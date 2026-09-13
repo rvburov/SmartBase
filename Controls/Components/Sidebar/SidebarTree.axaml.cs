@@ -263,8 +263,8 @@ public partial class SidebarTree : UserControl
     {
         _rows.Clear();
         Flatten(_roots, 0);
-        // Первая строка стоит на месте шапки колонок таблицы (высота 36), остальные — на месте
-        // строк данных (37). См. SidebarRow.RowHeight.
+        // Первая строка стоит на месте шапки колонок таблицы (высота ячейки), остальные — на месте
+        // строк данных (высота ячейки + линия сетки). См. SidebarRow.RowHeight.
         if (_rows.Count > 0) _rows[0].IsFirstRow = true;
         MeasureRowWidth();
     }
@@ -789,6 +789,12 @@ public partial class SidebarTree : UserControl
 
         FontScale.Changed += OnFontScaleChanged;
         if (_dbs.Count > 0 && _renderedFontDelta != FontScale.Delta) Refresh();
+
+        // Плотность строк таблицы двигает и строки дерева (они выровнены построчно):
+        // высота сидит в уже построенных строках, поэтому дерево пересобираем.
+        Utils.ConstructorSettings.Changed += OnConstructorSettingsChanged;
+        if (_dbs.Count > 0 && _renderedRowHeight != Utils.ConstructorSettings.RowHeight)
+            OnConstructorSettingsChanged();
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
@@ -797,7 +803,19 @@ public partial class SidebarTree : UserControl
         _keyHookTopLevel?.RemoveHandler(PointerPressedEvent, OnTopLevelPointerPressed);
         _keyHookTopLevel = null;
         FontScale.Changed -= OnFontScaleChanged;
+        Utils.ConstructorSettings.Changed -= OnConstructorSettingsChanged;
         base.OnDetachedFromVisualTree(e);
+    }
+
+    // Высота строки последнего рендера — чтобы догнать смену плотности, случившуюся, пока
+    // сайдбар был не виден (как _renderedFontDelta у размера шрифта).
+    private int _renderedRowHeight = Utils.ConstructorSettings.RowHeight;
+
+    private void OnConstructorSettingsChanged()
+    {
+        if (_renderedRowHeight == Utils.ConstructorSettings.RowHeight) return;
+        _renderedRowHeight = Utils.ConstructorSettings.RowHeight;
+        Refresh();
     }
 
     // Запоминаем, был ли клик внутри сайдбара — это и есть «пользователь работает здесь».
@@ -1434,7 +1452,13 @@ public partial class SidebarTree : UserControl
             else
             {
                 var pos = repo.GetAllCollections().Select(c => c.Position).DefaultIfEmpty(0).Max() + 1000;
-                var col = repo.AddCollection(new DbCollection { Name = res.Name, GroupId = res.ParentId, Position = pos });
+                // Цвет — из «Настройки → Конструктор базы данных» (здесь окна выбора нет,
+                // коллекция заводится одним вводом имени).
+                var col = repo.AddCollection(new DbCollection
+                {
+                    Name = res.Name, GroupId = res.ParentId, Position = pos,
+                    Color = Utils.ConstructorSettings.NewCollectionColor,
+                });
                 if (col.Id.HasValue)
                     // Title задаем реальным текстом «Без названия» (как кнопка «+»),
                     // а не оставляем пустым с одним плейсхолдером в ячейке.
@@ -2535,12 +2559,14 @@ public partial class SidebarRow : ObservableObject
     public bool   HasStatus   => !string.IsNullOrEmpty(Status);
     public IBrush StatusBrush => StatusFailed ? Red : Secondary;
 
-    // Строка повторяет СТРУКТУРУ строки таблицы: контент = высота ячейки (RowHeightStandard = 36),
-    // а линия-разделитель ДОБАВЛЯЕТСЯ снизу отдельным элементом толщиной SeparatorThickness (тот же
+    // Строка повторяет СТРУКТУРУ строки таблицы: контент = высота ячейки (токен RowHeightTable —
+    // 36 стандартно, 28 или 44 по настройке «Плотность строк таблицы»), а линия-разделитель
+    // ДОБАВЛЯЕТСЯ снизу отдельным элементом толщиной SeparatorThickness (тот же
     // зум-компенсированный токен, что у линий сетки таблицы = ровно 1 физ. пиксель). Итог: шаг строки
-    // данных = 36 + линия, ровно как у DataGrid (RowHeight задает только ячейки, линия сетки — отдельная
-    // Auto-строка сверх них), поэтому белые линии сайдбара садятся на линии сетки при ЛЮБОМ зуме.
-    // ПЕРВАЯ строка сайдбара стоит на месте ШАПКИ колонок (высота ровно 36, линия НЕ добавляется).
+    // данных = высота ячейки + линия, ровно как у DataGrid (RowHeight задает только ячейки, линия
+    // сетки — отдельная Auto-строка сверх них), поэтому белые линии сайдбара садятся на линии сетки
+    // при ЛЮБОМ зуме и любой плотности. ПЕРВАЯ строка сайдбара стоит на месте ШАПКИ колонок
+    // (высота ровно как у ячейки, линия НЕ добавляется).
     private bool _isFirstRow;
     public bool IsFirstRow
     {
@@ -2548,7 +2574,7 @@ public partial class SidebarRow : ObservableObject
         set { if (_isFirstRow == value) return; _isFirstRow = value;
               OnPropertyChanged(nameof(LineGridRow)); OnPropertyChanged(nameof(LineRowHeight)); }
     }
-    // Контент строки = высота ячейки таблицы (RowHeightStandard = 36). Заглушки очереди со статусом
+    // Контент строки = высота ячейки таблицы (токен RowHeightTable). Заглушки очереди со статусом
     // растут: NaN → работает MinHeight.
     public double RowContentHeight => HasStatus ? double.NaN : CellHeight;
     // Линия-разделитель (толщина = компенсированный SeparatorThickness = 1 физ. пиксель, как линия сетки
@@ -2558,8 +2584,11 @@ public partial class SidebarRow : ObservableObject
     public int       LineGridRow  => IsFirstRow ? 0 : 1;
     public GridLength LineRowHeight => IsFirstRow ? new GridLength(0) : GridLength.Auto;
 
+    // Токен именно таблицы (RowHeightTable): дерево коллекций стоит вплотную к ней и выровнено
+    // построчно, поэтому «Плотность строк таблицы» обязана двигать обе стороны разом.
     private static double CellHeight =>
-        Application.Current!.TryFindResource("RowHeightStandard", out var v) && v is double d ? d : 36;
+        Application.Current!.TryFindResource(Utils.ConstructorSettings.RowHeightResourceKey, out var v)
+        && v is double d ? d : Utils.ConstructorSettings.RowHeight;
 
     // Раскрываемые узлы — группы и корни-БД (запертая и немонтированная не раскрываются).
     private bool Expandable => Node.IsGroup || (Node.IsDatabase && !Node.IsLocked && !Node.IsPending);

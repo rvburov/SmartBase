@@ -12,6 +12,7 @@ using SmartBase.Controls.Behaviors;
 using SmartBase.Controls.Widgets;
 using SmartBase.Core.Models;
 using SmartBase.Database.Repositories;
+using SmartBase.Utils;
 using SmartBase.ViewModels.ConstructorDb;
 using Path = Avalonia.Controls.Shapes.Path;
 
@@ -217,7 +218,9 @@ public partial class RecordPageView : UserControl
 
         HeaderBar.SetTitle(_vm.Title == "Без названия" ? "" : _vm.Title);
 
-        FooterBar.IsPreview = false;
+        // Начальный вид описания — из «Настройки → Конструктор базы данных»; переключатель
+        // внизу панели работает как и раньше, настройка задает только состояние при открытии.
+        FooterBar.IsPreview = ConstructorSettings.DescriptionPreview;
 
         BuildProperties();
         ApplyPropsHeight();
@@ -334,12 +337,24 @@ public partial class RecordPageView : UserControl
     // высоту: тянем вниз — свойства растут (описание сжимается, оно в Star-строке),
     // тянем вверх — свойства сжимаются, и если их больше, чем влезает, ScrollViewer
     // дает прокрутку. Выбранная высота помнится в пределах сессии и переносится
-    // между записями (на диск не пишем — у разных записей разное число свойств).
+    // между записями; на диск она уходит, только если включено «Запоминать раскладку
+    // панели записи» (стандартно выключено — у разных записей разное число свойств,
+    // и одна и та же высота не всем подходит).
 
     private bool    _propsGripDragging;
     private double  _propsGripStartY;
     private double  _propsGripStartHeight;
-    private double? _propsHeight;   // выбранная пользователем высота блока свойств (null = Auto)
+    private double? _propsHeight = StoredPropsHeight();   // высота блока свойств (null = Auto)
+
+    // Запомненная раскладка читается один раз, при создании панели: настройку могли включить
+    // уже после запуска, но забытая раскладка стирается при выключении (см. ConstructorSettings),
+    // так что читать ее на каждом открытии записи незачем.
+    private static double? StoredPropsHeight()
+    {
+        if (!ConstructorSettings.RememberLayout) return null;
+        var h = AppSettings.LoadConstructorPropsHeight();
+        return h > 0 ? h : null;
+    }
 
     private const double PropsHeightMin = 48;
 
@@ -381,13 +396,25 @@ public partial class RecordPageView : UserControl
         _propsGripDragging = false;
         e.Pointer.Capture(null);
         e.Handled = true;
+        // Пишем в конце перетаскивания, а не на каждом движении мыши: иначе одно движение
+        // ручки дало бы сотню записей в app.db.
+        if (ConstructorSettings.RememberLayout && _propsHeight is double h)
+            AppSettings.SaveConstructorPropsHeight(h);
     }
 
     // Общая ширина колонки названий (px) — делится всеми карточками; меняется
     // перетаскиванием ручки-разделителя ⋮. Живет в пределах сессии (переносится между записями).
     private readonly List<ColumnDefinition> _nameCols = new();
-    private double _nameColWidth = 150;
+    private const double NameColDefault = 150;
+    private double _nameColWidth = StoredNameColWidth();
     private const double NameColMin = 70;
+
+    private static double StoredNameColWidth()
+    {
+        if (!ConstructorSettings.RememberLayout) return NameColDefault;
+        var w = AppSettings.LoadConstructorNameColWidth();
+        return w >= NameColMin ? w : NameColDefault;
+    }
 
     private Border? _selectedCard;
 
@@ -1049,6 +1076,9 @@ public partial class RecordPageView : UserControl
         _colGripDragging = false;
         e.Pointer.Capture(null);
         e.Handled = true;
+        // Как и у высоты свойств: сохраняем в конце перетаскивания.
+        if (ConstructorSettings.RememberLayout)
+            AppSettings.SaveConstructorNameColWidth(_nameColWidth);
     }
 
     private void OnAddPropertyClick(object? sender, PointerPressedEventArgs e)

@@ -120,7 +120,8 @@
                 <ItemsControl.ItemTemplate>
                     <DataTemplate x:DataType="comp:SidebarRow">
                         <!-- Строка повторяет структуру строки DataGrid. Контент = высота ячейки
-                             (RowHeightStandard = 36) в Row 0. Линия-разделитель — компенсированный по
+                             (токен RowHeightTable, настройка «Плотность строк таблицы») в Row 0.
+                             Линия-разделитель — компенсированный по
                              зуму SeparatorThickness (ровно 1 физ. пиксель, как линия сетки таблицы):
                              у строк ДАННЫХ она в Auto-строке Row 1 → ДОБАВЛЯЕТСЯ (36 + линия); у ПЕРВОЙ
                              строки (= шапка колонок) Row 1 схлопнут в 0, а линия лежит ПОВЕРХ контента
@@ -136,7 +137,7 @@
                                 Background="{Binding RowBackground}"
                                 Padding="10,0,0,0"
                                 Height="{Binding RowContentHeight}"
-                                MinHeight="{StaticResource RowHeightStandard}"
+                                MinHeight="{DynamicResource RowHeightTable}"
                                 MinWidth="{Binding MinRowWidth}"
                                 Tapped="OnRowTapped"
                                 PointerEntered="OnRowEnter"

@@ -322,26 +322,9 @@
                     </Border>
                     <Border Classes="separator h" />
 
-                    <!-- Строки календаря и задач (стартовый вид, видимость видов) переехали в
-                         разделы «Календарь» и «Задачи» — CalendarPanel и TasksPanel ниже;
-                         механизм InitAppearance общий. -->
-
-                    <Border Classes="settingRow">
-                        <Grid ColumnDefinitions="*,Auto">
-                            <StackPanel Grid.Column="0" Spacing="4"
-                                        VerticalAlignment="Center" Margin="0,0,32,0">
-                                <TextBlock Classes="title" Text="Отображение по умолчанию раздела конструктора" />
-                                <TextBlock Classes="desc"
-                                           Text="Какой вид коллекции открывается в конструкторе базы данных. Если у коллекции выбран свой вид, он сохраняется за ней." />
-                            </StackPanel>
-                            <ComboBox Grid.Column="1" x:Name="ConstructorViewCombo"
-                                      Width="240" Height="{StaticResource ControlHeightStandard}"
-                                      VerticalAlignment="Center"
-                                      Background="{StaticResource BrushSecondaryBg}"
-                                      CornerRadius="{StaticResource RadiusBase}" />
-                        </Grid>
-                    </Border>
-                    <Border Classes="separator h" />
+                    <!-- Строки календаря, задач и конструктора (стартовый вид, видимость видов)
+                         переехали в свои разделы — CalendarPanel, TasksPanel и ConstructorPanel
+                         ниже; механизм InitAppearance общий. -->
 
                     <!-- ── Что вообще показывать ───────────────────────────────
                          Галочки убирают лишние виды и разделы с глаз. Последнюю снять
@@ -357,20 +340,6 @@
                                            Text="Какие разделы показывать в панели навигации слева. «Настройки» и «Профиль» скрыть нельзя." />
                             </StackPanel>
                             <w:CheckListDropdown Grid.Column="1" x:Name="NavigationVisibility"
-                                                 Width="240" VerticalAlignment="Center" />
-                        </Grid>
-                    </Border>
-                    <Border Classes="separator h" />
-
-                    <Border Classes="settingRow">
-                        <Grid ColumnDefinitions="*,Auto">
-                            <StackPanel Grid.Column="0" Spacing="4"
-                                        VerticalAlignment="Center" Margin="0,0,32,0">
-                                <TextBlock Classes="title" Text="Отображение раздела конструктора" />
-                                <TextBlock Classes="desc"
-                                           Text="Какие виды коллекции показывать в конструкторе базы данных." />
-                            </StackPanel>
-                            <w:CheckListDropdown Grid.Column="1" x:Name="ConstructorVisibility"
                                                  Width="240" VerticalAlignment="Center" />
                         </Grid>
                     </Border>
@@ -975,6 +944,293 @@
                                       Background="{StaticResource BrushSecondaryBg}"
                                       CornerRadius="{StaticResource RadiusBase}"
                                       SelectionChanged="OnTasksQuickDueChanged" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    </StackPanel>
+                </Grid>
+            </ScrollViewer>
+
+            <!-- ── Конструктор базы данных ───────────────────────── -->
+            <!-- Раздел «Конструктор базы данных»: стартовый вид и видимость видов (контролы те
+                 же, что были в «Оформлении», механизм InitAppearance общий), остальное наполняет
+                 SettingsConstructorPanel и пишет в живой сервис ConstructorSettings — таблица и
+                 панель записи перечитываются сразу. Строки идут группами: сначала виды, потом
+                 создание и удаление, затем таблица, панель записи и память. -->
+            <ScrollViewer x:Name="ConstructorPanel" IsVisible="False"
+                          VerticalScrollBarVisibility="Auto">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Margin="16,0,16,32">
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Отображение по умолчанию" />
+                                <TextBlock Classes="desc"
+                                           Text="Какой вид коллекции открывается в конструкторе базы данных. Если у коллекции выбран свой вид, он сохраняется за ней." />
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" x:Name="ConstructorViewCombo"
+                                      Width="240" Height="{StaticResource ControlHeightStandard}"
+                                      VerticalAlignment="Center"
+                                      Background="{StaticResource BrushSecondaryBg}"
+                                      CornerRadius="{StaticResource RadiusBase}" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Отображаемые виды" />
+                                <TextBlock Classes="desc"
+                                           Text="Какие виды коллекции показывать в переключателе навбара." />
+                            </StackPanel>
+                            <w:CheckListDropdown Grid.Column="1" x:Name="ConstructorVisibility"
+                                                 Width="240" VerticalAlignment="Center" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Тип нового свойства" />
+                                <TextBlock Classes="desc"
+                                           Text="Какой тип стоит в окне «Создание свойства». Типы «Связь» и «Пользователь» и вычисляемые типы стандартными не бывают: им нужна цель или готовые данные записи, поэтому в списке их нет." />
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" x:Name="ConstructorNewFieldTypeCombo"
+                                      Width="240" Height="{StaticResource ControlHeightStandard}"
+                                      VerticalAlignment="Center"
+                                      Background="{StaticResource BrushSecondaryBg}"
+                                      CornerRadius="{StaticResource RadiusBase}"
+                                      SelectionChanged="OnConstructorNewFieldTypeChanged" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Открывать новую запись" />
+                                <TextBlock Classes="desc"
+                                           Text="Созданная запись сразу открывается в панели справа. Выключено — запись появляется в таблице, а панель не выезжает: так удобно заводить строки подряд." />
+                            </StackPanel>
+                            <ToggleSwitch Grid.Column="1" x:Name="ConstructorOpenNewRecordToggle"
+                                          OnContent="" OffContent=""
+                                          VerticalAlignment="Center"
+                                          IsCheckedChanged="OnConstructorOpenNewRecordToggled" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Спрашивать подтверждение при удалении" />
+                                <TextBlock Classes="desc"
+                                           Text="Вопрос перед удалением записей и столбцов. Выключено — удаление происходит сразу, но предупреждение о том, что удаление оборвет связи или снимет роль раздела, остается: это про потерю данных, а не про рутину." />
+                            </StackPanel>
+                            <ToggleSwitch Grid.Column="1" x:Name="ConstructorConfirmDeleteToggle"
+                                          OnContent="" OffContent=""
+                                          VerticalAlignment="Center"
+                                          IsCheckedChanged="OnConstructorConfirmDeleteToggled" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Цвет новой коллекции" />
+                                <TextBlock Classes="desc"
+                                           Text="Каким цветом помечается коллекция, созданная в конструкторе. Цвет каждой коллекции всегда можно поменять в ее меню." />
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" x:Name="ConstructorColorCombo"
+                                      Width="240" Height="{StaticResource ControlHeightStandard}"
+                                      VerticalAlignment="Center"
+                                      Background="{StaticResource BrushSecondaryBg}"
+                                      CornerRadius="{StaticResource RadiusBase}"
+                                      SelectionChanged="OnConstructorColorChanged" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Плотность строк таблицы" />
+                                <TextBlock Classes="desc"
+                                           Text="Высота строки таблицы и дерева коллекций в панели слева — они выровнены друг с другом и меняются вместе, в том числе в «Календаре» и «Задачах» (дерево там то же самое). Своя высота строки, заданная перетягиванием, сохраняется за коллекцией." />
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" x:Name="ConstructorRowHeightCombo"
+                                      Width="240" Height="{StaticResource ControlHeightStandard}"
+                                      VerticalAlignment="Center"
+                                      Background="{StaticResource BrushSecondaryBg}"
+                                      CornerRadius="{StaticResource RadiusBase}"
+                                      SelectionChanged="OnConstructorRowHeightChanged" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Стандартная ширина столбца" />
+                                <TextBlock Classes="desc"
+                                           Text="Ширина столбца, которому ее еще не задавали вручную. Она же — предел, ниже которого столбцы не сжимаются сами при нехватке места; вручную столбец по-прежнему можно сузить сильнее." />
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" x:Name="ConstructorColWidthCombo"
+                                      Width="240" Height="{StaticResource ControlHeightStandard}"
+                                      VerticalAlignment="Center"
+                                      Background="{StaticResource BrushSecondaryBg}"
+                                      CornerRadius="{StaticResource RadiusBase}"
+                                      SelectionChanged="OnConstructorColWidthChanged" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Ручная ширина столбцов" />
+                                <TextBlock Classes="desc"
+                                           Text="Включено — границы столбцов можно тянуть мышью. Действует на коллекции, в которых этот режим не переключали вручную: у тех, где переключали, он хранится за коллекцией и сильнее настройки." />
+                            </StackPanel>
+                            <ToggleSwitch Grid.Column="1" x:Name="ConstructorColResizeToggle"
+                                          OnContent="" OffContent=""
+                                          VerticalAlignment="Center"
+                                          IsCheckedChanged="OnConstructorColResizeToggled" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Ручная высота строк" />
+                                <TextBlock Classes="desc"
+                                           Text="То же для высоты строк: включено — у нижней границы строки появляются полоски-захваты. Коллекции, где режим переключали вручную, живут по своему значению." />
+                            </StackPanel>
+                            <ToggleSwitch Grid.Column="1" x:Name="ConstructorRowResizeToggle"
+                                          OnContent="" OffContent=""
+                                          VerticalAlignment="Center"
+                                          IsCheckedChanged="OnConstructorRowResizeToggled" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Открывать запись" />
+                                <TextBlock Classes="desc"
+                                           Text="Клик по номеру строки (первый столбец «№») открывает запись в панели справа. «Двойным кликом» — одиночный клик только выделяет строку; так проще выделять и копировать, не открывая запись каждый раз." />
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" x:Name="ConstructorOpenClickCombo"
+                                      Width="240" Height="{StaticResource ControlHeightStandard}"
+                                      VerticalAlignment="Center"
+                                      Background="{StaticResource BrushSecondaryBg}"
+                                      CornerRadius="{StaticResource RadiusBase}"
+                                      SelectionChanged="OnConstructorOpenClickChanged" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Описание записи открывается" />
+                                <TextBlock Classes="desc"
+                                           Text="В каком виде показывать описание записи при открытии панели: в редакторе разметки или в готовом виде. Переключатель внизу панели работает как и раньше — настройка задает только начальное состояние." />
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" x:Name="ConstructorDescriptionCombo"
+                                      Width="240" Height="{StaticResource ControlHeightStandard}"
+                                      VerticalAlignment="Center"
+                                      Background="{StaticResource BrushSecondaryBg}"
+                                      CornerRadius="{StaticResource RadiusBase}"
+                                      SelectionChanged="OnConstructorDescriptionChanged" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Восстанавливать открытую запись при запуске" />
+                                <TextBlock Classes="desc"
+                                           Text="Программа откроется с той же записью в панели, на которой вы закончили. Если запись удалили или ее база отключена, панель просто останется закрытой." />
+                            </StackPanel>
+                            <ToggleSwitch Grid.Column="1" x:Name="ConstructorRestoreRecordToggle"
+                                          OnContent="" OffContent=""
+                                          VerticalAlignment="Center"
+                                          IsCheckedChanged="OnConstructorRestoreRecordToggled" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Запоминать раскладку панели записи" />
+                                <TextBlock Classes="desc"
+                                           Text="Высота блока свойств и ширина колонки названий переживут перезапуск. Выключено — панель каждый раз открывается в стандартной раскладке, а запомненная стирается." />
+                            </StackPanel>
+                            <ToggleSwitch Grid.Column="1" x:Name="ConstructorRememberLayoutToggle"
+                                          OnContent="" OffContent=""
+                                          VerticalAlignment="Center"
+                                          IsCheckedChanged="OnConstructorRememberLayoutToggled" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Запоминать фильтры и сортировку" />
+                                <TextBlock Classes="desc"
+                                           Text="Фильтры и сортировка столбцов сохраняются за коллекцией и возвращаются при следующем открытии. Выключено — коллекция всегда открывается полным списком в своем порядке." />
+                            </StackPanel>
+                            <ToggleSwitch Grid.Column="1" x:Name="ConstructorRememberFiltersToggle"
+                                          OnContent="" OffContent=""
+                                          VerticalAlignment="Center"
+                                          IsCheckedChanged="OnConstructorRememberFiltersToggled" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Проверка чужих изменений" />
+                                <TextBlock Classes="desc"
+                                           Text="Как часто программа спрашивает базу о правках других людей. Реже — меньше обращений к сетевой папке или серверу, но чужая правка появится на экране позже. Когда окно свернуто, период в пять раз больше." />
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" x:Name="ConstructorPollCombo"
+                                      Width="240" Height="{StaticResource ControlHeightStandard}"
+                                      VerticalAlignment="Center"
+                                      Background="{StaticResource BrushSecondaryBg}"
+                                      CornerRadius="{StaticResource RadiusBase}"
+                                      SelectionChanged="OnConstructorPollChanged" />
                         </Grid>
                     </Border>
                     <Border Classes="separator h" />

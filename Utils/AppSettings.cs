@@ -425,6 +425,242 @@ public static class AppSettings
         else                                _store?.Set(KeyConstructorView, mode);
     }
 
+    // ── Раздел «Настройки → Конструктор базы данных» ─────────────────────────────
+    //
+    // Хранятся дельтами (стандарт = отсутствие ключа); живой кэш, разбор мусора и событие —
+    // ConstructorSettings. Стартовый вид коллекции (constructorView, выше) в раздел входит,
+    // но живет отдельной парой: он старше раздела, и его пишет сам интерфейс, запоминая
+    // переключение вида. Строковые значения отдаются как есть — что из них допустимо,
+    // решает сервис.
+    //
+    // Стандарты подобраны так, чтобы «ничего не настраивал» = сегодняшнее поведение.
+    public const string ConstructorNewFieldTypeDefault       = "text";
+    public const bool   ConstructorOpenNewRecordDefault      = false;     // «+» создает, не открывая панель
+    public const bool   ConstructorConfirmDeleteDefault      = true;
+    public const string ConstructorNewCollectionColorDefault = "#007AFF"; // тот же синий, что зашит в CreateCollection
+    public const int    ConstructorRowHeightDefault          = 36;        // = токен RowHeightTable
+    public const int    ConstructorColWidthDefault           = 160;       // = прежняя константа MinColWidth
+    public const bool   ConstructorColResizeDefault          = false;
+    public const bool   ConstructorRowResizeDefault          = false;
+    public const bool   ConstructorOpenByDoubleClickDefault  = false;     // открытие записи одним кликом
+    public const bool   ConstructorDescriptionPreviewDefault = false;     // описание открывается в редакторе
+    public const bool   ConstructorRestoreRecordDefault      = false;
+    public const bool   ConstructorRememberLayoutDefault     = false;
+    public const bool   ConstructorRememberFiltersDefault    = false;
+    public const int    ConstructorPollSecondsDefault        = 3;         // = прежний ForegroundMs
+
+    // Допустимые значения плотности строк и периода опроса: список закрыт, потому что
+    // оба числа уходят в геометрию и в таймер — произвольное значение из правленого
+    // app.db не должно давать ни нулевой строки, ни опроса раз в сутки.
+    public static readonly int[] ConstructorRowHeights   = [28, 36, 44];
+    public static readonly int[] ConstructorPollSeconds  = [3, 10, 30];
+    // Ширины столбца — тоже закрытый список, и по той же причине, что высоты: панель предлагает
+    // ровно их, а значение вне списка встало бы в выпадающем списке первым пунктом, продолжая
+    // действовать другим числом. Один источник правды на Load, Set и панель.
+    public static readonly int[] ConstructorColWidths    = [120, 160, 200, 240, 300];
+    public static int ConstructorColWidthMin => ConstructorColWidths[0];
+    public static int ConstructorColWidthMax => ConstructorColWidths[^1];
+
+    public static string LoadConstructorNewFieldType() =>
+        _store?.Get(KeyConstructorNewFieldType) ?? ConstructorNewFieldTypeDefault;
+
+    public static void SaveConstructorNewFieldType(string type)
+    {
+        if (type == ConstructorNewFieldTypeDefault) _store?.Remove(KeyConstructorNewFieldType);
+        else                                        _store?.Set(KeyConstructorNewFieldType, type);
+    }
+
+    public static bool LoadConstructorOpenNewRecord() =>
+        bool.TryParse(_store?.Get(KeyConstructorOpenNewRecord), out var on) ? on : ConstructorOpenNewRecordDefault;
+
+    public static void SaveConstructorOpenNewRecord(bool on)
+    {
+        if (on == ConstructorOpenNewRecordDefault) _store?.Remove(KeyConstructorOpenNewRecord);
+        else                                       _store?.Set(KeyConstructorOpenNewRecord, on.ToString());
+    }
+
+    public static bool LoadConstructorConfirmDelete() =>
+        bool.TryParse(_store?.Get(KeyConstructorConfirmDelete), out var on) ? on : ConstructorConfirmDeleteDefault;
+
+    public static void SaveConstructorConfirmDelete(bool on)
+    {
+        if (on == ConstructorConfirmDeleteDefault) _store?.Remove(KeyConstructorConfirmDelete);
+        else                                       _store?.Set(KeyConstructorConfirmDelete, on.ToString());
+    }
+
+    public static string LoadConstructorNewCollectionColor() =>
+        _store?.Get(KeyConstructorNewCollectionColor) ?? ConstructorNewCollectionColorDefault;
+
+    public static void SaveConstructorNewCollectionColor(string hex)
+    {
+        if (hex == ConstructorNewCollectionColorDefault) _store?.Remove(KeyConstructorNewCollectionColor);
+        else                                             _store?.Set(KeyConstructorNewCollectionColor, hex);
+    }
+
+    public static int LoadConstructorRowHeight()
+    {
+        if (int.TryParse(_store?.Get(KeyConstructorRowHeight), NumberStyles.Integer, CultureInfo.InvariantCulture, out var h)
+            && Array.IndexOf(ConstructorRowHeights, h) >= 0)
+            return h;
+        return ConstructorRowHeightDefault;
+    }
+
+    public static void SaveConstructorRowHeight(int height)
+    {
+        if (height == ConstructorRowHeightDefault) _store?.Remove(KeyConstructorRowHeight);
+        else _store?.Set(KeyConstructorRowHeight, height.ToString(CultureInfo.InvariantCulture));
+    }
+
+    public static int LoadConstructorColWidth()
+    {
+        if (int.TryParse(_store?.Get(KeyConstructorColWidth), NumberStyles.Integer, CultureInfo.InvariantCulture, out var w)
+            && Array.IndexOf(ConstructorColWidths, w) >= 0)
+            return w;
+        return ConstructorColWidthDefault;
+    }
+
+    public static void SaveConstructorColWidth(int width)
+    {
+        if (width == ConstructorColWidthDefault) _store?.Remove(KeyConstructorColWidth);
+        else _store?.Set(KeyConstructorColWidth, width.ToString(CultureInfo.InvariantCulture));
+    }
+
+    public static bool LoadConstructorColResize() =>
+        bool.TryParse(_store?.Get(KeyConstructorColResize), out var on) ? on : ConstructorColResizeDefault;
+
+    public static void SaveConstructorColResize(bool on)
+    {
+        if (on == ConstructorColResizeDefault) _store?.Remove(KeyConstructorColResize);
+        else                                   _store?.Set(KeyConstructorColResize, on.ToString());
+    }
+
+    public static bool LoadConstructorRowResize() =>
+        bool.TryParse(_store?.Get(KeyConstructorRowResize), out var on) ? on : ConstructorRowResizeDefault;
+
+    public static void SaveConstructorRowResize(bool on)
+    {
+        if (on == ConstructorRowResizeDefault) _store?.Remove(KeyConstructorRowResize);
+        else                                   _store?.Set(KeyConstructorRowResize, on.ToString());
+    }
+
+    public static bool LoadConstructorOpenByDoubleClick() =>
+        bool.TryParse(_store?.Get(KeyConstructorOpenDoubleClick), out var on) ? on : ConstructorOpenByDoubleClickDefault;
+
+    public static void SaveConstructorOpenByDoubleClick(bool on)
+    {
+        if (on == ConstructorOpenByDoubleClickDefault) _store?.Remove(KeyConstructorOpenDoubleClick);
+        else                                           _store?.Set(KeyConstructorOpenDoubleClick, on.ToString());
+    }
+
+    public static bool LoadConstructorDescriptionPreview() =>
+        bool.TryParse(_store?.Get(KeyConstructorDescriptionPreview), out var on) ? on : ConstructorDescriptionPreviewDefault;
+
+    public static void SaveConstructorDescriptionPreview(bool on)
+    {
+        if (on == ConstructorDescriptionPreviewDefault) _store?.Remove(KeyConstructorDescriptionPreview);
+        else                                            _store?.Set(KeyConstructorDescriptionPreview, on.ToString());
+    }
+
+    public static bool LoadConstructorRestoreRecord() =>
+        bool.TryParse(_store?.Get(KeyConstructorRestoreRecord), out var on) ? on : ConstructorRestoreRecordDefault;
+
+    public static void SaveConstructorRestoreRecord(bool on)
+    {
+        if (on == ConstructorRestoreRecordDefault) _store?.Remove(KeyConstructorRestoreRecord);
+        else                                       _store?.Set(KeyConstructorRestoreRecord, on.ToString());
+    }
+
+    public static bool LoadConstructorRememberLayout() =>
+        bool.TryParse(_store?.Get(KeyConstructorRememberLayout), out var on) ? on : ConstructorRememberLayoutDefault;
+
+    public static void SaveConstructorRememberLayout(bool on)
+    {
+        if (on == ConstructorRememberLayoutDefault) _store?.Remove(KeyConstructorRememberLayout);
+        else                                        _store?.Set(KeyConstructorRememberLayout, on.ToString());
+    }
+
+    public static bool LoadConstructorRememberFilters() =>
+        bool.TryParse(_store?.Get(KeyConstructorRememberFilters), out var on) ? on : ConstructorRememberFiltersDefault;
+
+    public static void SaveConstructorRememberFilters(bool on)
+    {
+        if (on == ConstructorRememberFiltersDefault) _store?.Remove(KeyConstructorRememberFilters);
+        else                                         _store?.Set(KeyConstructorRememberFilters, on.ToString());
+    }
+
+    public static int LoadConstructorPollSeconds()
+    {
+        if (int.TryParse(_store?.Get(KeyConstructorPollSeconds), NumberStyles.Integer, CultureInfo.InvariantCulture, out var s)
+            && Array.IndexOf(ConstructorPollSeconds, s) >= 0)
+            return s;
+        return ConstructorPollSecondsDefault;
+    }
+
+    public static void SaveConstructorPollSeconds(int seconds)
+    {
+        if (seconds == ConstructorPollSecondsDefault) _store?.Remove(KeyConstructorPollSeconds);
+        else _store?.Set(KeyConstructorPollSeconds, seconds.ToString(CultureInfo.InvariantCulture));
+    }
+
+    // Раскладка панели записи — СОСТОЯНИЕ (как ширина самой панели), а не настройка: пишется
+    // всегда, когда включено «запоминать раскладку», дефолта в понимании «сброс = удаление
+    // ключа» у него нет. Ноль и мусор читаются как «не запомнено» — панель берет свои 50/50
+    // и 150 px. Значения в логических пикселях (до зума): зум — LayoutTransform поверх, и
+    // сохраненная раскладка не должна зависеть от того, при каком масштабе ее двигали.
+    public static double LoadConstructorPropsHeight() =>
+        double.TryParse(_store?.Get(KeyConstructorPropsHeight), NumberStyles.Float, CultureInfo.InvariantCulture, out var h)
+        && h > 0 ? h : 0;
+
+    public static void SaveConstructorPropsHeight(double height)
+    {
+        if (height <= 0) _store?.Remove(KeyConstructorPropsHeight);
+        else _store?.Set(KeyConstructorPropsHeight, height.ToString("0.##", CultureInfo.InvariantCulture));
+    }
+
+    // Запомненные фильтры и сортировка коллекций — СОСТОЯНИЕ одной строкой JSON (формат и
+    // ограничения — ConstructorFilterMemory). Пусто — ничего не помним.
+    public static string LoadConstructorFilters() => _store?.Get(KeyConstructorFilters) ?? "";
+
+    public static void SaveConstructorFilters(string json)
+    {
+        if (string.IsNullOrEmpty(json)) _store?.Remove(KeyConstructorFilters);
+        else                            _store?.Set(KeyConstructorFilters, json);
+    }
+
+    // Последняя открытая запись — тоже СОСТОЯНИЕ: «база:запись» одной строкой (как курсоры
+    // очереди событий), пишется всегда. Пусто — открывать нечего; при выключенном
+    // «Восстанавливать открытую запись» значение просто не читают.
+    public static string LoadConstructorLastRecord() => _store?.Get(KeyConstructorLastRecord) ?? "";
+
+    public static void SaveConstructorLastRecord(int dbId, int recordId)
+    {
+        if (recordId <= 0) _store?.Remove(KeyConstructorLastRecord);
+        else _store?.Set(KeyConstructorLastRecord,
+                         string.Create(CultureInfo.InvariantCulture, $"{dbId}:{recordId}"));
+    }
+
+    /// <summary>Разбор «база:запись»; мусор и пустое — null (открывать нечего). Ноль в базе не
+    /// принимаем: между запусками «текущая база» — не адрес, активной при старте может стать
+    /// другая, и запись с тем же номером нашлась бы в ней.</summary>
+    public static (int DbId, int RecordId)? ParseConstructorLastRecord(string? value)
+    {
+        var parts = value?.Split(':');
+        if (parts is not { Length: 2 }) return null;
+        if (!int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var dbId)) return null;
+        if (!int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var recId)) return null;
+        return dbId > 0 && recId > 0 ? (dbId, recId) : null;
+    }
+
+    public static double LoadConstructorNameColWidth() =>
+        double.TryParse(_store?.Get(KeyConstructorNameColWidth), NumberStyles.Float, CultureInfo.InvariantCulture, out var w)
+        && w > 0 ? w : 0;
+
+    public static void SaveConstructorNameColWidth(double width)
+    {
+        if (width <= 0) _store?.Remove(KeyConstructorNameColWidth);
+        else _store?.Set(KeyConstructorNameColWidth, width.ToString("0.##", CultureInfo.InvariantCulture));
+    }
+
     // ── Путь обновления ──────────────────────────────────────────────────────────
     //
     // Папка (сетевая/файловая), где лежит свежий SmartBase.exe для обновления. Пусто по
@@ -1118,6 +1354,24 @@ public static class AppSettings
     private const string KeyCalendarNewEventDuration  = "calendarNewEventDuration";
     private const string KeyDiagramScale     = "diagramScale";
     private const string KeyConstructorView  = "constructorView";
+    private const string KeyConstructorNewFieldType       = "constructorNewFieldType";
+    private const string KeyConstructorOpenNewRecord      = "constructorOpenNewRecord";
+    private const string KeyConstructorConfirmDelete      = "constructorConfirmDelete";
+    private const string KeyConstructorNewCollectionColor = "constructorNewCollectionColor";
+    private const string KeyConstructorRowHeight          = "constructorRowHeight";
+    private const string KeyConstructorColWidth           = "constructorColWidth";
+    private const string KeyConstructorColResize          = "constructorColResize";
+    private const string KeyConstructorRowResize          = "constructorRowResize";
+    private const string KeyConstructorOpenDoubleClick    = "constructorOpenDoubleClick";
+    private const string KeyConstructorDescriptionPreview = "constructorDescriptionPreview";
+    private const string KeyConstructorRestoreRecord      = "constructorRestoreRecord";
+    private const string KeyConstructorRememberLayout     = "constructorRememberLayout";
+    private const string KeyConstructorRememberFilters    = "constructorRememberFilters";
+    private const string KeyConstructorPollSeconds        = "constructorPollSeconds";
+    private const string KeyConstructorPropsHeight        = "constructorPropsHeight";
+    private const string KeyConstructorNameColWidth       = "constructorNameColWidth";
+    private const string KeyConstructorLastRecord         = "constructorLastRecord";
+    private const string KeyConstructorFilters            = "constructorFilters";
     private const string KeyUpdatePath       = "updatePath";
     private const string KeyNotesVault       = "notesVault";
     private const string KeyNotesLastFile    = "notesLastFile";

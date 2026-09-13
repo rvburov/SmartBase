@@ -37,6 +37,12 @@ public partial class CollectionDialogViewModel : ViewModelBase
             Icon    = editing.Icon;
             GroupId = editing.GroupId;
         }
+        else
+        {
+            // Новая коллекция открывается с цветом из «Настройки → Конструктор базы данных»;
+            // выбрать другой в самом окне по-прежнему можно.
+            Color = Utils.ConstructorSettings.NewCollectionColor;
+        }
     }
 
     [RelayCommand]

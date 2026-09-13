@@ -446,8 +446,14 @@ public partial class ConstructorControllerView : UserControl
         // из открытых баз). Best-effort: связи из закрытых баз чистятся лениво. Показываем лишь ФАКТ.
         var linkWarn = RelationDeleteImpact.ForRecords(_repository, CurrentDbId, ids)
             ? " На них ссылаются связи из других записей — они будут удалены." : "";
-        var dlg = new ConfirmDialog($"Вы удаляете {ids.Count} {RecordsPlural(ids.Count)}.{linkWarn} Подтвердить?");
-        if (await dlg.ShowDialog<bool>(win) != true) return;
+        // Рутинный вопрос снимает настройка «Спрашивать подтверждение при удалении», а вот
+        // предупреждение об обрыве связей она НЕ снимает: это про потерю чужих данных, о
+        // которой из самого действия не догадаться.
+        if (ConstructorSettings.ConfirmDelete || linkWarn.Length > 0)
+        {
+            var dlg = new ConfirmDialog($"Вы удаляете {ids.Count} {RecordsPlural(ids.Count)}.{linkWarn} Подтвердить?");
+            if (await dlg.ShowDialog<bool>(win) != true) return;
+        }
 
         var keepVertical = TableViewCtrl.IsVisible ? TableViewCtrl.CurrentVerticalOffset() : (double?)null;
 
@@ -956,11 +962,16 @@ public partial class ConstructorControllerView : UserControl
             .ToList();
         if (deletable.Count == 0) return;
 
-        var message = $"Вы удаляете {deletable.Count} {PropertiesPlural(deletable.Count)}. Подтвердить?"
-                    + RoleLossWarning(fields, deletable,
-                                      _repository.HasTaskExecField(_currentCollectionId.Value),
-                                      _repository.HasCalendarDateField(_currentCollectionId.Value));
-        if (await new ConfirmDialog(message).ShowDialog<bool>(win) != true) return;
+        var roleWarn = RoleLossWarning(fields, deletable,
+                                       _repository.HasTaskExecField(_currentCollectionId.Value),
+                                       _repository.HasCalendarDateField(_currentCollectionId.Value));
+        // Как и у записей: рутину снимает настройка, а предупреждение о потере роли раздела
+        // («коллекция выпадет из задач/календаря») остается — оно о последствии, а не о рутине.
+        if (ConstructorSettings.ConfirmDelete || roleWarn.Length > 0)
+        {
+            var message = $"Вы удаляете {deletable.Count} {PropertiesPlural(deletable.Count)}. Подтвердить?" + roleWarn;
+            if (await new ConfirmDialog(message).ShowDialog<bool>(win) != true) return;
+        }
 
         // Надежно (без осиротевших данных) и без фриза UI: подсчет значений и удаление идут
         // в фоне на изолированных подключениях, на главном потоке ничего не считаем. Окно

@@ -140,6 +140,11 @@ public partial class PropertyEditorDialog : Window
         PopulateFileSources();
         PopulateRelationDatabases();
 
+        // Новое свойство открывается с типом из «Настройки → Конструктор базы данных»;
+        // у существующего тип берется из самого поля (ниже), настройка его не трогает.
+        if (!editFieldId.HasValue)
+            _selectedType = Utils.ConstructorSettings.NewFieldType;
+
         if (editFieldId.HasValue)
         {
             Title = "Изменение свойства";
@@ -182,7 +187,12 @@ public partial class PropertyEditorDialog : Window
         // строке сперва зафиксирует текущую, затем откроет ту.
         AddHandler(PointerPressedEvent, DismissOptionEditor, RoutingStrategies.Tunnel);
 
+        // Тип, которого в списке нет (настройка «Тип нового свойства» с неизвестным ключом после
+        // правки app.db руками или отката версии), приводим к первому пункту ЯВНО: присваивание
+        // SelectedIndex идет до подписки ниже, поэтому само по себе оно _selectedType не поправит
+        // — окно показывало бы «Текст», а сохраняло чужой тип.
         var idx = Array.FindIndex(FieldTypes, t => t.Type == _selectedType);
+        if (idx < 0) _selectedType = FieldTypes[0].Type;
         TypeCombo.SelectedIndex = idx >= 0 ? idx : 0;
         TypeCombo.SelectionChanged += (_, _) =>
         {

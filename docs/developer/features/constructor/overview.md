@@ -71,6 +71,40 @@
 `CollectionsChanged` (обновить сайдбар), `RecordPageRequested`, `RecordPageClosed`,
 `RecordPanelToggled`.
 
+### Настройки раздела
+
+«Настройки → Конструктор базы данных»
+([SettingsConstructorPanel.cs](../../../../Views/Settings/SettingsConstructorPanel.cs), ключи —
+[settings.md](../settings.md#разделы)). Живой сервис
+[ConstructorSettings](../../../../Utils/ConstructorSettings.cs) по образцу `TaskSettings`: кэш
+значений из app.db, `Set*` сохраняют дельту и поднимают `Changed`, `Stamp` — для догоняющей
+перерисовки. Сервис отдает примитивы: списки типов и цветов собирает панель настроек,
+применяют сами вью — Utils не тянет за собой Views. Стандарт каждой настройки равен поведению
+программы до ее появления, поэтому чистый app.db ничего не меняет.
+
+| Настройка | Что делает | Где действует |
+|---|---|---|
+| Тип нового свойства (`NewFieldType`) | тип в окне создания свойства; при изменении существующего не участвует | `PropertyEditorDialog`: `_selectedType` в ветке `editFieldId is null` |
+| Открывать новую запись (`OpenNewRecord`) | подставляется в `Open` события `RecordCreateRequested` | `TableView`: «+»-строка, меню пустой области, меню строки. «Список» открывает всегда |
+| Подтверждение удаления (`ConfirmDelete`) | снимает рутинный вопрос | `DeleteRecordsWithConfirm`, `DeletePropertiesWithConfirm`; при непустых `linkWarn`/`roleWarn` окно показывается всегда |
+| Цвет новой коллекции (`NewCollectionColor`) | «#RRGGBB», мусор → стандартный синий | `CollectionDialogViewModel` (создание), `SidebarTree` (создание из дерева) |
+| Плотность строк (`RowHeight`) | 28/36/44 → ресурс `RowHeightTable` | `TableView` (`RowHeight`, высота шапки, `StandardRowHeight`), `SidebarRow.CellHeight` — строки выровнены и двигаются вместе |
+| Ширина столбца (`ColWidth`) | база авто-режима и ширина колонки без ручной | `TableView.MinColWidth` (свойство, не константа); `MinManualColWidth` = 48 не меняется |
+| Ручные размеры (`ColResize`, `RowResize`) | значения для коллекции без своей записи `ui_collection_settings` — а ее заводит только ручное переключение режима в меню (`SaveUiSettings`), поэтому настройка действует на все коллекции, которых меню не касалось, а не только на новые | `ConstructorRepository.GetUiSettings` — рядом с `constructorView` |
+| Открывать запись двойным кликом (`OpenByDoubleClick`) | одиночный клик по столбцу «№» (`DisplayIndex == 0`) только выделяет строку; на редактор ячейки не влияет | `OnCellPointerPressed`: `ClickCount >= 2` |
+| Вид описания (`DescriptionPreview`) | начальное состояние `FooterBar.IsPreview` | `RecordPageView.Show`; переключатель футера работает как прежде |
+| Восстановление записи (`RestoreRecord`) | открыть запись прошлого сеанса | `MainWindow.RestoreLastRecordPanel` фоновым приоритетом; молчит, если запись/база пропали |
+| Память раскладки (`RememberLayout`) | высота блока свойств и ширина колонки названий на диск | `RecordPageView`: читается при создании, пишется в конце перетаскивания ручки |
+| Память отбора (`RememberFilters`) | фильтры и сортировка за коллекцией | `TableView.Load` (восстановление) и `ApplyFilters` (сохранение уже вычищенного отбора; `Save` сверяет с лежащим и молчит при совпадении — иначе каждый тик поллера переписывал бы app.db) |
+| Период опроса (`PollSeconds`) | 3/10/30 с, в фоне ×5 | `ChangePoller.ApplyPeriod` — таймер пересаживается на лету, режим окна помнится в `_foreground` |
+
+Строки «Отображение по умолчанию» и «Отображаемые виды» переехали сюда из «Оформления» без
+переименования ключей (`constructorView`, `hiddenViews.constructor`); механизм `InitAppearance`
+общий. Запомненный отбор лежит в app.db одной JSON-строкой
+([ConstructorFilterMemory](../../../../Utils/ConstructorFilterMemory.cs)), а не в схеме
+пользовательской базы: это личная раскладка экрана, и колонка в общей базе навязывала бы ее
+всем. Покрытие — `ConstructorSettingsTests`, `ConstructorFilterMemoryTests`.
+
 ## Связанные документы
 
 [[table]], [[record-page]], [[../../architecture/data-model]], [[../calendar/overview]]

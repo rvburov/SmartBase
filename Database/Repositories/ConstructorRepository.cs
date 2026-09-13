@@ -5221,10 +5221,12 @@ public partial class ConstructorRepository(AppDbContext db)
     public (bool ColResize, bool RowResize, string ViewMode) GetUiSettings(int collectionId)
     {
         var s = db.UiCollectionSettings.Find(collectionId);
-        // Нет своей записи у коллекции → вид по умолчанию берем из настроек (Оформление).
-        // Свой сохраненный вид коллекции (переключали вручную) имеет приоритет.
+        // Нет своей записи у коллекции → все три значения берем из настроек раздела
+        // «Конструктор базы данных». Свои сохраненные (переключали вручную в меню коллекции)
+        // имеют приоритет: настройка задает, с чего коллекция начинает, а не чем живет.
         return s is null
-            ? (false, false, Utils.AppSettings.LoadConstructorView())
+            ? (Utils.ConstructorSettings.ColResize, Utils.ConstructorSettings.RowResize,
+               Utils.AppSettings.LoadConstructorView())
             : (s.ColResize, s.RowResize, s.ViewMode);
     }
 

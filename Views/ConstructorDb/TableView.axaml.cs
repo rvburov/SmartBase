@@ -50,8 +50,10 @@ public partial class TableView : UserControl
     // «Расположение»: перенести записи в другую коллекцию/БД (список id, как дубль/удаление).
     // Одна запись из меню строки — список из одного id; если строка в мультивыделении — весь набор.
     public event EventHandler<IReadOnlyList<int>>? RecordRelocateRequested;
-    // Open = открывать ли запись справа после создания. «+»-строка создает без
-    // открытия (false), контекстное «Создать запись» — с открытием (true).
+    // Open = открывать ли запись справа после создания. Из таблицы все три пути («+»-строка,
+    // меню пустой области, меню строки) решают это одинаково — по настройке «Открывать новую
+    // запись»; стандартно она выключена, то есть запись появляется в таблице, а панель не
+    // выезжает. Событие несет уже готовый ответ, чтобы контроллер не знал о настройках.
     // AfterId = id записи-инициатора (меню строки) — создать сразу после нее; null —
     // создать в конце («+»-строка и меню пустой области таблицы).
     public event EventHandler<(bool Open, int? AfterId)>? RecordCreateRequested;
@@ -81,7 +83,10 @@ public partial class TableView : UserControl
     // MinColWidth — СТАНДАРТНАЯ ширина движимой колонки: минимум авто-режима и ширина
     // колонки, для которой ручная ширина еще не задана. Ручное перетаскивание опускается
     // ниже — до MinManualColWidth (иначе «уменьшить столбец» было бы невыполнимо).
-    private const int MinColWidth       = 160;
+    // Значение задается настройкой раздела (стандарт — прежние 160), поэтому свойство, а
+    // не константа: колонки строятся заново при каждой загрузке коллекции и при смене
+    // настройки, так что читать его на месте достаточно.
+    private static int MinColWidth      => ConstructorSettings.ColWidth;
     private const int MinManualColWidth = 48;
     private const int NumColWidth       = 36;
     private const int PlusColWidth      = 36;
@@ -253,6 +258,11 @@ public partial class TableView : UserControl
         // границы колонок на новую физическую сетку. Линии заголовков обновляются сами
         // (GetResourceObservable в WrapHeaderContent), нативные линии — через DynamicResource.
         LineMetrics.Changed += OnLineMetricsChanged;
+
+        // Настройки раздела меняются живьем: ширина столбцов зашита в построенные колонки,
+        // высота — в реализованные строки, сами они не обновятся.
+        ConstructorSettings.Changed += OnConstructorSettingsChanged;
+        OnConstructorSettingsChanged();
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
@@ -261,7 +271,33 @@ public partial class TableView : UserControl
         _keyHookTopLevel = null;
         FontScale.Changed -= OnFontScaleChanged;
         LineMetrics.Changed -= OnLineMetricsChanged;
+        ConstructorSettings.Changed -= OnConstructorSettingsChanged;
         base.OnDetachedFromVisualTree(e);
+    }
+
+    // Сверяем ЗНАЧЕНИЯ, а не Stamp (как сайдбар с _renderedRowHeight): событие Changed поднимают
+    // все настройки раздела, а таблицу из них меняют только эти две. Иначе щелчок по тумблеру
+    // «Спрашивать подтверждение при удалении» перестраивал бы таблицу на сотни тысяч записей.
+    // Высота строк доезжает сама токеном RowHeightTable, поэтому пересборка нужна только ради
+    // ширин — уже построенные колонки про новое значение не знают.
+    private int _renderedColWidth  = ConstructorSettings.ColWidth;
+    private int _renderedRowHeight = ConstructorSettings.RowHeight;
+
+    private void OnConstructorSettingsChanged()
+    {
+        var widthChanged  = _renderedColWidth  != ConstructorSettings.ColWidth;
+        var heightChanged = _renderedRowHeight != ConstructorSettings.RowHeight;
+        _renderedColWidth  = ConstructorSettings.ColWidth;
+        _renderedRowHeight = ConstructorSettings.RowHeight;
+
+        if (_repository is null) return;
+
+        // Ширина: колонки надо пересобрать, но прокрутку сохраняем — таблицу не должно
+        // отбрасывать в начало из-за настройки.
+        if (widthChanged) ReloadPreservingScroll();
+        // Высота: сами строки едут за токеном, а вот полоски-захваты ручной высоты нарисованы
+        // по старым координатам — их пересаживаем.
+        else if (heightChanged) ScheduleRowHandlesRefresh();
     }
 
     // Сменился зум или DPI: квант физического пиксела стал другим — переквантовать базу
@@ -379,9 +415,18 @@ public partial class TableView : UserControl
             // не понимал бы, почему ячейка не открывается.
             RecordsGrid.IsReadOnly = false;
 
-            // Фильтры/сортировка не переносятся между коллекциями.
+            // Фильтры/сортировка не переносятся между коллекциями: у каждой свои колонки.
+            // При включенном «Запоминать фильтры и сортировку» подставляем запомненное за ЭТОЙ
+            // коллекцией; колонки, которых уже нет, отсеет сама ApplyFilters.
             _filters.Clear();
             _sortKey = null;
+            if (ConstructorSettings.RememberFilters
+                && ConstructorFilterMemory.Load(repository.DbPath, collectionId) is { } remembered)
+            {
+                foreach (var (col, values) in remembered.Filters) _filters[col] = values;
+                _sortKey = remembered.SortKey;
+                _sortAsc = remembered.SortAsc;
+            }
 
             var (colResize, rowResize, _) = snapshot?.UiSettings ?? repository.GetUiSettings(collectionId);
             _manualColResize = colResize;
@@ -2036,9 +2081,9 @@ public partial class TableView : UserControl
 
         if (row.IsAddRow)
         {
-            // Создать в конце, без открытия; без права — окно с причиной.
+            // Создать в конце; открывать ли панель — по настройке. Без права — окно с причиной.
             PermissionNotice.Run(this, Can(PermAction.CreateRecord), PermAction.CreateRecord,
-                                 () => RecordCreateRequested?.Invoke(this, (false, null)));
+                                 () => RecordCreateRequested?.Invoke(this, (ConstructorSettings.OpenNewRecord, null)));
             return;
         }
 
@@ -2069,8 +2114,13 @@ public partial class TableView : UserControl
         if (colIdx >= 0 && colIdx < _colDefs.Count)
             _colDefs[colIdx].OnCellClick?.Invoke(row, _colDefs[colIdx]);
 
-        // Открываем запись только обычным левым кликом (без модификаторов — они выше).
-        if (e.Column.DisplayIndex == 0 && props.IsLeftButtonPressed)
+        // Открываем запись обычным левым кликом по первой колонке (без модификаторов — они
+        // выше). При настройке «Открывать запись двойным кликом» одиночный клик только
+        // выделяет строку: счетчик кликов дает сам DataGrid (ClickCount), отдельного
+        // DoubleTapped не нужно — он приходит позже и мимо этого обработчика.
+        if (e.Column.DisplayIndex == 0 && props.IsLeftButtonPressed
+            && (!ConstructorSettings.OpenByDoubleClick
+                || e.PointerPressedEventArgs.ClickCount >= 2))
             RecordClicked?.Invoke(this, row.RecordId);
     }
 
@@ -2162,8 +2212,9 @@ public partial class TableView : UserControl
     {
         var menu = new ContextMenu();
         var mi = new MenuItem { Header = Controls.Components.MenuIcons.CreateRecordHeader() };
-        // В конце, без открытия.
-        Guarded(mi, PermAction.CreateRecord, () => RecordCreateRequested?.Invoke(this, (false, null)));
+        // В конце; открывать ли панель — по настройке.
+        Guarded(mi, PermAction.CreateRecord,
+                () => RecordCreateRequested?.Invoke(this, (ConstructorSettings.OpenNewRecord, null)));
         menu.Items.Add(mi);
 
         // «Отображение» доступно и отсюда — на случай, если все колонки скрыты и до
@@ -2186,11 +2237,12 @@ public partial class TableView : UserControl
         var menu = new ContextMenu();
 
         var miCreate = new MenuItem { Header = Controls.Components.MenuIcons.CreateRecordHeader() };
-        // После этой строки, без открытия. Если строка еще не заполнена (id=0) — создаем в конце.
+        // После этой строки; открывать ли панель — по настройке. Если строка еще не заполнена
+        // (id=0) — создаем в конце.
         Guarded(miCreate, PermAction.CreateRecord, () =>
         {
             var rid = RowRecordId(row);
-            RecordCreateRequested?.Invoke(this, (false, rid > 0 ? rid : (int?)null));
+            RecordCreateRequested?.Invoke(this, (ConstructorSettings.OpenNewRecord, rid > 0 ? rid : (int?)null));
         });
         menu.Items.Add(miCreate);
 
@@ -2790,7 +2842,9 @@ public partial class TableView : UserControl
     // ── Ручная высота строк: полоски-«грипперы» у нижней границы ───────────────
 
     private double StandardRowHeight() =>
-        this.TryFindResource("RowHeightStandard", out var r) && r is double d ? d : 36;
+        this.TryFindResource(ConstructorSettings.RowHeightResourceKey, out var r) && r is double d
+            ? d
+            : ConstructorSettings.RowHeight;
 
     // Откладывает перестройку полосок на тик диспетчера (как у рамок колонок —
     // менять дерево Canvas прямо в LayoutUpdated нельзя). Во время drag не трогаем.
@@ -3791,6 +3845,12 @@ public partial class TableView : UserControl
         UpdateChevronStates();
 
         if (_repository is null) return;
+
+        // Запоминаем уже вычищенный от мертвых колонок отбор — ровно то, что видно на экране.
+        // Точка одна на все пути (окно фильтра, сортировка, удаление поля), поэтому запомненное
+        // не расходится с показанным.
+        if (ConstructorSettings.RememberFilters && _collectionId > 0)
+            ConstructorFilterMemory.Save(_repository.DbPath, _collectionId, _filters, _sortKey, _sortAsc);
 
         if (_filters.Count == 0 && _sortKey is null)
         {

@@ -54,7 +54,11 @@
       <Setter Property="HorizontalContentAlignment" Value="Stretch" />
       <Setter Property="VerticalContentAlignment" Value="Stretch" />
       <Setter Property="FontSize" Value="15" />
-      <Setter Property="MinHeight" Value="32" />
+      <!-- Нижний предел высоты ячейки — тот же токен, что и высота строки. Зашитые 32 из
+           штатной темы не дают «компактной» плотности (28) сработать: Height опускает
+           строку до 28, а MinHeight тянет ячейку обратно к 32, и строки сайдбара
+           разъезжаются с таблицей. -->
+      <Setter Property="MinHeight" Value="{DynamicResource RowHeightTable}" />
       <Setter Property="Template">
         <ControlTemplate>
           <Border x:Name="CellBorder"

@@ -19,6 +19,7 @@ public static class SettingsRegistry
         new("backup",     "Резервное копирование",     "IconArchive"),
         new("calendar",   "Календарь",                 "IconCalendarDate"),
         new("tasks",      "Задачи",                    "IconSquareCheck"),
+        new("constructor","Конструктор базы данных",   "IconDatabaseCheck"),
         new("notes",      "Заметки",                   "IconNotebook"),
         new("extensions", "Расширения",                "IconBlocks"),
         new("integrations", "Интеграции",              "IconWorkflow"),

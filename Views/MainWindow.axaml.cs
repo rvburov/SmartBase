@@ -309,8 +309,8 @@ public partial class MainWindow : Window
         ConstructorModule.SetDatabases(GrantedDbs());
 
         // Точки вызова обмена в разделе данных. Охват задает МЕСТО: меню строки таблицы —
-        // выделенные записи, меню коллекции в сайдбаре — вся коллекция, шапка открытой записи —
-        // она одна.
+        // выделенные записи, меню коллекции в сайдбаре — вся коллекция, кнопка в нижней полосе
+        // открытой записи — она одна.
         ConstructorModule.AttachIntegrations(workspace.Registry.Integrations, GrantedDbs);
 
         // Сайдбар: вся коллекция целиком, и потому здесь же ручные сценарии. Запускает их ТА ЖЕ
@@ -690,6 +690,13 @@ public partial class MainWindow : Window
                 Close();
             }
         };
+
+        // Восстановление открытой записи — последним шагом и отложенно (фоновым приоритетом):
+        // к этому моменту раздел уже показан и коллекция загружена, а до первого кадра лезть
+        // в базу за записью незачем — окно должно появиться сразу.
+        if (ConstructorSettings.RestoreRecord && AppSettings.LoadRecordPanelOpen())
+            Avalonia.Threading.Dispatcher.UIThread.Post(RestoreLastRecordPanel,
+                                                        Avalonia.Threading.DispatcherPriority.Background);
 
         Closed += (_, _) =>
         {
@@ -1647,6 +1654,32 @@ public partial class MainWindow : Window
         }
     }
 
+    // Вернуть панель на записи прошлого сеанса. Молча отступаем во всех сомнительных случаях:
+    // запись удалили, ее базу отключили или сменили профиль (прав на нее может уже не быть),
+    // пользователь успел сам открыть другую — открытая «не та» запись хуже закрытой панели.
+    // Сообщений не показываем: человек не просил ничего открывать, он просто запустил программу.
+    private void RestoreLastRecordPanel()
+    {
+        if (_recordPanelLogicalOpen) return;
+        if (AppSettings.ParseConstructorLastRecord(AppSettings.LoadConstructorLastRecord()) is not { } last) return;
+
+        // Идем строго по сохраненной базе (ноль разбор уже отсек): база могла не смонтироваться
+        // к этому моменту или вовсе выпасть из реестра — тогда панель просто не откроется.
+        var repo = RelationDbResolver.RepoFor(last.DbId);
+        if (repo is null) return;
+
+        try
+        {
+            if (repo.GetRecord(last.RecordId) is null) return;
+        }
+        catch (Exception ex) when (DbHealthMonitor.IsBusyError(ex) || DbHealthMonitor.IsUnavailableError(ex))
+        {
+            return;   // база занята или пропала — панель просто не откроется
+        }
+
+        OpenRecordPanel(last.DbId, last.RecordId);
+    }
+
     private void OpenRecordPanel(int recordId) => OpenRecordPanel(0, recordId);
 
     // dbId>0 — межбазовый переход (по чипу связи на запись в ДРУГОЙ .db): панель открывается из
@@ -1689,6 +1722,12 @@ public partial class MainWindow : Window
         _lastOpened             = (dbId, recordId);
         ConstructorModule.SetRecordPanelOpen(true);
         AppSettings.SaveRecordPanelOpen(true);
+        // Пишем всегда, а не только при включенном восстановлении: настройку могут включить
+        // позже, и тогда программа должна знать, куда возвращаться. Ноль здесь означает «база
+        // приложения», и внутри сеанса этого хватает, но значение переживает перезапуск —
+        // записываем НАСТОЯЩИЙ id базы (как DataActions выше), иначе после старта с другой
+        // активной базой мы открыли бы запись с тем же номером из чужой базы.
+        AppSettings.SaveConstructorLastRecord(dbId > 0 ? dbId : _currentConstructorDbId, recordId);
         ApplyColumns();
     }
 

@@ -90,7 +90,10 @@
             <Setter Property="UseLayoutRounding"          Value="{DynamicResource LineUseLayoutRounding}" />
             <Setter Property="Background"                 Value="Transparent" />
             <Setter Property="Padding"                    Value="0" />
-            <Setter Property="Height"                     Value="{StaticResource RowHeightStandard}" />
+            <Setter Property="Height"                     Value="{DynamicResource RowHeightTable}" />
+            <!-- MinHeight штатной темы (32) перебил бы Height при «компактной» плотности:
+                 шапка осталась бы 32 при строках 28, и сайдбар разъехался бы с таблицей. -->
+            <Setter Property="MinHeight"                  Value="{DynamicResource RowHeightTable}" />
             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
             <Setter Property="VerticalContentAlignment"   Value="Stretch" />
             <Setter Property="Template">
@@ -126,7 +129,7 @@
     <Panel>
         <DataGrid x:Name="RecordsGrid"
                   AutoGenerateColumns="False"
-                  RowHeight="{StaticResource RowHeightStandard}"
+                  RowHeight="{DynamicResource RowHeightTable}"
                   CanUserResizeColumns="False"
                   CanUserReorderColumns="False"
                   CanUserSortColumns="False"

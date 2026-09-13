@@ -53,8 +53,10 @@ public partial class DiagramView : UserControl
     // Константы макета. LeftW продублирована в ColumnDefinitions="230,*" разметки.
     private const double LeftW      = 230;  // ширина левой панели
 
-    // Высота строки (и группы, и записи) — как у строк таблицы конструктора:
-    // единый токен RowHeightStandard (Controls.axaml), резолв как в TableView.
+    // Высота строки (и группы, и записи) — базовые 36 из общего токена RowHeightStandard
+    // (Controls.axaml). Настройке «Плотность строк таблицы» диаграмма НЕ подчиняется: та
+    // двигает пару «таблица + дерево коллекций», выровненную построчно (токен RowHeightTable),
+    // а здесь строки ни с чем не выравниваются, и менять их заодно смысла нет.
     private static double RowH =>
         Application.Current!.TryFindResource("RowHeightStandard", out var r) && r is double d ? d : 36;
     private const double BarH       = 20;   // высота блока и диаметр круга однодневного события

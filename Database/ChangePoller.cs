@@ -32,8 +32,16 @@ public sealed class ChangePoller : IDisposable
     private readonly Timer           _timer;
     private int _busy;                        // тики не накладываются
 
-    private const int ForegroundMs = 3_000;   // окно активно — живая совместная работа
-    private const int BackgroundMs = 15_000;  // окно в фоне — экономный режим
+    // Период опроса задает настройка «Проверка чужих изменений» (стандарт — прежние 3 с при
+    // активном окне и 15 с в фоне). Свойства, а не константы: настройку меняют на ходу, и
+    // таймер пересаживается на новый период сразу (см. ApplyPeriod).
+    private static int ForegroundMs => Utils.ConstructorSettings.PollSeconds * 1000;
+    private static int BackgroundMs => Utils.ConstructorSettings.BackgroundPollSeconds * 1000;
+
+    // Активно ли окно — запоминаем, чтобы при смене настройки пересчитать ИМЕННО текущий
+    // период: иначе смена настройки на свернутом окне вернула бы его в активный режим.
+    private bool _foreground = true;
+    private bool _started;
 
     // Наблюдение за одной БД: постоянное соединение + последняя версия + курсор журнала.
     // Для PostgreSQL (Path — строка подключения) data_version не существует; дешевый
@@ -61,9 +69,14 @@ public sealed class ChangePoller : IDisposable
         _ws     = ws;
         _health = health;
         _timer  = new Timer(_ => Tick(), null, Timeout.Infinite, Timeout.Infinite);
+        Utils.ConstructorSettings.Changed += ApplyPeriod;
     }
 
-    public void Start() => _timer.Change(ForegroundMs, ForegroundMs);
+    public void Start()
+    {
+        _started = true;
+        ApplyPeriod();
+    }
 
     /// <summary>Один тик вручную (стенды и тесты — без ожидания таймера).</summary>
     public void PollNow() => Tick();
@@ -71,12 +84,23 @@ public sealed class ChangePoller : IDisposable
     /// <summary>Окно активно/в фоне: в фоне частота проверки снижается.</summary>
     public void SetForeground(bool fg)
     {
-        var period = fg ? ForegroundMs : BackgroundMs;
-        _timer.Change(period, period);
+        _foreground = fg;
+        ApplyPeriod();
+    }
+
+    // Пересадить таймер на период текущего режима. До Start ничего не делаем: поллер еще не
+    // работает, и заводить его раньше времени (например по смене настройки) нельзя.
+    private void ApplyPeriod()
+    {
+        if (!_started) return;
+        var period = _foreground ? ForegroundMs : BackgroundMs;
+        try { _timer.Change(period, period); }
+        catch (ObjectDisposedException) { /* окно уже закрылось — таймера нет */ }
     }
 
     public void Dispose()
     {
+        Utils.ConstructorSettings.Changed -= ApplyPeriod;
         _timer.Dispose();
         // Соединения наблюдения закрываются в фоне: закрытие хендла сетевого файла на зависшей
         // папке не возвращается, а Dispose зовется с UI-потока при закрытии окна — выход
