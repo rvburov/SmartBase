@@ -457,9 +457,8 @@ public static class IngressHandler
     {
         var source = $"{call.Remote} {IngressApi.InboxPath}".Trim();
 
-        if (access.Trouble(PermAction.CreateRecord) is { } trouble)
-            return Refuse(403, Capitalize(trouble) + ".", token, source, now);
-
+        // Разбор — ДО маски: какое право спрашивать, зависит от режима сообщения. Формат
+        // ничего о базе не выдает, так что недопущенный робот здесь не узнает лишнего.
         var message = InboxMessage.TryParse(call.Body, out var error);
 
         if (message is null)
@@ -468,6 +467,20 @@ public static class IngressHandler
         var problems = message.Problems();
         if (problems.Count > 0)
             return Refuse(400, Capitalize(string.Join("; ", problems)) + ".", token, source, now);
+
+        // Каждый режим спрашивает СВОЕ право — то же, которое проверила бы панель у человека.
+        // По умолчанию роботу выдана только запись; удаление и подготовку коллекций открывает
+        // администратор базы обычной панелью (docs/ROADMAP-API.md, шаг 11).
+        PermAction[] rights = message.Mode switch
+        {
+            InboxMode.Delete           => [PermAction.DeleteRecord],
+            InboxMode.EnsureCollection => [PermAction.CreateCollection, PermAction.CreateField],
+            _                          => [PermAction.CreateRecord],
+        };
+
+        foreach (var right in rights)
+            if (access.Trouble(right) is { } trouble)
+                return Refuse(403, Capitalize(trouble) + ".", token, source, now);
 
         // Повтор возвращает ТОТ ЖЕ ответ, что и первая доставка: отправитель, не дождавшийся
         // ответа, повторяет запрос именно ради него, и «уже приходило» для него не лучше молчания.

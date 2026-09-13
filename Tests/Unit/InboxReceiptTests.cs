@@ -85,6 +85,35 @@ public sealed class InboxReceiptTests
         Assert.Contains("изменений нет", receipt.Summary(), StringComparison.Ordinal);
     }
 
+    /// <summary>Квитанция удаления: «удалено» — своим полем, ненайденное — в «пропущено»,
+    /// и старый разбор без поля «deleted» ее все равно прочитает (умолчание — ноль).</summary>
+    [Fact]
+    public void Erased_receipt_counts_deletions_and_survives_a_round_trip()
+    {
+        var receipt = InboxReceipt.Erased("чистка.json", "x9", "Заказы", 5,
+                                          deleted: 3, missing: 1, ambiguous: 1, empty: 0, At);
+
+        Assert.True(receipt.Accepted);
+        Assert.Equal(3, receipt.Deleted);
+        Assert.Equal(1, receipt.Skipped);
+        Assert.Contains("удалено 3", receipt.Summary(), StringComparison.Ordinal);
+        Assert.Contains("\"deleted\"", receipt.ToJson(), StringComparison.Ordinal);
+        Assert.Equal(receipt, InboxReceipt.TryParse(receipt.ToJson()));
+    }
+
+    /// <summary>Квитанция подготовки коллекции: записей нет, вся суть — словами.</summary>
+    [Fact]
+    public void Ensured_receipt_speaks_in_words()
+    {
+        var receipt = InboxReceipt.Ensured("схема.json", "x2", "Заказы",
+                                           "коллекция «Заказы» создана, полей добавлено: 2", At);
+
+        Assert.True(receipt.Accepted);
+        Assert.Equal(0, receipt.Received);
+        Assert.Equal("схема.json: коллекция «Заказы» создана, полей добавлено: 2",
+                     receipt.Summary());
+    }
+
     [Fact]
     public void Time_is_written_in_a_machine_readable_form()
     {

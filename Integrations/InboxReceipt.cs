@@ -34,6 +34,8 @@ namespace SmartBase.Integrations;
 /// <param name="Empty">Сколько пропущено из-за пустого ключа.</param>
 /// <param name="Explanation">Причина отказа либо пояснение к принятому файлу.</param>
 /// <param name="At">Когда обработано (ISO-8601).</param>
+/// <param name="Deleted">Сколько записей удалено (режим «delete»; docs/ROADMAP-API.md, шаг 11).
+/// Поле добавлено последним и с умолчанием: старые квитанции читаются без него.</param>
 public sealed record InboxReceipt(
     [property: JsonPropertyName("file")]        string File,
     [property: JsonPropertyName("id")]          string Id,
@@ -46,7 +48,8 @@ public sealed record InboxReceipt(
     [property: JsonPropertyName("ambiguous")]   int    Ambiguous,
     [property: JsonPropertyName("empty")]       int    Empty,
     [property: JsonPropertyName("explanation")] string Explanation,
-    [property: JsonPropertyName("at")]          string At)
+    [property: JsonPropertyName("at")]          string At,
+    [property: JsonPropertyName("deleted")]     int    Deleted = 0)
 {
     private static readonly JsonSerializerOptions Format = new()
     {
@@ -68,6 +71,25 @@ public sealed record InboxReceipt(
         new(file, id, true, collection, rows,
             result.Created, result.Updated, result.Skipped, result.Ambiguous, result.Empty,
             explanation, Stamp(at));
+
+    /// <summary>
+    /// Удалено по ключу (режим «delete»). Ненайденные ключи ложатся в <see cref="Skipped"/> —
+    /// удалять было нечего, и для повтора сообщения это норма, а не беда.
+    /// </summary>
+    public static InboxReceipt Erased(string file, string id, string collection, int rows,
+                                      int deleted, int missing, int ambiguous, int empty,
+                                      DateTimeOffset at, string explanation = "") =>
+        new(file, id, true, collection, rows,
+            0, 0, missing, ambiguous, empty, explanation, Stamp(at), deleted);
+
+    /// <summary>
+    /// Коллекция подготовлена (режим «ensure-collection»). Числа записей всегда нули: этот
+    /// режим записи не принимает, а что именно сделано — коллекция создана, поля добраны —
+    /// сказано словами в <see cref="Explanation"/>.
+    /// </summary>
+    public static InboxReceipt Ensured(string file, string id, string collection,
+                                       string explanation, DateTimeOffset at) =>
+        new(file, id, true, collection, 0, 0, 0, 0, 0, 0, explanation, Stamp(at));
 
     /// <summary>
     /// Ответ СЦЕНАРИЯ на взятый из папки файл. Своей укладки у сценария нет: числа и слова
@@ -98,9 +120,13 @@ public sealed record InboxReceipt(
     {
         if (!Accepted) return $"{File}: отказ — {Explanation}";
 
+        // Квитанция без записей — подготовка коллекции: вся суть у нее в словах.
+        if (Received == 0 && Explanation.Length > 0) return $"{File}: {Explanation}";
+
         var parts = new List<string>();
         if (Created   > 0) parts.Add($"создано {Created}");
         if (Updated   > 0) parts.Add($"обновлено {Updated}");
+        if (Deleted   > 0) parts.Add($"удалено {Deleted}");
         if (Skipped   > 0) parts.Add($"пропущено {Skipped}");
         if (Ambiguous > 0) parts.Add($"неоднозначных {Ambiguous}");
         if (Empty     > 0) parts.Add($"без ключа {Empty}");

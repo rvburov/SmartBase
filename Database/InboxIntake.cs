@@ -33,6 +33,14 @@ public static class InboxIntake
     public static InboxReceipt Apply(InboxMessage message, ConstructorRepository repo, int dbId,
                                      string source, DateTimeOffset now)
     {
+        // Режимы без укладки — своими путями: у «удалить» нет привязки, у «подготовить
+        // коллекцию» нет и строк. Общее у всех одно — квитанция.
+        if (message.Mode == InboxMode.Delete)
+            return Erase(message, repo, source, now);
+
+        if (message.Mode == InboxMode.EnsureCollection)
+            return Ensure(message, repo, source, now);
+
         // Записи читает ТОТ ЖЕ источник, что и ответ чужой программы: один и тот же набор
         // данных, пришедший файлом и по сети, обязан ложиться в коллекцию одинаково.
         var reader = new JsonTextSource(message.RowsJson);
@@ -74,6 +82,94 @@ public static class InboxIntake
 
         return InboxReceipt.Accept(source, message.MessageId, message.Collection,
                                    message.Rows, result, now, note);
+    }
+
+    // ── Удаление по ключу ─────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Найти по ключу и удалить (docs/ROADMAP-API.md, шаг 11). Право «Удаление записи»
+    /// спрашивает репозиторий на входе; повтор сообщения безвреден — второй раз удалять нечего,
+    /// и квитанция честно скажет «пропущено».
+    /// </summary>
+    private static InboxReceipt Erase(InboxMessage message, ConstructorRepository repo,
+                                      string source, DateTimeOffset now)
+    {
+        var reader = new JsonTextSource(message.RowsJson);
+
+        ImportSchema schema;
+        try
+        {
+            schema = reader.Analyze(null, CancellationToken.None);
+        }
+        catch (ImportException failure)
+        {
+            return Reject(message, source, failure.Message, now);
+        }
+
+        ConstructorRepository.InboxErase? erased;
+        string problem;
+        try
+        {
+            erased = repo.EraseRowsIsolated(message, schema,
+                                            reader.ReadRows(CancellationToken.None), out problem);
+        }
+        catch (Exception failure) when (failure is ImportException or InvalidOperationException)
+        {
+            return Reject(message, source, failure.Message, now);
+        }
+
+        if (erased is null) return Reject(message, source, problem, now);
+
+        var notes = new List<string>();
+
+        if (erased.Missing   > 0) notes.Add($"не нашлось записей по {erased.Missing} ключам — "
+                                          + "возможно, они уже удалены");
+        if (erased.Ambiguous > 0) notes.Add($"по {erased.Ambiguous} ключам в коллекции несколько "
+                                          + "записей — не тронута ни одна");
+
+        return InboxReceipt.Erased(source, message.MessageId, message.Collection, message.Rows,
+                                   erased.Deleted, erased.Missing, erased.Ambiguous, erased.Empty,
+                                   now, string.Join("; ", notes));
+    }
+
+    // ── Подготовка коллекции ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Создать коллекцию по схеме и добрать недостающие поля (docs/ROADMAP-API.md, шаг 11).
+    /// Права «Создание коллекции» и «Создание свойства» спрашивает репозиторий на входе.
+    /// </summary>
+    private static InboxReceipt Ensure(InboxMessage message, ConstructorRepository repo,
+                                       string source, DateTimeOffset now)
+    {
+        ConstructorRepository.InboxEnsure? ensured;
+        string problem;
+        try
+        {
+            ensured = repo.EnsureCollectionIsolated(message, out problem);
+        }
+        catch (Exception failure) when (failure is InvalidOperationException)
+        {
+            return Reject(message, source, failure.Message, now);
+        }
+
+        if (ensured is null) return Reject(message, source, problem, now);
+
+        var parts = new List<string>
+        {
+            ensured.CreatedCollection
+                ? $"коллекция «{message.Collection}» создана"
+                : $"коллекция «{message.Collection}» уже есть",
+        };
+
+        if (ensured.CreatedFields.Count > 0)
+            parts.Add("полей добавлено: " + ensured.CreatedFields.Count
+                    + " (" + string.Join(", ", ensured.CreatedFields) + ")");
+
+        if (ensured.ExistingFields > 0)
+            parts.Add($"полей уже было: {ensured.ExistingFields}");
+
+        return InboxReceipt.Ensured(source, message.MessageId, message.Collection,
+                                    string.Join(", ", parts), now);
     }
 
     private static InboxReceipt Reject(InboxMessage message, string source, string explanation,

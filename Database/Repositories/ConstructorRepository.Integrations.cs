@@ -235,13 +235,21 @@ public partial class ConstructorRepository
     /// Значение ключа → запись. Повторяющиеся значения выносятся отдельно: править одну из
     /// нескольких одинаковых записей наугад хуже, чем не трогать ни одной и сказать об этом.
     /// </summary>
-    private (Dictionary<string, int> Index, HashSet<string> Duplicates) BuildKeyIndex(CollectionBinding binding)
+    private (Dictionary<string, int> Index, HashSet<string> Duplicates) BuildKeyIndex(CollectionBinding binding) =>
+        KeyIndex(binding.CollectionId, binding.MatchFieldId);
+
+    /// <summary>
+    /// То же без привязки — по коллекции и свойству ключа (<c>null</c> — название записи).
+    /// Отдельный вход нужен удалению по ключу: у него привязки нет, только колонка.
+    /// </summary>
+    private (Dictionary<string, int> Index, HashSet<string> Duplicates) KeyIndex(
+        int collectionId, int? keyFieldId)
     {
-        var key = binding.MatchFieldId is int fieldId
+        var key = keyFieldId is int fieldId
             ? fieldId.ToString()
             : TitleKey;
 
-        var values = GetColumnValues(binding.CollectionId, key);
+        var values = GetColumnValues(collectionId, key);
 
         var index      = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var duplicates = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

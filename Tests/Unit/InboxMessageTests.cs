@@ -82,16 +82,32 @@ public sealed class InboxMessageTests
     }
 
     /// <summary>
-    /// Незнакомый режим читается как «добавить» — самый безобидный: он ничего не перезаписывает.
-    /// Строку мог написать более новый выпуск программы-отправителя.
+    /// Незнакомый режим — отказ словами, а не «добавить». Пока режимов было два и оба клали
+    /// данные, деградация была безвредной; с появлением «delete» прочесть чужое намерение НЕ ТЕМ
+    /// действием стало хуже, чем отказать: отправитель из квитанции узнает, что приемник старее.
     /// </summary>
     [Fact]
-    public void Unknown_mode_reads_as_add()
+    public void Unknown_mode_is_refused_with_its_own_word()
     {
         var message = InboxMessage.TryParse(
             """{"collection":"Заказы","mode":"МЕРЖ","id":"x1","rows":[{"а":1}]}""", out _);
 
+        Assert.Equal(InboxMode.Unknown, message!.Mode);
+
+        var problem = Assert.Single(message.Problems());
+        Assert.Contains("МЕРЖ", problem, StringComparison.Ordinal);
+        Assert.Contains("ensure-collection", problem, StringComparison.Ordinal);
+    }
+
+    /// <summary>Пустой режим остается «добавить»: так пишут с первого дня формата.</summary>
+    [Fact]
+    public void Missing_mode_still_reads_as_add()
+    {
+        var message = InboxMessage.TryParse(
+            """{"collection":"Заказы","id":"x1","rows":[{"а":1}]}""", out _);
+
         Assert.Equal(InboxMode.Add, message!.Mode);
+        Assert.Empty(message.Problems());
     }
 
     [Fact]
@@ -147,6 +163,96 @@ public sealed class InboxMessageTests
 
         Assert.Contains(add!.Problems(), p => p.Contains("идентификатор", StringComparison.Ordinal));
         Assert.Empty(update!.Problems());
+    }
+
+    // ── Удаление по ключу ─────────────────────────────────────────────────────
+
+    [Fact]
+    public void Delete_needs_a_key_but_not_an_identifier()
+    {
+        var without = InboxMessage.TryParse(
+            """{"collection":"Заказы","mode":"delete","rows":[{"Номер":"А-1"}]}""", out _);
+
+        var with = InboxMessage.TryParse(
+            """{"collection":"Заказы","mode":"delete","key":"Номер","rows":[{"Номер":"А-1"}]}""",
+            out _);
+
+        Assert.Contains(without!.Problems(), p => p.Contains("delete", StringComparison.Ordinal));
+        Assert.Empty(with!.Problems());
+        Assert.Equal(InboxMode.Delete, with.Mode);
+    }
+
+    // ── Подготовка коллекции ──────────────────────────────────────────────────
+
+    [Fact]
+    public void Ensure_collection_reads_fields_instead_of_rows()
+    {
+        var message = InboxMessage.TryParse("""
+            {"collection":"Заказы","mode":"ensure-collection",
+             "fields":[{"name":"Номер","type":"text"},{"name":"Сумма","type":"number"}]}
+            """, out var error);
+
+        Assert.NotNull(message);
+        Assert.Equal("", error);
+        Assert.Equal(InboxMode.EnsureCollection, message!.Mode);
+        Assert.Empty(message.Problems());
+        Assert.Equal(2, message.Schema.Count);
+        Assert.Equal(new InboxField("Сумма", "number"), message.Schema[1]);
+    }
+
+    [Fact]
+    public void Ensure_collection_without_fields_is_refused()
+    {
+        var message = InboxMessage.TryParse(
+            """{"collection":"Заказы","mode":"ensure-collection"}""", out _);
+
+        Assert.Contains(message!.Problems(),
+                        p => p.Contains("fields", StringComparison.Ordinal));
+    }
+
+    /// <summary>«Подготовь место и сразу положи» — два разных права и два разных отказа:
+    /// строки при подготовке не принимаются, об этом говорится прямо.</summary>
+    [Fact]
+    public void Ensure_collection_does_not_take_rows()
+    {
+        var message = InboxMessage.TryParse("""
+            {"collection":"Заказы","mode":"ensure-collection",
+             "fields":[{"name":"Номер","type":"text"}],
+             "rows":[{"Номер":"А-1"}]}
+            """, out _);
+
+        Assert.Contains(message!.Problems(),
+                        p => p.Contains("записи не принимает", StringComparison.Ordinal));
+    }
+
+    /// <summary>Словарь типов нарочно короткий: списки требуют состава пунктов, связи — второй
+    /// коллекции. Незнакомый тип — отказ со списком разрешенных, а не молчаливый «текст».</summary>
+    [Theory]
+    [InlineData("select")]
+    [InlineData("relation")]
+    [InlineData("настроение")]
+    public void Ensure_collection_refuses_types_outside_the_dictionary(string type)
+    {
+        var message = InboxMessage.TryParse($$"""
+            {"collection":"Заказы","mode":"ensure-collection",
+             "fields":[{"name":"Поле","type":"{{type}}"}]}
+            """, out _);
+
+        var problem = Assert.Single(message!.Problems());
+        Assert.Contains(type, problem, StringComparison.Ordinal);
+        Assert.Contains("checkbox", problem, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Ensure_collection_field_without_a_name_is_refused()
+    {
+        var message = InboxMessage.TryParse("""
+            {"collection":"Заказы","mode":"ensure-collection",
+             "fields":[{"type":"text"}]}
+            """, out _);
+
+        Assert.Contains(message!.Problems(),
+                        p => p.Contains("не указано имя", StringComparison.Ordinal));
     }
 
     /// <summary>

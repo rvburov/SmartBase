@@ -81,11 +81,18 @@ public static class ApiDescription
             """);
         text.AppendLine();
         text.AppendLine("«mode»: «add» — добавить, «update» — найти по ключу и обновить "
-                      + "(ненайденную запись заведет).");
+                      + "(ненайденную запись заведет),");
+        text.AppendLine("«delete» — найти по ключу и удалить (нужно право «Удаление записи» у "
+                      + "робота; читается только колонка ключа),");
+        text.AppendLine("«ensure-collection» — создать коллекцию и добрать недостающие поля "
+                      + "(права «Создание коллекции» и «Создание свойства»); вместо «rows» — "
+                      + "«fields»: [{ \"name\": \"Номер\", \"type\": \"text\" }], типы: "
+                      + string.Join(", ", InboxField.KnownTypes) + ". Существующие поля не "
+                      + "трогаются, несовпадение типов — отказ.");
         text.AppendLine("«id» обязателен у «add»: без него повторная доставка заведет записи "
                       + "второй раз. Повтор с тем же «id» возвращает ТОТ ЖЕ ответ.");
         text.AppendLine();
-        text.AppendLine("В ответ приходит квитанция: сколько создано, сколько обновлено и что "
+        text.AppendLine("В ответ приходит квитанция: сколько создано, обновлено, удалено и что "
                       + "не перенеслось.");
         text.AppendLine();
 
@@ -145,10 +152,12 @@ public static class ApiDescription
             message = new
             {
                 collection = "<имя коллекции>",
-                mode       = "add | update",
-                key        = "<колонка сопоставления; нужна у update>",
+                mode       = "add | update | delete | ensure-collection",
+                key        = "<колонка сопоставления; нужна у update и delete>",
                 id         = "<номер сообщения>",
                 rows       = new[] { new Dictionary<string, string> { ["<колонка>"] = "<значение>" } },
+                fields     = new[] { new { name = "<имя поля>",
+                                           type = string.Join(" | ", InboxField.KnownTypes) } },
             },
             collections = collections.Select(c => new
             {
