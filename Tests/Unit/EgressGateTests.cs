@@ -271,7 +271,7 @@ public sealed class EgressGateTests
         Assert.Equal(EgressDenyReason.FolderNotAllowed, decision.Reason);
     }
 
-    /// <summary>Без политики закрыты и папки: правило одно на все двери.</summary>
+    /// <summary>Без политики закрыты и папки: корни называет она, а называть их некому.</summary>
     [Fact]
     public void Folders_are_closed_together_with_the_gate()
     {
@@ -281,5 +281,77 @@ public sealed class EgressGateTests
 
         Assert.False(decision.Allowed);
         Assert.Equal(EgressDenyReason.NoPolicy, decision.Reason);
+    }
+
+    // ── Изолированный режим: сеть закрыта, папки работают ─────────────────────
+
+    /// <summary>
+    /// Главное про изолированный режим (10.4): он запрещает СЕТЕВЫЕ обращения, а папка обмена в
+    /// нем работает — «работают локальные шаги: папка-приемник … экспорт в разрешенные папки».
+    ///
+    /// Пока режим запирал и папки, изолированное рабочее место — то самое, под которое режим и
+    /// назначен, — оставалось без единственного доступного ему транспорта: файл не клался и не
+    /// читался, хотя папка была перечислена в политике.
+    /// </summary>
+    [Fact]
+    public void Isolated_mode_closes_the_network_but_not_the_folders()
+    {
+        var folder = Path.GetTempPath();
+
+        EgressGate.AttachPolicy(EgressPolicySet.Of(EgressPolicy.Closed with
+        {
+            Source  = "тест",
+            Mode    = EgressMode.Isolated,
+            Folders = [folder],
+        }));
+
+        var toFolder = EgressGate.CheckFolder(folder, Today);
+        Assert.True(toFolder.Allowed);
+
+        var toNetwork = EgressGate.Check(Address("https://api.zavod.local/orders"), Today);
+        Assert.False(toNetwork.Allowed);
+        Assert.Equal(EgressDenyReason.IsolatedMode, toNetwork.Reason);
+    }
+
+    /// <summary>
+    /// Рамку папкам ставит список <c>folders</c>, и он остается ЕДИНСТВЕННОЙ их рамкой: режим
+    /// папки больше не запирает, поэтому пустой список обязан запирать сам. Иначе «изолированный
+    /// режим» стал бы способом писать куда угодно.
+    /// </summary>
+    [Fact]
+    public void Isolated_mode_does_not_open_folders_the_policy_never_named()
+    {
+        EgressGate.AttachPolicy(EgressPolicySet.Of(EgressPolicy.Closed with
+        {
+            Source  = "тест",
+            Mode    = EgressMode.Isolated,
+            Folders = [],
+        }));
+
+        var decision = EgressGate.CheckFolder(Path.GetTempPath(), Today);
+
+        Assert.False(decision.Allowed);
+        Assert.Equal(EgressDenyReason.FolderNotAllowed, decision.Reason);
+    }
+
+    /// <summary>
+    /// Истекшая политика запирает и папки: спискам файла, у которого вышел срок, верить больше
+    /// нельзя — это тот же вопрос, что и у сетевой двери, и ответ на него общий.
+    /// </summary>
+    [Fact]
+    public void An_expired_policy_closes_the_folders_too()
+    {
+        EgressGate.AttachPolicy(EgressPolicySet.Of(EgressPolicy.Closed with
+        {
+            Source     = "тест",
+            Mode       = EgressMode.Isolated,
+            Folders    = [Path.GetTempPath()],
+            ValidUntil = Today.AddDays(-1),
+        }));
+
+        var decision = EgressGate.CheckFolder(Path.GetTempPath(), Today);
+
+        Assert.False(decision.Allowed);
+        Assert.Equal(EgressDenyReason.PolicyExpired, decision.Reason);
     }
 }

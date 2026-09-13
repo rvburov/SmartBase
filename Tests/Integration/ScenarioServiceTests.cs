@@ -90,7 +90,14 @@ public sealed class ScenarioServiceTests : IDisposable
         return requestId;
     }
 
-    /// <summary>Сценарий с одним шагом-запросом; якорь ставится указанным моментом.</summary>
+    /// <summary>
+    /// Сценарий с одним шагом-запросом. Якорь ставит САМО сохранение — моментом, который передан
+    /// в <paramref name="anchor"/> (по умолчанию «сейчас»): включенным сценарий становится в
+    /// окне правки, и якорь встает там же.
+    ///
+    /// Раньше помощник ставил якорь вторым шагом, через тумблер, и оттого молча держался за
+    /// поведение, которого у программы больше нет: сохранение включенным якоря не ставило.
+    /// </summary>
     private Scenario Ready(int requestId, ScenarioTrigger trigger, DateTimeOffset? anchor = null,
                            bool enabled = true)
     {
@@ -100,9 +107,7 @@ public sealed class ScenarioServiceTests : IDisposable
             Enabled = enabled,
             Trigger = trigger,
             Steps   = [ScenarioStep.OfRequest(requestId)],
-        });
-
-        if (anchor is { } moment) Cards.EnableScenario(scenario.Id, enabled, moment);
+        }, anchor ?? Now);
 
         return Cards.FindScenario(scenario.Id)!;
     }
@@ -155,14 +160,19 @@ public sealed class ScenarioServiceTests : IDisposable
     }
 
     /// <summary>
-    /// «Еще ни разу» — не повод срываться с места: якорь ставится при включении, а без него
-    /// сценарий «ежедневно в 07:00», заведенный вечером, пошел бы немедленно.
+    /// Заведенный только что — не повод срываться с места. Якорь встает моментом включения,
+    /// поэтому «ежедневно в 07:00», заведенное в полдень, ждет завтрашнего утра, а не идет
+    /// немедленно. Ради этого якорь и существует.
+    ///
+    /// Обратная сторона того же правила — сценарий БЕЗ якоря вовсе (так лежат строки в базах,
+    /// заведенных до того, как якорь стал ставиться при сохранении): <c>IsDue(null, …)</c>
+    /// отвечает «не пора», и это закреплено юнит-тестами модели (<c>ScenarioTests</c>).
     /// </summary>
     [Fact]
-    public async Task Without_an_anchor_nothing_runs()
+    public async Task A_scenario_created_after_its_hour_waits_for_the_next_day()
     {
         using var server = Server();
-        Ready(ReadyRequest(server), ScenarioTrigger.DailyAt(new TimeOnly(7, 0)));   // без якоря
+        Ready(ReadyRequest(server), ScenarioTrigger.DailyAt(new TimeOnly(7, 0)));
 
         Assert.Equal(0, await Service().TickAsync(Now));
         Assert.Empty(server.Seen);
