@@ -130,10 +130,12 @@
 ячейкой, а не дописывается строками в соседнюю: это отдельные данные, и смешивать их со
 сводкой нельзя.
 
-Стиль объявлен в [SettingsView.axaml](../../../Views/Settings/SettingsView.axaml), готовые
-кирпичики для code-behind (`DataBox`, `CodeBox`, `RowButton`, `Picker`, `Field`, `Toggle`,
-`SideRow`, `TableHead`, `TableRow`) — в
-[SettingsIntegrationsStyle.cs](../../../Views/Settings/SettingsIntegrationsStyle.cs).
+Стиль объявлен в [SettingRows.axaml](../../../Assets/Styles/SettingRows.axaml) и подключен на
+уровне приложения, готовые кирпичики для code-behind (`DataBox`, `CodeBox`, `RowButton`,
+`Picker`, `Field`, `Toggle`, `SideRow`, `TableHead`, `TableRow`) — в
+[SettingRows.cs](../../../Controls/Widgets/SettingRows.cs). И то и другое общее: те же строки
+показывает панель администратора (контур безопасности, журнал безопасности), и вторая копия
+стилей разошлась бы с первой при первой же правке отступа.
 
 ## Скроллбар
 
