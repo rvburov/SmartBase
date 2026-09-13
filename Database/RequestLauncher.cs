@@ -66,6 +66,29 @@ public static class RequestLauncher
             sentBody: outcome.SentBody, gotBody: outcome.GotBody,
             scenario: scenario, step: step));
 
+        // Вторая строка журнала безопасности — ИТОГ: код ответа, объем, время либо причина, по
+        // которой до сети не дошло. Первая строка легла до сокета, и кода ответа в ней быть не
+        // могло: его тогда еще не существовало. Без этой второй проверяющий не отличал бы
+        // дошедшую отправку от застрявшей — «собирались отправить» выглядит одинаково и когда
+        // ушло, и когда сервер ответил 500.
+        //
+        // Неудача записи здесь НИЧЕГО не отменяет, в отличие от первой строки: отправка уже
+        // случилась, и притворяться, что ее можно отозвать, было бы ложью.
+        if (request.Outward)
+            SecurityJournal.Add(SecurityEntry.New(
+                SecurityEvent.Result,
+                allowed:     outcome.Ok,
+                who:         Utils.CurrentUser.DisplayName,
+                scenario:    scenario,
+                address:     outcome.SafeAddress.Length > 0 ? outcome.SafeAddress : request.Path,
+                fields:      "",
+                rows:        outcome.Rows,
+                bytes:       outcome.Bytes,
+                bodyHash:    "",
+                explanation: Result(outcome),
+                dbId:        dbId,
+                at:          now));
+
         // Направлением воспользовались — отсчет простоя начинается заново. По тому же признаку,
         // что и расход квоты: данные ДОШЛИ до сети.
         if (outcome.Sent) OutwardGuard.Used(registry, request, now);
@@ -80,5 +103,30 @@ public static class RequestLauncher
                               outcome.Ok, Utils.CurrentUser.DisplayName, scenario, now);
 
         return outcome;
+    }
+
+    /// <summary>
+    /// Итог отправки одной строкой — той, что уедет проверяющему.
+    ///
+    /// Три случая и три ответа. Не дошло до сети — это не «ошибка обмена», а «данные не покинули
+    /// машину», и для проверяющего разница принципиальная. Дошло и ответили — код ответа первым
+    /// делом: по нему отличают «приняли» от «отказали». Дошло, но обрезали по потолку — сказано
+    /// прямо: иначе неполный ответ выглядел бы полным.
+    /// </summary>
+    private static string Result(RunOutcome outcome)
+    {
+        if (!outcome.Sent) return "до сети не дошло: " + outcome.Explanation;
+
+        var parts = new List<string> { $"код ответа {outcome.StatusCode}" };
+
+        if (outcome.Rows  > 0) parts.Add($"записей {outcome.Rows:N0}");
+        if (outcome.Bytes > 0) parts.Add($"байт {outcome.Bytes:N0}");
+
+        parts.Add($"за {outcome.Elapsed.TotalSeconds:N1} с");
+
+        if (outcome.Capped) parts.Add("ответ обрезан по потолку");
+        if (!outcome.Ok && outcome.Explanation.Length > 0) parts.Add(outcome.Explanation);
+
+        return string.Join(", ", parts);
     }
 }

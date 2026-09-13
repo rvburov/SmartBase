@@ -38,6 +38,10 @@ public partial class SettingsView
     private RunChannel? _journalChannel;
     private bool        _journalFailedOnly;
 
+    // За какой период показывать; 0 — за все время. Тот же набор кнопок, что у журнала
+    // безопасности, и то же поведение: «что было за неделю» — первый вопрос разбора.
+    private int _journalDays = 30;
+
     // Ключ строки, у которой раскрыты подробности; 0 — ни одной.
     private long _journalOpen;
 
@@ -110,7 +114,8 @@ public partial class SettingsView
         foreach (var (column, values) in _journalPicked)
             if (values.Count > 0) picked[column] = values;
 
-        return new RunFilter(_journalChannel, _journalFailedOnly, picked);
+        return new RunFilter(_journalChannel, _journalFailedOnly, picked,
+                             _journalDays > 0 ? DateTimeOffset.Now.AddDays(-_journalDays) : null);
     }
 
     /// <summary>Выбранное в воронке колонки; множество живет, пока открыт раздел.</summary>
@@ -222,6 +227,29 @@ public partial class SettingsView
             BuildIntegrationsJournal();
         };
 
+        var period = Picker(["7 дней", "30 дней", "Год", "Все"], _journalDays switch
+        {
+            7   => 0,
+            30  => 1,
+            365 => 2,
+            _   => 3,
+        }, width: 120);
+
+        period.SelectionChanged += (_, _) =>
+        {
+            _journalDays = period.SelectedIndex switch
+            {
+                0 => 7,
+                1 => 30,
+                2 => 365,
+                _ => 0,
+            };
+
+            _journalOpen  = 0;
+            _journalShown = 0;
+            BuildIntegrationsJournal();
+        };
+
         var failed = new CheckBox
         {
             Content           = "Только неудачные",
@@ -245,11 +273,13 @@ public partial class SettingsView
 
         var export = RowButton("Выгрузить CSV", () => _ = ExportRunsAsync());
 
-        var line = ButtonLine(channel, failed, refresh, export);
+        var line = ButtonLine(channel, period, failed, refresh, export);
 
         return Row("Что показывать",
             "Разбор «почему записи не появились» начинается с неудачных строк — их тут больше "
-            + "всего и ищут. Выгрузка отдает ВСЕ подошедшие строки, а не показанные две сотни.",
+            + "всего и ищут. Период сужает выборку В ФАЙЛЕ, а не на экране: единственная неудача "
+            + "недельной давности иначе не нашлась бы, вытесненная свежими строками. Выгрузка "
+            + "отдает ВСЕ подошедшие строки, а не показанные две сотни.",
             line);
     }
 

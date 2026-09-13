@@ -87,6 +87,19 @@ public interface IEgressUsage
     /// <param name="moment">С какого момента считать.</param>
     /// <param name="direction">Ключ карточки запроса; 0 — обмен без карточки.</param>
     long BytesSince(DateTimeOffset moment, int direction);
+
+    /// <summary>
+    /// Когда из скользящего окна выпадет САМЫЙ СТАРЫЙ засчитанный расход — то есть когда потолок
+    /// начнет отпускать. <c>null</c> — расхода в окне нет, ждать нечего.
+    ///
+    /// Нужно ровно для одного: сказать человеку, КОГДА обмен пойдет снова. Отказ «выбран
+    /// суточный потолок» без этого ответа выглядит как поломка — обмен молча перестал работать,
+    /// и непонятно, чинить его или ждать.
+    /// </summary>
+    /// <param name="now">Текущий момент.</param>
+    /// <param name="direction">Ключ карточки запроса; 0 — обмен без карточки.</param>
+    /// <param name="window">Ширина окна: сутки для объема, час для числа запусков.</param>
+    DateTimeOffset? FreesAt(DateTimeOffset now, int direction, TimeSpan window);
 }
 
 /// <summary>Решение шлюза: пускать или нет, почему и что показать человеку.</summary>
@@ -367,21 +380,49 @@ public static class EgressGate
 
         if (_usage is not { } usage) return EgressDecision.Allow();
 
-        var runs = usage.RunsSince(now - TimeSpan.FromHours(1));
+        var hour = TimeSpan.FromHours(1);
+        var day  = TimeSpan.FromDays(1);
+
+        var runs = usage.RunsSince(now - hour);
         if (runs >= _policy.MaxRunsPerHour)
             return EgressDecision.Deny(EgressDenyReason.TooManyRuns,
-                $"выбран потолок запусков в час: {runs} из {_policy.MaxRunsPerHour}");
+                $"выбран потолок запусков в час: {runs} из {_policy.MaxRunsPerHour}"
+              + Resumes(usage, now, direction, hour));
 
         // Любой обмен стоит хотя бы что-то, поэтому выбранный до нуля остаток — уже отказ, даже
         // когда объем заранее неизвестен. Пропустить запрос ради того, чтобы отклонить его на
         // первой же порции, значит зря потревожить чужую программу.
-        var spent = usage.BytesSince(now - TimeSpan.FromDays(1), direction);
+        var spent = usage.BytesSince(now - day, direction);
         if (spent >= _policy.MaxBytesPerDay || spent + Math.Max(0, bytes) > _policy.MaxBytesPerDay)
             return EgressDecision.Deny(EgressDenyReason.TooManyBytes,
                 $"выбран суточный потолок объема этого направления: "
-              + $"{spent:N0} из {_policy.MaxBytesPerDay:N0} байт");
+              + $"{spent:N0} из {_policy.MaxBytesPerDay:N0} байт"
+              + Resumes(usage, now, direction, day));
 
         return EgressDecision.Allow();
+    }
+
+    /// <summary>
+    /// Хвост отказа по потолку: когда обмен пойдет снова. Ради него и заведен
+    /// <see cref="IEgressUsage.FreesAt"/>.
+    ///
+    /// Без этой добавки отказ по квоте — худший из возможных: обмен, настроенный и работавший,
+    /// молча перестает ходить, и человек не знает, сломалось это или ждет. Строка уезжает и в
+    /// журнал запусков, и в журнал безопасности, и на карточку — всюду, где отказ читают.
+    ///
+    /// Счетчик не ответил — добавки нет. Придумывать время, которого не знаем, хуже, чем
+    /// промолчать: обещанное и не сбывшееся «после 14:20» дороже отсутствия обещания.
+    /// </summary>
+    private static string Resumes(IEgressUsage usage, DateTimeOffset now, int direction,
+                                  TimeSpan window)
+    {
+        if (usage.FreesAt(now, direction, window) is not { } at || at <= now) return "";
+
+        var local = at.ToLocalTime();
+
+        return local.Date == now.ToLocalTime().Date
+            ? $"; отпустит после {local:HH:mm}"
+            : $"; отпустит после {local:dd.MM HH:mm}";
     }
 
     /// <summary>

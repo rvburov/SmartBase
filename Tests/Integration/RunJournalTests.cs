@@ -176,6 +176,70 @@ public sealed class RunJournalTests : IDisposable
         Assert.Equal(1000, journal.Since(since).Bytes);   // общая сумма осталась для экрана
     }
 
+    // ── Когда потолок отпустит ────────────────────────────────────────────────
+
+    /// <summary>
+    /// Момент, когда из окна выпадет самый старый расход. Им отвечают человеку на «а когда обмен
+    /// пойдет снова»: без этого ответа отказ по потолку выглядит как поломка — обмен, вчера
+    /// работавший, молча перестал ходить.
+    ///
+    /// Берется САМАЯ РАННЯЯ строка окна: когда она выпадет, потолок отпустит хотя бы на ее объем.
+    /// Обещать «тогда все пройдет» нельзя, и текст отказа честно говорит «отпустит после».
+    /// </summary>
+    [Fact]
+    public void The_window_frees_when_its_oldest_row_falls_out()
+    {
+        var journal = Journal();
+        var day     = TimeSpan.FromDays(1);
+
+        journal.Write(Request("Заказы", 500, Now.AddHours(-20), direction: 7));
+        journal.Write(Request("Заказы", 200, Now.AddHours(-2),  direction: 7));
+
+        // Самая ранняя строка — двадцатичасовой давности; выпадет она через четыре часа.
+        var frees = journal.FreesAt(Now, direction: 7, day);
+
+        Assert.NotNull(frees);
+        Assert.Equal(Now.AddHours(4).ToUniversalTime(), frees!.Value.ToUniversalTime(),
+                     TimeSpan.FromMinutes(1));
+    }
+
+    /// <summary>Счет по направлению, а не по всему обмену: чужой расход чужого окна не двигает.</summary>
+    [Fact]
+    public void A_foreign_direction_does_not_move_the_window()
+    {
+        var journal = Journal();
+
+        journal.Write(Request("Остатки", 300, Now.AddHours(-23), direction: 8));
+
+        Assert.Null(journal.FreesAt(Now, direction: 7, TimeSpan.FromDays(1)));
+        Assert.NotNull(journal.FreesAt(Now, direction: 8, TimeSpan.FromDays(1)));
+    }
+
+    /// <summary>
+    /// Отрицательное направление означает «по всему обмену» — так его зовет потолок запусков в
+    /// час, который общий, в отличие от суточного потолка объема.
+    /// </summary>
+    [Fact]
+    public void A_negative_direction_means_the_whole_exchange()
+    {
+        var journal = Journal();
+
+        journal.Write(Request("Остатки", 300, Now.AddMinutes(-40), direction: 8));
+
+        Assert.NotNull(journal.FreesAt(Now, direction: -1, TimeSpan.FromHours(1)));
+    }
+
+    /// <summary>Расхода в окне нет — ждать нечего, и придумывать момент незачем.</summary>
+    [Fact]
+    public void An_empty_window_has_nothing_to_wait_for()
+    {
+        var journal = Journal();
+
+        journal.Write(Request("Заказы", 500, Now.AddDays(-3), direction: 7));
+
+        Assert.Null(journal.FreesAt(Now, direction: 7, TimeSpan.FromDays(1)));
+    }
+
     /// <summary>
     /// Экрану нужен разрез по направлениям: общая цифра на вопрос «почему отказали» не отвечает,
     /// когда отказало одно направление при почти пустом счете у остальных. Имя берется у самой
@@ -589,6 +653,37 @@ public sealed class RunJournalTests : IDisposable
         // …а по чужой действует: файл из папки под отбор по названию не подошел.
         Assert.Equal([((int)RunChannel.Request).ToString()],
                      journal.Values("Channel", filter).Select(v => v.Value).ToArray());
+    }
+
+    // ── Период ────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Период сужает выборку В ФАЙЛЕ. Отбери его из прочитанной пачки — и единственная неудача
+    /// недельной давности не нашлась бы вовсе: свежие строки вытеснили бы ее раньше, чем до нее
+    /// дошел бы отбор. У журнала безопасности период был с самого начала, у рабочего — нет, хотя
+    /// разбирают по нему чаще.
+    /// </summary>
+    [Fact]
+    public void The_period_narrows_the_selection_in_the_file()
+    {
+        var journal = Journal();
+
+        journal.Write(Request("Позавчерашний", 100, Now.AddDays(-2)));
+        journal.Write(Request("Сегодняшний",   200, Now));
+
+        var week = journal.Page(new RunFilter(Since: Now.AddDays(-7)));
+        var day  = journal.Page(new RunFilter(Since: Now.AddDays(-1)));
+
+        Assert.Equal(2, week.Count);
+        Assert.Equal("Сегодняшний", Assert.Single(day).Name);
+    }
+
+    /// <summary>Период — тоже сужение: окно выгрузки обязано сказать об этом вслух.</summary>
+    [Fact]
+    public void A_period_counts_as_narrowing()
+    {
+        Assert.False(RunFilter.Any.Narrow);
+        Assert.True(new RunFilter(Since: Now.AddDays(-7)).Narrow);
     }
 
     [Fact]

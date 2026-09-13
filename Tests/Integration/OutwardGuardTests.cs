@@ -505,4 +505,98 @@ public sealed class OutwardGuardTests : IDisposable
             return Task.CompletedTask;
         });
     }
+
+    // ── Итог отправки ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// У отправки в журнале ДВЕ строки: намерение и итог с кодом ответа.
+    ///
+    /// Одной не обойтись. Первая обязана лечь ДО сокета — иначе правило «не записалось — не
+    /// отправляем» не значит ничего, — а кода ответа в тот момент еще не существует. Приписать
+    /// его к той же строке можно было бы только переписав ее задним числом, то есть сломав
+    /// цепочку, которая ровно от этого и бережет.
+    ///
+    /// Без второй строки проверяющий не отличает дошедшую отправку от застрявшей: «собирались
+    /// отправить» выглядит одинаково и когда ушло, и когда сервер ответил 500.
+    /// </summary>
+    [Fact]
+    public async Task A_send_leaves_both_an_intent_and_a_result()
+    {
+        AttachPolicy();
+        var journal = Attach();
+
+        await WithRegistry(async cards =>
+        {
+            using var server = new TinyServer(_ => TinyServer.Reply(200, "[]"));
+
+            var connection = Connect(cards, server.Port);
+            var request    = Push(cards, connection.Id);
+
+            Confirm(cards, request);
+
+            await RequestLauncher.SendAsync(cards, connection, request, payload: null,
+                                            dbId: 3, startedAt: Now, now: Now,
+                                            scenario: "Итоги суток");
+
+            var intent = Assert.Single(journal.Page(new SecurityFilter(Event: SecurityEvent.Send)));
+            var result = Assert.Single(journal.Page(new SecurityFilter(Event: SecurityEvent.Result)));
+
+            Assert.True(intent.Allowed);
+            Assert.True(result.Allowed);
+            Assert.Equal("Итоги суток", result.Scenario);
+            Assert.Contains("код ответа 200", result.Explanation, StringComparison.Ordinal);
+            Assert.Equal("итог отправки", SecurityJournal.Name(SecurityEvent.Result));
+        });
+    }
+
+    /// <summary>
+    /// Не дошло до сети — итог говорит именно это, а не «ошибка обмена». Разница для
+    /// проверяющего принципиальная: данные машину не покинули.
+    /// </summary>
+    [Fact]
+    public async Task A_send_stopped_before_the_socket_says_it_never_left()
+    {
+        AttachPolicy();
+        var journal = Attach();
+
+        await WithRegistry(async cards =>
+        {
+            var connection = Connect(cards, 8080);
+            var request    = Push(cards, connection.Id);   // не подтверждено — замок держит
+
+            await RequestLauncher.SendAsync(cards, connection, request, payload: null,
+                                            dbId: 0, startedAt: Now, now: Now);
+
+            var result = Assert.Single(journal.Page(new SecurityFilter(Event: SecurityEvent.Result)));
+
+            Assert.False(result.Allowed);
+            Assert.Contains("до сети не дошло", result.Explanation, StringComparison.Ordinal);
+        });
+    }
+
+    /// <summary>
+    /// У читающего запроса итоговой строки нет — как нет и строки о намерении: журнал
+    /// безопасности ведет исходящие, а чтение отвечает своим событием (<see cref="SecurityEvent.Read"/>).
+    /// Одна половина пары без другой сбивала бы счет.
+    /// </summary>
+    [Fact]
+    public async Task A_reading_request_leaves_no_result_line()
+    {
+        AttachPolicy();
+        var journal = Attach();
+
+        await WithRegistry(async cards =>
+        {
+            using var server = new TinyServer(_ => TinyServer.Reply(200, "[]"));
+
+            var connection = Connect(cards, server.Port);
+            var request    = Pull(cards, connection.Id);
+
+            await RequestLauncher.SendAsync(cards, connection, request, payload: null,
+                                            dbId: 0, startedAt: Now, now: Now);
+
+            Assert.Empty(journal.Page(new SecurityFilter(Event: SecurityEvent.Result)));
+            Assert.Empty(journal.Page(new SecurityFilter(Event: SecurityEvent.Send)));
+        });
+    }
 }

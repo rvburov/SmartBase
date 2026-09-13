@@ -231,6 +231,8 @@ public sealed class RequestPreviewTests : IDisposable
     {
         public int  RunsSince(DateTimeOffset moment)  => 0;
         public long BytesSince(DateTimeOffset moment, int direction) => bytes;
+
+        public DateTimeOffset? FreesAt(DateTimeOffset now, int direction, TimeSpan window) => null;
     }
 
     /// <summary>Читающий запрос исходящим не считается — и подтверждения не ждет.</summary>

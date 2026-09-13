@@ -402,6 +402,8 @@ public sealed class RequestRunnerTests : IDisposable
     {
         public int  RunsSince(DateTimeOffset moment)  => runs;
         public long BytesSince(DateTimeOffset moment, int direction) => bytes;
+
+        public DateTimeOffset? FreesAt(DateTimeOffset now, int direction, TimeSpan window) => null;
     }
 
     /// <summary>

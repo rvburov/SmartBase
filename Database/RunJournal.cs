@@ -103,6 +103,9 @@ public sealed record RunEntry(
 /// </summary>
 /// <param name="Channel">Только этот канал; <c>null</c> — любые.</param>
 /// <param name="FailedOnly">Только неудачные строки — с них начинается всякий разбор.</param>
+/// <param name="Since">Не раньше этого момента; <c>null</c> — с самого начала. Тот же отбор, что
+/// у журнала безопасности, и по той же причине: «что было за последнюю неделю» — первый вопрос
+/// разбора, а без периода на него отвечают, крутя список и считая глазами.</param>
 /// <param name="Columns">Отбор по колонкам — «как в Excel»: имя колонки и выбранные значения
 /// (docs/ROADMAP-API.md, шаг 14). Пустое множество значений означает «все», и такой колонки в
 /// словаре не бывает. Имена колонок проверяются по белому списку
@@ -111,7 +114,8 @@ public sealed record RunEntry(
 public sealed record RunFilter(
     RunChannel?                                                  Channel    = null,
     bool                                                         FailedOnly = false,
-    IReadOnlyDictionary<string, IReadOnlyCollection<string>>?    Columns    = null)
+    IReadOnlyDictionary<string, IReadOnlyCollection<string>>?    Columns    = null,
+    DateTimeOffset?                                              Since      = null)
 {
     /// <summary>Без сужения — весь журнал.</summary>
     public static RunFilter Any { get; } = new();
@@ -121,7 +125,7 @@ public sealed record RunFilter(
         Columns ?? new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.Ordinal);
 
     /// <summary>Сужено ли хоть чем-нибудь: окно выгрузки говорит об этом вслух.</summary>
-    public bool Narrow => Channel is not null || FailedOnly || Picked.Count > 0;
+    public bool Narrow => Channel is not null || FailedOnly || Since is not null || Picked.Count > 0;
 }
 
 /// <summary>
@@ -489,6 +493,15 @@ public sealed class RunJournal
 
         if (filter.FailedOnly) parts.Add("Ok = 0");
 
+        // Период — такой же отбор в SQL, как и прочие: отбери его из прочитанной пачки, и
+        // единственная неудача недельной давности не нашлась бы, вытесненная свежими строками.
+        if (filter.Since is { } since)
+        {
+            parts.Add("At >= $since");
+            command.Parameters.AddWithValue("$since",
+                since.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture));
+        }
+
         var at = 0;
 
         foreach (var (column, values) in filter.Picked)
@@ -662,6 +675,60 @@ public sealed class RunJournal
     }
 
     /// <summary>
+    /// Когда из скользящего окна выпадет самый старый засчитанный расход. <c>null</c> — расхода в
+    /// окне нет, ждать нечего.
+    ///
+    /// Этим и отвечают человеку на «а когда обмен пойдет снова». Берется САМАЯ РАННЯЯ строка окна:
+    /// когда она выпадет, потолок отпустит хотя бы на ее объем. Обещать «тогда все пройдет»
+    /// нельзя — следом выпадет не весь расход, а одна строка, — поэтому и сказано «отпустит
+    /// после», а не «возобновится в».
+    ///
+    /// Направление 0 со значением «по всему обмену» здесь не путается с направлением 0 как ключом
+    /// карточки: <paramref name="direction"/> ниже нуля означает «любое», и так его зовет потолок
+    /// запусков в час, который общий.
+    /// </summary>
+    /// <param name="now">Текущий момент.</param>
+    /// <param name="direction">Ключ карточки; отрицательное — по всему обмену.</param>
+    /// <param name="window">Ширина окна: сутки у объема, час у числа запусков.</param>
+    public DateTimeOffset? FreesAt(DateTimeOffset now, int direction, TimeSpan window)
+    {
+        try
+        {
+            lock (_lock)
+            {
+                using var connection = Open();
+                using var command    = connection.CreateCommand();
+
+                command.CommandText = """
+                    SELECT MIN(At) FROM runs
+                    WHERE Counts = 1 AND At >= $since
+                      AND ($any = 1 OR Direction = $direction);
+                    """;
+
+                command.Parameters.AddWithValue("$since",
+                    (now - window).ToUniversalTime().ToString("o", CultureInfo.InvariantCulture));
+                command.Parameters.AddWithValue("$any",       direction < 0 ? 1 : 0);
+                command.Parameters.AddWithValue("$direction", direction < 0 ? 0 : direction);
+
+                if (command.ExecuteScalar() is not string oldest) return null;
+
+                return DateTimeOffset.TryParse(oldest, CultureInfo.InvariantCulture,
+                                               DateTimeStyles.RoundtripKind, out var at)
+                    ? at + window
+                    : null;
+            }
+        }
+        catch (SqliteException failure)
+        {
+            // Не сосчиталось — молчим. Придумывать время, которого не знаем, хуже, чем не
+            // ответить: обещанное и не сбывшееся дороже отсутствия обещания.
+            Serilog.Log.Warning("Журнал обмена: момент освобождения квоты не сосчитался — {Reason:l}",
+                                failure.Message);
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Расход по направлениям за период: ключ карточки, ее имя и сколько байт ушло. Нужен экрану
     /// «Журнал»: потолок объема теперь у каждого направления свой, и общая строка «передано за
     /// сутки» на вопрос «почему отказали» больше не отвечает.
@@ -799,6 +866,14 @@ public sealed class RunJournal
 
         public long BytesSince(DateTimeOffset moment, int direction) =>
             journal.BytesSince(moment, direction);
+
+        /// <summary>
+        /// Час запусков — окно ОБЩЕЕ, сутки объема — окно направления. Разные окна у двух
+        /// потолков не случайность, а то же правило, что и у самих потолков (10.6): запусков в
+        /// час считается по всему обмену, байт в сутки — по каждому направлению отдельно.
+        /// </summary>
+        public DateTimeOffset? FreesAt(DateTimeOffset now, int direction, TimeSpan window) =>
+            journal.FreesAt(now, window >= TimeSpan.FromDays(1) ? direction : -1, window);
     }
 
     /// <summary>Счетчик расхода поверх этого журнала.</summary>

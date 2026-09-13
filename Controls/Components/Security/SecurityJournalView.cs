@@ -234,18 +234,21 @@ public sealed class SecurityJournalView : UserControl
     private Border FilterRow()
     {
         var kinds = Picker(
-            ["Все события", "Отправки", "Чтения по выдаче", "Подтверждения",
-             "Снятия подтверждения", "Понижения меток", "Ручные выгрузки", "Показы секретов"],
+            ["Все события", "Отправки", "Итоги отправок", "Чтения по выдаче", "Подтверждения",
+             "Снятия подтверждения", "Понижения меток", "Ручные выгрузки", "Показы секретов",
+             "Уборки журнала"],
             _event switch
             {
                 null                    => 0,
                 SecurityEvent.Send      => 1,
-                SecurityEvent.Read      => 2,
-                SecurityEvent.Confirm   => 3,
-                SecurityEvent.Revoke    => 4,
-                SecurityEvent.Downgrade => 5,
-                SecurityEvent.Export    => 6,
-                _                       => 7,
+                SecurityEvent.Result    => 2,
+                SecurityEvent.Read      => 3,
+                SecurityEvent.Confirm   => 4,
+                SecurityEvent.Revoke    => 5,
+                SecurityEvent.Downgrade => 6,
+                SecurityEvent.Export    => 7,
+                SecurityEvent.Reveal    => 8,
+                _                       => 9,
             });
 
         kinds.SelectionChanged += (_, _) =>
@@ -253,12 +256,14 @@ public sealed class SecurityJournalView : UserControl
             _event = kinds.SelectedIndex switch
             {
                 1 => SecurityEvent.Send,
-                2 => SecurityEvent.Read,
-                3 => SecurityEvent.Confirm,
-                4 => SecurityEvent.Revoke,
-                5 => SecurityEvent.Downgrade,
-                6 => SecurityEvent.Export,
-                7 => SecurityEvent.Reveal,
+                2 => SecurityEvent.Result,
+                3 => SecurityEvent.Read,
+                4 => SecurityEvent.Confirm,
+                5 => SecurityEvent.Revoke,
+                6 => SecurityEvent.Downgrade,
+                7 => SecurityEvent.Export,
+                8 => SecurityEvent.Reveal,
+                9 => SecurityEvent.Trim,
                 _ => null,
             };
 

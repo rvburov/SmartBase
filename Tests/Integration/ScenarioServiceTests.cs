@@ -559,4 +559,36 @@ public sealed class ScenarioServiceTests : IDisposable
         Assert.Equal(0, await service.TickAsync(Now));
         Assert.Empty(server.Seen);
     }
+
+    // ── Молчаливых поломок нет ────────────────────────────────────────────────
+
+    /// <summary>
+    /// Сценарий, который перестал отрабатывать, ГОВОРИТ об этом человеку.
+    ///
+    /// Это и есть жалоба «обмен перестал работать без причины»: причина ложилась в
+    /// «Диагностику», но туда не заходят, пока не заподозрят неладное, — а заподозрить нечего,
+    /// программа молчит. Особенно верно для отказов по потолкам политики: они приходят на
+    /// исправно настроенный обмен, который вчера работал.
+    ///
+    /// Повтор отсекается: одна и та же беда сообщается один раз, иначе ночь без сетевой базы
+    /// оставила бы к утру тысячу карточек.
+    /// </summary>
+    [Fact]
+    public async Task A_scenario_that_stopped_working_says_so_once()
+    {
+        using var server = Server();
+        var request = ReadyRequest(server, withBinding: false);   // привязки нет — помеха
+        Ready(request, ScenarioTrigger.EveryMinutes(5), anchor: Now.AddMinutes(-10));
+
+        var service = Service();
+
+        Assert.Equal(0, await service.TickAsync(Now));
+
+        var said = Assert.Single(_notices);
+        Assert.Contains("не отработал", said, StringComparison.Ordinal);
+
+        // Та же беда на следующем тике — второй карточки нет.
+        Assert.Equal(0, await service.TickAsync(Now.AddMinutes(10)));
+        Assert.Single(_notices);
+    }
 }

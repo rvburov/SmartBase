@@ -44,6 +44,12 @@ public sealed class EgressQuotaTests : IDisposable
                 ? own
                 : bytes;
         }
+
+        /// <summary>Когда отпустит; <c>null</c> — счетчик этого не знает, и отказ молчит об этом.</summary>
+        public DateTimeOffset? FreesAt(DateTimeOffset now, int direction, TimeSpan window) => Frees;
+
+        /// <summary>Что отдавать про освобождение окна; задается тестом.</summary>
+        public DateTimeOffset? Frees { get; set; }
     }
 
     private static void Attach(int runsPerHour = 10, long bytesPerDay = 1000) =>
@@ -251,5 +257,69 @@ public sealed class EgressQuotaTests : IDisposable
         Attach();
 
         Assert.True(EgressGate.CheckQuota(Now, Direction).Allowed);
+    }
+
+    // ── Когда отпустит ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Отказ по потолку говорит, КОГДА обмен пойдет снова.
+    ///
+    /// Без этого отказ по квоте — худший из возможных: обмен, вчера работавший, молча перестает
+    /// ходить, и непонятно, чинить его или ждать. Именно так «превышение квоты» и выглядело —
+    /// «перестало работать без причины».
+    /// </summary>
+    [Fact]
+    public void A_ceiling_refusal_says_when_it_lets_go()
+    {
+        Attach(bytesPerDay: 1000);
+        EgressGate.AttachUsage(new Spent(runs: 0, bytes: 5000) { Frees = Now.AddHours(3) });
+
+        var decision = EgressGate.CheckQuota(Now, Direction);
+
+        Assert.False(decision.Allowed);
+        Assert.Equal(EgressDenyReason.TooManyBytes, decision.Reason);
+        Assert.Contains("отпустит после", decision.Explanation, StringComparison.Ordinal);
+        Assert.Contains(Now.AddHours(3).ToLocalTime().ToString("HH:mm"), decision.Explanation,
+                        StringComparison.Ordinal);
+    }
+
+    /// <summary>Тот же ответ и у потолка запусков в час.</summary>
+    [Fact]
+    public void The_hourly_ceiling_says_it_too()
+    {
+        Attach(runsPerHour: 5);
+        EgressGate.AttachUsage(new Spent(runs: 50, bytes: 0) { Frees = Now.AddMinutes(20) });
+
+        var decision = EgressGate.CheckQuota(Now, Direction);
+
+        Assert.Equal(EgressDenyReason.TooManyRuns, decision.Reason);
+        Assert.Contains("отпустит после", decision.Explanation, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Счетчик не знает момента — отказ молчит о нем, а не придумывает. Обещанное и не сбывшееся
+    /// «после 14:20» дороже отсутствия обещания.
+    /// </summary>
+    [Fact]
+    public void When_the_moment_is_unknown_the_refusal_stays_silent_about_it()
+    {
+        Attach(bytesPerDay: 1000);
+        EgressGate.AttachUsage(new Spent(runs: 0, bytes: 5000));   // Frees не задан
+
+        var decision = EgressGate.CheckQuota(Now, Direction);
+
+        Assert.False(decision.Allowed);
+        Assert.DoesNotContain("отпустит", decision.Explanation, StringComparison.Ordinal);
+    }
+
+    /// <summary>Момент уже прошел — добавки нет: «отпустит после вчера» ничего не значит.</summary>
+    [Fact]
+    public void A_moment_already_past_is_not_announced()
+    {
+        Attach(bytesPerDay: 1000);
+        EgressGate.AttachUsage(new Spent(runs: 0, bytes: 5000) { Frees = Now.AddHours(-1) });
+
+        Assert.DoesNotContain("отпустит", EgressGate.CheckQuota(Now, Direction).Explanation,
+                              StringComparison.Ordinal);
     }
 }
