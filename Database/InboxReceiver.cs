@@ -86,14 +86,21 @@ public static class InboxReceiver
     /// <param name="now">Текущий момент: помесячная папка и отметки в квитанциях.</param>
     /// <param name="ct">Отмена; уже начатый файл доводится до квитанции.</param>
     /// <param name="progress">Имя файла, за который взялись.</param>
+    /// <param name="clock">Текущий момент по ходу работы — им отмечается живой захват. Отдельно
+    /// от <paramref name="now"/>, и это не придирка: <paramref name="now"/> — момент НАЧАЛА
+    /// обхода, он не движется, а отметка «файлом занимаются прямо сейчас» обязана двигаться,
+    /// иначе она ничего не значит.</param>
     public static InboxRun Run(InboxLayout       layout,
                                ConstructorRepository repo,
                                int               dbId,
                                string            machine,
                                DateTimeOffset    now,
                                CancellationToken ct = default,
-                               IProgress<string>? progress = null)
+                               IProgress<string>? progress = null,
+                               Func<DateTimeOffset>? clock = null)
     {
+        clock ??= () => DateTimeOffset.Now;
+
         var reclaimed = InboxFolder.ReclaimStale(layout, now);
         var ready     = InboxFolder.Ready(layout, now);
 
@@ -116,7 +123,7 @@ public static class InboxReceiver
 
             try
             {
-                (receipt, repeat) = Handle(layout, repo, dbId, file, claimed, now);
+                (receipt, repeat) = Handle(layout, repo, dbId, file, claimed, now, clock);
             }
             catch (InboxException failure)
             {
@@ -151,16 +158,13 @@ public static class InboxReceiver
 
     private static (InboxReceipt Receipt, bool Repeat) Handle(
         InboxLayout layout, ConstructorRepository repo, int dbId,
-        InboxFile file, string claimed, DateTimeOffset now)
+        InboxFile file, string claimed, DateTimeOffset now, Func<DateTimeOffset> clock)
     {
-        // Потолок размера спрашивается ДО чтения: файл в общую папку кладет кто угодно с
-        // правами на запись, и гигабайт оттуда не должен кончаться нехваткой памяти.
-        var text = InboxFolder.ReadText(claimed, out var unread);
-
-        if (text is null)
-            return (Reject(layout, file, claimed, "", "", 0, unread, now), false);
-
-        var message = InboxMessage.TryParse(text, out var error);
+        // Конверт читается ПОТОКОМ, и потолка на размер файла здесь нет: записи в память не
+        // попадают ни сейчас, ни при укладке — их читает потоковый источник прямо из файла.
+        // Раньше файл читался в строку целиком, и потолок был обязателен: одна строка стоила
+        // нескольких своих размеров памяти, а кладет файл в общую папку кто угодно.
+        var message = InboxMessage.TryParseFile(claimed, out var error);
 
         if (message is null)
             return (Reject(layout, file, claimed, "", "", 0, error, now), false);
@@ -185,7 +189,9 @@ public static class InboxReceiver
         }
 
         // Дальше — общая часть обоих транспортов: файл и тело запроса ложатся одним кодом.
-        var receipt = InboxIntake.Apply(message, repo, dbId, file.Name, now);
+        // Знак жизни — только у файла: у сетевого канала захвата нет и отмечать нечего.
+        var receipt = InboxIntake.Apply(message, repo, dbId, file.Name, now,
+                                        beat: () => InboxFolder.Touch(claimed, clock()));
 
         Write(layout, receipt);
         Move(layout, claimed, file, receipt.Accepted, now);

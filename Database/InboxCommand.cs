@@ -61,22 +61,12 @@ public static class InboxCommand
         if (!File.Exists(file))
             return Fail(output, $"Файл не найден: {file}.");
 
-        var size = new FileInfo(file).Length;
-
-        if (size > IngressGate.MaxBodyBytes)
-            return Fail(output, $"Файл больше потолка в {ApiDescription.BodyLimit()}.");
-
-        string text;
-        try
-        {
-            text = File.ReadAllText(file);
-        }
-        catch (Exception failure) when (failure is IOException or UnauthorizedAccessException)
-        {
-            return Fail(output, "Файл не прочитался: " + failure.Message);
-        }
-
-        var message = InboxMessage.TryParse(text, out var error);
+        // Файл читается ПОТОКОМ, и потолка на его размер здесь нет — как и у папки обмена.
+        // Канал этот и заводят под ночную выгрузку из планировщика, то есть под самые большие
+        // файлы, какие вообще приходят; отказать им по размеру значило бы отказать по сути.
+        // Потолок остается у сети: тело обращения надо принять целиком, прежде чем станет
+        // понятно, что это (см. ApiDescription — там он назван отправителю прямо).
+        var message = InboxMessage.TryParseFile(file, out var error);
 
         if (message is null) return Fail(output, "Сообщение не разобралось: " + error + ".");
 

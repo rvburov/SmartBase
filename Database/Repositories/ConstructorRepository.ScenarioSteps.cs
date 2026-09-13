@@ -149,6 +149,14 @@ public partial class ConstructorRepository
         {
             ct.ThrowIfCancellationRequested();
 
+            // То же правило, что у укладки ответа (см. ApplyRows): написанное предыдущей
+            // строкой уже сохранено, и держать его в трекере EF незачем. Без этой строки время
+            // росло КВАДРАТИЧНО — EF на каждом SaveChanges обходит весь накопленный список.
+            //
+            // Стоит она в НАЧАЛЕ цикла, а не в конце: из тела выходят четыре разные ветки через
+            // continue, и в конце ее обошли бы три из них.
+            ctx.ChangeTracker.Clear();
+
             var title = row.FirstOrDefault(v => Same(v.Key, titleLabel)).Value ?? "";
 
             if (matching)

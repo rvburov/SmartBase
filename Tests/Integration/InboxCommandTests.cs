@@ -117,6 +117,49 @@ public sealed class InboxCommandTests : IDisposable
         Assert.Equal(InboxCommand.Failed, code);
     }
 
+    /// <summary>
+    /// Файл ЗАВЕДОМО больше потолка сетевого тела разбирается, а не отвергается по размеру.
+    ///
+    /// Канал этот заводят под ночную выгрузку из планировщика — под самые большие файлы, какие
+    /// вообще приходят, — и отказывать им по размеру значило бы отказать по сути. Раньше отказ
+    /// был: файл читался в строку целиком, и потолок был обязателен.
+    ///
+    /// Сообщение здесь негодное НАРОЧНО («update» без колонки ключа): так проверка не доходит до
+    /// базы данных и не зависит от того, какая база у машины по умолчанию. Важно ровно одно — что
+    /// отказ пришел по СОДЕРЖАНИЮ, а не по размеру, то есть файл был прочитан целиком.
+    /// </summary>
+    [Fact]
+    public void A_file_over_the_network_body_cap_is_still_read()
+    {
+        var path = Path.Combine(_dir, "выгрузка.json");
+
+        using (var file = new StreamWriter(path))
+        {
+            file.Write("""{ "collection": "Заказы", "mode": "update", "rows": [""");
+
+            // Много мелких записей, а не одна огромная: так проверяется потоковое чтение, а не
+            // способность буфера дорасти под длинное значение.
+            for (var i = 0; i < 700_000; i++)
+            {
+                if (i > 0) file.Write(',');
+                file.Write($$"""{"Номер":"А-{{i}}","Статус":"новый"}""");
+            }
+
+            file.Write("] }");
+        }
+
+        Assert.True(new FileInfo(path).Length > SmartBase.Integrations.IngressGate.MaxBodyBytes,
+                    "файл должен быть заведомо больше потолка сетевого тела");
+
+        var (code, text) = Run(InboxCommand.Flag, path);
+
+        Assert.Equal(InboxCommand.Failed, code);
+
+        var explanation = Receipt(text).GetProperty("explanation").GetString()!;
+        Assert.Contains("key", explanation, StringComparison.Ordinal);
+        Assert.DoesNotContain("потолк", explanation, StringComparison.Ordinal);
+    }
+
     /// <summary>Коды возврата читает планировщик — они обязаны различаться.</summary>
     [Fact]
     public void The_three_outcomes_are_three_different_codes()

@@ -30,20 +30,22 @@ public static class InboxIntake
     /// <param name="dbId">Ключ базы — привязка обязана называть базу явно.</param>
     /// <param name="source">Чем подписать квитанцию: имя файла либо имя канала.</param>
     /// <param name="now">Момент обработки.</param>
+    /// <param name="beat">Знак жизни — зовется по ходу укладки каждые
+    /// <see cref="BeatEvery"/> строк. Нужен файловому каналу: пока идет долгая укладка, захват
+    /// файла обязан выглядеть живым, иначе сосед сочтет его брошенным. У сетевого канала захвата
+    /// нет, и там это <c>null</c>.</param>
     public static InboxReceipt Apply(InboxMessage message, ConstructorRepository repo, int dbId,
-                                     string source, DateTimeOffset now)
+                                     string source, DateTimeOffset now, Action? beat = null)
     {
         // Режимы без укладки — своими путями: у «удалить» нет привязки, у «подготовить
         // коллекцию» нет и строк. Общее у всех одно — квитанция.
         if (message.Mode == InboxMode.Delete)
-            return Erase(message, repo, source, now);
+            return Erase(message, repo, source, now, beat);
 
         if (message.Mode == InboxMode.EnsureCollection)
             return Ensure(message, repo, source, now);
 
-        // Записи читает ТОТ ЖЕ источник, что и ответ чужой программы: один и тот же набор
-        // данных, пришедший файлом и по сети, обязан ложиться в коллекцию одинаково.
-        var reader = new JsonTextSource(message.RowsJson);
+        var reader = Reader(message);
 
         ImportSchema schema;
         try
@@ -65,7 +67,7 @@ public static class InboxIntake
         try
         {
             result = repo.ApplyRowsIsolated(plan.Binding, schema,
-                                            reader.ReadRows(CancellationToken.None),
+                                            Beating(reader.ReadRows(CancellationToken.None), beat),
                                             CancellationToken.None);
         }
         catch (Exception failure) when (failure is ImportException or InvalidOperationException)
@@ -92,9 +94,9 @@ public static class InboxIntake
     /// и квитанция честно скажет «пропущено».
     /// </summary>
     private static InboxReceipt Erase(InboxMessage message, ConstructorRepository repo,
-                                      string source, DateTimeOffset now)
+                                      string source, DateTimeOffset now, Action? beat)
     {
-        var reader = new JsonTextSource(message.RowsJson);
+        var reader = Reader(message);
 
         ImportSchema schema;
         try
@@ -111,7 +113,8 @@ public static class InboxIntake
         try
         {
             erased = repo.EraseRowsIsolated(message, schema,
-                                            reader.ReadRows(CancellationToken.None), out problem);
+                                            Beating(reader.ReadRows(CancellationToken.None), beat),
+                                            out problem);
         }
         catch (Exception failure) when (failure is ImportException or InvalidOperationException)
         {
@@ -171,6 +174,58 @@ public static class InboxIntake
         return InboxReceipt.Ensured(source, message.MessageId, message.Collection,
                                     string.Join(", ", parts), now);
     }
+
+    // ── Знак жизни ────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Через сколько строк подавать знак жизни. Отметка стоит одного обращения к файловой
+    /// системе, а срок брошенности захвата — четыре часа: десять тысяч строк не проходят и за
+    /// минуту даже на медленной базе, так что запас тут четырехзначный, и мельчить незачем.
+    /// </summary>
+    public const int BeatEvery = 10_000;
+
+    /// <summary>
+    /// Тот же поток строк, но каждые <see cref="BeatEvery"/> строк подается знак жизни.
+    ///
+    /// Обертка вокруг строк, а не отдельный поток или таймер, — намеренно: знак жизни обязан
+    /// означать «работа ИДЕТ», а не «программа жива». Таймер отмечал бы захват живым и тогда,
+    /// когда укладка намертво встала на замке базы, — то есть ровно в том случае, ради которого
+    /// возврат брошенных захватов и написан.
+    /// </summary>
+    private static IEnumerable<ImportRow> Beating(IEnumerable<ImportRow> rows, Action? beat)
+    {
+        if (beat is null) return rows;
+
+        return Counted(rows, beat);
+
+        static IEnumerable<ImportRow> Counted(IEnumerable<ImportRow> rows, Action beat)
+        {
+            var done = 0;
+
+            foreach (var row in rows)
+            {
+                if (++done % BeatEvery == 0) beat();
+                yield return row;
+            }
+        }
+    }
+
+    // ── Откуда читаются записи ────────────────────────────────────────────────
+
+    /// <summary>
+    /// Чем читать записи сообщения. Источник ОДИН и тот же, что читает ответ чужой программы:
+    /// один и тот же набор данных, пришедший файлом и по сети, обязан ложиться в коллекцию
+    /// одинаково.
+    ///
+    /// Развилка — только в том, откуда берутся байты, и она не про удобство. Тело HTTP-обращения
+    /// уже в памяти и уже обрезано потолком двери — читать его потоком неоткуда. Файл из общей
+    /// папки кладет кто угодно и какого угодно размера, поэтому его записи остаются В ФАЙЛЕ и
+    /// читаются потоково: память не зависит от размера файла, и потолок на него не нужен.
+    /// </summary>
+    private static ITableSource Reader(InboxMessage message) =>
+        message.RowsFile.Length > 0
+            ? new JsonTableSource(message.RowsFile, "rows")
+            : new JsonTextSource(message.RowsJson);
 
     private static InboxReceipt Reject(InboxMessage message, string source, string explanation,
                                        DateTimeOffset now) =>

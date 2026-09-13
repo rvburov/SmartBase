@@ -14,7 +14,7 @@
   `ImportSchema`, `ImportRow`, `SheetMode`, `ImportException`)
 - Источники форматов: [Core/Importers/TableSources/](../../../../Core/Importers/TableSources/) —
   `ExcelTableSource`/`ExcelMergedSource` (ExcelDataReader), `CsvTableSource`,
-  `JsonTableSource`, общие правила в `SourceHelpers`, контракт `ITableSource`
+  `JsonTableSource` поверх `JsonCursor`, общие правила в `SourceHelpers`, контракт `ITableSource`
 - Планировщик юнитов: [ImportPlanner.cs](../../../../Core/Importers/ImportPlanner.cs)
 - Файловые ошибки: [ImportErrors.cs](../../../../Core/Importers/ImportErrors.cs)
 - Запись в БД: `ConstructorRepository.ImportStreamedCollection(Isolated)`

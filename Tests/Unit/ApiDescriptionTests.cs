@@ -32,6 +32,22 @@ public sealed class ApiDescriptionTests
         Assert.Contains(IngressApi.TokenHeader, text, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Потолок тела назван отправителю ЗДЕСЬ, а не выясняется им по отказу. И рядом сказано, что
+    /// к файловым каналам он не относится: каналов три, потолок у одного, и первое же число,
+    /// написанное без оговорки, прочиталось бы как общее правило — а ночную выгрузку по нему
+    /// стали бы резать на части без всякой нужды.
+    /// </summary>
+    [Fact]
+    public void The_text_names_the_body_cap_and_says_where_it_does_not_apply()
+    {
+        var text = ApiDescription.Text("http://127.0.0.1:8787", "Основная", Schema);
+
+        Assert.Contains(ApiDescription.BodyLimit(), text, StringComparison.Ordinal);
+        Assert.Contains("--inbox",                  text, StringComparison.Ordinal);
+        Assert.Contains("не ограничен",             text, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void The_text_lists_collections_with_their_columns()
     {

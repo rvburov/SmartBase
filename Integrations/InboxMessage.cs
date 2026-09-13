@@ -1,4 +1,7 @@
+using System.Text;
 using System.Text.Json;
+using SmartBase.Core.Importers;
+using SmartBase.Core.Importers.TableSources;
 
 namespace SmartBase.Integrations;
 
@@ -58,8 +61,12 @@ public sealed record InboxField(string Name, string Type)
 /// не требуют от отправителя ничего особенного. Папки же читает человек, который зашел на общий
 /// диск посмотреть, что там лежит.
 ///
-/// Модель без ввода-вывода: файлы, захват и раскладку по папкам ведет <see cref="InboxFolder"/>,
-/// запись в коллекцию — укладка привязки. Здесь только формат и его проверка.
+/// Захват файлов и раскладку по папкам ведет <see cref="InboxFolder"/>, запись в коллекцию —
+/// укладка привязки. Здесь только формат и его проверка — и ОДНО исключение из «без
+/// ввода-вывода»: <see cref="TryParseFile"/> открывает файл сам. Иначе не выходит: чтобы прочитать
+/// из большого файла только конверт, не втащив в память записи, надо идти по файлу токенами, а
+/// значит держать поток. Отдать эту работу файловому слою значило бы переселить туда знание
+/// формата — и завести второе его понимание.
 ///
 /// <code>
 /// {
@@ -91,11 +98,16 @@ public sealed record InboxField(string Name, string Type)
 /// <param name="RowsJson">Массив записей сырым текстом — тем же, что читает
 /// <c>JsonTextSource</c>. Разбирать записи здесь незачем: дальше их читает ровно тот же источник
 /// импорта, что и ответ чужой программы, и делать это дважды значило бы завести два разных
-/// понимания одних и тех же данных.</param>
+/// понимания одних и тех же данных. Пусто у сообщения из файла — там записи остаются в файле
+/// (<paramref name="RowsFile"/>).</param>
 /// <param name="Rows">Сколько записей в массиве — для квитанции и для отказа «файл пустой».</param>
 /// <param name="Fields">Состав полей (только <see cref="InboxMode.EnsureCollection"/>).</param>
 /// <param name="ModeWord">Слово режима, как его написал отправитель, — для отказа
 /// «режим не знаком»: отправителю нужно увидеть в квитанции СВОЕ слово.</param>
+/// <param name="RowsFile">Путь к файлу, в котором лежат записи; пусто — они в
+/// <paramref name="RowsJson"/>. Заполняется только разбором файла
+/// (<see cref="TryParseFile"/>): записи оттуда читаются ПОТОКОМ и в память целиком не попадают
+/// никогда, поэтому предела на размер файла у этого канала нет.</param>
 public sealed record InboxMessage(
     string    Collection,
     InboxMode Mode,
@@ -104,7 +116,8 @@ public sealed record InboxMessage(
     string    RowsJson,
     int       Rows,
     IReadOnlyList<InboxField>? Fields   = null,
-    string                     ModeWord = "")
+    string                     ModeWord = "",
+    string                     RowsFile = "")
 {
     /// <summary>Пустой набор — чтобы проверка на <c>null</c> не расползлась по всем местам.</summary>
     public IReadOnlyList<InboxField> Schema => Fields ?? [];
@@ -198,9 +211,11 @@ public sealed record InboxMessage(
     // ── Разбор ────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Разобрать текст файла. <paramref name="error"/> заполняется, когда разобрать не удалось
+    /// Разобрать текст сообщения. <paramref name="error"/> заполняется, когда разобрать не удалось
     /// вовсе; негодное по составу сообщение возвращается целиком — про него скажет
     /// <see cref="Problems"/>, и отправитель получит квитанцию с причиной, а не молчание.
+    ///
+    /// Этим путем приходит тело HTTP-обращения: оно уже в памяти и уже обрезано потолком двери.
     /// </summary>
     public static InboxMessage? TryParse(string? text, out string error)
     {
@@ -212,40 +227,137 @@ public sealed record InboxMessage(
             return null;
         }
 
-        JsonDocument document;
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(text));
+        return Read(stream, rowsFile: "", out error);
+    }
+
+    /// <summary>
+    /// Разобрать сообщение из ФАЙЛА, не читая файл в память.
+    ///
+    /// <b>Чем отличается от <see cref="TryParse"/> и зачем существует.</b> Разбор один и тот же —
+    /// оба пути идут через <see cref="Read"/>, и второго понимания формата не заводится. Разница в
+    /// одном: массив записей отсюда не забирается в память, а остается в файле, и вместо него
+    /// сообщение несет путь (<see cref="RowsFile"/>). Записи потом читает потоковый источник
+    /// импорта — тот же, которым программа читает любой большой файл.
+    ///
+    /// Ради этого все и сделано: пока конверт разбирался из строки, прочитанной целиком, файл в
+    /// общей папке приходилось ограничивать по размеру, потому что один такой файл стоил
+    /// нескольких своих размеров памяти. Теперь память не зависит от размера файла вовсе.
+    /// </summary>
+    /// <param name="path">Путь к файлу; он же попадет в <see cref="RowsFile"/>.</param>
+    /// <param name="error">Почему не разобралось; пусто — разобралось.</param>
+    public static InboxMessage? TryParseFile(string path, out string error)
+    {
+        error = "";
+
         try
         {
-            document = JsonDocument.Parse(text, new JsonDocumentOptions
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+
+            if (stream.Length == 0)
             {
-                AllowTrailingCommas = true,
-                CommentHandling     = JsonCommentHandling.Skip,
-            });
+                error = "файл пустой";
+                return null;
+            }
+
+            return Read(stream, path, out error);
         }
-        catch (JsonException failure)
+        catch (Exception failure) when (failure is IOException or UnauthorizedAccessException)
         {
-            error = "файл не является JSON: " + failure.Message;
+            error = "файл не прочитался: " + failure.Message;
             return null;
         }
+    }
 
-        using (document)
+    /// <summary>
+    /// Общий разбор конверта — по одному токену, без чтения потока целиком.
+    ///
+    /// Поля конверта отправитель вправе написать в любом порядке, в том числе ПОСЛЕ массива
+    /// записей, — поэтому массив приходится проходить, а не бросать чтение на нем. Проходится он
+    /// пропуском (<see cref="JsonCursor.Skip"/>), то есть без памяти, и заодно считается: число
+    /// записей нужно и квитанции, и отказу «в сообщении нет записей», а отдельным проходом по
+    /// файлу за него платить не пришлось.
+    /// </summary>
+    /// <param name="stream">Поток сообщения.</param>
+    /// <param name="rowsFile">Путь к файлу — тогда записи остаются в нем; пусто — записи
+    /// забираются текстом в <see cref="RowsJson"/>.</param>
+    private static InboxMessage? Read(Stream stream, string rowsFile, out string error)
+    {
+        error = "";
+
+        try
         {
-            var root = document.RootElement;
+            var cursor = new JsonCursor(stream);
 
-            if (root.ValueKind != JsonValueKind.Object)
+            if (cursor.Peek() != JsonTokenType.StartObject)
             {
                 error = "в файле ожидался объект с полями «collection», «mode» и «rows»";
                 return null;
             }
 
-            var word = Text(root, "mode");
+            cursor.Consume();
+
+            var collection = "";
+            var word       = "";
+            var key        = "";
+            var id         = "";
+            var rowsJson   = "[]";
+            var hasRows    = false;
+            long rows      = 0;
+            IReadOnlyList<InboxField>? fields = null;
+
+            // Повтор имени в конверте — не наш случай, но поведение на нем менять молча нельзя:
+            // разбор через JsonDocument брал ПЕРВОЕ вхождение, и здесь берется тоже первое.
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+
+            while (true)
+            {
+                var token = cursor.Peek();
+
+                if (token is JsonTokenType.EndObject or JsonTokenType.None) break;
+                if (token != JsonTokenType.PropertyName) throw JsonCursor.Broken();
+
+                var name = cursor.TakeName();
+
+                if (!seen.Add(name)) { cursor.Skip(); continue; }
+
+                switch (name)
+                {
+                    case "collection": collection = Scalar(cursor); break;
+                    case "mode":       word       = Scalar(cursor); break;
+                    case "key":        key        = Scalar(cursor); break;
+                    case "id":         id         = Scalar(cursor); break;
+
+                    case "fields":
+                        if (cursor.Peek() != JsonTokenType.StartArray) { cursor.Skip(); break; }
+                        using (var list = cursor.Take()) fields = ParseFields(list.RootElement);
+                        break;
+
+                    case "rows":
+                        if (cursor.Peek() != JsonTokenType.StartArray) { cursor.Skip(); break; }
+                        hasRows = true;
+
+                        if (rowsFile.Length > 0)
+                        {
+                            rows = cursor.Skip();
+                        }
+                        else
+                        {
+                            using var array = cursor.Take();
+                            rowsJson = array.RootElement.GetRawText();
+                            rows     = array.RootElement.GetArrayLength();
+                        }
+                        break;
+
+                    default: cursor.Skip(); break;   // чужое поле — мимо, и не в память
+                }
+            }
+
             var mode = ModeOf(word);
 
             // Массив записей обязателен у всех режимов, кроме подготовки коллекции: там вместо
             // строк идет состав полей. У незнакомого режима массив не спрашивается тоже —
             // сообщение вернется целиком, и отказ назовет режим, а не отсутствие «rows».
-            var hasRows = root.TryGetProperty("rows", out var rows)
-                          && rows.ValueKind == JsonValueKind.Array;
-
             if (!hasRows && mode is not (InboxMode.EnsureCollection or InboxMode.Unknown))
             {
                 error = "в файле нет массива записей «rows»";
@@ -253,15 +365,39 @@ public sealed record InboxMessage(
             }
 
             return new InboxMessage(
-                Text(root, "collection"),
+                collection,
                 mode,
-                Text(root, "key"),
-                Text(root, "id"),
-                hasRows ? rows.GetRawText() : "[]",
-                hasRows ? rows.GetArrayLength() : 0,
-                ParseFields(root),
-                word);
+                key,
+                id,
+                hasRows ? rowsJson : "[]",
+                // Два миллиарда записей в одном сообщении — не обмен, а сбой у отправителя;
+                // счетчик упирается в потолок, а разбираться с таким файлом все равно человеку.
+                (int)Math.Min(int.MaxValue, rows),
+                fields,
+                word,
+                hasRows ? rowsFile : "");
         }
+        catch (ImportException failure)
+        {
+            // Отправителю в квитанции нужен РОД беды — «файл не является JSON»: чинить он пойдет
+            // свою выгрузку. Про развал структуры курсор говорит нашими внутренними словами, и
+            // вместе они читались бы заиканием, поэтому этот случай называется здесь заново.
+            error = failure.Message == JsonCursor.BrokenText
+                ? "файл не является JSON: структура нарушена или файл оборван"
+                : "файл не является JSON: " + failure.Message;
+
+            return null;
+        }
+    }
+
+    /// <summary>Скалярное поле конверта текстом; не строка — пусто, как и было при разборе целиком.</summary>
+    private static string Scalar(JsonCursor cursor)
+    {
+        using var value = cursor.Take();
+
+        return value.RootElement.ValueKind == JsonValueKind.String
+            ? value.RootElement.GetString()?.Trim() ?? ""
+            : "";
     }
 
     /// <summary>
@@ -292,12 +428,8 @@ public sealed record InboxMessage(
     /// или типом: про них скажет <see cref="Problems"/>, и отправитель узнает о своей ошибке из
     /// квитанции, а не по молча пропавшему полю.
     /// </summary>
-    private static IReadOnlyList<InboxField>? ParseFields(JsonElement root)
+    private static IReadOnlyList<InboxField> ParseFields(JsonElement fields)
     {
-        if (!root.TryGetProperty("fields", out var fields)
-            || fields.ValueKind != JsonValueKind.Array)
-            return null;
-
         var parsed = new List<InboxField>();
 
         foreach (var field in fields.EnumerateArray())

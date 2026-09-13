@@ -20,8 +20,6 @@ namespace SmartBase.Core.Importers.TableSources;
 /// </summary>
 public sealed class JsonTableSource(string path, string itemsPath = "") : ITableSource
 {
-    private const int MaxValueBytes = 64 * 1024 * 1024;
-
     private sealed class KeyStat
     {
         public int  Index;      // позиция в union-порядке
@@ -116,173 +114,24 @@ public sealed class JsonTableSource(string path, string itemsPath = "") : ITable
 
     // ── Потоковое чтение значений ─────────────────────────────────────────────
 
-    // Utf8JsonReader — ref struct и не переживает yield, поэтому на каждый шаг он пересоздается
-    // из сохраненного JsonReaderState + буфера. JsonDocument.TryParseValue при нехватке данных
-    // возвращает false и откатывает ридер — буфер дозаполняется (и дорастает под большое значение).
+    // Весь обход токенов живет в JsonCursor: тем же обходом читается конверт входящего сообщения,
+    // и вторая его копия означала бы второе понимание того, где в файле кончается значение.
     private IEnumerable<JsonDocument> ReadValues(IProgress<double>? progress, CancellationToken ct)
     {
         using var fs = ImportErrors.OpenRead(path);
         if (fs.Length == 0) throw new ImportException("Файл пустой — нет данных для импорта.");
         var total = Math.Max(1L, fs.Length);
 
-        var opts   = new JsonReaderOptions { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip };
-        var state  = new JsonReaderState(opts);
-        var buffer = new byte[64 * 1024];
-        var start  = 0;
-        var len    = 0;
-        var final  = false;
+        var cursor = new JsonCursor(fs);
 
-        void Fill()
-        {
-            if (start > 0)
-            {
-                Buffer.BlockCopy(buffer, start, buffer, 0, len - start);
-                len -= start;
-                start = 0;
-            }
-            if (len == buffer.Length)
-            {
-                if (buffer.Length >= MaxValueBytes)
-                    throw new ImportException("Слишком большое значение в JSON (более 64 МБ) — файл не может быть импортирован.");
-                Array.Resize(ref buffer, buffer.Length * 2);
-            }
-            var read = fs.Read(buffer, len, buffer.Length - len);
-            if (read == 0) final = true;
-            len += read;
-        }
+        // Спуск к массиву записей по пути. Поля, встреченные до нужного, пропускаются, не попадая
+        // в память. Сам массив записей так не пропускается: до него мы доходим и дальше читаем
+        // поштучно, ради чего весь этот спуск и написан.
+        cursor.Descend(itemsPath);
 
-        static ImportException Broken() =>
-            new("Файл поврежден или имеет некорректную структуру JSON.");
-
-        static bool WhitespaceOnly(byte[] buf, int start, int len)
-        {
-            for (var i = start; i < len; i++)
-                if (buf[i] is not ((byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n')) return false;
-            return true;
-        }
-
-        // Тип следующего токена, НЕ сдвигая позицию (пробный ридер отбрасывается). None — конец файла.
-        JsonTokenType Peek()
-        {
-            while (true)
-            {
-                // Хвост из одних пробелов/переводов строк: свежий ридер (NDJSON) на таком
-                // остатке при isFinalBlock кидает исключение вместо false — это конец данных.
-                if (final && WhitespaceOnly(buffer, start, len)) return JsonTokenType.None;
-
-                var r = new Utf8JsonReader(buffer.AsSpan(start, len - start), final, state);
-                try { if (r.Read()) return r.TokenType; }
-                catch (JsonException) { throw Broken(); }
-                if (final) return JsonTokenType.None;
-                Fill();
-            }
-        }
-
-        // Считать один токен (сдвинуть позицию).
-        void Consume()
-        {
-            while (true)
-            {
-                var r = new Utf8JsonReader(buffer.AsSpan(start, len - start), final, state);
-                bool ok;
-                try { ok = r.Read(); }
-                catch (JsonException) { throw Broken(); }
-                if (ok)
-                {
-                    state = r.CurrentState;
-                    start += (int)r.BytesConsumed;
-                    return;
-                }
-                if (final) throw Broken();
-                Fill();
-            }
-        }
-
-        // Считать одно полное значение (объект/массив/скаляр) как JsonDocument.
-        JsonDocument Take()
-        {
-            while (true)
-            {
-                var r = new Utf8JsonReader(buffer.AsSpan(start, len - start), final, state);
-                try
-                {
-                    // Сначала встать НА первый токен значения тем же ридером: TryParseValue по
-                    // возобновленному состоянию принял бы «текущим» уже съеденный чужой токен
-                    // (StartArray внешнего массива) и распарсил бы не тот диапазон.
-                    if (r.Read() && JsonDocument.TryParseValue(ref r, out var doc))
-                    {
-                        state = r.CurrentState;
-                        start += (int)r.BytesConsumed;
-                        return doc;
-                    }
-                }
-                catch (JsonException) { throw Broken(); }
-                if (final) throw Broken();   // файл оборвался посреди значения
-                Fill();
-            }
-        }
-
-        // Имя текущего свойства (сдвигает позицию). Отдельно от Consume, потому что имя надо
-        // сравнить: спуск по пути идет по именам, а не по порядку полей.
-        string TakeName()
-        {
-            while (true)
-            {
-                var r = new Utf8JsonReader(buffer.AsSpan(start, len - start), final, state);
-                bool    ok;
-                string? name = null;
-
-                try
-                {
-                    ok = r.Read();
-                    if (ok) name = r.GetString();
-                }
-                catch (JsonException) { throw Broken(); }
-
-                if (ok)
-                {
-                    state  = r.CurrentState;
-                    start += (int)r.BytesConsumed;
-                    return name ?? "";
-                }
-
-                if (final) throw Broken();
-                Fill();
-            }
-        }
-
-        Fill();
-        if (len >= 3 && buffer[0] == 0xEF && buffer[1] == 0xBB && buffer[2] == 0xBF) start = 3;   // UTF-8 BOM
-
-        // Спуск к массиву записей по пути. Поля, встреченные до нужного, пропускаются ЦЕЛИКОМ —
-        // это скаляры конверта (коллекция, режим, ключ сопоставления), и они малы. Сам массив
-        // записей так не пропускается: до него мы доходим и дальше читаем поштучно, ради чего
-        // весь этот спуск и написан.
-        foreach (var segment in (itemsPath ?? "").Split('.', StringSplitOptions.RemoveEmptyEntries))
-        {
-            if (Peek() != JsonTokenType.StartObject)
-                throw new ImportException($"Некорректный JSON: ожидался объект с полем «{segment}».");
-
-            Consume();
-
-            while (true)
-            {
-                var token = Peek();
-
-                if (token is JsonTokenType.EndObject or JsonTokenType.None)
-                    throw new ImportException($"В файле нет поля «{segment}» — записи не найдены.");
-
-                if (token != JsonTokenType.PropertyName) throw Broken();
-
-                if (string.Equals(TakeName(), segment, StringComparison.Ordinal)) break;
-
-                Take().Dispose();   // чужое поле целиком — мимо
-            }
-        }
-
-        var first = Peek();
+        var first = cursor.Peek();
         bool isArray;
-        if (first == JsonTokenType.StartArray) { isArray = true; Consume(); }
+        if (first == JsonTokenType.StartArray) { isArray = true; cursor.Consume(); }
         else if (first == JsonTokenType.StartObject) isArray = false;
         else throw new ImportException(
             "Некорректный JSON: ожидается массив объектов [{…}] или NDJSON (объект в каждой строке).");
@@ -292,22 +141,22 @@ public sealed class JsonTableSource(string path, string itemsPath = "") : ITable
         {
             ct.ThrowIfCancellationRequested();
 
-            var t = Peek();
+            var t = cursor.Peek();
             if (isArray && t == JsonTokenType.EndArray) yield break;
             if (t == JsonTokenType.None)
             {
-                if (isArray) throw Broken();   // файл оборвался до закрывающей ]
+                if (isArray) throw JsonCursor.Broken();   // файл оборвался до закрывающей ]
                 yield break;
             }
 
-            var doc = Take();
+            var doc = cursor.Take();
             // NDJSON — последовательность независимых верхнеуровневых значений: состояние ридера
             // сбрасывается перед каждым следующим (иначе «лишний» токен после первого значения).
-            if (!isArray) state = new JsonReaderState(opts);
+            if (!isArray) cursor.Restart();
 
             if (progress is not null)
             {
-                var consumed = fs.Position - (len - start);   // прочитано минус необработанный остаток
+                var consumed = cursor.Position;
                 var pct = (int)(consumed * 100 / total);
                 if (pct != lastPct) { progress.Report(Math.Min(1.0, consumed / (double)total)); lastPct = pct; }
             }

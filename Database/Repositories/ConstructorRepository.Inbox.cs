@@ -278,6 +278,12 @@ public partial class ConstructorRepository
             {
                 missing++;
             }
+
+            // То же правило, что у укладки ответа (см. ApplyRows): удаленное уже удалено,
+            // и держать за ним в трекере EF строки журнала изменений незачем. Без этой строки
+            // время росло КВАДРАТИЧНО — EF на каждом SaveChanges обходит весь накопленный
+            // список, — и удаление тысяч записей упиралось не в базу, а в этот обход.
+            ctx.ChangeTracker.Clear();
         }
 
         return new InboxErase(deleted, missing, ambiguous, empty);
