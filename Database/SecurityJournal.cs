@@ -44,6 +44,15 @@ public enum SecurityEvent
     /// момента отвечать за него некому, и запись — единственное, что об этом помнит.
     /// </summary>
     Reveal,
+
+    /// <summary>
+    /// Из журнала удалены строки старше срока, названного политикой организации
+    /// (docs/ROADMAP-API.md, 10.10). Событие пишется В САМ ЖУРНАЛ и не случайно: проверяющий,
+    /// увидевший, что записей за прошлый год нет, обязан прочитать здесь, что их удалила
+    /// программа по правилу организации, а не кто-то руками. Строка называет и сколько удалено,
+    /// и с каким сроком.
+    /// </summary>
+    Trim,
 }
 
 /// <summary>
@@ -176,8 +185,10 @@ public sealed record SecurityFilter(
 ///   (<see cref="Verify"/>) назовет первую разошедшуюся. Цепочка не защищает от удаления файла
 ///   целиком — от этого спасает только копия в папке аудита организации (10.6), и делать вид,
 ///   что хэши закрывают и это, нельзя.</item>
-///   <item><b>Пользователь его не чистит.</b> Ни кнопки, ни метода: журнал, который чистит тот,
-///   за кем он ведется, не журнал. Ротация придет вместе с правилами политики.</item>
+///   <item><b>Пользователь его не чистит.</b> Ни кнопки, ни пункта меню: журнал, который чистит
+///   тот, за кем он ведется, не журнал. Убирается он только по сроку из файла политики
+///   (<see cref="Trim"/>, поле <c>journalKeepDays</c>), и уборка оставляет в самом журнале строку
+///   о себе, а в цепочке — шов, по которому проверка продолжает счет.</item>
 ///   <item><b>Не записалось — не отправляем.</b> Это правило живет в шлюзе, но начинается здесь:
 ///   <see cref="Write"/> честно возвращает 0, когда строка не легла, и НЕ глушит сбой молча, как
 ///   рабочий журнал. Отправка, о которой не осталось следа, — ровно то, чего требование службы
@@ -237,6 +248,19 @@ public sealed class SecurityJournal
                 Hash        TEXT    NOT NULL
             );
             CREATE INDEX IF NOT EXISTS events_at ON events (At);
+
+            -- ШОВ ЦЕПОЧКИ после уборки по сроку. Без него удаление старых строк ломало бы
+            -- проверку: у самой ранней уцелевшей строки «предыдущий хэш» указывает на строку,
+            -- которой больше нет, и Verify честно назвал бы ее испорченной. Здесь лежит хэш
+            -- ПОСЛЕДНЕЙ удаленной строки — с него проверка и начинает считать.
+            CREATE TABLE IF NOT EXISTS trims (
+                Id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                At       TEXT    NOT NULL,
+                UpToId   INTEGER NOT NULL,
+                LastHash TEXT    NOT NULL,
+                Removed  INTEGER NOT NULL,
+                KeepDays INTEGER NOT NULL
+            );
             """;
 
         command.ExecuteNonQuery();
@@ -326,6 +350,122 @@ public sealed class SecurityJournal
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = "SELECT Hash FROM events ORDER BY Id DESC LIMIT 1;";
+
+        return command.ExecuteScalar() as string ?? "";
+    }
+
+    // ── Уборка по сроку политики ──────────────────────────────────────────────
+
+    /// <summary>
+    /// Удалить строки старше срока, названного политикой организации (docs/ROADMAP-API.md, 10.10).
+    /// Возвращает, сколько строк удалено; 0 — удалять было нечего либо срок не назначен.
+    ///
+    /// <b>Кнопки для этого нет и не будет.</b> Журнал, который чистит тот, за кем он ведется, —
+    /// не журнал. Срок назначает файл политики, пользователь его не правит, а программа лишь
+    /// исполняет: это ровно то, чего второе правило журнала и требовало, когда говорило «ротация
+    /// придет вместе с правилами политики».
+    ///
+    /// <b>Цепочка при этом не рвется.</b> Наивное удаление сломало бы проверку: у самой ранней
+    /// уцелевшей строки «предыдущий хэш» указывал бы на строку, которой больше нет, и
+    /// <see cref="Verify"/> честно назвал бы ЧЕСТНУЮ строку испорченной — а проверка, которая
+    /// врет после штатной уборки, хуже отсутствия проверки. Поэтому в таблице <c>trims</c>
+    /// остается шов: хэш последней удаленной строки, с которого проверка продолжает счет.
+    ///
+    /// <b>В самом журнале остается строка о том, что уборка была</b> — с числом удаленных и
+    /// сроком. Проверяющий, не нашедший записей за прошлый год, обязан прочитать, куда они
+    /// делись, в том же файле, а не догадываться.
+    ///
+    /// Шов и удаление идут ОДНОЙ транзакцией: удаление без шва оставило бы журнал непроверяемым.
+    /// </summary>
+    /// <param name="keepDays">Сколько дней хранить; 0 и меньше — не убирать ничего.</param>
+    /// <param name="now">Момент уборки; от него отсчитывается срок.</param>
+    public int Trim(int keepDays, DateTimeOffset now)
+    {
+        if (keepDays <= 0) return 0;
+
+        var cutoff = now.ToUniversalTime().AddDays(-keepDays)
+                        .ToString("o", CultureInfo.InvariantCulture);
+
+        try
+        {
+            long removed;
+            int  keep = keepDays;
+
+            lock (_lock)
+            {
+                using var connection  = Open();
+                using var transaction = connection.BeginTransaction();
+
+                // Граница: последняя строка, которая под срок уже не подходит. Берется ключ, а не
+                // дата: время в строках — текст, и сравнение по ключу после однократного отбора
+                // надежнее повторного сравнения строк.
+                using var edge = connection.CreateCommand();
+                edge.Transaction = transaction;
+                edge.CommandText = "SELECT Id, Hash FROM events WHERE At < $cutoff "
+                                 + "ORDER BY Id DESC LIMIT 1;";
+                edge.Parameters.AddWithValue("$cutoff", cutoff);
+
+                long   upTo = 0;
+                string hash = "";
+
+                using (var reader = edge.ExecuteReader())
+                    if (reader.Read())
+                    {
+                        upTo = reader.GetInt64(0);
+                        hash = reader.GetString(1);
+                    }
+
+                if (upTo == 0) return 0;
+
+                using var cut = connection.CreateCommand();
+                cut.Transaction = transaction;
+                cut.CommandText = "DELETE FROM events WHERE Id <= $upTo;";
+                cut.Parameters.AddWithValue("$upTo", upTo);
+                removed = cut.ExecuteNonQuery();
+
+                using var seam = connection.CreateCommand();
+                seam.Transaction = transaction;
+                seam.CommandText = """
+                    INSERT INTO trims (At, UpToId, LastHash, Removed, KeepDays)
+                    VALUES ($at, $upTo, $hash, $removed, $keep);
+                    """;
+                seam.Parameters.AddWithValue("$at",      now.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture));
+                seam.Parameters.AddWithValue("$upTo",    upTo);
+                seam.Parameters.AddWithValue("$hash",    hash);
+                seam.Parameters.AddWithValue("$removed", removed);
+                seam.Parameters.AddWithValue("$keep",    keep);
+                seam.ExecuteNonQuery();
+
+                transaction.Commit();
+            }
+
+            // Строка о самой уборке пишется ПОСЛЕ и обычным путем: она продолжает цепочку с
+            // уцелевшего хвоста и сама под уборку не попадает — ей ноль дней от роду.
+            Write(SecurityEntry.New(
+                SecurityEvent.Trim, allowed: true, who: "программа", scenario: "",
+                address: Path, fields: "", rows: (int)Math.Min(int.MaxValue, removed), bytes: 0,
+                bodyHash: "",
+                explanation: $"по сроку политики организации ({keep} дн.) удалено строк: {removed:N0}",
+                dbId: 0, at: now));
+
+            return (int)Math.Min(int.MaxValue, removed);
+        }
+        catch (SqliteException failure)
+        {
+            Serilog.Log.Warning("Журнал безопасности: уборка по сроку не прошла — {Reason:l}",
+                                failure.Message);
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// Хэш, с которого начинается уцелевшая часть цепочки: последний шов уборки. Пусто — уборок
+    /// не было, и цепочка начинается с нуля, как у нового файла.
+    /// </summary>
+    private static string SeamHash(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT LastHash FROM trims ORDER BY UpToId DESC LIMIT 1;";
 
         return command.ExecuteScalar() as string ?? "";
     }
@@ -517,6 +657,7 @@ public sealed class SecurityJournal
         SecurityEvent.Listen    => "порт приема",
         SecurityEvent.Read      => "чтение по выдаче",
         SecurityEvent.Reveal    => "показан секрет соединения",
+        SecurityEvent.Trim      => "уборка журнала по сроку политики",
         _                       => "ручная выгрузка данных",
     };
 
@@ -669,7 +810,10 @@ public sealed class SecurityJournal
 
                 command.CommandText = Select + " ORDER BY Id;";
 
-                var previous = "";
+                // Счет начинается со шва, если уборка по сроку политики уже была: иначе самая
+                // ранняя уцелевшая строка ссылалась бы на удаленную, и честная строка сошла бы
+                // за испорченную.
+                var previous = SeamHash(connection);
 
                 foreach (var row in Read(command))
                 {

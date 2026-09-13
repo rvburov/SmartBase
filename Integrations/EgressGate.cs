@@ -50,6 +50,12 @@ public enum EgressDenyReason
 
     /// <summary>Выбран потолок объема за сутки.</summary>
     TooManyBytes,
+
+    /// <summary>Прокси организации записан в политике так, что им нельзя воспользоваться.</summary>
+    BadProxy,
+
+    /// <summary>Два источника политики назвали РАЗНЫЕ прокси — ходить не через что.</summary>
+    ProxyConflict,
 }
 
 /// <summary>
@@ -92,6 +98,14 @@ public sealed record EgressDecision(bool Allowed, EgressDenyReason Reason, strin
     private static readonly EgressDecision Ok = new(true, EgressDenyReason.None, "разрешено политикой");
 
     public static EgressDecision Allow() => Ok;
+
+    /// <summary>
+    /// Разрешено, но НЕ белым списком. Текст уезжает в журнал безопасности, и там разница
+    /// принципиальна: «разрешено политикой» и «политика позволила пользователю дописать адрес
+    /// самому» — два разных ответа проверяющему на вопрос, кто решил пустить этот запрос.
+    /// </summary>
+    public static EgressDecision AllowBecause(string explanation) =>
+        new(true, EgressDenyReason.None, explanation);
 
     public static EgressDecision Deny(EgressDenyReason reason, string explanation) =>
         new(false, reason, explanation);
@@ -184,11 +198,21 @@ public static class EgressGate
             return EgressDecision.Deny(EgressDenyReason.SchemeNotAllowed,
                 $"схема «{address.Scheme}» не поддерживается: разрешены только http и https");
 
-        if (!_policy.AllowsHost(address.Host))
-            return EgressDecision.Deny(EgressDenyReason.HostNotAllowed,
-                $"адрес «{address.Host}» не входит в белый список организации");
+        if (_policy.AllowsHost(address.Host)) return EgressDecision.Allow();
 
-        return EgressDecision.Allow();
+        // Флаг «пользователю разрешено добавлять адреса» (10.3, по умолчанию выключен). Организация
+        // им говорит: белый список на этой машине — подсказка, а не рамка. Пока флаг ничего не
+        // делал, включить его было нельзя — он просто врал строкой на экране.
+        //
+        // Разрешение это НАЗЫВАЕТСЯ в журнале отдельно от обычного: проверяющему важно отличить
+        // «адрес был в списке организации» от «списка не хватило, но пускать разрешено».
+        if (_policy.UserMayAddHosts)
+            return EgressDecision.AllowBecause(
+                $"адреса «{address.Host}» нет в списке организации, но политика разрешает "
+              + "дописывать адреса на этой машине");
+
+        return EgressDecision.Deny(EgressDenyReason.HostNotAllowed,
+            $"адрес «{address.Host}» не входит в белый список организации");
 #endif
     }
 
@@ -211,23 +235,79 @@ public static class EgressGate
         var gate = CheckPolicyState(today);
         if (!gate.Allowed) return gate;
 
-        if (!_policy.AllowsAddress(address))
+        var listed = _policy.AllowsAddress(address);
+
+        if (!listed && !_policy.UserMayAddHosts)
             return EgressDecision.Deny(EgressDenyReason.AddressNotAllowed,
                 $"адрес {address} не входит в разрешенные сети организации");
 
         // Внутренний режим держится на приватности адреса, а не на списке имен: имя из списка,
         // разрешившееся в публичный адрес, — ровно тот случай, ради которого проверка вторая.
+        //
+        // Режим НЕ уступает флагу «пользователю разрешено добавлять адреса», и это не
+        // непоследовательность: список — рамка организации вокруг адресов, а режим — рамка вокруг
+        // самой машины. Разреши флаг обходить и режим, и «внутренний контур» на машине с этим
+        // флагом перестал бы быть внутренним вовсе.
         if (_policy.Mode == EgressMode.Internal && !NetworkAddress.IsPrivate(address))
             return EgressDecision.Deny(EgressDenyReason.PublicAddressInInternalMode,
                 $"внутренний контур: адрес {address} не из сетей организации");
 
-        return EgressDecision.Allow();
+        return listed
+            ? EgressDecision.Allow()
+            : EgressDecision.AllowBecause(
+                $"адреса {address} нет в сетях организации, но политика разрешает дописывать "
+              + "адреса на этой машине");
 #endif
     }
 
     /// <inheritdoc cref="CheckResolved(IPAddress?, DateOnly)"/>
     public static EgressDecision CheckResolved(IPAddress? address) =>
         CheckResolved(address, DateOnly.FromDateTime(DateTime.Today));
+
+    /// <summary>
+    /// Через какой прокси ходить наружу (docs/ROADMAP-API.md, 10.5). <c>null</c> при разрешенном
+    /// решении — прямое соединение; это состояние по умолчанию.
+    ///
+    /// <b>Прокси называет только политика.</b> Своего пользователь указать не может, и это не
+    /// придирка: через прокси проходит все содержимое запроса целиком, поэтому выбор прокси
+    /// равносилен выбору того, кто это содержимое увидит. Такие решения принимает организация.
+    ///
+    /// <b>Два источника, назвавшие разные прокси, — отказ, а не выбор одного из них.</b> Разные
+    /// прокси означают, что две инстанции не договорились, и пойти через любой значило бы решить
+    /// за них, кому показать данные. Правило то же, что у мастер-пароля: несогласие источников
+    /// запирает дверь, а не открывает ее наполовину.
+    ///
+    /// Адрес прокси проверяется здесь на разбираемость и схему; его ФАКТИЧЕСКИЙ адрес
+    /// проверяется отдельно, там же, где и всякий другой, — <see cref="CheckResolved"/>. Иначе
+    /// подмена DNS на имя прокси уводила бы весь исходящий поток куда угодно, и белый список
+    /// адресов не значил бы ничего.
+    /// </summary>
+    /// <param name="proxy">Адрес прокси; <c>null</c> — прямое соединение.</param>
+    public static EgressDecision CheckProxy(out Uri? proxy)
+    {
+        proxy = null;
+
+        var named = _policy.Proxies;
+
+        if (named.Count == 0) return EgressDecision.Allow();
+
+        if (named.Count > 1)
+            return EgressDecision.Deny(EgressDenyReason.ProxyConflict,
+                "источники политики назвали разные прокси организации ("
+              + string.Join(", ", named) + "): исходящие запрещены, пока они не сойдутся");
+
+        if (!Uri.TryCreate(named[0], UriKind.Absolute, out var parsed))
+            return EgressDecision.Deny(EgressDenyReason.BadProxy,
+                $"адрес прокси «{named[0]}» в политике не разобрался: "
+              + "ожидался вид http://proxy.example:3128");
+
+        if (!AllowedSchemes.Contains(parsed.Scheme, StringComparer.OrdinalIgnoreCase))
+            return EgressDecision.Deny(EgressDenyReason.BadProxy,
+                $"схема прокси «{parsed.Scheme}» не поддерживается: разрешены только http и https");
+
+        proxy = parsed;
+        return EgressDecision.Allow();
+    }
 
     /// <summary>
     /// Проверка пути, куда сценарию разрешено писать и откуда читать. Выгрузка файлом — такой

@@ -509,4 +509,114 @@ public sealed class SecurityJournalTests : IDisposable
         Assert.Single(journal.Page(new SecurityFilter(Event: SecurityEvent.Reveal)));
         Assert.Equal("показан секрет соединения", SecurityJournal.Name(SecurityEvent.Reveal));
     }
+
+    // ── Уборка по сроку политики ──────────────────────────────────────────────
+
+    /// <summary>
+    /// Уборка удаляет старое, оставляет свежее и НЕ ломает проверку цепочки.
+    ///
+    /// Последнее — главное здесь. Наивное удаление оставило бы самую раннюю уцелевшую строку со
+    /// ссылкой на строку, которой больше нет, и <see cref="SecurityJournal.Verify"/> назвал бы
+    /// честную строку испорченной. Проверка, которая врет после штатной уборки, хуже отсутствия
+    /// проверки: ей перестанут верить в тот единственный раз, когда она понадобится.
+    /// </summary>
+    [Fact]
+    public void Trimming_by_policy_keeps_the_chain_verifiable()
+    {
+        var journal = Journal();
+
+        journal.Write(Send("Старый-1", allowed: true,  at: Now.AddDays(-400)));
+        journal.Write(Send("Старый-2", allowed: false, at: Now.AddDays(-380)));
+        journal.Write(Send("Свежий",   allowed: true,  at: Now.AddDays(-10)));
+
+        Assert.Equal(0, journal.Verify());
+
+        Assert.Equal(2, journal.Trim(keepDays: 365, now: Now));
+
+        // Старых нет, свежий на месте, и цепочка по-прежнему цела.
+        var left = journal.Recent().Select(r => r.Scenario).ToList();
+        Assert.DoesNotContain("Старый-1", left);
+        Assert.DoesNotContain("Старый-2", left);
+        Assert.Contains("Свежий", left);
+        Assert.Equal(0, journal.Verify());
+    }
+
+    /// <summary>
+    /// Уборка оставляет в самом журнале строку о себе — с числом удаленных и сроком.
+    ///
+    /// Проверяющий, не нашедший записей за прошлый год, обязан прочитать, куда они делись, в том
+    /// же файле. Молчаливое исчезновение строк неотличимо от подчистки следов, а объяснять его
+    /// потом словами — значит просить поверить на слово.
+    /// </summary>
+    [Fact]
+    public void A_trim_leaves_its_own_line_in_the_journal()
+    {
+        var journal = Journal();
+
+        journal.Write(Send("Старый", allowed: true, at: Now.AddDays(-400)));
+        journal.Write(Send("Свежий", allowed: true, at: Now));
+
+        journal.Trim(keepDays: 365, now: Now);
+
+        var note = journal.Page(new SecurityFilter(Event: SecurityEvent.Trim)).Single();
+
+        Assert.True(note.Allowed);
+        Assert.Contains("365", note.Explanation, StringComparison.Ordinal);
+        Assert.Contains("удалено строк: 1", note.Explanation, StringComparison.Ordinal);
+        Assert.Equal("уборка журнала по сроку политики", SecurityJournal.Name(SecurityEvent.Trim));
+    }
+
+    /// <summary>
+    /// Правка файла руками ловится и ПОСЛЕ уборки. Иначе шов стал бы дырой: подчистив старое по
+    /// сроку, дальше можно было бы править что угодно.
+    /// </summary>
+    [Fact]
+    public void After_a_trim_a_hand_edit_is_still_caught()
+    {
+        var journal = Journal();
+
+        journal.Write(Send("Старый", allowed: true,  at: Now.AddDays(-400)));
+        journal.Write(Send("Первый", allowed: true,  at: Now.AddDays(-5)));
+        journal.Write(Send("Второй", allowed: false, at: Now.AddDays(-4)));
+
+        journal.Trim(keepDays: 365, now: Now);
+
+        // Подменяем содержимое уцелевшей строки, не трогая ее хэш, — самая частая правка.
+        using (var connection = new SqliteConnection($"Data Source={_path}"))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "UPDATE events SET Allowed = 1 WHERE Scenario = 'Второй';";
+            command.ExecuteNonQuery();
+        }
+
+        SqliteConnection.ClearAllPools();
+        Assert.NotEqual(0, Journal().Verify());
+    }
+
+    /// <summary>Срока нет — не удаляется ничего: отсутствие настройки не должно ничего стирать.</summary>
+    [Fact]
+    public void Without_a_term_nothing_is_removed()
+    {
+        var journal = Journal();
+
+        journal.Write(Send("Древний", allowed: true, at: Now.AddDays(-3650)));
+
+        Assert.Equal(0, journal.Trim(keepDays: 0,  now: Now));
+        Assert.Equal(0, journal.Trim(keepDays: -5, now: Now));
+        Assert.Single(journal.Recent());
+    }
+
+    /// <summary>Нечего удалять — уборка молчит: лишняя строка «удалено 0» засоряла бы журнал.</summary>
+    [Fact]
+    public void When_there_is_nothing_to_remove_the_journal_stays_silent()
+    {
+        var journal = Journal();
+
+        journal.Write(Send("Свежий", allowed: true, at: Now));
+
+        Assert.Equal(0, journal.Trim(keepDays: 365, now: Now));
+        Assert.Empty(journal.Page(new SecurityFilter(Event: SecurityEvent.Trim)));
+        Assert.Single(journal.Recent());
+    }
 }

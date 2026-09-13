@@ -55,6 +55,17 @@ public enum EgressMode
 /// несколько человек, и «подтвердил и подтвердил» одним из них — ровно то, от чего этот флаг
 /// бережет. По умолчанию <c>false</c>: организация включает его там, где цена ошибки выше цены
 /// задержки.</param>
+/// <param name="Proxy">Прокси организации: <c>http://proxy.zavod.local:3128</c>; пусто — прямое
+/// соединение (docs/ROADMAP-API.md, 10.5). Называет его ТОЛЬКО политика: свой прокси пользователь
+/// указать не может, потому что прокси — это машина, через которую проходит все содержимое
+/// запроса, и выбор ее равносилен выбору того, кто это содержимое увидит.
+///
+/// В сетях, где прямого выхода нет, без этого поля исходящие не работали вовсе — и выглядело это
+/// не как «политика запрещает», а как «программа не умеет».</param>
+/// <param name="JournalKeepDays">Сколько дней хранить журнал безопасности; 0 — хранить вечно
+/// (docs/ROADMAP-API.md, 10.10). Срок назначает ОРГАНИЗАЦИЯ, а не пользователь: журнал — след
+/// того, что уходило наружу, и дать тому, за кем наблюдают, укоротить срок наблюдения значило бы
+/// отдать ему и уборку следов.</param>
 public sealed record EgressPolicy(
     EgressMode              Mode,
     IReadOnlyList<string>   Hosts,
@@ -69,7 +80,9 @@ public sealed record EgressPolicy(
     string                  MasterHash  = "",
     bool                    AllowListen = false,
     string                  Mirror      = "",
-    bool                    RequireSecondConfirm = false)
+    bool                    RequireSecondConfirm = false,
+    string                  Proxy       = "",
+    int                     JournalKeepDays = 0)
 {
     /// <summary>
     /// Самая строгая политика: наружу нельзя ничего. Ею подменяется любой источник, который
@@ -78,6 +91,9 @@ public sealed record EgressPolicy(
     /// </summary>
     public static EgressPolicy Closed { get; } = new(
         EgressMode.Isolated, [], [], [], 0, 0, 0, null, false, "нет политики");
+
+    /// <summary>Ходит ли этот источник наружу через прокси.</summary>
+    public bool HasProxy => !string.IsNullOrWhiteSpace(Proxy);
 
     /// <summary>Позволяет ли ЭТОТ источник подтверждать исходящие направления.</summary>
     public bool HasMaster => MasterPassword.Defined(MasterHash);
@@ -195,6 +211,34 @@ public sealed class EgressPolicySet
                    .Where(m => !string.IsNullOrWhiteSpace(m))
                    .Select(m => m.Trim())
                    .Distinct(StringComparer.OrdinalIgnoreCase)];
+
+    /// <summary>
+    /// Прокси, названные источниками, — без повторов. Пересечения тут нет и быть не может:
+    /// прокси — это не разрешение, а указание, и оно единственное. Два источника, назвавшие
+    /// РАЗНЫЕ прокси, означают, что две инстанции не договорились между собой, и ходить наружу
+    /// нельзя ни через один из них: выбрать за них — значит выбрать, кто увидит содержимое
+    /// запросов. Разбирается этот случай в <see cref="EgressGate"/>, здесь только список.
+    /// </summary>
+    public IReadOnlyList<string> Proxies =>
+        [.. Sources.Select(p => p.Proxy)
+                   .Where(p => !string.IsNullOrWhiteSpace(p))
+                   .Select(p => p.Trim())
+                   .Distinct(StringComparer.OrdinalIgnoreCase)];
+
+    /// <summary>
+    /// Сколько дней хранить журнал безопасности: САМЫЙ КОРОТКИЙ из названных сроков, а 0 —
+    /// «хранить вечно» и потому в счет не идет. Правило то же, что у прочих рамок: строже
+    /// побеждает. Ни один источник срока не назвал — 0, журнал не чистится вовсе; отсутствие
+    /// настройки не должно ничего удалять.
+    /// </summary>
+    public int JournalKeepDays
+    {
+        get
+        {
+            var named = Sources.Select(p => p.JournalKeepDays).Where(d => d > 0).ToList();
+            return named.Count == 0 ? 0 : named.Min();
+        }
+    }
 
     /// <summary>Имя узла разрешено, только если его разрешает каждый источник.</summary>
     public bool AllowsHost(string? host) =>

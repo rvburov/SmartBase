@@ -21,6 +21,8 @@ namespace SmartBase.Integrations;
 ///   "allowNetworkListen": false,
 ///   "mirror": "P:\\Аудит\\Исходящее",
 ///   "requireSecondConfirm": false,
+///   "proxy": "http://proxy.zavod.local:3128",
+///   "journalKeepDays": 365,
 ///   "masterHash": "pbkdf2$210000$...$..."
 /// }
 /// </code>
@@ -97,6 +99,8 @@ public static class PolicyJson
             if (!TryText(root, "masterHash",         out var master, out error)) return null;
             if (!TryText(root, "mirror",             out var mirror, out error)) return null;
             if (!TryBool(root, "requireSecondConfirm", out var second, out error)) return null;
+            if (!TryText(root, "proxy",              out var proxy,  out error)) return null;
+            if (!TryLong(root, "journalKeepDays",    out var keep,   out error)) return null;
 
             return new EgressPolicy(
                 mode,
@@ -112,7 +116,9 @@ public static class PolicyJson
                 master,
                 listen ?? false,
                 mirror,
-                second ?? false);
+                second ?? false,
+                proxy,
+                (int)Math.Clamp(keep ?? 0, 0, int.MaxValue));
         }
     }
 

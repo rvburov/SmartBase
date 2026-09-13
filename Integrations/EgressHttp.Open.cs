@@ -26,7 +26,8 @@ namespace SmartBase.Integrations;
 /// <item>спрашивает <see cref="EgressGate"/> дважды — по имени и по фактическому адресу;</item>
 /// <item>соединяется РОВНО с проверенным адресом, а не с тем, что даст DNS во второй раз;</item>
 /// <item>не ходит за перенаправлениями: новый адрес шлюза не проходил;</item>
-/// <item>не пользуется прокси: прокси — это адрес, которого нет в белом списке;</item>
+/// <item>пользуется прокси ТОЛЬКО тем, который назвала политика организации, и проверяет его
+///       адрес как всякий другой;</item>
 /// <item>не хранит cookie: чужое состояние между запусками нам не нужно;</item>
 /// <item>проверяет сертификат — всегда, отключить это нечем;</item>
 /// <item>обрезает ответ по потолку: чужая программа не должна уметь занять всю память;</item>
@@ -97,9 +98,17 @@ public static class EgressHttp
         if (!byName.Allowed)
             return EgressResponse.Denied(byName.Reason, byName.Explanation, plan.SafeAddress);
 
+        // Прокси организации: если он назван политикой, соединяемся МЫ с ним, а не с чужой
+        // программой, — значит и проверять адресом надо его. Имя цели при этом проверено выше и
+        // остается обязательным: прокси не разрешение ходить куда угодно, а способ дойти.
+        var viaProxy = EgressGate.CheckProxy(out var proxy);
+        if (!viaProxy.Allowed)
+            return EgressResponse.Denied(viaProxy.Reason, viaProxy.Explanation, plan.SafeAddress);
+
         var watch = Stopwatch.StartNew();
 
-        var pinned = await ResolveAndCheckAsync(plan, ct);
+        var target = proxy ?? plan.Address;
+        var pinned = await ResolveAndCheckAsync(target, ct);
         if (pinned.Address is null)
             return EgressResponse.Denied(pinned.Reason, pinned.Explanation, plan.SafeAddress);
 
@@ -113,7 +122,7 @@ public static class EgressHttp
         {
             try
             {
-                return await OnceAsync(plan, pinned.Address, attempt, watch, ceiling, ct);
+                return await OnceAsync(plan, pinned.Address, target.Port, proxy, attempt, watch, ceiling, ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -144,13 +153,16 @@ public static class EgressHttp
     ///
     /// Адрес запоминается и дальше используется именно он — иначе защита была бы показной:
     /// проверили одно, соединились с тем, что DNS отдаст в следующий раз.
+    ///
+    /// <paramref name="target"/> — то, с чем мы СОЕДИНЯЕМСЯ, а это не всегда адрес чужой
+    /// программы: при прокси организации соединение идет с прокси, и проверять надо его адрес.
     /// </summary>
     private static async Task<(IPAddress? Address, EgressDenyReason Reason, string Explanation)>
-        ResolveAndCheckAsync(EgressPlan plan, CancellationToken ct)
+        ResolveAndCheckAsync(Uri target, CancellationToken ct)
     {
         IPAddress[] candidates;
 
-        if (IPAddress.TryParse(plan.Address.Host.Trim('[', ']'), out var literal))
+        if (IPAddress.TryParse(target.Host.Trim('[', ']'), out var literal))
         {
             candidates = [literal];
         }
@@ -158,17 +170,17 @@ public static class EgressHttp
         {
             try
             {
-                candidates = await Dns.GetHostAddressesAsync(plan.Address.Host, ct);
+                candidates = await Dns.GetHostAddressesAsync(target.Host, ct);
             }
             catch (Exception error) when (error is SocketException or ArgumentException)
             {
                 return (null, EgressDenyReason.BadAddress,
-                        $"имя «{plan.Address.Host}» не разрешилось: {error.Message}");
+                        $"имя «{target.Host}» не разрешилось: {error.Message}");
             }
         }
 
         if (candidates.Length == 0)
-            return (null, EgressDenyReason.BadAddress, $"имя «{plan.Address.Host}» не разрешилось");
+            return (null, EgressDenyReason.BadAddress, $"имя «{target.Host}» не разрешилось");
 
         // Берется первый РАЗРЕШЕННЫЙ, а не первый попавшийся: у имени может быть и адрес IPv6,
         // и адрес IPv4, а в политике перечислена одна из сетей. Отказ по такому поводу выглядел
@@ -187,9 +199,10 @@ public static class EgressHttp
     // ── Одна попытка ──────────────────────────────────────────────────────────
 
     private static async Task<EgressResponse> OnceAsync(
-        EgressPlan plan, IPAddress pinned, int attempt, Stopwatch watch, long ceiling, CancellationToken ct)
+        EgressPlan plan, IPAddress pinned, int port, Uri? proxy,
+        int attempt, Stopwatch watch, long ceiling, CancellationToken ct)
     {
-        using var handler = HandlerFor(plan, pinned);
+        using var handler = HandlerFor(plan, pinned, port, proxy);
         using var client  = new HttpClient(handler, disposeHandler: false)
         {
             Timeout = TimeSpan.FromSeconds(plan.TimeoutSeconds),
@@ -227,19 +240,22 @@ public static class EgressHttp
     /// <summary>
     /// Клиент, соединяющийся ровно с проверенным адресом. Свой на каждый вызов: пул соединений
     /// пережил бы смену закрепленного адреса и однажды отправил бы запрос по старому.
+    ///
+    /// <paramref name="pinned"/> и <paramref name="port"/> — это то, куда идет ТСР-соединение: сама
+    /// чужая программа либо прокси организации. При прокси имя цели остается в самом запросе, и
+    /// разрешает его прокси, а не мы, — потому и проверять адресом мы можем только прокси.
     /// </summary>
-    private static SocketsHttpHandler HandlerFor(EgressPlan plan, IPAddress pinned)
+    private static SocketsHttpHandler HandlerFor(EgressPlan plan, IPAddress pinned, int port, Uri? proxy)
     {
-        var port = plan.Address.Port;
-
         return new SocketsHttpHandler
         {
             // Перенаправление — это новый адрес, а его шлюз не проверял.
             AllowAutoRedirect = false,
 
-            // Прокси — это тоже адрес, и в белом списке его нет.
-            UseProxy = false,
-            Proxy    = null,
+            // Прокси — только тот, который назвала политика организации. Своего у пользователя
+            // нет и быть не может: через прокси проходит содержимое запроса целиком.
+            UseProxy = proxy is not null,
+            Proxy    = proxy is null ? null : new WebProxy(proxy) { BypassProxyOnLocal = false },
 
             // Чужое состояние между запусками нам не нужно.
             UseCookies = false,

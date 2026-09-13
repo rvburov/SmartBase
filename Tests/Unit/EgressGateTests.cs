@@ -354,4 +354,145 @@ public sealed class EgressGateTests
         Assert.False(decision.Allowed);
         Assert.Equal(EgressDenyReason.PolicyExpired, decision.Reason);
     }
+
+    // ── Пользователь дописывает адреса сам ────────────────────────────────────
+
+    /// <summary>
+    /// Флаг «пользователю разрешено добавлять адреса» (10.3) действительно снимает белый список.
+    ///
+    /// Пока он ничего не делал, включить его было нельзя: строка на экране обещала одно, а
+    /// программа делала другое. Флаг по умолчанию выключен — организация включает его там, где
+    /// список адресов ведут не централизованно.
+    /// </summary>
+    [Fact]
+    public void When_the_policy_lets_the_user_add_addresses_the_list_stops_being_a_fence()
+    {
+        Attach(Policy(hosts: ["api.zavod.local"]) with { UserMayAddHosts = true });
+
+        var decision = EgressGate.Check(Address("https://api.postavshik.example/orders"), Today);
+
+        Assert.True(decision.Allowed);
+
+        // Разрешение НАЗЫВАЕТСЯ иначе, и это не косметика: текст уезжает в журнал безопасности,
+        // и проверяющий должен отличать «адрес был в списке организации» от «списка не хватило».
+        Assert.Contains("дописывать адреса", decision.Explanation, StringComparison.Ordinal);
+    }
+
+    /// <summary>Без флага тот же адрес — отказ: поведение по умолчанию не изменилось.</summary>
+    [Fact]
+    public void Without_the_flag_the_list_is_still_a_fence()
+    {
+        Attach(Policy(hosts: ["api.zavod.local"]));
+
+        var decision = EgressGate.Check(Address("https://api.postavshik.example/orders"), Today);
+
+        Assert.False(decision.Allowed);
+        Assert.Equal(EgressDenyReason.HostNotAllowed, decision.Reason);
+    }
+
+    /// <summary>
+    /// Режим контура флагу НЕ уступает. Список — рамка вокруг адресов, режим — рамка вокруг самой
+    /// машины: разреши флаг обходить и его, и «внутренний контур» перестал бы быть внутренним.
+    /// </summary>
+    [Fact]
+    public void The_flag_does_not_open_the_internal_mode()
+    {
+        Attach(Policy(mode: EgressMode.Internal, networks: ["10.0.0.0/8"])
+               with { UserMayAddHosts = true });
+
+        var decision = EgressGate.CheckResolved(IPAddress.Parse("93.184.216.34"), Today);
+
+        Assert.False(decision.Allowed);
+        Assert.Equal(EgressDenyReason.PublicAddressInInternalMode, decision.Reason);
+    }
+
+    /// <summary>Разрешают флаг все источники или никто — правило пересечения общее.</summary>
+    [Fact]
+    public void One_source_is_not_enough_to_let_the_user_add_addresses()
+    {
+        Attach(Policy(hosts: ["api.zavod.local"]) with { UserMayAddHosts = true },
+               Policy(hosts: ["api.zavod.local"]));
+
+        Assert.False(EgressGate.Check(Address("https://api.postavshik.example/x"), Today).Allowed);
+    }
+
+    // ── Прокси организации ────────────────────────────────────────────────────
+
+    /// <summary>Прокси не назван — прямое соединение; это состояние по умолчанию.</summary>
+    [Fact]
+    public void Without_a_proxy_connections_are_direct()
+    {
+        Attach(Policy(hosts: ["api.zavod.local"]));
+
+        Assert.True(EgressGate.CheckProxy(out var proxy).Allowed);
+        Assert.Null(proxy);
+    }
+
+    /// <summary>Назван один — им и ходим.</summary>
+    [Fact]
+    public void A_named_proxy_is_taken_as_is()
+    {
+        Attach(Policy(hosts: ["api.zavod.local"]) with { Proxy = "http://proxy.zavod.local:3128" });
+
+        Assert.True(EgressGate.CheckProxy(out var proxy).Allowed);
+        Assert.NotNull(proxy);
+        Assert.Equal("proxy.zavod.local", proxy!.Host);
+        Assert.Equal(3128, proxy.Port);
+    }
+
+    /// <summary>
+    /// Два источника назвали РАЗНЫЕ прокси — отказ, а не выбор одного из них.
+    ///
+    /// Через прокси проходит содержимое запроса целиком, поэтому выбрать за не договорившиеся
+    /// инстанции значило бы решить за них, кому показать данные. Правило то же, что у
+    /// мастер-пароля: несогласие источников запирает дверь, а не открывает наполовину.
+    /// </summary>
+    [Fact]
+    public void Two_different_proxies_close_the_door()
+    {
+        Attach(Policy(hosts: ["api.zavod.local"]) with { Proxy = "http://proxy-1.zavod.local:3128" },
+               Policy(hosts: ["api.zavod.local"]) with { Proxy = "http://proxy-2.zavod.local:3128" });
+
+        var decision = EgressGate.CheckProxy(out var proxy);
+
+        Assert.False(decision.Allowed);
+        Assert.Equal(EgressDenyReason.ProxyConflict, decision.Reason);
+        Assert.Null(proxy);
+    }
+
+    /// <summary>Один и тот же прокси у двух источников — согласие, а не конфликт.</summary>
+    [Fact]
+    public void The_same_proxy_named_twice_is_not_a_conflict()
+    {
+        Attach(Policy(hosts: ["api.zavod.local"]) with { Proxy = "http://proxy.zavod.local:3128" },
+               Policy(hosts: ["api.zavod.local"]) with { Proxy = "HTTP://Proxy.Zavod.Local:3128" });
+
+        Assert.True(EgressGate.CheckProxy(out var proxy).Allowed);
+        Assert.NotNull(proxy);
+    }
+
+    /// <summary>Неразбираемый адрес прокси — отказ словами, а не тихое прямое соединение.</summary>
+    [Fact]
+    public void A_proxy_that_does_not_parse_is_refused_in_words()
+    {
+        Attach(Policy(hosts: ["api.zavod.local"]) with { Proxy = "proxy.zavod.local:3128" });
+
+        var decision = EgressGate.CheckProxy(out var proxy);
+
+        Assert.False(decision.Allowed);
+        Assert.Equal(EgressDenyReason.BadProxy, decision.Reason);
+        Assert.Null(proxy);
+    }
+
+    /// <summary>Схема прокси — только http и https: остальное не прокси, а способ уйти мимо двери.</summary>
+    [Fact]
+    public void A_proxy_with_a_foreign_scheme_is_refused()
+    {
+        Attach(Policy(hosts: ["api.zavod.local"]) with { Proxy = "socks5://proxy.zavod.local:1080" });
+
+        var decision = EgressGate.CheckProxy(out _);
+
+        Assert.False(decision.Allowed);
+        Assert.Equal(EgressDenyReason.BadProxy, decision.Reason);
+    }
 }

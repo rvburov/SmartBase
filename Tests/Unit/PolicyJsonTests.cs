@@ -234,4 +234,54 @@ public sealed class PolicyJsonTests
         Assert.False(policy!.HasMaster);
         Assert.False(EgressPolicySet.Of(policy).MasterMatches(""));
     }
+
+    // ── Прокси и срок хранения журнала ────────────────────────────────────────
+
+    /// <summary>Оба новых поля читаются; отсутствуют — прямое соединение и вечное хранение.</summary>
+    [Fact]
+    public void The_proxy_and_the_journal_term_are_read()
+    {
+        var named = PolicyJson.Parse("""
+            {"mode":"external","proxy":"http://proxy.zavod.local:3128","journalKeepDays":365}
+            """, Source, out var error);
+
+        Assert.Equal("", error);
+        Assert.Equal("http://proxy.zavod.local:3128", named!.Proxy);
+        Assert.True(named.HasProxy);
+        Assert.Equal(365, named.JournalKeepDays);
+
+        var plain = PolicyJson.Parse("""{"mode":"external"}""", Source, out _);
+
+        Assert.Equal("", plain!.Proxy);
+        Assert.False(plain.HasProxy);
+        Assert.Equal(0, plain.JournalKeepDays);
+    }
+
+    /// <summary>Не тот тип — отказ разбора целиком, как и у всех прочих полей.</summary>
+    [Fact]
+    public void A_proxy_of_the_wrong_type_refuses_the_whole_file()
+    {
+        Assert.Null(PolicyJson.Parse("""{"mode":"external","proxy":3128}""", Source, out var error));
+        Assert.Contains("proxy", error, StringComparison.Ordinal);
+
+        Assert.Null(PolicyJson.Parse("""{"mode":"external","journalKeepDays":"год"}""",
+                                     Source, out var second));
+        Assert.Contains("journalKeepDays", second, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Срок хранения журнала у набора — САМЫЙ КОРОТКИЙ из названных, а 0 значит «вечно» и в счет
+    /// не идет. Иначе источник, промолчавший о сроке, отменял бы срок, назначенный другим.
+    /// </summary>
+    [Fact]
+    public void The_shortest_journal_term_wins_and_silence_is_not_a_term()
+    {
+        var year  = PolicyJson.Parse("""{"mode":"external","journalKeepDays":365}""", Source, out _)!;
+        var month = PolicyJson.Parse("""{"mode":"external","journalKeepDays":30}""",  Source, out _)!;
+        var mute  = PolicyJson.Parse("""{"mode":"external"}""",                        Source, out _)!;
+
+        Assert.Equal(30,  EgressPolicySet.Of(year, month).JournalKeepDays);
+        Assert.Equal(365, EgressPolicySet.Of(year, mute).JournalKeepDays);
+        Assert.Equal(0,   EgressPolicySet.Of(mute).JournalKeepDays);
+    }
 }

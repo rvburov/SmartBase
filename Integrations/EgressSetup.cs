@@ -53,7 +53,45 @@ public static class EgressSetup
 
         EgressGate.AttachPolicy(result.Set);
         Report(result);
+        TidyJournal();
         return Last = result;
+    }
+
+    /// <summary>
+    /// Убрать из журнала безопасности строки старше срока, названного политикой
+    /// (docs/ROADMAP-API.md, 10.10). Возвращает, сколько удалено.
+    ///
+    /// Зовется в двух местах, и оба нужны: из <see cref="Init"/> — чтобы «Перечитать политику»
+    /// применяло новый срок сразу, и из старта приложения — потому что при первом чтении
+    /// политики журнал еще не открыт. Отдельного таймера уборки нет намеренно: срок живет в
+    /// файле политики, и второе место, где программа его помнит, однажды с ним разошлось бы.
+    /// Журнал пишется только на этой машине и растет медленно — сутки задержки ничего не меняют.
+    ///
+    /// Сбой уборки ничего не останавливает: это обслуживание, а не рубеж, и потерять из-за нее
+    /// запуск программы было бы хуже, чем оставить журнал длиннее положенного.
+    /// </summary>
+    public static int TidyJournal()
+    {
+        var keep = Last.Set.JournalKeepDays > 0 ? Last.Set.JournalKeepDays
+                                                : EgressGate.Policy.JournalKeepDays;
+
+        if (keep <= 0 || Database.SecurityJournal.Current is not { } journal) return 0;
+
+        try
+        {
+            var removed = journal.Trim(keep, DateTimeOffset.Now);
+
+            if (removed > 0)
+                Log.Information("Журнал безопасности: по сроку политики ({Days} дн.) удалено строк {Rows}",
+                                keep, removed);
+
+            return removed;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Журнал безопасности: уборка по сроку политики не прошла");
+            return 0;
+        }
     }
 
     private static void Report(PolicyLoadResult result)

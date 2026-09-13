@@ -167,6 +167,8 @@ public static class IntegrationsPassport
             text.AppendLine($"    запусков в час    не больше {policy.MaxRunsPerHour:N0}");
             text.AppendLine($"    адреса самому     {(policy.UserMayAddHosts ? "разрешено дописывать" : "дописывать запрещено")}");
             text.AppendLine($"    два подтверждения {(policy.RequiresSecondConfirm ? "требуются" : "не требуются")}");
+            text.AppendLine($"    прокси            {Proxy(policy)}");
+            text.AppendLine($"    журнал хранится   {(policy.JournalKeepDays > 0 ? $"{policy.JournalKeepDays:N0} дн." : "без срока")}");
         }
 
         text.AppendLine();
@@ -585,4 +587,17 @@ public static class IntegrationsPassport
     private static string Join(IReadOnlyList<string> values) => Sizes.List(values);
 
     private static string Size(long bytes) => Sizes.Text(bytes);
+
+    /// <summary>
+    /// Прокси организации словами. Несогласие источников названо ОТДЕЛЬНОЙ строкой, а не
+    /// перечислением: по паспорту сверяют то, что программа делает, а при разных прокси она не
+    /// делает ничего — исходящие заперты, и читающий должен увидеть именно это.
+    /// </summary>
+    private static string Proxy(EgressPolicySet policy) => policy.Proxies.Count switch
+    {
+        0 => "нет, соединения прямые",
+        1 => policy.Proxies[0],
+        _ => "ИСТОЧНИКИ НАЗВАЛИ РАЗНЫЕ (" + string.Join(", ", policy.Proxies)
+           + ") — исходящие запрещены",
+    };
 }

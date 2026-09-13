@@ -95,6 +95,12 @@ public partial class App : Application
             {
                 Database.SecurityJournal.Attach(
                     new Database.SecurityJournal(AppSettings.SecurityJournalPath));
+
+                // Уборка по сроку из политики — только ЗДЕСЬ, после того как журнал открыт.
+                // Политика читается раньше (строка выше), и звать уборку оттуда нельзя: журнала
+                // в тот момент еще нет. Срок при этом по-прежнему живет в одном месте — в файле
+                // политики, и программа лишь исполняет его.
+                Integrations.EgressSetup.TidyJournal();
             }
             catch (Exception ex)
             {
