@@ -10,8 +10,15 @@ namespace SmartBase.Core.Importers.TableSources;
 /// появления. Название записи — ключ «Название», name или title (без учета регистра), иначе первый
 /// ключ первого объекта. Скаляры сохраняются текстом как в файле (числа/булевы — сырой токен),
 /// null → пусто, вложенные объекты/массивы → сырой JSON-текст.
+///
+/// <paramref name="itemsPath"/> — путь к массиву записей внутри файла, точками: <c>rows</c>,
+/// <c>data.items</c>. Пусто — записями считается сам файл. Написание пути то же, что у
+/// <see cref="JsonTextSource"/>, а разница в том, что здесь спуск идет ПОТОКОМ: поля до нужного
+/// пропускаются по одному, а сам массив записей никогда не оказывается в памяти целиком. Ради
+/// этого путь и заведен — им читается конверт сообщения из папки обмена, где записи лежат под
+/// ключом <c>rows</c>, и файл на сотни мегабайт перестает требовать столько же памяти.
 /// </summary>
-public sealed class JsonTableSource(string path) : ITableSource
+public sealed class JsonTableSource(string path, string itemsPath = "") : ITableSource
 {
     private const int MaxValueBytes = 64 * 1024 * 1024;
 
@@ -215,8 +222,63 @@ public sealed class JsonTableSource(string path) : ITableSource
             }
         }
 
+        // Имя текущего свойства (сдвигает позицию). Отдельно от Consume, потому что имя надо
+        // сравнить: спуск по пути идет по именам, а не по порядку полей.
+        string TakeName()
+        {
+            while (true)
+            {
+                var r = new Utf8JsonReader(buffer.AsSpan(start, len - start), final, state);
+                bool    ok;
+                string? name = null;
+
+                try
+                {
+                    ok = r.Read();
+                    if (ok) name = r.GetString();
+                }
+                catch (JsonException) { throw Broken(); }
+
+                if (ok)
+                {
+                    state  = r.CurrentState;
+                    start += (int)r.BytesConsumed;
+                    return name ?? "";
+                }
+
+                if (final) throw Broken();
+                Fill();
+            }
+        }
+
         Fill();
         if (len >= 3 && buffer[0] == 0xEF && buffer[1] == 0xBB && buffer[2] == 0xBF) start = 3;   // UTF-8 BOM
+
+        // Спуск к массиву записей по пути. Поля, встреченные до нужного, пропускаются ЦЕЛИКОМ —
+        // это скаляры конверта (коллекция, режим, ключ сопоставления), и они малы. Сам массив
+        // записей так не пропускается: до него мы доходим и дальше читаем поштучно, ради чего
+        // весь этот спуск и написан.
+        foreach (var segment in (itemsPath ?? "").Split('.', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (Peek() != JsonTokenType.StartObject)
+                throw new ImportException($"Некорректный JSON: ожидался объект с полем «{segment}».");
+
+            Consume();
+
+            while (true)
+            {
+                var token = Peek();
+
+                if (token is JsonTokenType.EndObject or JsonTokenType.None)
+                    throw new ImportException($"В файле нет поля «{segment}» — записи не найдены.");
+
+                if (token != JsonTokenType.PropertyName) throw Broken();
+
+                if (string.Equals(TakeName(), segment, StringComparison.Ordinal)) break;
+
+                Take().Dispose();   // чужое поле целиком — мимо
+            }
+        }
 
         var first = Peek();
         bool isArray;
