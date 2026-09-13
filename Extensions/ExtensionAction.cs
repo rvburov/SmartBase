@@ -22,6 +22,18 @@ public enum ExtensionActionKind
     /// ГОСТ, проверить занятость серии, завести связанные записи.
     /// </summary>
     Operation,
+
+    /// <summary>
+    /// Автоматизация: строки пришли — строки ушли (docs/ROADMAP-API.md, шаг 13). Вид заведен
+    /// третьим, потому что первые два отвечают на другие вопросы: преобразователь разбирает
+    /// ТЕКСТ, операция работает с ОДНОЙ записью, а «свести выгрузку по проектам» — это вся
+    /// таблица разом, и разбить ее на строки нельзя, не потеряв смысла.
+    ///
+    /// В базу не пишет и подключения не получает — как преобразователь. Может вместо строк
+    /// вернуть ГОТОВЫЙ ФАЙЛ (<see cref="ActionResult.File"/>), и тогда класть его на диск будет
+    /// оболочка: файл наружу — тот же транспорт, что и сеть, и дверь у него одна.
+    /// </summary>
+    Rows,
 }
 
 /// <summary>
@@ -60,19 +72,28 @@ public sealed record ActionContext(
 
 /// <summary>
 /// Что пришло действию. У операции заполнены <see cref="Values"/> — одна запись; у
-/// преобразователя — <see cref="Text"/> или <see cref="Bytes"/>.
+/// преобразователя — <see cref="Text"/> или <see cref="Bytes"/>; у автоматизации —
+/// <see cref="Rows"/>, вся таблица предыдущего шага разом.
 /// </summary>
-/// <param name="Values">Поля записи по ключам из <see cref="IExtensionAction.Fields"/>.</param>
+/// <param name="Values">Поля записи по ключам из <see cref="IExtensionAction.Fields"/>. У
+/// автоматизации сюда попадают ее настройки — те же поля, но заполненные один раз на шаг, а не
+/// на строку: подставлять в них колонку нечего, строк много.</param>
 /// <param name="Text">Исходный текст — для преобразователя.</param>
 /// <param name="Bytes">Исходный файл — для преобразователя двоичного формата.</param>
+/// <param name="Rows">Строки предыдущего шага — для автоматизации. Колонки ищутся без учета
+/// регистра: имена приходят из чужой выгрузки.</param>
 public sealed record ActionInput(
-    IReadOnlyDictionary<string, string> Values,
-    string                              Text  = "",
-    byte[]?                             Bytes = null)
+    IReadOnlyDictionary<string, string>                 Values,
+    string                                              Text  = "",
+    byte[]?                                             Bytes = null,
+    IReadOnlyList<IReadOnlyDictionary<string, string>>? Rows  = null)
 {
     /// <summary>Значение поля; чего нет — пустая строка. Крайние пробелы снимаются.</summary>
     public string Value(string key) =>
         Values.TryGetValue(key, out var value) ? (value ?? "").Trim() : "";
+
+    /// <summary>Строки; у остальных видов действия пусто.</summary>
+    public IReadOnlyList<IReadOnlyDictionary<string, string>> Table => Rows ?? [];
 }
 
 /// <summary>
@@ -85,14 +106,23 @@ public sealed record ActionInput(
 /// <param name="Ok">Действие сделало свое дело.</param>
 /// <param name="Explanation">Что случилось, человеческим языком: и удача, и отказ.</param>
 /// <param name="Rows">Сколько записей затронуто или получено.</param>
-/// <param name="Json">Строки таблицы одним массивом JSON — только у преобразователя. Оболочка
-/// читает их обычным источником импорта, поэтому дальше работает существующее сопоставление
-/// колонок без единой правки.</param>
+/// <param name="Json">Строки таблицы одним массивом JSON — у преобразователя и у автоматизации.
+/// Оболочка читает их обычным источником импорта, поэтому дальше работает существующее
+/// сопоставление колонок без единой правки.</param>
+/// <param name="File">Готовый файл — только у автоматизации, объявившей
+/// <see cref="IExtensionAction.MakesFile"/>. Расширение его СОБИРАЕТ, но никуда не кладет: файл
+/// наружу — тот же транспорт, что и сеть, и дверь у него одна. Папку проверяет политикой,
+/// пишет и оставляет след в журнале безопасности ОБОЛОЧКА.</param>
+/// <param name="FileName">Как назвать файл — имя с расширением и без пути («Строки.xlsx»).
+/// Момент к нему добавит оболочка: выгрузка повторяется по расписанию, и вчерашний файл не
+/// должен молча пропадать под сегодняшним.</param>
 public sealed record ActionResult(
-    bool   Ok,
-    string Explanation,
-    int    Rows = 0,
-    string Json = "")
+    bool    Ok,
+    string  Explanation,
+    int     Rows     = 0,
+    string  Json     = "",
+    byte[]? File     = null,
+    string  FileName = "")
 {
     public static ActionResult Failed(string reason) => new(false, reason);
 
@@ -102,6 +132,14 @@ public sealed record ActionResult(
     /// <summary>Преобразователь разобрал вход в строки.</summary>
     public static ActionResult Table(string json, int rows) =>
         new(true, $"разобрано строк: {rows}", rows, json);
+
+    /// <summary>Автоматизация отдает строки дальше по сценарию.</summary>
+    public static ActionResult Rowset(string json, int rows, string explanation = "") =>
+        new(true, explanation.Length > 0 ? explanation : $"строк: {rows}", rows, json);
+
+    /// <summary>Автоматизация собрала файл; класть его на диск будет оболочка.</summary>
+    public static ActionResult MadeFile(byte[] bytes, string name, string explanation, int rows = 0) =>
+        new(true, explanation, rows, "", bytes, name);
 }
 
 /// <summary>
@@ -138,9 +176,18 @@ public interface IExtensionAction
 
     /// <summary>
     /// Поля, которые действие ждет на входе. У преобразователя пусто: он получает текст или
-    /// файл целиком.
+    /// файл целиком. У автоматизации это НАСТРОЙКИ шага — имя колонки-ключа, имя листа: они
+    /// заполняются один раз, а не на строку.
     /// </summary>
     IReadOnlyList<ExtensionActionField> Fields => [];
+
+    /// <summary>
+    /// Действие возвращает готовый файл (<see cref="ActionResult.File"/>), а кладет его на диск
+    /// оболочка. Объявляется заранее, а не выясняется по результату: папку надо спросить при
+    /// настройке шага и проверить политикой ДО запуска — «папка не разрешена» должно читаться в
+    /// списке сценариев, а не в журнале наутро.
+    /// </summary>
+    bool MakesFile => false;
 
     /// <summary>
     /// Выполнить действие ОДИН раз: операция — над одной записью, преобразователь — над одним

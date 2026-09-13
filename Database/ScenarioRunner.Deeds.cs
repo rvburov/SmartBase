@@ -1,15 +1,195 @@
 using System.Globalization;
 using SmartBase.Core.Exporters;
+using SmartBase.Core.Importers;
+using SmartBase.Core.Importers.TableSources;
+using SmartBase.Core.Models;
+using SmartBase.Extensions;
 using SmartBase.Integrations;
 
 namespace SmartBase.Database;
 
 /// <summary>
 /// Шаги «создать запись» и «экспорт выборки» (docs/ROADMAP-API.md, шаг 11) — исполнители,
-/// которых ждали триггер «календарное событие» и полный набор действий над данными.
+/// которых ждали триггер «календарное событие» и полный набор действий над данными, — и
+/// действие-автоматизация «строки пришли → строки ушли» (шаг 13), которое умеет вместо строк
+/// отдать оболочке готовый файл.
 /// </summary>
 public static partial class ScenarioRunner
 {
+    // ── Действие-автоматизация: строки → строки или файл ──────────────────────
+
+    /// <summary>
+    /// Автоматизация расширения над ВСЕЙ таблицей предыдущего шага (docs/ROADMAP-API.md, шаг 13).
+    ///
+    /// Отличие от действия-операции — в единице работы: операция идет по разу на строку, а
+    /// автоматизации нужна вся выгрузка разом («свести по проектам» нельзя сделать построчно).
+    /// Отличие от преобразователя — во входе: тому нужен текст файла, этой — строки.
+    ///
+    /// В базу автоматизация не пишет и подключения не получает: <see cref="ActionContext.Repo"/>
+    /// у нее пуст ровно по той же причине, что у преобразователя, — спрашивать права на запись
+    /// ради пересчета строк незачем.
+    ///
+    /// <b>Файл кладет ОБОЛОЧКА.</b> Расширение собирает байты и придумывает имя, но не касается
+    /// диска: файл наружу — тот же транспорт, что и сеть, и дверь у него одна. Папку разрешает
+    /// политика, след в журнале безопасности обязателен (<see cref="Keep"/>).
+    /// </summary>
+    private static async Task<StepOutcome> AutomationStepAsync(ScenarioStep      step,
+                                                               IExtensionAction  action,
+                                                               StepTable?        incoming,
+                                                               string            scenario,
+                                                               DateTimeOffset    now,
+                                                               CancellationToken ct)
+    {
+        if (incoming is not { } table) return StepOutcome.Bad(NoTable(action));
+
+        if (table.Rows.Count > StepTable.MaxRows)
+            return StepOutcome.Bad(
+                $"«{action.Name}»: строк {table.Rows.Count}, а за один запуск их обрабатывается "
+                + $"не больше {StepTable.MaxRows}");
+
+        // Настройки шага — как есть: подстановки {{колонка}} тут не при чем. Поле заполняется
+        // один раз на шаг, а строк много, и «колонка из какой именно» ответа не имеет.
+        var values = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        foreach (var (key, value) in step.Fields) values[key] = value;
+
+        if (Unfilled(step, action) is { } unfilled) return StepOutcome.Bad(unfilled);
+
+        ActionResult result;
+        try
+        {
+            result = await Task.Run(
+                () => action.Run(new ActionContext(null, 0, 0, now),
+                                 new ActionInput(values, Rows: table.Rows)), ct);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception error)
+        {
+            // Расширение обязано возвращать отказ результатом, но обязанность — не гарантия.
+            return StepOutcome.Bad($"«{action.Name}» сорвался: {error.Message}");
+        }
+
+        if (!result.Ok) return StepOutcome.Bad($"«{action.Name}»: {result.Explanation}");
+
+        if (result.File is { } bytes)
+        {
+            try
+            {
+                return await Task.Run(() => Keep(step, action, bytes, result, table, scenario, now), ct);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception error)
+            {
+                return StepOutcome.Bad($"«{action.Name}»: файл не записался — "
+                                     + ExportErrors.Map(error, step.Folder).Message);
+            }
+        }
+
+        // Строк не осталось — это не неудача, а «делать дальше нечего»: то же прочтение, что у
+        // отбора, не нашедшего ни одной подходящей строки.
+        if (result.Json.Trim() is "" or "[]")
+            return StepOutcome.Halt($"«{action.Name}»: {result.Explanation}; строк не осталось, "
+                                  + "дальше незачем");
+
+        var source = new JsonTextSource(result.Json);
+
+        ImportSchema schema;
+        try
+        {
+            schema = await Task.Run(() => source.Analyze(null, ct), ct);
+        }
+        catch (ImportException error)
+        {
+            return StepOutcome.Bad($"«{action.Name}» вернул строки, которые не разобрались: "
+                                 + error.Message);
+        }
+
+        if (schema.RowCount > StepTable.MaxRows)
+            return StepOutcome.Bad(
+                $"«{action.Name}»: вернулось строк {schema.RowCount}, а дальше по сценарию их "
+                + $"идет не больше {StepTable.MaxRows}");
+
+        var rows = await Task.Run(() => source.ReadRows(ct).ToList(), ct);
+
+        // Записей шаг не заводит, поэтому в счет сценария не идет: те же строки посчитаются на
+        // шаге, который их куда-то положит.
+        return new StepOutcome(true, $"Действие «{action.Name}»: {result.Explanation}", 0,
+                               StepTable.Of(schema, rows));
+    }
+
+    /// <summary>
+    /// Положить собранный расширением файл — через те же рубежи, что и «экспорт выборки»:
+    /// папка из корней политики (10.11) и обязательный след в журнале безопасности.
+    ///
+    /// Метка конфиденциальности сюда не приходит, и это не упущение: в потоке шагов лежат
+    /// строки, принесенные запросом, папкой обмена или триггером, а не прочитанные из
+    /// коллекции, — рубеж меток стоит там, где данные ИЗ БАЗЫ выходят наружу
+    /// (<c>ExportSourceIsolated</c>).
+    /// </summary>
+    private static StepOutcome Keep(ScenarioStep step, IExtensionAction action, byte[] bytes,
+                                    ActionResult result, StepTable table,
+                                    string scenario, DateTimeOffset now)
+    {
+        // Повторная проверка после Blocker: политику могли сменить, пока сценарий ждал тика.
+        var folder = EgressGate.CheckFolder(step.Folder);
+        if (!folder.Allowed) return StepOutcome.Bad($"«{action.Name}»: папка файла — "
+                                                  + folder.Explanation);
+
+        if (!ExportTrace.Ready) return StepOutcome.Bad(ExportTrace.NoJournal);
+
+        Directory.CreateDirectory(step.Folder);
+
+        var path = Path.Combine(step.Folder, Stamped(result.FileName, now));
+
+        File.WriteAllBytes(path, bytes);
+
+        var traced = new ExportedCollection(step.DbId, "строки сценария", table.Rows.Count,
+                                            table.Columns, ConfidentialityLabel.Open);
+
+        if (!ExportTrace.Note(path, [traced], now, scenario))
+        {
+            try { File.Delete(path); } catch { /* best-effort */ }
+            return StepOutcome.Bad(ExportTrace.NotWritten);
+        }
+
+        return new StepOutcome(true,
+            $"Действие «{action.Name}»: {result.Explanation} → {Path.GetFileName(path)}",
+            result.Rows);
+    }
+
+    /// <summary>
+    /// Имя файла с моментом: «Строки 2026-09-13 0830.xlsx». Момент добавляет оболочка, а не
+    /// расширение, — по той же причине, что и в экспорте: выгрузка повторяется по расписанию, и
+    /// вчерашний файл не должен молча пропадать под сегодняшним.
+    ///
+    /// Путь из имени вырезается целиком: расширение называет ФАЙЛ, а не место — место выбрано
+    /// шагом и разрешено политикой, и «..\..\» в имени не должно уводить из него никуда.
+    /// </summary>
+    private static string Stamped(string wanted, DateTimeOffset now)
+    {
+        var name = Path.GetFileName((wanted ?? "").Trim());
+
+        if (name.Length == 0) name = "Строки.xlsx";
+
+        foreach (var forbidden in Path.GetInvalidFileNameChars())
+            name = name.Replace(forbidden, '_');
+
+        var stamp = now.ToLocalTime().ToString("yyyy-MM-dd HHmm", CultureInfo.InvariantCulture);
+
+        return Path.GetFileNameWithoutExtension(name) + " " + stamp + Path.GetExtension(name);
+    }
+
+    /// <summary>Автоматизации нечего обрабатывать — строки приносит запрос, папка или триггер.</summary>
+    private static string NoTable(IExtensionAction action) =>
+        $"«{action.Name}» работает со строками, а строк нет: поставьте перед ним шаг, который их "
+        + "приносит, — запрос в коллекцию или разбор файла";
+
     // ── Шаг «создать запись» ──────────────────────────────────────────────────
 
     /// <summary>

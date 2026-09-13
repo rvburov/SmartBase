@@ -267,6 +267,27 @@ public static partial class ScenarioRunner
                     continue;
                 }
 
+                if (action.Kind == ExtensionActionKind.Rows)
+                {
+                    if (!rows) return NoTable(action);
+
+                    // Файл наружу — та же дверь, что сетевой адрес: папка спрашивается при
+                    // настройке шага и проверяется политикой ДО запуска (10.11).
+                    if (action.MakesFile)
+                    {
+                        if (string.IsNullOrWhiteSpace(step.Folder))
+                            return $"у действия «{action.Name}» не выбрана папка для файла";
+
+                        var place = EgressGate.CheckFolder(step.Folder);
+                        if (!place.Allowed) return "папка файла: " + place.Explanation;
+                    }
+
+                    if (Unfilled(step, action) is { } missing) return missing;
+
+                    // Строк не прибавляет и не убавляет — только меняет их состав.
+                    continue;
+                }
+
                 if (step.CollectionId <= 0)
                     return $"у действия «{action.Name}» не выбрана коллекция";
 
@@ -373,7 +394,8 @@ public static partial class ScenarioRunner
                 {
                     ScenarioStepKind.Request => await RequestStepAsync(step, registry, databases,
                                                                        carry, scenario.Name, mark, now, ct),
-                    ScenarioStepKind.Action  => await ActionStepAsync(step, databases, extensions, table, text, now, ct),
+                    ScenarioStepKind.Action  => await ActionStepAsync(step, databases, extensions,
+                                                                      table, text, scenario.Name, now, ct),
                     ScenarioStepKind.Intake  => IntakeStep(step, scenario.Name, mark, now, ref taken),
                     ScenarioStepKind.Filter  => FilterStep(step, table),
                     ScenarioStepKind.Compute => ComputeStep(step, table, now),
@@ -579,11 +601,14 @@ public static partial class ScenarioRunner
     /// расширения — не транзакция обмена, и откатывать чужую работу оболочка не берется. Сколько
     /// прошло и на чем встали, говорит строка отчета.
     /// </summary>
+    /// <param name="scenario">Имя сценария — для следа в журнале безопасности: файл, собранный
+    /// автоматизацией ночью, проверяющий должен уметь привязать к тому, кто ее завел.</param>
     private static async Task<StepOutcome> ActionStepAsync(ScenarioStep                   step,
                                                            IReadOnlyList<DatabaseManager> databases,
                                                            IReadOnlyList<IExtension>      extensions,
                                                            StepTable?                     incoming,
                                                            string                         text,
+                                                           string                         scenario,
                                                            DateTimeOffset                 now,
                                                            CancellationToken              ct)
     {
@@ -592,6 +617,9 @@ public static partial class ScenarioRunner
 
         if (action.Kind == ExtensionActionKind.Transformer)
             return await TransformStepAsync(action, text, now, ct);
+
+        if (action.Kind == ExtensionActionKind.Rows)
+            return await AutomationStepAsync(step, action, incoming, scenario, now, ct);
 
         if (step.CollectionId <= 0)
             return StepOutcome.Bad($"у действия «{action.Name}» не выбрана коллекция");

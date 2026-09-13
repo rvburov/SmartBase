@@ -74,6 +74,7 @@ public partial class ScenarioActionDialog : Window
 
         ActionCombo.SelectedIndex = Math.Max(0, IndexOfAction(step));
         PlaceCombo.SelectedIndex  = Math.Max(0, IndexOfPlace(step));
+        FolderBox.Text            = step.Folder;
 
         ActionCombo.SelectionChanged += (_, _) => ShowFields();
 
@@ -124,18 +125,30 @@ public partial class ScenarioActionDialog : Window
 
         ActionHint.Text = choice.Action.Description;
 
-        // Преобразователь формата в базу не пишет и полей не ждет: он разбирает то, что принес
-        // предыдущий шаг. Показывать ему «куда писать» значило бы спрашивать о том, чего он не
-        // делает, — и человек искал бы у себя ошибку, не найдя коллекции по смыслу.
-        var parses = choice.Action.Kind == ExtensionActionKind.Transformer;
+        // Преобразователь формата и автоматизация в базу не пишут: первый разбирает текст,
+        // вторая считает строки. Показывать им «куда писать» значило бы спрашивать о том, чего
+        // они не делают, — и человек искал бы у себя ошибку, не найдя коллекции по смыслу.
+        var writes = choice.Action.Kind == ExtensionActionKind.Operation;
 
-        PlaceLabel.IsVisible = !parses;
-        PlaceCombo.IsVisible = !parses;
-        FieldsLabel.IsVisible = !parses;
-        FieldsHint.IsVisible  = !parses;
-        FieldsBox.IsVisible   = !parses;
+        // Поля у автоматизации есть, но они означают другое: не значения записи, а настройки
+        // шага — какая колонка ключевая, как назвать лист. Подстановок в них нет: поле
+        // заполняется один раз, а строк много.
+        var counts = choice.Action.Kind == ExtensionActionKind.Rows;
+        var fields = writes || (counts && choice.Action.Fields.Count > 0);
 
-        if (parses || choice.Action.Fields.Count == 0)
+        PlaceLabel.IsVisible = writes;
+        PlaceCombo.IsVisible = writes;
+
+        FolderLabel.IsVisible = choice.Action.MakesFile;
+        FolderHint.IsVisible  = choice.Action.MakesFile;
+        FolderBox.IsVisible   = choice.Action.MakesFile;
+
+        FieldsLabel.Text      = counts ? "Настройки" : "Значения полей";
+        FieldsHint.IsVisible  = writes;
+        FieldsLabel.IsVisible = fields;
+        FieldsBox.IsVisible   = fields;
+
+        if (!fields || choice.Action.Fields.Count == 0)
         {
             FieldsPanel.Children.Add(new TextBlock
             {
@@ -200,6 +213,33 @@ public partial class ScenarioActionDialog : Window
             return;
         }
 
+        // Автоматизация: коллекции у нее нет, зато бывают настройки и папка для файла.
+        if (choice.Action.Kind == ExtensionActionKind.Rows)
+        {
+            var folder = (FolderBox.Text ?? "").Trim();
+
+            if (choice.Action.MakesFile && folder.Length == 0)
+            {
+                NoticeBanner.Show("Не выбрана папка для файла: без нее шаг не сработает.");
+                return;
+            }
+
+            if (Settings(choice) is not { } settings) return;
+
+            Close(_step with
+            {
+                Kind         = ScenarioStepKind.Action,
+                Extension    = choice.ExtensionId,
+                Action       = choice.Action.Key,
+                DbId         = 0,
+                CollectionId = 0,
+                Folder       = folder,
+                FieldValues  = settings,
+            });
+
+            return;
+        }
+
         if (PlaceCombo.SelectedIndex < 0 || PlaceCombo.SelectedIndex >= _places.Count)
         {
             NoticeBanner.Show("Не выбрана коллекция.");
@@ -208,23 +248,7 @@ public partial class ScenarioActionDialog : Window
 
         var place = _places[PlaceCombo.SelectedIndex];
 
-        // В шаг уезжают только поля ВЫБРАННОГО действия: набранное для другого осталось бы
-        // мусором в хранении и всплыло бы, если действие когда-нибудь заведет такой же ключ.
-        var fields = new Dictionary<string, string>(StringComparer.Ordinal);
-
-        foreach (var field in choice.Action.Fields)
-        {
-            var value = (_values.TryGetValue(field.Key, out var text) ? text : "").Trim();
-
-            if (field.Required && value.Length == 0)
-            {
-                NoticeBanner.Show($"Поле «{field.Label}» обязательно: без него действие не "
-                                + "выполнится, и сценарий остановится на этом шаге.");
-                return;
-            }
-
-            if (value.Length > 0) fields[field.Key] = value;
-        }
+        if (Settings(choice) is not { } fields) return;
 
         Close(_step with
         {
@@ -235,5 +259,33 @@ public partial class ScenarioActionDialog : Window
             CollectionId = place.CollectionId,
             FieldValues  = fields,
         });
+    }
+
+    /// <summary>
+    /// Поля выбранного действия из набранного; <c>null</c> — не заполнено обязательное, и об
+    /// этом уже сказано в окне.
+    ///
+    /// В шаг уезжают только поля ВЫБРАННОГО действия: набранное для другого осталось бы мусором
+    /// в хранении и всплыло бы, если действие когда-нибудь заведет такой же ключ.
+    /// </summary>
+    private Dictionary<string, string>? Settings(ActionChoice choice)
+    {
+        var fields = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        foreach (var field in choice.Action.Fields)
+        {
+            var value = (_values.TryGetValue(field.Key, out var text) ? text : "").Trim();
+
+            if (field.Required && value.Length == 0)
+            {
+                NoticeBanner.Show($"Поле «{field.Label}» обязательно: без него действие не "
+                                + "выполнится, и сценарий остановится на этом шаге.");
+                return null;
+            }
+
+            if (value.Length > 0) fields[field.Key] = value;
+        }
+
+        return fields;
     }
 }
