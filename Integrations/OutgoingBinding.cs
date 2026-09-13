@@ -56,18 +56,42 @@ public sealed record OutgoingField(int? FieldId, string Name);
 /// <param name="Fields">Поля и их имена в JSON. Порядок — тот, в каком они показаны человеку.</param>
 /// <param name="Shape">Как обернуто тело.</param>
 /// <param name="Envelope">Имя поля-обертки (только для <see cref="OutgoingShape.Wrapped"/>).</param>
+/// <param name="Conditions">Какие записи уходят; пусто — вся коллекция. Условия названы по
+/// свойствам коллекции и проверяются ДО потолка строк — см. <see cref="Tests"/>.</param>
 public sealed record OutgoingBinding(
-    int                          DbId,
-    int                          CollectionId,
-    IReadOnlyList<OutgoingField> Fields,
-    OutgoingShape                Shape    = OutgoingShape.Array,
-    string                       Envelope = "")
+    int                              DbId,
+    int                              CollectionId,
+    IReadOnlyList<OutgoingField>     Fields,
+    OutgoingShape                    Shape      = OutgoingShape.Array,
+    string                           Envelope   = "",
+    IReadOnlyList<ScenarioCondition>? Conditions = null)
 {
+    /// <summary>Сколько условий отбора умещается в одной привязке.</summary>
+    public const int MaxConditions = 10;
+
     /// <summary>Обертка объектом — у нее есть имя поля.</summary>
     public bool Wrapped => Shape == OutgoingShape.Wrapped;
 
     /// <summary>Обмен на одну запись: больше одной такой запрос не примет.</summary>
     public bool Single => Shape == OutgoingShape.Single;
+
+    /// <summary>
+    /// Условия отбора; пустой список — уходит вся коллекция.
+    ///
+    /// <b>Зачем они здесь.</b> Раздел 2 обещает «наружу — зеркально: коллекция И ФИЛЬТР (какие
+    /// записи)», а привязка знала только «какие поля». Из-за этого самый частый обмен из раздела
+    /// 1 — «статус стал „Отгружен" → отправить эту запись» — не выражался вовсе: сценарий по
+    /// триггеру «изменение данных» отправлял ВСЮ коллекцию при каждой правке одной строки и
+    /// переставал работать совсем, как только коллекция перерастала потолок строк.
+    ///
+    /// <b>Отбор идет ДО потолка, а не после.</b> Иначе он ничего бы не решал: потолок проверяется
+    /// по числу прочитанных строк, и коллекция на сто тысяч записей отказывала бы и с фильтром,
+    /// отбирающим три.
+    ///
+    /// Условия те же самые, что у шага «отбор» и у шага «экспорт выборки»
+    /// (<see cref="ScenarioCondition"/>) — один язык на все отборы в подсистеме.
+    /// </summary>
+    public IReadOnlyList<ScenarioCondition> Tests => Conditions ?? [];
 
     /// <summary>
     /// Что не так с привязкой; пустой список — годится. Отказ, а не исключение: привязку
@@ -101,6 +125,14 @@ public sealed record OutgoingBinding(
         if (Wrapped && string.IsNullOrWhiteSpace(Envelope))
             problems.Add("Не задано имя поля, в котором уйдет массив записей");
 
+        if (Tests.Count > MaxConditions)
+            problems.Add($"Условий отбора больше {MaxConditions}: столько правил читаются хуже, "
+                       + "чем отдельная коллекция");
+
+        foreach (var test in Tests)
+            if (test.Problems() is { Count: > 0 } bad)
+                problems.Add($"Условие «{test}»: " + string.Join(", ", bad));
+
         return problems;
     }
 
@@ -122,15 +154,30 @@ public sealed record OutgoingBinding(
             CollectionId.ToString(System.Globalization.CultureInfo.InvariantCulture),
             .. Fields.Select(f => (f.FieldId?.ToString(System.Globalization.CultureInfo.InvariantCulture)
                                    ?? "название") + "=" + f.Name.Trim()),
+
+            // Отбор входит в отпечаток наравне с составом полей: он решает, какие записи уйдут,
+            // и снятое условие расширяет выгрузку не меньше, чем дописанное поле. Не считай его
+            // — и отбор остался бы единственной частью отправки, которую можно поменять после
+            // согласования, не уронив подтверждения направления.
+            .. Tests.Select(t => "если:" + t),
         ]);
 
     /// <summary>Как это читается на карточке запроса.</summary>
-    public string Describe() => Shape switch
+    public string Describe()
     {
-        OutgoingShape.Single  => $"одна запись, полей: {Fields.Count}",
-        OutgoingShape.Wrapped => $"записи в поле «{Envelope.Trim()}», полей: {Fields.Count}",
-        _                     => $"массив записей, полей: {Fields.Count}",
-    };
+        var body = Shape switch
+        {
+            OutgoingShape.Single  => $"одна запись, полей: {Fields.Count}",
+            OutgoingShape.Wrapped => $"записи в поле «{Envelope.Trim()}», полей: {Fields.Count}",
+            _                     => $"массив записей, полей: {Fields.Count}",
+        };
+
+        return Tests.Count == 0 ? body : body + $", отбор: {Tests.Count}";
+    }
+
+    /// <summary>Отбор одной строкой для окна и карточки; пусто — вся коллекция.</summary>
+    public string DescribeTests() =>
+        Tests.Count == 0 ? "" : string.Join(" и ", Tests.Select(t => t.ToString()));
 }
 
 /// <summary>

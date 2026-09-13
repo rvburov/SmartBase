@@ -64,7 +64,10 @@ public partial class OutgoingBindingDialog : Window
         DbCombo.ItemsSource   = _dbs.Select(d => d.Name).ToList();
         DbCombo.SelectedIndex = Math.Max(0, IndexOfDb(saved?.DbId ?? 0));
 
+        _tests = saved?.Tests ?? [];
+
         RebuildCollections(saved?.CollectionId);
+        ShowTests();
 
         DbCombo.SelectionChanged         += (_, _) => { if (!_building) RebuildCollections(null); };
         CollectionCombo.SelectionChanged += (_, _) => { if (!_building) RebuildFields(); };
@@ -73,6 +76,7 @@ public partial class OutgoingBindingDialog : Window
 
         SearchBox.TextChanged += (_, _) => ShowFound();
 
+        FilterBtn.Click  += async (_, _) => await EditTestsAsync();
         ClearBtn.Click   += (_, _) => Close(new OutgoingChoice(null));
         CancelBtn.Click  += (_, _) => Close(null);
         ConfirmBtn.Click += (_, _) => Confirm();
@@ -163,6 +167,16 @@ public partial class OutgoingBindingDialog : Window
             ? _saved
             : null;
 
+        // Отбор привязан к свойствам ЭТОЙ коллекции и вместе с ней же и сбрасывается: условие
+        // «Статус равно Отгружен», перенесенное в соседнюю коллекцию, отобрало бы там не то, а
+        // при отсутствии свойства «Статус» — вовсе остановило бы обмен словами о том, чего
+        // человек не делал.
+        if (saved is null && _tests.Count > 0)
+        {
+            _tests = [];
+            ShowTests();
+        }
+
         // Название записи — такое же поле выгрузки, как остальные, и идет первым: чаще всего
         // именно оно и есть «номер заказа», ради которого обмен затевали.
         AddRow(null, "Название записи", ConfidentialityLabel.Open, saved);
@@ -251,7 +265,52 @@ public partial class OutgoingBindingDialog : Window
             [.. _rows.Where(r => r.Allowed && r.Takes)
                      .Select(r => new OutgoingField(r.FieldId == 0 ? null : r.FieldId, r.Alias.Trim()))],
             CurrentShape,
-            (EnvelopeInput.Text ?? "").Trim());
+            (EnvelopeInput.Text ?? "").Trim(),
+            _tests);
+
+    // ── Отбор ─────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Какие записи уходят; пусто — вся коллекция. Отбор правится своим окном и живет здесь, а
+    /// не в строках списка полей: он относится к привязке целиком.
+    /// </summary>
+    private IReadOnlyList<ScenarioCondition> _tests = [];
+
+    /// <summary>
+    /// Открыть правку отбора. Колонки — свойства ТЕКУЩЕЙ коллекции, включая те, что наружу не
+    /// идут: «Отправлено пусто» — обычный способ не слать одно и то же дважды, и требовать ради
+    /// такого условия отправлять служебное поле было бы прямо вредно.
+    ///
+    /// Помеченных свойств в списке нет: условие по закрытому полю не выносит наружу значение, но
+    /// выносит ЗНАНИЕ о нем — по тому, какие записи ушли, оно и восстанавливается.
+    /// </summary>
+    private async Task EditTestsAsync()
+    {
+        var columns = _rows.Where(r => r.Allowed).Select(r => r.Title).ToList();
+
+        if (columns.Count == 0)
+        {
+            var empty = Position;
+            NoticeBanner.Show("Сначала выберите коллекцию: отбирать пока не по чему.");
+            KeepWindowPosition(empty);
+            return;
+        }
+
+        if (await new OutgoingFilterDialog(columns, _tests)
+                .ShowDialog<IReadOnlyList<ScenarioCondition>?>(this) is not { } chosen) return;
+
+        _tests = chosen;
+        ShowTests();
+        ShowHint();
+    }
+
+    // Окно этого класса не растет по содержимому (заданы Width/Height), поэтому удерживать
+    // позицию, как в окнах с SizeToContent, здесь не нужно и нечем: в конструкторе Position
+    // еще не тот, и «удержание» уехало бы в левый верхний угол экрана.
+    private void ShowTests() =>
+        FilterText.Text = _tests.Count == 0
+            ? "Уходит вся коллекция."
+            : "Уйдут записи, у которых " + string.Join(" и ", _tests.Select(t => t.ToString())) + ".";
 
     private void Confirm()
     {

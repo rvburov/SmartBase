@@ -399,14 +399,65 @@ public partial class ConstructorRepository
             columns.Add(column);
         }
 
+        // Колонки отбора — сверх уходящих: отбирать можно по свойству, которое наружу не идет
+        // («Отправлено» = пусто), и это обычный случай, а не исключение. Помеченные свойства сюда
+        // тоже не попадают: условие по закрытому полю не выносит значение наружу, но выносит
+        // ЗНАНИЕ о нем — по тому, какие записи ушли, оно и восстанавливается.
+        var extra = new List<ExportColumn>();
+
+        foreach (var test in binding.Tests)
+        {
+            if (columns.Any(c => Same(c.Header, test.Column)) ||
+                extra.Any(c => Same(c.Header, test.Column))) continue;
+
+            if (available.Values.FirstOrDefault(c => Same(c.Header, test.Column)) is not { } found)
+                return OutgoingRows.Bad(
+                    $"свойства «{test.Column}», по которому идет отбор, в коллекции "
+                    + $"«{collection}» нет — отбор надо собрать заново");
+
+            var mark = EgressGate.CheckField(Confidentiality.FromConfig(found.ConfigJson));
+
+            if (!mark.Allowed)
+                return OutgoingRows.Bad(
+                    $"отбор идет по свойству «{found.Header}»: {mark.Explanation}");
+
+            extra.Add(found);
+        }
+
+        // Отбор применяется ДО потолка, иначе он ничего не решает: потолок считается по числу
+        // прочитанных строк, и коллекция на сто тысяч записей отказывала бы и с условием,
+        // отбирающим три.
+        var all   = columns.Concat(extra).ToList();
+        var tests = binding.Tests
+                           .Select(t => (Test: t, At: all.FindIndex(c => Same(c.Header, t.Column))))
+                           .ToList();
+
+        var take = Math.Max(0, limit) + 1;
+
         var rows = records is { Count: > 0 }
-            ? isolated.ChosenRows(binding.CollectionId, columns, records, Math.Max(0, limit) + 1)
-            : ReadExportRowsIsolated(binding.CollectionId, columns, excludeHidden: false, ct)
-              .Take(Math.Max(0, limit) + 1)
+            ? isolated.ChosenRows(binding.CollectionId, all, records, tests, take)
+            : ReadExportRowsIsolated(binding.CollectionId, all, excludeHidden: false, ct)
+              .Where(row => Fits(tests, row))
+              .Take(take)
               .ToList();
+
+        // Колонки отбора уходили только ради условий — обрезаем их, иначе они попали бы в тело.
+        if (extra.Count > 0)
+            rows = [.. rows.Select(row => row[..columns.Count])];
 
         return new OutgoingRows(columns, rows, collection, null);
     }
+
+    /// <summary>
+    /// Проходит ли строка все условия отбора. Порядок значений — порядок колонок; колонку
+    /// сопоставили условию один раз, а не на каждую строку.
+    ///
+    /// Колонки нет в строке (<c>At &lt; 0</c>) — строка НЕ проходит. Такого быть не должно:
+    /// отсутствие свойства ловится раньше и объясняется словами. Но если уж случилось,
+    /// «пропустить всё» было бы худшим из ответов — отбор молча перестал бы отбирать.
+    /// </summary>
+    private static bool Fits(IReadOnlyList<(ScenarioCondition Test, int At)> tests, string[] row) =>
+        tests.All(t => t.At >= 0 && t.At < row.Length && t.Test.HoldsValue(row[t.At]));
 
     /// <summary>
     /// Значения выбранных записей в порядке колонок. Порядок строк — тот же, что в таблице
@@ -415,14 +466,24 @@ public partial class ConstructorRepository
     ///
     /// Записи не из этой коллекции отбрасываются молча: выделение живет в таблице, а коллекцию
     /// за это время могли переключить.
+    ///
+    /// <b>Отбор привязки действует и здесь</b>, хотя записи выбрал человек руками. Причина не в
+    /// строгости: отбор входит в отпечаток направления, то есть в то, что подтвердили
+    /// мастер-паролем. Пропусти его у кнопки — и ручная отправка уносила бы записи, которых
+    /// согласованный обмен не касается, оставаясь при этом тем же самым направлением.
     /// </summary>
     private List<string[]> ChosenRows(int collectionId, IReadOnlyList<ExportColumn> columns,
-                                      IReadOnlyList<int> records, int take)
+                                      IReadOnlyList<int> records,
+                                      IReadOnlyList<(ScenarioCondition Test, int At)> tests,
+                                      int take)
     {
+        // Отбор идет ПОСЛЕ чтения, а не срезает выборку в SQL: условия работают над значениями
+        // полей, которые лежат в отдельной таблице и собираются пачкой ниже. Выделение человека
+        // и так ограничено экраном, поэтому читать «на всякий случай больше» здесь нечего —
+        // берем ровно то, что выделено, и отсеиваем.
         var chosen = db.DbRecords.AsNoTracking()
                        .Where(r => r.CollectionId == collectionId && records.Contains(r.Id))
                        .OrderBy(r => r.Position).ThenBy(r => r.Id)
-                       .Take(take)
                        .ToList();
 
         var values = GetFieldValuesBatch([.. chosen.Select(r => r.Id)]);
@@ -441,7 +502,10 @@ public partial class ConstructorRepository
                         ? mine.GetValueOrDefault(field, "")
                         : "";
 
+            if (!Fits(tests, row)) continue;
+
             rows.Add(row);
+            if (rows.Count >= take) break;
         }
 
         return rows;

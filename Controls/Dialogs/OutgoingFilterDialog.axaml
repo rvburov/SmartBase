@@ -1,0 +1,40 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:w="clr-namespace:SmartBase.Controls.Widgets"
+        x:Class="SmartBase.Controls.Dialogs.OutgoingFilterDialog"
+        Title="Какие записи уходят"
+        Width="{StaticResource DialogWidthBase}"
+        MinWidth="{StaticResource DialogWidthBase}"
+        MaxWidth="{StaticResource DialogWidthBase}"
+        MinHeight="0"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="{StaticResource BrushBg}">
+
+    <StackPanel Spacing="0" Margin="{StaticResource DialogPadding}">
+
+        <TextBlock Margin="0,0,0,12"
+                   TextWrapping="Wrap"
+                   FontSize="{DynamicResource FontSizeSmall}"
+                   Foreground="{StaticResource BrushSecondaryText}"
+                   Text="Уйдут записи, прошедшие ВСЕ условия. Условий нет — уходит вся коллекция. Отбирать можно и по свойству, которое наружу не идет: «Отправлено пусто» — обычный способ не слать одно и то же дважды." />
+
+        <w:ConditionRows x:Name="Rows" Margin="0,0,0,10" />
+
+        <Button x:Name="AddBtn" Classes="dialog"
+                Content="Добавить условие"
+                HorizontalAlignment="Left"
+                Margin="0,0,0,12" />
+
+        <w:NoticeBanner x:Name="NoticeBanner" Margin="0,0,0,12" />
+
+        <Grid ColumnDefinitions="Auto,*,Auto,8,Auto" Margin="0,4,0,0">
+            <Button Grid.Column="0" x:Name="ClearBtn" Classes="dialog" Content="Без отбора" />
+            <Button Grid.Column="2" x:Name="CancelBtn" Classes="dialog" Content="Отмена" />
+            <Button Grid.Column="4" x:Name="SaveBtn" Classes="dialog" Content="Сохранить" />
+        </Grid>
+
+    </StackPanel>
+
+</Window>

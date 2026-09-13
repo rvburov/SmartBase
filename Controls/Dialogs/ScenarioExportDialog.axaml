@@ -88,7 +88,7 @@
             <ScrollViewer MaxHeight="200"
                           HorizontalScrollBarVisibility="Disabled"
                           VerticalScrollBarVisibility="Auto">
-                <StackPanel x:Name="TestsPanel" Spacing="8" Margin="10,8" />
+                <w:ConditionRows x:Name="TestsPanel" Margin="10,8" />
             </ScrollViewer>
         </Border>
 

@@ -473,4 +473,231 @@ public sealed class OutgoingSourceTests : IDisposable
             await Task.CompletedTask;
         });
     }
+
+    // ── Отбор записей ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Отбор оставляет только подошедшие записи. Ради него все и делалось: раздел 2 обещает
+    /// «коллекция И ФИЛЬТР», а без фильтра самый частый обмен — «статус стал „Отгружен" →
+    /// отправить» — выражался только отправкой всей коллекции при каждой правке.
+    /// </summary>
+    [Fact]
+    public async Task Only_the_records_that_pass_the_filter_go_out()
+    {
+        AttachPolicy();
+
+        await WithStand(async (cards, data) =>
+        {
+            var (collection, sum) = Orders(data);
+            var request = Push(cards);
+
+            cards.SaveOutgoing(request.Id, Binding(collection, sum) with
+            {
+                Conditions = [new ScenarioCondition("Сумма", ScenarioTest.Equals, "250")],
+            });
+
+            var (payload, trouble) = OutgoingSource.Build(cards, request, [data.Manager]);
+
+            Assert.Null(trouble);
+            Assert.NotNull(payload);
+            Assert.Equal("""[{"order_no":"А-2","amount":250}]""", payload.Body);
+            Assert.Equal(1, payload.Rows);
+
+            await Task.CompletedTask;
+        });
+    }
+
+    /// <summary>
+    /// Отбирать можно по свойству, которое НАРУЖУ НЕ ИДЕТ. «Отправлено пусто» — обычный способ
+    /// не слать одно и то же дважды, и требовать ради такого условия отправлять служебное поле
+    /// было бы прямо вредно: лишнее поле в теле — это лишние данные у той стороны.
+    ///
+    /// Колонка отбора при этом в тело НЕ попадает — она читается и обрезается.
+    /// </summary>
+    [Fact]
+    public async Task A_filter_may_use_a_property_that_does_not_go_out()
+    {
+        AttachPolicy();
+
+        await WithStand(async (cards, data) =>
+        {
+            var (collection, sum) = Orders(data);
+
+            var sent = SampleData.AddField(data.Constructor, collection, "Отправлено", "text").Id!.Value;
+            var rows = data.Constructor.GetRecords(collection);
+            data.Constructor.SetFieldValue(rows[0].Id!.Value, sent, "да");
+
+            var request = Push(cards);
+            cards.SaveOutgoing(request.Id, Binding(collection, sum) with
+            {
+                Conditions = [new ScenarioCondition("Отправлено", ScenarioTest.Empty)],
+            });
+
+            var (payload, trouble) = OutgoingSource.Build(cards, request, [data.Manager]);
+
+            Assert.Null(trouble);
+            Assert.NotNull(payload);
+            Assert.Equal("""[{"order_no":"А-2","amount":250}]""", payload.Body);
+
+            await Task.CompletedTask;
+        });
+    }
+
+    /// <summary>
+    /// Отбор идет ДО потолка строк, иначе он ничего не решает: коллекция, которая целиком в
+    /// потолок не влезает, отправляется, если отобранного в нем помещается.
+    ///
+    /// Это и есть вторая половина найденной беды: с триггером «изменение данных» сценарий
+    /// переставал работать совсем, как только коллекция перерастала потолок.
+    /// </summary>
+    [Fact]
+    public async Task The_filter_runs_before_the_row_ceiling()
+    {
+        AttachPolicy(maxRows: 1);
+
+        await WithStand(async (cards, data) =>
+        {
+            var (collection, sum) = Orders(data);
+            var request = Push(cards);
+
+            // Без отбора две записи в потолок «одна строка» не влезают.
+            cards.SaveOutgoing(request.Id, Binding(collection, sum));
+            Assert.Contains("больше, чем разрешает политика",
+                            OutgoingSource.Build(cards, request, [data.Manager]).Trouble!,
+                            StringComparison.Ordinal);
+
+            // С отбором остается одна — и она проходит.
+            cards.SaveOutgoing(request.Id, Binding(collection, sum) with
+            {
+                Conditions = [new ScenarioCondition("Сумма", ScenarioTest.Equals, "250")],
+            });
+
+            var (payload, trouble) = OutgoingSource.Build(cards, request, [data.Manager]);
+
+            Assert.Null(trouble);
+            Assert.Equal(1, payload!.Rows);
+
+            await Task.CompletedTask;
+        });
+    }
+
+    /// <summary>
+    /// Свойство отбора удалили — отправка встает СЛОВАМИ, а не отбирает ноль записей молча.
+    /// Молчаливый ноль здесь худший из ответов: обмен выглядит работающим, а наружу месяцами
+    /// не уходит ничего.
+    /// </summary>
+    [Fact]
+    public async Task A_filter_on_a_missing_property_stops_the_send()
+    {
+        AttachPolicy();
+
+        await WithStand(async (cards, data) =>
+        {
+            var (collection, sum) = Orders(data);
+            var request = Push(cards);
+
+            cards.SaveOutgoing(request.Id, Binding(collection, sum) with
+            {
+                Conditions = [new ScenarioCondition("Такого нет", ScenarioTest.Filled)],
+            });
+
+            var (payload, trouble) = OutgoingSource.Build(cards, request, [data.Manager]);
+
+            Assert.Null(payload);
+            Assert.NotNull(trouble);
+            Assert.Contains("отбор надо собрать заново", trouble, StringComparison.Ordinal);
+
+            await Task.CompletedTask;
+        });
+    }
+
+    /// <summary>
+    /// Отбирать по ПОМЕЧЕННОМУ свойству нельзя. Значение такого поля наружу не уходит, но
+    /// уходит знание о нем: по тому, какие записи ушли, оно и восстанавливается.
+    /// </summary>
+    [Fact]
+    public async Task A_filter_on_a_labeled_property_is_refused()
+    {
+        AttachPolicy();
+
+        await WithStand(async (cards, data) =>
+        {
+            var (collection, sum) = Orders(data);
+
+            var secret = SampleData.AddField(data.Constructor, collection, "Скидка", "text").Id!.Value;
+            data.Constructor.SetFieldLabel(secret, ConfidentialityLabel.Restricted);
+
+            var request = Push(cards);
+            cards.SaveOutgoing(request.Id, Binding(collection, sum) with
+            {
+                Conditions = [new ScenarioCondition("Скидка", ScenarioTest.Filled)],
+            });
+
+            var (payload, trouble) = OutgoingSource.Build(cards, request, [data.Manager]);
+
+            Assert.Null(payload);
+            Assert.NotNull(trouble);
+            Assert.Contains("отбор идет по свойству", trouble, StringComparison.Ordinal);
+
+            await Task.CompletedTask;
+        });
+    }
+
+    /// <summary>
+    /// Отбор действует и на записи, выбранные РУКАМИ. Он входит в отпечаток направления, то есть
+    /// в то, что подтверждали мастер-паролем: пропусти его у кнопки — и ручная отправка уносила
+    /// бы записи, которых согласованный обмен не касается.
+    /// </summary>
+    [Fact]
+    public async Task The_filter_applies_to_hand_picked_records_too()
+    {
+        AttachPolicy();
+
+        await WithStand(async (cards, data) =>
+        {
+            var (collection, sum) = Orders(data);
+            var chosen  = data.Constructor.GetRecords(collection).Select(r => r.Id!.Value).ToList();
+            var request = Push(cards);
+
+            cards.SaveOutgoing(request.Id, Binding(collection, sum) with
+            {
+                Conditions = [new ScenarioCondition("Сумма", ScenarioTest.Equals, "250")],
+            });
+
+            var (payload, trouble) = OutgoingSource.Build(cards, request, [data.Manager], chosen);
+
+            Assert.Null(trouble);
+            Assert.Equal("""[{"order_no":"А-2","amount":250}]""", payload!.Body);
+
+            await Task.CompletedTask;
+        });
+    }
+
+    /// <summary>Отбор переживает переоткрытие базы вместе с остальной привязкой.</summary>
+    [Fact]
+    public async Task The_filter_survives_a_reopen()
+    {
+        AttachPolicy();
+
+        await WithStand(async (cards, data) =>
+        {
+            var (collection, sum) = Orders(data);
+            var request = Push(cards);
+
+            cards.SaveOutgoing(request.Id, Binding(collection, sum) with
+            {
+                Conditions = [new ScenarioCondition("Сумма", ScenarioTest.Contains, "25")],
+            });
+
+            var back = cards.Outgoing(request.Id);
+
+            Assert.NotNull(back);
+            Assert.Single(back!.Tests);
+            Assert.Equal("Сумма", back.Tests[0].Column);
+            Assert.Equal(ScenarioTest.Contains, back.Tests[0].Test);
+            Assert.Equal("25", back.Tests[0].Value);
+
+            await Task.CompletedTask;
+        });
+    }
 }

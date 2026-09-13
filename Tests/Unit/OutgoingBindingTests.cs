@@ -209,4 +209,108 @@ public sealed class OutgoingBindingTests
     public void Mismatched_columns_are_a_programming_error() =>
         Assert.Throws<ArgumentException>(
             () => OutgoingBody.Build(Valid(), Columns("text"), [["А-1"]], "Заказы"));
+
+    // ── Отбор записей ─────────────────────────────────────────────────────────
+
+    /// <summary>Отбора нет — это норма, а не незаполненность: уходит вся коллекция.</summary>
+    [Fact]
+    public void No_filter_is_a_valid_binding()
+    {
+        Assert.Empty(Valid().Tests);
+        Assert.Empty(Valid().Problems());
+        Assert.Equal("", Valid().DescribeTests());
+    }
+
+    /// <summary>Негодное условие не проходит вместе с привязкой — и называет себя.</summary>
+    [Fact]
+    public void A_condition_without_a_sample_is_refused()
+    {
+        var binding = Valid() with
+        {
+            Conditions = [new ScenarioCondition("Статус", ScenarioTest.Equals, "")],
+        };
+
+        Assert.Contains(binding.Problems(),
+                        p => p.Contains("не заполнен образец", StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>Условию «заполнено» образец не нужен — и не спрашивается.</summary>
+    [Fact]
+    public void Filled_needs_no_sample()
+    {
+        var binding = Valid() with
+        {
+            Conditions = [new ScenarioCondition("Статус", ScenarioTest.Filled)],
+        };
+
+        Assert.Empty(binding.Problems());
+    }
+
+    /// <summary>
+    /// Условий больше потолка — отказ: столько правил читаются хуже, чем отдельная коллекция, и
+    /// разобраться, почему запись не ушла, по ним уже нельзя.
+    /// </summary>
+    [Fact]
+    public void Too_many_conditions_are_refused()
+    {
+        var many = Enumerable.Range(0, OutgoingBinding.MaxConditions + 1)
+                             .Select(i => new ScenarioCondition($"Поле {i}", ScenarioTest.Filled))
+                             .ToList();
+
+        Assert.Contains((Valid() with { Conditions = many }).Problems(),
+                        p => p.Contains("условий отбора больше", StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Отбор входит в отпечаток состава наравне с полями. Снятое условие расширяет выгрузку не
+    /// меньше, чем дописанное поле, — не считай его, и отбор остался бы единственной частью
+    /// отправки, которую можно поменять после согласования, не уронив подтверждения направления.
+    /// </summary>
+    [Fact]
+    public void The_filter_is_part_of_the_fingerprint()
+    {
+        var plain = Valid();
+
+        var filtered = plain with
+        {
+            Conditions = [new ScenarioCondition("Статус", ScenarioTest.Equals, "Отгружен")],
+        };
+
+        var otherSample = plain with
+        {
+            Conditions = [new ScenarioCondition("Статус", ScenarioTest.Equals, "Оплачен")],
+        };
+
+        var otherTest = plain with
+        {
+            Conditions = [new ScenarioCondition("Статус", ScenarioTest.Contains, "Отгружен")],
+        };
+
+        Assert.NotEqual(plain.Mark(),    filtered.Mark());
+        Assert.NotEqual(filtered.Mark(), otherSample.Mark());
+        Assert.NotEqual(filtered.Mark(), otherTest.Mark());
+
+        // Тот же отбор — тот же отпечаток: пересохранение без правок подтверждения не роняет.
+        Assert.Equal(filtered.Mark(), (plain with
+        {
+            Conditions = [new ScenarioCondition("Статус", ScenarioTest.Equals, "Отгружен")],
+        }).Mark());
+    }
+
+    /// <summary>Отбор виден на карточке: и числом в общей строке, и словами отдельно.</summary>
+    [Fact]
+    public void The_filter_shows_up_in_the_description()
+    {
+        var binding = Valid() with
+        {
+            Conditions =
+            [
+                new ScenarioCondition("Статус",     ScenarioTest.Equals, "Отгружен"),
+                new ScenarioCondition("Отправлено", ScenarioTest.Empty),
+            ],
+        };
+
+        Assert.Contains("отбор: 2", binding.Describe(), StringComparison.Ordinal);
+        Assert.Equal("Статус равно Отгружен и Отправлено пусто", binding.DescribeTests());
+    }
 }
