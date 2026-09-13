@@ -152,8 +152,15 @@ public sealed record SecurityFilter(
     public IReadOnlyDictionary<string, IReadOnlyCollection<string>> Picked =>
         Columns ?? new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.Ordinal);
 
-    /// <summary>Сужен ли отбор хоть чем-нибудь.</summary>
-    public bool Narrow => Event is not null || BlockedOnly || Since is not null || Picked.Count > 0;
+    /// <summary>
+    /// Сужен ли отбор хоть чем-нибудь — от этого зависят и текст пустого списка, и пометка
+    /// «отобрано» в выгрузке.
+    ///
+    /// Живет у ФИЛЬТРА, а не у экрана: экран считал то же самое дважды своими руками — в
+    /// списке и в выгрузке, — и третье место (или новое поле отбора) разошлось бы с ними молча.
+    /// </summary>
+    public bool Narrow =>
+        Event is not null || BlockedOnly || Since is not null || Picked.Count > 0;
 }
 
 /// <summary>

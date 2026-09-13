@@ -19,10 +19,6 @@ namespace SmartBase.Database;
 /// </summary>
 public sealed partial class IntegrationsRegistry
 {
-    /// <summary>Все подтвержденные направления.</summary>
-    public IReadOnlyList<OutgoingDirection> Directions() =>
-        [.. db.IntegrationDirections.AsNoTracking().AsEnumerable().Select(ToModel)];
-
     /// <summary>Направление запроса; <c>null</c> — не подтверждено.</summary>
     public OutgoingDirection? Direction(int requestId)
     {

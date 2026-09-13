@@ -96,7 +96,7 @@ public static class IngressHandler
         return path switch
         {
             IngressApi.PingPath    => Ping(token, target, access),
-            IngressApi.SchemaPath  => Schema(token, target, access),
+            IngressApi.SchemaPath  => Schema(target, access),
             IngressApi.RecordsPath => Records(call, token, target, access, registry, now),
             IngressApi.ChangesPath => Changes(call, token, target, access, registry, now),
             _                          => Inbox(call, token, target, access, registry, replies, now),
@@ -126,14 +126,12 @@ public static class IngressHandler
 
     // ── Схема ─────────────────────────────────────────────────────────────────
 
-    private static IngressAnswer Schema(AccessToken token, DatabaseManager target, RobotAccess access)
+    private static IngressAnswer Schema(DatabaseManager target, RobotAccess access)
     {
         // Схему отдаем только тому, кому есть куда писать: список коллекций базы, в которую
         // робота не пустили, — это уже сведения о базе, а не о его собственном обмене.
         if (access.Trouble(PermAction.CreateRecord) is { } trouble)
             return IngressAnswer.Problem(403, Capitalize(trouble) + ".");
-
-        _ = token;
 
         return IngressAnswer.Ok(
             ApiDescription.Json(target.Name, target.Constructor.ApiSchemaIsolated()));

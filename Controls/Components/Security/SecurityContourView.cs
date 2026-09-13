@@ -600,6 +600,4 @@ public sealed class SecurityContourView : UserControl
         });
     }
 
-    private static string Join(IReadOnlyList<string> values) =>
-        values.Count == 0 ? "не заданы" : string.Join(", ", values);
 }

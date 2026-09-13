@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
+using SmartBase.Utils;
 
 namespace SmartBase.Controls.Widgets;
 
@@ -449,10 +450,8 @@ public static class SettingRows
 
     // ── Числа ─────────────────────────────────────────────────────────────────
 
-    public static string Size(long bytes) => bytes switch
-    {
-        < 1024L * 1024        => $"{bytes / 1024.0:N0} КБ",
-        < 1024L * 1024 * 1024 => $"{bytes / 1024.0 / 1024:N1} МБ",
-        _                     => $"{bytes / 1024.0 / 1024 / 1024:N2} ГБ",
-    };
+    public static string Size(long bytes) => Sizes.Text(bytes);
+
+    /// <inheritdoc cref="Sizes.List"/>
+    public static string Join(IReadOnlyList<string> values) => Sizes.List(values);
 }

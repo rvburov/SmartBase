@@ -803,12 +803,7 @@ public partial class MainWindow : Window
     // очереди, читает обработчик MaintenanceFinished на UI-потоке уже после нее).
     private readonly System.Collections.Concurrent.ConcurrentDictionary<int, (long Before, long After)> _compactSizes = new();
 
-    private static string DatabaseRowSize(long bytes) => bytes switch
-    {
-        < 1024L * 1024        => $"{bytes / 1024.0:N0} КБ",
-        < 1024L * 1024 * 1024 => $"{bytes / 1024.0 / 1024:N1} МБ",
-        _                     => $"{bytes / 1024.0 / 1024 / 1024:N2} ГБ",
-    };
+    private static string DatabaseRowSize(long bytes) => Utils.Sizes.Text(bytes);
 
     // Сжатие (VACUUM) переписывает файл целиком под эксклюзивным замком, поэтому базу на это
     // время отцепляем от рабочего пространства (как при потере) и ведем через очередь

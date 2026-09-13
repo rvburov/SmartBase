@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using Serilog;
+using SmartBase.Utils;
 
 namespace SmartBase.Logging;
 
@@ -126,13 +127,7 @@ public static class Diag
     // ── Форматирование для записей ───────────────────────────────────────────────
 
     /// <summary>Размер по-человечески: «812 КБ», «1,7 ГБ».</summary>
-    public static string Size(long bytes) => bytes switch
-    {
-        < 1024                => $"{bytes} Б",
-        < 1024 * 1024         => $"{bytes / 1024.0:N0} КБ",
-        < 1024L * 1024 * 1024 => $"{bytes / 1024.0 / 1024:N1} МБ",
-        _                     => $"{bytes / 1024.0 / 1024 / 1024:N2} ГБ",
-    };
+    public static string Size(long bytes) => Sizes.Text(bytes, tiny: true);
 
     /// <summary>Длительность по-человечески: «48 с», «12 мин», «2 ч 15 мин».</summary>
     public static string Duration(TimeSpan t)

@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using SmartBase.Core.Models;
 using SmartBase.Integrations;
+using SmartBase.Utils;
 
 namespace SmartBase.Database;
 
@@ -580,13 +581,7 @@ public static class IntegrationsPassport
     private static string Text(string value) =>
         string.IsNullOrWhiteSpace(value) ? "не указан" : value;
 
-    private static string Join(IReadOnlyList<string> values) =>
-        values.Count == 0 ? "не заданы" : string.Join(", ", values);
+    private static string Join(IReadOnlyList<string> values) => Sizes.List(values);
 
-    private static string Size(long bytes) => bytes switch
-    {
-        < 1024L * 1024        => $"{bytes / 1024.0:N0} КБ",
-        < 1024L * 1024 * 1024 => $"{bytes / 1024.0 / 1024:N1} МБ",
-        _                     => $"{bytes / 1024.0 / 1024 / 1024:N2} ГБ",
-    };
+    private static string Size(long bytes) => Sizes.Text(bytes);
 }

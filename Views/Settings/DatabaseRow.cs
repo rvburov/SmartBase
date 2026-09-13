@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
 using SmartBase.Database;
+using SmartBase.Utils;
 
 namespace SmartBase.Views.Settings;
 
@@ -73,12 +74,7 @@ public sealed partial class DatabaseRow : ObservableObject
         return text;
     }
 
-    private static string Size(long bytes) => bytes switch
-    {
-        < 1024L * 1024        => $"{bytes / 1024.0:N0} КБ",
-        < 1024L * 1024 * 1024 => $"{bytes / 1024.0 / 1024:N1} МБ",
-        _                     => $"{bytes / 1024.0 / 1024 / 1024:N2} ГБ",
-    };
+    private static string Size(long bytes) => Sizes.Text(bytes);
 
     /// <summary>Живое обновление статуса из очереди монтирования (тик ~2 раза в секунду).</summary>
     public void SetStatus(string? text, bool isError)

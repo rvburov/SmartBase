@@ -304,7 +304,7 @@ public sealed class DirectionsRegistryTests : IDisposable
             cards.DeleteRequest(request.Id);
 
             Assert.Null(cards.Direction(request.Id));
-            Assert.Empty(cards.Directions());
+            Assert.Empty(cards.Requests());
         }
         finally { Cleanup(dir, appDb, dataDb); }
     }

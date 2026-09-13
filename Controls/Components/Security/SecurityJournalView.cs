@@ -335,7 +335,6 @@ public sealed class SecurityJournalView : UserControl
 
         // Снимок условий ДО ожидания: их могли поменять, пока считались строки.
         var filter = FilterNow();
-        var narrow = _event is not null || _blockedOnly || _days > 0 || _picked.Any(p => p.Value.Count > 0);
 
         _exporting = true;
         try
@@ -344,7 +343,7 @@ public sealed class SecurityJournalView : UserControl
                 Title:           "Выгрузка журнала безопасности",
                 What:            "Журнал безопасности",
                 TotalRows:       journal.Count(filter),
-                Filtered:        narrow,
+                Filtered:        filter.Narrow,
                 DefaultFileName: CsvExportRunner.FileName("Журнал безопасности", DateTime.Now),
                 Headers:         SecurityJournal.CsvHeaders,
                 Rows:            ct => journal.Stream(filter)
@@ -362,7 +361,7 @@ public sealed class SecurityJournalView : UserControl
 
         if (page.Count == 0)
             return Row("События", "", DataBox(
-                Narrowed()
+                FilterNow().Narrow
                     ? "Под выбранные условия не подошло ни одной строки."
                     : "Событий безопасности еще не было: наружу ничего не уходило и направлений "
                     + "не подтверждали."));
@@ -389,10 +388,6 @@ public sealed class SecurityJournalView : UserControl
             + "адрес, поля и объемы.",
             list);
     }
-
-    /// <summary>Сужена ли выборка хоть чем-нибудь — от этого зависит текст пустого списка.</summary>
-    private bool Narrowed() =>
-        _event is not null || _blockedOnly || _days > 0 || _picked.Any(p => p.Value.Count > 0);
 
     /// <summary>Ширины колонок общие у шапки и строк — иначе таблица «поедет».</summary>
     private static ColumnDefinitions Columns() => new("104,8,*,8,96,8,74");

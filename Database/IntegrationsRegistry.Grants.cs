@@ -21,10 +21,6 @@ public sealed partial class IntegrationsRegistry
     public IReadOnlyList<ReadGrant> Grants() =>
         [.. db.IntegrationGrants.AsNoTracking().AsEnumerable().Select(ToModel)];
 
-    /// <summary>Выдачи одного токена.</summary>
-    public IReadOnlyList<ReadGrant> GrantsOf(int tokenId) =>
-        [.. Grants().Where(g => g.TokenId == tokenId)];
-
     /// <summary>Выдача токена на коллекцию; <c>null</c> — чтение не разрешено.</summary>
     public ReadGrant? GrantFor(int tokenId, int collectionId)
     {

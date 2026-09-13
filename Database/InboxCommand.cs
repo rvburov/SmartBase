@@ -64,8 +64,7 @@ public static class InboxCommand
         var size = new FileInfo(file).Length;
 
         if (size > IngressGate.MaxBodyBytes)
-            return Fail(output, $"Файл больше потолка в "
-                              + $"{IngressGate.MaxBodyBytes / 1024 / 1024} МБ.");
+            return Fail(output, $"Файл больше потолка в {ApiDescription.BodyLimit()}.");
 
         string text;
         try

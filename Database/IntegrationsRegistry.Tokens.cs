@@ -127,10 +127,6 @@ public sealed partial class IntegrationsRegistry
         db.SaveChanges();
     }
 
-    /// <summary>Токены, выданные под эту базу, — экрану и описанию API.</summary>
-    public IReadOnlyList<AccessToken> TokensOf(int dbId) =>
-        [.. Tokens().Where(t => t.DbId == dbId)];
-
     // ── Перевод ───────────────────────────────────────────────────────────────
 
     private static AccessToken ToModel(IntegrationTokenEntity entity) =>

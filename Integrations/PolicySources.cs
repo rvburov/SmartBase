@@ -133,7 +133,7 @@ public static class PolicySources
             using var machine = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
             using var key     = machine.OpenSubKey(RegistrySubKey);
 
-            if (key is null) return Vanished(NameRegistry, SnapshotSystem);
+            if (key is null) return Vanished(SnapshotSystem);
 
             if (key.GetValue(RegistryJsonValue) is string json && !string.IsNullOrWhiteSpace(json))
                 return Remember(NameRegistry, SnapshotSystem, json, null, signatureRequired: false);
@@ -141,7 +141,7 @@ public static class PolicySources
             if (key.GetValue(RegistryPathValue) is string path && !string.IsNullOrWhiteSpace(path))
                 return FromFile(NameRegistry, SnapshotSystem, path, signatureRequired: false);
 
-            return Vanished(NameRegistry, SnapshotSystem);
+            return Vanished(SnapshotSystem);
         }
         catch (Exception ex) when (ex is System.Security.SecurityException or UnauthorizedAccessException or IOException)
         {
@@ -182,7 +182,7 @@ public static class PolicySources
     {
         try
         {
-            if (!File.Exists(path)) return Vanished(name, snapshotKey);
+            if (!File.Exists(path)) return Vanished(snapshotKey);
 
             var json      = File.ReadAllText(path);
             var signature = ReadSignature(path);
@@ -224,9 +224,8 @@ public static class PolicySources
     /// Источник отменили: место доступно, файла или ветки в нем больше нет. Снимок
     /// забывается, источник исчезает из набора.
     /// </summary>
-    private static PolicyCandidate? Vanished(string name, string snapshotKey)
+    private static PolicyCandidate? Vanished(string snapshotKey)
     {
-        _ = name;
         AppSettings.ForgetPolicySnapshot(snapshotKey);
         AppSettings.ForgetPolicySnapshot(snapshotKey + SignatureExtension);
         return null;

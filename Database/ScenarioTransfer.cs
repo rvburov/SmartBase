@@ -151,7 +151,7 @@ public static class ScenarioTransfer
 
         var connections = MergeConnections(bundle, registry, notes, out var madeConnections);
         var requests    = MergeRequests(bundle, registry, connections, notes, out var madeRequests);
-        var scenarios   = MergeScenarios(bundle, registry, requests, databases, notes, now);
+        var scenarios   = MergeScenarios(bundle, registry, requests, databases, notes);
 
         return new ImportReport(madeConnections, madeRequests, scenarios, notes);
     }
@@ -268,10 +268,8 @@ public static class ScenarioTransfer
     private static int MergeScenarios(ScenarioBundle bundle, IntegrationsRegistry registry,
                                       Dictionary<string, int> requests,
                                       IReadOnlyList<DatabaseManager> databases,
-                                      List<string> notes, DateTimeOffset now)
+                                      List<string> notes)
     {
-        _ = now;
-
         var taken = new HashSet<string>(registry.Scenarios().Select(s => s.Name.Trim()),
                                         StringComparer.CurrentCultureIgnoreCase);
         var made  = 0;
