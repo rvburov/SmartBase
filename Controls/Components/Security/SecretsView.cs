@@ -280,8 +280,13 @@ public sealed class SecretsView : UserControl
 
         list.Children.Add(Note(entry.What));
 
-        if (entry.Created is { } created)
-            list.Children.Add(Note("Заведен: " + created.ToLocalTime().ToString("dd.MM.yyyy HH:mm")));
+        // «Заведен» знает только тот секрет, который выпустила САМА программа, — токен робота.
+        // У остальных момент появления не записан и записан быть не может: пароль базы лежит в
+        // ее файле, пароль сервера — в хранилище ОС, мастер-пароль — в чужом подписанном файле.
+        // Сказано вслух, иначе пустое место читается как «не заполнили».
+        list.Children.Add(Note(entry.Created is { } created
+            ? "Заведен: " + created.ToLocalTime().ToString("dd.MM.yyyy HH:mm")
+            : "Когда заведен — неизвестно: этот секрет выпускала не программа."));
 
         if (stale)
             list.Children.Add(Note($"Им не пользовались дольше {SecretsInventory.StaleDays} дней. "

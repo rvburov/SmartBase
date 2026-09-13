@@ -426,6 +426,17 @@ public partial class MainWindow : Window
             SettingsSidebar.Select("notes");
         };
 
+        // «Показать политику» с карточки соединения: отказ адреса объясняет себя строкой, а
+        // правила целиком живут в контуре безопасности — в другом модуле. Переключаем тем же
+        // путем, что и панель активности, иначе подсветка кнопки разъедется с показанным
+        // разделом.
+        SettingsModule.PolicyRequested += (_, _) =>
+        {
+            ActivityBarControl.SetModuleActive("profile");
+            ShowModule("profile");
+            ProfileSidebar.Select("security");
+        };
+
         // Папку хранилища сменили в настройках — раздать новый путь дереву и разделу.
         SettingsModule.NotesVaultChanged += (_, path) =>
         {

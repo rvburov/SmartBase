@@ -72,10 +72,31 @@ public partial class SettingsView
             ? "Политика: адрес разрешен"
             : "Политика: " + decision.Explanation;
 
+        // «Показать политику» появляется только у ОТКАЗА и ведет в контур безопасности: там
+        // написано, какие адреса разрешены и кто это задал. Отказ, объясняющий себя одной
+        // строкой и не показывающий, куда идти дальше, отправляет человека искать наугад
+        // (docs/ROADMAP-API.md, 10.18 и 6.7).
+        var extra = new List<(string, Action)>
+        {
+            ("Дублировать", () => _ = EditConnectionAsync(connection.Copy())),
+        };
+
+        if (!decision.Allowed) extra.Insert(0, ("Показать политику", ShowPolicy));
+
         return CardRow(connection.Name, description, policy,
             edit:   () => _ = EditConnectionAsync(connection),
-            delete: () => _ = DeleteConnectionAsync(connection));
+            delete: () => _ = DeleteConnectionAsync(connection),
+            more:   extra);
     }
+
+    /// <summary>Открыть контур безопасности: там написано, что разрешено и кем задано.</summary>
+    private void ShowPolicy() => PolicyRequested?.Invoke(this, EventArgs.Empty);
+
+    /// <summary>
+    /// Человек просит показать правила целиком. Экран контура живет в модуле «Профиль», а
+    /// настройки о нем не знают — переключает разделы хозяин окна.
+    /// </summary>
+    public event EventHandler? PolicyRequested;
 
     private async Task EditConnectionAsync(IntegrationConnection card)
     {

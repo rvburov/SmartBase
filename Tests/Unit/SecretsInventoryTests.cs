@@ -307,4 +307,48 @@ public sealed class SecretsInventoryTests
         Assert.Equal("установлен",     SecretsInventory.StateText(alive, Now));
         Assert.Equal("давно не нужен", SecretsInventory.StateText(dead, Now));
     }
+
+
+    // ── Куда идти, если отсюда нельзя ─────────────────────────────────────────
+
+    /// <summary>
+    /// У пароля сервера PostgreSQL нет своих действий, и опись обязана сказать, ГДЕ его менять.
+    /// В этом весь смысл описи: человек пришел сюда, чтобы не рыскать по программе, — и уйти
+    /// отсюда с пустыми руками он не должен.
+    ///
+    /// Своих «заменить» и «удалить» у строки нет намеренно: пароль сервера — часть строки
+    /// подключения, и менять его отдельно от адреса, порта, базы и пользователя значило бы
+    /// разрешить задать пароль к серверу, которого не назвали.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void The_server_password_says_where_it_is_changed(bool hasPassword)
+    {
+        var entry = SecretsInventory.PgPassword(1, "Заказы", "srv:5432/orders", hasPassword);
+
+        Assert.Contains("Настройки", entry.Guard, StringComparison.Ordinal);
+        Assert.Contains("Базы данных", entry.Guard, StringComparison.Ordinal);
+        Assert.False(entry.Revealable);
+    }
+
+    /// <summary>
+    /// «Когда заведен» знает только секрет, который выпустила САМА программа, — токен робота. У
+    /// остальных момента появления нет и быть не может: пароль базы лежит в ее файле, пароль
+    /// сервера — в хранилище операционной системы, мастер-пароль — в чужом подписанном файле.
+    /// Тест закрепляет это как решение, а не как недоделку.
+    /// </summary>
+    [Fact]
+    public void Only_secrets_the_program_issued_know_when_they_were_made()
+    {
+        var moment = new DateTimeOffset(2026, 9, 1, 10, 0, 0, TimeSpan.Zero);
+
+        Assert.NotNull(SecretsInventory.RobotToken(1, "Робот", "Заказы", moment, null, true).Created);
+
+        Assert.Null(SecretsInventory.Connection(1, "Учетная система", "https://srv",
+                                                requests: 1, lastRun: null, created: null).Created);
+        Assert.Null(SecretsInventory.DatabasePassword(1, "Заказы").Created);
+        Assert.Null(SecretsInventory.PgPassword(1, "Заказы", "srv:5432/orders").Created);
+        Assert.Null(SecretsInventory.PolicyMaster(true, "реестр").Created);
+    }
 }

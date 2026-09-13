@@ -156,4 +156,53 @@ public sealed class IntegrationConnectionTests
         // исправлять по одному и жать «Сохранить» четыре раза.
         Assert.Equal(4, card.Problems().Count);
     }
+
+
+    // ── Дублирование ──────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Копия соединения заводит НОВУЮ карточку, а не переписывает исходную: ключ сброшен, имя
+    /// отличается. Не сбрось ключ — и «Дублировать» молча перезаписывало бы то соединение, с
+    /// которого копировали.
+    /// </summary>
+    [Fact]
+    public void A_copy_is_a_new_card_with_a_new_name()
+    {
+        var card = Valid() with { Id = 42, Name = "Учетная система" };
+        var copy = card.Copy();
+
+        Assert.Equal(0, copy.Id);
+        Assert.NotEqual(card.Name, copy.Name);
+        Assert.Contains("копия", copy.Name, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Все, ради чего дублируют, копируется: адрес, способ авторизации, заголовки, таймаут и
+    /// повторы. Иначе копия — это пустая карточка с похожим именем.
+    /// </summary>
+    [Fact]
+    public void A_copy_keeps_everything_the_duplicate_is_made_for()
+    {
+        var card = Valid() with
+        {
+            Id             = 7,
+            Auth           = ConnectionAuth.Header,
+            AuthName       = "X-Api-Key",
+            Headers        = [new IntegrationHeader("Accept", "application/json")],
+            TimeoutSeconds = 15,
+            Retries        = 1,
+        };
+
+        var copy = card.Copy();
+
+        Assert.Equal(card.Address,        copy.Address);
+        Assert.Equal(card.Auth,           copy.Auth);
+        Assert.Equal(card.AuthName,       copy.AuthName);
+        Assert.Equal(card.Headers,        copy.Headers);
+        Assert.Equal(card.TimeoutSeconds, copy.TimeoutSeconds);
+        Assert.Equal(card.Retries,        copy.Retries);
+
+        // И копия годна к сохранению сразу: форма не поехала.
+        Assert.Empty(copy.Problems());
+    }
 }
