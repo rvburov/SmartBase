@@ -44,7 +44,12 @@ public static class RequestLauncher
         string                step     = "",
         CancellationToken     ct       = default)
     {
-        var context = VariableContext.Now(registry.LastRun(request.Id), connection.Address);
+        // Значения единственной уходящей записи — для подстановки {{поле.Имя}} В ПУТИ запроса.
+        // Записей не одна — подстановки нет, и запуск остановится с понятным отказом: путь
+        // собирается один раз, и подставить в него запись из трех значило бы отправить две
+        // оставшиеся по чужому адресу.
+        var context = VariableContext.Now(registry.LastRun(request.Id), connection.Address,
+                                          payload?.Single);
 
         // Замок на исходящем: подтверждено ли направление и лег ли след. Читающий запрос сюда не
         // попадает — ему подтверждать нечего.

@@ -9,7 +9,8 @@ namespace SmartBase.Core.Importers.TableSources;
 /// дружелюбная ошибка). Ключи объектов → свойства: объединение по всем записям в порядке первого
 /// появления. Название записи — ключ «Название», name или title (без учета регистра), иначе первый
 /// ключ первого объекта. Скаляры сохраняются текстом как в файле (числа/булевы — сырой токен),
-/// null → пусто, вложенные объекты/массивы → сырой JSON-текст.
+/// null → пусто, массивы → сырой JSON-текст, а вложенные объекты разворачиваются ТОЧКОЙ
+/// (<c>клиент.название</c>, до трех уровней — см. <see cref="SourceHelpers.JsonLeaves"/>).
 ///
 /// <paramref name="itemsPath"/> — путь к массиву записей внутри файла, точками: <c>rows</c>,
 /// <c>data.items</c>. Пусто — записями считается сам файл. Написание пути то же, что у
@@ -45,23 +46,20 @@ public sealed class JsonTableSource(string path, string itemsPath = "") : ITable
                         $"Запись {rowCount + 1} не является объектом JSON — ожидается массив объектов или NDJSON.");
                 rowCount++;
 
-                foreach (var p in doc.RootElement.EnumerateObject())
+                // Вложенные объекты разворачиваются точкой: «клиент.название». Правило общее с
+                // сетевым источником — один и тот же набор записей, пришедший файлом и по сети,
+                // обязан ложиться в коллекцию одинаково.
+                foreach (var (name, text) in SourceHelpers.JsonLeaves(doc.RootElement))
                 {
-                    if (!stats.TryGetValue(p.Name, out var st))
+                    if (!stats.TryGetValue(name, out var st))
                     {
                         st = new KeyStat { Index = keys.Count };
-                        stats[p.Name] = st;
-                        keys.Add(p.Name);
-                        firstKey ??= p.Name;
+                        stats[name] = st;
+                        keys.Add(name);
+                        firstKey ??= name;
                     }
 
-                    var nonEmpty = p.Value.ValueKind switch
-                    {
-                        JsonValueKind.Null or JsonValueKind.Undefined => false,
-                        JsonValueKind.String => !string.IsNullOrWhiteSpace(p.Value.GetString()),
-                        _ => true,
-                    };
-                    if (nonEmpty && st.LastDoc != rowCount) { st.NonEmpty++; st.LastDoc = rowCount; }
+                    if (!string.IsNullOrWhiteSpace(text) && st.LastDoc != rowCount) { st.NonEmpty++; st.LastDoc = rowCount; }
                 }
             }
 
@@ -100,12 +98,11 @@ public sealed class JsonTableSource(string path, string itemsPath = "") : ITable
                 var vals  = new string[Math.Max(0, _keys.Count - 1)];
                 Array.Fill(vals, "");
 
-                foreach (var p in doc.RootElement.EnumerateObject())
+                foreach (var (name, text) in SourceHelpers.JsonLeaves(doc.RootElement))
                 {
-                    if (!index.TryGetValue(p.Name, out var i)) continue;   // ключа не было в проходе 1
-                    var s = SourceHelpers.FormatJsonValue(p.Value);
-                    if (i == _titleIdx) title = s;
-                    else vals[i < _titleIdx ? i : i - 1] = s;
+                    if (!index.TryGetValue(name, out var i)) continue;   // ключа не было в проходе 1
+                    if (i == _titleIdx) title = text;
+                    else vals[i < _titleIdx ? i : i - 1] = text;
                 }
 
                 yield return new ImportRow(title, vals);

@@ -59,15 +59,95 @@ public sealed class JsonTextSourceTests
         Assert.Equal(expected, Read(json).Schema.TitleHeader);
     }
 
-    /// <summary>Числа и вложенные объекты сохраняются как в ответе, null — пусто.</summary>
+    /// <summary>Числа и массивы сохраняются как в ответе, null — пусто.</summary>
     [Fact]
     public void Values_keep_their_source_form()
     {
         var (_, rows) = Read("""
-            [{"name":"А","число":12.50,"флаг":true,"пусто":null,"вложение":{"a":1}}]
+            [{"name":"А","число":12.50,"флаг":true,"пусто":null,"список":[1,2]}]
             """);
 
-        Assert.Equal(["12.50", "true", "", """{"a":1}"""], rows[0].FieldValues);
+        Assert.Equal(["12.50", "true", "", "[1,2]"], rows[0].FieldValues);
+    }
+
+    // ── Точка у вложенных полей ───────────────────────────────────────────────
+
+    /// <summary>
+    /// Вложенный объект разворачивается точкой: <c>клиент.название</c> (раздел 2).
+    ///
+    /// Пока он ложился сырым JSON, колонка «клиент» содержала
+    /// <c>{"название":"Иванов","инн":"7701"}</c> — данные приходили, но пользоваться ими было
+    /// нельзя: ни сопоставить по ИНН, ни положить название в свое поле.
+    /// </summary>
+    [Fact]
+    public void A_nested_object_becomes_dotted_columns()
+    {
+        var (schema, rows) = Read("""
+            [{"name":"А","клиент":{"название":"Иванов","инн":"7701"}}]
+            """);
+
+        Assert.Equal(["клиент.название", "клиент.инн"], schema.FieldNames);
+        Assert.Equal(["Иванов", "7701"], rows[0].FieldValues);
+    }
+
+    /// <summary>
+    /// Глубже трех уровней разворота нет: там начинается чужая внутренняя кухня, из которой
+    /// колонки не делают. Такое значение остается сырым JSON — то есть ведет себя как прежде.
+    /// </summary>
+    [Fact]
+    public void Deeper_than_three_levels_stays_raw()
+    {
+        var (schema, rows) = Read("""
+            [{"name":"А","а":{"б":{"в":{"г":1}}}}]
+            """);
+
+        Assert.Equal(["а.б.в"], schema.FieldNames);
+        Assert.Equal(["""{"г":1}"""], rows[0].FieldValues);
+    }
+
+    /// <summary>
+    /// Массив остается сырым JSON: у него нет имен, по которым делать колонки, а номер позиции
+    /// колонкой быть не может — во второй записи под тем же номером лежит другое.
+    /// </summary>
+    [Fact]
+    public void An_array_is_not_unfolded()
+    {
+        var (schema, rows) = Read("""[{"name":"А","теги":["один","два"]}]""");
+
+        Assert.Equal(["теги"], schema.FieldNames);
+        Assert.Equal(["""["один","два"]"""], rows[0].FieldValues);
+    }
+
+    /// <summary>
+    /// Пустой объект не дает колонок вовсе: данных в нем нет, а колонка со значением <c>{}</c> —
+    /// обещание сведений, которых не пришло.
+    /// </summary>
+    [Fact]
+    public void An_empty_object_gives_no_columns()
+    {
+        var (schema, _) = Read("""[{"name":"А","клиент":{}}]""");
+
+        Assert.Empty(schema.FieldNames);
+    }
+
+    /// <summary>
+    /// Вложенное поле годится и в ключи сопоставления, и в названия: после разворота оно ничем не
+    /// отличается от обычной колонки — ради этого разворот и сделан.
+    /// </summary>
+    [Fact]
+    public void A_nested_field_behaves_like_any_other_column()
+    {
+        var (schema, rows) = Read("""
+            [{"id":1,"клиент":{"name":"Иванов"}},{"id":2,"клиент":{"name":"Петров"}}]
+            """);
+
+        // «name» внутри объекта названием записи НЕ становится: название ищется среди колонок,
+        // а колонка здесь зовется «клиент.name» — и это правильно, иначе вложенное поле молча
+        // перехватывало бы роль у верхнего уровня.
+        Assert.Equal("id", schema.TitleHeader);
+        Assert.Equal(["клиент.name"], schema.FieldNames);
+        Assert.Equal(["Иванов"], rows[0].FieldValues);
+        Assert.Equal(["Петров"], rows[1].FieldValues);
     }
 
     // ── Путь к массиву ────────────────────────────────────────────────────────

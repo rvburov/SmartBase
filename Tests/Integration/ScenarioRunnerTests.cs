@@ -437,12 +437,18 @@ public sealed class ScenarioRunnerTests : IDisposable
 
         await Run(Save(ScenarioStep.OfRequest(requestId)));
 
-        var row = journal.Recent().Single();
+        // Строк у отправки ДВЕ: намерение до сокета и итог после. Имя сценария обязано стоять в
+        // обеих — проверяющий отбирает журнал по нему.
+        var row = Assert.Single(journal.Page(new SecurityFilter(Event: SecurityEvent.Send)));
 
-        Assert.Equal(SecurityEvent.Send,          row.Event);
         Assert.False(row.Allowed);
         Assert.Equal("Заказы каждые полчаса",     row.Scenario);
         Assert.Equal(_db.Manager.DbId,            row.DbId);
+
+        var result = Assert.Single(journal.Page(new SecurityFilter(Event: SecurityEvent.Result)));
+
+        Assert.Equal("Заказы каждые полчаса", result.Scenario);
+        Assert.Contains("до сети не дошло",   result.Explanation, StringComparison.Ordinal);
     }
 
     /// <summary>

@@ -188,7 +188,17 @@ public sealed record OutgoingBinding(
 /// <param name="Fields">Имена полей через запятую — для строки журнала безопасности. Значений
 /// там нет и не будет, поэтому имена собираются отдельно от тела.</param>
 /// <param name="Collection">Имя коллекции — для сообщений человеку.</param>
-public sealed record OutgoingPayload(string Body, int Rows, string Fields, string Collection);
+/// <param name="Body">Готовое тело запроса.</param>
+/// <param name="Rows">Сколько записей в нем.</param>
+/// <param name="Fields">Имена ушедших полей через запятую — для журналов.</param>
+/// <param name="Collection">Из какой коллекции взято.</param>
+/// <param name="Single">Значения ЕДИНСТВЕННОЙ записи «имя поля → текст»; <c>null</c> — записей
+/// не одна. Нужны подстановкам <c>{{запись.id}}</c> и <c>{{поле.Имя}}</c> в ПУТИ запроса: путь
+/// собирается один раз на запуск, поэтому подставить в него запись можно только тогда, когда она
+/// одна (docs/ROADMAP-API.md, раздел 2). Ради этого же случая существует и форма «одна запись»:
+/// <c>PUT /orders/123</c> привязкой к телу не выражается никак.</param>
+public sealed record OutgoingPayload(string Body, int Rows, string Fields, string Collection,
+                                     IReadOnlyDictionary<string, string>? Single = null);
 
 /// <summary>
 /// Сборка тела из строк коллекции.
@@ -260,7 +270,29 @@ public static class OutgoingBody
             System.Text.Encoding.UTF8.GetString(buffer.ToArray()),
             binding.Single ? Math.Min(1, rows.Count) : rows.Count,
             string.Join(", ", binding.Fields.Select(f => f.Name.Trim())),
-            collection);
+            collection,
+            Only(binding, rows));
+    }
+
+    /// <summary>
+    /// Значения единственной записи «имя поля → текст»; <c>null</c> — записей не одна.
+    ///
+    /// Ровно одна — это ровно одна: ни первая из трех, ни «возьмем какую-нибудь». Путь запроса
+    /// собирается ОДИН раз на запуск, и подставить в него запись из трех значило бы отправить
+    /// две оставшиеся по чужому адресу.
+    /// </summary>
+    private static IReadOnlyDictionary<string, string>? Only(OutgoingBinding binding,
+                                                             IReadOnlyList<string[]> rows)
+    {
+        if (rows.Count != 1) return null;
+
+        var made = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var row  = rows[0];
+
+        for (var i = 0; i < binding.Fields.Count && i < row.Length; i++)
+            made[binding.Fields[i].Name.Trim()] = row[i] ?? "";
+
+        return made;
     }
 
     private static void WriteRows(Utf8JsonWriter writer, JsonEncodedText[] names,

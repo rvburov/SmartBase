@@ -409,6 +409,57 @@ public sealed class CollectionBindingTests
         Assert.Empty(db.Constructor.GetRecords(collectionId));
     }
 
+    // ── Плохая строка не уносит остальные ─────────────────────────────────────
+
+    /// <summary>
+    /// Запись, удаленную КОЛЛЕГОЙ во время укладки, программа записывает в отчет и идет дальше
+    /// (раздел 2: «плохие строки уходят в отчет, остальные принимаются»).
+    ///
+    /// Случай настоящий, а не выдуманный: база лежит в общей папке и открыта на нескольких
+    /// машинах, ключи собираются одним чтением В НАЧАЛЕ укладки, а ночная выгрузка идет минуты.
+    /// Запись, попавшую в индекс и удаленную соседом через минуту, обновить уже не во что.
+    ///
+    /// Раньше такая строка роняла ВЕСЬ ответ: выгрузка на десять тысяч строк отклонялась целиком
+    /// из-за одной чужой правки — и приходила снова, и снова отклонялась.
+    /// </summary>
+    [Fact]
+    public void A_record_deleted_mid_flight_is_reported_and_the_rest_go_through()
+    {
+        using var db = new TempDatabase();
+        var (collectionId, numberId, _) = Collection(db.Constructor);
+
+        var binding = new CollectionBinding(Db, collectionId,
+            [new BindingColumn("Название", null), new BindingColumn("Номер", numberId)],
+            MatchColumn: "Номер", UpdateExisting: true, CreateMissing: true);
+
+        // Запись, которую «удалит коллега», уже есть и попадет в индекс ключей.
+        Apply(db.Constructor, binding, """[{"Название":"Молоток","Номер":"А-1"}]""");
+
+        var doomed = db.Constructor.GetRecords(collectionId).Single().Id!.Value;
+
+        var (schema, rows) = Source("""
+            [{"Название":"Молоток","Номер":"А-1"},
+             {"Название":"Отвертка","Номер":"А-2"}]
+            """);
+
+        // Удаление происходит ПОСЛЕ сбора индекса ключей — ровно как у соседа по сети: индекс
+        // строится в начале укладки, а строки читаются лениво.
+        IEnumerable<ImportRow> Racing()
+        {
+            db.Constructor.DeleteRecord(doomed);
+            foreach (var row in rows) yield return row;
+        }
+
+        var result = db.Constructor.ApplyRows(binding, schema, Racing(), CancellationToken.None);
+
+        // Исчезнувшая строка ПРОПУЩЕНА, а не «обновлена»: обновлять было не во что. Вторая
+        // строка при этом легла — одна чужая правка не отменяет всю выгрузку.
+        Assert.Equal(1, result.Skipped);
+        Assert.Equal(0, result.Updated);
+        Assert.Equal(1, result.Created);
+        Assert.Equal(["Отвертка"], db.Constructor.GetRecords(collectionId).Select(r => r.Title));
+    }
+
     // ── Скорость ──────────────────────────────────────────────────────────────
 
     /// <summary>

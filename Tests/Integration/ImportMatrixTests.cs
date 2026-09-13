@@ -80,9 +80,11 @@ public sealed class ImportMatrixTests
         var id = IE.Import(db.Constructor, f, "JSON");
         var (fields, count, titles) = IE.Snapshot(db.Path, id);
         Assert.Equal(2, count);
-        Assert.Equal(["price", "nested", "extra"], fields);
+        // Вложенный объект разворачивается точкой (раздел 2): колонка «nested.a», а не
+        // «nested» со всем объектом внутри — иначе данные приходят, а пользоваться ими нельзя.
+        Assert.Equal(["price", "nested.a", "extra"], fields);
         Assert.Equal(["Первый", "Без названия"], titles);
-        Assert.Equal("""{"a":1}""", IE.Values(db.Path, id, 0)["nested"]);
+        Assert.Equal("1", IE.Values(db.Path, id, 0)["nested.a"]);
         Assert.Equal("", IE.Values(db.Path, id, 1)["price"]);
         Assert.Equal("true", IE.Values(db.Path, id, 1)["extra"]);
     }

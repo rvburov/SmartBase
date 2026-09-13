@@ -117,10 +117,20 @@
                     <ItemsControl.ItemTemplate>
                         <DataTemplate x:DataType="d:BindingMapRow">
                             <Grid ColumnDefinitions="*,12,*" Margin="0,0,0,6">
-                                <TextBlock Grid.Column="0"
-                                           Text="{Binding Column}"
-                                           VerticalAlignment="Center"
-                                           TextTrimming="CharacterEllipsis" />
+                                <!-- Имя колонки и под ним ее НАСТОЯЩИЕ значения из ответа.
+                                     Раскладка подбирается по именам, а у чужих программ они
+                                     похожи до неразличимости; ошибку без значений видно только
+                                     после укладки, то есть по испорченной коллекции. -->
+                                <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding Column}"
+                                               TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{Binding Sample}"
+                                               IsVisible="{Binding HasSample}"
+                                               Margin="0,2,0,0"
+                                               FontSize="{DynamicResource FontSizeSmall}"
+                                               Foreground="{StaticResource BrushSecondaryText}"
+                                               TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
                                 <ComboBox Grid.Column="2"
                                           Height="30"
                                           HorizontalAlignment="Stretch"

@@ -10,7 +10,8 @@ namespace SmartBase.Tests.Integration;
 /// крошечный сервер, поднятый тут же на петле.
 ///
 /// Проверяется не «работает ли HTTP» — это забота платформы, — а обещания слоя, которые легко
-/// потерять правкой: шлюз спрашивается ДО отправки, за перенаправлением слой не идет, ответ
+/// потерять правкой: шлюз спрашивается ДО отправки, за перенаправлением слой идет только проверив
+/// новый адрес заново, ответ
 /// обрезается по потолку, POST не повторяется, а отказ политики выглядит отказом политики, а
 /// не сетевым сбоем.
 ///
@@ -159,23 +160,70 @@ public sealed class EgressHttpTests : IDisposable
     // ── Обещания слоя ─────────────────────────────────────────────────────────
 
     /// <summary>
-    /// За перенаправлением слой не идет: новый адрес шлюз не проверял, и сходить по нему
-    /// значило бы обойти белый список одним ответом чужого сервера.
+    /// За перенаправлением слой ИДЕТ — но проверив новый адрес с самого начала (10.5: «каждый
+    /// переход проверяется заново»).
+    ///
+    /// Пока переходы были запрещены целиком, самый обычный <c>http → https</c> у чужого API
+    /// кончался отказом, и выглядело это как поломка программы, а не как правило организации.
+    /// Автоматический переход HttpClient при этом по-прежнему выключен: он прошел бы мимо шлюза,
+    /// и одним ответом чужого сервера белый список обходился бы весь.
     /// </summary>
     [Fact]
-    public async Task Redirect_is_not_followed()
+    public async Task An_allowed_redirect_is_followed_after_a_fresh_check()
+    {
+        AllowLoopback();
+        using var elsewhere = new TinyServer(_ => TinyServer.Reply(200, """[{"а":1}]"""));
+        using var server = new TinyServer(_ => TinyServer.Reply(
+            302, "", "text/plain", $"Location: http://127.0.0.1:{elsewhere.Port}/забрать"));
+
+        var answer = await EgressHttp.SendAsync(Connection(server), Request(), secret: "");
+
+        Assert.True(answer.Ok, answer.Explanation);
+        Assert.Equal(200, answer.StatusCode);
+        Assert.Single(elsewhere.Seen);
+        Assert.Contains("перенаправлений: 1", answer.Explanation, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Перенаправление НА ЗАПРЕЩЕННЫЙ адрес не проходит: новый адрес — это новое обращение
+    /// наружу, и шлюз спрашивается о нем заново. Без этого одним ответом чужого сервера белый
+    /// список обходился бы целиком.
+    /// </summary>
+    [Fact]
+    public async Task A_redirect_outside_the_white_list_is_refused()
+    {
+        AllowLoopback();   // разрешена только петля
+        using var server = new TinyServer(_ => TinyServer.Reply(
+            302, "", "text/plain", "Location: http://api.postavshik.example/забрать"));
+
+        var answer = await EgressHttp.SendAsync(Connection(server), Request(), secret: "");
+
+        Assert.False(answer.Ok);
+        Assert.Equal(EgressDenyReason.HostNotAllowed, answer.Reason);
+        Assert.Contains("перенаправление", answer.Explanation, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// За перенаправлением запроса С ТЕЛОМ слой не идет. Тело на новом адресе можно либо
+    /// отправить туда, куда человек не собирался (это вынос данных), либо тихо выбросить — и оба
+    /// пути хуже отказа.
+    /// </summary>
+    [Fact]
+    public async Task A_redirect_of_a_request_with_a_body_is_refused()
     {
         AllowLoopback();
         using var elsewhere = new TinyServer(_ => TinyServer.Reply(200, "секрет", "text/plain"));
         using var server = new TinyServer(_ => TinyServer.Reply(
             302, "", "text/plain", $"Location: http://127.0.0.1:{elsewhere.Port}/забрать"));
 
-        var answer = await EgressHttp.SendAsync(Connection(server), Request(), secret: "");
+        var answer = await EgressHttp.SendAsync(
+            Connection(server),
+            Request() with { Method = RequestMethod.Post, Body = """{"тело":"важное"}""" },
+            secret: "");
 
         Assert.Equal(302, answer.StatusCode);
-        Assert.True(answer.Redirected);
         Assert.False(answer.Ok);
-        Assert.Contains("перенаправлением", answer.Explanation, StringComparison.Ordinal);
+        Assert.Contains("только у GET", answer.Explanation, StringComparison.Ordinal);
         Assert.Empty(elsewhere.Seen);
     }
 

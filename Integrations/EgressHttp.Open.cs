@@ -25,7 +25,8 @@ namespace SmartBase.Integrations;
 /// <list type="bullet">
 /// <item>спрашивает <see cref="EgressGate"/> дважды — по имени и по фактическому адресу;</item>
 /// <item>соединяется РОВНО с проверенным адресом, а не с тем, что даст DNS во второй раз;</item>
-/// <item>не ходит за перенаправлениями: новый адрес шлюза не проходил;</item>
+/// <item>за перенаправлением идет ТОЛЬКО у GET и только проверив новый адрес с самого начала —
+///       иначе тело ушло бы туда, куда его не посылали;</item>
 /// <item>пользуется прокси ТОЛЬКО тем, который назвала политика организации, и проверяет его
 ///       адрес как всякий другой;</item>
 /// <item>не хранит cookie: чужое состояние между запусками нам не нужно;</item>
@@ -198,43 +199,119 @@ public static class EgressHttp
 
     // ── Одна попытка ──────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Сколько перенаправлений разрешено пройти за одну попытку. Три — это «http → https» плюс
+    /// смена пути и еще один запас; дальше начинается не перенаправление, а петля, и ходить по
+    /// ней значит дать чужой программе водить нас по адресам сколько ей угодно.
+    /// </summary>
+    private const int MaxRedirects = 3;
+
     private static async Task<EgressResponse> OnceAsync(
         EgressPlan plan, IPAddress pinned, int port, Uri? proxy,
         int attempt, Stopwatch watch, long ceiling, CancellationToken ct)
     {
-        using var handler = HandlerFor(plan, pinned, port, proxy);
-        using var client  = new HttpClient(handler, disposeHandler: false)
+        var address = plan.Address;
+        var hops    = 0;
+
+        while (true)
         {
-            Timeout = TimeSpan.FromSeconds(plan.TimeoutSeconds),
-        };
+            using var handler = HandlerFor(plan, pinned, port, proxy);
+            using var client  = new HttpClient(handler, disposeHandler: false)
+            {
+                Timeout = TimeSpan.FromSeconds(plan.TimeoutSeconds),
+            };
 
-        using var message  = MessageFor(plan);
-        using var response = await client.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, ct);
+            using var message  = MessageFor(plan, address);
+            using var response = await client.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, ct);
 
-        var (body, bytes, truncated) = await ReadAsync(response, ceiling, ct);
+            if ((int)response.StatusCode is >= 300 and < 400
+                && Redirect(plan, response, address) is { } next
+                && hops < MaxRedirects)
+            {
+                // Новый адрес — это НОВОЕ обращение наружу, и проверяется он с самого начала:
+                // имя по белому списку, потом фактический адрес. Ради этого редиректы и не
+                // отданы HttpClient: его автоматический переход прошел бы мимо шлюза.
+                var byName = EgressGate.Check(next);
+                if (!byName.Allowed)
+                    return EgressResponse.Denied(byName.Reason,
+                        $"перенаправление на «{next.Host}»: " + byName.Explanation,
+                        plan.SafeAddress);
 
-        var headers = response.Headers
-            .Concat(response.Content.Headers)
-            .Select(h => new IntegrationHeader(h.Key, string.Join(", ", h.Value)))
-            .ToList();
+                if (proxy is null)
+                {
+                    var again = await ResolveAndCheckAsync(next, ct);
 
-        var explanation = (int)response.StatusCode is >= 300 and < 400
-            ? "чужая программа ответила перенаправлением; программа за ним не идет — "
-            + "новый адрес шлюз не проверял. Укажите итоговый адрес в соединении."
-            : "";
+                    if (again.Address is null)
+                        return EgressResponse.Denied(again.Reason,
+                            $"перенаправление на «{next.Host}»: " + again.Explanation,
+                            plan.SafeAddress);
 
-        return new EgressResponse(
-            Sent:        true,
-            Reason:      EgressDenyReason.None,
-            Explanation: explanation,
-            StatusCode:  (int)response.StatusCode,
-            Body:        body,
-            Bytes:       bytes,
-            Truncated:   truncated,
-            Elapsed:     watch.Elapsed,
-            Headers:     headers,
-            SafeAddress: plan.SafeAddress,
-            Attempts:    attempt);
+                    pinned = again.Address;
+                    port   = next.Port;
+                }
+
+                address = next;
+                hops++;
+                continue;
+            }
+
+            var (body, bytes, truncated) = await ReadAsync(response, ceiling, ct);
+
+            var headers = response.Headers
+                .Concat(response.Content.Headers)
+                .Select(h => new IntegrationHeader(h.Key, string.Join(", ", h.Value)))
+                .ToList();
+
+            return new EgressResponse(
+                Sent:        true,
+                Reason:      EgressDenyReason.None,
+                Explanation: Note(plan, response, hops),
+                StatusCode:  (int)response.StatusCode,
+                Body:        body,
+                Bytes:       bytes,
+                Truncated:   truncated,
+                Elapsed:     watch.Elapsed,
+                Headers:     headers,
+                SafeAddress: plan.SafeAddress,
+                Attempts:    attempt);
+        }
+    }
+
+    /// <summary>
+    /// Куда зовет перенаправление; <c>null</c> — идти за ним нельзя или некуда.
+    ///
+    /// <b>Идем только за GET.</b> У остальных методов есть тело, и с ним на новый адрес два пути,
+    /// оба плохие: отправить его туда, куда человек не собирался (это вынос данных), — или тихо
+    /// выбросить и отправить пустой запрос, о чем никто не узнает. Отказ здесь честнее обоих.
+    ///
+    /// Относительный адрес разрешается от текущего: чужие программы пишут <c>Location: /v2/orders</c>
+    /// не реже полного адреса.
+    /// </summary>
+    private static Uri? Redirect(EgressPlan plan, HttpResponseMessage response, Uri from)
+    {
+        if (plan.Method != RequestMethod.Get) return null;
+
+        if (response.Headers.Location is not { } location) return null;
+
+        return Uri.TryCreate(from, location, out var next) ? next : null;
+    }
+
+    /// <summary>
+    /// Пояснение к ответу: за перенаправлением не пошли — сказать почему; прошли — сказать
+    /// сколько. Второе не мелочь: ответ, пришедший с ТРЕТЬЕГО адреса, человек должен видеть как
+    /// пришедший оттуда, а не с того, что написан в карточке.
+    /// </summary>
+    private static string Note(EgressPlan plan, HttpResponseMessage response, int hops)
+    {
+        if ((int)response.StatusCode is >= 300 and < 400)
+            return plan.Method == RequestMethod.Get
+                ? "перенаправлений подряд больше " + MaxRedirects
+                + ": похоже на петлю. Укажите итоговый адрес в соединении."
+                : "чужая программа ответила перенаправлением; за ним программа идет только у GET: "
+                + "у остальных методов есть тело, и оно ушло бы туда, куда его не посылали. "
+                + "Укажите итоговый адрес в соединении.";
+
+        return hops == 0 ? "" : $"пройдено перенаправлений: {hops}";
     }
 
     /// <summary>
@@ -288,9 +365,9 @@ public static class EgressHttp
         };
     }
 
-    private static HttpRequestMessage MessageFor(EgressPlan plan)
+    private static HttpRequestMessage MessageFor(EgressPlan plan, Uri address)
     {
-        var message = new HttpRequestMessage(MethodFor(plan.Method), plan.Address);
+        var message = new HttpRequestMessage(MethodFor(plan.Method), address);
 
         if (plan.Body.Length > 0)
         {

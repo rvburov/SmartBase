@@ -29,12 +29,23 @@ namespace SmartBase.Controls.Dialogs;
 /// </summary>
 public partial class IntegrationBindingDialog : Window
 {
-    /// <summary>Куда может лечь одна колонка ответа: никуда, в название записи или в свойство.</summary>
-    private sealed record Slot(string Text, bool Transfer, int? FieldId);
+    /// <summary>
+    /// Куда может лечь одна колонка ответа: никуда, в название записи, в существующее свойство —
+    /// или в НОВОЕ, которое программа заведет при подтверждении.
+    /// </summary>
+    /// <param name="Create">Завести свойство с именем колонки. Раздел 2 обещает это с самого
+    /// начала: чужая программа отдает колонку, которой в коллекции нет, и выбор «не переносить или
+    /// заводить поле руками в другом окне» — это не выбор, а отправка человека по кругу.</param>
+    private sealed record Slot(string Text, bool Transfer, int? FieldId, bool Create = false);
 
     private readonly IReadOnlyList<DbOption> _dbs;
     private readonly IReadOnlyList<string>   _columns;
     private readonly CollectionBinding?      _saved;
+
+    // Настоящие значения колонок из первых строк ответа: по одной готовой строке на колонку.
+    // Готовятся в конструкторе, а не при каждой перестройке списка: раскладку пересобирают на
+    // каждый выбор коллекции, а образцы от него не зависят.
+    private readonly IReadOnlyList<string> _samples;
 
     private List<(string Name, int Id)> _collections  = [];
     private readonly List<BindingMapRow> _rows        = [];
@@ -52,20 +63,27 @@ public partial class IntegrationBindingDialog : Window
     /// <param name="rows">Сколько записей в ответе — для строки над раскладкой.</param>
     /// <param name="saved">Прошлая привязка этого запроса; null — раскладка подбирается по
     /// совпадению имен.</param>
+    /// <param name="sample">Первые строки ответа — значения в порядке <paramref name="columns"/>.
+    /// Раздел 2 обещает «показ первых 20 строк», и обещает не ради полноты: раскладка подбирается
+    /// ПО ИМЕНАМ, а у чужих программ имена похожи до неразличимости, и ошибку в них без значений
+    /// видно только после укладки — то есть по испорченной коллекции.</param>
     public IntegrationBindingDialog(
         IReadOnlyList<DbOption> dbs,
         IReadOnlyList<string>   columns,
         long                    rows,
-        CollectionBinding?      saved)
+        CollectionBinding?      saved,
+        IReadOnlyList<IReadOnlyList<string>>? sample = null)
     {
         InitializeComponent();
 
         _dbs     = dbs;
         _columns = columns;
         _saved   = saved;
+        _samples = BindingSample.Of(columns, sample ?? []);
 
         AnswerText.Text = $"В ответе записей: {rows:N0} · колонок: {columns.Count}. "
-                        + "Колонка, для которой не выбрано место, не переносится.";
+                        + "Под именем колонки — ее значения из первых строк ответа: по ним видно, "
+                        + "та ли это колонка. Колонка, для которой не выбрано место, не переносится.";
 
         UpdateCheck.IsChecked = saved?.UpdateExisting ?? true;
         CreateCheck.IsChecked = saved?.CreateMissing  ?? true;
@@ -163,6 +181,14 @@ public partial class IntegrationBindingDialog : Window
         _slots = [new Slot("Не переносить", false, null), new Slot("Название записи", true, null)];
         _slots.AddRange(fields.Select(f => new Slot(TitleText.FirstLine(f.Name), true, f.Id!.Value)));
 
+        // Последним — «завести свойство». Последним намеренно: сперва человек ищет готовое место,
+        // и новое поле должно быть тем, что выбирают осознанно, а не тем, на что падает глаз.
+        //
+        // Тип — ТЕКСТ, как у импорта файла, и это не упрощение: импорт заводит текстовые поля
+        // ровно так же. Тип у свойства меняют одним щелчком в окне коллекции, а угаданный неверно
+        // тип молча портит значения при первой же укладке.
+        _slots.Add(new Slot("Завести свойство с этим именем (текст)", true, null, Create: true));
+
         var slots   = _slots;
         var options = slots.Select(s => s.Text).ToList();
 
@@ -172,8 +198,10 @@ public partial class IntegrationBindingDialog : Window
             ? _saved
             : null;
 
-        foreach (var column in _columns)
-            _rows.Add(new BindingMapRow(column, options, DefaultSlot(column, slots, saved))
+        for (var i = 0; i < _columns.Count; i++)
+            _rows.Add(new BindingMapRow(_columns[i], options,
+                                        DefaultSlot(_columns[i], slots, saved),
+                                        i < _samples.Count ? _samples[i] : "")
             {
                 // Перестройка списка ключей сама обновляет подсказку — звать ее отдельно незачем.
                 Picked = () => { if (!_building) RebuildMatches(); },
@@ -294,6 +322,17 @@ public partial class IntegrationBindingDialog : Window
 
     private void Confirm()
     {
+        // Новые свойства заводятся ДО сборки привязки: она хранит ключи полей, а их до создания
+        // не существует. Не вышло — окно остается открытым с причиной: закрыться, не сделав
+        // обещанного, значило бы уложить ответ мимо половины колонок и не сказать об этом.
+        if (!MakeFields(out var trouble))
+        {
+            var spot = Position;
+            NoticeBanner.Show(trouble);
+            KeepWindowPosition(spot);
+            return;
+        }
+
         var binding  = Build();
         var problems = binding.Problems();
 
@@ -306,6 +345,93 @@ public partial class IntegrationBindingDialog : Window
         }
 
         Close(binding);
+    }
+
+    /// <summary>
+    /// Завести свойства для колонок, которым выбрано «завести свойство». Возвращает <c>false</c> и
+    /// причину, если хоть одно не завелось.
+    ///
+    /// <b>Заводятся они здесь, а не при укладке.</b> Привязка хранит КЛЮЧИ полей, и до создания
+    /// ключа нет; отложи создание — и привязку пришлось бы учить хранить «а еще заведи вот это»,
+    /// то есть класть одноразовое поручение в настройку, которая живет годами.
+    ///
+    /// Права спрашивает сам репозиторий (<c>AddField</c> требует «Создание свойства»), и отказ
+    /// приходит сюда исключением — его человек читает строкой в окне, а не молчаливым пропуском
+    /// колонки.
+    /// </summary>
+    private bool MakeFields(out string trouble)
+    {
+        trouble = "";
+
+        if (CurrentDb is not { } db) return true;
+
+        var collectionId = CurrentCollectionId;
+        if (collectionId <= 0) return true;
+
+        var wanted = _rows.Where(r => Chosen(r).Create).ToList();
+        if (wanted.Count == 0) return true;
+
+        var made = new List<(BindingMapRow Row, int FieldId)>();
+
+        try
+        {
+            var position = db.Repo.GetFields(collectionId).Count * 1000 + 1000;
+
+            foreach (var row in wanted)
+            {
+                var field = db.Repo.AddField(new Core.Models.DbField
+                {
+                    CollectionId = collectionId,
+                    Name         = row.Column.Trim(),
+                    FieldType    = "text",
+                    Position     = position,
+                });
+
+                position += 1000;
+                made.Add((row, field.Id!.Value));
+            }
+        }
+        catch (Exception failure) when (failure is InvalidOperationException
+                                               or PermissionDeniedException)
+        {
+            // Часть полей могла завестись — они остаются: удалять их обратно значило бы
+            // разбирать чужую коллекцию из-за неудачи на третьей колонке. Зато выбор в списке
+            // уже переставлен на них, и повторное нажатие не заведет второй копии.
+            Pick(made);
+            trouble = "свойство не завелось: " + failure.Message;
+            return false;
+        }
+
+        Pick(made);
+        return true;
+    }
+
+    /// <summary>
+    /// Перевести строки с «завести свойство» на только что заведенные поля. Делается и при удаче,
+    /// и при неудаче: поле, которое уже существует, обязано выбираться как существующее — иначе
+    /// повторное нажатие попыталось бы завести его второй раз.
+    /// </summary>
+    private void Pick(IReadOnlyList<(BindingMapRow Row, int FieldId)> made)
+    {
+        if (made.Count == 0) return;
+
+        _building = true;
+        RebuildMap();
+        _building = true;
+
+        foreach (var row in _rows)
+        {
+            var known = made.FirstOrDefault(m => string.Equals(m.Row.Column, row.Column,
+                                                               StringComparison.Ordinal));
+
+            if (known.Row is null) continue;
+
+            var slot = _slots.FindIndex(s => s.Transfer && s.FieldId == known.FieldId);
+            if (slot >= 0) row.Selected = slot;
+        }
+
+        _building = false;
+        RebuildMatches();
     }
 
     /// <summary>Что именно случится при переносе — словами и до нажатия.</summary>

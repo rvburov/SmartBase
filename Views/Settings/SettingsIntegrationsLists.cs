@@ -383,7 +383,7 @@ public partial class SettingsView
         // сухой прогон однажды показал бы «уйдет», там где не уйдет.
         var preview = RequestRunner.Preview(
             connection, request, registry.Secret(connection.Id),
-            VariableContext.Now(registry.LastRun(request.Id), connection.Address),
+            VariableContext.Now(registry.LastRun(request.Id), connection.Address, payload?.Single),
             Database.OutwardGuard.Refusal(registry, request, DateTimeOffset.Now),
             payload);
 

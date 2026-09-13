@@ -16,8 +16,17 @@ public sealed class RequestVariablesTests
 {
     private static readonly DateOnly Day = new(2026, 9, 9);
 
-    private static VariableContext Context(DateTimeOffset? lastRun = null, string address = "") =>
-        new(Day, lastRun, address);
+    private static VariableContext Context(DateTimeOffset? lastRun = null, string address = "",
+                                           IReadOnlyDictionary<string, string>? record = null) =>
+        new(Day, lastRun, address, record);
+
+    /// <summary>Единственная уходящая запись — то, чем живет подстановка «поле.Имя».</summary>
+    private static IReadOnlyDictionary<string, string> One =>
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Номер"]  = "А-1043",
+            ["Статус"] = "отгружен",
+        };
 
     private static string Apply(string text, VariableContext context)
     {
@@ -123,16 +132,67 @@ public sealed class RequestVariablesTests
     /// <summary>
     /// Список для подсказки и сам разбор не должны разъезжаться: подстановка, попавшая в
     /// подсказку, но не разбираемая, — прямой путь к отчету «неизвестная подстановка».
+    ///
+    /// Контекст здесь с записью: подстановка поля в подсказке названа образцом «поле.Имя», и
+    /// без записи она честно ответила бы «не знаю такого поля».
     /// </summary>
     [Fact]
     public void Every_listed_substitution_actually_works()
     {
+        var record = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["Имя"] = "А-1" };
+
         foreach (var (name, meaning) in RequestVariables.All)
         {
-            RequestVariables.Apply("{{" + name + "}}", Context(), out var unknown);
+            RequestVariables.Apply("{{" + name + "}}", Context(record: record), out var unknown);
 
             Assert.Empty(unknown);
             Assert.False(string.IsNullOrWhiteSpace(meaning));
         }
+    }
+
+    // ── Поле уходящей записи ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Поле единственной уходящей записи подставляется В ПУТЬ: чужие программы правят запись по
+    /// адресу вида <c>PUT /orders/А-1043</c>, где номер лежит в пути, а не в теле.
+    ///
+    /// Без этой подстановки такой обмен не выражался вовсе: исходящая привязка собирает тело и на
+    /// путь не влияет никак, и единственным способом было завести отдельную карточку запроса на
+    /// каждую запись.
+    /// </summary>
+    [Fact]
+    public void A_field_of_the_single_record_goes_into_the_path()
+    {
+        Assert.Equal("/orders/А-1043",
+                     Apply("/orders/{{поле.Номер}}", Context(record: One)));
+
+        // Регистр имени поля не важен — как и везде, где поле называют по имени.
+        Assert.Equal("/orders/А-1043/отгружен",
+                     Apply("/orders/{{поле.номер}}/{{поле.СТАТУС}}", Context(record: One)));
+    }
+
+    /// <summary>
+    /// Записей не одна — подстановки нет, и это ОТКАЗ, а не пустое место. Путь собирается один
+    /// раз на запуск; подставь в него запись из трех — две оставшиеся ушли бы по чужому адресу.
+    /// </summary>
+    [Fact]
+    public void Without_a_single_record_the_substitution_refuses()
+    {
+        RequestVariables.Apply("/orders/{{поле.Номер}}", Context(), out var unknown);
+
+        Assert.Equal(["поле.Номер"], unknown);
+    }
+
+    /// <summary>
+    /// Неизвестное имя поля — тоже отказ, а не пустота. Пустой хвост в «/orders/» ушел бы к чужой
+    /// программе как обращение ко ВСЕМУ списку, а не к одной записи, и ответ на него выглядел бы
+    /// удачным.
+    /// </summary>
+    [Fact]
+    public void An_unknown_field_name_refuses_instead_of_emptying_the_path()
+    {
+        RequestVariables.Apply("/orders/{{поле.Артикул}}", Context(record: One), out var unknown);
+
+        Assert.Equal(["поле.Артикул"], unknown);
     }
 }

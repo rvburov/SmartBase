@@ -88,8 +88,17 @@ public partial class SettingsView
         var columns = new List<string> { schema.TitleHeader ?? "" };
         columns.AddRange(schema.FieldNames);
 
+        // Первые строки ответа — чтобы раскладку сверяли по ЗНАЧЕНИЯМ, а не по одним именам.
+        // Читаются тем же источником и заново: он потоковый, второй проход по строке в памяти
+        // ничего не стоит, а держать прочитанное ради окна значило бы завести вторую копию
+        // ответа рядом с первой.
+        var sample = source.ReadRows(CancellationToken.None)
+                           .Take(20)
+                           .Select(r => (IReadOnlyList<string>)[r.Title, .. r.FieldValues])
+                           .ToList();
+
         var binding = await new IntegrationBindingDialog(
-                options, columns, schema.RowCount, registry.Binding(request.Id))
+                options, columns, schema.RowCount, registry.Binding(request.Id), sample)
             .ShowDialog<CollectionBinding?>(win);
 
         if (binding is null) return;

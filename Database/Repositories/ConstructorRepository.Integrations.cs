@@ -91,8 +91,24 @@ public partial class ConstructorRepository
                 }
                 else if (index.TryGetValue(key, out var recordId))
                 {
-                    if (binding.UpdateExisting) { Update(binding, reader, fields, row, recordId); updated++; }
-                    else skipped++;
+                    // Запись могла ИСЧЕЗНУТЬ, пока шла укладка: база лежит в общей папке, ключи
+                    // собираются одним чтением в начале, а выгрузка идет минуты. Обновлять
+                    // удаленную запись не во что, и считать это обновлением нельзя — квитанция
+                    // сказала бы «обновлено», не обновив ничего.
+                    if (!Exists(recordId))
+                    {
+                        index.Remove(key);
+                        skipped++;
+                    }
+                    else if (binding.UpdateExisting)
+                    {
+                        Update(binding, reader, fields, row, recordId);
+                        updated++;
+                    }
+                    else
+                    {
+                        skipped++;
+                    }
                 }
                 else if (binding.CreateMissing)
                 {
@@ -305,6 +321,17 @@ public partial class ConstructorRepository
 
         return record.Id!.Value;
     }
+
+    /// <summary>
+    /// Жива ли еще запись. Спрашивается на КАЖДОМ обновлении, и это не перестраховка: ключи
+    /// собираются одним чтением в начале укладки, база лежит в общей папке, а выгрузка идет
+    /// минуты — запись, попавшую в индекс и удаленную соседом через минуту, обновить уже не во что.
+    ///
+    /// Без этой проверки такая строка считалась ОБНОВЛЕННОЙ: квитанция уезжала отправителю со
+    /// словом «обновлено», не обновив ничего, и разошлось бы это только при сверке остатков.
+    /// </summary>
+    private bool Exists(int recordId) =>
+        db.DbRecords.AsNoTracking().Any(r => r.Id == recordId);
 
     private void Update(
         CollectionBinding binding,

@@ -11,14 +11,19 @@ namespace SmartBase.Integrations;
 /// <param name="LastRun">Когда этот запрос последний раз отработал успешно; <c>null</c> — еще
 /// ни разу.</param>
 /// <param name="ConnectionAddress">Адрес соединения — иногда нужен внутри тела запроса.</param>
+/// <param name="Record">Значения ЕДИНСТВЕННОЙ уходящей записи «имя поля → текст»; <c>null</c> —
+/// записей не одна. Ими живет подстановка <c>{{поле.Имя}}</c>: путь запроса собирается один раз
+/// на запуск, и подставить в него запись можно только тогда, когда она одна.</param>
 public sealed record VariableContext(
     DateOnly        Today,
     DateTimeOffset? LastRun,
-    string          ConnectionAddress = "")
+    string          ConnectionAddress = "",
+    IReadOnlyDictionary<string, string>? Record = null)
 {
     /// <summary>Контекст «сейчас» — для боевого запуска.</summary>
-    public static VariableContext Now(DateTimeOffset? lastRun, string address = "") =>
-        new(DateOnly.FromDateTime(DateTime.Today), lastRun, address);
+    public static VariableContext Now(DateTimeOffset? lastRun, string address = "",
+                                      IReadOnlyDictionary<string, string>? record = null) =>
+        new(DateOnly.FromDateTime(DateTime.Today), lastRun, address, record);
 }
 
 /// <summary>
@@ -48,6 +53,21 @@ public static class RequestVariables
     public const string ConnectionAddress = "соединение.адрес";
 
     /// <summary>
+    /// Приставка подстановки поля уходящей записи: <c>{{поле.Номер}}</c>
+    /// (docs/ROADMAP-API.md, раздел 2).
+    ///
+    /// <b>Зачем она понадобилась.</b> Чужие программы правят запись по адресу вида
+    /// <c>PUT /orders/А-1043</c> — номер лежит В ПУТИ, а не в теле. Исходящая привязка собирает
+    /// тело и на путь не влияет никак, поэтому без этой подстановки такой обмен не выражался
+    /// вовсе: единственный способ был завести отдельную карточку запроса на каждую запись.
+    ///
+    /// <b>Работает только когда запись ОДНА.</b> Путь собирается один раз на запуск; подставь в
+    /// него запись из трех — и две оставшиеся уйдут по чужому адресу. Форма привязки «одна
+    /// запись» для того и существует.
+    /// </summary>
+    public const string FieldPrefix = "поле.";
+
+    /// <summary>
     /// Первый запуск: подставляется начало отсчета времени, то есть «отдай все». Пустая строка
     /// тут не годится — половина чужих программ ответит на <c>since=</c> отказом, а не полным
     /// списком, и первый же обмен встанет.
@@ -61,6 +81,8 @@ public static class RequestVariables
         (Yesterday,         "вчерашняя дата"),
         (LastRun,           "момент последнего удачного запуска; при первом — начало отсчета"),
         (ConnectionAddress, "адрес соединения"),
+        (FieldPrefix + "Имя", "значение поля уходящей записи — когда запись одна, например "
+                            + "/orders/{{поле.Номер}}"),
     ];
 
     /// <summary>
@@ -123,6 +145,15 @@ public static class RequestVariables
 
         if (Same(name, ConnectionAddress))
             return context.ConnectionAddress;
+
+        // Поле уходящей записи. Неизвестное имя поля НЕ подставляется пустотой: пустой хвост в
+        // «/orders/» ушел бы к чужой программе как обращение ко всему списку, а не к одной
+        // записи, и ответ на него выглядел бы удачным.
+        if (name.StartsWith(FieldPrefix, StringComparison.OrdinalIgnoreCase))
+            return context.Record is { } record
+                && record.TryGetValue(name[FieldPrefix.Length..].Trim(), out var value)
+                    ? value
+                    : null;
 
         return null;
     }

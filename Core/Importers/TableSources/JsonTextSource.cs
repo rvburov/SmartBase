@@ -7,7 +7,8 @@ namespace SmartBase.Core.Importers.TableSources;
 /// что у файлового <see cref="JsonTableSource"/>: ключи объектов становятся свойствами
 /// (объединение по всем записям в порядке первого появления), название берется по общему правилу
 /// <see cref="SourceHelpers.PickJsonTitleKey"/>, значения переводятся в текст
-/// <see cref="SourceHelpers.FormatJsonValue"/>. Одинаковость не случайна: один и тот же набор
+/// <see cref="SourceHelpers.FormatJsonValue"/>, вложенные объекты разворачиваются точкой
+/// <see cref="SourceHelpers.JsonLeaves"/>. Одинаковость не случайна: один и тот же набор
 /// записей, пришедший файлом и по сети, обязан ложиться в коллекцию одинаково.
 ///
 /// Потоковости здесь нет и не нужно: ответ уже прочитан целиком и обрезан по потолку
@@ -43,21 +44,23 @@ public sealed class JsonTextSource(string json, string itemsPath = "") : ITableS
                 throw new ImportException(
                     $"Запись {rowCount} в ответе не является объектом — ожидался список объектов.");
 
-            foreach (var property in item.EnumerateObject())
+            // Вложенные объекты разворачиваются точкой: «клиент.название». Пока они ложились
+            // сырым JSON, данные приходили, а пользоваться ими было нельзя (раздел 2).
+            foreach (var (name, text) in SourceHelpers.JsonLeaves(item))
             {
-                if (!index.TryGetValue(property.Name, out var i))
+                if (!index.TryGetValue(name, out var i))
                 {
                     i = keys.Count;
-                    index[property.Name] = i;
-                    keys.Add(property.Name);
+                    index[name] = i;
+                    keys.Add(name);
                     nonEmpty.Add(0);
                     seen.Add(0);
-                    firstKey ??= property.Name;
+                    firstKey ??= name;
                 }
 
                 // seen — защита от повторного ключа внутри одного объекта: JSON это допускает,
                 // а считать одну запись дважды нельзя.
-                if (Filled(property.Value) && seen[i] != rowCount)
+                if (!string.IsNullOrWhiteSpace(text) && seen[i] != rowCount)
                 {
                     nonEmpty[i] = nonEmpty[i] + 1;
                     seen[i]     = rowCount;
@@ -106,11 +109,10 @@ public sealed class JsonTextSource(string json, string itemsPath = "") : ITableS
             var values = new string[Math.Max(0, _keys.Count - 1)];
             Array.Fill(values, "");
 
-            foreach (var property in item.EnumerateObject())
+            foreach (var (name, text) in SourceHelpers.JsonLeaves(item))
             {
-                if (!index.TryGetValue(property.Name, out var i)) continue;   // ключа не было в проходе 1
+                if (!index.TryGetValue(name, out var i)) continue;   // ключа не было в проходе 1
 
-                var text = SourceHelpers.FormatJsonValue(property.Value);
                 if (i == _titleIdx) title = text;
                 else values[i < _titleIdx ? i : i - 1] = text;
             }
@@ -182,10 +184,4 @@ public sealed class JsonTextSource(string json, string itemsPath = "") : ITableS
             ? message + " Если записи лежат внутри ответа, укажите путь к ним — например, data.items."
             : message + $" Путь: «{itemsPath}».";
 
-    private static bool Filled(JsonElement value) => value.ValueKind switch
-    {
-        JsonValueKind.Null or JsonValueKind.Undefined => false,
-        JsonValueKind.String => !string.IsNullOrWhiteSpace(value.GetString()),
-        _ => true,
-    };
 }
