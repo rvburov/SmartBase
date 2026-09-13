@@ -88,20 +88,17 @@ public sealed class SecretsView : UserControl
         var dead    = entries.Count(e => SecretsInventory.Stale(e, now));
 
         Add(rows, Row("Что это за список",
-            "Все секреты, заведенные на этой машине: пароли и токены чужих программ, токены "
-            + "роботов, пароли баз данных и мастер-пароль организации. Значения здесь не хранятся "
-            + "и почти нигде не показываются — список отвечает на вопрос «что где заведено», а не "
-            + "«какой там пароль».",
-            DataBox(dead == 0
-                ? $"Секретов: {entries.Count}. Давно не используемых нет."
-                : $"Секретов: {entries.Count}, из них давно не используемых: {dead}. "
-                  + $"«Давно» — это больше {SecretsInventory.StaleDays} дней: за такой срок "
-                  + "срабатывает и месячный отчет, и квартальная выгрузка.")));
+            "ВСЕ места, где на этой машине бывает пароль: соединения с чужими программами, токены "
+            + "роботов, базы данных, серверы PostgreSQL и мастер-пароль организации. Места без "
+            + "пароля показаны наравне с остальными — иначе на вопрос «где я его не поставил» "
+            + "пришлось бы искать ответ по всей программе. Значения здесь не хранятся и почти "
+            + "нигде не показываются.",
+            DataBox(Summary(entries, dead))));
 
         if (entries.Count == 0)
         {
-            Add(rows, Row("Секретов нет",
-                "Ни соединений с чужими программами, ни токенов, ни паролей баз пока не "
+            Add(rows, Row("Мест для паролей нет",
+                "Ни баз данных, ни соединений с чужими программами на этой машине пока не "
                 + "заведено."), last: true);
             return;
         }
@@ -119,6 +116,35 @@ public sealed class SecretsView : UserControl
     }
 
     /// <summary>
+    /// Сводка над списком. Считаются все три ответа, и «неизвестно» названо отдельно: строка
+    /// «паролей: 4» рядом с тремя закрытыми базами была бы правдой ровно наполовину.
+    /// </summary>
+    private static string Summary(IReadOnlyList<SecretEntry> entries, int dead)
+    {
+        var set     = entries.Count(e => e.State == SecretState.Set);
+        var empty   = entries.Count(e => e.State == SecretState.NotSet);
+        var unknown = entries.Count(e => e.State == SecretState.Unknown);
+
+        var text = $"Мест, где бывает пароль: {entries.Count}. Установлено: {set}";
+
+        if (empty   > 0) text += $" · без пароля: {empty}";
+        if (unknown > 0) text += $" · не проверить: {unknown}";
+
+        text += ".";
+
+        if (unknown > 0)
+            text += " «Не проверить» — это закрытые базы: пароль лежит внутри файла базы, "
+                  + "и у закрытой читать его негде. Откройте базу — ответ появится.";
+
+        text += dead == 0
+            ? " Давно не используемых нет."
+            : $" Давно не используемых: {dead}. «Давно» — это больше {SecretsInventory.StaleDays} "
+              + "дней: за такой срок срабатывает и месячный отчет, и квартальная выгрузка.";
+
+        return text;
+    }
+
+    /// <summary>
     /// Собрать опись из того, что знает программа. Сами строки делает
     /// <see cref="SecretsInventory"/>: здесь только выборка данных.
     /// </summary>
@@ -130,10 +156,10 @@ public sealed class SecretsView : UserControl
         {
             var requests = registry.Requests();
 
+            // Соединения ВСЕ, а не только с секретом: «здесь пароля нет» — такой же ответ, и
+            // пропущенная строка читается как «такого соединения нет».
             foreach (var connection in registry.Connections())
             {
-                if (!registry.HasSecret(connection.Id)) continue;
-
                 var mine = requests.Where(r => r.ConnectionId == connection.Id).ToList();
 
                 // Последнее пользование секретом — последний запуск любого из запросов этого
@@ -145,7 +171,8 @@ public sealed class SecretsView : UserControl
 
                 entries.Add(SecretsInventory.Connection(
                     connection.Id, connection.Name, connection.Address,
-                    mine.Count, last, created: null));
+                    mine.Count, last, created: null,
+                    hasSecret: registry.HasSecret(connection.Id)));
             }
 
             foreach (var token in registry.Tokens())
@@ -155,15 +182,26 @@ public sealed class SecretsView : UserControl
                     token.Created, token.Used, token.Enabled));
         }
 
-        foreach (var db in Databases)
-            if (db.Permissions.HasPassword)
-                entries.Add(SecretsInventory.DatabasePassword(db.DbId, db.Name));
-
-        // Пароли серверов PostgreSQL: база может быть и не открыта — пароль живет в реестре
-        // машины, и в описи ему место наравне с остальными.
+        // Базы ВСЕ, что заведены на машине, а не только открытые. Пароль лежит внутри файла
+        // базы: у открытой видно, есть он или нет, у закрытой — не видно ничего, и это третий
+        // ответ, а не повод молчать о самой базе.
         foreach (var entry in _workspace?.Registry.GetAll() ?? [])
+        {
+            var open = Databases.FirstOrDefault(d => d.DbId == entry.Id);
+
+            entries.Add(SecretsInventory.DatabasePassword(
+                entry.Id,
+                open?.Name ?? entry.Name,
+                open is null                  ? SecretState.Unknown
+                : open.Permissions.HasPassword ? SecretState.Set
+                :                                SecretState.NotSet));
+
+            // Пароль сервера PostgreSQL живет в реестре машины и виден даже у закрытой базы.
             if (entry.IsPostgres)
-                entries.Add(SecretsInventory.PgPassword(entry.Id, entry.Name, PgServer(entry)));
+                entries.Add(SecretsInventory.PgPassword(
+                    entry.Id, entry.Name, PgServer(entry),
+                    hasPassword: !string.IsNullOrEmpty(entry.PgPassword)));
+        }
 
         var policy = EgressSetup.Last.Set;
 
@@ -207,9 +245,17 @@ public sealed class SecretsView : UserControl
         Put(grid, 2, Cell(entry.Where, secondary: true));
         Put(grid, 4, Cell(UsedText(entry), secondary: true));
 
-        var state = Cell(stale ? "давно не нужен" : "в работе");
-        state.Foreground = Ink(stale ? "BrushRed" : "BrushGreen",
-                               stale ? "#FF3B30" : "#34C759");
+        var state = Cell(SecretsInventory.StateText(entry, now));
+
+        // Цветом отмечается только то, что требует внимания. «Не установлен» — не беда и не
+        // достижение: бывает открытый обмен и база без пароля, и красить это тревожным цветом
+        // значило бы звать чинить исправное.
+        state.Foreground = stale
+            ? Ink("BrushRed", "#FF3B30")
+            : entry.State == SecretState.Set
+                ? Ink("BrushGreen", "#34C759")
+                : Ink("BrushSecondaryText", "#8E8E93");
+
         Put(grid, 6, state);
 
         return TableRow(grid, open ? Details(entry, stale) : null, open, () =>
@@ -269,14 +315,24 @@ public sealed class SecretsView : UserControl
     {
         var buttons = new List<Control>();
 
+        // У закрытой базы действий нет и быть не может: пароль лежит в ее файле, а файл не
+        // открыт. Кнопка, которая откроет базу «заодно», — не то, чего ждут от списка паролей.
+        if (entry.State == SecretState.Unknown) return buttons;
+
+        var set = entry.State == SecretState.Set;
+
         if (entry.Revealable && !_shown.ContainsKey(entry.Key))
             buttons.Add(RowButton("Показать…", () => _ = RevealAsync(entry)));
 
         switch (entry.Kind)
         {
             case SecretKind.Connection:
-                buttons.Add(RowButton("Заменить…", () => _ = ReplaceConnectionAsync(entry)));
-                buttons.Add(RowButton("Удалить",   () => _ = ForgetConnectionAsync(entry)));
+                // Слово на кнопке отвечает состоянию: «заменить» там, где нечего заменять,
+                // заставляет гадать, что произойдет.
+                buttons.Add(RowButton(set ? "Заменить…" : "Задать…",
+                                      () => _ = ReplaceConnectionAsync(entry)));
+
+                if (set) buttons.Add(RowButton("Удалить", () => _ = ForgetConnectionAsync(entry)));
                 break;
 
             case SecretKind.RobotToken:
@@ -286,8 +342,11 @@ public sealed class SecretsView : UserControl
                 break;
 
             case SecretKind.DatabasePassword:
-                buttons.Add(RowButton("Заменить…", () => _ = ReplaceDatabasePasswordAsync(entry)));
-                buttons.Add(RowButton("Удалить",   () => _ = RemoveDatabasePasswordAsync(entry)));
+                buttons.Add(RowButton(set ? "Заменить…" : "Установить…",
+                                      () => _ = ReplaceDatabasePasswordAsync(entry)));
+
+                if (set)
+                    buttons.Add(RowButton("Удалить", () => _ = RemoveDatabasePasswordAsync(entry)));
                 break;
         }
 
@@ -435,7 +494,7 @@ public sealed class SecretsView : UserControl
             return;
         }
 
-        var password = await PasswordDialog.ForSet(db.Name, hasPassword: true)
+        var password = await PasswordDialog.ForSet(db.Name, db.Permissions.HasPassword)
                                            .ShowDialog<string?>(win);
 
         if (password is null) return;

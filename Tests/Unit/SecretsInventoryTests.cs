@@ -214,4 +214,97 @@ public sealed class SecretsInventoryTests
 
         Assert.Contains("не найдена", entry.Where);
     }
+
+    // ── Места без пароля (что где установлено) ────────────────────────────────
+
+    /// <summary>
+    /// Место без пароля — это ответ, а не пропуск. Вопрос «где я поставил пароль, а где нет» —
+    /// ровно тот, ради которого опись и заводят, и молчание на него читается как «такого места
+    /// нет».
+    /// </summary>
+    [Fact]
+    public void A_place_without_a_password_is_still_a_row()
+    {
+        var db   = SecretsInventory.DatabasePassword(2, "Заказы", SecretState.NotSet);
+        var conn = SecretsInventory.Connection(5, "Открытый обмен", "api.example.org",
+                                               requests: 2, lastRun: Now, created: null,
+                                               hasSecret: false);
+        var pg   = SecretsInventory.PgPassword(3, "Заказы", "pg:5432", hasPassword: false);
+
+        foreach (var entry in new[] { db, conn, pg })
+        {
+            Assert.Equal(SecretState.NotSet, entry.State);
+            Assert.NotEmpty(entry.Guard);          // сказано, почему пусто
+            Assert.False(entry.Revealable);        // показывать нечего
+        }
+    }
+
+    /// <summary>Пустое место не может быть «давно не нужным»: нечему быть забытым.</summary>
+    [Fact]
+    public void An_empty_place_is_never_called_dead()
+    {
+        var conn = SecretsInventory.Connection(5, "Открытый обмен", "api.example.org",
+                                               requests: 0, lastRun: null, created: null,
+                                               hasSecret: false);
+
+        Assert.False(SecretsInventory.Stale(conn, Now));
+        Assert.Equal("не установлен", SecretsInventory.StateText(conn, Now));
+    }
+
+    /// <summary>
+    /// У закрытой базы — третий ответ. Сказать про нее «пароля нет» значило бы соврать ровно в
+    /// том вопросе, ради которого опись заведена: пароль лежит внутри ее файла.
+    /// </summary>
+    [Fact]
+    public void A_closed_database_answers_unknown()
+    {
+        var entry = SecretsInventory.DatabasePassword(2, "Архив", SecretState.Unknown);
+
+        Assert.Equal(SecretState.Unknown, entry.State);
+        Assert.Equal("неизвестно", SecretsInventory.StateText(entry, Now));
+        Assert.Contains("закрыт", entry.Where);
+        Assert.Contains("Откройте базу", entry.Guard);
+        Assert.False(SecretsInventory.Stale(entry, Now));
+    }
+
+    /// <summary>Незаданный мастер-пароль — тоже «не установлен», а не строка-обманка.</summary>
+    [Fact]
+    public void A_missing_master_password_reads_as_not_set()
+    {
+        Assert.Equal(SecretState.NotSet, SecretsInventory.PolicyMaster(false, "").State);
+        Assert.Equal(SecretState.Set,    SecretsInventory.PolicyMaster(true, "policy.json").State);
+    }
+
+    /// <summary>
+    /// Порядок: мертвое — наверх, пустые места — вниз. Пустое не требует действия, но и пропасть
+    /// не должно, иначе вопрос «где я пароль не поставил» остается без ответа.
+    /// </summary>
+    [Fact]
+    public void Empty_places_sink_below_the_filled_ones()
+    {
+        var dead  = SecretsInventory.Connection(1, "Забытое", "a.example.org",
+                                                1, Now.AddYears(-1), null);
+        var alive = SecretsInventory.Connection(2, "Живое", "b.example.org", 1, Now, null);
+        var empty = SecretsInventory.Connection(3, "Без секрета", "c.example.org",
+                                                1, Now, null, hasSecret: false);
+        var closed = SecretsInventory.DatabasePassword(4, "Архив", SecretState.Unknown);
+
+        var order = SecretsInventory.Ordered([empty, closed, alive, dead], Now);
+
+        Assert.Equal(["Соединение «Забытое»", "Соединение «Живое»",
+                      "Пароль базы «Архив»",  "Соединение «Без секрета»"],
+                     order.Select(e => e.Title));
+    }
+
+    /// <summary>Состояние словами — одно на колонку и на сводку.</summary>
+    [Fact]
+    public void The_state_is_said_in_words()
+    {
+        var alive = SecretsInventory.Connection(1, "Живое", "a.example.org", 1, Now, null);
+        var dead  = SecretsInventory.Connection(2, "Забытое", "b.example.org",
+                                                1, Now.AddYears(-1), null);
+
+        Assert.Equal("установлен",     SecretsInventory.StateText(alive, Now));
+        Assert.Equal("давно не нужен", SecretsInventory.StateText(dead, Now));
+    }
 }
