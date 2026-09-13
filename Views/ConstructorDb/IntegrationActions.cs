@@ -8,11 +8,12 @@ namespace SmartBase.Views.ConstructorDb;
 
 /// <summary>
 /// Точки вызова обмена в разделе данных (docs/ROADMAP-API.md, шаг 6): пункт «Действия» в
-/// контекстном меню таблицы и в панели записи, кнопка в навбаре коллекции.
+/// контекстном меню таблицы, такой же пункт в меню коллекции в сайдбаре и кнопка в нижней
+/// полосе открытой записи.
 ///
 /// Смысл шага — «интеграции приходят туда, где данные»: человек не должен идти в настройки, чтобы
 /// отправить заказ. Собрано в одном месте, потому что точек вызова три, а список и запуск у них
-/// обязаны быть одни: разойдись они — и в меню таблицы оказался бы обмен, которого нет в навбаре.
+/// обязаны быть одни: разойдись они — и в меню таблицы оказался бы обмен, которого нет в сайдбаре.
 ///
 /// <b>Что попадает в список.</b> Исходящие запросы, чья привязка указывает на ЭТУ коллекцию, — их
 /// можно звать и для выделенных записей. Ручные сценарии — только там, где охват коллекция
@@ -56,10 +57,9 @@ public static class IntegrationActions
             if (registry.Outgoing(request.Id) is not { } binding) continue;
             if (binding.DbId != dbId || binding.CollectionId != collectionId) continue;
 
-            var card = request;   // замыкание не должно видеть переменную цикла
             actions.Add(new DataAction(
-                $"Отправить: {card.Name}",
-                records => SendAsync(owner, registry, databases, card, records)));
+                $"Отправить: {request.Name}",
+                records => SendAsync(owner, registry, databases, request, records)));
         }
 
         if (scenarios && scenarioRun is { } run)
@@ -68,9 +68,8 @@ public static class IntegrationActions
                 if (scenario.Trigger.Kind != ScenarioTriggerKind.Manual) continue;
                 if (!Touches(registry, scenario, dbId, collectionId)) continue;
 
-                var what = scenario;
                 actions.Add(new DataAction(
-                    $"Запустить: {what.Name}", _ => RunScenarioAsync(owner, what, run)));
+                    $"Запустить: {scenario.Name}", _ => RunScenarioAsync(owner, scenario, run)));
             }
 
         return actions;

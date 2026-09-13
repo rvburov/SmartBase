@@ -11,14 +11,14 @@
 # Формат: «ID_символа;сообщение». Пустых строк и строк из одного знака «#» тут быть не может:
 # анализатор считает их записями без символа и ругается RS0031 — поэтому текст сплошной.
 # ── Клиенты HTTP ──────────────────────────────────────────────────────────────
-T:System.Net.Http.HttpClient;наружу ходит только Integrations/EgressGate.cs
-T:System.Net.Http.HttpClientHandler;наружу ходит только Integrations/EgressGate.cs
-T:System.Net.Http.SocketsHttpHandler;наружу ходит только Integrations/EgressGate.cs
-T:System.Net.Http.HttpMessageInvoker;наружу ходит только Integrations/EgressGate.cs
-T:System.Net.Http.HttpRequestMessage;запрос наружу собирает Integrations/EgressPlan.cs
-T:System.Net.WebClient;устаревший клиент; наружу ходит только Integrations/EgressGate.cs
-T:System.Net.WebRequest;устаревший клиент; наружу ходит только Integrations/EgressGate.cs
-T:System.Net.HttpWebRequest;устаревший клиент; наружу ходит только Integrations/EgressGate.cs
+T:System.Net.Http.HttpClient;наружу ходит только Integrations/EgressHttp.Open.cs
+T:System.Net.Http.HttpClientHandler;наружу ходит только Integrations/EgressHttp.Open.cs
+T:System.Net.Http.SocketsHttpHandler;наружу ходит только Integrations/EgressHttp.Open.cs
+T:System.Net.Http.HttpMessageInvoker;наружу ходит только Integrations/EgressHttp.Open.cs
+T:System.Net.Http.HttpRequestMessage;запрос наружу собирает EgressPlan в Integrations/EgressCall.cs
+T:System.Net.WebClient;устаревший клиент; наружу ходит только Integrations/EgressHttp.Open.cs
+T:System.Net.WebRequest;устаревший клиент; наружу ходит только Integrations/EgressHttp.Open.cs
+T:System.Net.HttpWebRequest;устаревший клиент; наружу ходит только Integrations/EgressHttp.Open.cs
 # ── Прием входящих по сети: слушает одна дверь ────────────────────────────────
 # Слушатель у программы один — Integrations/IngressHttp.Open.cs, петлевой адрес по умолчанию
 # и выключенный прием в состоянии по умолчанию (10.12). Второй слушатель где угодно еще — это

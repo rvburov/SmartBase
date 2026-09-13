@@ -143,6 +143,14 @@ public sealed class IngressHttp : IDisposable
             await WriteAsync(context, IngressAnswer.Problem(413, oversize.Message));
             return;
         }
+        catch (TimeoutException)
+        {
+            // Отправитель начал слать тело и замолчал. Обработка последовательная, и ждать его
+            // вечно значило бы остановить прием для всех остальных; поток запроса после обрыва
+            // чтения в неопределенном состоянии, поэтому соединение рвется, а не отвечает.
+            context.Response.Abort();
+            return;
+        }
 
         var call = new IngressCall(
             request.HttpMethod ?? "",
@@ -172,10 +180,14 @@ public sealed class IngressHttp : IDisposable
             : "";
     }
 
+    /// <summary>Сколько ждать очередной порции тела — иначе байты по капле держат прием вечно.</summary>
+    private const int ReadSeconds = 30;
+
     /// <summary>
-    /// Прочитать тело с потолком. Потолок спрашивается ПО ХОДУ чтения, а не по заголовку длины:
-    /// заголовок пишет отправитель, и верить ему в вопросе «сколько памяти сейчас занять»
-    /// нельзя.
+    /// Прочитать тело с потолком и со сроком. Потолок спрашивается ПО ХОДУ чтения, а не по
+    /// заголовку длины: заголовок пишет отправитель, и верить ему в вопросе «сколько памяти
+    /// сейчас занять» нельзя. Срок — на каждую порцию, а не на тело целиком: медленная сеть
+    /// шлет порции редко, но шлет, а замолчавший отправитель не шлет ничего.
     /// </summary>
     private static async Task<string> ReadBodyAsync(HttpListenerRequest request)
     {
@@ -187,7 +199,8 @@ public sealed class IngressHttp : IDisposable
 
         while (true)
         {
-            var read = await request.InputStream.ReadAsync(buffer);
+            var read = await request.InputStream.ReadAsync(buffer)
+                .AsTask().WaitAsync(TimeSpan.FromSeconds(ReadSeconds));
             if (read == 0) break;
 
             memory.Write(buffer, 0, read);

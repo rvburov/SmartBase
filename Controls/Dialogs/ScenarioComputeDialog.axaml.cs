@@ -147,7 +147,7 @@ public partial class ScenarioComputeDialog : Window
         HelpPanel.Children.Add(new TextBlock
         {
             Text         = "Что умеют выражения",
-            FontWeight   = FontWeight.SemiBold,
+            FontWeight   = Weight("FontWeightBold"),
             TextWrapping = TextWrapping.Wrap,
         });
 
@@ -327,14 +327,20 @@ public partial class ScenarioComputeDialog : Window
     private void Result(string text, bool bad)
     {
         ResultText.Text       = text;
-        ResultText.Foreground = Brush(bad ? "BrushRed" : "BrushPrimaryText");
+        ResultText.Foreground = Brush(bad ? "BrushRed" : "BrushPrimaryText",
+                                      bad ? "#FF3B30"  : "#1C1C1E");
         ResultBox.IsVisible   = text.Length > 0;
     }
 
-    private static IBrush Brush(string key) =>
+    private static IBrush Brush(string key, string fallbackHex) =>
         Application.Current!.TryFindResource(key, out var found) && found is IBrush brush
             ? brush
-            : Brushes.Black;
+            : new SolidColorBrush(Color.Parse(fallbackHex));
+
+    private static FontWeight Weight(string key) =>
+        Application.Current!.TryFindResource(key, out var found) && found is FontWeight weight
+            ? weight
+            : FontWeight.SemiBold;
 
     // ── Сохранение ────────────────────────────────────────────────────────────
 
