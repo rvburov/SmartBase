@@ -175,7 +175,7 @@ public partial class SettingsView
             list.Children.Add(Note($"Запусков за час: {hour.Runs:N0}. Передано за сутки: {Size(day.Bytes)}."));
             list.Children.Add(Note(
                 "Потолки не заданы: политики организации нет, и обмен наружу запрещен целиком — "
-                + "см. вкладку «Безопасность»."));
+                + "см. раздел «Безопасность» в профиле."));
         }
 
         return Row("Расход",
@@ -720,6 +720,6 @@ public partial class SettingsView
             : $"№{dbId} (сейчас не открыта)";
     }
 
-    // Ячейки таблицы (Head, Cell, Put), строка таблицы и кисти — в SettingsIntegrationsStyle:
+    // Ячейки таблицы (Head, Cell, Put), строка таблицы и кисти — в Controls/Widgets/SettingRows.cs:
     // журнал обмена и журнал безопасности показывают одну и ту же таблицу с разными колонками.
 }

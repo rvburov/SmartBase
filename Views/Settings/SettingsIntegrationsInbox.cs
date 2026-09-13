@@ -125,7 +125,7 @@ public partial class SettingsView
 
         if (!decision.Allowed)
             return "Политика: " + decision.Explanation
-                 + ". Корни папок обмена задает организация — см. вкладку «Безопасность».";
+                 + ". Корни папок обмена задает организация — см. раздел «Безопасность» в профиле.";
 
         return Directory.Exists(folder)
             ? "Политика: папка разрешена."

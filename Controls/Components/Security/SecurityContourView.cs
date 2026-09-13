@@ -505,6 +505,20 @@ public sealed class SecurityContourView : UserControl
             lines.Add(Note(
                 $"{place.Name} — {place.Where}" + (place.SignatureRequired ? " · подпись обязательна" : "")));
 
+        // Сказано ЗАРАНЕЕ, а не в момент отказа. Открытый ключ организации вшивается в сборку, и
+        // пустой он означает, что места с обязательной подписью в этой сборке не работают вовсе:
+        // файл туда положат, программа его отклонит, а отклоненный источник по правилу
+        // пересечения запрет контур целиком. Узнавать об этом после раздачи политики по сети —
+        // худший из возможных моментов.
+        if (!PolicySignature.KeyPresent && PolicySources.Places().Any(p => p.SignatureRequired))
+        {
+            var warning = SubNote("В эту сборку открытый ключ организации не вшит — места с "
+                                + "обязательной подписью не примут политику. Используйте реестр "
+                                + "или папку установки.");
+            warning.Foreground = Ink("BrushRed", "#FF3B30");
+            lines.Add(warning);
+        }
+
         return DataBox(lines);
     }
 

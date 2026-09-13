@@ -546,7 +546,7 @@ public partial class SettingsView
         _                    => "нет",
     };
 
-    // Строки списка (Actions, CardRow) и сами контролы — в SettingsIntegrationsStyle:
+    // Строки списка (ActionsRow, CardRow) и сами контролы — в Controls/Widgets/SettingRows.cs:
     // вид у всех вкладок раздела один, и держать его в одном месте дешевле, чем
     // сверять шесть.
 }
