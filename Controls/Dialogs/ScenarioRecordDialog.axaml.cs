@@ -40,6 +40,13 @@ public partial class ScenarioRecordDialog : Window
         PlaceCombo.SelectedIndex = Math.Max(0, _places.ToList().FindIndex(
             p => p.DbId == step.DbId && p.CollectionId == step.CollectionId));
 
+        KeyBox.Text                    = step.MatchField;
+        CreateMissingCheck.IsChecked   = step.CreateMissing;
+
+        KeyBox.TextChanged             += (_, _) => ShowKeyHint();
+        CreateMissingCheck.IsCheckedChanged += (_, _) => ShowKeyHint();
+        ShowKeyHint();
+
         foreach (var (field, value) in step.Fields) _fields.Add(NewRow(field, value));
 
         // Пустой список показывать незачем: поле нужно хотя бы одно, и строка «нажмите плюс» —
@@ -145,6 +152,29 @@ public partial class ScenarioRecordDialog : Window
 
     // ── Сохранение ────────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Что шаг сделает при нынешних настройках — словами. Главное здесь то, чего не видно из
+    /// полей: без ключа шаг заводит НОВУЮ запись на каждый запуск, и обмен, повторяющийся по
+    /// расписанию, к концу недели оставляет семь одинаковых записей.
+    /// </summary>
+    private void ShowKeyHint()
+    {
+        var key    = (KeyBox.Text ?? "").Trim();
+        var create = CreateMissingCheck.IsChecked == true;
+
+        CreateMissingCheck.IsEnabled = key.Length > 0;
+
+        KeyHint.Text = key.Length == 0
+            ? "Ключа нет — каждый запуск заводит НОВУЮ запись. Для обмена по расписанию назовите "
+              + "поле, по которому запись узнается: номер заказа, артикул, идентификатор у той "
+              + "стороны."
+            : create
+                ? $"Запись с тем же значением поля «{key}» будет обновлена, а если такой нет — "
+                  + "заведена новая."
+                : $"Будут обновлены только записи, у которых поле «{key}» совпало. Не нашлось — "
+                  + "строка пропускается: значит, ключ разошелся, и заводить новую нельзя.";
+    }
+
     private void Save()
     {
         if (PlaceCombo.SelectedIndex < 0 || PlaceCombo.SelectedIndex >= _places.Count)
@@ -178,7 +208,12 @@ public partial class ScenarioRecordDialog : Window
         }
 
         var place = _places[PlaceCombo.SelectedIndex];
-        var step  = ScenarioStep.OfRecord(place.DbId, place.CollectionId, values);
+        var key   = (KeyBox.Text ?? "").Trim();
+
+        var step  = ScenarioStep.OfRecord(place.DbId, place.CollectionId, values, key,
+                                          // Без ключа галочка не значит ничего: искать нечем, и
+                                          // «не заводить новые» превратило бы шаг в пустой.
+                                          key.Length == 0 || CreateMissingCheck.IsChecked == true);
 
         var problems = step.Problems();
         if (problems.Count > 0)

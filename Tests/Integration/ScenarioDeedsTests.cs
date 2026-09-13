@@ -135,6 +135,176 @@ public sealed class ScenarioDeedsTests : IDisposable
                      _db.Constructor.GetFieldValues(records[0].Id!.Value)[shift]);
     }
 
+    // ── Шаг «обновить запись» ─────────────────────────────────────────────────
+
+    /// <summary>
+    /// Ключ назван — найденная запись ОБНОВЛЯЕТСЯ, а не заводится второй раз. Ради этого шаг и
+    /// доделан: раздел 2 обещает «создать/обновить запись», а сценарий умел одно создание, и
+    /// «разобрать сообщение → обновить статус» оставлял по дублю на каждый запуск.
+    /// </summary>
+    [Fact]
+    public async Task A_key_updates_the_record_instead_of_making_a_second_one()
+    {
+        var (journal, shift) = Journal();
+
+        var scenario = Save(null, ScenarioStep.OfRecord(_db.Manager.DbId, journal,
+            new Dictionary<string, string>
+            {
+                ["Название"] = "{{Название}}",
+                ["Смена"]    = "{{Начало}}",
+            },
+            matchField: "Название"));
+
+        Assert.True((await Run(scenario, Shifts())).Ok);
+        Assert.Equal(2, _db.Constructor.GetRecords(journal).Count);
+
+        // Второй запуск с теми же названиями и другим временем: записей столько же, время новое.
+        var later = new StepTable(["Название", "Начало"],
+        [
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                { ["Название"] = "Смена А", ["Начало"] = "14.09.2026 08:00" },
+        ]);
+
+        var outcome = await Run(scenario, later);
+
+        Assert.True(outcome.Ok, outcome.Problem);
+        Assert.Contains("обновлено 1", string.Join(" | ", outcome.Lines), StringComparison.Ordinal);
+
+        var records = _db.Constructor.GetRecords(journal);
+
+        Assert.Equal(2, records.Count);
+        Assert.Equal("14.09.2026 08:00",
+                     _db.Constructor.GetFieldValues(
+                         records.Single(r => r.Title == "Смена А").Id!.Value)[shift]);
+    }
+
+    /// <summary>
+    /// Записи по ключу не нашлось — заводится новая, если это разрешено. Обычный случай: первый
+    /// запуск обмена, когда в коллекции еще пусто.
+    /// </summary>
+    [Fact]
+    public async Task A_key_that_finds_nothing_creates_the_record()
+    {
+        var (journal, _) = Journal();
+
+        var scenario = Save(null, ScenarioStep.OfRecord(_db.Manager.DbId, journal,
+            new Dictionary<string, string> { ["Название"] = "{{Название}}" },
+            matchField: "Название"));
+
+        var outcome = await Run(scenario, Shifts());
+
+        Assert.True(outcome.Ok, outcome.Problem);
+        Assert.Contains("заведено 2", string.Join(" | ", outcome.Lines), StringComparison.Ordinal);
+        Assert.Equal(2, _db.Constructor.GetRecords(journal).Count);
+    }
+
+    /// <summary>
+    /// «Только найденные»: записи нет — строка пропускается, а не заводится. Нужно обмену, где
+    /// запись обязана уже существовать: новая там означает, что ключ разошелся, и завести ее
+    /// молча — худшее из возможного.
+    /// </summary>
+    [Fact]
+    public async Task Update_only_skips_what_it_did_not_find()
+    {
+        var (journal, _) = Journal();
+
+        var scenario = Save(null, ScenarioStep.OfRecord(_db.Manager.DbId, journal,
+            new Dictionary<string, string> { ["Название"] = "{{Название}}" },
+            matchField: "Название", createMissing: false));
+
+        var outcome = await Run(scenario, Shifts());
+
+        Assert.True(outcome.Ok, outcome.Problem);
+        Assert.Contains("пропущено 2", string.Join(" | ", outcome.Lines), StringComparison.Ordinal);
+        Assert.Empty(_db.Constructor.GetRecords(journal));
+    }
+
+    /// <summary>
+    /// Под ключ подошло НЕСКОЛЬКО записей — строка пропускается и считается отдельной цифрой.
+    /// Какую из них править, программа не угадывает: угаданная неверно правка тихо портит чужую
+    /// запись, и заметить это нечем.
+    /// </summary>
+    [Fact]
+    public async Task An_ambiguous_key_touches_nothing()
+    {
+        var (journal, shift) = Journal();
+
+        // Два тезки заведены заранее — так выглядит коллекция, которую вели руками.
+        foreach (var _ in Enumerable.Range(0, 2))
+            SampleData.AddRecord(_db.Constructor, journal, "Смена А");
+
+        var scenario = Save(null, ScenarioStep.OfRecord(_db.Manager.DbId, journal,
+            new Dictionary<string, string>
+            {
+                ["Название"] = "{{Название}}",
+                ["Смена"]    = "{{Начало}}",
+            },
+            matchField: "Название", createMissing: false));
+
+        var outcome = await Run(scenario, Shifts());
+
+        Assert.True(outcome.Ok, outcome.Problem);
+        Assert.Contains("неоднозначных 1", string.Join(" | ", outcome.Lines), StringComparison.Ordinal);
+
+        // Ни одна из двух не тронута.
+        foreach (var record in _db.Constructor.GetRecords(journal))
+            Assert.False(_db.Constructor.GetFieldValues(record.Id!.Value).ContainsKey(shift));
+    }
+
+    /// <summary>
+    /// Поля-ключа в коллекции нет — шаг встает СЛОВАМИ и до первой записи, как и при опечатке в
+    /// обычном поле. Молча отобрать ноль записей здесь нельзя: обмен выглядел бы работающим.
+    /// </summary>
+    [Fact]
+    public async Task An_unknown_key_field_stops_the_step()
+    {
+        var (journal, _) = Journal();
+
+        var scenario = Save(null, ScenarioStep.OfRecord(_db.Manager.DbId, journal,
+            new Dictionary<string, string> { ["Название"] = "{{Название}}" },
+            matchField: "Такого поля нет"));
+
+        var outcome = await Run(scenario, Shifts());
+
+        Assert.False(outcome.Ok);
+        Assert.Contains("поля-ключа", outcome.Problem!, StringComparison.Ordinal);
+        Assert.Empty(_db.Constructor.GetRecords(journal));
+    }
+
+    /// <summary>
+    /// Две строки с одним ключом в ОДНОЙ пачке — это одна запись, обновленная дважды, а не два
+    /// дубля: заведенное в этом же запуске сразу попадает в индекс.
+    /// </summary>
+    [Fact]
+    public async Task Two_rows_with_the_same_key_make_one_record()
+    {
+        var (journal, shift) = Journal();
+
+        var twice = new StepTable(["Название", "Начало"],
+        [
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                { ["Название"] = "Смена А", ["Начало"] = "13.09.2026 08:00" },
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                { ["Название"] = "Смена А", ["Начало"] = "13.09.2026 20:00" },
+        ]);
+
+        var scenario = Save(null, ScenarioStep.OfRecord(_db.Manager.DbId, journal,
+            new Dictionary<string, string>
+            {
+                ["Название"] = "{{Название}}",
+                ["Смена"]    = "{{Начало}}",
+            },
+            matchField: "Название"));
+
+        Assert.True((await Run(scenario, twice)).Ok);
+
+        var records = _db.Constructor.GetRecords(journal);
+
+        Assert.Single(records);
+        Assert.Equal("13.09.2026 20:00",
+                     _db.Constructor.GetFieldValues(records[0].Id!.Value)[shift]);
+    }
+
     /// <summary>Шагу без строк — одна запись из постоянных значений: «каждый день в 07:00
     /// завести запись планерки» работает без единого запроса.</summary>
     [Fact]

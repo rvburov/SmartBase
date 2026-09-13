@@ -371,6 +371,11 @@ public enum ScenarioStepKind
 /// Список, как и словарь полей, не участвует в сравнении записей.</param>
 /// <param name="Format">Формат файла выгрузки (только <see cref="ScenarioStepKind.Export"/>):
 /// «csv», «json» либо «xlsx».</param>
+/// <param name="MatchField">Поле-ключ шага «создать/обновить запись»; пусто — только создание.
+/// Раздел 2 обещал «создать/обновить запись», а шаг умел одно создание, и «разобрать сообщение →
+/// обновить статус» заводило дубли при каждом запуске.</param>
+/// <param name="CreateMissing">Заводить ли запись, которой не нашлось по ключу. Запрет нужен
+/// обмену, где запись обязана уже существовать: там новая означает, что ключ разошелся.</param>
 /// <param name="ColumnFormulas">Новые колонки и выражения для них
 /// (<see cref="ScenarioStepKind.Compute"/>) — по порядку: каждая следующая видит уже
 /// посчитанные. Список, как и словарь полей, не участвует в сравнении записей.</param>
@@ -386,7 +391,9 @@ public sealed record ScenarioStep(
     string                               Folder         = "",
     IReadOnlyList<ScenarioCondition>?    Conditions     = null,
     string                               Format         = "",
-    IReadOnlyList<ScenarioFormula>?      ColumnFormulas = null)
+    IReadOnlyList<ScenarioFormula>?      ColumnFormulas = null,
+    string                               MatchField     = "",
+    bool                                 CreateMissing  = true)
 {
     /// <summary>Сколько знаков умещается в карточке сообщения, не превращая ее в простыню.</summary>
     public const int MaxTextLength = 200;
@@ -407,6 +414,9 @@ public sealed record ScenarioStep(
 
     /// <summary>Условия отбора; у остальных видов шага пусто.</summary>
     public IReadOnlyList<ScenarioCondition> Tests => Conditions ?? [];
+
+    /// <summary>Ищет ли шаг записи по ключу, а не только заводит новые.</summary>
+    public bool Matching => !string.IsNullOrWhiteSpace(MatchField);
 
     /// <summary>
     /// Сколько колонок считает один шаг преобразования. Предел тот же по духу, что у условий:
@@ -435,9 +445,10 @@ public sealed record ScenarioStep(
         new(ScenarioStepKind.Filter, 0, "", Conditions: conditions);
 
     public static ScenarioStep OfRecord(int dbId, int collectionId,
-                                        IReadOnlyDictionary<string, string> fields) =>
+                                        IReadOnlyDictionary<string, string> fields,
+                                        string matchField = "", bool createMissing = true) =>
         new(ScenarioStepKind.CreateRecord, 0, "", DbId: dbId, CollectionId: collectionId,
-            FieldValues: fields);
+            FieldValues: fields, MatchField: matchField, CreateMissing: createMissing);
 
     public static ScenarioStep OfExport(int dbId, int collectionId, string folder, string format,
                                         IReadOnlyList<ScenarioCondition>? conditions = null) =>
@@ -506,6 +517,12 @@ public sealed record ScenarioStep(
             // чем спросить.
             if (Fields.All(f => string.IsNullOrWhiteSpace(f.Value)))
                 problems.Add("В шаге не заполнено ни одного поля записи");
+
+            // «Ни обновлять найденные, ни заводить новые» — шаг, который не делает ничего.
+            // Такое сочетание набирается в два щелчка и молча ничего не пишет неделями.
+            if (!Matching && !CreateMissing)
+                problems.Add("Шаг не заводит новые записи и не ищет их по ключу — "
+                           + "делать ему нечего");
         }
 
         if (Kind == ScenarioStepKind.Export)
@@ -579,9 +596,12 @@ public sealed record ScenarioStep(
         ScenarioStepKind.Filter => "Отбор: "
             + (Tests.Count > 0 ? string.Join(" и ", Tests) : "условия не заданы"),
 
-        ScenarioStepKind.CreateRecord => "Создать запись: "
+        ScenarioStepKind.CreateRecord => (Matching ? "Обновить запись: " : "Создать запись: ")
             + (name.Length > 0 ? name : $"коллекция №{CollectionId}")
-            + $" ({Fields.Count(f => !string.IsNullOrWhiteSpace(f.Value))} полей)",
+            + $" ({Fields.Count(f => !string.IsNullOrWhiteSpace(f.Value))} полей)"
+            + (Matching
+                ? $", ключ «{MatchField.Trim()}»" + (CreateMissing ? "" : ", только найденные")
+                : ""),
 
         ScenarioStepKind.Export => "Экспорт выборки: "
             + (name.Length > 0 ? name : $"коллекция №{CollectionId}")

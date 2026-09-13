@@ -689,4 +689,68 @@ public sealed class ScenarioTests
         Assert.True((card with { Enabled = true }).Automatic);
         Assert.Equal("при запуске программы", card.Trigger.Describe());
     }
+
+
+    // ── Шаг «создать/обновить запись» ─────────────────────────────────────────
+
+    /// <summary>
+    /// Без ключа шаг только создает — прежнее поведение, и оно осталось умолчанием: сценарии,
+    /// заведенные до этой правки, ведут себя ровно так же.
+    /// </summary>
+    [Fact]
+    public void A_record_step_without_a_key_only_creates()
+    {
+        var step = ScenarioStep.OfRecord(1, 10,
+            new Dictionary<string, string> { ["Название"] = "Планерка" });
+
+        Assert.False(step.Matching);
+        Assert.True(step.CreateMissing);
+        Assert.Empty(step.Problems());
+        Assert.StartsWith("Создать запись:", step.Describe());
+    }
+
+    /// <summary>С ключом шаг называет себя обновлением — и говорит, по какому полю ищет.</summary>
+    [Fact]
+    public void A_record_step_with_a_key_calls_itself_an_update()
+    {
+        var step = ScenarioStep.OfRecord(1, 10,
+            new Dictionary<string, string> { ["Статус"] = "{{Статус}}" },
+            matchField: "Номер");
+
+        Assert.True(step.Matching);
+        Assert.Empty(step.Problems());
+
+        var text = step.Describe();
+
+        Assert.StartsWith("Обновить запись:", text);
+        Assert.Contains("ключ «Номер»", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("только найденные", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>«Только найденные» видно в подписи: это самое неочевидное из настроек шага.</summary>
+    [Fact]
+    public void Update_only_says_so_in_its_description()
+    {
+        var step = ScenarioStep.OfRecord(1, 10,
+            new Dictionary<string, string> { ["Статус"] = "{{Статус}}" },
+            matchField: "Номер", createMissing: false);
+
+        Assert.Contains("только найденные", step.Describe(), StringComparison.Ordinal);
+        Assert.Empty(step.Problems());
+    }
+
+    /// <summary>
+    /// «Ни искать по ключу, ни заводить новые» — шаг, который не делает ничего. Набирается в два
+    /// щелчка и молча не пишет неделями, поэтому не сохраняется.
+    /// </summary>
+    [Fact]
+    public void A_step_that_neither_finds_nor_creates_is_refused()
+    {
+        var step = ScenarioStep.OfRecord(1, 10,
+            new Dictionary<string, string> { ["Статус"] = "готов" },
+            matchField: "", createMissing: false);
+
+        Assert.Contains(step.Problems(),
+                        p => p.Contains("делать ему нечего", StringComparison.OrdinalIgnoreCase));
+    }
 }

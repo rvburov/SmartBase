@@ -31,6 +31,30 @@
                   Background="{StaticResource BrushSecondaryBg}"
                   CornerRadius="{StaticResource RadiusBase}" />
 
+        <!-- ── Ключ ─────────────────────────────────────────────────────────── -->
+
+        <TextBlock Text="Искать существующую запись по полю"
+                   Margin="0,0,0,6"
+                   FontWeight="{StaticResource FontWeightBold}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <TextBox x:Name="KeyBox"
+                 Height="30"
+                 Margin="0,0,0,6"
+                 Watermark="пусто — всегда заводить новую"
+                 VerticalContentAlignment="Center"
+                 CornerRadius="{StaticResource RadiusBase}" />
+
+        <CheckBox x:Name="CreateMissingCheck"
+                  Content="Заводить запись, если не нашлась"
+                  Margin="0,0,0,6" />
+
+        <TextBlock x:Name="KeyHint"
+                   Margin="0,0,0,12"
+                   TextWrapping="Wrap"
+                   FontSize="{DynamicResource FontSizeSmall}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
         <!-- ── Значения полей ───────────────────────────────────────────────── -->
 
         <TextBlock Text="Поля записи"

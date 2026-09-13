@@ -240,13 +240,20 @@ public static partial class ScenarioRunner
         try
         {
             var made = await Task.Run(
-                () => target.Constructor.CreateRecordsIsolated(step.CollectionId, rows, ct), ct);
+                () => target.Constructor.WriteRecordsIsolated(
+                    step.CollectionId, rows, ct, step.MatchField, step.CreateMissing), ct);
+
+            var what = step.Matching ? "обновление записи" : "создание записи";
 
             if (made.Trouble is { } trouble)
-                return StepOutcome.Bad("создание записи: " + trouble);
+                return StepOutcome.Bad(what + ": " + trouble);
 
+            // В отчет идут все четыре цифры, а не одно «заведено»: пропущенные по пустому ключу
+            // и неоднозначные — это и есть ответ на вопрос «почему записей меньше, чем строк».
             return new StepOutcome(true,
-                $"Создание записи: заведено {made.Created} в «{made.Collection}»", made.Created);
+                char.ToUpperInvariant(what[0]) + what[1..]
+                + $": {made.Describe()} в «{made.Collection}»",
+                made.Created + made.Updated);
         }
         catch (OperationCanceledException)
         {
@@ -256,7 +263,8 @@ public static partial class ScenarioRunner
         {
             // Права человека за машиной и прочие беды базы — отказом словами, а не падением
             // службы сценариев.
-            return StepOutcome.Bad("создание записи: " + error.Message);
+            return StepOutcome.Bad(
+                (step.Matching ? "обновление записи: " : "создание записи: ") + error.Message);
         }
     }
 
