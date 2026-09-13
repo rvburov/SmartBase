@@ -48,6 +48,17 @@ public sealed class SecurityContourView : UserControl
     /// </summary>
     public event EventHandler? BlockedRequested;
 
+    /// <summary>
+    /// Показывать ли администраторские действия: переход в журнал безопасности и выписку
+    /// паспорта.
+    ///
+    /// Сам контур читают все — он объясняет, почему отправка не уходит, и это нужнее всего тому,
+    /// у кого прав нет. А вот журнал и паспорт — дело администратора: паспорт уносит из программы
+    /// сводку по направлениям и объемам, журнал живет в его панели. Кнопка, которая ведет туда,
+    /// куда человека не пустят, хуже отсутствующей.
+    /// </summary>
+    public bool ForAdmin { get; set; }
+
     public SecurityContourView() =>
         Content = new ScrollViewer
         {
@@ -56,9 +67,10 @@ public sealed class SecurityContourView : UserControl
         };
 
     /// <summary>Показать контур заново — при открытии экрана и после «Перечитать политику».</summary>
-    public void Show(Workspace? workspace)
+    public void Show(Workspace? workspace, bool forAdmin = false)
     {
         _workspace = workspace;
+        ForAdmin   = forAdmin;
         Build();
     }
 
@@ -139,15 +151,22 @@ public sealed class SecurityContourView : UserControl
             "Отказы, записанные в журнал безопасности за последние семь дней.",
             BlocksList()), last: true);
 
-        var reread = RowButton("Перечитать политику", () =>
+        // «Перечитать политику» доступно всем: оно ничего не разрешает, а перечитывать файл
+        // приходится сразу после того, как администратор его поправил, — и первым это замечает
+        // тот, у кого встал обмен.
+        var buttons = new List<Control>
         {
-            EgressSetup.Init();
-            Build();
-        });
+            RowButton("Перечитать политику", () =>
+            {
+                EgressSetup.Init();
+                Build();
+            }),
+        };
 
-        var passport = RowButton("Паспорт интеграций…", () => _ = ExportPassportAsync());
+        if (ForAdmin)
+            buttons.Add(RowButton("Паспорт интеграций…", () => _ = ExportPassportAsync()));
 
-        var actions = ButtonLine(reread, passport);
+        var actions = ButtonLine([.. buttons]);
         actions.Margin = new Avalonia.Thickness(0, 12, 0, -6);
         rows.Add(actions);
 
@@ -439,7 +458,9 @@ public sealed class SecurityContourView : UserControl
             ? "За неделю не заблокировано ни одной попытки."
             : $"Заблокировано попыток: {blocked:N0}.");
 
-        if (blocked == 0) return box;
+        // Само число видно всем — «замок сработал» это ответ и тому, у кого встал обмен. А
+        // читать сами строки ведет только администратора: журнал живет в его панели.
+        if (blocked == 0 || !ForAdmin) return box;
 
         return new StackPanel
         {

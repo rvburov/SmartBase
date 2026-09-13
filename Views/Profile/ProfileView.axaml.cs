@@ -84,9 +84,10 @@ public partial class ProfileView : UserControl
         if (GeneralPanel.IsVisible && key != "general") CommitProfile();
 
         _categoryKey = key;
-        GeneralPanel.IsVisible = key == "general";
-        AdminPanel.IsVisible   = key == "admin";
-        HistoryPanel.IsVisible = key == "history";
+        GeneralPanel.IsVisible  = key == "general";
+        AdminPanel.IsVisible    = key == "admin";
+        SecurityPanel.IsVisible = key == "security";
+        HistoryPanel.IsVisible  = key == "history";
         // Список пользователей открыт «поверх» раздела и сам не спрячется: выбор раздела
         // в сайдбаре (в том числе повторный выбор «Панели администратора») возвращает
         // обычный вид с навбаром. То же с контуром безопасности и его журналом.
@@ -99,8 +100,9 @@ public partial class ProfileView : UserControl
         // Действия истории (выбор базы, очистка журнала) — только для истории.
         HeaderBar.ShowHistoryActions = key == "history";
 
-        if (key == "admin")   RebuildAdminPanel();
-        if (key == "history") RebuildHistoryPanel();
+        if (key == "admin")    RebuildAdminPanel();
+        if (key == "security") ShowSecurityContour();
+        if (key == "history")  RebuildHistoryPanel();
     }
 
     // ── Поля профиля (ФИО, подразделение, должность) ──────────────────────────

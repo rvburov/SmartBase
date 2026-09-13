@@ -394,6 +394,10 @@ public partial class MainWindow : Window
         ProfileSidebar.Title = "Профиль";
         ProfileSidebar.SetItems(ProfileRegistry.All.Select(c => new SidebarListItem(c.Key, c.Label, c.Icon)));
         ProfileSidebar.CategorySelected += (_, key) => ProfileModule.ShowCategory(key);
+        // Модуль сам просит открыть свой раздел — переход «В журнал» из контура безопасности.
+        // Выделяет пункт сайдбар (и он же зовет ShowCategory): переключи раздел молча, и сайдбар
+        // показывал бы один раздел, а экран — другой.
+        ProfileModule.CategoryRequested += (_, key) => ProfileSidebar.Select(key);
         // Панели администратора и истории работают со смонтированными БД рабочего пространства.
         ProfileModule.Initialize(workspace);
 
