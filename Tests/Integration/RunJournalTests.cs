@@ -686,6 +686,30 @@ public sealed class RunJournalTests : IDisposable
         Assert.True(new RunFilter(Since: Now.AddDays(-7)).Narrow);
     }
 
+    /// <summary>
+    /// Счет запусков одного сценария за период — то, чем карточка отвечает на «идет ли обмен».
+    /// Момент последнего запуска на этот вопрос не отвечает: «в 07:00» выглядит одинаково и когда
+    /// сценарий отработал раз, и когда он с тех пор молчит.
+    /// </summary>
+    [Fact]
+    public void Runs_of_one_scenario_are_counted_for_the_period()
+    {
+        var journal = Journal();
+
+        journal.Write(Request("Заказы",  100, Now.AddHours(-2)) with { Scenario = "Ночной обмен" });
+        journal.Write(Request("Остатки", 100, Now.AddHours(-1)) with { Scenario = "Ночной обмен" });
+        journal.Write(Request("Заказы",  100, Now)              with { Scenario = "Чужой" });
+        journal.Write(Request("Заказы",  100, Now.AddDays(-3))  with { Scenario = "Ночной обмен" });
+
+        var mine = new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.Ordinal)
+        {
+            ["Scenario"] = new[] { "Ночной обмен" },
+        };
+
+        Assert.Equal(2, journal.Count(new RunFilter(Columns: mine, Since: Now.AddHours(-6))));
+        Assert.Equal(3, journal.Count(new RunFilter(Columns: mine)));
+    }
+
     [Fact]
     public void A_column_filter_counts_as_narrowing()
     {

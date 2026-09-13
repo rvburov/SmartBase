@@ -81,12 +81,49 @@ public partial class SettingsView
             ("Дублировать", () => _ = EditConnectionAsync(connection.Copy())),
         };
 
-        if (!decision.Allowed) extra.Insert(0, ("Показать политику", ShowPolicy));
+        if (!decision.Allowed)
+        {
+            extra.Insert(0, ("Показать политику", ShowPolicy));
+            extra.Insert(0, ("Скопировать заявку",
+                             () => _ = CopyAddressRequestAsync(registry, connection, decision)));
+        }
 
         return CardRow(connection.Name, description, policy,
             edit:   () => _ = EditConnectionAsync(connection),
             delete: () => _ = DeleteConnectionAsync(connection),
             more:   extra);
+    }
+
+    /// <summary>
+    /// Положить в буфер готовую заявку на разрешение адреса (docs/ROADMAP-API.md, 10.18).
+    ///
+    /// Отказ «адрес не входит в белый список» оставляет человека с задачей, которую он решать не
+    /// умеет: к кому идти, что писать, какие сведения приложить. Ответственный за интеграции все
+    /// равно спросит то же самое — адрес, зачем, какая коллекция, какие поля, — и спросит не
+    /// сразу, а через день. Заявка собирает эти ответы из карточек, где они уже лежат.
+    /// </summary>
+    private async Task CopyAddressRequestAsync(Database.IntegrationsRegistry registry,
+                                               IntegrationConnection connection,
+                                               EgressDecision decision)
+    {
+        var opened = _databases?.Invoke() ?? [];
+
+        var note = Database.AddressRequestNote.Text(
+            Database.AddressRequestNote.Gather(
+                registry, connection, decision.Explanation,
+                collections: (dbId, collectionId) =>
+                    opened.FirstOrDefault(d => d.DbId == dbId)?
+                          .Constructor.CollectionName(collectionId) ?? "",
+                who:     Utils.CurrentUser.DisplayName,
+                machine: Environment.MachineName),
+            EgressSetup.Last.Set,
+            DateOnly.FromDateTime(DateTime.Today));
+
+        await (TopLevel.GetTopLevel(this)?.Clipboard?.SetTextAsync(note) ?? Task.CompletedTask);
+
+        Controls.Widgets.AppNotifications.Info(
+            "Заявка на разрешение адреса скопирована — вставьте ее в письмо ответственному "
+            + "за интеграции.");
     }
 
     /// <summary>Открыть контур безопасности: там написано, что разрешено и кем задано.</summary>

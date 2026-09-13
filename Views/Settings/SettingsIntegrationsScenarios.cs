@@ -208,16 +208,31 @@ public partial class SettingsView
 
         var description = scenario.Trigger.Describe(WatchedName(scenario)) + " · " + steps;
 
-        var extra = "";
+        var facts = new List<string>();
+
+        // «Работает на этом компьютере» — раздел 3. Сценарии лежат в app.db, а он у каждой машины
+        // свой: включенный здесь сценарий у коллеги не идет, и наоборот. Пока строки не было,
+        // человек считал настройку общей и ждал ночного обмена от выключенного ноутбука.
+        facts.Add(scenario.Automatic
+            ? "Работает на этом компьютере, пока программа открыта"
+            : "Запускается только вручную");
 
         if (registry.ScenarioLastRun(scenario.Id) is { } last)
-            extra = "Последний запуск: " + last.ToLocalTime().ToString("dd.MM.yyyy HH:mm");
+            facts.Add("последний запуск " + last.ToLocalTime().ToString("dd.MM.yyyy HH:mm"));
+
+        // Сколько раз сходил сегодня. Отвечает на «идет ли обмен вообще» лучше, чем момент
+        // последнего запуска: «в 07:00» одинаково выглядит и когда сценарий отработал раз, и
+        // когда он с тех пор молчит.
+        if (RunsToday(scenario) is { } today)
+            facts.Add($"сегодня запусков: {today}");
 
         // Что помешает прямо сейчас — спрашивается вживую у того же кода, которым пользуется
         // служба: два ответа на один вопрос разошлись бы на первой же правке.
         if (ScenarioRunner.Blocker(scenario, registry, _databases?.Invoke() ?? [],
                                    ExtensionRegistry.All) is { } blocker)
-            extra += (extra.Length > 0 ? " · " : "") + "Не сработает: " + blocker;
+            facts.Add("не сработает: " + blocker);
+
+        var extra = string.Join(" · ", facts);
 
         // Включать сценарий без расписания незачем: он не сработает никогда, а человек будет
         // считать, что обмен идет.
@@ -241,12 +256,91 @@ public partial class SettingsView
             BuildIntegrationsScenarios();
         };
 
+        var more = new List<(string, Action)>
+        {
+            // Журнал сценария — не «журнал вообще»: у человека на экране один сценарий, и
+            // искать его строки среди чужих он будет воронкой, которую эта кнопка и ставит.
+            ("Журнал сценария", () => ShowScenarioRuns(scenario)),
+        };
+
+        // Сухой прогон жил только на карточке запроса, а спрашивают его о сценарии: «что уйдет,
+        // когда это сработает ночью». Показывается первый исходящий шаг — именно он уносит
+        // данные, и именно про него вопрос.
+        if (Outgoing(registry, scenario) is { } step)
+            more.Add(("Показать, что уйдет", () => _ = PreviewScenarioAsync(registry, step)));
+
         return CardRow(scenario.Name, description, extra,
             edit:   () => _ = EditScenarioAsync(scenario),
             delete: () => _ = DeleteScenarioAsync(scenario),
             first:  ("Запустить", () => _ = RunScenarioAsync(scenario)),
+            more:   more,
             lead:   toggle);
     }
+
+    // ── Чем карточка отвечает на «идет ли обмен» ──────────────────────────────
+
+    /// <summary>
+    /// Сколько раз сценарий сходил сегодня; <c>null</c> — журнала нет и считать нечем.
+    ///
+    /// Считается по ИМЕНИ сценария — тем же, каким он подписан в строке журнала. Ключ был бы
+    /// надежнее, но журнал его не хранит намеренно: сценарий могли удалить, а строки о нем
+    /// остаются, и ссылаться им не на что.
+    /// </summary>
+    private static int? RunsToday(Scenario scenario)
+    {
+        if (RunJournal.Current is not { } journal) return null;
+
+        var since = DateTimeOffset.Now.Date;
+        var only  = new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.Ordinal)
+        {
+            ["Scenario"] = new[] { scenario.Name },
+        };
+
+        return (int)Math.Min(int.MaxValue,
+            journal.Count(new RunFilter(Columns: only, Since: new DateTimeOffset(since))));
+    }
+
+    /// <summary>
+    /// Открыть журнал, отобранный по ЭТОМУ сценарию. Воронка ставится за человека: искать свои
+    /// строки среди чужих он пошел бы туда же и сделал бы то же самое, только руками.
+    /// </summary>
+    private void ShowScenarioRuns(Scenario scenario)
+    {
+        _journalPicked.Clear();
+        _journalPicked["Scenario"] = [scenario.Name];
+
+        _journalChannel    = null;
+        _journalFailedOnly = false;
+        _journalOpen       = 0;
+        _journalShown      = 0;
+
+        ShowIntegrationTab("journal");
+    }
+
+    /// <summary>
+    /// Первый шаг-запрос сценария, который уносит данные наружу; <c>null</c> — такого нет.
+    /// Сухой прогон показывает именно его: вопрос «что уйдет» — про то, что покидает машину, а
+    /// читающие шаги не уносят ничего.
+    /// </summary>
+    private static IntegrationRequest? Outgoing(IntegrationsRegistry registry, Scenario scenario)
+    {
+        foreach (var step in scenario.Steps)
+        {
+            if (step.Kind != ScenarioStepKind.Request) continue;
+
+            if (registry.FindRequest(step.RequestId) is { Outward: true } request) return request;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Сухой прогон шага сценария — тем же кодом, что и у карточки запроса. Второй сухой прогон
+    /// однажды показал бы не то тело, что уйдет, а сухой прогон, показывающий не то, хуже, чем
+    /// его отсутствие.
+    /// </summary>
+    private async Task PreviewScenarioAsync(IntegrationsRegistry registry, IntegrationRequest request) =>
+        await PreviewRequestAsync(registry, request, registry.Find(request.ConnectionId));
 
     // ── Правка ────────────────────────────────────────────────────────────────
 

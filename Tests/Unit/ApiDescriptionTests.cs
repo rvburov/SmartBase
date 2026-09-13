@@ -48,6 +48,22 @@ public sealed class ApiDescriptionTests
         Assert.Contains("не ограничен",             text, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Про открытый текст сказано ПРЯМО (6.2: «сказать об этом надо прямо»).
+    ///
+    /// Описание пересылают той стороне, и решение «по какой сети ходить» принимают там. Молчание
+    /// об открытом тексте в документе, который читает именно тот, кто будет слать токен, — худшее
+    /// место для умолчания: «защита только токеном» звучит надежно ровно до вопроса «а токен-то
+    /// как едет».
+    /// </summary>
+    [Fact]
+    public void The_text_says_plainly_that_the_token_travels_in_the_open()
+    {
+        var text = ApiDescription.Text("http://127.0.0.1:8787", "Основная", Schema);
+
+        Assert.Contains("ОТКРЫТЫМ ТЕКСТОМ", text, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void The_text_lists_collections_with_their_columns()
     {
