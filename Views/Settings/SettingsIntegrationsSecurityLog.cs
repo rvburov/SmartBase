@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using SmartBase.Database;
+using static SmartBase.Controls.Widgets.SettingRows;
 
 namespace SmartBase.Views.Settings;
 

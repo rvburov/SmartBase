@@ -18,20 +18,9 @@
     </UserControl.Resources>
 
     <UserControl.Styles>
-        <!-- Строка одного пункта. Линия под строкой — отдельный separator h ПОСЛЕ каждой
-             строки (не бордер контейнера с текстом: отдельную линию можно алиасить,
-             она четкая при любом зуме). Стили — как settingRow в SettingsView. -->
-        <Style Selector="Border.settingRow">
-            <Setter Property="Padding" Value="0,16" />
-        </Style>
-        <Style Selector="Border.settingRow TextBlock.title">
-            <Setter Property="Foreground" Value="{StaticResource BrushPrimaryText}" />
-        </Style>
-        <Style Selector="Border.settingRow TextBlock.desc">
-            <Setter Property="FontSize"     Value="{DynamicResource FontSizeSmall}" />
-            <Setter Property="Foreground"   Value="{StaticResource BrushSecondaryText}" />
-            <Setter Property="TextWrapping" Value="Wrap" />
-        </Style>
+        <!-- Строка одного пункта, ячейка с данными и строка таблицы — общие
+             (Assets/Styles/SettingRows.axaml): панель администратора показывает те же
+             строки, что раздел «Интеграции», и вторая копия стилей разошлась бы с первой. -->
 
         <!-- Стили DataGrid таблицы истории — копии стилей TableView.axaml (там же
              объяснено, почему линии/шапка устроены именно так). -->

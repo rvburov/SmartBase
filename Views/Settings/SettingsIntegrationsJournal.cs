@@ -5,6 +5,7 @@ using Avalonia.Media;
 using SmartBase.Controls.Dialogs;
 using SmartBase.Database;
 using SmartBase.Integrations;
+using static SmartBase.Controls.Widgets.SettingRows;
 
 namespace SmartBase.Views.Settings;
 

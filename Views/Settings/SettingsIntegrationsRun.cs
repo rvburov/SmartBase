@@ -3,6 +3,7 @@ using SmartBase.Controls.Dialogs;
 using SmartBase.Core.Importers;
 using SmartBase.Core.Importers.TableSources;
 using SmartBase.Integrations;
+using static SmartBase.Controls.Widgets.SettingRows;
 
 namespace SmartBase.Views.Settings;
 

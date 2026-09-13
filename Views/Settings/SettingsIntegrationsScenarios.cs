@@ -4,6 +4,7 @@ using SmartBase.Controls.Dialogs;
 using SmartBase.Database;
 using SmartBase.Extensions;
 using SmartBase.Integrations;
+using static SmartBase.Controls.Widgets.SettingRows;
 
 namespace SmartBase.Views.Settings;
 

@@ -1,6 +1,7 @@
 using Avalonia.Controls;
 using SmartBase.Controls.Dialogs;
 using SmartBase.Integrations;
+using static SmartBase.Controls.Widgets.SettingRows;
 
 namespace SmartBase.Views.Settings;
 
@@ -36,7 +37,7 @@ public partial class SettingsView
 
         var registry = Integrations;
 
-        rows.Add(Actions("Добавить", () => _ = EditConnectionAsync(IntegrationConnection.New())));
+        rows.Add(ActionsRow("Добавить", () => _ = EditConnectionAsync(IntegrationConnection.New())));
 
         var connections = registry.Connections();
 
@@ -157,9 +158,9 @@ public partial class SettingsView
             return;
         }
 
-        rows.Add(Actions("Добавить", () => _ = EditRequestAsync(IntegrationRequest.New()),
-                         "Из cURL",   () => _ = ImportCurlAsync(),
-                         PresetButton()));
+        rows.Add(ActionsRow("Добавить", () => _ = EditRequestAsync(IntegrationRequest.New()),
+                            "Из cURL",   () => _ = ImportCurlAsync(),
+                            PresetButton()));
 
         var requests = registry.Requests();
 
