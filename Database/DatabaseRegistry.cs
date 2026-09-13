@@ -147,6 +147,10 @@ public sealed class DatabaseRegistry : IDisposable, ISettingsDatabase
             "\"Until\" TEXT NOT NULL, " +
             "\"UsedAt\" TEXT NULL);");
 
+        // Второе подтверждение (принцип двух рук, 10.3) появилось позже таблицы — достраиваем,
+        // как и все прочее, аддитивно.
+        AddColumns(db, "integration_directions", [("Second", "TEXT"), ("SecondAt", "TEXT")]);
+
         db.Database.ExecuteSqlRaw(
             "CREATE TABLE IF NOT EXISTS \"integration_tokens\" (" +
             "\"Id\" INTEGER NOT NULL CONSTRAINT \"PK_integration_tokens\" PRIMARY KEY AUTOINCREMENT, " +

@@ -45,18 +45,22 @@
                    FontSize="{DynamicResource FontSizeSmall}"
                    Foreground="{StaticResource BrushSecondaryText}" />
 
-        <TextBlock Text="На какой срок"
-                   Margin="0,0,0,6"
-                   FontWeight="{StaticResource FontWeightBold}"
-                   Foreground="{StaticResource BrushSecondaryText}" />
+        <!-- Срок спрашивается только у ПЕРВОГО подтверждения: второе не продлевает, а
+             допускает к уже согласованному. -->
+        <StackPanel x:Name="DaysBox" Spacing="0">
+            <TextBlock Text="На какой срок"
+                       Margin="0,0,0,6"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       Foreground="{StaticResource BrushSecondaryText}" />
 
-        <ComboBox x:Name="DaysCombo"
-                  Height="34"
-                  Margin="0,0,0,6"
-                  HorizontalAlignment="Stretch"
-                  VerticalContentAlignment="Center"
-                  Background="{StaticResource BrushSecondaryBg}"
-                  CornerRadius="{StaticResource RadiusBase}" />
+            <ComboBox x:Name="DaysCombo"
+                      Height="34"
+                      Margin="0,0,0,6"
+                      HorizontalAlignment="Stretch"
+                      VerticalContentAlignment="Center"
+                      Background="{StaticResource BrushSecondaryBg}"
+                      CornerRadius="{StaticResource RadiusBase}" />
+        </StackPanel>
 
         <TextBlock x:Name="IdleHint"
                    Margin="0,0,0,12"

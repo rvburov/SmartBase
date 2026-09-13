@@ -166,6 +166,7 @@ public static class IntegrationsPassport
             text.AppendLine($"    объем в сутки     не больше {Size(policy.MaxBytesPerDay)}");
             text.AppendLine($"    запусков в час    не больше {policy.MaxRunsPerHour:N0}");
             text.AppendLine($"    адреса самому     {(policy.UserMayAddHosts ? "разрешено дописывать" : "дописывать запрещено")}");
+            text.AppendLine($"    два подтверждения {(policy.RequiresSecondConfirm ? "требуются" : "не требуются")}");
         }
 
         text.AppendLine();

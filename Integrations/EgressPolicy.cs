@@ -50,6 +50,11 @@ public enum EgressMode
 /// (docs/ROADMAP-API.md, 10.12 и шаг 8). Петлевой адрес сюда не относится: к <c>127.0.0.1</c>
 /// может обратиться только программа этой же машины, и разрешать ей то, что она и так может,
 /// незачем. По умолчанию <c>false</c> — сетевой режим включается точечно, на машине обмена.</param>
+/// <param name="RequireSecondConfirm">Требовать ли ВТОРОЕ подтверждение исходящего направления —
+/// другим человеком (docs/ROADMAP-API.md, 10.3). Принцип двух рук: мастер-пароль знают
+/// несколько человек, и «подтвердил и подтвердил» одним из них — ровно то, от чего этот флаг
+/// бережет. По умолчанию <c>false</c>: организация включает его там, где цена ошибки выше цены
+/// задержки.</param>
 public sealed record EgressPolicy(
     EgressMode              Mode,
     IReadOnlyList<string>   Hosts,
@@ -61,9 +66,10 @@ public sealed record EgressPolicy(
     DateOnly?               ValidUntil,
     bool                    UserMayAddHosts,
     string                  Source,
-    string                  MasterHash = "",
+    string                  MasterHash  = "",
     bool                    AllowListen = false,
-    string                  Mirror      = "")
+    string                  Mirror      = "",
+    bool                    RequireSecondConfirm = false)
 {
     /// <summary>
     /// Самая строгая политика: наружу нельзя ничего. Ею подменяется любой источник, который
@@ -207,6 +213,14 @@ public sealed class EgressPolicySet
     /// мастер-пароль.
     /// </summary>
     public bool HasMaster => Sources.Any(p => p.HasMaster);
+
+    /// <summary>
+    /// Требует ли хоть один источник второго подтверждения. Правило то же, что у всех прочих
+    /// рамок, только с другой стороны: разрешено то, что разрешают ВСЕ, значит ТРЕБУЕТСЯ то,
+    /// чего требует ХОТЬ ОДИН. Иначе подложенный рядом свой файл без этого флага снимал бы
+    /// требование, поставленное организацией.
+    /// </summary>
+    public bool RequiresSecondConfirm => Sources.Any(p => p.RequireSecondConfirm);
 
     /// <summary>
     /// Подходит ли пароль. Правило то же, что у остальных рамок, — ПЕРЕСЕЧЕНИЕ: пароль обязан

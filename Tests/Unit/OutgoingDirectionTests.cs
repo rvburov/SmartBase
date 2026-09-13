@@ -200,13 +200,13 @@ public sealed class OutgoingDirectionTests
         var direction = OutgoingDirection.Confirm(request, "Петров П. П.", Now, days: 90);
 
         Assert.Null(direction.Trouble(request, Now));
-        Assert.True(direction.Works(request, Now.AddDays(20)));
+        Assert.Null(direction.Trouble(request, Now.AddDays(20)));
         Assert.Contains("Петров П. П.", direction.Describe(), StringComparison.Ordinal);
 
         // Срок в 90 дней сам по себе до 90 дней не доживет: простой считается от подтверждения,
         // и направление, которым ни разу не воспользовались, отключится через месяц. Так и надо —
         // подтвержденный впрок обмен ничем не отличается от забытого.
-        Assert.False(direction.Works(request, Now.AddDays(80)));
+        Assert.NotNull(direction.Trouble(request, Now.AddDays(80)));
     }
 
     /// <summary>Подтвердили одно, а работает другое — направление молчит и говорит почему.</summary>
@@ -228,7 +228,7 @@ public sealed class OutgoingDirectionTests
         var request   = Push();
         var direction = OutgoingDirection.Confirm(request, "Петров П. П.", Now, days: 30);
 
-        Assert.True(direction.Works(request, Now.AddDays(29)));
+        Assert.Null(direction.Trouble(request, Now.AddDays(29)));
         Assert.Contains("срок", direction.Trouble(request, Now.AddDays(31))!, StringComparison.Ordinal);
     }
 
@@ -242,7 +242,7 @@ public sealed class OutgoingDirectionTests
         var request   = Push();
         var direction = OutgoingDirection.Confirm(request, "Петров П. П.", Now, days: 365);
 
-        Assert.True(direction.Works(request, Now.AddDays(OutgoingDirection.IdleDays - 1)));
+        Assert.Null(direction.Trouble(request, Now.AddDays(OutgoingDirection.IdleDays - 1)));
 
         Assert.Contains("не пользовались",
                         direction.Trouble(request, Now.AddDays(OutgoingDirection.IdleDays + 1))!,
@@ -260,7 +260,7 @@ public sealed class OutgoingDirectionTests
             UsedAt = Now.AddDays(25),
         };
 
-        Assert.True(direction.Works(request, Now.AddDays(50)));
+        Assert.Null(direction.Trouble(request, Now.AddDays(50)));
     }
 
     /// <summary>Срок не уезжает дальше года, даже если попросили тысячу дней.</summary>
@@ -279,5 +279,101 @@ public sealed class OutgoingDirectionTests
         var direction = OutgoingDirection.Confirm(Push(), "Петров П. П.", Now, days: 90);
 
         Assert.NotNull(direction.Trouble(Push() with { Id = 8 }, Now));
+    }
+
+
+    // ── Второе подтверждение: принцип двух рук ────────────────────────────────
+
+    /// <summary>
+    /// Пока политика не требует второго подтверждения, одного достаточно — прежнее поведение, и
+    /// оно осталось умолчанием: направления, подтвержденные до появления флага, работают.
+    /// </summary>
+    [Fact]
+    public void One_signature_is_enough_until_the_policy_asks_for_two()
+    {
+        var request   = Push();
+        var direction = OutgoingDirection.Confirm(request, "Петров П. П.", Now, days: 90);
+
+        Assert.False(direction.Confirmed2);
+        Assert.Null(direction.Trouble(request, Now.AddDays(1)));
+    }
+
+    /// <summary>
+    /// Политика требует двух рук — направление с одной подписью НЕ действует и говорит, чего
+    /// ждет. Требование спрашивается вживую, поэтому оно догоняет и те направления, которые
+    /// подтвердили до его появления.
+    /// </summary>
+    [Fact]
+    public void With_the_policy_asking_for_two_one_signature_does_not_work()
+    {
+        var request   = Push();
+        var direction = OutgoingDirection.Confirm(request, "Петров П. П.", Now, days: 90);
+
+        var trouble = direction.Trouble(request, Now.AddDays(1), secondRequired: true);
+
+        Assert.NotNull(trouble);
+        Assert.Contains("второго подтверждения", trouble, StringComparison.Ordinal);
+        Assert.Contains("Петров П. П.", trouble, StringComparison.Ordinal);
+    }
+
+    /// <summary>Вторая подпись другого человека открывает направление.</summary>
+    [Fact]
+    public void A_second_person_opens_the_direction()
+    {
+        var request = Push();
+        var first   = OutgoingDirection.Confirm(request, "Петров П. П.", Now, days: 90);
+
+        var (signed, trouble) = first.Countersign("Сидоров С. С.", Now.AddHours(1));
+
+        Assert.Equal("", trouble);
+        Assert.NotNull(signed);
+        Assert.True(signed!.Confirmed2);
+        Assert.Null(signed.Trouble(request, Now.AddDays(1), secondRequired: true));
+        Assert.Contains("Сидоров С. С.", signed.Describe(), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Тот же человек вторым подтвердить НЕ может — в этом весь принцип. Мастер-пароль знают
+    /// несколько человек, и «подтвердил и подтвердил» одним из них не значит ничего.
+    /// </summary>
+    [Fact]
+    public void The_same_person_cannot_sign_twice()
+    {
+        var request = Push();
+        var first   = OutgoingDirection.Confirm(request, "Петров П. П.", Now, days: 90);
+
+        var (signed, trouble) = first.Countersign("петров п. п.", Now.AddHours(1));
+
+        Assert.Null(signed);
+        Assert.Contains("ДРУГОЙ человек", trouble, StringComparison.Ordinal);
+    }
+
+    /// <summary>Дважды второе подтверждение не выдается: подписей ровно две.</summary>
+    [Fact]
+    public void A_third_signature_is_refused()
+    {
+        var request = Push();
+        var first   = OutgoingDirection.Confirm(request, "Петров П. П.", Now, days: 90);
+        var second  = first.Countersign("Сидоров С. С.", Now.AddHours(1)).Direction!;
+
+        var (third, trouble) = second.Countersign("Иванов И. И.", Now.AddHours(2));
+
+        Assert.Null(third);
+        Assert.Contains("уже подтверждено вторым", trouble, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Второе подтверждение СРОКА НЕ ПРОДЛЕВАЕТ: это допуск к уже согласованному, а не новое
+    /// согласование. Иначе двое подряд выдавали бы направлению два срока.
+    /// </summary>
+    [Fact]
+    public void A_second_signature_does_not_extend_the_term()
+    {
+        var request = Push();
+        var first   = OutgoingDirection.Confirm(request, "Петров П. П.", Now, days: 30);
+        var second  = first.Countersign("Сидоров С. С.", Now.AddDays(10)).Direction!;
+
+        Assert.Equal(first.Until, second.Until);
+        Assert.Equal(first.At,    second.At);
     }
 }

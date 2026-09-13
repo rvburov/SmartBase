@@ -32,13 +32,18 @@ namespace SmartBase.Integrations;
 /// <param name="At">Когда подтвердили.</param>
 /// <param name="Until">До какого момента действует включительно.</param>
 /// <param name="UsedAt">Когда направлением пользовались в последний раз; <c>null</c> — ни разу.</param>
+/// <param name="Second">Кто подтвердил ВТОРЫМ; пусто — второго подтверждения не было. Нужно,
+/// только когда политика требует принципа двух рук (<c>requireSecondConfirm</c>).</param>
+/// <param name="SecondAt">Когда подтвердили вторым; <c>null</c> — не подтверждали.</param>
 public sealed record OutgoingDirection(
     int             RequestId,
     string          Fingerprint,
     string          Confirmed,
     DateTimeOffset  At,
     DateTimeOffset  Until,
-    DateTimeOffset? UsedAt = null)
+    DateTimeOffset? UsedAt   = null,
+    string          Second   = "",
+    DateTimeOffset? SecondAt = null)
 {
     /// <summary>
     /// Через сколько дней простоя направление отключается само. Месяц — не круглое число ради
@@ -62,6 +67,38 @@ public sealed record OutgoingDirection(
         new(request.Id, request.Fingerprint(outgoing), who, now,
             now.AddDays(Math.Clamp(days, 1, MaxDays)));
 
+    /// <summary>Есть ли второе подтверждение.</summary>
+    public bool Confirmed2 => !string.IsNullOrWhiteSpace(Second);
+
+    /// <summary>
+    /// Подтвердить ВТОРЫМ. Возвращает причину отказа либо новое направление.
+    ///
+    /// <b>Второй обязан быть ДРУГИМ человеком.</b> В этом весь принцип двух рук: мастер-пароль
+    /// знают несколько человек, и «подтвердил и подтвердил» одним из них не значит ничего.
+    /// Программа различает людей так же, как везде, — по отображаемому имени; лазейка тут
+    /// известна и названа в 10.17: от сговора и от чужой учетной записи контур не защищает и
+    /// защищать не берется.
+    ///
+    /// <b>Срок не продлевается.</b> Считается он от ПЕРВОГО подтверждения: второе — это допуск
+    /// к уже согласованному, а не новое согласование.
+    /// </summary>
+    public (OutgoingDirection? Direction, string Trouble) Countersign(string who, DateTimeOffset now)
+    {
+        var name = (who ?? "").Trim();
+
+        if (name.Length == 0)
+            return (null, "второе подтверждение выдается от имени человека, а имя не заполнено");
+
+        if (Confirmed2)
+            return (null, $"направление уже подтверждено вторым: {Second}");
+
+        if (string.Equals(name, Confirmed.Trim(), StringComparison.CurrentCultureIgnoreCase))
+            return (null, "второе подтверждение обязан выдать ДРУГОЙ человек — "
+                        + $"первым подтвердил {Confirmed}");
+
+        return (this with { Second = name, SecondAt = now }, "");
+    }
+
     /// <summary>Момент, от которого считается простой: последнее использование либо подтверждение.</summary>
     public DateTimeOffset Since => UsedAt ?? At;
 
@@ -71,12 +108,21 @@ public sealed record OutgoingDirection(
     /// Причина возвращается словами и одна: человек, у которого обмен встал, должен увидеть
     /// «вышел срок» или «запрос правили», а не общее «не разрешено».
     /// </summary>
-    public string? Trouble(IntegrationRequest request, DateTimeOffset now, string outgoing = "")
+    /// <param name="secondRequired">Требует ли политика второго подтверждения. Спрашивается
+    /// ВЖИВУЮ, а не запоминается в направлении: организация включает требование тогда, когда
+    /// сочтет нужным, и подтвержденные до того дня направления обязаны встать вместе со всеми —
+    /// иначе флаг не значил бы ничего для уже настроенного обмена.</param>
+    public string? Trouble(IntegrationRequest request, DateTimeOffset now, string outgoing = "",
+                           bool secondRequired = false)
     {
         if (request.Id != RequestId) return "подтверждение выдано другому запросу";
 
         if (Fingerprint != request.Fingerprint(outgoing))
             return "запрос правили после подтверждения — нужно подтвердить заново";
+
+        if (secondRequired && !Confirmed2)
+            return "политика организации требует второго подтверждения — его должен выдать "
+                 + $"другой человек, не {Confirmed}";
 
         if (now > Until)
             return $"срок подтверждения вышел {Until.ToLocalTime():dd.MM.yyyy}";
@@ -87,11 +133,9 @@ public sealed record OutgoingDirection(
         return null;
     }
 
-    /// <summary>Действует ли направление для этого запроса.</summary>
-    public bool Works(IntegrationRequest request, DateTimeOffset now, string outgoing = "") =>
-        Trouble(request, now, outgoing) is null;
-
     /// <summary>Одной строкой для карточки: до какого числа и кем подтверждено.</summary>
     public string Describe() =>
-        $"подтвердил {Confirmed}, до {Until.ToLocalTime():dd.MM.yyyy}";
+        $"подтвердил {Confirmed}"
+        + (Confirmed2 ? $" и {Second}" : "")
+        + $", до {Until.ToLocalTime():dd.MM.yyyy}";
 }

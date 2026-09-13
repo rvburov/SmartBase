@@ -38,7 +38,7 @@ public sealed class DirectionsRegistryTests : IDisposable
     }
 
     /// <summary>Политика с мастер-паролем; без него подтверждать нечем.</summary>
-    private static void AttachPolicy(string master = Master) =>
+    private static void AttachPolicy(string master = Master, bool second = false) =>
         EgressGate.AttachPolicy(EgressPolicySet.Of(new EgressPolicy(
             EgressMode.Internal,
             Hosts:           ["api.zavod.local"],
@@ -50,7 +50,8 @@ public sealed class DirectionsRegistryTests : IDisposable
             ValidUntil:      null,
             UserMayAddHosts: false,
             Source:          "тест",
-            MasterHash:      master.Length > 0 ? MasterPassword.Hash(master) : "")));
+            MasterHash:      master.Length > 0 ? MasterPassword.Hash(master) : "",
+            RequireSecondConfirm: second)));
 
     /// <summary>Соединение и запрос-отправитель: без сохраненной карточки подтверждать нечего.</summary>
     private static IntegrationRequest Push(IntegrationsRegistry cards, string body = "{\"итог\":1}")
@@ -339,6 +340,124 @@ public sealed class DirectionsRegistryTests : IDisposable
 
             Assert.Contains("срок", again.Integrations.OutwardTrouble(request, Now)!,
                             StringComparison.Ordinal);
+        }
+        finally { Cleanup(dir, appDb, dataDb); }
+    }
+
+
+    // ── Второе подтверждение ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Политика требует двух рук: одного подтверждения мало, второе выдает ДРУГОЙ человек тем же
+    /// мастер-паролем, и после него отправка открывается. Срок при этом не двигается.
+    /// </summary>
+    [Fact]
+    public void Two_hands_open_the_direction_and_the_same_hand_does_not()
+    {
+        var (dir, appDb, dataDb) = TempPaths();
+        try
+        {
+            AttachPolicy(second: true);
+
+            using var registry = DatabaseRegistry.Open(dataDb, appDb);
+            var cards   = registry.Integrations;
+            var request = Push(cards);
+
+            var first = cards.ConfirmDirection(request, Master, "Петров П. П.", days: 90, Now,
+                                               out var trouble);
+
+            Assert.NotNull(first);
+            Assert.Equal("", trouble);
+
+            // Одной подписи мало — и сказано, чего ждут.
+            Assert.Contains("второго подтверждения", cards.OutwardTrouble(request, Now)!,
+                            StringComparison.Ordinal);
+
+            // Тот же человек вторым не проходит.
+            Assert.Null(cards.CountersignDirection(request, Master, "Петров П. П.", Now,
+                                                   out var same));
+            Assert.Contains("ДРУГОЙ человек", same, StringComparison.Ordinal);
+
+            // Чужой пароль не проходит тоже.
+            Assert.Null(cards.CountersignDirection(request, "не тот", "Сидоров С. С.", Now,
+                                                   out var wrong));
+            Assert.Contains("мастер-пароль не подошел", wrong, StringComparison.Ordinal);
+
+            var second = cards.CountersignDirection(request, Master, "Сидоров С. С.",
+                                                    Now.AddHours(1), out var ok);
+
+            Assert.NotNull(second);
+            Assert.Equal("", ok);
+            Assert.Null(cards.OutwardTrouble(request, Now.AddDays(1)));
+            Assert.Equal(first!.Until, second!.Until);
+        }
+        finally { Cleanup(dir, appDb, dataDb); }
+    }
+
+    /// <summary>
+    /// Обе подписи переживают переоткрытие базы: они и есть след согласования, и терять их при
+    /// перезапуске нельзя.
+    /// </summary>
+    [Fact]
+    public void Both_signatures_survive_a_reopen()
+    {
+        var (dir, appDb, dataDb) = TempPaths();
+        try
+        {
+            AttachPolicy(second: true);
+
+            int requestId;
+
+            using (var registry = DatabaseRegistry.Open(dataDb, appDb))
+            {
+                var request = Push(registry.Integrations);
+                requestId   = request.Id;
+
+                registry.Integrations.ConfirmDirection(request, Master, "Петров П. П.",
+                                                       days: 90, Now, out _);
+                registry.Integrations.CountersignDirection(request, Master, "Сидоров С. С.",
+                                                           Now.AddHours(1), out _);
+            }
+
+            using (var again = DatabaseRegistry.Open(dataDb, appDb))
+            {
+                var back = again.Integrations.Direction(requestId);
+
+                Assert.NotNull(back);
+                Assert.True(back!.Confirmed2);
+                Assert.Equal("Сидоров С. С.", back.Second);
+                Assert.NotNull(back.SecondAt);
+            }
+        }
+        finally { Cleanup(dir, appDb, dataDb); }
+    }
+
+    /// <summary>
+    /// Повторное ПЕРВОЕ подтверждение сбрасывает второе: подтверждают заново тогда, когда запрос
+    /// правили, а согласие второго человека было дано другому запросу.
+    /// </summary>
+    [Fact]
+    public void Confirming_again_drops_the_second_signature()
+    {
+        var (dir, appDb, dataDb) = TempPaths();
+        try
+        {
+            AttachPolicy(second: true);
+
+            using var registry = DatabaseRegistry.Open(dataDb, appDb);
+            var cards   = registry.Integrations;
+            var request = Push(cards);
+
+            cards.ConfirmDirection(request, Master, "Петров П. П.", days: 90, Now, out _);
+            cards.CountersignDirection(request, Master, "Сидоров С. С.", Now.AddHours(1), out _);
+
+            Assert.True(cards.Direction(request.Id)!.Confirmed2);
+
+            cards.ConfirmDirection(request, Master, "Петров П. П.", days: 90, Now.AddDays(1), out _);
+
+            Assert.False(cards.Direction(request.Id)!.Confirmed2);
+            Assert.Contains("второго подтверждения",
+                            cards.OutwardTrouble(request, Now.AddDays(1))!, StringComparison.Ordinal);
         }
         finally { Cleanup(dir, appDb, dataDb); }
     }

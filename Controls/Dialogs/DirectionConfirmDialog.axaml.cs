@@ -35,7 +35,11 @@ public partial class DirectionConfirmDialog : Window
 
     /// <param name="what">Что подтверждаем — имя запроса и метод с путем.</param>
     /// <param name="confirm">Пароль и срок; возвращает причину отказа либо <c>null</c>.</param>
-    public DirectionConfirmDialog(string what, Func<string, int, string?> confirm)
+    /// <param name="second">Имя того, кто подтвердил ПЕРВЫМ. Не пусто — окно работает вторым
+    /// подтверждением (принцип двух рук, 10.3): срок не спрашивается, он уже назначен первым, а
+    /// второе подтверждение — допуск к согласованному, а не новое согласование.</param>
+    public DirectionConfirmDialog(string what, Func<string, int, string?> confirm,
+                                  string second = "")
     {
         InitializeComponent();
 
@@ -46,9 +50,22 @@ public partial class DirectionConfirmDialog : Window
         DaysCombo.ItemsSource   = Terms.Select(t => t.Text).ToList();
         DaysCombo.SelectedIndex = 1;   // 90 дней — срок, на котором о направлении еще помнят
 
-        IdleHint.Text = $"Направление отключится само, если им не пользоваться "
-                      + $"{OutgoingDirection.IdleDays} дней: настроенный и забытый обмен — "
-                      + "открытая дверь, о которой никто не думает.";
+        var countersigning = second.Length > 0;
+
+        if (countersigning)
+        {
+            Title            = "Второе подтверждение";
+            SaveBtn.Content  = "Подтвердить вторым";
+            DaysBox.IsVisible = false;
+        }
+
+        IdleHint.Text = countersigning
+            ? $"Политика организации требует принципа двух рук: первым подтвердил {second}, и "
+            + "второе подтверждение обязан выдать ДРУГОЙ человек. Срок остается тем, который "
+            + "назначил первый: это допуск к согласованному, а не новое согласование."
+            : $"Направление отключится само, если им не пользоваться "
+            + $"{OutgoingDirection.IdleDays} дней: настроенный и забытый обмен — "
+            + "открытая дверь, о которой никто не думает.";
 
         CancelBtn.Click += (_, _) => Close(false);
         SaveBtn.Click   += (_, _) => Save();

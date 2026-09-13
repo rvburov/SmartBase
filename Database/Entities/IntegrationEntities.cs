@@ -179,6 +179,12 @@ public class IntegrationDirectionEntity
     /// <summary>До какого момента действует включительно (ISO-8601).</summary>
     [Required] public string Until { get; set; } = "";
 
+    /// <summary>Кто подтвердил вторым; пусто — второго подтверждения не было.</summary>
+    public string? Second { get; set; }
+
+    /// <summary>Когда подтвердили вторым (ISO-8601).</summary>
+    public string? SecondAt { get; set; }
+
     /// <summary>Когда направлением пользовались в последний раз (ISO-8601); пусто — ни разу.</summary>
     public string? UsedAt { get; set; }
 }

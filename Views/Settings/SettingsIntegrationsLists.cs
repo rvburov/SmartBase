@@ -287,14 +287,23 @@ public partial class SettingsView
             // осталась, но разрешения нет, и человеку нужна ровно одна кнопка: подтвердить
             // заново. Предлагать в этом состоянии «Отозвать» значило бы просить его отменить то,
             // что уже не работает, и лишь потом разрешить снова.
-            more.Add((registry.Direction(request.Id), trouble) switch
+            var direction = registry.Direction(request.Id);
+
+            // Ждет второй подписи — и кнопка об этом же. Предложи здесь «Подтвердить заново», и
+            // второй человек сбросил бы согласие первого вместо того, чтобы добавить свое.
+            var awaiting = direction is { Confirmed2: false }
+                        && EgressGate.Policy.RequiresSecondConfirm;
+
+            more.Add((direction, trouble, awaiting) switch
             {
-                (null, _)  => ("Подтвердить",
-                               () => _ = ConfirmDirectionAsync(registry, request)),
-                (_, null)  => ("Отозвать",
-                               () => _ = RevokeDirectionAsync(registry, request)),
-                _          => ("Подтвердить заново",
-                               () => _ = ConfirmDirectionAsync(registry, request)),
+                (null, _, _)     => ("Подтвердить",
+                                     () => _ = ConfirmDirectionAsync(registry, request)),
+                (_, _, true)     => ("Подтвердить вторым",
+                                     () => _ = CountersignDirectionAsync(registry, request)),
+                (_, null, _)     => ("Отозвать",
+                                     () => _ = RevokeDirectionAsync(registry, request)),
+                _                => ("Подтвердить заново",
+                                     () => _ = ConfirmDirectionAsync(registry, request)),
             });
         }
 
@@ -415,6 +424,44 @@ public partial class SettingsView
                 : "подтверждение записано, но след в журнале безопасности не лег — сообщите "
                 + "ответственному за интеграции";
         }).ShowDialog<bool>(win);
+
+        if (done) BuildIntegrationsRequests();
+    }
+
+    /// <summary>
+    /// Подтвердить направление ВТОРЫМ человеком — принцип двух рук (10.3). Окно то же самое, что
+    /// у первого подтверждения, только срок не спрашивается: он уже назначен первым, и второе
+    /// подтверждение — допуск к согласованному, а не новое согласование.
+    /// </summary>
+    private async Task CountersignDirectionAsync(Database.IntegrationsRegistry registry,
+                                                 IntegrationRequest request)
+    {
+        if (VisualRoot is not Window win) return;
+        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsOutward)) return;
+
+        var what = $"{request.Name}: {request.Method.ToString().ToUpperInvariant()} {request.Path}";
+        var first = registry.Direction(request.Id)?.Confirmed ?? "";
+
+        var done = await new DirectionConfirmDialog(what, (password, _) =>
+        {
+            registry.CountersignDirection(request, password, Utils.CurrentUser.DisplayName,
+                                          DateTimeOffset.Now, out var trouble);
+
+            if (trouble.Length > 0) return trouble;
+
+            var written = Database.SecurityJournal.Add(Database.SecurityEntry.New(
+                Database.SecurityEvent.Confirm, allowed: true,
+                who: Utils.CurrentUser.DisplayName, scenario: "",
+                address: request.Path, fields: "", rows: 0, bytes: 0, bodyHash: "",
+                explanation: $"второе подтверждение направления «{request.Name}»; "
+                           + $"первым подтвердил {first}",
+                dbId: 0, at: DateTimeOffset.Now, confirmed: Utils.CurrentUser.DisplayName));
+
+            return written
+                ? null
+                : "подтверждение записано, но след в журнале безопасности не лег — сообщите "
+                + "ответственному за интеграции";
+        }, second: first).ShowDialog<bool>(win);
 
         if (done) BuildIntegrationsRequests();
     }

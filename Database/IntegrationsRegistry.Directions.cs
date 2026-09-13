@@ -95,8 +95,82 @@ public sealed partial class IntegrationsRegistry
         // Отсчет простоя начинается заново: подтверждение — это и есть «им только что занимались».
         entity.UsedAt = null;
 
+        // Первое подтверждение СБРАСЫВАЕТ второе: подтверждают заново тогда, когда запрос
+        // правили, а согласие второго человека было дано другому запросу.
+        entity.Second   = null;
+        entity.SecondAt = null;
+
         db.SaveChanges();
         return direction;
+    }
+
+    /// <summary>
+    /// Подтвердить направление ВТОРЫМ человеком — принцип двух рук
+    /// (docs/ROADMAP-API.md, 10.3, поле политики <c>requireSecondConfirm</c>).
+    ///
+    /// Мастер-пароль спрашивается тот же самый и той же политики: он и есть полномочие. Отличие
+    /// одно — имя обязано быть ДРУГИМ, и проверяет это сама модель
+    /// (<see cref="OutgoingDirection.Countersign"/>).
+    ///
+    /// Срок не продлевается: второе подтверждение — допуск к уже согласованному, а не новое
+    /// согласование.
+    /// </summary>
+    /// <returns>Направление с двумя подписями либо <c>null</c> и причина словами.</returns>
+    public OutgoingDirection? CountersignDirection(IntegrationRequest request, string password,
+                                                   string who, DateTimeOffset now,
+                                                   out string trouble)
+    {
+        trouble = "";
+
+        if (Direction(request.Id) is not { } direction)
+        {
+            trouble = "направление еще не подтверждено — второе подтверждение выдается после первого";
+            return null;
+        }
+
+        var policy = EgressGate.Policy;
+
+        if (!policy.HasMaster)
+        {
+            trouble = "в политике организации не задан мастер-пароль: подтверждать исходящие "
+                    + "направления некому и нечем";
+            return null;
+        }
+
+        if (!policy.MasterMatches(password))
+        {
+            trouble = "мастер-пароль не подошел";
+            return null;
+        }
+
+        // Отпечаток сверяется и здесь: между первым подтверждением и вторым запрос могли
+        // поправить, и тогда второй человек подписывал бы не то, что увидел первый.
+        if (direction.Fingerprint != request.Fingerprint(OutgoingMark(request.Id)))
+        {
+            trouble = "запрос правили после первого подтверждения — нужно подтвердить заново";
+            return null;
+        }
+
+        var (signed, refusal) = direction.Countersign(who, now);
+
+        if (signed is null)
+        {
+            trouble = refusal;
+            return null;
+        }
+
+        var entity = db.IntegrationDirections.FirstOrDefault(d => d.RequestId == request.Id);
+        if (entity is null)
+        {
+            trouble = "направление исчезло, пока его подтверждали";
+            return null;
+        }
+
+        entity.Second   = signed.Second;
+        entity.SecondAt = Stamp(signed.SecondAt!.Value);
+
+        db.SaveChanges();
+        return signed;
     }
 
     /// <summary>
@@ -145,7 +219,11 @@ public sealed partial class IntegrationsRegistry
         if (Direction(request.Id) is not { } direction)
             return "не подтверждено мастер-паролем";
 
-        return direction.Trouble(request, now, OutgoingMark(request.Id));
+        // Требование второго подтверждения спрашивается ВЖИВУЮ, а не запоминается в
+        // направлении: организация включает его тогда, когда сочтет нужным, и подтвержденные до
+        // того дня направления обязаны встать вместе со всеми.
+        return direction.Trouble(request, now, OutgoingMark(request.Id),
+                                 EgressGate.Policy.RequiresSecondConfirm);
     }
 
     /// <summary>
@@ -163,7 +241,9 @@ public sealed partial class IntegrationsRegistry
             entity.Confirmed,
             Moment(entity.At)    ?? DateTimeOffset.MinValue,
             Moment(entity.Until) ?? DateTimeOffset.MinValue,
-            Moment(entity.UsedAt));
+            Moment(entity.UsedAt),
+            entity.Second ?? "",
+            Moment(entity.SecondAt));
 
     private static string Stamp(DateTimeOffset at) =>
         at.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture);
