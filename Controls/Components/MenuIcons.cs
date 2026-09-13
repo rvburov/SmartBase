@@ -40,6 +40,9 @@ public static class MenuIcons
     private static Geometry Palette        => Icon("IconPalette");
     private static Geometry Workflow       => Icon("IconWorkflow");
     private static Geometry Play           => Icon("IconPlay");
+    private static Geometry Clipboard      => Icon("IconClipboard");
+    private static Geometry ClipboardPaste => Icon("IconClipboardPaste");
+    private static Geometry Eraser         => Icon("IconRemoveFormatting");
 
     private static SolidColorBrush Red => new(Color.Parse("#FF3B30"));
 
@@ -285,6 +288,12 @@ public static class MenuIcons
         row.Children.Add(texts);
         return row;
     }
+
+    // Работа со значениями выделенных ячеек. Три пункта идут своей группой — отдельно от
+    // «Удалить», чтобы очистку значений не путали с удалением записи или столбца.
+    public static Control CopyTextHeader()  => Header(Clipboard,      "Копировать текст");
+    public static Control PasteTextHeader() => Header(ClipboardPaste, "Вставить текст");
+    public static Control ClearTextHeader() => Header(Eraser,         "Очистить текст");
 
     // Заголовок пункта «Удалить»: иконка корзины + красный текст.
     public static Control DeleteHeader()

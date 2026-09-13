@@ -19,6 +19,7 @@ public static class ChangeLogLabels
         "duplicate"    => "Дублирование",
         "import"       => "Импорт",
         "export"       => "Экспорт",
+        "copy"         => "Копирование",
         "move"         => "Перенос",
         "user.join"    => "Присоединение",
         "user.approve" => "Допуск",

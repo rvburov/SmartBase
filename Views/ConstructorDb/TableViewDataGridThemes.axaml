@@ -180,9 +180,9 @@
         </Style>
       </Style>
 
-      <Style Selector="^:pointerover /template/ Rectangle#BackgroundRectangle">
-        <Setter Property="Fill" Value="{DynamicResource DataGridRowHoveredBackgroundColor}" />
-      </Style>
+      <!-- ОТЛИЧИЕ от исходной темы: подсветки наведения у строки нет. Курсор ходит по
+           значениям, поэтому подсвечивается ЯЧЕЙКА под ним (стиль в TableView.axaml), а
+           строка целиком — только когда она выделена, то есть по клику в столбец «№». -->
 
       <Style Selector="^:selected">
         <Style Selector="^ /template/ Rectangle#BackgroundRectangle">

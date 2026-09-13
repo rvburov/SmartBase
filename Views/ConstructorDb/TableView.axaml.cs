@@ -227,8 +227,21 @@ public partial class TableView : UserControl
                 return;
             }
             IsCellEditing = true;
+            _editingCell  = e.Row.DataContext is TableRowVm vm
+                ? (vm.RowNumber - 1, RecordsGrid.Columns.IndexOf(e.Column))
+                : null;
+            RefreshCellSelectionOverlay();   // убрать свою рамку: у редактора есть собственная
         };
-        RecordsGrid.CellEditEnded      += (_, _) => IsCellEditing = false;
+        // Правка кончилась — строка больше не обязана быть выделенной: возвращаем картинку
+        // «выделена ячейка, а не запись» (при правке она выделена вынужденно, см.
+        // ScheduleRecordSelectionDrop).
+        RecordsGrid.CellEditEnded      += (_, _) =>
+        {
+            IsCellEditing = false;
+            _editingCell  = null;
+            RefreshCellSelectionOverlay();   // рамка возвращается на место
+            ScheduleRecordSelectionDrop();
+        };
         // Delete по выделенным колонкам. Tunnel — чтобы перехватить раньше, чем
         // DataGrid обработает клавишу для редактирования/навигации.
         AddHandler(KeyDownEvent, OnTableKeyDown, RoutingStrategies.Tunnel);
@@ -236,6 +249,24 @@ public partial class TableView : UserControl
 
     /// <summary>Пользователь сейчас редактирует ячейку (открыт cell-editor DataGrid).</summary>
     public bool IsCellEditing { get; private set; }
+
+    // Какая именно ячейка сейчас в правке (позиции строки и колонки). Нужна, чтобы отличить
+    // клик ВНУТРИ открытого редактора от клика по другой ячейке — см. OnCellPointerPressed.
+    private (int Row, int Column)? _editingCell;
+
+    /// <summary>
+    /// Забыть открытую правку: источник строк заменили, и редактор умер вместе со старыми
+    /// строками. При подмене <c>ItemsSource</c> грид <c>CellEditEnded</c> НЕ поднимает, поэтому
+    /// без явного сброса <see cref="IsCellEditing"/> остается true навсегда — а тогда рамка
+    /// выделения больше никогда не рисуется и Ctrl+C с Delete молчат.
+    /// </summary>
+    private void ForgetCellEditing()
+    {
+        if (!IsCellEditing) return;
+        IsCellEditing = false;
+        _editingCell  = null;
+        RefreshCellSelectionOverlay();
+    }
 
     // Окно, на которое навешен обработчик Delete для записей (см. OnTopLevelKeyDown).
     private TopLevel? _keyHookTopLevel;
@@ -316,10 +347,24 @@ public partial class TableView : UserControl
 
     private void OnTopLevelKeyDown(object? sender, KeyEventArgs e)
     {
-        if (e.Key != Key.Delete) return;
         if (!IsVisible) return;                       // таблица не на экране (режим «Список»)
+        if (IsTextInputFocused(e)) return;            // печатают в поле — таблица молчит
+
+        // Выделены ячейки — Ctrl+C, Ctrl+V и Delete работают по прямоугольнику, как в Excel.
+        // Проверяем ДО удаления записей: пока выделены ячейки, строки не выделены (одно гасит
+        // другое), и Delete должен стирать значения, а не записи.
+        if (HasCellSelection && !IsCellEditing)
+        {
+            var ctrl = e.KeyModifiers.HasFlag(KeyModifiers.Control)
+                    || e.KeyModifiers.HasFlag(KeyModifiers.Meta);   // macOS: Cmd
+
+            if (ctrl && e.Key == Key.C) { _ = CopyCellsAsync();  e.Handled = true; return; }
+            if (ctrl && e.Key == Key.V) { _ = PasteCellsAsync(); e.Handled = true; return; }
+            if (e.Key is Key.Delete or Key.Back) { _ = ClearCellsAsync(); e.Handled = true; return; }
+        }
+
+        if (e.Key != Key.Delete) return;
         if (_selectedColumnKeys.Count > 0) return;    // удаление колонок — в OnTableKeyDown
-        if (IsTextInputFocused(e)) return;            // печатают в поле — не удаляем записи
 
         var ids = SelectedRecordIds();
         if (ids.Count == 0) return;
@@ -414,6 +459,12 @@ public partial class TableView : UserControl
             // с причиной): read-only сетка молча игнорировала бы двойной клик, и человек
             // не понимал бы, почему ячейка не открывается.
             RecordsGrid.IsReadOnly = false;
+
+            // Выделенные ячейки к ДРУГОЙ коллекции отношения не имеют: их координаты указывали
+            // бы на чужие строки и столбцы. А вот перезагрузку той же коллекции выделение
+            // переживает: сюда приходят все фоновые обновления, включая вызванные нашей же
+            // записью в журнал при копировании, — гасить рамку прямо под руками нельзя.
+            if (!sameCollection) ClearCellSelection();
 
             // Фильтры/сортировка не переносятся между коллекциями: у каждой свои колонки.
             // При включенном «Запоминать фильтры и сортировку» подставляем запомненное за ЭТОЙ
@@ -662,16 +713,13 @@ public partial class TableView : UserControl
                                       .OfType<DataGridRowsPresenter>()
                                       .FirstOrDefault();
 
-    private static readonly PropertyInfo? RowIsRecycledProp =
-        typeof(DataGridRow).GetProperty("IsRecycled",
-            BindingFlags.Instance | BindingFlags.NonPublic);
-
     /// <summary>
     /// Строка ушла с экрана, но осталась в визуальном дереве — ее номер и раскладка от
     /// прошлой позиции. Таких две породы, и обе надо пропускать при обходе дерева:
     ///
-    /// • <b>сирота</b> после прыжка к краю — помечена <c>IsRecycled</c> и брошена в
-    ///   <c>Children</c> (см. <see cref="VisibleRowRangeByTree"/>);
+    /// • <b>сирота</b> в пуле переработки — спрятана через <c>IsVisible=false</c>
+    ///   (<c>FullyRecycleElements</c>) и брошена в <c>Children</c>
+    ///   (см. <see cref="VisibleRowRangeByTree"/>);
     /// • <b>паркованная</b> строка с фокусом или в режиме правки — их DataGrid не
     ///   перерабатывает (<c>IsRowRecyclable</c> = строка не <c>EditingRow</c> и не
     ///   <c>_focusedRow</c>), а закрывает пустым <c>Clip</c> и оставляет в дереве. Сам он
@@ -679,12 +727,19 @@ public partial class TableView : UserControl
     ///   (Avalonia Button по клику не фокусируется), поэтому <c>DataGrid_LostFocus</c> →
     ///   <c>ResetFocusedRow</c> не срабатывает.
     ///
-    /// Живой строке <c>Clip</c> снимают при возвращении в окно
-    /// (<c>InsertDisplayedElement</c>), а сами мы строкам <c>Clip</c> нигде не задаем
+    /// Живой строке <c>Clip</c> снимают при возвращении в окно (<c>InsertDisplayedElement</c>),
+    /// видимость возвращает <c>GetUsedRow</c>; сами мы строкам <c>Clip</c> нигде не задаем
     /// (<c>RoundedClip</c> живет на полях ввода и списках).
+    ///
+    /// ЛОВУШКА: судить по внутреннему флагу <c>IsRecycled</c> нельзя. Он ставится при уходе
+    /// строки в пул и НИКОГДА не сбрасывается — любая переиспользованная строка помечена им
+    /// навсегда. После первой же подмены ItemsSource (перезагрузка строк после вставки,
+    /// очистки, фильтра) ВСЕ живые строки — переиспользованные, и проверка по флагу считала
+    /// бы «застрявшим» весь экран: рамка выделения перестает рисоваться, диапазон нижней
+    /// панели пустеет.
     /// </summary>
     private static bool IsStaleRow(DataGridRow row) =>
-        row.Clip is not null || RowIsRecycledProp?.GetValue(row) is true;
+        row.Clip is not null || !row.IsVisible;
 
     // Пересчитывает диапазон и поднимает событие, только если он изменился.
     private void RefreshVisibleRange()
@@ -779,6 +834,8 @@ public partial class TableView : UserControl
         _filters.Clear();
         _chevronPaths.Clear();
         _sortKey = null;
+        ForgetCellEditing();
+        ClearCellSelection();
         _rowHeights = [];
         _isResizingRow = false;
         _resizeRow = null;
@@ -920,6 +977,8 @@ public partial class TableView : UserControl
     public void ReloadRows()
     {
         if (_repository is null) return;
+
+        ForgetCellEditing();   // ниже меняется ItemsSource — редактор умрет молча
 
         var snap = _snapshot;   // снимок открытия (прочитан в фоне) — вместо обращений с UI-потока
         _hiddenRecords = (snap?.RecordDisplay ?? _repository.GetRecordDisplay(_collectionId))
@@ -2087,19 +2146,42 @@ public partial class TableView : UserControl
             return;
         }
 
-        // Shift/Ctrl + левый клик — точечно добавить/убрать строку из выделения (toggle,
-        // по одной строке — как у колонок). Перехватываем до DataGrid (Handled), иначе он
-        // сделал бы выделение диапазоном. Запись при этом не открываем.
-        var props = e.PointerPressedEventArgs.GetCurrentPoint(null).Properties;
-        var mods  = e.PointerPressedEventArgs.KeyModifiers;
-        if (props.IsLeftButtonPressed
-            && (mods.HasFlag(KeyModifiers.Shift) || mods.HasFlag(KeyModifiers.Control)))
+        var props  = e.PointerPressedEventArgs.GetCurrentPoint(null).Properties;
+        var mods   = e.PointerPressedEventArgs.KeyModifiers;
+        var colIdx = RecordsGrid.Columns.IndexOf(e.Column);
+        var rowIdx = row.RowNumber - 1;
+
+        // Клик ВНУТРИ открытого редактора — работа с текстом (поставить каретку, выделить слово),
+        // а не выделение ячейки. Отсечка обязательна: DataGridCell слушает клики классовым
+        // обработчиком с handledEventsToo, поэтому событие доходит сюда, даже когда его уже
+        // забрал редактор. Без нее первый же клик по тексту закрывал бы правку — снятие
+        // выделения строки внутри делает CommitEdit.
+        if (IsCellEditing && _editingCell == (rowIdx, colIdx)) return;
+
+        // ── Столбец «№»: он и только он работает со СТРОКАМИ ──────────────────
+        // Shift/Ctrl по номеру — точечно добавить или убрать строку из выделения (toggle).
+        // Перехватываем до DataGrid (Handled), иначе он сделал бы выделение диапазоном.
+        if (colIdx == 0)
         {
-            ToggleRecordSelection(row);
-            e.PointerPressedEventArgs.Handled = true;
-            // Уводим фокус из возможного текстового поля (правая панель) в таблицу, чтобы
-            // последующий Delete удалял записи, а не правил текст.
-            Focus();
+            ClearCellSelection();
+
+            if (props.IsLeftButtonPressed
+                && (mods.HasFlag(KeyModifiers.Shift) || mods.HasFlag(KeyModifiers.Control)))
+            {
+                ToggleRecordSelection(row);
+                e.PointerPressedEventArgs.Handled = true;
+                // Уводим фокус из возможного текстового поля (правая панель) в таблицу, чтобы
+                // последующий Delete удалял записи, а не правил текст.
+                Focus();
+                return;
+            }
+
+            // Обычный клик по номеру открывает запись (при настройке «двойным кликом» —
+            // на втором клике: счетчик дает сам DataGrid).
+            if (props.IsLeftButtonPressed
+                && (!ConstructorSettings.OpenByDoubleClick
+                    || e.PointerPressedEventArgs.ClickCount >= 2))
+                RecordClicked?.Invoke(this, row.RecordId);
             return;
         }
 
@@ -2110,18 +2192,70 @@ public partial class TableView : UserControl
             return;
         }
 
-        var colIdx = RecordsGrid.Columns.IndexOf(e.Column);
         if (colIdx >= 0 && colIdx < _colDefs.Count)
             _colDefs[colIdx].OnCellClick?.Invoke(row, _colDefs[colIdx]);
 
-        // Открываем запись обычным левым кликом по первой колонке (без модификаторов — они
-        // выше). При настройке «Открывать запись двойным кликом» одиночный клик только
-        // выделяет строку: счетчик кликов дает сам DataGrid (ClickCount), отдельного
-        // DoubleTapped не нужно — он приходит позже и мимо этого обработчика.
-        if (e.Column.DisplayIndex == 0 && props.IsLeftButtonPressed
-            && (!ConstructorSettings.OpenByDoubleClick
-                || e.PointerPressedEventArgs.ClickCount >= 2))
-            RecordClicked?.Invoke(this, row.RecordId);
+        // ── Обычная ячейка: выделяем ЕЕ, а не строку ──────────────────────────
+        if (props.IsLeftButtonPressed)
+        {
+            // Клик пришел В ДРУГУЮ ячейку (свою отсекли выше) — правку закрываем сразу сами.
+            // Иначе ее закрывает грид, и по дороге он же открывает редактор в ячейке, по которой
+            // кликнули, если она в той же строке: выделение подменялось бы правкой.
+            if (IsCellEditing) RecordsGrid.CommitEdit();
+
+            var extend = mods.HasFlag(KeyModifiers.Shift);
+            BeginCellSelection(rowIdx, colIdx, extend);
+
+            // Shift-клик забираем себе целиком. Гриду отдавать его нельзя: он передвинул бы
+            // «текущую» ячейку на дальний угол, а повторный Shift-клик по той же ячейке открыл
+            // бы там редактор — внутри выделения появлялась бы вторая рамка. Заодно якорь
+            // остается на месте, и следующий Shift тянет от него же.
+            if (extend) e.PointerPressedEventArgs.Handled = true;
+            else        ScheduleRecordSelectionDrop();   // почему не Handled — см. там же
+            return;
+        }
+
+        // Правый клик: если ячейка вне выделения — переносим выделение на нее (как в Excel),
+        // внутри — прямоугольник оставляем, меню будет работать по всему диапазону.
+        if (props.IsRightButtonPressed)
+        {
+            if (!IsCellSelected(rowIdx, colIdx))
+                SetCellSelection(CellRange.Single(rowIdx, colIdx));
+
+            if (colIdx >= 0 && colIdx < _colDefs.Count)
+                ShowCellMenuOn(e.Cell, row, _colDefs[colIdx]);
+        }
+    }
+
+
+    /// <summary>
+    /// Снять выделение строки, которое DataGrid поставил по клику в ячейку.
+    ///
+    /// Погасить сам клик (Handled) нельзя: правка ячейки в Avalonia живет ТОЛЬКО на штатном
+    /// пути грида. <c>DataGridCell</c> при <c>Handled</c> выходит сразу и не зовет
+    /// <c>UpdateStateOnMouseLeftButtonDown</c>, а именно он делает ячейку «текущей» и на втором
+    /// клике по ней открывает редактор; вдобавок <c>DataGrid.BeginEdit</c> прямо требует, чтобы
+    /// строка была ВЫДЕЛЕНА. Поэтому гриду даем отработать целиком, а выделение строки убираем
+    /// следом — «текущую» ячейку <c>ClearRowSelection</c> не трогает, и второй клик по-прежнему
+    /// открывает редактор.
+    ///
+    /// Отложено на тик диспетчера, потому что наш обработчик вызывается ДО работы грида.
+    /// </summary>
+    private bool _recordSelectionDropPending;
+
+    private void ScheduleRecordSelectionDrop()
+    {
+        if (_recordSelectionDropPending) return;
+        _recordSelectionDropPending = true;
+        Dispatcher.UIThread.Post(() =>
+        {
+            _recordSelectionDropPending = false;
+
+            // Идет правка — строка обязана остаться выделенной: SelectedItems.Clear() внутри
+            // делает CommitEdit и закрыл бы только что открытый редактор.
+            if (IsCellEditing || !HasCellSelection) return;
+            ClearRecordSelection();
+        }, DispatcherPriority.Input);
     }
 
     // Точечный toggle строки в выделении (Extended-режим поддерживает Add/Remove).
@@ -2268,6 +2402,11 @@ public partial class TableView : UserControl
         menu.Items.Add(miDisplay);
 
         AddColorItems(menu, row);
+
+        // Работа со значениями строки: копирование, очистка и вставка идут своей группой
+        // выше «Удалить» — очистку значений не должно тянуть перепутать с удалением записи.
+        AddCellValueItems(menu, () => SelectWholeRow(row));
+
         AddRecordMoveItems(menu, row);
         AddHeightModeItems(menu);
         AddActionItems(menu);
@@ -2591,6 +2730,11 @@ public partial class TableView : UserControl
         menu.Items.Add(miDisplay);
 
         AddColumnColorItems(menu, key);
+
+        // Значения столбца названий: копировать и вставлять их можно, очистка их не трогает
+        // (см. ClearCellsAsync) — пункт остается на месте ради единообразия всех трех меню.
+        AddCellValueItems(menu, () => SelectWholeColumn(key));
+
         AddMoveItems(menu, key);
         AddWidthModeItems(menu);
         return menu;
@@ -2697,6 +2841,10 @@ public partial class TableView : UserControl
             Guarded(miRefresh, PermAction.EditRecord, () => RefreshAutoFileFromMenu(fieldId));
             menu.Items.Add(miRefresh);
         }
+
+        // Значения всего столбца: копирование, вставка и очистка — своей группой, отдельно от
+        // «Удалить», которое убирает сам столбец вместе со значениями.
+        AddCellValueItems(menu, () => SelectWholeColumn(fieldId.ToString()));
 
         AddMoveItems(menu, fieldId.ToString());
         AddWidthModeItems(menu);
@@ -3836,6 +3984,8 @@ public partial class TableView : UserControl
     /// </summary>
     private void ApplyFilters()
     {
+        ForgetCellEditing();   // ниже может смениться ItemsSource — редактор умрет молча
+
         // Чистим фильтры по колонкам, которых больше нет (поле удалили).
         var validKeys = _colDefs.Select(d => d.Key).ToHashSet();
         foreach (var stale in _filters.Keys.Where(k => !validKeys.Contains(k)).ToList())
@@ -4044,6 +4194,11 @@ public partial class TableView : UserControl
         // Индикатор нижней панели следит за прокруткой и ресайзом: пересчет дешевый
         // (обход реализованных строк), наверх уходит только изменение диапазона.
         RefreshVisibleRange();
+
+        // Рамка выделенных ячеек нарисована слоем поверх сетки, поэтому за прокруткой и
+        // ресайзом она следует здесь же, где полоски ресайза — и так же откладывается на тик
+        // диспетчера со сверкой геометрии (правка Canvas прямо отсюда дает layout-цикл).
+        ScheduleCellOverlayRefresh();
 
         // Полоски ресайза строк следуют за скроллом/ресайзом.
         if (_manualRowResize && !_isResizingRow)

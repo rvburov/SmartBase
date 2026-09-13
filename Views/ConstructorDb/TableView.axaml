@@ -34,6 +34,12 @@
         <Style Selector="DataGridCell:focus /template/ Grid#FocusVisual">
             <Setter Property="IsVisible" Value="False" />
         </Style>
+        <!-- Метка «текущей» ячейки от темы тоже не нужна: это отдельная тонкая рамка ВНУТРИ
+             выделения (у грида свое понятие текущей ячейки, оно живет ради правки). Где стоит
+             курсор, показывает наша рамка выделения — одна на всех. -->
+        <Style Selector="DataGridCell:current /template/ Rectangle#CurrencyVisual">
+            <Setter Property="IsVisible" Value="False" />
+        </Style>
 
         <!-- Толщина линий сетки — динамический токен LineMetrics (визуально ~1 пиксель
              при любом зуме/DPI). Задается стилями, а не в шаблоне: локальные Width/Height
@@ -54,10 +60,30 @@
             <Setter Property="UseLayoutRounding" Value="{DynamicResource LineUseLayoutRounding}" />
         </Style>
 
-        <Style Selector="DataGridRow:pointerover /template/ Rectangle#BackgroundRectangle">
-            <Setter Property="Fill"    Value="{StaticResource BrushSecondaryBg}" />
-            <Setter Property="Opacity" Value="1" />
+        <!-- Редакторы ВНУТРИ ячейки — без скруглений. Рамка правки стоит там же, где рамка
+             выделения ячейки, а та прямоугольная (садится на линии сетки): одно и то же место
+             таблицы не должно выглядеть то квадратным, то круглым. Скругления остаются у тех же
+             полей вне таблицы — в панели записи и в окнах. -->
+        <Style Selector="DataGridCell TextBox">
+            <Setter Property="CornerRadius" Value="0" />
         </Style>
+        <Style Selector="DataGridCell TextBox /template/ Border#PART_BorderElement">
+            <Setter Property="CornerRadius" Value="0" />
+        </Style>
+        <Style Selector="DataGridCell ComboBox">
+            <Setter Property="CornerRadius" Value="0" />
+        </Style>
+        <Style Selector="DataGridCell Border.timeField">
+            <Setter Property="CornerRadius" Value="0" />
+        </Style>
+
+        <!-- Наведение подсвечивает ЯЧЕЙКУ, а не строку целиком: курсор ходит по значениям,
+             и видеть надо ту ячейку, в которую сейчас попадешь, — выделение и правка тоже
+             поячеечные. Подсветка всей строки осталась за выделением записи (клик по «№»). -->
+        <Style Selector="DataGridCell:pointerover /template/ Border#CellBorder">
+            <Setter Property="Background" Value="{StaticResource BrushSecondaryBg}" />
+        </Style>
+
         <Style Selector="DataGridRow:selected /template/ Rectangle#BackgroundRectangle">
             <Setter Property="Fill"    Value="{StaticResource BrushAccentLight}" />
             <Setter Property="Opacity" Value="1" />
@@ -75,6 +101,19 @@
              значением самим надписям, см. CellStyleHost в code-behind. -->
         <Style Selector="DataGridRow:selected DataGridCell">
             <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
+        </Style>
+
+        <!-- Пока выделены ЯЧЕЙКИ, строка голубым не заливается: выделена ячейка (рамкой), а не
+             запись. Внутри DataGrid строка при этом все равно выделена — иначе не работает
+             правка ячейки (см. ScheduleRecordSelectionDrop в code-behind), поэтому прячем
+             именно ВИД. Класс «cellselect» ставит на грид SetCellSelection. -->
+        <Style Selector="DataGrid.cellselect DataGridRow:selected /template/ Rectangle#BackgroundRectangle">
+            <Setter Property="Fill"    Value="{DynamicResource DataGridRowBackgroundBrush}" />
+            <Setter Property="Opacity" Value="1" />
+        </Style>
+        <Style Selector="DataGrid.cellselect DataGridRow:selected:pointerover /template/ Rectangle#BackgroundRectangle">
+            <Setter Property="Fill"    Value="{DynamicResource DataGridRowBackgroundBrush}" />
+            <Setter Property="Opacity" Value="1" />
         </Style>
 
         <!-- Заголовки ПРОЗРАЧНЫЕ: фон строки заголовков рисуется одним прямоугольником
@@ -145,6 +184,13 @@
                   HorizontalScrollBarVisibility="Auto"
                   VerticalScrollBarVisibility="Auto"
                   />
+
+        <!-- Рамка выделенных ячеек. Отдельным слоем, а не в самой ячейке: строки
+             виртуализованы и переиспользуются при прокрутке — рамка, прибитая к ячейке,
+             уехала бы на чужую запись. Кликов не ловит (IsHitTestVisible=False), иначе
+             перекрыл бы и правку ячейки, и полоски ресайза ниже. -->
+        <Canvas x:Name="CellSelectionLayer"
+                IsHitTestVisible="False" />
 
         <!-- Слой прозрачных полосок-«грипперов» у нижней границы строк для ручного
              изменения высоты — кликабельный (ловит drag). Полоски строятся в коде
