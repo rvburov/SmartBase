@@ -1,21 +1,25 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
+using SmartBase.Controls.Dialogs;
+using SmartBase.Controls.Widgets;
 using SmartBase.Database;
 using static SmartBase.Controls.Widgets.SettingRows;
 
-namespace SmartBase.Views.Settings;
+namespace SmartBase.Controls.Components.Security;
 
 /// <summary>
-/// Журнал безопасности на вкладке «Журнал» раздела «Интеграции» (partial SettingsView,
-/// docs/ROADMAP-API.md, 10.10).
+/// Журнал безопасности (docs/ROADMAP-API.md, 10.10) — отдельный файл, который ведется для
+/// проверки: только добавление, цепочка хэшей, ни тел запросов, ни значений полей.
 ///
-/// Второй журнал на той же вкладке, а не отдельным разделом: смотрят их подряд и по одному
-/// поводу — «что уходило наружу». Разные файлы и разные колонки, поэтому переключатель, а не
-/// общий список: свести их в одну таблицу значило бы придумать колонки, которых нет ни у того,
-/// ни у другого.
+/// <b>Почему он не рядом с рабочим журналом.</b> До шага 15 оба журнала жили на одной вкладке
+/// «Настройки → Интеграции → Журнал» и переключались списком. Читают их, однако, разные люди:
+/// рабочий — тот, у кого обмен встал, а этот — тот, кто проверяет, что уходило наружу. Вместе с
+/// контуром безопасности журнал уехал в панель администратора, к своей аудитории; переключателя
+/// «какой журнал» не стало — каждый журнал теперь лежит там, где его ищут.
 ///
-/// Разница с журналом запусков видна по тому, чего здесь НЕТ. Нет кнопки «Очистить»: журнал, о
+/// Разница с рабочим журналом видна по тому, чего здесь НЕТ. Нет кнопки «Очистить»: журнал, о
 /// котором ведется запись, чистить тому, за кем она ведется, нельзя. Нет тел запросов: их место
 /// занял SHA-256, потому что журнал выгружают проверяющему целиком, и тело в нем стало бы второй
 /// утечкой следом за первой. Нет счетчика расхода: потолки считаются не по этому файлу.
@@ -24,61 +28,75 @@ namespace SmartBase.Views.Settings;
 /// украшение — журнал доказывает, что уходило именно согласованное, и первым делом надо знать,
 /// можно ли ему верить.
 /// </summary>
-public partial class SettingsView
+public sealed class SecurityJournalView : UserControl
 {
     /// <summary>Сколько строк в странице. Больше двух сотен подряд все равно никто не читает.</summary>
-    private const int SecurityPage = 200;
+    private const int Page = 200;
 
-    // Показан журнал безопасности, а не запусков. Живет в пределах захода в программу: это
-    // взгляд на одно и то же место с двух сторон, а не отдельный раздел настроек.
-    private bool _securityLog;
+    private readonly StackPanel _rows = new() { Spacing = 0, Margin = new Thickness(16, 0, 16, 32) };
+
+    private Workspace? _workspace;
 
     // Чем сужена выборка и сколько строк уже показано. Живет в пределах захода: это лупа, а не
     // режим работы, и запоминать ее в настройках значило бы вернуть человека к чужому взгляду.
-    private SecurityEvent? _securityEvent;
-    private bool           _securityBlockedOnly;
-    private int            _securityDays = 30;
-    private int            _securityShown;
+    private SecurityEvent? _event;
+    private bool           _blockedOnly;
+    private int            _days = 30;
+    private int            _shown;
 
-    // Отбор по колонкам — «как в Excel»: колонка и выбранные в ее воронке значения. Живет в
-    // пределах захода в программу, как и остальные сужения этого экрана.
-    private readonly Dictionary<string, HashSet<string>> _securityPicked = new(StringComparer.Ordinal);
+    // Отбор по колонкам — «как в Excel»: колонка и выбранные в ее воронке значения.
+    private readonly Dictionary<string, HashSet<string>> _picked = new(StringComparer.Ordinal);
 
     // Ключ строки с раскрытыми подробностями; 0 — ни одной.
-    private long _securityOpen;
+    private long _open;
 
     // Итог проверки цепочки: 0 — цела, >0 — ключ первой разошедшейся строки, null — еще не
     // проверяли в этот заход. Проверка идет по всему файлу, и делать ее на каждую перерисовку
-    // вкладки значило бы перечитывать журнал за год ради обновления списка.
-    private long? _securityChain;
+    // экрана значило бы перечитывать журнал за год ради обновления списка.
+    private long? _chain;
 
-    /// <summary>Переключатель журналов — первой строкой вкладки, до всего остального.</summary>
-    private Border SecuritySwitchRow()
-    {
-        var choice = Picker(["Запуски", "Безопасность"], _securityLog ? 1 : 0);
+    // Считать строки на большом журнале — секунды, а окон в это время еще нет: второй щелчок
+    // по кнопке дал бы вторую выгрузку и второе окно подтверждения.
+    private bool _exporting;
 
-        // Обработчик вешается ПОСЛЕ выставления значения: иначе первый же показ вкладки
-        // перестроил бы сам себя.
-        choice.SelectionChanged += (_, _) =>
+    public SecurityJournalView() =>
+        Content = new ScrollViewer
         {
-            _securityLog  = choice.SelectedIndex == 1;
-            _journalOpen  = 0;
-            _securityOpen = 0;
-
-            BuildIntegrationsJournal();
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Content                     = _rows,
         };
 
-        return SideRow("Какой журнал",
-            "«Запуски» — рабочий журнал обмена: его чистят, по нему считаются потолки. "
-            + "«Безопасность» — отдельный файл для проверки: только добавление, цепочка хэшей, "
-            + "ни тел, ни значений полей.",
-            choice);
+    /// <summary>Показать журнал — при каждом открытии экрана.</summary>
+    public void Show(Workspace? workspace)
+    {
+        _workspace = workspace;
+        Build();
+    }
+
+    /// <summary>
+    /// Показать сразу заблокированные попытки за неделю — переход из контура безопасности, где
+    /// их сосчитали. Переход без отбора заставил бы человека повторять руками то, что соседний
+    /// экран уже знает, — и на второй странице он бы отбор забыл.
+    /// </summary>
+    public void ShowBlocked(Workspace? workspace)
+    {
+        _event       = null;
+        _blockedOnly = true;
+        _days        = 7;
+        _shown       = 0;
+        _open        = 0;
+        _picked.Clear();
+
+        Show(workspace);
     }
 
     // ── Сам журнал ────────────────────────────────────────────────────────────
 
-    private void BuildSecurityLog(Avalonia.Controls.Controls rows)
+    private void Build()
     {
+        var rows = _rows.Children;
+        rows.Clear();
+
         if (SecurityJournal.Current is not { } journal)
         {
             // Журнал не открылся при запуске. В отличие от рабочего, это не мелочь: без него
@@ -91,76 +109,73 @@ public partial class SettingsView
             return;
         }
 
-        var filter = SecurityFilterNow();
+        var filter = FilterNow();
 
         // Одна строка сверх показанного — так и узнаем, есть ли что дальше, не считая весь файл.
         var page = journal.Page(filter, take: Shown() + 1);
         var more = page.Count > Shown();
 
         Add(rows, ChainRow(journal));
-        Add(rows, SecurityFilterRow());
-        Add(rows, SecurityRowsBlock([.. page.Take(Shown())], more));
-        Add(rows, SecurityFileRow(journal), last: true);
+        Add(rows, FilterRow());
+        Add(rows, RowsBlock([.. page.Take(Shown())], more));
+        Add(rows, FileRow(journal), last: true);
     }
 
     /// <summary>
     /// Сколько строк показываем: каждое «Показать еще» добавляет страницу. Читается всегда от
-    /// свежего конца, а не «следующая страница после последней»: вкладка перестраивается
-    /// целиком на каждое нажатие, и хранить накопленные страницы означало бы держать в памяти
-    /// то, что и так лежит в файле рядом.
+    /// свежего конца, а не «следующая страница после последней»: экран перестраивается целиком
+    /// на каждое нажатие, и хранить накопленные страницы означало бы держать в памяти то, что и
+    /// так лежит в файле рядом.
     /// </summary>
-    private int Shown() => _securityShown > 0 ? _securityShown : SecurityPage;
+    private int Shown() => _shown > 0 ? _shown : Page;
 
     /// <summary>Что показываем: переключатели сверху плюс воронки в шапке таблицы.</summary>
-    private SecurityFilter SecurityFilterNow()
+    private SecurityFilter FilterNow()
     {
         var picked = new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.Ordinal);
 
-        foreach (var (column, values) in _securityPicked)
+        foreach (var (column, values) in _picked)
             if (values.Count > 0) picked[column] = values;
 
-        return new SecurityFilter(_securityEvent, _securityBlockedOnly, Since(), picked);
+        return new SecurityFilter(_event, _blockedOnly, Since(), picked);
     }
 
-    /// <summary>Выбранное в воронке колонки; множество живет, пока открыт раздел.</summary>
-    private HashSet<string> SecurityPicked(string column)
+    /// <summary>Выбранное в воронке колонки; множество живет, пока открыт экран.</summary>
+    private HashSet<string> Picked(string column)
     {
-        if (!_securityPicked.TryGetValue(column, out var values))
-            _securityPicked[column] = values = new HashSet<string>(StringComparer.Ordinal);
+        if (!_picked.TryGetValue(column, out var values))
+            _picked[column] = values = new HashSet<string>(StringComparer.Ordinal);
 
         return values;
     }
 
     /// <summary>Заголовок колонки с воронкой отбора.</summary>
-    private Control SecurityFunnel(string column, string title) =>
-        Controls.Widgets.ColumnFilter.Head(title, () => SecurityValues(column),
-                                            SecurityPicked(column),
-                                            () =>
-                                            {
-                                                _securityShown = 0;
-                                                _securityOpen  = 0;
-                                                BuildIntegrationsJournal();
-                                            });
+    private Control Funnel(string column, string title) =>
+        ColumnFilter.Head(title, () => Values(column), Picked(column), () =>
+        {
+            _shown = 0;
+            _open  = 0;
+            Build();
+        });
 
     /// <summary>
     /// Какие значения бывают в колонке. Числа переводятся в слова здесь: в журнале событие лежит
     /// числом, а проверяющему нужно «Отправка наружу».
     /// </summary>
-    private IReadOnlyList<Controls.Widgets.ColumnFilterValue> SecurityValues(string column)
+    private IReadOnlyList<ColumnFilterValue> Values(string column)
     {
         if (SecurityJournal.Current is not { } journal) return [];
 
-        var values = journal.Values(column, SecurityFilterNow());
-        var made   = new List<Controls.Widgets.ColumnFilterValue>(values.Count);
+        var values = journal.Values(column, FilterNow());
+        var made   = new List<ColumnFilterValue>(values.Count);
 
         foreach (var (value, count) in values)
-            made.Add(new Controls.Widgets.ColumnFilterValue(value, SecurityValueText(column, value),
-                                                            count));
+            made.Add(new ColumnFilterValue(value, ValueText(column, value), count));
 
         return made;
     }
 
-    private static string SecurityValueText(string column, string value) => column switch
+    private static string ValueText(string column, string value) => column switch
     {
         "Event" => int.TryParse(value, out var kind)
             ? SecurityJournal.Name((SecurityEvent)kind)
@@ -172,7 +187,7 @@ public partial class SettingsView
     };
 
     private DateTimeOffset? Since() =>
-        _securityDays > 0 ? DateTimeOffset.Now.AddDays(-_securityDays) : null;
+        _days > 0 ? DateTimeOffset.Now.AddDays(-_days) : null;
 
     // ── Цепочка ───────────────────────────────────────────────────────────────
 
@@ -188,7 +203,7 @@ public partial class SettingsView
     {
         var block = new StackPanel { Spacing = 6 };
 
-        if (_securityChain is { } first)
+        if (_chain is { } first)
         {
             var verdict = Note(first == 0
                 ? $"Цепочка цела: все {journal.Count():N0} строк сходятся."
@@ -203,8 +218,8 @@ public partial class SettingsView
 
         block.Children.Add(ButtonLine(RowButton("Проверить цепочку", () =>
         {
-            _securityChain = journal.Verify();
-            BuildIntegrationsJournal();
+            _chain = journal.Verify();
+            Build();
         })));
 
         return Row("Проверка целости",
@@ -216,12 +231,12 @@ public partial class SettingsView
 
     // ── Что показывать ────────────────────────────────────────────────────────
 
-    private Border SecurityFilterRow()
+    private Border FilterRow()
     {
         var kinds = Picker(
             ["Все события", "Отправки", "Чтения по выдаче", "Подтверждения",
              "Снятия подтверждения", "Понижения меток", "Ручные выгрузки"],
-            _securityEvent switch
+            _event switch
             {
                 null                    => 0,
                 SecurityEvent.Send      => 1,
@@ -234,7 +249,7 @@ public partial class SettingsView
 
         kinds.SelectionChanged += (_, _) =>
         {
-            _securityEvent = kinds.SelectedIndex switch
+            _event = kinds.SelectedIndex switch
             {
                 1 => SecurityEvent.Send,
                 2 => SecurityEvent.Read,
@@ -248,7 +263,7 @@ public partial class SettingsView
             Reset();
         };
 
-        var period = Picker(["7 дней", "30 дней", "Год", "Все"], _securityDays switch
+        var period = Picker(["7 дней", "30 дней", "Год", "Все"], _days switch
         {
             7   => 0,
             30  => 1,
@@ -258,7 +273,7 @@ public partial class SettingsView
 
         period.SelectionChanged += (_, _) =>
         {
-            _securityDays = period.SelectedIndex switch
+            _days = period.SelectedIndex switch
             {
                 0 => 7,
                 1 => 30,
@@ -272,17 +287,17 @@ public partial class SettingsView
         var blocked = new CheckBox
         {
             Content           = "Только заблокированные",
-            IsChecked         = _securityBlockedOnly,
+            IsChecked         = _blockedOnly,
             VerticalAlignment = VerticalAlignment.Center,
         };
 
         blocked.IsCheckedChanged += (_, _) =>
         {
-            _securityBlockedOnly = blocked.IsChecked == true;
+            _blockedOnly = blocked.IsChecked == true;
             Reset();
         };
 
-        var export = RowButton("Выгрузить CSV", () => _ = ExportSecurityLogAsync());
+        var export = RowButton("Выгрузить CSV", () => _ = ExportAsync());
 
         var line = ButtonLine(kinds, period, blocked, export);
 
@@ -295,17 +310,13 @@ public partial class SettingsView
 
         void Reset()
         {
-            _securityOpen  = 0;
-            _securityShown = 0;   // сужение начинает чтение заново: страницы были от другой выборки
-            BuildIntegrationsJournal();
+            _open  = 0;
+            _shown = 0;   // сужение начинает чтение заново: страницы были от другой выборки
+            Build();
         }
     }
 
     // ── Выгрузка ──────────────────────────────────────────────────────────────
-
-    // Считать строки на большом журнале — секунды, а окон в это время еще нет: второй щелчок
-    // по кнопке дал бы вторую выгрузку и второе окно подтверждения.
-    private bool _securityExporting;
 
     /// <summary>
     /// Выгрузить отобранное в CSV — то, чем кончается почти всякая проверка.
@@ -314,58 +325,57 @@ public partial class SettingsView
     /// «Выгрузить», просит журнал за период, а не картинку экрана. Строки читаются лениво,
     /// страницами, поэтому размер файла ограничивает только диск.
     /// </summary>
-    private async Task ExportSecurityLogAsync()
+    private async Task ExportAsync()
     {
         if (TopLevel.GetTopLevel(this) is not Window owner) return;
         if (SecurityJournal.Current is not { } journal) return;
-        if (_securityExporting) return;
+        if (_exporting) return;
 
         // Снимок условий ДО ожидания: их могли поменять, пока считались строки.
-        var filter = SecurityFilterNow();
-        var narrow = _securityEvent is not null || _securityBlockedOnly || _securityDays > 0;
+        var filter = FilterNow();
+        var narrow = _event is not null || _blockedOnly || _days > 0 || _picked.Any(p => p.Value.Count > 0);
 
-        _securityExporting = true;
+        _exporting = true;
         try
         {
-            await Controls.Dialogs.CsvExportRunner.Run(owner, new Controls.Dialogs.CsvExportRunner.Job(
+            await CsvExportRunner.Run(owner, new CsvExportRunner.Job(
                 Title:           "Выгрузка журнала безопасности",
                 What:            "Журнал безопасности",
                 TotalRows:       journal.Count(filter),
                 Filtered:        narrow,
-                DefaultFileName: Controls.Dialogs.CsvExportRunner.FileName(
-                                     "Журнал безопасности", DateTime.Now),
+                DefaultFileName: CsvExportRunner.FileName("Журнал безопасности", DateTime.Now),
                 Headers:         SecurityJournal.CsvHeaders,
                 Rows:            ct => journal.Stream(filter)
                                               .TakeWhile(_ => !ct.IsCancellationRequested)
                                               .Select(SecurityJournal.CsvRow)));
         }
-        finally { _securityExporting = false; }
+        finally { _exporting = false; }
     }
 
     // ── Список ────────────────────────────────────────────────────────────────
 
-    private Border SecurityRowsBlock(IReadOnlyList<SecurityEntry> page, bool more)
+    private Border RowsBlock(IReadOnlyList<SecurityEntry> page, bool more)
     {
         var list = new StackPanel { Spacing = 0 };
 
         if (page.Count == 0)
             return Row("События", "", DataBox(
-                _securityEvent is not null || _securityBlockedOnly || _securityDays > 0
+                Narrowed()
                     ? "Под выбранные условия не подошло ни одной строки."
                     : "Событий безопасности еще не было: наружу ничего не уходило и направлений "
                     + "не подтверждали."));
 
-        list.Children.Add(SecurityHeaderLine());
+        list.Children.Add(HeaderLine());
 
         foreach (var entry in page)
-            list.Children.Add(SecurityLine(entry));
+            list.Children.Add(Line(entry));
 
         if (more)
         {
             var next = ButtonLine(RowButton("Показать еще", () =>
             {
-                _securityShown = Shown() + SecurityPage;
-                BuildIntegrationsJournal();
+                _shown = Shown() + Page;
+                Build();
             }));
 
             next.Margin = new Thickness(0, 10, 0, -6);
@@ -378,33 +388,37 @@ public partial class SettingsView
             list);
     }
 
+    /// <summary>Сужена ли выборка хоть чем-нибудь — от этого зависит текст пустого списка.</summary>
+    private bool Narrowed() =>
+        _event is not null || _blockedOnly || _days > 0 || _picked.Any(p => p.Value.Count > 0);
+
     /// <summary>Ширины колонок общие у шапки и строк — иначе таблица «поедет».</summary>
-    private static ColumnDefinitions SecurityColumns() => new("104,8,*,8,96,8,74");
+    private static ColumnDefinitions Columns() => new("104,8,*,8,96,8,74");
 
     /// <summary>
     /// Шапка таблицы. У колонок, по которым есть что отбирать, — воронка с отбором «как в
     /// Excel»; отбор уходит в SQL, а не отсеивает показанную пачку: журнал никто не чистит, он
     /// копится годами, и одно заблокированное событие полугодовой давности иначе не найти.
     /// </summary>
-    private Control SecurityHeaderLine()
+    private Control HeaderLine()
     {
-        var grid = new Grid { ColumnDefinitions = SecurityColumns() };
+        var grid = new Grid { ColumnDefinitions = Columns() };
 
         Put(grid, 0, Head("Время"));
-        Put(grid, 2, SecurityFunnel("Event",   "Что произошло"));
-        Put(grid, 4, SecurityFunnel("Who",     "Кто"));
-        Put(grid, 6, SecurityFunnel("Allowed", "Решение"));
+        Put(grid, 2, Funnel("Event",   "Что произошло"));
+        Put(grid, 4, Funnel("Who",     "Кто"));
+        Put(grid, 6, Funnel("Allowed", "Решение"));
 
         return TableHead(grid);
     }
 
-    private Control SecurityLine(SecurityEntry entry)
+    private Control Line(SecurityEntry entry)
     {
-        var open = _securityOpen == entry.Id;
+        var open = _open == entry.Id;
 
-        var grid = new Grid { ColumnDefinitions = SecurityColumns() };
+        var grid = new Grid { ColumnDefinitions = Columns() };
 
-        Put(grid, 0, Cell(SecurityMoment(entry), secondary: true));
+        Put(grid, 0, Cell(Moment(entry), secondary: true));
         Put(grid, 2, Cell(EventLine(entry)));
         Put(grid, 4, Cell(entry.Who.Length > 0 ? entry.Who : "—", secondary: true));
 
@@ -413,18 +427,18 @@ public partial class SettingsView
                                  entry.Allowed ? "#34C759" : "#FF3B30");
         Put(grid, 6, verdict);
 
-        return TableRow(grid, open ? SecurityDetails(entry) : null, open, () =>
+        return TableRow(grid, open ? Details(entry) : null, open, () =>
         {
-            _securityOpen = open ? 0 : entry.Id;
-            BuildIntegrationsJournal();
+            _open = open ? 0 : entry.Id;
+            Build();
         });
     }
 
     /// <summary>
     /// Подробности строки: то, чему не нашлось места в колонках. Лежат в ячейке с данными — как
-    /// подробности строки журнала обмена на соседнем экране.
+    /// подробности строки рабочего журнала.
     /// </summary>
-    private Control SecurityDetails(SecurityEntry entry)
+    private Control Details(SecurityEntry entry)
     {
         var list = new StackPanel { Spacing = 4 };
 
@@ -459,7 +473,7 @@ public partial class SettingsView
         list.Children.Add(Note("База данных: " + DatabaseName(entry.DbId)));
 
         var copy = RowButton("Скопировать", () =>
-            _ = TopLevel.GetTopLevel(this)?.Clipboard?.SetTextAsync(SecurityPlain(entry)));
+            _ = TopLevel.GetTopLevel(this)?.Clipboard?.SetTextAsync(Plain(entry)));
 
         return new StackPanel
         {
@@ -472,8 +486,8 @@ public partial class SettingsView
     /// Строка текстом — чтобы переслать. Секрета в ней нет: адрес лежит в журнале уже
     /// замаскированным, а от тела остался один отпечаток.
     /// </summary>
-    private string SecurityPlain(SecurityEntry entry) =>
-        $"{SecurityFull(entry)} · {SecurityJournal.Name(entry.Event)} · "
+    private string Plain(SecurityEntry entry) =>
+        $"{Full(entry)} · {SecurityJournal.Name(entry.Event)} · "
         + $"{(entry.Allowed ? "разрешено" : "заблокировано")}\n"
         + $"кто: {entry.Who}"
         + (entry.Scenario.Length > 0  ? $" · сценарий: {entry.Scenario}"     : "")
@@ -489,7 +503,7 @@ public partial class SettingsView
 
     // ── Файл ──────────────────────────────────────────────────────────────────
 
-    private Border SecurityFileRow(SecurityJournal journal)
+    private static Border FileRow(SecurityJournal journal)
     {
         var block = DataBox(new[]
         {
@@ -506,6 +520,18 @@ public partial class SettingsView
 
     // ── Мелочи оформления ─────────────────────────────────────────────────────
 
+    /// <summary>Имя базы по ключу; закрытая база названа ключом — история переживает базы.</summary>
+    private string DatabaseName(int dbId)
+    {
+        if (dbId <= 0) return "не задета";
+
+        var open = _workspace?.Mounted ?? [];
+
+        return open.FirstOrDefault(d => d.DbId == dbId) is { } found
+            ? found.Name
+            : $"№{dbId} (сейчас не открыта)";
+    }
+
     /// <summary>Событие колонкой — вместе с тем, чего оно касалось.</summary>
     private static string EventLine(SecurityEntry entry) => entry.Event switch
     {
@@ -514,11 +540,11 @@ public partial class SettingsView
     };
 
     /// <summary>Время строки; испорченный правкой файла момент показывается как есть.</summary>
-    private static string SecurityMoment(SecurityEntry entry) =>
+    private static string Moment(SecurityEntry entry) =>
         entry.Moment is { } moment ? moment.ToLocalTime().ToString("dd.MM HH:mm:ss") : entry.At;
 
     /// <summary>То же время с годом — для текста, который уносят из программы.</summary>
-    private static string SecurityFull(SecurityEntry entry) =>
+    private static string Full(SecurityEntry entry) =>
         entry.Moment is { } moment
             ? moment.ToLocalTime().ToString("dd.MM.yyyy HH:mm:ss")
             : entry.At;

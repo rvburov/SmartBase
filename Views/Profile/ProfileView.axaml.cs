@@ -89,8 +89,9 @@ public partial class ProfileView : UserControl
         HistoryPanel.IsVisible = key == "history";
         // Список пользователей открыт «поверх» раздела и сам не спрячется: выбор раздела
         // в сайдбаре (в том числе повторный выбор «Панели администратора») возвращает
-        // обычный вид с навбаром.
+        // обычный вид с навбаром. То же с контуром безопасности и его журналом.
         CloseUsersPanel();
+        CloseSecurityPanels();
         // Детали строки журнала живут в отдельной колонке окна и разделом не скрываются —
         // закрываем их вместе с уходом из «Истории изменений».
         CloseHistoryDetail();
@@ -151,8 +152,8 @@ public partial class ProfileView : UserControl
         AdminNoAccessRow.IsVisible = !hasAny;
         AdminContent.IsVisible     = hasAny;
         // Администрировать больше нечего (последнюю базу размонтировали или админство
-        // отозвали) — открытая панель пользователей не должна остаться висеть.
-        if (!hasAny) { CloseUsersPanel(); return; }
+        // отозвали) — открытые панели не должны остаться висеть.
+        if (!hasAny) { CloseUsersPanel(); CloseSecurityPanels(); return; }
 
         // Сохранить выбранную базу, если она еще в списке.
         var keepDbId = _adminDb?.DbId;

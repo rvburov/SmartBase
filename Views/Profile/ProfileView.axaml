@@ -418,6 +418,45 @@
                     </Border>
                     <Border Classes="separator h" />
 
+                    <!-- Контур безопасности: что программе разрешено на этой машине и откуда
+                         это взялось. Экран общий на всю программу, а не на выбранную базу, —
+                         поэтому он ниже выбора базы и от него не зависит (шаг 15). -->
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Контур безопасности" />
+                                <TextBlock Classes="desc"
+                                           Text="Что программе разрешено уносить наружу: режим, источники политики, разрешенные адреса и папки, действующие направления. Только показ — политику правит ответственный за интеграции, вне программы." />
+                            </StackPanel>
+                            <Button Grid.Column="1" x:Name="SecurityOpenBtn" Classes="dialog"
+                                    Width="NaN" MinWidth="110" Padding="14,0"
+                                    VerticalAlignment="Center"
+                                    Content="Открыть"
+                                    Click="OnOpenSecurityPanel" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <!-- Журнал безопасности: отдельный файл для проверки — только добавление
+                         и цепочка хэшей. Общий на все базы данных. -->
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Журнал безопасности" />
+                                <TextBlock Classes="desc"
+                                           Text="Что уходило наружу и что было заблокировано: только добавление, цепочка хэшей, ни тел запросов, ни значений полей. Журнал общий на все базы данных, чистить его нельзя." />
+                            </StackPanel>
+                            <Button Grid.Column="1" x:Name="SecurityLogOpenBtn" Classes="dialog"
+                                    Width="NaN" MinWidth="110" Padding="14,0"
+                                    VerticalAlignment="Center"
+                                    Content="Открыть"
+                                    Click="OnOpenSecurityLogPanel" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
                     </StackPanel>
 
                     </StackPanel>
@@ -529,6 +568,78 @@
                               HorizontalScrollBarVisibility="Auto"
                               VerticalScrollBarVisibility="Auto" />
                 </Panel>
+            </Grid>
+
+            <!-- ── Контур безопасности и его журнал ────────────────────────
+                 Открываются кнопками «Открыть» ВМЕСТО панели администратора — тем же
+                 приемом, что список пользователей: своя шапка 56 на месте навбара модуля,
+                 крестик возвращает панель. Содержимое собирают отдельные контролы
+                 (Controls/Components/Security): экраны общие на всю программу, и панель
+                 администратора — их зритель, а не хозяин. -->
+            <Grid x:Name="SecurityPanel" IsVisible="False"
+                  RowDefinitions="Auto,*"
+                  Background="{StaticResource BrushBg}">
+
+                <Grid Grid.Row="0" ColumnDefinitions="*,Auto"
+                      Height="56" Margin="16,0">
+                    <TextBlock Grid.Column="0" Text="Контур безопасности"
+                               VerticalAlignment="Center"
+                               FontSize="{DynamicResource FontSizeLarge}"
+                               FontWeight="{StaticResource FontWeightBold}"
+                               TextTrimming="CharacterEllipsis"
+                               Margin="0,0,12,0" />
+                    <Button Grid.Column="1" x:Name="SecurityPanelCloseBtn"
+                            Classes="navbtn" Width="30" Height="30"
+                            VerticalAlignment="Center"
+                            CornerRadius="{StaticResource RadiusMedium}"
+                            ToolTip.Tip="Закрыть"
+                            Click="OnCloseSecurityPanel">
+                        <Viewbox Width="{StaticResource IconSizeMedium}"
+                                 Height="{StaticResource IconSizeMedium}">
+                            <Canvas Width="24" Height="24">
+                                <Path Data="{StaticResource IconClose}"
+                                      Stroke="{Binding $parent[Button].Foreground}"
+                                      StrokeThickness="{StaticResource IconStrokeMedium}"
+                                      StrokeLineCap="Round" StrokeJoin="Round" />
+                            </Canvas>
+                        </Viewbox>
+                    </Button>
+                </Grid>
+
+                <Panel Grid.Row="1" x:Name="SecurityHost" />
+            </Grid>
+
+            <Grid x:Name="SecurityLogPanel" IsVisible="False"
+                  RowDefinitions="Auto,*"
+                  Background="{StaticResource BrushBg}">
+
+                <Grid Grid.Row="0" ColumnDefinitions="*,Auto"
+                      Height="56" Margin="16,0">
+                    <TextBlock Grid.Column="0" Text="Журнал безопасности"
+                               VerticalAlignment="Center"
+                               FontSize="{DynamicResource FontSizeLarge}"
+                               FontWeight="{StaticResource FontWeightBold}"
+                               TextTrimming="CharacterEllipsis"
+                               Margin="0,0,12,0" />
+                    <Button Grid.Column="1" x:Name="SecurityLogPanelCloseBtn"
+                            Classes="navbtn" Width="30" Height="30"
+                            VerticalAlignment="Center"
+                            CornerRadius="{StaticResource RadiusMedium}"
+                            ToolTip.Tip="Закрыть"
+                            Click="OnCloseSecurityLogPanel">
+                        <Viewbox Width="{StaticResource IconSizeMedium}"
+                                 Height="{StaticResource IconSizeMedium}">
+                            <Canvas Width="24" Height="24">
+                                <Path Data="{StaticResource IconClose}"
+                                      Stroke="{Binding $parent[Button].Foreground}"
+                                      StrokeThickness="{StaticResource IconStrokeMedium}"
+                                      StrokeLineCap="Round" StrokeJoin="Round" />
+                            </Canvas>
+                        </Viewbox>
+                    </Button>
+                </Grid>
+
+                <Panel Grid.Row="1" x:Name="SecurityLogHost" />
             </Grid>
 
         </Grid>
