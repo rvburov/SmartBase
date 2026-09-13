@@ -235,7 +235,7 @@ public sealed class SecurityJournalView : UserControl
     {
         var kinds = Picker(
             ["Все события", "Отправки", "Чтения по выдаче", "Подтверждения",
-             "Снятия подтверждения", "Понижения меток", "Ручные выгрузки"],
+             "Снятия подтверждения", "Понижения меток", "Ручные выгрузки", "Показы секретов"],
             _event switch
             {
                 null                    => 0,
@@ -244,7 +244,8 @@ public sealed class SecurityJournalView : UserControl
                 SecurityEvent.Confirm   => 3,
                 SecurityEvent.Revoke    => 4,
                 SecurityEvent.Downgrade => 5,
-                _                       => 6,
+                SecurityEvent.Export    => 6,
+                _                       => 7,
             });
 
         kinds.SelectionChanged += (_, _) =>
@@ -257,6 +258,7 @@ public sealed class SecurityJournalView : UserControl
                 4 => SecurityEvent.Revoke,
                 5 => SecurityEvent.Downgrade,
                 6 => SecurityEvent.Export,
+                7 => SecurityEvent.Reveal,
                 _ => null,
             };
 

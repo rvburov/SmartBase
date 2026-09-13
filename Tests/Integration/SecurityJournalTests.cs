@@ -448,4 +448,65 @@ public sealed class SecurityJournalTests : IDisposable
         Assert.Empty(journal.Values("Who = 'x' OR 1=1 --", new SecurityFilter()));
     }
 
+    // ── Показ секрета (шаг 16) ────────────────────────────────────────────────
+
+    private static SecurityEntry Reveal(bool allowed) =>
+        SecurityEntry.New(SecurityEvent.Reveal, allowed, "Иванов И. И.", "",
+                          "Соединение «Учетная система»", "", 0, 0, "",
+                          allowed
+                              ? "Секрет соединения показан на экране в менеджере паролей."
+                              : "Показ секрета отклонен: мастер-пароль не подошел.",
+                          dbId: 0, at: Now);
+
+    /// <summary>
+    /// Показ секрета — событие журнала наравне с отправкой: сам секрет наружу не уходит, но
+    /// уходит из программы в чужой конфигурационный файл, и после этого отвечать за него некому.
+    /// </summary>
+    [Fact]
+    public void A_revealed_secret_leaves_a_row()
+    {
+        var journal = Journal();
+
+        Assert.True(journal.Write(Reveal(allowed: true)) > 0);
+
+        var row = journal.Recent().Single();
+
+        Assert.Equal(SecurityEvent.Reveal, row.Event);
+        Assert.True(row.Allowed);
+        Assert.Equal("Соединение «Учетная система»", row.Address);
+
+        // Ни самого секрета, ни его отпечатка: строку журнала выгружают проверяющему целиком.
+        Assert.Empty(row.BodyHash);
+        Assert.Empty(row.Fields);
+    }
+
+    /// <summary>
+    /// Неудачная попытка пишется тоже — и она важнее удачной: подбор мастер-пароля выглядит
+    /// именно как череда таких строк.
+    /// </summary>
+    [Fact]
+    public void A_refused_reveal_is_written_too()
+    {
+        var journal = Journal();
+
+        journal.Write(Reveal(allowed: false));
+
+        var blocked = journal.Page(new SecurityFilter(BlockedOnly: true)).Single();
+
+        Assert.Equal(SecurityEvent.Reveal, blocked.Event);
+        Assert.Contains("не подошел", blocked.Explanation);
+    }
+
+    /// <summary>Событие отбирается родом, как и остальные: «покажи все показы секретов».</summary>
+    [Fact]
+    public void Reveals_are_filtered_by_kind()
+    {
+        var journal = Journal();
+
+        journal.Write(Send("Заказы", allowed: true));
+        journal.Write(Reveal(allowed: true));
+
+        Assert.Single(journal.Page(new SecurityFilter(Event: SecurityEvent.Reveal)));
+        Assert.Equal("показан секрет соединения", SecurityJournal.Name(SecurityEvent.Reveal));
+    }
 }

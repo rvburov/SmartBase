@@ -23,6 +23,7 @@ public static class ProfileRegistry
         new("general",  "Общие данные",           "IconUser"),
         new("admin",    "Панель администратора",  "IconShieldUser"),
         new("security", "Безопасность",           "IconLock"),
+        new("secrets",  "Менеджер паролей",       "IconKey"),
         new("history",  "История изменений",      "IconHistory"),
     ];
 

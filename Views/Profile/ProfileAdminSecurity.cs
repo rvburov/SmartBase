@@ -37,6 +37,7 @@ public partial class ProfileView
     // молча сбрасывало бы его на каждый уход из раздела.
     private SecurityContourView? _contour;
     private SecurityJournalView? _securityJournal;
+    private SecretsView?         _secrets;
 
     /// <summary>
     /// Модуль просит открыть другой свой раздел (переход «В журнал» из контура). Сайдбар живет
@@ -68,6 +69,23 @@ public partial class ProfileView
         // Администраторские действия — по тому же признаку, по которому открывается панель
         // администратора: администратор хотя бы одной открытой базы.
         _contour.Show(_workspace, forAdmin: _workspace?.Mounted.Any(m => m.Permissions.IsAdmin) == true);
+    }
+
+    // ── Менеджер паролей ──────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Показать опись секретов. Строится при каждом заходе: секреты заводят и отзывают на
+    /// соседних экранах, и вернуться сюда можно уже с другим списком.
+    /// </summary>
+    private void ShowSecrets()
+    {
+        if (_secrets is null)
+        {
+            _secrets = new SecretsView();
+            SecretsPanel.Children.Add(_secrets);
+        }
+
+        _secrets.Show(_workspace);
     }
 
     // ── Журнал ────────────────────────────────────────────────────────────────

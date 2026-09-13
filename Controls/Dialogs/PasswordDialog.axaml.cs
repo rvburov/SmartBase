@@ -90,6 +90,49 @@ public partial class PasswordDialog : Window
         return dlg;
     }
 
+    /// <summary>
+    /// Показ секрета соединения в менеджере паролей (docs/ROADMAP-API.md, шаг 16). Устроен как
+    /// <see cref="ForMaster"/>: окно спрашивает мастер-пароль, а проверяет его и пишет строку в
+    /// журнал безопасности сам вызывающий — вторая реализация проверки полномочий рано или поздно
+    /// расходится с первой в сторону разрешения.
+    ///
+    /// ShowDialog&lt;bool&gt; → true, когда секрет показан.
+    /// </summary>
+    /// <param name="what">О чем речь: «соединения „Учетная система“».</param>
+    /// <param name="reveal">Показать секрет этим паролем; возвращает причину отказа или пусто.</param>
+    public static PasswordDialog ForReveal(string what, Func<string, string> reveal)
+    {
+        var dlg = new PasswordDialog(reveal);
+        dlg.Title = "Показать секрет";
+        dlg.InfoText.Text =
+            $"Секрет {what} будет показан на экране. С этого момента отвечать за него некому: "
+            + "показанный секрет уходит из программы в чужой конфигурационный файл или в записку. "
+            + "Введите мастер-пароль политики организации — событие попадет в журнал безопасности.";
+        dlg.PasswordLabel.Text    = "Мастер-пароль политики";
+        dlg.RepeatBlock.IsVisible = false;
+        dlg.ConfirmBtn.Content    = "Показать";
+        return dlg;
+    }
+
+    /// <summary>
+    /// Ввод нового секрета соединения — менеджер паролей, «Заменить»
+    /// (docs/ROADMAP-API.md, шаг 16). ShowDialog&lt;string?&gt; → секрет или null.
+    /// </summary>
+    public static PasswordDialog ForSecret(string what)
+    {
+        var dlg = new PasswordDialog(tryUnlock: null);
+        dlg.Title = "Новый секрет";
+        dlg.InfoText.Text =
+            $"Секрет {what} будет заменен. Прежний удаляется из хранилища операционной системы "
+            + "и восстановить его будет нечем: возьмите новый там, где выдают доступ к чужой "
+            + "программе.";
+        dlg.PasswordLabel.Text    = "Новый секрет";
+        dlg.PasswordBox.Watermark = "Вставьте токен или пароль";
+        dlg.RepeatBlock.IsVisible = false;
+        dlg.ConfirmBtn.Content    = "Сохранить";
+        return dlg;
+    }
+
     private void TryConfirm()
     {
         var password = PasswordBox.Text ?? "";
@@ -112,6 +155,15 @@ public partial class PasswordDialog : Window
                 PasswordBox.Focus();
                 PasswordBox.SelectAll();
             }
+            return;
+        }
+
+        // Секрет чужой программы: повтора нет, и сверять нечего. Его не придумывают, а
+        // вставляют из буфера — второе поле тут не ловит опечатку, а лишь просит вставить
+        // дважды.
+        if (!RepeatBlock.IsVisible)
+        {
+            Close(password);
             return;
         }
 

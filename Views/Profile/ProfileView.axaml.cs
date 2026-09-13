@@ -87,12 +87,16 @@ public partial class ProfileView : UserControl
         GeneralPanel.IsVisible  = key == "general";
         AdminPanel.IsVisible    = key == "admin";
         SecurityPanel.IsVisible = key == "security";
+        SecretsPanel.IsVisible  = key == "secrets";
         HistoryPanel.IsVisible  = key == "history";
         // Список пользователей открыт «поверх» раздела и сам не спрячется: выбор раздела
         // в сайдбаре (в том числе повторный выбор «Панели администратора») возвращает
         // обычный вид с навбаром. То же с контуром безопасности и его журналом.
         CloseUsersPanel();
         CloseSecurityPanels();
+        // Показанный секрет живет, пока человек на его экране: уйти и вернуться через час
+        // к открытому паролю — то же, что оставить его на бумажке.
+        if (key != "secrets") _secrets?.Forget();
         // Детали строки журнала живут в отдельной колонке окна и разделом не скрываются —
         // закрываем их вместе с уходом из «Истории изменений».
         CloseHistoryDetail();
@@ -102,6 +106,7 @@ public partial class ProfileView : UserControl
 
         if (key == "admin")    RebuildAdminPanel();
         if (key == "security") ShowSecurityContour();
+        if (key == "secrets")  ShowSecrets();
         if (key == "history")  RebuildHistoryPanel();
     }
 
