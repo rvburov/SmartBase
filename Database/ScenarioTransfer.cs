@@ -122,7 +122,8 @@ public static class ScenarioTransfer
                 step.FieldValues,
                 step.Folder,
                 step.Conditions,
-                step.Format))]);
+                step.Format,
+                step.ColumnFormulas))]);
 
     private static string NameOfDatabase(IReadOnlyList<DatabaseManager> databases, int dbId) =>
         dbId <= 0 ? "" : databases.FirstOrDefault(d => d.DbId == dbId)?.Name ?? "";
@@ -349,7 +350,8 @@ public static class ScenarioTransfer
             step.Fields,
             step.Folder ?? "",
             step.Conditions,
-            step.Format ?? "");
+            step.Format ?? "",
+            step.Formulas);
     }
 
     private static ScenarioTrigger Unpack(BundleTrigger? trigger,
@@ -473,6 +475,7 @@ public static class ScenarioTransfer
         "filter"       => ScenarioStepKind.Filter,
         "createrecord" => ScenarioStepKind.CreateRecord,
         "export"       => ScenarioStepKind.Export,
+        "compute"      => ScenarioStepKind.Compute,
         _              => ScenarioStepKind.Notify,
     };
 }

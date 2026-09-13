@@ -185,6 +185,7 @@ public partial class ScenarioDialog : Window
         AddIntakeBtn.Click  += (_, _) => AddStep(ScenarioStep.OfIntake(""));
         AddActionBtn.Click  += async (_, _) => await AddActionAsync();
         AddFilterBtn.Click  += async (_, _) => await AddFilterAsync();
+        AddComputeBtn.Click += async (_, _) => await AddComputeAsync();
         AddRecordBtn.Click  += async (_, _) => await AddRecordAsync();
         AddExportBtn.Click  += async (_, _) => await AddExportAsync();
 
@@ -212,6 +213,7 @@ public partial class ScenarioDialog : Window
             ScenarioStepKind.Filter       => FilterRow(step),
             ScenarioStepKind.CreateRecord => RecordRow(step),
             ScenarioStepKind.Export       => ExportRow(step),
+            ScenarioStepKind.Compute      => ComputeRow(step),
             _                             => NoticeRow(step),
         };
 
@@ -389,6 +391,45 @@ public partial class ScenarioDialog : Window
         card.Click += async (_, _) =>
         {
             var made = await new ScenarioFilterDialog(row.Action).ShowDialog<ScenarioStep?>(this);
+            if (made is null) return;
+
+            row.Action   = made;
+            card.Content = made.Describe();
+        };
+
+        return row;
+    }
+
+    /// <summary>
+    /// Завести шаг «преобразовать строки». Окно сразу, как у отбора: шаг без выражений не
+    /// сохранится, а пустая строка «настройте меня» — переложенная работа.
+    /// </summary>
+    private async Task AddComputeAsync()
+    {
+        var made = await new ScenarioComputeDialog(ScenarioStep.OfCompute())
+                             .ShowDialog<ScenarioStep?>(this);
+
+        if (made is not null) AddStep(made);
+    }
+
+    /// <summary>Строка шага «преобразовать строки»: колонки словами, нажатие открывает окно.</summary>
+    private StepRow ComputeRow(ScenarioStep step)
+    {
+        var card = new Button
+        {
+            Height                     = 30,
+            Padding                    = new Thickness(10, 0),
+            HorizontalAlignment        = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Left,
+            VerticalContentAlignment   = VerticalAlignment.Center,
+            Content                    = step.Describe(),
+        };
+
+        var row = new StepRow { Kind = ScenarioStepKind.Compute, Card = card, Action = step };
+
+        card.Click += async (_, _) =>
+        {
+            var made = await new ScenarioComputeDialog(row.Action).ShowDialog<ScenarioStep?>(this);
             if (made is null) return;
 
             row.Action   = made;
@@ -601,6 +642,7 @@ public partial class ScenarioDialog : Window
                 ScenarioStepKind.Filter       => row.Action,
                 ScenarioStepKind.CreateRecord => row.Action,
                 ScenarioStepKind.Export       => row.Action,
+                ScenarioStepKind.Compute      => row.Action,
                 ScenarioStepKind.Intake       => ScenarioStep.OfIntake((row.Text!.Text ?? "").Trim()),
                 _                             => ScenarioStep.OfNotice((row.Text!.Text ?? "").Trim()),
             });

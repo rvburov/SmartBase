@@ -297,6 +297,14 @@ public enum ScenarioStepKind
     /// тогда, когда сценарию никто ничего не принес.
     /// </summary>
     Export,
+
+    /// <summary>
+    /// Посчитать новые колонки выражениями над строками предыдущего шага (шаг 12) — то самое
+    /// «данные пришли, их пересчитали, они ушли дальше», ради которого обычно и заводят
+    /// маленький скрипт. Скрипта тут нет и не будет: у выражения нет ни файлов, ни сети, ни
+    /// циклов, и запрещать ему нечего (<see cref="Formula"/>).
+    /// </summary>
+    Compute,
 }
 
 /// <summary>
@@ -314,8 +322,9 @@ public enum ScenarioStepKind
 /// <c>{{имя колонки}}</c> из строки, которую принес предыдущий шаг. Так одно и то же расширение
 /// вешается на разные каналы и разные журналы, ничего о них не зная.
 ///
-/// Видов пока четыре — по той же причине, что и у триггеров: остальные из плана (создать запись,
-/// экспорт выборки) ждут своих исполнителей.
+/// Шаг «преобразовать строки» ничего не читает и никуда не пишет: он считает новые колонки
+/// выражениями над тем, что принес предыдущий шаг. Ввода-вывода у него нет по построению —
+/// поэтому и прав он не спрашивает, и в контур безопасности не упирается.
 /// </summary>
 /// <param name="Kind">Вид шага.</param>
 /// <param name="RequestId">Запрос (только <see cref="ScenarioStepKind.Request"/>).</param>
@@ -334,18 +343,22 @@ public enum ScenarioStepKind
 /// Список, как и словарь полей, не участвует в сравнении записей.</param>
 /// <param name="Format">Формат файла выгрузки (только <see cref="ScenarioStepKind.Export"/>):
 /// «csv», «json» либо «xlsx».</param>
+/// <param name="ColumnFormulas">Новые колонки и выражения для них
+/// (<see cref="ScenarioStepKind.Compute"/>) — по порядку: каждая следующая видит уже
+/// посчитанные. Список, как и словарь полей, не участвует в сравнении записей.</param>
 public sealed record ScenarioStep(
     ScenarioStepKind                     Kind,
     int                                  RequestId,
     string                               Text,
-    string                               Extension    = "",
-    string                               Action       = "",
-    int                                  DbId         = 0,
-    int                                  CollectionId = 0,
-    IReadOnlyDictionary<string, string>? FieldValues  = null,
-    string                               Folder       = "",
-    IReadOnlyList<ScenarioCondition>?    Conditions   = null,
-    string                               Format       = "")
+    string                               Extension      = "",
+    string                               Action         = "",
+    int                                  DbId           = 0,
+    int                                  CollectionId   = 0,
+    IReadOnlyDictionary<string, string>? FieldValues    = null,
+    string                               Folder         = "",
+    IReadOnlyList<ScenarioCondition>?    Conditions     = null,
+    string                               Format         = "",
+    IReadOnlyList<ScenarioFormula>?      ColumnFormulas = null)
 {
     /// <summary>Сколько знаков умещается в карточке сообщения, не превращая ее в простыню.</summary>
     public const int MaxTextLength = 200;
@@ -366,6 +379,16 @@ public sealed record ScenarioStep(
 
     /// <summary>Условия отбора; у остальных видов шага пусто.</summary>
     public IReadOnlyList<ScenarioCondition> Tests => Conditions ?? [];
+
+    /// <summary>
+    /// Сколько колонок считает один шаг преобразования. Предел тот же по духу, что у условий:
+    /// десяток выражений в одном шаге еще читается сверху вниз, а два десятка проверяются уже
+    /// не глазами. Нужно больше — это два шага подряд, и в отчете видно, где что посчиталось.
+    /// </summary>
+    public const int MaxFormulas = 10;
+
+    /// <summary>Новые колонки и выражения к ним; у остальных видов шага пусто.</summary>
+    public IReadOnlyList<ScenarioFormula> Formulas => ColumnFormulas ?? [];
 
     public static ScenarioStep OfRequest(int requestId) =>
         new(ScenarioStepKind.Request, requestId, "");
@@ -392,6 +415,9 @@ public sealed record ScenarioStep(
                                         IReadOnlyList<ScenarioCondition>? conditions = null) =>
         new(ScenarioStepKind.Export, 0, "", DbId: dbId, CollectionId: collectionId,
             Folder: folder, Conditions: conditions, Format: format);
+
+    public static ScenarioStep OfCompute(params ScenarioFormula[] formulas) =>
+        new(ScenarioStepKind.Compute, 0, "", ColumnFormulas: formulas);
 
     /// <summary>Форматы выгрузки, которые умеет шаг «экспорт выборки». Ровно те, что пишут
     /// готовые писатели экспорта; «xlsm» намеренно не предлагается — macro-enabled контейнер
@@ -474,6 +500,31 @@ public sealed record ScenarioStep(
                     problems.Add($"Условие {i + 1}: {problem}");
         }
 
+        if (Kind == ScenarioStepKind.Compute)
+        {
+            if (Formulas.Count == 0)
+                problems.Add("В преобразовании нет ни одной колонки");
+            else if (Formulas.Count > MaxFormulas)
+                problems.Add($"Колонок больше {MaxFormulas}: посчитайте в два приема");
+
+            for (var i = 0; i < Formulas.Count; i++)
+                foreach (var problem in Formulas[i].Problems())
+                    problems.Add($"Колонка {i + 1}: {problem}");
+
+            // Две строки с одним именем — это спор, чье значение останется, и решать его
+            // порядком строк незачем: вторая просто переписала бы первую, а человек считал бы,
+            // что посчиталось и то и другое.
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var formula in Formulas)
+            {
+                var name = (formula.Column ?? "").Trim();
+
+                if (name.Length > 0 && !seen.Add(name))
+                    problems.Add($"Колонка «{name}» названа дважды");
+            }
+        }
+
         return problems;
     }
 
@@ -509,6 +560,11 @@ public sealed record ScenarioStep(
             + $" → {Format}"
             + (Tests.Count > 0 ? $", условий: {Tests.Count}" : ""),
 
+        ScenarioStepKind.Compute => "Преобразовать строки: "
+            + (Formulas.Count > 0
+                ? string.Join(", ", Formulas.Select(f => f.Column))
+                : "колонки не заданы"),
+
         _ => "Неизвестный шаг",
     };
 }
@@ -521,10 +577,9 @@ public sealed record ScenarioStep(
 /// на каждой открытой копии программы — и один обмен превратился бы в пять.
 ///
 /// Модель без ввода-вывода: выполняет сценарий отдельная служба, а здесь только форма и ее
-/// проверка. Условий («ЕСЛИ» из плана) пока нет. Между шагами уже течет таблица — ее берет шаг
-/// «действие», — но условию нужен не поток, а язык сравнения над ним, а всякий такой язык
-/// приходится описывать, отлаживать и объяснять. Выбирать его форму раньше, чем станет видно,
-/// какие сравнения нужны на деле, значит выбирать вслепую.
+/// проверка. Между шагами течет таблица, и над ней работают два шага без всякого доступа наружу:
+/// отбор («ЕСЛИ» из плана) и преобразование строк. Язык сравнения у них общий и нарочно бедный —
+/// его границы описаны в <see cref="Formula"/>.
 /// </summary>
 /// <param name="Id">Ключ строки в <c>app.db</c>; 0 — сценарий еще не сохранен.</param>
 /// <param name="Name">Имя для человека: «Заказы из учетной системы».</param>

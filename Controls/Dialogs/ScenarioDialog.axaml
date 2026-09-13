@@ -150,6 +150,7 @@
             <Button x:Name="AddActionBtn"  Content="+ Действие"        Height="30" Padding="12,0" Margin="0,0,8,8" />
             <Button x:Name="AddIntakeBtn"  Content="+ Файл из папки"   Height="30" Padding="12,0" Margin="0,0,8,8" />
             <Button x:Name="AddFilterBtn"  Content="+ Отбор"           Height="30" Padding="12,0" Margin="0,0,8,8" />
+            <Button x:Name="AddComputeBtn" Content="+ Преобразовать"   Height="30" Padding="12,0" Margin="0,0,8,8" />
             <Button x:Name="AddRecordBtn"  Content="+ Создать запись"  Height="30" Padding="12,0" Margin="0,0,8,8" />
             <Button x:Name="AddExportBtn"  Content="+ Экспорт выборки" Height="30" Padding="12,0" Margin="0,0,8,8" />
             <Button x:Name="AddNoticeBtn"  Content="+ Сообщение"       Height="30" Padding="12,0" Margin="0,0,8,8" />

@@ -570,4 +570,77 @@ public sealed class ScenarioTests
 
         Assert.Equal("Экспорт выборки: Заказы → xlsx, условий: 1", step.Describe("Заказы"));
     }
+
+    // ── Шаг «преобразовать строки» ────────────────────────────────────────────
+
+    [Fact]
+    public void A_compute_step_needs_at_least_one_column()
+    {
+        Assert.Contains(ScenarioStep.OfCompute().Problems(),
+                        p => p.Contains("ни одной колонки", StringComparison.Ordinal));
+
+        Assert.Empty(ScenarioStep.OfCompute(
+            new ScenarioFormula("Итого", "{{Цена}} * {{Количество}}")).Problems());
+    }
+
+    /// <summary>
+    /// Выражение проверяется ПРИ СОХРАНЕНИИ, а не в три ночи на боевой машине: сломанная скобка
+    /// не зависит от того, что придет в строке, и молчать о ней до запуска незачем.
+    /// </summary>
+    [Fact]
+    public void A_broken_expression_is_refused_with_its_place()
+    {
+        var step = ScenarioStep.OfCompute(new ScenarioFormula("Итого", "{{Цена}} * ("));
+
+        Assert.Contains(step.Problems(), p => p.StartsWith("Колонка 1:", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_column_without_a_name_is_refused()
+    {
+        var step = ScenarioStep.OfCompute(new ScenarioFormula("  ", "1 + 1"));
+
+        Assert.Contains(step.Problems(), p => p.Contains("не названа колонка", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Одно имя дважды — это спор, чье значение останется; решать его порядком строк незачем.
+    /// </summary>
+    [Fact]
+    public void The_same_column_twice_is_refused()
+    {
+        var step = ScenarioStep.OfCompute(new ScenarioFormula("Итого", "1"),
+                                          new ScenarioFormula("итого", "2"));
+
+        Assert.Contains(step.Problems(), p => p.Contains("названа дважды", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Too_many_columns_are_refused()
+    {
+        var many = Enumerable.Range(1, ScenarioStep.MaxFormulas + 1)
+                             .Select(i => new ScenarioFormula("К" + i, "1"))
+                             .ToArray();
+
+        Assert.Contains(ScenarioStep.OfCompute(many).Problems(),
+                        p => p.Contains("в два приема", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Curly_braces_in_a_column_name_are_refused()
+    {
+        var step = ScenarioStep.OfCompute(new ScenarioFormula("{{Итого}}", "1"));
+
+        Assert.Contains(step.Problems(),
+                        p => p.Contains("фигурных скобок", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_compute_step_says_which_columns_it_makes()
+    {
+        var step = ScenarioStep.OfCompute(new ScenarioFormula("Сумма", "{{Цена}} * {{Кол}}"),
+                                          new ScenarioFormula("С НДС", "{{Сумма}} * 1.2"));
+
+        Assert.Equal("Преобразовать строки: Сумма, С НДС", step.Describe());
+    }
 }

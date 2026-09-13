@@ -1,0 +1,112 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:b="clr-namespace:SmartBase.Controls.Behaviors"
+        xmlns:w="clr-namespace:SmartBase.Controls.Widgets"
+        x:Class="SmartBase.Controls.Dialogs.ScenarioComputeDialog"
+        Title="Преобразовать строки"
+        Width="{StaticResource DialogWidthWide}"
+        MinWidth="{StaticResource DialogWidthWide}"
+        MaxWidth="{StaticResource DialogWidthWide}"
+        MinHeight="0"
+        SizeToContent="Height"
+        b:DialogFit.LimitToScreen="True"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="{StaticResource BrushBg}">
+
+    <StackPanel Spacing="0" Margin="{StaticResource DialogPadding}">
+
+        <TextBlock Text="Шаг считает новые колонки над строками предыдущего шага и передает их дальше. В базу он не пишет и никуда не ходит: выражению доступны только значения строки."
+                   Margin="0,0,0,6"
+                   TextWrapping="Wrap"
+                   FontSize="{DynamicResource FontSizeSmall}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <TextBlock Text="Слева — имя новой колонки; совпало с существующей — ее значение заменится. Справа — выражение: значение колонки пишется {{Имя}}, текст в кавычках, дробная часть через точку, аргументы функций через «;». Колонки считаются сверху вниз, и каждая следующая видит уже посчитанные."
+                   Margin="0,0,0,8"
+                   TextWrapping="Wrap"
+                   FontSize="{DynamicResource FontSizeSmall}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <!-- ── Колонки ──────────────────────────────────────────────────────── -->
+
+        <!-- Полоса идет во всю высоту блока, а воздух висит на содержимом ВНУТРИ прокрутки
+             (docs/developer/ui/scrolling.md) — иначе она отходит от рамки. -->
+        <Border BorderBrush="{StaticResource BrushSeparator}"
+                BorderThickness="{DynamicResource BorderLine}"
+                CornerRadius="{StaticResource RadiusBase}"
+                ClipToBounds="True"
+                Margin="0,0,0,8"
+                Padding="0">
+            <ScrollViewer MaxHeight="220"
+                          HorizontalScrollBarVisibility="Disabled"
+                          VerticalScrollBarVisibility="Auto">
+                <StackPanel x:Name="ColumnsPanel" Spacing="8" Margin="10,8" />
+            </ScrollViewer>
+        </Border>
+
+        <WrapPanel Margin="0,0,0,12">
+            <Button x:Name="AddColumnBtn" Content="+ Колонка" Height="30" Padding="12,0" Margin="0,0,8,0" />
+            <Button x:Name="TryBtn"       Content="Проба"     Height="30" Padding="12,0" />
+        </WrapPanel>
+
+        <!-- ── Проба ────────────────────────────────────────────────────────── -->
+
+        <TextBlock x:Name="TryHint"
+                   Text="Проба считает выражения на одной придуманной строке — здесь, не запуская сценарий. Поля для колонок появятся сами, по именам из выражений."
+                   Margin="0,0,0,8"
+                   TextWrapping="Wrap"
+                   FontSize="{DynamicResource FontSizeSmall}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <Border x:Name="SampleBox"
+                IsVisible="False"
+                BorderBrush="{StaticResource BrushSeparator}"
+                BorderThickness="{DynamicResource BorderLine}"
+                CornerRadius="{StaticResource RadiusBase}"
+                ClipToBounds="True"
+                Margin="0,0,0,8"
+                Padding="0">
+            <ScrollViewer MaxHeight="180"
+                          HorizontalScrollBarVisibility="Disabled"
+                          VerticalScrollBarVisibility="Auto">
+                <StackPanel x:Name="SamplePanel" Spacing="8" Margin="10,8" />
+            </ScrollViewer>
+        </Border>
+
+        <Border x:Name="ResultBox"
+                IsVisible="False"
+                Background="{StaticResource BrushSecondaryBg}"
+                CornerRadius="{StaticResource RadiusBase}"
+                Margin="0,0,0,12"
+                Padding="10,8">
+            <TextBlock x:Name="ResultText"
+                       TextWrapping="Wrap"
+                       FontSize="{DynamicResource FontSizeSmall}" />
+        </Border>
+
+        <!-- ── Что умеют выражения ──────────────────────────────────────────── -->
+
+        <Border BorderBrush="{StaticResource BrushSeparator}"
+                BorderThickness="{DynamicResource BorderLine}"
+                CornerRadius="{StaticResource RadiusBase}"
+                ClipToBounds="True"
+                Margin="0,0,0,12"
+                Padding="0">
+            <ScrollViewer MaxHeight="150"
+                          HorizontalScrollBarVisibility="Disabled"
+                          VerticalScrollBarVisibility="Auto">
+                <StackPanel x:Name="HelpPanel" Spacing="4" Margin="10,8" />
+            </ScrollViewer>
+        </Border>
+
+        <w:NoticeBanner x:Name="NoticeBanner" Margin="0,0,0,12" />
+
+        <Grid ColumnDefinitions="*,Auto,8,Auto" Margin="0,4,0,0">
+            <Button Grid.Column="1" x:Name="CancelBtn" Classes="dialog" Content="Отмена" />
+            <Button Grid.Column="3" x:Name="SaveBtn"   Classes="dialog" Content="Готово" />
+        </Grid>
+
+    </StackPanel>
+
+</Window>

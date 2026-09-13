@@ -183,10 +183,14 @@ public static partial class ScenarioRunner
     /// папка обмена лежит на сетевом диске, который бывает выключен. Проверяется разрешение
     /// политики — оно считается по строкам, — а существование папки выяснит сам шаг.
     /// </summary>
+    /// <param name="initial">Строки, которые принесли сценарию ИЗВНЕ — их кладет календарный
+    /// триггер, и ими же запускают сценарий вручную с готовой таблицей. Шаг, которому нужны
+    /// строки, с ними законен и первым в списке.</param>
     public static string? Blocker(Scenario                       scenario,
                                   IntegrationsRegistry           registry,
                                   IReadOnlyList<DatabaseManager> databases,
-                                  IReadOnlyList<IExtension>      extensions)
+                                  IReadOnlyList<IExtension>      extensions,
+                                  StepTable?                     initial = null)
     {
         if (scenario.Steps.Count == 0) return "в сценарии нет шагов";
 
@@ -195,13 +199,24 @@ public static partial class ScenarioRunner
         // такой шаг разбирать и отбирать будет нечего. Календарный триггер строки ПРИНОСИТ
         // САМ — наступившие события, как будто их принес нулевой шаг.
         var text = false;
-        var rows = scenario.Trigger.WatchesCalendar;
+        var rows = scenario.Trigger.WatchesCalendar || initial is { Rows.Count: > 0 };
 
         foreach (var step in scenario.Steps)
         {
             if (step.Kind == ScenarioStepKind.Filter)
             {
                 if (!rows) return NoRows();
+                continue;
+            }
+
+            if (step.Kind == ScenarioStepKind.Compute)
+            {
+                if (step.Formulas.Count == 0) return "в шаге преобразования не задано ни одной колонки";
+
+                // Строк не прибавляет и не убавляет — только колонки, поэтому признак остается
+                // как был: после преобразования отбор работает, до него — нечего преобразовывать.
+                if (!rows) return NoComputeRows();
+
                 continue;
             }
 
@@ -316,7 +331,7 @@ public static partial class ScenarioRunner
         var clock = Stopwatch.StartNew();
         var total = scenario.Steps.Count;
 
-        if (Blocker(scenario, registry, databases, extensions) is { } blocker)
+        if (Blocker(scenario, registry, databases, extensions, initial) is { } blocker)
         {
             Journal(scenario, ok: false, blocker, rows: 0, clock.Elapsed, DbOf(scenario, registry),
                     now, "");
@@ -327,7 +342,9 @@ public static partial class ScenarioRunner
         // укладывает ответ потоком, и превращать его в список ради шага, которого в сценарии
         // нет, значило бы платить памятью за неиспользуемую возможность.
         var carry = scenario.Steps.Any(
-            s => s.Kind is ScenarioStepKind.Action or ScenarioStepKind.Filter);
+            s => s.Kind is ScenarioStepKind.Action
+                        or ScenarioStepKind.Filter
+                        or ScenarioStepKind.Compute);
 
         var lines   = new List<string>();
         var rows    = 0;
@@ -359,6 +376,7 @@ public static partial class ScenarioRunner
                     ScenarioStepKind.Action  => await ActionStepAsync(step, databases, extensions, table, text, now, ct),
                     ScenarioStepKind.Intake  => IntakeStep(step, scenario.Name, mark, now, ref taken),
                     ScenarioStepKind.Filter  => FilterStep(step, table),
+                    ScenarioStepKind.Compute => ComputeStep(step, table, now),
                     ScenarioStepKind.CreateRecord => await RecordStepAsync(step, databases, table, ct),
                     ScenarioStepKind.Export  => await ExportStepAsync(step, databases,
                                                                       scenario.Name, now, ct),
@@ -824,6 +842,128 @@ public static partial class ScenarioRunner
         "отбирать нечего: перед отбором нужен шаг, который приносит строки, — запрос в коллекцию "
         + "или разбор файла";
 
+    // ── Шаг «преобразовать строки» ────────────────────────────────────────────
+
+    /// <summary>
+    /// Новые колонки, посчитанные выражениями над строками предыдущего шага
+    /// (docs/ROADMAP-API.md, шаг 12). Ни файлов, ни сети, ни базы: шаг берет таблицу и отдает ее
+    /// же, только шире.
+    ///
+    /// <b>Колонки считаются ПО ПОРЯДКУ, и каждая следующая видит уже посчитанные.</b> Так
+    /// длинный расчет раскладывается на несколько понятных строк вместо одной неразбираемой:
+    /// «Сумма» из цены и количества, «С НДС» из суммы. Ссылка назад — единственная возможная,
+    /// поэтому круга не получится даже случайно.
+    ///
+    /// <b>Выражения разбираются до первой строки, имена колонок проверяются там же.</b> Опечатка
+    /// в имени, найденная на сотой строке, оставила бы девяносто девять посчитанных и никакого
+    /// способа понять, какие из них верные.
+    ///
+    /// <b>Первая отказавшая строка останавливает шаг.</b> Считать дальше значило бы решить за
+    /// человека, что пустая цена в одной строке — мелочь; в отчете сказано, на какой строке и в
+    /// какой колонке встали.
+    /// </summary>
+    private static StepOutcome ComputeStep(ScenarioStep step, StepTable? incoming, DateTimeOffset now)
+    {
+        if (step.Formulas.Count == 0)
+            return StepOutcome.Bad("в преобразовании нет ни одной колонки");
+
+        if (incoming is not { } table)
+            return StepOutcome.Bad(NoComputeRows());
+
+        // Разбор — один раз на шаг, а не на каждую строку: пятьсот строк по десять выражений
+        // означали бы пять тысяч разборов одного и того же текста.
+        var ready = new List<(string Column, Formula Formula)>(step.Formulas.Count);
+
+        foreach (var formula in step.Formulas)
+        {
+            var name = (formula.Column ?? "").Trim();
+
+            if (name.Length == 0)
+                return StepOutcome.Bad("преобразование: у одного из выражений не названа колонка");
+
+            if (Formula.TryParse(formula.Expression, out var trouble) is not { } parsed)
+                return StepOutcome.Bad($"преобразование, колонка «{name}»: {trouble}");
+
+            ready.Add((name, parsed));
+        }
+
+        // Известные имена растут по ходу списка: колонка, посчитанная выше, — законный источник
+        // для той, что ниже.
+        var known   = new HashSet<string>(table.Columns, StringComparer.OrdinalIgnoreCase);
+        var unknown = new List<string>();
+
+        foreach (var (name, formula) in ready)
+        {
+            foreach (var column in formula.Columns)
+                if (!known.Contains(column)
+                    && !unknown.Contains(column, StringComparer.OrdinalIgnoreCase))
+                    unknown.Add(column);
+
+            known.Add(name);
+        }
+
+        if (unknown.Count > 0)
+            return StepOutcome.Bad(
+                "в выражениях названы колонки, которых нет: " + string.Join(", ", unknown)
+                + (table.Columns.Count > 0
+                    ? "; в строке есть: " + string.Join(", ", table.Columns)
+                    : "; предыдущий шаг строк не передал"));
+
+        if (table.Rows.Count > StepTable.MaxRows)
+            return StepOutcome.Bad(
+                $"преобразование: строк {table.Rows.Count}, а за один запуск их считается не "
+                + $"больше {StepTable.MaxRows}");
+
+        var rows   = new List<IReadOnlyDictionary<string, string>>(table.Rows.Count);
+        var number = 0;
+
+        foreach (var row in table.Rows)
+        {
+            number++;
+
+            var made = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (column, value) in row) made[column] = value;
+
+            foreach (var (name, formula) in ready)
+            {
+                var value = formula.Run(made, now, out var trouble);
+
+                if (trouble.Length > 0)
+                    return StepOutcome.Bad(table.Rows.Count > 1
+                        ? $"преобразование, строка {number} из {table.Rows.Count}, "
+                          + $"колонка «{name}»: {trouble}"
+                        : $"преобразование, колонка «{name}»: {trouble}");
+
+                made[name] = value;
+            }
+
+            rows.Add(made);
+        }
+
+        // Имя, совпавшее с существующей колонкой, заменяет ее значение — так обрезают пробелы и
+        // приводят к одному написанию. Замена названа числом: молча переписанная колонка
+        // неотличима от посчитанной новой.
+        var columns  = new List<string>(table.Columns);
+        var replaced = 0;
+
+        foreach (var (name, _) in ready)
+            if (columns.Contains(name, StringComparer.OrdinalIgnoreCase)) replaced++;
+            else columns.Add(name);
+
+        var line = $"Преобразование ({string.Join(", ", ready.Select(r => r.Column))}): "
+                 + $"строк {rows.Count}"
+                 + (replaced > 0 ? $", колонок заменено {replaced}" : "");
+
+        // Записей шаг не заводит, поэтому в счет сценария не идет: посчитанные здесь строки и
+        // заведенные из них записи на следующем шаге — это одни и те же строки, а не двойной итог.
+        return new StepOutcome(true, line, 0, new StepTable(columns, rows));
+    }
+
+    /// <summary>Преобразовывать нечего — строки приносят запрос, разбор файла или триггер.</summary>
+    private static string NoComputeRows() =>
+        "преобразовывать нечего: перед шагом нужен тот, который приносит строки, — запрос в "
+        + "коллекцию или разбор файла";
+
     // ── Шаг «сообщение» ───────────────────────────────────────────────────────
 
     /// <summary>Сообщение человеку. Единственный шаг, который ничего не меняет.</summary>
@@ -936,6 +1076,7 @@ public static partial class ScenarioRunner
             ScenarioStepKind.Filter       => "отбор",
             ScenarioStepKind.CreateRecord => "создание записи",
             ScenarioStepKind.Export       => "экспорт выборки",
+            ScenarioStepKind.Compute      => "преобразование",
             _                             => kind.ToString(),
         };
 

@@ -127,6 +127,41 @@ public sealed class ScenarioTransferTests : IDisposable
     }
 
     /// <summary>
+    /// Шаг «преобразовать строки» переезжает целиком — вместе с выражениями и их порядком. Ни
+    /// баз, ни коллекций он не называет, поэтому на чужой машине работает сразу: считать колонки
+    /// из строк можно где угодно.
+    /// </summary>
+    [Fact]
+    public void A_compute_step_travels_with_its_expressions()
+    {
+        ScenarioBundle bundle;
+
+        using (var first = Machine("один"))
+        {
+            first.Integrations.SaveScenario(new Scenario(0, "Пересчет", false,
+                ScenarioTrigger.EveryMinutes(30),
+                [
+                    ScenarioStep.OfIntake(@"P:\Обмен\Заказы"),
+                    ScenarioStep.OfCompute(
+                        new ScenarioFormula("Сумма", "{{Цена}} * {{Количество}}"),
+                        new ScenarioFormula("С НДС", "ОКРУГЛ({{Сумма}} * 1.2; 2)")),
+                ]));
+
+            bundle = ScenarioTransfer.Export(first.Integrations, first.Integrations.Scenarios(),
+                                             [], "ПК17", Now);
+        }
+
+        using var second = Machine("два");
+        Assert.Equal(1, ScenarioTransfer.Import(bundle, second.Integrations, [], Now).Scenarios);
+
+        var step = Assert.Single(second.Integrations.Scenarios()).Steps[1];
+
+        Assert.Equal(ScenarioStepKind.Compute, step.Kind);
+        Assert.Equal(["Сумма", "С НДС"], step.Formulas.Select(f => f.Column).ToArray());
+        Assert.Equal("ОКРУГЛ({{Сумма}} * 1.2; 2)", step.Formulas[1].Expression);
+    }
+
+    /// <summary>
     /// Приехавший сценарий выключен всегда: файл открывают, чтобы посмотреть, а не чтобы
     /// немедленно начать обмен с чужой системой.
     /// </summary>
