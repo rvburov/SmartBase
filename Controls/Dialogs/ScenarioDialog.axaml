@@ -4,17 +4,21 @@
         xmlns:w="clr-namespace:SmartBase.Controls.Widgets"
         x:Class="SmartBase.Controls.Dialogs.ScenarioDialog"
         Title="Сценарий"
-        Width="{StaticResource DialogWidthBase}"
-        MinWidth="{StaticResource DialogWidthBase}"
-        MaxWidth="{StaticResource DialogWidthBase}"
-        MinHeight="0"
-        SizeToContent="Height"
+        Width="{StaticResource DialogWidthData}"
+        Height="{StaticResource DialogHeightData}"
+        MinWidth="{StaticResource DialogMinWidthData}"
+        MinHeight="{StaticResource DialogMinHeightData}"
         b:DialogFit.LimitToScreen="True"
+        b:DialogSize.Remember="scenario"
         WindowStartupLocation="CenterOwner"
-        CanResize="False"
+        CanResize="True"
         Background="{StaticResource BrushBg}">
 
-    <StackPanel Spacing="0" Margin="{StaticResource DialogPadding}">
+    <!-- Окно КЛАССА «данные»: растет СПИСОК ШАГОВ — в сценарии их бывает два десятка, и
+         перебирать их в прокрутке высотой в пять строк невозможно. -->
+    <Grid RowDefinitions="Auto,*,Auto" Margin="{StaticResource DialogPadding}">
+
+    <StackPanel Grid.Row="0" Spacing="0">
 
         <TextBlock Text="Название"
                    Margin="0,0,0,6"
@@ -128,20 +132,24 @@
                    FontSize="{DynamicResource FontSizeSmall}"
                    Foreground="{StaticResource BrushSecondaryText}" />
 
+    </StackPanel>
+
         <!-- Полоса идет во всю высоту блока, а воздух висит на содержимом ВНУТРИ прокрутки
              (docs/developer/ui/scrolling.md) — иначе она отходит от рамки. -->
-        <Border BorderBrush="{StaticResource BrushSeparator}"
+        <Border Grid.Row="1"
+                BorderBrush="{StaticResource BrushSeparator}"
                 BorderThickness="{DynamicResource BorderLine}"
                 CornerRadius="{StaticResource RadiusBase}"
                 ClipToBounds="True"
                 Margin="0,0,0,8"
                 Padding="0">
-            <ScrollViewer MaxHeight="180"
-                          HorizontalScrollBarVisibility="Disabled"
+            <ScrollViewer HorizontalScrollBarVisibility="Disabled"
                           VerticalScrollBarVisibility="Auto">
                 <StackPanel x:Name="StepsPanel" Spacing="6" Margin="10,8" />
             </ScrollViewer>
         </Border>
+
+    <StackPanel Grid.Row="2" Spacing="0">
 
         <!-- Кнопок много, и в одну строку они не помещаются: WrapPanel переносит сам, а
              подпись «+» делает их кнопками добавления, а не отбора. -->
@@ -179,5 +187,7 @@
         </Grid>
 
     </StackPanel>
+
+    </Grid>
 
 </Window>

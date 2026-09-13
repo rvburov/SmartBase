@@ -1,18 +1,27 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:b="clr-namespace:SmartBase.Controls.Behaviors"
         xmlns:w="clr-namespace:SmartBase.Controls.Widgets"
         x:Class="SmartBase.Controls.Dialogs.IntegrationRequestDialog"
         Title="Запрос"
-        Width="{StaticResource DialogWidthBase}"
-        MinWidth="{StaticResource DialogWidthBase}"
-        MaxWidth="{StaticResource DialogWidthBase}"
-        MinHeight="0"
-        SizeToContent="Height"
+        Width="{StaticResource DialogWidthData}"
+        Height="{StaticResource DialogHeightData}"
+        MinWidth="{StaticResource DialogMinWidthData}"
+        MinHeight="{StaticResource DialogMinHeightData}"
+        b:DialogFit.LimitToScreen="True"
+        b:DialogSize.Remember="request-card"
         WindowStartupLocation="CenterOwner"
-        CanResize="False"
+        CanResize="True"
         Background="{StaticResource BrushBg}">
 
-    <StackPanel Spacing="0" Margin="{StaticResource DialogPadding}">
+    <!-- Окно КЛАССА «данные»: форма длинная, а сырой ответ чужой программы читают глазами —
+         поэтому форма живет в прокрутке, ответ и кнопки прижаты к низу, а окно тянется. -->
+    <Grid RowDefinitions="*,Auto,Auto" Margin="{StaticResource DialogPadding}">
+
+    <ScrollViewer Grid.Row="0"
+                  HorizontalScrollBarVisibility="Disabled"
+                  VerticalScrollBarVisibility="Auto">
+    <StackPanel Spacing="0" Margin="0,0,10,0">
 
         <TextBlock Text="Название"
                    Margin="0,0,0,6"
@@ -132,16 +141,21 @@
                    TextWrapping="Wrap"
                    FontSize="{DynamicResource FontSizeSmall}" />
 
-        <!-- Сырой ответ: без него чужой API не настроить никогда. Только чтение. -->
+    </StackPanel>
+    </ScrollViewer>
+
+        <!-- Сырой ответ: без него чужой API не настроить никогда. Только чтение. Живет он ВНЕ
+             прокрутки формы: его читают глазами, и уезжать вместе с полями он не должен. -->
         <TextBox x:Name="AnswerBox"
+                 Grid.Row="1"
                  IsVisible="False"
                  IsReadOnly="True"
                  AcceptsReturn="True"
-                 Height="120" Margin="0,0,0,12"
+                 MinHeight="120" MaxHeight="320" Margin="0,8,0,12"
                  TextWrapping="NoWrap"
                  CornerRadius="{StaticResource RadiusMedium}" />
 
-        <Grid ColumnDefinitions="Auto,*,Auto,8,Auto" Margin="0,4,0,0">
+        <Grid Grid.Row="2" ColumnDefinitions="Auto,*,Auto,8,Auto" Margin="0,4,0,0">
             <Button Grid.Column="0" x:Name="TestBtn" Classes="dialog" Width="130"
                     Content="Проверить" />
             <Button Grid.Column="2" x:Name="CancelBtn" Classes="dialog"
@@ -150,6 +164,6 @@
                     Content="Сохранить" />
         </Grid>
 
-    </StackPanel>
+    </Grid>
 
 </Window>

@@ -58,7 +58,7 @@ if (await dlg.ShowDialog<bool>(ownerWindow) == true) { /* ... */ }
 Габариты диалога берутся **только** из токенов
 [Assets/Styles/WindowMetrics.axaml](../../../Assets/Styles/WindowMetrics.axaml) — так же, как
 размер текста берется из `Typography.axaml` (см. [theming.md](theming.md)). Голых чисел в шапке
-окна быть не должно: правка стандарта — одно место, а не двадцать файлов. Размеров ровно три,
+окна быть не должно: правка стандарта — одно место, а не двадцать файлов. Размеров ровно четыре,
 новые не заводим:
 
 | Размер | Токен | Габариты | Кому |
@@ -66,10 +66,45 @@ if (await dlg.ShowDialog<bool>(ownerWindow) == true) { /* ... */ }
 | Compact | `DialogWidthCompact` | 420 × авто | `ConfirmDialog`, `NotificationRecordDialog`, `PasswordDialog`, `ProgressDialog` |
 | Base | `DialogWidthBase` | 520 × авто | все формы: `RecordDialog`, `TaskDialog`, `CollectionDialog`, `GroupDialog`, `CreateItemDialog`, `NoteItemDialog`, `LocationDialog`, `RecordLocationDialog`, `PropertyEditorDialog`, `CreateDatabaseDialog`, `DbSettingsDialog`, `ImportExportDialog`, все `Pg*Dialog` |
 | Wide | `DialogWidthWide` / `DialogHeightWide` | 800 × 800 | `DisplayDialog`, `RecordDisplayDialog` |
+| Data | `DialogWidthData` / `DialogHeightData` + `DialogMinWidthData` / `DialogMinHeightData` | 900 × 700, растягивается, минимум 640 × 480 | `IntegrationBindingDialog`, `OutgoingBindingDialog`, `RequestPreviewDialog`, `IntegrationRequestDialog`, `ScenarioDialog`, `ApiDescriptionDialog` |
 
 Compact — окна без формы: сообщение, подтверждение, пара коротких полей, индикатор процесса.
 Base — размер по умолчанию: если сомневаетесь, берите его. Wide — окна-таблицы, где высота
 нужна под список, а не под форму.
+
+**Data — окна, за которыми работают с данными** (шаг 14
+[плана интеграций](../../ROADMAP-API.md)): раскладка колонок на сотню свойств, превью
+уходящего, карточка запроса, сценарий, описание своего API. От Wide отличается не числами, а
+поведением — `CanResize="True"` и память размера: подобранный однажды размер не подбирают заново
+каждое утро.
+
+```xml
+<Window Width="{StaticResource DialogWidthData}"
+        Height="{StaticResource DialogHeightData}"
+        MinWidth="{StaticResource DialogMinWidthData}"
+        MinHeight="{StaticResource DialogMinHeightData}"
+        b:DialogFit.LimitToScreen="True"
+        b:DialogSize.Remember="binding-in"
+        CanResize="True">
+    <Grid RowDefinitions="Auto,*,Auto" Margin="{StaticResource DialogPadding}">
+```
+
+Три правила этого класса:
+
+- **Растет одна середина.** Разметка — `Grid` из трех строк: шапка (`Auto`), растущее тело
+  (`*`) и низ с кнопками (`Auto`). Тело — то, ради чего окно тянут: список колонок, тело
+  запроса, список шагов. `MaxHeight` у его прокрутки не ставится — он и есть ограничитель
+  роста, а окно должно расти.
+- **Размер помнится по имени окна**
+  ([DialogSize](../../../Controls/Behaviors/DialogSize.cs)): ключ `dialog.<имя>.size` в
+  `app_settings`, значение «900x700». Хранится размер при зуме 100% — габариты умножаются на
+  зум, и запомни программа «как на экране», окно росло бы само собой при смене масштаба.
+  Вернулся к исходному — ключ уходит из базы, как и у остальных настроек.
+- **Списки на сотни строк виртуализуются** — `ItemsControl` с `VirtualizingStackPanel` и
+  моделью строки ([BindingRows.cs](../../../Controls/Dialogs/BindingRows.cs)). Состояние
+  (выбранное место, галочка, имя) живет в модели, а не в контроле: виртуализация пересоздает
+  контролы при прокрутке, и выбор, живущий в комбобоксе, терялся бы, стоило строке уехать за
+  край. Рядом со списком — поиск: прокрутка на сотню свойств без него не раскладка, а перебор.
 
 **Как записывается в разметке.** Ширина фиксируется тройкой `Width`/`MinWidth`/`MaxWidth`
 (длинная строка не должна распирать окно), высота у Compact и Base идет за содержимым:
@@ -91,10 +126,10 @@ Base — размер по умолчанию: если сомневаетесь
 поэтому колонка задана токеном `DialogColumnWidth` (480 = Base − отступы). Окно с одной колонкой
 выходит ровно в Base, при ручном типе вторая колонка расширяет его вправо на столько же.
 
-**Потолок по экрану.** У Wide габариты жесткие, а зум приложения их умножает
+**Потолок по экрану.** У Wide и Data габариты жесткие, а зум приложения их умножает
 ([WindowZoom](../../../Controls/Behaviors/WindowZoom.cs)): 800 → 1000 при 125%, 1200 при 150% —
-на ноутбучном экране такое окно уходит за нижний край, а ресайза у диалогов нет. Поэтому Wide
-помечены `b:DialogFit.LimitToScreen="True"`
+на ноутбучном экране такое окно уходит за нижний край. Поэтому Wide и Data помечены
+`b:DialogFit.LimitToScreen="True"`
 ([DialogFit](../../../Controls/Behaviors/DialogFit.cs)): окно ужимается до рабочей области и
 возвращается в ее центр, остальное добирает внутренний скролл. Окнам с `SizeToContent` это не
 нужно — их высота и так идет за содержимым.

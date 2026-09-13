@@ -1,6 +1,5 @@
 using Avalonia.Controls;
 using Avalonia.Layout;
-using Avalonia.Platform.Storage;
 using SmartBase.Controls.Dialogs;
 using SmartBase.Database;
 using SmartBase.Integrations;
@@ -546,11 +545,12 @@ public partial class SettingsView
 
         var combo = Picker(opened.Select(d => d.Name), 0);
 
+        // Кнопка одна: описание открывается своим окном, а копирование и сохранение живут в
+        // нем же. Три кнопки в строке означали три пути к одному и тому же тексту, из которых
+        // два показывали его вслепую.
         block.Children.Add(ButtonLine(
             combo,
-            RowButton("Показать",         () => _ = ShowApiAsync(Chosen(combo, opened), copy: false)),
-            RowButton("Скопировать",      () => _ = ShowApiAsync(Chosen(combo, opened), copy: true)),
-            RowButton("Сохранить в файл", () => _ = SaveApiAsync(Chosen(combo, opened)))));
+            RowButton("Показать описание", () => _ = ShowApiAsync(Chosen(combo, opened)))));
 
         return Row("Описание для отправителя", ApiHelp(), block);
     }
@@ -580,51 +580,18 @@ public partial class SettingsView
         return ApiDescription.Text(address, name, collections);
     }
 
-    private async Task ShowApiAsync(DatabaseManager? target, bool copy)
+    /// <summary>
+    /// Показать описание своим окном (<see cref="ApiDescriptionDialog"/>). Раньше это делало окно
+    /// сообщения — оно растет по содержимому и режет длинный текст краем экрана; описание на
+    /// сотню коллекций прочитать в нем было нечем (docs/ROADMAP-API.md, шаг 14).
+    /// </summary>
+    private async Task ShowApiAsync(DatabaseManager? target)
     {
         if (VisualRoot is not Window win || target is null) return;
 
         var text = await ApiTextAsync(target);
 
-        if (copy)
-        {
-            await (TopLevel.GetTopLevel(this)?.Clipboard?.SetTextAsync(text) ?? Task.CompletedTask);
-            await ConfirmDialog.Info("Описание скопировано — его можно вставить в письмо.")
-                               .ShowDialog(win);
-            return;
-        }
-
-        await ConfirmDialog.Info(text).ShowDialog(win);
-    }
-
-    private async Task SaveApiAsync(DatabaseManager? target)
-    {
-        if (VisualRoot is not Window win || target is null) return;
-
-        var text = await ApiTextAsync(target);
-
-        var file = await win.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
-        {
-            Title               = "Куда сохранить описание",
-            SuggestedFileName   = ApiDescription.FileName(target.Name),
-            DefaultExtension    = "txt",
-            ShowOverwritePrompt = true,
-            FileTypeChoices     = [new FilePickerFileType("Текстовый файл") { Patterns = ["*.txt"] }],
-        });
-
-        if (file?.TryGetLocalPath() is not { Length: > 0 } path) return;
-
-        try
-        {
-            // С меткой порядка байтов: файл открывают Блокнотом, а он без метки читает русский
-            // текст как набор знаков вопроса.
-            await File.WriteAllTextAsync(path, text, new System.Text.UTF8Encoding(true));
-
-            await ConfirmDialog.Info($"Описание сохранено.\n\nФайл: {path}").ShowDialog(win);
-        }
-        catch (Exception error)
-        {
-            await ConfirmDialog.Info("Сохранить не удалось.\n\n" + error.Message).ShowDialog(win);
-        }
+        await new ApiDescriptionDialog(text, ApiDescription.FileName(target.Name), ApiHelp())
+            .ShowDialog(win);
     }
 }

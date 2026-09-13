@@ -1,20 +1,25 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:b="clr-namespace:SmartBase.Controls.Behaviors"
+        xmlns:d="clr-namespace:SmartBase.Controls.Dialogs"
         xmlns:w="clr-namespace:SmartBase.Controls.Widgets"
         x:Class="SmartBase.Controls.Dialogs.OutgoingBindingDialog"
         Title="Что уходит наружу"
-        Width="{StaticResource DialogWidthWide}"
-        MinWidth="{StaticResource DialogWidthWide}"
-        MaxWidth="{StaticResource DialogWidthWide}"
-        MinHeight="0"
-        SizeToContent="Height"
+        Width="{StaticResource DialogWidthData}"
+        Height="{StaticResource DialogHeightData}"
+        MinWidth="{StaticResource DialogMinWidthData}"
+        MinHeight="{StaticResource DialogMinHeightData}"
         b:DialogFit.LimitToScreen="True"
+        b:DialogSize.Remember="binding-out"
         WindowStartupLocation="CenterOwner"
-        CanResize="False"
+        CanResize="True"
         Background="{StaticResource BrushBg}">
 
-    <StackPanel Spacing="0" Margin="{StaticResource DialogPadding}">
+    <!-- Окно КЛАССА «данные»: шапка и низ на месте, растет список полей — ради него окно и
+         тянут, свойств в коллекции бывает под сотню. -->
+    <Grid RowDefinitions="Auto,*,Auto" Margin="{StaticResource DialogPadding}">
+
+    <StackPanel Grid.Row="0" Spacing="0">
 
         <!-- Главное правило этого окна, и сказать его надо до списка: уходит только то, что
              перечислено поименно. Ни «запись целиком», ни «все поля». -->
@@ -64,23 +69,86 @@
             </StackPanel>
         </Grid>
 
-        <TextBlock Text="Какие поля уходят"
-                   Margin="0,0,0,6"
-                   FontWeight="{StaticResource FontWeightBold}"
-                   Foreground="{StaticResource BrushSecondaryText}" />
+        <Grid ColumnDefinitions="Auto,12,*,12,Auto" Margin="0,0,0,6">
+            <TextBlock Grid.Column="0"
+                       Text="Какие поля уходят"
+                       VerticalAlignment="Center"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       Foreground="{StaticResource BrushSecondaryText}" />
 
-        <Border BorderBrush="{StaticResource BrushSeparator}"
+            <!-- Поиск по свойствам: в коллекции их бывают сотни, и отметить два нужных, листая
+                 весь список, — работа на пустом месте. -->
+            <TextBox Grid.Column="2" x:Name="SearchBox"
+                     Height="30"
+                     Watermark="Поиск по свойствам"
+                     VerticalContentAlignment="Center"
+                     CornerRadius="{StaticResource RadiusBase}" />
+
+            <TextBlock Grid.Column="4" x:Name="FoundText"
+                       VerticalAlignment="Center"
+                       FontSize="{DynamicResource FontSizeSmall}"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+        </Grid>
+
+    </StackPanel>
+
+        <Border Grid.Row="1"
+                BorderBrush="{StaticResource BrushSeparator}"
                 BorderThickness="{DynamicResource BorderLine}"
                 CornerRadius="{StaticResource RadiusBase}"
                 ClipToBounds="True"
                 Margin="0,0,0,12"
                 Padding="0">
-            <ScrollViewer MaxHeight="260"
-                          HorizontalScrollBarVisibility="Disabled"
-                          VerticalScrollBarVisibility="Auto">
-                <StackPanel x:Name="FieldsPanel" Spacing="6" Margin="10,8" />
-            </ScrollViewer>
+            <Panel>
+                <!-- Строки виртуализуются: свойств в коллекции бывают сотни, и создавать на
+                     каждое галочку с полем разом — заметная пауза на открытии окна. Состояние
+                     живет в модели строки: виртуализация пересоздает контролы при прокрутке. -->
+                <ItemsControl x:Name="FieldItems" Margin="10,8">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <VirtualizingStackPanel />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="d:OutgoingFieldRow">
+                            <StackPanel Spacing="2" Margin="0,0,0,6">
+                                <Grid ColumnDefinitions="*,12,*">
+                                    <CheckBox Grid.Column="0"
+                                              Content="{Binding Title}"
+                                              IsChecked="{Binding Takes, Mode=TwoWay}"
+                                              IsEnabled="{Binding Allowed}"
+                                              VerticalAlignment="Center" />
+                                    <TextBox Grid.Column="2"
+                                             Height="30"
+                                             Text="{Binding Alias, Mode=TwoWay}"
+                                             IsEnabled="{Binding Allowed}"
+                                             Watermark="имя в JSON"
+                                             VerticalContentAlignment="Center"
+                                             HorizontalAlignment="Stretch" />
+                                </Grid>
+
+                                <!-- Почему галочки нет — прямо под строкой: узнать, что поле
+                                     наружу не уходит, надо здесь, а не из пустой колонки у той
+                                     стороны через неделю. -->
+                                <TextBlock Text="{Binding Note}"
+                                           IsVisible="{Binding HasNote}"
+                                           TextWrapping="Wrap"
+                                           FontSize="{DynamicResource FontSizeSmall}"
+                                           Foreground="{StaticResource BrushSecondaryText}" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <TextBlock x:Name="FieldsEmpty"
+                           IsVisible="False"
+                           Margin="10,8"
+                           TextWrapping="Wrap"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+            </Panel>
         </Border>
+
+    <StackPanel Grid.Row="2" Spacing="0">
 
         <Grid ColumnDefinitions="*,12,*" Margin="0,0,0,10">
             <StackPanel Grid.Column="0">
@@ -128,5 +196,7 @@
         </Grid>
 
     </StackPanel>
+
+    </Grid>
 
 </Window>

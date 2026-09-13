@@ -1,0 +1,57 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:b="clr-namespace:SmartBase.Controls.Behaviors"
+        x:Class="SmartBase.Controls.Dialogs.ApiDescriptionDialog"
+        Title="Описание для отправителя"
+        Width="{StaticResource DialogWidthData}"
+        Height="{StaticResource DialogHeightData}"
+        MinWidth="{StaticResource DialogMinWidthData}"
+        MinHeight="{StaticResource DialogMinHeightData}"
+        b:DialogFit.LimitToScreen="True"
+        b:DialogSize.Remember="api-description"
+        WindowStartupLocation="CenterOwner"
+        CanResize="True"
+        Background="{StaticResource BrushBg}">
+
+    <!-- Окно КЛАССА «данные»: описание длиной в несколько экранов, и растет именно оно.
+         Раньше его показывало окно сообщения — оно режет длинный текст краем экрана, и
+         прочитать описание целиком было нечем. -->
+    <Grid RowDefinitions="Auto,*,Auto" Margin="{StaticResource DialogPadding}">
+
+        <TextBlock Grid.Row="0"
+                   x:Name="HintText"
+                   Margin="0,0,0,10"
+                   TextWrapping="Wrap"
+                   FontSize="{DynamicResource FontSizeSmall}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <!-- Полоса идет во всю высоту блока, а воздух висит на содержимом ВНУТРИ прокрутки
+             (docs/developer/ui/scrolling.md) — иначе она отходит от рамки. -->
+        <Border Grid.Row="1"
+                BorderBrush="{StaticResource BrushSeparator}"
+                BorderThickness="{DynamicResource BorderLine}"
+                CornerRadius="{StaticResource RadiusBase}"
+                ClipToBounds="True"
+                Margin="0,0,0,12"
+                Padding="0">
+            <!-- Моноширинная ячейка: в описании выровненные колонки со свойствами и типами,
+                 и в пропорциональном шрифте они разъезжаются. Перенос выключен по той же
+                 причине — строка описания длиннее ширины окна уезжает вбок, а не ломается. -->
+            <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                          VerticalScrollBarVisibility="Auto">
+                <SelectableTextBlock x:Name="BodyText"
+                                     Margin="10,8"
+                                     FontFamily="{StaticResource FontFamilyMono}"
+                                     FontSize="{DynamicResource FontSizeMono}" />
+            </ScrollViewer>
+        </Border>
+
+        <Grid Grid.Row="2" ColumnDefinitions="Auto,8,Auto,*,Auto" Margin="0,4,0,0">
+            <Button Grid.Column="0" x:Name="CopyBtn" Classes="dialog" Content="Скопировать" />
+            <Button Grid.Column="2" x:Name="SaveBtn" Classes="dialog" Content="Сохранить в файл" />
+            <Button Grid.Column="4" x:Name="CloseBtn" Classes="dialog" Content="Закрыть" />
+        </Grid>
+
+    </Grid>
+
+</Window>

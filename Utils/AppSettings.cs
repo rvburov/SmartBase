@@ -149,6 +149,56 @@ public static class AppSettings
     // переключателей нет (без них большие коллекции зависают). Бывший ключ asyncRowLoad
     // удален: оставшиеся в app.db значения игнорируются.
 
+    // ── Размер окон данных ─────────────────────────────────────────────────────
+    //
+    // Четвертый класс окон (WindowMetrics.axaml, «Data») — единственный, который человек
+    // тянет мышью, и единственный, чей размер помнится: раскладку на сотню свойств один раз
+    // растягивают на весь экран, и делать это каждое утро заново — работа на пустом месте.
+    //
+    // Хранится размер при зуме 100%: габариты окон умножаются на зум (Controls/Behaviors/
+    // WindowZoom), и запомни мы размер «как на экране» — при смене масштаба окно росло бы
+    // само собой. Ключ — «dialog.<окно>.size», значение «900x700».
+
+    public const int DialogSizeMin = 320;
+    public const int DialogSizeMax = 6000;
+
+    /// <summary>
+    /// Запомненный размер окна данных; <c>null</c> — не запоминали или в базе мусор. Пределы
+    /// проверяются при ЧТЕНИИ: файл app.db переезжает между машинами, и размер, снятый с
+    /// четырехмониторной стены, не должен открывать окно за краем ноутбука.
+    /// </summary>
+    public static (int Width, int Height)? LoadDialogSize(string window)
+    {
+        var parts = (_store?.Get(DialogSizeKey(window)) ?? "").Split('x', 2);
+
+        if (parts.Length != 2) return null;
+
+        if (!int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var width)
+         || !int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var height))
+            return null;
+
+        if (width  is < DialogSizeMin or > DialogSizeMax) return null;
+        if (height is < DialogSizeMin or > DialogSizeMax) return null;
+
+        return (width, height);
+    }
+
+    /// <summary>Запомнить размер окна данных.</summary>
+    public static void SaveDialogSize(string window, int width, int height)
+    {
+        if (width  is < DialogSizeMin or > DialogSizeMax) return;
+        if (height is < DialogSizeMin or > DialogSizeMax) return;
+
+        _store?.Set(DialogSizeKey(window),
+                    width.ToString(CultureInfo.InvariantCulture) + "x"
+                  + height.ToString(CultureInfo.InvariantCulture));
+    }
+
+    /// <summary>Забыть размер: окно вернулось к тому, с которого начинало.</summary>
+    public static void ForgetDialogSize(string window) => _store?.Remove(DialogSizeKey(window));
+
+    private static string DialogSizeKey(string window) => $"dialog.{window}.size";
+
     // ── Размер шрифта ──────────────────────────────────────────────────────────
     //
     // Дельта в пикселях к стандартным размерам из Typography.axaml (FontSizeSmall/Base/Large).

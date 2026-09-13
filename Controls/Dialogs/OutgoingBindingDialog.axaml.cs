@@ -32,14 +32,11 @@ public sealed record OutgoingChoice(OutgoingBinding? Binding);
 /// </summary>
 public partial class OutgoingBindingDialog : Window
 {
-    /// <summary>Строка списка: свойство коллекции и имя, под которым оно уходит.</summary>
-    private sealed record FieldRow(int? FieldId, CheckBox Take, TextBox Name);
-
     private readonly IReadOnlyList<DbOption> _dbs;
     private readonly OutgoingBinding?        _saved;
 
-    private List<(string Name, int Id)> _collections = [];
-    private readonly List<FieldRow>     _rows        = [];
+    private List<(string Name, int Id)>     _collections = [];
+    private readonly List<OutgoingFieldRow> _rows        = [];
 
     // Перестройка списков сама меняет выбор в комбобоксах: пока она идет, реакции выключены —
     // иначе подсказка считалась бы по полусобранному состоянию.
@@ -73,6 +70,8 @@ public partial class OutgoingBindingDialog : Window
         CollectionCombo.SelectionChanged += (_, _) => { if (!_building) RebuildFields(); };
         ShapeCombo.SelectionChanged      += (_, _) => { if (!_building) ShowHint(); };
         EnvelopeInput.TextChanged        += (_, _) => { if (!_building) ShowHint(); };
+
+        SearchBox.TextChanged += (_, _) => ShowFound();
 
         ClearBtn.Click   += (_, _) => Close(new OutgoingChoice(null));
         CancelBtn.Click  += (_, _) => Close(null);
@@ -128,17 +127,18 @@ public partial class OutgoingBindingDialog : Window
     {
         _building = true;
         _rows.Clear();
-        FieldsPanel.Children.Clear();
+        FieldItems.ItemsSource = null;
 
         var collectionId = CurrentCollectionId;
 
         if (CurrentDb is not { } db || collectionId <= 0)
         {
-            FieldsPanel.Children.Add(Note(_dbs.Count == 0
+            Empty(_dbs.Count == 0
                 ? "Нет открытых баз данных."
-                : "В выбранной базе нет коллекций — отправлять нечего."));
+                : "В выбранной базе нет коллекций — отправлять нечего.");
 
             _building = false;
+            ShowFound();
             ShowHint();
             return;
         }
@@ -149,9 +149,10 @@ public partial class OutgoingBindingDialog : Window
 
         if (!closed.Allowed)
         {
-            FieldsPanel.Children.Add(Note(closed.Explanation, warning: true));
+            Empty(closed.Explanation, warning: true);
 
             _building = false;
+            ShowFound();
             ShowHint();
             return;
         }
@@ -175,74 +176,80 @@ public partial class OutgoingBindingDialog : Window
             AddRow(field.Id!.Value, TitleText.FirstLine(field.Name),
                    Confidentiality.FromConfig(field.ConfigJson), saved);
 
+        FieldsEmpty.IsVisible = false;
+
         _building = false;
+        ShowFound();
         ShowHint();
     }
 
     /// <summary>
-    /// Одна строка списка. Помеченное свойство показывается серым и с причиной: узнать, что поле
-    /// наружу не уходит, надо здесь, а не из пустой колонки у той стороны через неделю.
+    /// Одна строка списка. Помеченное свойство остается в списке, но выбрать его нельзя, и рядом
+    /// написано почему: узнать, что поле наружу не уходит, надо здесь, а не из пустой колонки у
+    /// той стороны через неделю.
     /// </summary>
     private void AddRow(int? fieldId, string title, ConfidentialityLabel label, OutgoingBinding? saved)
     {
-        var mark    = EgressGate.CheckField(label);
-        var chosen  = saved?.Fields.FirstOrDefault(f => f.FieldId == fieldId);
+        var mark   = EgressGate.CheckField(label);
+        var chosen = saved?.Fields.FirstOrDefault(f => f.FieldId == fieldId);
 
-        var take = new CheckBox
+        _rows.Add(new OutgoingFieldRow(fieldId ?? 0, title, mark.Allowed)
         {
-            Content           = title,
-            IsChecked         = mark.Allowed && chosen is not null,
-            IsEnabled         = mark.Allowed,
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-
-        var name = new TextBox
-        {
-            Text                     = chosen?.Name ?? title,
-            Height                   = 30,
-            IsEnabled                = mark.Allowed,
-            VerticalContentAlignment = VerticalAlignment.Center,
-            HorizontalAlignment      = HorizontalAlignment.Stretch,
-            Watermark                = "имя в JSON",
-        };
-
-        take.IsCheckedChanged += (_, _) => { if (!_building) ShowHint(); };
-        name.TextChanged      += (_, _) => { if (!_building) ShowHint(); };
-
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,12,*") };
-
-        Grid.SetColumn(take, 0);
-        Grid.SetColumn(name, 2);
-        grid.Children.Add(take);
-        grid.Children.Add(name);
-
-        FieldsPanel.Children.Add(grid);
-
-        if (!mark.Allowed)
-        {
-            FieldsPanel.Children.Add(Note(mark.Explanation));
-            return;   // помеченное поле в итог не попадает вовсе
-        }
-
-        _rows.Add(new FieldRow(fieldId, take, name));
+            Takes  = mark.Allowed && chosen is not null,
+            Alias  = chosen?.Name ?? title,
+            Note   = mark.Allowed ? "" : mark.Explanation,
+            Picked = () => { if (!_building) ShowHint(); },
+        });
     }
 
-    private static TextBlock Note(string text, bool warning = false) => new()
+    /// <summary>Списку нечего показать — причина словами вместо пустой рамки.</summary>
+    private void Empty(string text, bool warning = false)
     {
-        Text         = text,
-        TextWrapping = TextWrapping.Wrap,
-        FontSize     = 12,
-        Foreground   = Brush(warning ? "BrushRed" : "BrushSecondaryText",
-                             warning ? "#FF3B30" : "#8E8E93"),
-    };
+        FieldsEmpty.Text       = text;
+        FieldsEmpty.Foreground = Brush(warning ? "BrushRed" : "BrushSecondaryText",
+                                       warning ? "#FF3B30" : "#8E8E93");
+        FieldsEmpty.IsVisible  = true;
+    }
+
+    // ── Поиск по свойствам ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Показать строки, подходящие под поиск. Отбор — только показ: состав выгрузки собирается
+    /// из ВСЕХ строк, иначе набранное слово молча снимало бы отметки с остальных.
+    /// </summary>
+    private void ShowFound()
+    {
+        var needle = (SearchBox.Text ?? "").Trim();
+
+        var shown = needle.Length == 0
+            ? _rows
+            : [.. _rows.Where(r => r.Title.Contains(needle, StringComparison.CurrentCultureIgnoreCase))];
+
+        FieldItems.ItemsSource = shown;
+
+        ShowCount(shown.Count, needle);
+
+        if (needle.Length > 0 && shown.Count == 0) Empty($"Свойств со словом «{needle}» здесь нет.");
+        else if (_rows.Count > 0)                  FieldsEmpty.IsVisible = false;
+    }
+
+    /// <summary>
+    /// Счетчик рядом с поиском. Отдельно от <see cref="ShowFound"/> намеренно: галочка меняет
+    /// число отмеченных, но не состав списка, а пере-присвоение <c>ItemsSource</c> на каждый щелчок
+    /// отматывало бы прокрутку к началу.
+    /// </summary>
+    private void ShowCount(int shown, string needle) =>
+        FoundText.Text = needle.Length == 0
+            ? (_rows.Count > 0 ? $"отмечено {_rows.Count(r => r.Takes)} из {_rows.Count}" : "")
+            : $"найдено {shown} из {_rows.Count}";
 
     // ── Итог ──────────────────────────────────────────────────────────────────
 
     private OutgoingBinding Build() =>
         new(CurrentDb?.Id ?? 0,
             CurrentCollectionId,
-            [.. _rows.Where(r => r.Take.IsChecked == true)
-                     .Select(r => new OutgoingField(r.FieldId, (r.Name.Text ?? "").Trim()))],
+            [.. _rows.Where(r => r.Allowed && r.Takes)
+                     .Select(r => new OutgoingField(r.FieldId == 0 ? null : r.FieldId, r.Alias.Trim()))],
             CurrentShape,
             (EnvelopeInput.Text ?? "").Trim());
 
@@ -269,6 +276,13 @@ public partial class OutgoingBindingDialog : Window
     private void ShowHint()
     {
         EnvelopeBox.IsVisible = CurrentShape == OutgoingShape.Wrapped;
+
+        // Счетчик отмеченного живет рядом с поиском и считается от ВСЕХ строк, а не от видимых:
+        // человек ищет одно поле, а отправляет десять. Список при этом не трогаем — прокрутка
+        // должна остаться там, где человек ее оставил.
+        if (!_building)
+            ShowCount(FieldItems.ItemsSource?.Cast<object>().Count() ?? _rows.Count,
+                      (SearchBox.Text ?? "").Trim());
 
         var binding = Build();
         var names   = binding.Fields.Select(f => $"\"{f.Name}\": …").ToList();

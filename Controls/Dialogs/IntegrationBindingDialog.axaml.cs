@@ -32,15 +32,14 @@ public partial class IntegrationBindingDialog : Window
     /// <summary>Куда может лечь одна колонка ответа: никуда, в название записи или в свойство.</summary>
     private sealed record Slot(string Text, bool Transfer, int? FieldId);
 
-    private sealed record MapRow(string Column, ComboBox Combo, List<Slot> Slots);
-
     private readonly IReadOnlyList<DbOption> _dbs;
     private readonly IReadOnlyList<string>   _columns;
     private readonly CollectionBinding?      _saved;
 
-    private List<(string Name, int Id)> _collections = [];
-    private readonly List<MapRow>       _rows        = [];
-    private List<string>                _matchOptions = [];
+    private List<(string Name, int Id)> _collections  = [];
+    private readonly List<BindingMapRow> _rows        = [];
+    private List<Slot>                   _slots       = [];
+    private List<string>                 _matchOptions = [];
 
     // Перестройка списков сама меняет выбор в комбобоксах: пока она идет, реакции на выбор
     // выключены — иначе подсказка и список ключей считались бы по полусобранному состоянию.
@@ -81,6 +80,8 @@ public partial class IntegrationBindingDialog : Window
         MatchCombo.SelectionChanged      += (_, _) => { if (!_building) ShowHint(); };
         UpdateCheck.IsCheckedChanged     += (_, _) => ShowHint();
         CreateCheck.IsCheckedChanged     += (_, _) => ShowHint();
+
+        SearchBox.TextChanged += (_, _) => ShowFound();
 
         CancelBtn.Click  += (_, _) => Close(null);
         ConfirmBtn.Click += (_, _) => Confirm();
@@ -132,22 +133,20 @@ public partial class IntegrationBindingDialog : Window
     {
         _building = true;
         _rows.Clear();
-        MapPanel.Children.Clear();
+        MapItems.ItemsSource = null;
 
         var collectionId = CurrentCollectionId;
 
         if (CurrentDb is not { } db || collectionId <= 0)
         {
-            MapPanel.Children.Add(new TextBlock
-            {
-                Text         = _dbs.Count == 0
-                    ? "Нет открытых баз данных."
-                    : "В выбранной базе нет коллекций — ответ некуда положить.",
-                TextWrapping = TextWrapping.Wrap,
-                Foreground   = Brush("BrushSecondaryText", "#8E8E93"),
-            });
+            MapEmpty.Text = _dbs.Count == 0
+                ? "Нет открытых баз данных."
+                : "В выбранной базе нет коллекций — ответ некуда положить.";
+
+            MapEmpty.IsVisible = true;
 
             _building = false;
+            ShowFound();
             RebuildMatches();
             return;
         }
@@ -161,8 +160,11 @@ public partial class IntegrationBindingDialog : Window
                      && !FieldTypeInfo.IsRelation(f.FieldType))
             .ToList();
 
-        var slots = new List<Slot> { new("Не переносить", false, null), new("Название записи", true, null) };
-        slots.AddRange(fields.Select(f => new Slot(TitleText.FirstLine(f.Name), true, f.Id!.Value)));
+        _slots = [new Slot("Не переносить", false, null), new Slot("Название записи", true, null)];
+        _slots.AddRange(fields.Select(f => new Slot(TitleText.FirstLine(f.Name), true, f.Id!.Value)));
+
+        var slots   = _slots;
+        var options = slots.Select(s => s.Text).ToList();
 
         var saved = _saved is not null
                  && _saved.DbId == db.Id
@@ -171,38 +173,16 @@ public partial class IntegrationBindingDialog : Window
             : null;
 
         foreach (var column in _columns)
-        {
-            var combo = new ComboBox
+            _rows.Add(new BindingMapRow(column, options, DefaultSlot(column, slots, saved))
             {
-                ItemsSource         = slots.Select(s => s.Text).ToList(),
-                Height              = 30,
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-                VerticalContentAlignment = VerticalAlignment.Center,
-            };
+                // Перестройка списка ключей сама обновляет подсказку — звать ее отдельно незачем.
+                Picked = () => { if (!_building) RebuildMatches(); },
+            });
 
-            combo.SelectedIndex = DefaultSlot(column, slots, saved);
-            // Перестройка списка ключей сама обновляет подсказку — звать ее отдельно незачем.
-            combo.SelectionChanged += (_, _) => { if (!_building) RebuildMatches(); };
-
-            var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,12,*") };
-
-            var name = new TextBlock
-            {
-                Text              = column,
-                VerticalAlignment = VerticalAlignment.Center,
-                TextTrimming      = TextTrimming.CharacterEllipsis,
-            };
-
-            Grid.SetColumn(name, 0);
-            Grid.SetColumn(combo, 2);
-            grid.Children.Add(name);
-            grid.Children.Add(combo);
-
-            MapPanel.Children.Add(grid);
-            _rows.Add(new MapRow(column, combo, slots));
-        }
+        MapEmpty.IsVisible = false;
 
         _building = false;
+        ShowFound();
         RebuildMatches();
     }
 
@@ -263,10 +243,41 @@ public partial class IntegrationBindingDialog : Window
         ShowHint();
     }
 
-    private static Slot Chosen(MapRow row) =>
-        row.Combo.SelectedIndex >= 0 && row.Combo.SelectedIndex < row.Slots.Count
-            ? row.Slots[row.Combo.SelectedIndex]
-            : row.Slots[0];
+    private Slot Chosen(BindingMapRow row) =>
+        row.Selected >= 0 && row.Selected < _slots.Count ? _slots[row.Selected] : _slots[0];
+
+    // ── Поиск по колонкам ─────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Показать строки, подходящие под поиск, и сказать, сколько их. Отбор — только показ:
+    /// раскладка собирается из ВСЕХ строк, а не из видимых, иначе набранное в поиске слово
+    /// молча отменяло бы настроенное для остальных колонок.
+    /// </summary>
+    private void ShowFound()
+    {
+        var needle = (SearchBox.Text ?? "").Trim();
+
+        var shown = needle.Length == 0
+            ? _rows
+            : [.. _rows.Where(r => r.Column.Contains(needle, StringComparison.CurrentCultureIgnoreCase))];
+
+        MapItems.ItemsSource = shown;
+
+        FoundText.Text = needle.Length == 0
+            ? (_rows.Count > 0 ? $"колонок: {_rows.Count}" : "")
+            : $"найдено {shown.Count} из {_rows.Count}";
+
+        // Искали и не нашли — это надо сказать: пустой список читается как «колонок нет вовсе».
+        if (needle.Length > 0 && shown.Count == 0)
+        {
+            MapEmpty.Text      = $"Колонок со словом «{needle}» в ответе нет.";
+            MapEmpty.IsVisible = true;
+        }
+        else if (_rows.Count > 0)
+        {
+            MapEmpty.IsVisible = false;
+        }
+    }
 
     // ── Итог ──────────────────────────────────────────────────────────────────
 

@@ -22,18 +22,15 @@ namespace SmartBase.Views.Settings;
 /// журнал пользователю чистить МОЖНО — в отличие от журнала безопасности, который заводится
 /// отдельным файлом и не чистится никем (см. overview.md, «Два журнала»).
 ///
-/// Таблицы с excel-фильтрами и подгрузкой страниц, как в «Диагностике», здесь нет намеренно:
-/// та таблица написана под строки Serilog и не разбирается параметрами, а разложить ее на
-/// общий вид — отдельная работа. Пока читается последняя пачка строк, и сколько именно —
-/// сказано на экране, чтобы «показано все» не путали с «больше ничего не было».
+/// Строки читаются СТРАНИЦАМИ: сначала последние две сотни, дальше — по кнопке «Показать еще»,
+/// тем же приемом, что в журнале безопасности. Журнал копится годами, и поднимать его целиком
+/// ради экрана незачем; «показано столько-то» при этом остается на виду, чтобы «больше нет»
+/// не путали с «больше не показано».
 /// </summary>
 public partial class SettingsView
 {
-    /// <summary>Сколько строк поднимаем из файла за раз.</summary>
-    private const int JournalRead = 500;
-
-    /// <summary>Сколько показываем. Больше двух сотен строк подряд все равно никто не читает.</summary>
-    private const int JournalShow = 200;
+    /// <summary>Сколько строк добавляет одно нажатие «Показать еще».</summary>
+    private const int JournalPage = 200;
 
     // Что показываем: канал (null — все) и «только неудачные». Живет в пределах захода в
     // программу и намеренно НЕ запоминается в настройках: это лупа, а не режим работы.
@@ -42,6 +39,10 @@ public partial class SettingsView
 
     // Ключ строки, у которой раскрыты подробности; 0 — ни одной.
     private long _journalOpen;
+
+    // Сколько строк показано сейчас; 0 — первая страница. Живет в пределах захода, как и отбор:
+    // «докрутил до сотой строки» — это не настройка, а сегодняшний разбор.
+    private int _journalShown;
 
     /// <summary>
     /// Сценарий отработал сам. Зовет MainWindow из службы сценариев; экран перестраивается,
@@ -80,14 +81,27 @@ public partial class SettingsView
 
         // Сужение уходит в SQL, а не в память: отбери «неудачные» из прочитанной пачки — и
         // единственная ночная неудача не найдется, потому что удачные строки вытеснят ее.
-        var filter   = new RunFilter(_journalChannel, _journalFailedOnly);
-        var selected = journal.Page(filter, JournalRead);
+        var filter = new RunFilter(_journalChannel, _journalFailedOnly);
+
+        // Одна строка сверх показанного — так и узнаем, есть ли что дальше, не считая весь файл.
+        var page = journal.Page(filter, JournalShown() + 1);
+        var more = page.Count > JournalShown();
+
+        var selected = page.Take(JournalShown()).ToList();
 
         Add(rows, SpendRow(journal));
         Add(rows, FilterRow());
-        Add(rows, RunsRow(selected));
+        Add(rows, RunsRow(selected, more));
         Add(rows, FileRow(journal, selected.Count, filter.Narrow), last: true);
     }
+
+    /// <summary>
+    /// Сколько строк показываем: каждое «Показать еще» добавляет страницу. Читается всегда от
+    /// свежего конца, а не «следующая страница после последней»: вкладка перестраивается целиком
+    /// на каждое нажатие, и хранить накопленные страницы означало бы держать в памяти то, что и
+    /// так лежит в файле рядом.
+    /// </summary>
+    private int JournalShown() => _journalShown > 0 ? _journalShown : JournalPage;
 
     // ── Расход ────────────────────────────────────────────────────────────────
 
@@ -184,7 +198,8 @@ public partial class SettingsView
                 _ => null,
             };
 
-            _journalOpen = 0;
+            _journalOpen  = 0;
+            _journalShown = 0;   // сужение начинает чтение заново: страницы были от другой выборки
             BuildIntegrationsJournal();
         };
 
@@ -199,6 +214,7 @@ public partial class SettingsView
         {
             _journalFailedOnly = failed.IsChecked == true;
             _journalOpen       = 0;
+            _journalShown      = 0;
             BuildIntegrationsJournal();
         };
 
@@ -263,7 +279,7 @@ public partial class SettingsView
 
     // ── Список запусков ───────────────────────────────────────────────────────
 
-    private Border RunsRow(IReadOnlyList<RunEntry> runs)
+    private Border RunsRow(IReadOnlyList<RunEntry> runs, bool more)
     {
         var list = new StackPanel { Spacing = 0 };
 
@@ -278,17 +294,28 @@ public partial class SettingsView
 
         list.Children.Add(HeaderLine());
 
-        foreach (var run in runs.Take(JournalShow))
+        foreach (var run in runs)
             list.Children.Add(RunLine(run));
 
-        if (runs.Count > JournalShow)
+        if (more)
+        {
             list.Children.Add(new TextBlock
             {
                 Classes      = { "desc" },
                 Margin       = new Thickness(0, 8, 0, 0),
                 TextWrapping = TextWrapping.Wrap,
-                Text         = $"Показаны последние {JournalShow:N0} строк из {runs.Count:N0} подошедших.",
+                Text         = $"Показаны последние {runs.Count:N0} строк — дальше есть еще.",
             });
+
+            var next = ButtonLine(RowButton("Показать еще", () =>
+            {
+                _journalShown = JournalShown() + JournalPage;
+                BuildIntegrationsJournal();
+            }));
+
+            next.Margin = new Thickness(0, 10, 0, -6);
+            list.Children.Add(next);
+        }
 
         return Row("Запуски",
             "Строка на каждый запуск, свежие сверху. Нажмите на строку — под ней раскроются "
@@ -519,8 +546,8 @@ public partial class SettingsView
         block.Children.Add(DataBox(new[]
         {
             Note($"Файл: {journal.Path}"),
-            Note((narrow ? $"Прочитано подошедших строк: {read:N0}."
-                         : $"Прочитано последних строк: {read:N0}.")
+            Note((narrow ? $"Показано подошедших строк: {read:N0}."
+                         : $"Показано последних строк: {read:N0}.")
                  + $" Журнал хранит не больше {RunJournal.Keep:N0} строк и подрезает себя сам "
                  + "при запуске программы."),
         }));

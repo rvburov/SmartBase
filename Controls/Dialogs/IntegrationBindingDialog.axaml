@@ -1,20 +1,25 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:b="clr-namespace:SmartBase.Controls.Behaviors"
+        xmlns:d="clr-namespace:SmartBase.Controls.Dialogs"
         xmlns:w="clr-namespace:SmartBase.Controls.Widgets"
         x:Class="SmartBase.Controls.Dialogs.IntegrationBindingDialog"
         Title="В коллекцию"
-        Width="{StaticResource DialogWidthWide}"
-        MinWidth="{StaticResource DialogWidthWide}"
-        MaxWidth="{StaticResource DialogWidthWide}"
-        MinHeight="0"
-        SizeToContent="Height"
+        Width="{StaticResource DialogWidthData}"
+        Height="{StaticResource DialogHeightData}"
+        MinWidth="{StaticResource DialogMinWidthData}"
+        MinHeight="{StaticResource DialogMinHeightData}"
         b:DialogFit.LimitToScreen="True"
+        b:DialogSize.Remember="binding-in"
         WindowStartupLocation="CenterOwner"
-        CanResize="False"
+        CanResize="True"
         Background="{StaticResource BrushBg}">
 
-    <StackPanel Spacing="0" Margin="{StaticResource DialogPadding}">
+    <!-- Окно КЛАССА «данные»: шапка и низ на месте, а растет середина — раскладка колонок.
+         Колонок в ответе бывает под сотню, и тянут окно именно ради нее. -->
+    <Grid RowDefinitions="Auto,*,Auto" Margin="{StaticResource DialogPadding}">
+
+    <StackPanel Grid.Row="0" Spacing="0">
 
         <!-- Что пришло: без этой строки человек не знает, к чему относится раскладка ниже. -->
         <TextBlock x:Name="AnswerText"
@@ -64,14 +69,33 @@
             </StackPanel>
         </Grid>
 
-        <TextBlock Text="Что куда ложится"
-                   Margin="0,0,0,6"
-                   FontWeight="{StaticResource FontWeightBold}"
-                   Foreground="{StaticResource BrushSecondaryText}" />
+        <Grid ColumnDefinitions="Auto,12,*,12,Auto" Margin="0,0,0,6">
+            <TextBlock Grid.Column="0"
+                       Text="Что куда ложится"
+                       VerticalAlignment="Center"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       Foreground="{StaticResource BrushSecondaryText}" />
 
-        <!-- Раскладка колонок. Колонок в ответе бывает несколько десятков, поэтому список
-             прокручивается, а окно не растет до потолка экрана. -->
-        <Border BorderBrush="{StaticResource BrushSeparator}"
+            <!-- Поиск по колонкам: в ответе их бывает под сотню, и листать список ради одной
+                 «order_no» — не раскладка, а перебор. -->
+            <TextBox Grid.Column="2" x:Name="SearchBox"
+                     Height="30"
+                     Watermark="Поиск по колонкам"
+                     VerticalContentAlignment="Center"
+                     CornerRadius="{StaticResource RadiusBase}" />
+
+            <TextBlock Grid.Column="4" x:Name="FoundText"
+                       VerticalAlignment="Center"
+                       FontSize="{DynamicResource FontSizeSmall}"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+        </Grid>
+
+    </StackPanel>
+
+        <!-- Раскладка колонок — растущая середина окна: колонок в ответе бывает под сотню, и
+             тянут окно именно ради нее. -->
+        <Border Grid.Row="1"
+                BorderBrush="{StaticResource BrushSeparator}"
                 BorderThickness="{DynamicResource BorderLine}"
                 CornerRadius="{StaticResource RadiusBase}"
                 ClipToBounds="True"
@@ -79,12 +103,44 @@
                 Padding="0">
             <!-- Полоса идет во всю высоту блока, а воздух висит на содержимом ВНУТРИ прокрутки
                  (docs/developer/ui/scrolling.md) — иначе она отходит от рамки. -->
-            <ScrollViewer MaxHeight="260"
-                          HorizontalScrollBarVisibility="Disabled"
-                          VerticalScrollBarVisibility="Auto">
-                <StackPanel x:Name="MapPanel" Spacing="6" Margin="10,8" />
-            </ScrollViewer>
+            <Panel>
+                <!-- Строки виртуализуются: на сотне колонок сотня комбобоксов, созданных разом,
+                     заметна и на открытии окна, и на прокрутке. Состояние выбора живет в
+                     модели строки, а не в контроле, — иначе прокрутка сбрасывала бы выбранное
+                     вместе с пересозданным комбобоксом. -->
+                <ItemsControl x:Name="MapItems" Margin="10,8">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <VirtualizingStackPanel />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="d:BindingMapRow">
+                            <Grid ColumnDefinitions="*,12,*" Margin="0,0,0,6">
+                                <TextBlock Grid.Column="0"
+                                           Text="{Binding Column}"
+                                           VerticalAlignment="Center"
+                                           TextTrimming="CharacterEllipsis" />
+                                <ComboBox Grid.Column="2"
+                                          Height="30"
+                                          HorizontalAlignment="Stretch"
+                                          VerticalContentAlignment="Center"
+                                          ItemsSource="{Binding Options}"
+                                          SelectedIndex="{Binding Selected, Mode=TwoWay}" />
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <TextBlock x:Name="MapEmpty"
+                           IsVisible="False"
+                           Margin="10,8"
+                           TextWrapping="Wrap"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+            </Panel>
         </Border>
+
+    <StackPanel Grid.Row="2" Spacing="0">
 
         <Grid ColumnDefinitions="*,12,*" Margin="0,0,0,10">
             <StackPanel Grid.Column="0">
@@ -123,5 +179,7 @@
         </Grid>
 
     </StackPanel>
+
+    </Grid>
 
 </Window>
