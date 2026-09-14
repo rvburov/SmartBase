@@ -36,7 +36,8 @@ public sealed record PasteColumn(
     DecimalMark DecimalSeparator = DecimalMark.Comma,
     bool IsTitle = false,
     NumberFormat? NumberFormat = null,
-    string? Separator = null);
+    string? Separator = null,
+    bool IsCrossDatabaseRelation = false);
 
 /// <summary>Одно значение, готовое лечь в базу: координаты, столбец и значение В ФОРМАТЕ ХРАНЕНИЯ.</summary>
 public sealed record PasteCell(int Row, int Column, string ColumnKey, string StorageValue);
@@ -138,12 +139,13 @@ public static class TablePastePlanner
         return new TablePastePlan(cells, skipped);
     }
 
-    /// <summary>Можно ли вообще писать текст в такой столбец. Отдельно от <see cref="Convert"/>,
-    /// потому что этим же вопросом задается очистка: очищать вычисляемое и связи нельзя.</summary>
+    /// <summary>Можно ли вообще писать в такой столбец. Отдельно от <see cref="Convert"/>, потому
+    /// что этим же вопросом задается очистка: очищать вычисляемое и файлы нельзя. Связь пишется
+    /// названиями записей (их находит база), кроме межбазовой — ее цель в другом файле.</summary>
     public static bool IsWritable(PasteColumn column) =>
         !column.IsReadOnly
         && !FieldTypeInfo.IsComputed(column.FieldType)
-        && !FieldTypeInfo.IsRelation(column.FieldType)
+        && !(FieldTypeInfo.IsRelation(column.FieldType) && column.IsCrossDatabaseRelation)
         && column.FieldType != "file";
 
     /// <summary>Текст → значение в формате хранения; null — в эту ячейку такой текст не ложится.</summary>
@@ -158,6 +160,10 @@ public static class TablePastePlanner
         // Непустое название пишется как есть: пробелы в тексте — тоже данные.
         if (column.IsTitle)
             return string.IsNullOrWhiteSpace(source) ? null : source;
+
+        // Связь — названиями связанных записей, как их показывает ячейка. Найти записи по ним может
+        // только база, поэтому здесь текст лишь очищается от краевых пробелов; пустой снимает связи.
+        if (FieldTypeInfo.IsRelation(column.FieldType)) return source.Trim();
 
         // Текст, ссылка и все неизвестное — как есть, без обрезки: пробелы по краям в тексте могут
         // быть частью значения, и молча их срезать значит портить данные. Пустая ячейка буфера

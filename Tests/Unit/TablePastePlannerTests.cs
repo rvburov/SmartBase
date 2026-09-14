@@ -319,19 +319,26 @@ public sealed class TablePastePlannerTests
         Assert.Equal(1, plan.Skipped[PasteSkipReason.ComputedColumn]);
     }
 
-    /// <summary>Связь и файл значением-текстом не задаются: у связи значение живет ребрами в
-    /// отдельной таблице, и запись текста завела бы невидимую строку-фантом.</summary>
-    [Theory]
-    [InlineData("relation")]
-    [InlineData("file")]
-    public void Relation_and_file_columns_are_skipped(string fieldType)
+    /// <summary>Файл текстом не задается, связь с другой базой — тоже: ее цель в другом файле, и
+    /// найти записи по названию отсюда нельзя.</summary>
+    [Fact]
+    public void File_and_cross_database_relation_columns_are_skipped()
     {
-        var column = fieldType == "relation" ? Link : File;
-
-        var plan = TablePastePlanner.Plan(Values(["что-нибудь"]), 0, 0, [column], rowCount: 1);
+        var plan = TablePastePlanner.Plan(Values(["что-нибудь", "Проект А"]), 0, 0,
+                                          [File, Link with { IsCrossDatabaseRelation = true }], rowCount: 1);
 
         Assert.Empty(plan.Cells);
-        Assert.Equal(1, plan.Skipped[PasteSkipReason.NotTextColumn]);
+        Assert.Equal(2, plan.Skipped[PasteSkipReason.NotTextColumn]);
+    }
+
+    /// <summary>Связь внутри базы вставляется названиями: планировщик только чистит текст, записи
+    /// по названиям находит база.</summary>
+    [Fact]
+    public void Relation_is_passed_on_as_titles()
+    {
+        var plan = TablePastePlanner.Plan(Values(["  Проект А, Проект Б "]), 0, 0, [Link], rowCount: 1);
+
+        Assert.Equal("Проект А, Проект Б", Assert.Single(plan.Cells).StorageValue);
     }
 
     /// <summary>Read-only столбец пропускается, НО позицию в блоке занимает: соседи справа не
@@ -370,7 +377,8 @@ public sealed class TablePastePlannerTests
         Assert.True(TablePastePlanner.IsWritable(Text));
         Assert.True(TablePastePlanner.IsWritable(Title));
         Assert.False(TablePastePlanner.IsWritable(Created));
-        Assert.False(TablePastePlanner.IsWritable(Link));
+        Assert.True(TablePastePlanner.IsWritable(Link));
+        Assert.False(TablePastePlanner.IsWritable(Link with { IsCrossDatabaseRelation = true }));
         Assert.False(TablePastePlanner.IsWritable(File));
         Assert.False(TablePastePlanner.IsWritable(Text with { IsReadOnly = true }));
     }

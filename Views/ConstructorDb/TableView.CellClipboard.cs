@@ -43,8 +43,22 @@ public partial class TableView
         if (columns.Count == 0 || TooManyCells((long)range.RowCount * columns.Count)) return false;
         if (RowsOfRange(range.Top, range.RowCount) is not { Count: > 0 } rows) return false;
 
+        // Связь уходит в буфер названиями связанных записей через разделитель столбца — так ее
+        // показывает ячейка, и так она вставляется обратно. Названия одним запросом на столбец.
+        var recordIds = rows.Select(r => r.RecordId).ToList();
+        var links     = new Dictionary<int, Dictionary<int, List<(int Id, string Title)>>>();
+        foreach (var c in columns)
+            if (FieldTypeInfo.IsRelation(_colDefs[c].FieldType) && int.TryParse(_colDefs[c].Key, out var relationField))
+                links[c] = _repository.GetLinksBatch(relationField, recordIds);
+
+        string Text(TableRowVm row, int c) =>
+            links.TryGetValue(c, out var byRecord)
+                ? string.Join(_colDefs[c].Relation?.SeparatorString ?? ", ",
+                              byRecord.GetValueOrDefault(row.RecordId)?.Select(l => l.Title) ?? [])
+                : CellText(row, _colDefs[c]);
+
         var matrix = rows
-            .Select(row => (IReadOnlyList<string>)columns.Select(c => CellText(row, _colDefs[c])).ToList())
+            .Select(row => (IReadOnlyList<string>)columns.Select(c => Text(row, c)).ToList())
             .ToList();
 
         var text = TableClipboardFormat.Build(matrix);
@@ -221,8 +235,8 @@ public partial class TableView
                     writes.Add((row, _colDefs[visible[cell.Column]], cell.StorageValue));
         }
 
-        var result = WriteCells(writes, "Вставка");
-        ReportPaste(result.Changed, plan.Skipped);
+        var outcome = WriteCells(writes, "Вставка");
+        ReportPaste(outcome, plan.Skipped);
     }
 
     // Список допущенных пользователей для столбцов «Пользователь»: вставка сверяет с ним имена,
@@ -240,52 +254,96 @@ public partial class TableView
             DecimalSeparator: def.NumberFormat.DecimalSeparator,
             IsTitle: def.Key == TableRowVm.TitleKey,
             NumberFormat: def.NumberFormat,
-            Separator: def.Separator);
+            Separator: def.Separator,
+            // Связь без настроенной цели или с целью в другой базе по названию не найти.
+            IsCrossDatabaseRelation: FieldTypeInfo.IsRelation(def.FieldType) && def.Relation is not { IsCrossDb: false });
 
     // ── Запись ────────────────────────────────────────────────────────────────
 
-    // Одним пакетом: значения полей и названия записей разделяются здесь, потому что «Название»
-    // живет в самой записи, а не в таблице значений. operation — имя действия для журнала и отмены.
-    private ConstructorRepository.CellBulkResult WriteCells(
+    /// <summary>Итог записи ячеек: сколько изменилось и сколько связей не нашлось по названию.</summary>
+    private readonly record struct WriteOutcome(int Changed, int RelationNotFound, int RelationAmbiguous);
+
+    // Одним пакетом: значения полей, названия записей и связи разделяются здесь — «Название» живет
+    // в самой записи, связи — ребрами, а не текстом. operation — имя действия для журнала и отмены.
+    private WriteOutcome WriteCells(
         IReadOnlyList<(TableRowVm Row, TableColumnDef Column, string Value)> writes, string operation)
     {
-        if (writes.Count == 0 || _repository is null) return ConstructorRepository.CellBulkResult.Nothing;
+        if (writes.Count == 0 || _repository is null) return default;
 
-        var cells  = new List<ConstructorRepository.CellWrite>();
-        var titles = new List<ConstructorRepository.TitleWrite>();
+        var cells     = new List<ConstructorRepository.CellWrite>();
+        var titles    = new List<ConstructorRepository.TitleWrite>();
+        var relations = new List<(int RecordId, int FieldId, string Text)>();
 
         foreach (var (row, column, value) in writes)
         {
             if (column.Key == TableRowVm.TitleKey) titles.Add(new(row.RecordId, value));
-            else if (int.TryParse(column.Key, out var fieldId))
-                cells.Add(new ConstructorRepository.CellWrite(row.RecordId, fieldId, value));
+            else if (!int.TryParse(column.Key, out var fieldId)) continue;
+            else if (FieldTypeInfo.IsRelation(column.FieldType)) relations.Add((row.RecordId, fieldId, value));
+            else cells.Add(new ConstructorRepository.CellWrite(row.RecordId, fieldId, value));
         }
 
-        ConstructorRepository.CellBulkResult result;
-        try { result = _repository.SetCellsBulk(_collectionId, cells, titles, operation); }
-        catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { return ConstructorRepository.CellBulkResult.Nothing; }
+        var values = ConstructorRepository.CellBulkResult.Nothing;
+        if (cells.Count > 0 || titles.Count > 0)
+        {
+            try { values = _repository.SetCellsBulk(_collectionId, cells, titles, operation); }
+            catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { return default; }
+        }
 
-        RememberForUndo(operation, result);
-        if (result.Changed > 0) ReloadRows();   // строки перечитываем целиком: правок много и они разные
-        return result;
+        // Связи — вторым пакетом: значения к этому моменту уже записаны, и сбой здесь не должен
+        // лишить их отмены.
+        var links     = ConstructorRepository.LinkBulkResult.Nothing;
+        var notFound  = 0;
+        var ambiguous = 0;
+        if (relations.Count > 0)
+        {
+            try
+            {
+                var linkWrites = new List<ConstructorRepository.LinkWrite>();
+                foreach (var byField in relations.GroupBy(r => r.FieldId))
+                {
+                    var found = _repository.ResolveRelationTitles(byField.Key, [.. byField.Select(r => r.Text).Distinct()]);
+                    foreach (var (recordId, fieldId, text) in byField)
+                    {
+                        if (!found.TryGetValue(text, out var resolution)) { notFound++; continue; }
+                        switch (resolution.Match)
+                        {
+                            case ConstructorRepository.TitleMatch.NotFound:  notFound++;  break;
+                            case ConstructorRepository.TitleMatch.Ambiguous: ambiguous++; break;
+                            default: linkWrites.Add(new(recordId, fieldId, resolution.Ids)); break;
+                        }
+                    }
+                }
+                links = _repository.SetLinksBulk(_collectionId, linkWrites, operation);
+            }
+            catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { }
+        }
+
+        RememberForUndo(operation, values, links);
+        var changed = values.Changed + links.Changed;
+        if (changed > 0) ReloadRows();   // строки перечитываем целиком: правок много и они разные
+        return new WriteOutcome(changed, notFound, ambiguous);
     }
 
-    private static void ReportPaste(int written, IReadOnlyDictionary<PasteSkipReason, int> skipped)
+    private static void ReportPaste(WriteOutcome outcome, IReadOnlyDictionary<PasteSkipReason, int> skipped)
     {
-        var skippedTotal = skipped.Values.Sum();
-        if (written == 0 && skippedTotal == 0) return;
-
-        var message = written > 0
-            ? $"Вставлено {written} {ValuesPlural(written)}"
-            : "Вставлять было нечего";
-
         // Итог говорит, ПОЧЕМУ пропущено: «пропущено 6» без причины заставляло гадать, что не так
         // со вставкой, и перепроверять ячейки по одной.
+        var reasons = skipped
+            .Where(kv => kv.Value > 0)
+            .Select(kv => (Count: kv.Value, Phrase: SkipPhrase(kv.Key)))
+            .ToList();
+        if (outcome.RelationNotFound > 0)  reasons.Add((outcome.RelationNotFound,  "связей не нашлись по названию"));
+        if (outcome.RelationAmbiguous > 0) reasons.Add((outcome.RelationAmbiguous, "связей с неоднозначным названием"));
+
+        var skippedTotal = reasons.Sum(r => r.Count);
+        if (outcome.Changed == 0 && skippedTotal == 0) return;
+
+        var message = outcome.Changed > 0
+            ? $"Вставлено {outcome.Changed:N0} {ValuesPlural(outcome.Changed)}"
+            : "Вставлять было нечего";
         if (skippedTotal > 0)
-            message += $", пропущено {skippedTotal}: " + string.Join(", ", skipped
-                .Where(kv => kv.Value > 0)
-                .OrderByDescending(kv => kv.Value)
-                .Select(kv => $"{kv.Value} {SkipPhrase(kv.Key)}"));
+            message += $", пропущено {skippedTotal:N0}: " +
+                       string.Join(", ", reasons.OrderByDescending(r => r.Count).Select(r => $"{r.Count:N0} {r.Phrase}"));
 
         AppNotifications.Info(message + ".");
     }
@@ -295,7 +353,7 @@ public partial class TableView
         PasteSkipReason.WrongFormat    => "не подходят типу столбца",
         PasteSkipReason.NotInOptions   => "нет в списке допустимых",
         PasteSkipReason.ComputedColumn => "в столбцах, которые не правятся",
-        PasteSkipReason.NotTextColumn  => "в связях и файлах",
+        PasteSkipReason.NotTextColumn  => "в файлах и связях с другой базой",
         PasteSkipReason.OutsideTable   => "за краем таблицы",
         PasteSkipReason.EmptyTitle     => "пустые названия",
         _                              => "по другой причине",

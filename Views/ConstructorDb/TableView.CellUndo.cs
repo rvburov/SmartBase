@@ -23,7 +23,9 @@ public partial class TableView
     /// <summary>Сколько последних действий можно отменить подряд.</summary>
     private const int UndoDepth = 20;
 
-    private sealed record UndoStep(int CollectionId, string Operation, IReadOnlyList<ConstructorRepository.CellChange> Changes);
+    private sealed record UndoStep(int CollectionId, string Operation,
+                                   IReadOnlyList<ConstructorRepository.CellChange> Changes,
+                                   IReadOnlyList<ConstructorRepository.LinkChange> Links);
 
     private readonly List<UndoStep> _undoSteps = [];
 
@@ -33,11 +35,12 @@ public partial class TableView
 
     // Шаг запоминается, только если его можно вернуть целиком: итог без старых значений (больше
     // UndoChangesLimit) отменить нельзя, и об этом человека спросили до записи.
-    private void RememberForUndo(string operation, ConstructorRepository.CellBulkResult result)
+    private void RememberForUndo(string operation, ConstructorRepository.CellBulkResult values,
+                                 ConstructorRepository.LinkBulkResult links)
     {
-        if (result.Changed == 0 || result.ChangesTruncated) return;
+        if (values.Changed + links.Changed == 0 || values.ChangesTruncated) return;
 
-        _undoSteps.Add(new UndoStep(_collectionId, operation, result.Changes));
+        _undoSteps.Add(new UndoStep(_collectionId, operation, values.Changes, links.Changes));
         if (_undoSteps.Count > UndoDepth) _undoSteps.RemoveAt(0);
     }
 
@@ -60,21 +63,38 @@ public partial class TableView
             .Select(c => new ConstructorRepository.TitleWrite(c.RecordId, c.OldValue, ExpectedOld: c.NewValue))
             .ToList();
 
-        ConstructorRepository.CellBulkResult result;
-        try { result = _repository.SetCellsBulk(_collectionId, cells, titles, $"Отмена: {step.Operation.ToLowerInvariant()}"); }
+        var links = step.Links
+            .Select(l => new ConstructorRepository.LinkWrite(l.RecordId, l.FieldId, l.OldIds,
+                                                             ExpectedOldIds: ConstructorRepository.LinkIdsKey(l.NewIds)))
+            .ToList();
+        var journal = $"Отмена: {step.Operation.ToLowerInvariant()}";
+
+        var values = ConstructorRepository.CellBulkResult.Nothing;
+        var edges  = ConstructorRepository.LinkBulkResult.Nothing;
+        try
+        {
+            if (cells.Count > 0 || titles.Count > 0) values = _repository.SetCellsBulk(_collectionId, cells, titles, journal);
+            if (links.Count > 0)                     edges  = _repository.SetLinksBulk(_collectionId, links, journal);
+        }
         catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath))
         {
-            _undoSteps.Add(step);   // база была занята — шаг не потерян, Ctrl+Z можно нажать снова
+            // База была занята. Ничего не записалось — шаг возвращается, Ctrl+Z можно нажать снова;
+            // значения успели вернуться, а связи нет — повтор вернет оставшееся (вернувшееся он
+            // пропустит по ожидаемому значению).
+            _undoSteps.Add(step);
+            if (values.Changed > 0) ReloadRows();
             return;
         }
 
-        if (result.Changed > 0) ReloadRows();
+        var changed   = values.Changed + edges.Changed;
+        var conflicts = values.Conflicts + edges.Conflicts;
+        if (changed > 0) ReloadRows();
 
-        var message = result.Changed > 0
-            ? $"{Undone(step.Operation)}: возвращено {result.Changed:N0} {ValuesPlural(result.Changed)}"
+        var message = changed > 0
+            ? $"{Undone(step.Operation)}: возвращено {changed:N0} {ValuesPlural(changed)}"
             : $"{Undone(step.Operation)}: возвращать нечего";
-        if (result.Conflicts > 0)
-            message += $"; {result.Conflicts:N0} {ValuesPlural(result.Conflicts)} уже поменяли после этого — их не трогали";
+        if (conflicts > 0)
+            message += $"; {conflicts:N0} {ValuesPlural(conflicts)} уже поменяли после этого — их не трогали";
         AppNotifications.Info(message + ".");
     }
 
