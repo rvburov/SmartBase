@@ -365,6 +365,19 @@ public partial class TableView
         return true;
     }
 
+    /// <summary>Сколько ячеек обрабатывается за один раз: строки ограничены
+    /// <see cref="MaxRangeRows"/>, но столбцов в коллекции бывают сотни.</summary>
+    private const long MaxRangeCells = 200_000;
+
+    private static bool TooManyCells(long cells)
+    {
+        if (cells <= MaxRangeCells) return false;
+        AppNotifications.Info(
+            $"За один раз обрабатывается не больше {MaxRangeCells:N0} ячеек, а выделено {cells:N0}. " +
+            "Выделите меньше строк или столбцов.");
+        return true;
+    }
+
     /// <summary>Строки с данными в позициях [top, top + count) — ВСЕ, а не только прокрученные.
     /// null — строк больше, чем обрабатывается за раз (человеку уже сказано).</summary>
     private IReadOnlyList<TableRowVm>? RowsOfRange(int top, int count)
@@ -398,6 +411,7 @@ public partial class TableView
 
         var columns = VisibleDataColumns().Where(c => c >= range.Left && c <= range.Right).ToList();
         if (columns.Count == 0) return cells;
+        if (TooManyCells((long)range.RowCount * columns.Count)) return null;
         if (RowsOfRange(range.Top, range.RowCount) is not { } rows) return null;
 
         foreach (var row in rows)

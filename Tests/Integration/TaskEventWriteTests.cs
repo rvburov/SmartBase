@@ -279,6 +279,28 @@ public sealed class TaskEventWriteTests
         Assert.Equal(before, Events(db).Count);
     }
 
+    /// <summary>Вставка исполнителя из буфера — это назначение, как правка одной ячейки: сосед
+    /// получает уведомление. Пакетная запись дает его, пока правок ролей немного.</summary>
+    [Fact]
+    public void Pasting_an_executor_queues_the_same_event_as_a_single_edit()
+    {
+        using var db = new TempDatabase();
+        JoinUser(db.Path, "petrov@pc2", Neighbour);
+        var repo = db.Constructor;
+
+        var col = SampleData.AddCollection(repo, "Заявки").Id!.Value;
+        var (execId, _, _) = EnableTasks(repo, col);
+        var rec = SampleData.AddRecord(repo, col, "Заменить насос").Id!.Value;
+        var before = Events(db).Count;
+
+        repo.SetCellsBulk(col, [new ConstructorRepository.CellWrite(rec, execId, Neighbour)]);
+
+        var e = Assert.Single(Events(db).Skip(before));
+        Assert.Equal(TaskEventKinds.Assigned, e.Kind);
+        Assert.Equal("petrov@pc2", e.RecipientKey);
+        Assert.Equal("Заменить насос", e.TaskTitle);
+    }
+
     [Fact]
     public void Moving_a_record_to_another_collection_queues_nothing()
     {

@@ -32,6 +32,28 @@ public static class ChangeDetail
         return Clip(text, DetailMax);
     }
 
+    /// <summary>
+    /// Пакетная правка ячеек: «{операция}: Договор 12 (Телефон: «123» → «456»); Договор 13 (…)
+    /// и еще 10». Изменений в строку журнала попадает столько, сколько влезает в предел строки,
+    /// остальные — счетом: одна строка журнала на пакет — правило массовых путей.
+    /// </summary>
+    public static string Batch(string operation, int count,
+                               IReadOnlyList<(string Owner, string Field, string Old, string New)> sample)
+    {
+        var parts = new List<string>();
+        foreach (var (owner, field, oldValue, newValue) in sample)
+        {
+            var part = Value(owner, field, oldValue, newValue);
+            var rest = count - parts.Count - 1;
+            var text = $"{operation}: {string.Join("; ", parts.Append(part))}{(rest > 0 ? $" и еще {rest:N0}" : "")}";
+            if (parts.Count > 0 && text.Length > DetailMax) break;
+            parts.Add(part);
+        }
+
+        var left = count - parts.Count;
+        return Clip($"{operation}: {string.Join("; ", parts)}{(left > 0 ? $" и еще {left:N0}" : "")}", DetailMax);
+    }
+
     /// <summary>«до» → «после» с сворачиванием длинных текстов до изменившегося куска.</summary>
     public static string Diff(string oldValue, string newValue)
     {

@@ -33,13 +33,14 @@ public partial class TableView
 
     /// <summary>Значения выделенных ячеек в буфер обмена, в общем формате табличных редакторов
     /// (табуляция между столбцами, перевод строки между строками).</summary>
-    public async Task CopyCellsAsync()
+    public async Task<bool> CopyCellsAsync()
     {
-        if (_cellRange is not { } range || _repository is null) return;
+        FollowSelectionIdentity();
+        if (_cellRange is not { } range || _repository is null) return false;
 
         var columns = VisibleDataColumns().Where(c => c >= range.Left && c <= range.Right).ToList();
-        if (columns.Count == 0) return;
-        if (RowsOfRange(range.Top, range.RowCount) is not { Count: > 0 } rows) return;
+        if (columns.Count == 0 || TooManyCells((long)range.RowCount * columns.Count)) return false;
+        if (RowsOfRange(range.Top, range.RowCount) is not { Count: > 0 } rows) return false;
 
         var matrix = rows
             .Select(row => (IReadOnlyList<string>)columns.Select(c => CellText(row, _colDefs[c])).ToList())
@@ -48,11 +49,21 @@ public partial class TableView
         var text  = TableClipboardFormat.Build(matrix);
         var count = matrix.Count * columns.Count;
 
-        if (!await SetClipboardTextAsync(text)) return;
+        if (!await SetClipboardTextAsync(text)) return false;
 
         // След в журнале: копирование выносит данные наружу так же, как выгрузка в файл.
         try { _repository.LogCellsCopied(_collectionId, count); }
         catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { }
+        return true;
+    }
+
+    /// <summary>Вырезать: скопировать значения и сразу очистить ячейки. Отменяется Ctrl+Z, как
+    /// очистка; если скопировать не удалось, ничего не стирается.</summary>
+    public async Task CutCellsAsync()
+    {
+        if (!Can(PermAction.EditRecord)) { PermissionNotice.Show(this, PermAction.EditRecord); return; }
+        if (!await CopyCellsAsync()) return;
+        await ClearCellsAsync("Вырезание");
     }
 
     // Буфер может быть занят другой программой — на Windows это штатный отказ. Без своего
@@ -92,7 +103,7 @@ public partial class TableView
 
     /// <summary>Стереть значения выделенных ячеек. Сами записи и столбцы остаются — их удаляет
     /// пункт «Удалить».</summary>
-    public async Task ClearCellsAsync()
+    public async Task ClearCellsAsync(string operation = "Очистка")
     {
         if (!HasCellSelection || _repository is null) return;
         if (!Can(PermAction.EditRecord)) { PermissionNotice.Show(this, PermAction.EditRecord); return; }
@@ -114,16 +125,20 @@ public partial class TableView
             return;
         }
 
-        if (targets.Count > ClearConfirmThreshold && ConstructorSettings.ConfirmDelete)
+        // Больше, чем запоминает отмена, — спрашиваем всегда: вернуть такую очистку Ctrl+Z нельзя, и
+        // настройка «не спрашивать» на это не рассчитана.
+        var noUndo = targets.Count > ConstructorRepository.UndoChangesLimit;
+        if (noUndo || (targets.Count > ClearConfirmThreshold && ConstructorSettings.ConfirmDelete))
         {
             if (VisualRoot is not Window win) return;
             var dlg = new ConfirmDialog(
-                $"Очистить {targets.Count} {CellsPlural(targets.Count)}? Записи и столбцы останутся на месте.",
+                $"Очистить {targets.Count:N0} {CellsPlural(targets.Count)}? Записи и столбцы останутся на месте." +
+                (noUndo ? " Отменить очистку будет нельзя: столько изменений не запоминается." : ""),
                 confirmText: "Очистить");
             if (await dlg.ShowDialog<bool>(win) != true) return;
         }
 
-        WriteCells(targets.Select(t => (t.Row, t.Column, Value: "")).ToList());
+        WriteCells(targets.Select(t => (t.Row, t.Column, Value: "")).ToList(), operation);
 
         if (titles > 0) AppNotifications.Info("Названия записей очисткой не стираются.");
     }
@@ -134,6 +149,7 @@ public partial class TableView
     /// дальше он разливается вниз и вправо.</summary>
     public async Task PasteCellsAsync()
     {
+        FollowSelectionIdentity();
         if (_cellRange is not { } range || _repository is null) return;
         if (!Can(PermAction.EditRecord)) { PermissionNotice.Show(this, PermAction.EditRecord); return; }
 
@@ -161,6 +177,20 @@ public partial class TableView
                                              selectionRows:    range.RowCount,
                                              selectionColumns: Math.Max(1, visible.Count(c => c >= range.Left && c <= range.Right)));
 
+        if (TooManyCells(plan.Cells.Count)) return;
+
+        // Подтверждение — только когда отменить вставку будет нельзя: остальное возвращается Ctrl+Z,
+        // и вопрос на каждую вставку был бы рутиной, которую перестают читать.
+        if (plan.Cells.Count > ConstructorRepository.UndoChangesLimit)
+        {
+            if (VisualRoot is not Window win) return;
+            var dlg = new ConfirmDialog(
+                $"Вставить {plan.Cells.Count:N0} {ValuesPlural(plan.Cells.Count)}? Отменить вставку будет нельзя: " +
+                "столько изменений не запоминается.",
+                confirmText: "Вставить");
+            if (await dlg.ShowDialog<bool>(win) != true) return;
+        }
+
         var writes = new List<(TableRowVm Row, TableColumnDef Column, string Value)>();
         if (plan.Cells.Count > 0)
         {
@@ -176,8 +206,8 @@ public partial class TableView
                     writes.Add((row, _colDefs[visible[cell.Column]], cell.StorageValue));
         }
 
-        var written = WriteCells(writes);
-        ReportPaste(written, plan.Skipped);
+        var result = WriteCells(writes, "Вставка");
+        ReportPaste(result.Changed, plan.Skipped);
     }
 
     // Список допущенных пользователей для столбцов «Пользователь»: вставка сверяет с ним имена,
@@ -198,27 +228,29 @@ public partial class TableView
     // ── Запись ────────────────────────────────────────────────────────────────
 
     // Одним пакетом: значения полей и названия записей разделяются здесь, потому что «Название»
-    // живет в самой записи, а не в таблице значений.
-    private int WriteCells(IReadOnlyList<(TableRowVm Row, TableColumnDef Column, string Value)> writes)
+    // живет в самой записи, а не в таблице значений. operation — имя действия для журнала и отмены.
+    private ConstructorRepository.CellBulkResult WriteCells(
+        IReadOnlyList<(TableRowVm Row, TableColumnDef Column, string Value)> writes, string operation)
     {
-        if (writes.Count == 0 || _repository is null) return 0;
+        if (writes.Count == 0 || _repository is null) return ConstructorRepository.CellBulkResult.Nothing;
 
         var cells  = new List<ConstructorRepository.CellWrite>();
-        var titles = new List<(int RecordId, string Title)>();
+        var titles = new List<ConstructorRepository.TitleWrite>();
 
         foreach (var (row, column, value) in writes)
         {
-            if (column.Key == TableRowVm.TitleKey) titles.Add((row.RecordId, value));
+            if (column.Key == TableRowVm.TitleKey) titles.Add(new(row.RecordId, value));
             else if (int.TryParse(column.Key, out var fieldId))
                 cells.Add(new ConstructorRepository.CellWrite(row.RecordId, fieldId, value));
         }
 
-        int written;
-        try { written = _repository.SetCellsBulk(_collectionId, cells, titles); }
-        catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { return 0; }
+        ConstructorRepository.CellBulkResult result;
+        try { result = _repository.SetCellsBulk(_collectionId, cells, titles, operation); }
+        catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { return ConstructorRepository.CellBulkResult.Nothing; }
 
-        if (written > 0) ReloadRows();   // строки перечитываем целиком: правок много и они разные
-        return written;
+        RememberForUndo(operation, result);
+        if (result.Changed > 0) ReloadRows();   // строки перечитываем целиком: правок много и они разные
+        return result;
     }
 
     private static void ReportPaste(int written, IReadOnlyDictionary<PasteSkipReason, int> skipped)
@@ -293,7 +325,7 @@ public partial class TableView
             Header       = MenuIcons.ClearValuesHeader(),
             InputGesture = new KeyGesture(Key.Delete),
         };
-        Guarded(clear, PermAction.EditRecord, () => { select(); Fire(ClearCellsAsync); });
+        Guarded(clear, PermAction.EditRecord, () => { select(); Fire(() => ClearCellsAsync()); });
         menu.Items.Add(clear);
     }
 

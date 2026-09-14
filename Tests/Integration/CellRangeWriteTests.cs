@@ -32,7 +32,7 @@ public sealed class CellRangeWriteTests
             new(r2, f1, "a2"), new(r2, f2, "b2"),
         ]);
 
-        Assert.Equal(4, written);
+        Assert.Equal(4, written.Changed);
         Assert.Equal("a1", repo.GetFieldValues(r1)[f1]);
         Assert.Equal("b2", repo.GetFieldValues(r2)[f2]);
     }
@@ -48,7 +48,7 @@ public sealed class CellRangeWriteTests
 
         var written = repo.SetCellsBulk(colId, [new(r1, f1, "a1")]);
 
-        Assert.Equal(0, written);
+        Assert.Equal(0, written.Changed);
     }
 
     /// <summary>Очистка удаляет строку значения, а не оставляет ее пустой: «нет строки = пусто» —
@@ -62,7 +62,7 @@ public sealed class CellRangeWriteTests
 
         var written = repo.SetCellsBulk(colId, [new(r1, f1, "")]);
 
-        Assert.Equal(1, written);
+        Assert.Equal(1, written.Changed);
         Assert.False(repo.GetFieldValues(r1).ContainsKey(f1));
     }
 
@@ -73,7 +73,54 @@ public sealed class CellRangeWriteTests
         using var db = new TempDatabase();
         var (repo, colId, f1, _, r1, _) = Seed(db);
 
-        Assert.Equal(0, repo.SetCellsBulk(colId, [new(r1, f1, "")]));
+        Assert.Equal(0, repo.SetCellsBulk(colId, [new(r1, f1, "")]).Changed);
+    }
+
+    /// <summary>Отмена: старые значения из итога пишутся обратно с проверкой ExpectedOld — и
+    /// ячейку, которую после вставки поправили, не трогают.</summary>
+    [Fact]
+    public void Undo_restores_old_values_but_keeps_later_edits()
+    {
+        using var db = new TempDatabase();
+        var (repo, colId, f1, f2, r1, r2) = Seed(db);
+        repo.SetCellsBulk(colId, [new(r1, f1, "было"), new(r2, f1, "было")]);
+
+        var paste = repo.SetCellsBulk(colId,
+            [new(r1, f1, "стало"), new(r2, f1, "стало"), new(r1, f2, "новое")],
+            [(r1, "Переименована")], "Вставка");
+        Assert.Equal(4, paste.Changed);
+        Assert.Equal(4, paste.Changes.Count);
+
+        repo.SetFieldValue(r2, f1, "сосед");   // после вставки ячейку поправили
+
+        var undo = repo.SetCellsBulk(colId,
+            [.. paste.Changes.Where(c => c.FieldId is not null)
+                  .Select(c => new ConstructorRepository.CellWrite(c.RecordId, c.FieldId!.Value, c.OldValue, c.NewValue))],
+            [.. paste.Changes.Where(c => c.FieldId is null)
+                  .Select(c => new ConstructorRepository.TitleWrite(c.RecordId, c.OldValue, c.NewValue))],
+            "Отмена: вставка");
+
+        Assert.Equal(3, undo.Changed);
+        Assert.Equal(1, undo.Conflicts);
+        Assert.Equal("было", repo.GetFieldValues(r1)[f1]);
+        Assert.False(repo.GetFieldValues(r1).ContainsKey(f2));
+        Assert.Equal("сосед", repo.GetFieldValues(r2)[f1]);
+        Assert.Equal("R1", repo.GetRecord(r1)!.Title);
+    }
+
+    /// <summary>Строка журнала пакета говорит не только «сколько», но и «что было и что стало» —
+    /// хотя бы для первых изменений.</summary>
+    [Fact]
+    public async System.Threading.Tasks.Task Log_row_tells_what_changed()
+    {
+        using var db = new TempDatabase();
+        var (repo, colId, f1, _, r1, r2) = Seed(db);
+
+        repo.SetCellsBulk(colId, [new(r1, f1, "a1"), new(r2, f1, "a2")], null, "Вставка");
+
+        var page = await repo.GetChangeLogPageAsync(new ConstructorRepository.ChangeLogQuery(), take: 500);
+        Assert.StartsWith("Вставка: R1 (A: (пусто) → «a1»)", page[0].Detail);
+        Assert.Contains("R2", page[0].Detail);
     }
 
     /// <summary>Сосед удалил запись, пока ее строка была на экране. Раньше ее значение упиралось во
@@ -91,7 +138,7 @@ public sealed class CellRangeWriteTests
             new(r2, f1, "a2"), new(r2, f2, "b2"),
         ], [(r2, "Призрак")]);
 
-        Assert.Equal(2, written);
+        Assert.Equal(2, written.Changed);
         Assert.Equal("a1", repo.GetFieldValues(r1)[f1]);
         Assert.Equal("b1", repo.GetFieldValues(r1)[f2]);
     }
@@ -108,7 +155,7 @@ public sealed class CellRangeWriteTests
         var written = repo.SetCellsBulk(colId, [new(r1, f1, "a1"), new(stranger.Id!.Value, f1, "x")],
                                         [(stranger.Id!.Value, "Переименован")]);
 
-        Assert.Equal(1, written);
+        Assert.Equal(1, written.Changed);
         Assert.False(repo.GetFieldValues(stranger.Id!.Value).ContainsKey(f1));
         Assert.Equal("Чужак", repo.GetRecord(stranger.Id!.Value)!.Title);
     }
@@ -121,7 +168,7 @@ public sealed class CellRangeWriteTests
 
         var written = repo.SetCellsBulk(colId, [], [(r1, "Первая"), (r2, "R2")]);
 
-        Assert.Equal(1, written);   // у второй записи название не менялось
+        Assert.Equal(1, written.Changed);   // у второй записи название не менялось
         Assert.Equal("Первая", repo.GetRecord(r1)!.Title);
     }
 

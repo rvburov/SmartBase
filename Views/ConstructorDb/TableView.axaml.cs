@@ -351,6 +351,16 @@ public partial class TableView : UserControl
         if (IsTextInputFocused(e)) return;            // печатают в поле — таблица молчит
         if (IsCellEditing) return;                    // клавиши правят значение в редакторе
 
+        // Ctrl+Z — отмена последней вставки, очистки или вырезания в этой таблице. Выделение для
+        // нее не нужно (после вставки его могли снять), нужен лишь фокус в таблице.
+        if (HasUndo && IsKeyboardFocusWithin && e.Key == Key.Z
+            && (e.KeyModifiers == KeyModifiers.Control || e.KeyModifiers == KeyModifiers.Meta))
+        {
+            UndoLastCellChange();
+            e.Handled = true;
+            return;
+        }
+
         // Выделены ячейки — Ctrl+C, Ctrl+V, Delete и Backspace работают по прямоугольнику.
         // Только пока фокус В ТАБЛИЦЕ: иначе Delete по выделенным свойствам в панели записи уходил
         // в ячейки, выделенные когда-то раньше. Проверяем ДО удаления записей: пока выделены
@@ -363,10 +373,11 @@ public partial class TableView : UserControl
             var command = e.KeyModifiers == KeyModifiers.Control || e.KeyModifiers == KeyModifiers.Meta;
 
             if (command && e.Key == Key.C) { Fire(CopyCellsAsync);  e.Handled = true; return; }
+            if (command && e.Key == Key.X) { Fire(CutCellsAsync);   e.Handled = true; return; }
             if (command && e.Key == Key.V) { Fire(PasteCellsAsync); e.Handled = true; return; }
             if (e.KeyModifiers == KeyModifiers.None && e.Key is Key.Delete or Key.Back)
             {
-                Fire(ClearCellsAsync);
+                Fire(() => ClearCellsAsync());
                 e.Handled = true;
                 return;
             }
@@ -566,7 +577,11 @@ public partial class TableView : UserControl
             // бы на чужие строки и столбцы. А вот перезагрузку той же коллекции выделение
             // переживает: сюда приходят все фоновые обновления, включая вызванные нашей же
             // записью в журнал при копировании, — гасить рамку прямо под руками нельзя.
-            if (!sameCollection) ClearCellSelection();
+            if (!sameCollection)
+            {
+                ClearCellSelection();
+                ForgetUndo();   // отмена шагов чужой коллекции скорее навредила бы
+            }
 
             // Фильтры/сортировка не переносятся между коллекциями: у каждой свои колонки.
             // При включенном «Запоминать фильтры и сортировку» подставляем запомненное за ЭТОЙ
@@ -938,6 +953,7 @@ public partial class TableView : UserControl
         _sortKey = null;
         ForgetCellEditing();
         ClearCellSelection();
+        ForgetUndo();
         _rowHeights = [];
         _isResizingRow = false;
         _resizeRow = null;
