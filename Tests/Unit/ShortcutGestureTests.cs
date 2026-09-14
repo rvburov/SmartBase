@@ -48,8 +48,8 @@ public sealed class ShortcutGestureTests
     [InlineData("Ctrl+")]
     [InlineData("+C")]
     [InlineData("Ctrl")]           // одни модификаторы — не жест
-    [InlineData("Ctrl+Escape")]    // Escape всегда отменяет, назначать нечего
-    [InlineData("Ctrl+Up")]        // навигация не переназначается
+    [InlineData("Ctrl+CapsLock")]  // такой клавиши в таблице жестов нет
+    [InlineData("Ctrl+F13")]
     [InlineData("Hyper+C")]
     public void Garbage_does_not_parse(string text) =>
         Assert.Null(ShortcutGesture.Parse(text));
@@ -103,8 +103,10 @@ public sealed class ShortcutGestureTests
     {
         Assert.NotNull(ShortcutGesture.TryCreate(Key.K, KeyModifiers.Control));
         Assert.NotNull(ShortcutGesture.TryCreate(Key.F7, KeyModifiers.None));
-        Assert.Null(ShortcutGesture.TryCreate(Key.Escape, KeyModifiers.Control));
-        Assert.Null(ShortcutGesture.TryCreate(Key.Left, KeyModifiers.Control));
+        // Стрелки и Escape — тоже жесты: ими описаны справочные строки, чтобы их клавиши
+        // нельзя было занять чем-то другим.
+        Assert.NotNull(ShortcutGesture.TryCreate(Key.Left, KeyModifiers.Alt));
+        Assert.Null(ShortcutGesture.TryCreate(Key.CapsLock, KeyModifiers.Control));
         Assert.Null(ShortcutGesture.TryCreate(Key.LeftCtrl, KeyModifiers.Control));
     }
 

@@ -100,8 +100,9 @@ public static class ShortcutSettings
 
     /// <summary>
     /// Кто уже занял жест — действие с пересекающейся зоной конфликтов, у которого этот жест
-    /// сейчас действует (пользовательский или стандартный). null — жест свободен. Тройка
-    /// Delete-действий таблицы, разводимая состоянием, конфликтом не считается
+    /// сейчас действует (пользовательский или стандартный). null — жест свободен. Справочные
+    /// строки тоже участвуют: Enter правки ячейки и Escape окон вшиты в поведение, и отнять их
+    /// нельзя. Тройка Delete-действий таблицы, разводимая состоянием, конфликтом не считается
     /// (<see cref="ShortcutActions.AllowSameGesture"/>).
     /// </summary>
     public static ShortcutAction? ConflictOf(ShortcutGesture gesture, string forActionId)
@@ -110,7 +111,7 @@ public static class ShortcutSettings
 
         foreach (var other in ShortcutActions.All)
         {
-            if (!other.Rebindable || other.Id == forActionId) continue;
+            if (other.Id == forActionId) continue;
             if (!ShortcutActions.ContextsOverlap(self.Context, other.Context)) continue;
             if (ShortcutActions.AllowSameGesture(forActionId, other.Id)) continue;
 

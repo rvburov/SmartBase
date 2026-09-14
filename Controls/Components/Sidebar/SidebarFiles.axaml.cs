@@ -404,15 +404,15 @@ public partial class SidebarFiles : UserControl
 
         if (node.IsFolder)
         {
-            menu.Items.Add(Item(MenuIcons.CreateFolderHeader(), () => _ = CreateItem(node.RelativePath, NoteKind.Folder)));
-            menu.Items.Add(Item(MenuIcons.CreateNoteHeader(),   () => _ = CreateItem(node.RelativePath, NoteKind.File)));
+            menu.Items.Add(Item(MenuIcons.CreateFolderHeader(), () => _ = CreateItem(node.RelativePath, NoteKind.Folder), "notesTree.createFolder"));
+            menu.Items.Add(Item(MenuIcons.CreateNoteHeader(),   () => _ = CreateItem(node.RelativePath, NoteKind.File), "notesTree.createNote"));
             menu.Items.Add(new Separator());
         }
 
-        if (!multi) menu.Items.Add(Item(MenuIcons.RenameHeader(), () => _ = RenameNode(node)));
-        menu.Items.Add(Item(MenuIcons.LocationHeader(),  () => _ = MoveSelection(node)));
-        menu.Items.Add(Item(MenuIcons.DuplicateHeader(), () => _ = DuplicateSelection(node)));
-        menu.Items.Add(Item(MenuIcons.DeleteHeader(),    () => _ = DeleteSelection(node)));
+        if (!multi) menu.Items.Add(Item(MenuIcons.RenameHeader(), () => _ = RenameNode(node), "notesTree.rename"));
+        menu.Items.Add(Item(MenuIcons.LocationHeader(),  () => _ = MoveSelection(node), "notesTree.relocate"));
+        menu.Items.Add(Item(MenuIcons.DuplicateHeader(), () => _ = DuplicateSelection(node), "notesTree.duplicate"));
+        menu.Items.Add(Item(MenuIcons.DeleteHeader(),    () => _ = DeleteSelection(node), "notesTree.delete"));
 
         menu.Open(anchor);
         e.Handled = true;
@@ -428,15 +428,16 @@ public partial class SidebarFiles : UserControl
         RebuildRows();
 
         var menu = new ContextMenu();
-        menu.Items.Add(Item(MenuIcons.CreateFolderHeader(), () => _ = CreateItem("", NoteKind.Folder)));
-        menu.Items.Add(Item(MenuIcons.CreateNoteHeader(),   () => _ = CreateItem("", NoteKind.File)));
+        menu.Items.Add(Item(MenuIcons.CreateFolderHeader(), () => _ = CreateItem("", NoteKind.Folder), "notesTree.createFolder"));
+        menu.Items.Add(Item(MenuIcons.CreateNoteHeader(),   () => _ = CreateItem("", NoteKind.File), "notesTree.createNote"));
         menu.Open(this);
         e.Handled = true;
     }
 
-    private static MenuItem Item(Control header, Action run)
+    private MenuItem Item(Control header, Action run, string? actionId = null)
     {
         var item = new MenuItem { Header = header };
+        if (actionId is not null) item.WithGesture(actionId, this);
         item.Click += (_, _) => run();
         return item;
     }
@@ -765,16 +766,37 @@ public partial class SidebarFiles : UserControl
     // такой же хук стоит у дерева конструктора).
     private void OnTopLevelKeyDown(object? sender, KeyEventArgs e)
     {
-        if (e.Handled || !ShortcutSettings.Matches("notesTree.delete", e)) return;
-        if (!IsVisible || _selected.Count == 0) return;
+        if (e.Handled || !IsVisible) return;
         if (IsTextInputFocused(e)) return;
         if (!_lastPressInSidebar) return;
 
-        var first = FindNode(_roots, _selected.First());
-        if (first is null) return;
+        // Создание не требует выделения: без него новый файл или папка идут в корень.
+        if (ShortcutSettings.Matches("notesTree.createNote", e))
+        {
+            _ = CreateItem(TargetFolderForCreate(), NoteKind.File);
+            e.Handled = true;
+            return;
+        }
 
-        _ = DeleteSelection(first);
-        e.Handled = true;
+        if (ShortcutSettings.Matches("notesTree.createFolder", e))
+        {
+            _ = CreateItem(TargetFolderForCreate(), NoteKind.Folder);
+            e.Handled = true;
+            return;
+        }
+
+        if (_selected.Count == 0) return;
+        if (FindNode(_roots, _selected.First()) is not { } first) return;
+
+        // Остальные пункты меню — по выделению, тем же путем, что клик по пункту.
+        if (ShortcutSettings.Matches("notesTree.delete", e))    { _ = DeleteSelection(first);    e.Handled = true; }
+        else if (ShortcutSettings.Matches("notesTree.relocate", e))  { _ = MoveSelection(first);      e.Handled = true; }
+        else if (ShortcutSettings.Matches("notesTree.duplicate", e)) { _ = DuplicateSelection(first); e.Handled = true; }
+        else if (ShortcutSettings.Matches("notesTree.rename", e) && _selected.Count == 1)
+        {
+            _ = RenameNode(first);
+            e.Handled = true;
+        }
     }
 
     private static bool IsTextInputFocused(KeyEventArgs e) =>

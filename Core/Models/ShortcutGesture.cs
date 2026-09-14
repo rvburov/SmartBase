@@ -38,6 +38,17 @@ public readonly record struct ShortcutGesture(Key Key, KeyModifiers Modifiers)
         map[Key.Enter]    = "Enter";
         map[Key.Tab]      = "Tab";
         map[Key.Space]    = "Space";
+        map[Key.Home]     = "Home";
+        map[Key.End]      = "End";
+        map[Key.PageUp]   = "PageUp";
+        map[Key.PageDown] = "PageDown";
+        map[Key.Escape]   = "Escape";
+        // Стрелки назначаются только с модификатором (см. RequiresModifier): голыми они двигают
+        // выделение в таблице и курсор в тексте, и отнимать их у навигации нельзя.
+        map[Key.Up]       = "Up";
+        map[Key.Down]     = "Down";
+        map[Key.Left]     = "Left";
+        map[Key.Right]    = "Right";
         return map;
     }
 
@@ -104,13 +115,14 @@ public readonly record struct ShortcutGesture(Key Key, KeyModifiers Modifiers)
     public bool Matches(Key key, KeyModifiers mods) =>
         NormalizeKey(key) == Key && Normalize(mods) == Modifiers;
 
-    /// <summary>Голая буква, цифра или Enter в сочетании недопустимы — они печатают символ или
-    /// подтверждают окна. Без модификатора живут только клавиши-команды.</summary>
+    /// <summary>Голая буква, цифра, Enter или стрелка в сочетании недопустимы — они печатают
+    /// символ, подтверждают окна или двигают выделение. Без модификатора живут только
+    /// клавиши-команды.</summary>
     public static bool RequiresModifier(Key key) => NormalizeKey(key) switch
     {
-        >= Key.F1 and <= Key.F12    => false,
+        >= Key.F1 and <= Key.F12             => false,
         Key.Delete or Key.Back or Key.Insert => false,
-        _                           => true,
+        _                                    => true,
     };
 
     // ── Строки ──────────────────────────────────────────────────────────────────

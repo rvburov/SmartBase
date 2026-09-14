@@ -827,13 +827,41 @@ public partial class SidebarTree : UserControl
     // принадлежит таблице/полю справа).
     private void OnTopLevelKeyDown(object? sender, KeyEventArgs e)
     {
-        if (e.Handled || !ShortcutSettings.Matches("sidebar.delete", e)) return;
+        if (e.Handled) return;
         if (_selectedNodes.Count == 0) return;
-        if (IsTextInputFocused(e)) return;       // печатают в поле — Delete правит текст
+        if (IsTextInputFocused(e)) return;       // печатают в поле — клавиша правит текст
         if (!_lastPressInSidebar) return;        // пользователь работает не в сайдбаре
 
-        _ = DeleteNodes(_selectedNodes.ToList());
-        e.Handled = true;
+        if (ShortcutSettings.Matches("sidebar.delete", e))
+        {
+            _ = DeleteNodes(_selectedNodes.ToList());
+            e.Handled = true;
+            return;
+        }
+
+        // Пункты меню узла с клавиатуры — по выделению, тем же путем и с теми же правами.
+        var node = _selectedNodes.First();
+        if (node.Id is not { } id) return;
+
+        if (ShortcutSettings.Matches("sidebar.rename", e) && _selectedNodes.Count == 1)
+        {
+            if (node.IsDatabase) return;         // имя базы меняют в настройках
+            var can = RepoOf(node)?.Permissions?.Can(PermAction.EditCollection, node.IsGroup ? null : id) ?? true;
+            PermissionNotice.Run(this, can, PermAction.EditCollection,
+                () => _ = node.IsGroup ? EditGroup(node.DbId, id) : EditCollection(node.DbId, id));
+            e.Handled = true;
+            return;
+        }
+
+        if (ShortcutSettings.Matches("sidebar.relocate", e))
+        {
+            if (node.IsDatabase) return;
+            // Перенос = изъятие из текущего места: право как у удаления (так же в меню).
+            var can = RepoOf(node)?.Permissions?.Can(PermAction.DeleteCollection, node.IsGroup ? null : id) ?? true;
+            PermissionNotice.Run(this, can, PermAction.DeleteCollection,
+                () => RelocateSelectionOrNode(node));
+            e.Handled = true;
+        }
     }
 
     private static bool IsTextInputFocused(KeyEventArgs e) =>
@@ -1064,49 +1092,55 @@ public partial class SidebarTree : UserControl
             hex => ChangeColor(dbId, collectionId, hex ?? EventColors.Default));
 
     // Пункт «Создать группу» с иконкой папки с плюсом.
-    private static MenuItem MenuItemCreateGroup(Action onClick)
+    private MenuItem MenuItemCreateGroup(Action onClick)
     {
-        var item = new MenuItem { Header = MenuIcons.CreateGroupHeader() };
+        var item = new MenuItem { Header = MenuIcons.CreateGroupHeader() }
+            .WithGesture("sidebar.createGroup", this);
         item.Click += (_, _) => onClick();
         return item;
     }
 
     // Пункт «Создать коллекцию» с иконкой таблицы с плюсом.
-    private static MenuItem MenuItemCreateCollection(Action onClick)
+    private MenuItem MenuItemCreateCollection(Action onClick)
     {
-        var item = new MenuItem { Header = MenuIcons.CreateCollectionHeader() };
+        var item = new MenuItem { Header = MenuIcons.CreateCollectionHeader() }
+            .WithGesture("sidebar.createCollection", this);
         item.Click += (_, _) => onClick();
         return item;
     }
 
     // Пункт «Изменить» с иконкой карандаша.
-    private static MenuItem MenuItemEdit(Action onClick)
+    private MenuItem MenuItemEdit(Action onClick)
     {
-        var item = new MenuItem { Header = MenuIcons.EditHeader() };
+        var item = new MenuItem { Header = MenuIcons.EditHeader() }
+            .WithGesture("sidebar.rename", this);
         item.Click += (_, _) => onClick();
         return item;
     }
 
     // Пункт «Расположение» с иконкой дерева папок.
-    private static MenuItem MenuItemLocation(Action onClick)
+    private MenuItem MenuItemLocation(Action onClick)
     {
-        var item = new MenuItem { Header = MenuIcons.LocationHeader() };
+        var item = new MenuItem { Header = MenuIcons.LocationHeader() }
+            .WithGesture("sidebar.relocate", this);
         item.Click += (_, _) => onClick();
         return item;
     }
 
     // Пункт «Дублировать» с иконкой копирования.
-    private static MenuItem MenuItemDuplicate(Action onClick)
+    private MenuItem MenuItemDuplicate(Action onClick)
     {
-        var item = new MenuItem { Header = MenuIcons.DuplicateHeader() };
+        var item = new MenuItem { Header = MenuIcons.DuplicateHeader() }
+            .WithGesture("sidebar.duplicateCollection", this);
         item.Click += (_, _) => onClick();
         return item;
     }
 
     // Красный пункт «Удалить» с иконкой корзины.
-    private static MenuItem MenuItemDelete(Action onClick)
+    private MenuItem MenuItemDelete(Action onClick)
     {
-        var item = new MenuItem { Header = MenuIcons.DeleteHeader() };
+        var item = new MenuItem { Header = MenuIcons.DeleteHeader() }
+            .WithGesture("sidebar.delete", this);
         item.Click += (_, _) => onClick();
         return item;
     }

@@ -9,6 +9,7 @@ using Avalonia.Media;
 using Avalonia.VisualTree;
 using SmartBase.Controls.Components;
 using SmartBase.Controls.Behaviors;
+using SmartBase.Controls.Dialogs;
 using SmartBase.Controls.Widgets;
 using SmartBase.Core.Models;
 using SmartBase.Database.Repositories;
@@ -648,12 +649,52 @@ public partial class RecordPageView : UserControl
     // Путь тот же, что у меню «Удалить», — пакетный, с подтверждением у контроллера.
     private void OnPanelKeyDown(object? sender, KeyEventArgs e)
     {
-        if (!ShortcutSettings.Matches("record.deleteProperties", e)) return;
-        if (_selectedFieldIds.Count == 0) return;
         if (e.Source is TextBox || (e.Source is Visual v && v.FindAncestorOfType<TextBox>() is not null)) return;
 
-        PropertiesDeleteRequested?.Invoke(this, [.. _selectedFieldIds]);
-        e.Handled = true;
+        // Создание свойства цели не требует — остальные пункты меню работают по выделению.
+        if (_selectedFieldIds.Count == 0) return;
+        var fieldId = _selectedFieldIds.First();
+
+        // Новое свойство встает после выделенного — как пункт меню у этого свойства.
+        if (ShortcutSettings.Matches("record.createProperty", e))
+        {
+            PermissionNotice.Run(this, Can(PermAction.CreateField), PermAction.CreateField,
+                () => PropertyCreateAfterRequested?.Invoke(this, fieldId.ToString()));
+            e.Handled = true;
+            return;
+        }
+
+        if (ShortcutSettings.Matches("record.deleteProperties", e))
+        {
+            PropertiesDeleteRequested?.Invoke(this, [.. _selectedFieldIds]);
+            e.Handled = true;
+            return;
+        }
+
+        if (ShortcutSettings.Matches("record.editProperty", e))
+        {
+            PermissionNotice.Run(this, Can(PermAction.EditField), PermAction.EditField,
+                () => PropertyEditRequested?.Invoke(this, fieldId));
+            e.Handled = true;
+            return;
+        }
+
+        if (ShortcutSettings.Matches("record.duplicateProperty", e))
+        {
+            PermissionNotice.Run(this, Can(PermAction.DuplicateField), PermAction.DuplicateField,
+                () => PropertyDuplicateRequested?.Invoke(this, [.. _selectedFieldIds]));
+            e.Handled = true;
+            return;
+        }
+
+        // Сдвиг живет, только пока соседа есть куда двигать — как и пункт в меню.
+        var up = ShortcutSettings.Matches("record.movePropertyUp", e);
+        if ((up || ShortcutSettings.Matches("record.movePropertyDown", e))
+            && (CanMovePropertyProvider?.Invoke(fieldId, up) ?? false))
+        {
+            PropertyMoveRequested?.Invoke(this, (fieldId, up));
+            e.Handled = true;
+        }
     }
 
     // ── Контекстное меню свойства ───────────────────────────────────────────────
@@ -722,16 +763,19 @@ public partial class RecordPageView : UserControl
         });
         menu.Items.Add(new Separator());
 
-        var miEdit = new MenuItem { Header = Controls.Components.MenuIcons.EditHeader() };
+        var miEdit = new MenuItem { Header = Controls.Components.MenuIcons.EditHeader() }
+            .WithGesture("record.editProperty", this);
         Guarded(miEdit, PermAction.EditField, () => PropertyEditRequested?.Invoke(this, fieldId));
         menu.Items.Add(miEdit);
 
-        var miDuplicate = new MenuItem { Header = Controls.Components.MenuIcons.DuplicateHeader() };
+        var miDuplicate = new MenuItem { Header = Controls.Components.MenuIcons.DuplicateHeader() }
+            .WithGesture("record.duplicateProperty", this);
         Guarded(miDuplicate, PermAction.DuplicateField,
                 () => PropertyDuplicateRequested?.Invoke(this, TargetFieldIds(fieldId)));
         menu.Items.Add(miDuplicate);
 
-        var miCreate = new MenuItem { Header = Controls.Components.MenuIcons.CreatePropertyHeader() };
+        var miCreate = new MenuItem { Header = Controls.Components.MenuIcons.CreatePropertyHeader() }
+            .WithGesture("record.createProperty", this);
         Guarded(miCreate, PermAction.CreateField,
                 () => PropertyCreateAfterRequested?.Invoke(this, fieldId.ToString()));
         menu.Items.Add(miCreate);
@@ -760,7 +804,7 @@ public partial class RecordPageView : UserControl
         {
             Header    = Controls.Components.MenuIcons.DeleteHeader(),
             IsEnabled = !row.Field.IsRequired,
-        };
+        }.WithGesture("record.deleteProperties", this);
         Guarded(miDelete, PermAction.DeleteField,
                 () => PropertiesDeleteRequested?.Invoke(this, TargetFieldIds(fieldId)));
         menu.Items.Add(miDelete);
@@ -797,8 +841,10 @@ public partial class RecordPageView : UserControl
     private void AddMoveItems(ContextMenu menu, int fieldId)
     {
         var separator = new Separator();
-        var miUp   = new MenuItem { Header = Controls.Components.MenuIcons.MoveUpHeader() };
-        var miDown = new MenuItem { Header = Controls.Components.MenuIcons.MoveDownHeader() };
+        var miUp   = new MenuItem { Header = Controls.Components.MenuIcons.MoveUpHeader() }
+            .WithGesture("record.movePropertyUp", this);
+        var miDown = new MenuItem { Header = Controls.Components.MenuIcons.MoveDownHeader() }
+            .WithGesture("record.movePropertyDown", this);
         miUp.Click   += (_, _) => PropertyMoveRequested?.Invoke(this, (fieldId, true));
         miDown.Click += (_, _) => PropertyMoveRequested?.Invoke(this, (fieldId, false));
 

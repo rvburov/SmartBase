@@ -138,7 +138,7 @@ public sealed class NoteEditorBox : UserControl
 
         // Меню редактора: русские Вырезать/Копировать/Вставить плюс команды разметки. Свое,
         // потому что общее меню TextBox из Controls.axaml на TextEditor не распространяется.
-        _editor.TextArea.ContextMenu = NoteEditorMenu.Build(Run);
+        _editor.TextArea.ContextMenu = NoteEditorMenu.Build(Run, this);
 
         // AvaloniaEdit принудительно ставит свою англоязычную панель поиска в OnApplyTemplate.
         // Снять ее вызовом Uninstall() нельзя: он идет через Close(), а тот трогает части
@@ -338,6 +338,12 @@ public sealed class NoteEditorBox : UserControl
         ("notes.link",       NoteCommand.Link),
         ("notes.strike",     NoteCommand.Strike),
         ("notes.bulletList", NoteCommand.BulletList),
+        ("notes.orderedList", NoteCommand.OrderedList),
+        ("notes.quote",      NoteCommand.Quote),
+        ("notes.codeBlock",  NoteCommand.CodeBlock),
+        ("notes.table",      NoteCommand.Table),
+        ("notes.rule",       NoteCommand.Rule),
+        ("notes.clearFormat", NoteCommand.ClearFormat),
         ("notes.plainText",  NoteCommand.PlainText),
         ("notes.heading1",   NoteCommand.Heading1),
         ("notes.heading2",   NoteCommand.Heading2),

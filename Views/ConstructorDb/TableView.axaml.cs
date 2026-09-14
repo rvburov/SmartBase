@@ -351,22 +351,9 @@ public partial class TableView : UserControl
         if (IsTextInputFocused(e)) return;            // печатают в поле — таблица молчит
         if (IsCellEditing) return;                    // клавиши правят значение в редакторе
 
-        // Создание и дублирование записи — тот же путь, что у пунктов меню записи (контроллер
-        // сам спросит права и покажет прогресс). Дублировать без выделения нечего: клавиша
-        // тогда не наша.
-        if (ShortcutSettings.Matches("table.createRecord", e))
-        {
-            RecordCreateRequested?.Invoke(this, (ConstructorSettings.OpenNewRecord, null));
-            e.Handled = true;
-            return;
-        }
-
-        if (ShortcutSettings.Matches("table.duplicateRecord", e) && SelectedRecordIds() is { Count: > 0 } toCopy)
-        {
-            RecordDuplicateRequested?.Invoke(this, toCopy);
-            e.Handled = true;
-            return;
-        }
+        // Пункты контекстных меню с клавиатуры — тем же путем, что клик по пункту (права и
+        // прогресс спрашивает контроллер).
+        if (HandleMenuShortcut(e)) { e.Handled = true; return; }
 
         // Отмена последней вставки, очистки или вырезания в этой таблице. Выделение для нее не
         // нужно (после вставки его могли снять), нужен лишь фокус в таблице.
@@ -2527,7 +2514,8 @@ public partial class TableView : UserControl
     private ContextMenu BuildGridContextMenu()
     {
         var menu = new ContextMenu();
-        var mi = new MenuItem { Header = Controls.Components.MenuIcons.CreateRecordHeader() };
+        var mi = new MenuItem { Header = Controls.Components.MenuIcons.CreateRecordHeader() }
+            .WithGesture("table.createRecord", this);
         // В конце; открывать ли панель — по настройке.
         Guarded(mi, PermAction.CreateRecord,
                 () => RecordCreateRequested?.Invoke(this, (ConstructorSettings.OpenNewRecord, null)));
@@ -2535,7 +2523,8 @@ public partial class TableView : UserControl
 
         // «Отображение» доступно и отсюда — на случай, если все колонки скрыты и до
         // меню заголовка не добраться (окно показывает полный список колонок).
-        var miDisplay = new MenuItem { Header = Controls.Components.MenuIcons.DisplayHeader() };
+        var miDisplay = new MenuItem { Header = Controls.Components.MenuIcons.DisplayHeader() }
+            .WithGesture("table.columnDisplay", this);
         miDisplay.Click += (_, _) => ColumnDisplayRequested?.Invoke(this, EventArgs.Empty);
         menu.Items.Add(miDisplay);
 
@@ -2552,7 +2541,8 @@ public partial class TableView : UserControl
     {
         var menu = new ContextMenu();
 
-        var miCreate = new MenuItem { Header = Controls.Components.MenuIcons.CreateRecordHeader() };
+        var miCreate = new MenuItem { Header = Controls.Components.MenuIcons.CreateRecordHeader() }
+            .WithGesture("table.createRecord", this);
         // После этой строки; открывать ли панель — по настройке. Если строка еще не заполнена
         // (id=0) — создаем в конце.
         Guarded(miCreate, PermAction.CreateRecord, () =>
@@ -2564,22 +2554,26 @@ public partial class TableView : UserControl
 
         menu.Items.Add(new Separator());
 
-        var miEdit = new MenuItem { Header = Controls.Components.MenuIcons.EditHeader() };
+        var miEdit = new MenuItem { Header = Controls.Components.MenuIcons.EditHeader() }
+            .WithGesture("table.openRecord", this);
         miEdit.Click += (_, _) => { var rid = RowRecordId(row); if (rid > 0) RecordClicked?.Invoke(this, rid); };
         menu.Items.Add(miEdit);
 
-        var miDuplicate = new MenuItem { Header = Controls.Components.MenuIcons.DuplicateHeader() };
+        var miDuplicate = new MenuItem { Header = Controls.Components.MenuIcons.DuplicateHeader() }
+            .WithGesture("table.duplicateRecord", this);
         Guarded(miDuplicate, PermAction.DuplicateRecord, () => RequestRecordDuplicateFromMenu(row));
         menu.Items.Add(miDuplicate);
 
         // Перенос = изъятие записи из коллекции: право как у удаления.
-        var miRelocate = new MenuItem { Header = Controls.Components.MenuIcons.LocationHeader() };
+        var miRelocate = new MenuItem { Header = Controls.Components.MenuIcons.LocationHeader() }
+            .WithGesture("table.relocateRecords", this);
         Guarded(miRelocate, PermAction.DeleteRecord, () => RequestRecordRelocateFromMenu(row));
         menu.Items.Add(miRelocate);
 
         // «Отображение» (записей) — глобальное окно видимости/уровней строк (список всех
         // записей), инициатор-строка не важна.
-        var miDisplay = new MenuItem { Header = Controls.Components.MenuIcons.DisplayHeader() };
+        var miDisplay = new MenuItem { Header = Controls.Components.MenuIcons.DisplayHeader() }
+            .WithGesture("table.recordDisplay", this);
         miDisplay.Click += (_, _) => RecordDisplayRequested?.Invoke(this, EventArgs.Empty);
         menu.Items.Add(miDisplay);
 
@@ -2595,7 +2589,7 @@ public partial class TableView : UserControl
 
         menu.Items.Add(new Separator());
 
-        var miDelete = MakeDeleteMenuItem();
+        var miDelete = MakeDeleteMenuItem().WithGesture("table.deleteRecords", this);
         Guarded(miDelete, PermAction.DeleteRecord, () => RequestRecordDeleteFromMenu(row));
         menu.Items.Add(miDelete);
 
@@ -2826,9 +2820,11 @@ public partial class TableView : UserControl
         if (_sortKey is not null || _filters.Count > 0) return;
 
         var sep    = new Separator();
-        var miUp   = new MenuItem { Header = Controls.Components.MenuIcons.MoveUpHeader() };
+        var miUp   = new MenuItem { Header = Controls.Components.MenuIcons.MoveUpHeader() }
+            .WithGesture("table.moveRecordUp", this);
         miUp.Click += (_, _) => { var rid = RowRecordId(row); if (rid > 0) MoveRecord(rid, up: true); };
-        var miDown = new MenuItem { Header = Controls.Components.MenuIcons.MoveDownHeader() };
+        var miDown = new MenuItem { Header = Controls.Components.MenuIcons.MoveDownHeader() }
+            .WithGesture("table.moveRecordDown", this);
         miDown.Click += (_, _) => { var rid = RowRecordId(row); if (rid > 0) MoveRecord(rid, up: false); };
 
         menu.Items.Add(sep);
@@ -2890,15 +2886,18 @@ public partial class TableView : UserControl
             Controls.Components.MenuIcons.PropertyMenuHeader(SystemHeader(key), "text")));
         menu.Items.Add(new Separator());
 
-        var miEdit = new MenuItem { Header = Controls.Components.MenuIcons.EditHeader() };
+        var miEdit = new MenuItem { Header = Controls.Components.MenuIcons.EditHeader() }
+            .WithGesture("table.editProperty", this);
         Guarded(miEdit, PermAction.EditField, () => SystemFieldRenameRequested?.Invoke(this, key));
         menu.Items.Add(miEdit);
 
-        var miCreate = new MenuItem { Header = Controls.Components.MenuIcons.CreatePropertyHeader() };
+        var miCreate = new MenuItem { Header = Controls.Components.MenuIcons.CreatePropertyHeader() }
+            .WithGesture("table.createProperty", this);
         Guarded(miCreate, PermAction.CreateField, () => PropertyCreateAfterRequested?.Invoke(this, key));
         menu.Items.Add(miCreate);
 
-        var miDisplay = new MenuItem { Header = Controls.Components.MenuIcons.DisplayHeader() };
+        var miDisplay = new MenuItem { Header = Controls.Components.MenuIcons.DisplayHeader() }
+            .WithGesture("table.columnDisplay", this);
         miDisplay.Click += (_, _) => ColumnDisplayRequested?.Invoke(this, EventArgs.Empty);
         menu.Items.Add(miDisplay);
 
@@ -2926,13 +2925,15 @@ public partial class TableView : UserControl
 
         if (canRight)
         {
-            var mi = new MenuItem { Header = Controls.Components.MenuIcons.MoveRightHeader() };
+            var mi = new MenuItem { Header = Controls.Components.MenuIcons.MoveRightHeader() }
+                .WithGesture("table.moveColumnRight", this);
             mi.Click += (_, _) => MoveColumn(key, left: false);
             menu.Items.Add(mi);
         }
         if (canLeft)
         {
-            var mi = new MenuItem { Header = Controls.Components.MenuIcons.MoveLeftHeader() };
+            var mi = new MenuItem { Header = Controls.Components.MenuIcons.MoveLeftHeader() }
+                .WithGesture("table.moveColumnLeft", this);
             mi.Click += (_, _) => MoveColumn(key, left: true);
             menu.Items.Add(mi);
         }
@@ -2946,7 +2947,7 @@ public partial class TableView : UserControl
     {
         menu.Items.Add(new Separator());
 
-        var item = new MenuItem();
+        var item = new MenuItem().WithGesture("table.columnWidthMode", this);
         item.Click += (_, _) => SetColResizeMode(!_manualColResize);
         menu.Items.Add(item);
 
@@ -2965,7 +2966,7 @@ public partial class TableView : UserControl
     {
         menu.Items.Add(new Separator());
 
-        var item = new MenuItem();
+        var item = new MenuItem().WithGesture("table.rowHeightMode", this);
         item.Click += (_, _) => SetRowResizeMode(!_manualRowResize);
         menu.Items.Add(item);
 
@@ -2988,19 +2989,23 @@ public partial class TableView : UserControl
         menu.Items.Add(MakeMenuHeaderItem(Controls.Components.MenuIcons.PropertyMenuHeader(name, fieldType)));
         menu.Items.Add(new Separator());
 
-        var miEdit = new MenuItem { Header = Controls.Components.MenuIcons.EditHeader() };
+        var miEdit = new MenuItem { Header = Controls.Components.MenuIcons.EditHeader() }
+            .WithGesture("table.editProperty", this);
         Guarded(miEdit, PermAction.EditField, () => PropertyEditRequested?.Invoke(this, fieldId));
         menu.Items.Add(miEdit);
 
-        var miDuplicate = new MenuItem { Header = Controls.Components.MenuIcons.DuplicateHeader() };
+        var miDuplicate = new MenuItem { Header = Controls.Components.MenuIcons.DuplicateHeader() }
+            .WithGesture("table.duplicateProperty", this);
         Guarded(miDuplicate, PermAction.DuplicateField, () => RequestDuplicateFromMenu(fieldId));
         menu.Items.Add(miDuplicate);
 
-        var miCreate = new MenuItem { Header = Controls.Components.MenuIcons.CreatePropertyHeader() };
+        var miCreate = new MenuItem { Header = Controls.Components.MenuIcons.CreatePropertyHeader() }
+            .WithGesture("table.createProperty", this);
         Guarded(miCreate, PermAction.CreateField, () => PropertyCreateAfterRequested?.Invoke(this, fieldId.ToString()));
         menu.Items.Add(miCreate);
 
-        var miDisplay = new MenuItem { Header = Controls.Components.MenuIcons.DisplayHeader() };
+        var miDisplay = new MenuItem { Header = Controls.Components.MenuIcons.DisplayHeader() }
+            .WithGesture("table.columnDisplay", this);
         miDisplay.Click += (_, _) => ColumnDisplayRequested?.Invoke(this, EventArgs.Empty);
         menu.Items.Add(miDisplay);
 
@@ -3024,7 +3029,7 @@ public partial class TableView : UserControl
 
         menu.Items.Add(new Separator());
 
-        var miDelete = MakeDeleteMenuItem(enabled: !isRequired);
+        var miDelete = MakeDeleteMenuItem(enabled: !isRequired).WithGesture("table.deleteColumns", this);
         Guarded(miDelete, PermAction.DeleteField, () => RequestDeleteFromMenu(fieldId));
         menu.Items.Add(miDelete);
 

@@ -1,3 +1,4 @@
+using Avalonia;
 using Avalonia.Controls;
 using SmartBase.Core.Notes;
 
@@ -27,58 +28,64 @@ public enum NoteCommand
 /// </summary>
 public static class NoteEditorMenu
 {
-    public static ContextMenu Build(Action<NoteCommand> run)
+    public static ContextMenu Build(Action<NoteCommand> run) => Build(run, owner: null);
+
+    /// <param name="owner">Контрол, у которого спрашивается платформенный модификатор для
+    /// подсказок сочетаний; null — подсказок нет (меню строят и вне визуального дерева).</param>
+    public static ContextMenu Build(Action<NoteCommand> run, Visual? owner)
     {
         var menu = new ContextMenu();
 
         // Иконок у этих четырех нет намеренно — как и в Obsidian: иконка ничего не добавляет
         // к слову «Копировать», зато отступ под нее держит текст в одну линию с остальными.
-        menu.Items.Add(Item(MenuIcons.PlainHeader("Вырезать"),     () => run(NoteCommand.Cut)));
-        menu.Items.Add(Item(MenuIcons.PlainHeader("Копировать"),   () => run(NoteCommand.Copy)));
-        menu.Items.Add(Item(MenuIcons.PlainHeader("Вставить"),     () => run(NoteCommand.Paste)));
+        menu.Items.Add(Item(MenuIcons.PlainHeader("Вырезать"),     () => run(NoteCommand.Cut),       "windows.ref.textCut",   owner));
+        menu.Items.Add(Item(MenuIcons.PlainHeader("Копировать"),   () => run(NoteCommand.Copy),      "windows.ref.textCopy",  owner));
+        menu.Items.Add(Item(MenuIcons.PlainHeader("Вставить"),     () => run(NoteCommand.Paste),     "windows.ref.textPaste", owner));
         menu.Items.Add(Item(MenuIcons.PlainHeader("Выделить все"), () => run(NoteCommand.SelectAll)));
         menu.Items.Add(new Separator());
 
         menu.Items.Add(Sub("Форматирование",
         [
-            Item(MenuIcons.BoldHeader(),        () => run(NoteCommand.Bold)),
-            Item(MenuIcons.ItalicHeader(),      () => run(NoteCommand.Italic)),
-            Item(MenuIcons.StrikeHeader(),      () => run(NoteCommand.Strike)),
-            Item(MenuIcons.InlineCodeHeader(),  () => run(NoteCommand.InlineCode)),
-            Item(MenuIcons.LinkHeader(),        () => run(NoteCommand.Link)),
+            Item(MenuIcons.BoldHeader(),        () => run(NoteCommand.Bold),        "notes.bold",        owner),
+            Item(MenuIcons.ItalicHeader(),      () => run(NoteCommand.Italic),      "notes.italic",      owner),
+            Item(MenuIcons.StrikeHeader(),      () => run(NoteCommand.Strike),      "notes.strike",      owner),
+            Item(MenuIcons.InlineCodeHeader(),  () => run(NoteCommand.InlineCode),  "notes.inlineCode",  owner),
+            Item(MenuIcons.LinkHeader(),        () => run(NoteCommand.Link),        "notes.link",        owner),
             new Separator(),
-            Item(MenuIcons.ClearFormatHeader(), () => run(NoteCommand.ClearFormat)),
+            Item(MenuIcons.ClearFormatHeader(), () => run(NoteCommand.ClearFormat), "notes.clearFormat", owner),
         ]));
 
         menu.Items.Add(Sub("Абзац",
         [
-            Item(MenuIcons.BulletListHeader(),  () => run(NoteCommand.BulletList)),
-            Item(MenuIcons.OrderedListHeader(), () => run(NoteCommand.OrderedList)),
+            Item(MenuIcons.BulletListHeader(),  () => run(NoteCommand.BulletList),  "notes.bulletList",  owner),
+            Item(MenuIcons.OrderedListHeader(), () => run(NoteCommand.OrderedList), "notes.orderedList", owner),
             new Separator(),
-            Item(MenuIcons.HeadingHeader("Заголовок 1"), () => run(NoteCommand.Heading1)),
-            Item(MenuIcons.HeadingHeader("Заголовок 2"), () => run(NoteCommand.Heading2)),
-            Item(MenuIcons.HeadingHeader("Заголовок 3"), () => run(NoteCommand.Heading3)),
-            Item(MenuIcons.HeadingHeader("Заголовок 4"), () => run(NoteCommand.Heading4)),
-            Item(MenuIcons.HeadingHeader("Заголовок 5"), () => run(NoteCommand.Heading5)),
-            Item(MenuIcons.HeadingHeader("Заголовок 6"), () => run(NoteCommand.Heading6)),
-            Item(MenuIcons.PlainHeader("Обычный текст"), () => run(NoteCommand.PlainText)),
+            Item(MenuIcons.HeadingHeader("Заголовок 1"), () => run(NoteCommand.Heading1), "notes.heading1", owner),
+            Item(MenuIcons.HeadingHeader("Заголовок 2"), () => run(NoteCommand.Heading2), "notes.heading2", owner),
+            Item(MenuIcons.HeadingHeader("Заголовок 3"), () => run(NoteCommand.Heading3), "notes.heading3", owner),
+            Item(MenuIcons.HeadingHeader("Заголовок 4"), () => run(NoteCommand.Heading4), "notes.heading4", owner),
+            Item(MenuIcons.HeadingHeader("Заголовок 5"), () => run(NoteCommand.Heading5), "notes.heading5", owner),
+            Item(MenuIcons.HeadingHeader("Заголовок 6"), () => run(NoteCommand.Heading6), "notes.heading6", owner),
+            Item(MenuIcons.PlainHeader("Обычный текст"), () => run(NoteCommand.PlainText), "notes.plainText", owner),
             new Separator(),
-            Item(MenuIcons.QuoteHeader(),       () => run(NoteCommand.Quote)),
+            Item(MenuIcons.QuoteHeader(),       () => run(NoteCommand.Quote),       "notes.quote",       owner),
         ]));
 
         menu.Items.Add(Sub("Вставка",
         [
-            Item(MenuIcons.TableHeader(),     () => run(NoteCommand.Table)),
-            Item(MenuIcons.CodeBlockHeader(), () => run(NoteCommand.CodeBlock)),
-            Item(MenuIcons.RuleHeader(),      () => run(NoteCommand.Rule)),
+            Item(MenuIcons.TableHeader(),     () => run(NoteCommand.Table),     "notes.table",     owner),
+            Item(MenuIcons.CodeBlockHeader(), () => run(NoteCommand.CodeBlock), "notes.codeBlock", owner),
+            Item(MenuIcons.RuleHeader(),      () => run(NoteCommand.Rule),      "notes.rule",      owner),
         ]));
 
         return menu;
     }
 
-    private static MenuItem Item(Control header, Action run)
+    private static MenuItem Item(Control header, Action run, string? actionId = null, Visual? owner = null)
     {
         var item = new MenuItem { Header = header };
+        // Подсказка — из действующей привязки: переназначили сочетание, и меню говорит новое.
+        if (actionId is not null && owner is not null) item.WithGesture(actionId, owner);
         item.Click += (_, _) => run();
         return item;
     }

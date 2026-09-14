@@ -26,21 +26,12 @@ public sealed class ShortcutActionsTests
     }
 
     [Fact]
-    public void Every_rebindable_action_has_a_default_and_reference_rows_have_none()
+    public void Every_action_has_a_gesture_even_when_it_is_only_shown()
     {
+        // Справочная строка тоже перечисляет свои жесты: так она ЗАНИМАЕТ их, и окно захвата
+        // не даст отнять Enter у правки ячейки или Escape у окон.
         foreach (var action in ShortcutActions.All)
-        {
-            if (action.Rebindable)
-            {
-                Assert.NotEmpty(action.Defaults);
-                Assert.NotEqual(ShortcutContext.Reference, action.Context);
-            }
-            else
-            {
-                Assert.Empty(action.Defaults);
-                Assert.False(string.IsNullOrWhiteSpace(action.FixedLabel), $"справочная строка без подписи: {action.Id}");
-            }
-        }
+            Assert.NotEmpty(action.Defaults);
     }
 
     [Fact]
@@ -76,6 +67,8 @@ public sealed class ShortcutActionsTests
         Assert.True(ShortcutActions.AllowSameGesture("table.deleteColumns", "table.clearCells"));
         Assert.False(ShortcutActions.AllowSameGesture("table.copy", "table.paste"));
         Assert.False(ShortcutActions.AllowSameGesture("table.clearCells", "sidebar.delete"));
+        // Справочные строки делят клавишу законно: Enter правит ячейку и записывает значение.
+        Assert.True(ShortcutActions.AllowSameGesture("table.ref.edit", "table.ref.escape"));
     }
 
     [Fact]
@@ -87,8 +80,8 @@ public sealed class ShortcutActionsTests
         Assert.True(ShortcutActions.ContextsOverlap(ShortcutContext.Table, ShortcutContext.Table));
         Assert.True(ShortcutActions.ContextsOverlap(ShortcutContext.Global, ShortcutContext.Notes));
         Assert.True(ShortcutActions.ContextsOverlap(ShortcutContext.Notes, ShortcutContext.Global));
-        // Справочные строки не участвуют в конфликтах вовсе.
-        Assert.False(ShortcutActions.ContextsOverlap(ShortcutContext.Reference, ShortcutContext.Global));
+        // Клавиши окон и полей — своя зона: Ctrl+C в текстовом поле не мешает Ctrl+C таблицы.
+        Assert.False(ShortcutActions.ContextsOverlap(ShortcutContext.Windows, ShortcutContext.Table));
     }
 
     [Fact]
@@ -116,8 +109,13 @@ public sealed class ShortcutActionsTests
                 Assert.False(label.Contains(','), $"в строке несколько сочетаний: {action.Id} — {label}");
 
             // У переназначаемых в списке показывается только основной жест, псевдоним — молча
-            // действующий синоним стандарта (Backspace у удалений).
-            Assert.True(action.Defaults.Count <= 2, $"слишком много стандартов: {action.Id}");
+            // действующий синоним стандарта (Backspace у удалений). У справочных клавиш бывает
+            // больше (стрелки — сразу четыре), они и показываются одной подписью.
+            if (action.Rebindable)
+                Assert.True(action.Defaults.Count <= 2, $"слишком много стандартов: {action.Id}");
+            else
+                Assert.True(action.Defaults.Count == 1 || action.FixedLabel is not null,
+                    $"несколько клавиш без общей подписи: {action.Id}");
         }
     }
 
