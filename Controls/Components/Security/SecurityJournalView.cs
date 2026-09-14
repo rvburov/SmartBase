@@ -236,7 +236,7 @@ public sealed class SecurityJournalView : UserControl
         var kinds = Picker(
             ["Все события", "Отправки", "Итоги отправок", "Чтения по выдаче", "Подтверждения",
              "Снятия подтверждения", "Понижения меток", "Ручные выгрузки", "Показы секретов",
-             "Уборки журнала"],
+             "Уборки журнала", "Копирования в буфер обмена"],
             _event switch
             {
                 null                    => 0,
@@ -248,6 +248,7 @@ public sealed class SecurityJournalView : UserControl
                 SecurityEvent.Downgrade => 6,
                 SecurityEvent.Export    => 7,
                 SecurityEvent.Reveal    => 8,
+                SecurityEvent.Copy      => 10,
                 _                       => 9,
             });
 
@@ -264,6 +265,7 @@ public sealed class SecurityJournalView : UserControl
                 7 => SecurityEvent.Export,
                 8 => SecurityEvent.Reveal,
                 9 => SecurityEvent.Trim,
+                10 => SecurityEvent.Copy,
                 _ => null,
             };
 
@@ -449,8 +451,7 @@ public sealed class SecurityJournalView : UserControl
         // У выгрузки в «адресе» лежит путь к файлу, а у отправки — сетевой адрес. Слово должно
         // называть то, что под ним: проверяющий читает эти строки подряд и не должен гадать.
         if (entry.Address.Length > 0)
-            list.Children.Add(Note((entry.Event == SecurityEvent.Export ? "Файл: " : "Адрес: ")
-                                   + entry.Address));
+            list.Children.Add(Note(AddressCaption(entry.Event) + entry.Address));
 
         if (entry.Scenario.Length > 0)
             list.Children.Add(Note("Сценарий: " + entry.Scenario));
@@ -468,9 +469,7 @@ public sealed class SecurityJournalView : UserControl
             list.Children.Add(Note($"Записей: {entry.Rows:N0} · объем: {Size(entry.Bytes)}"));
 
         if (entry.BodyHash.Length > 0)
-            list.Children.Add(Note((entry.Event == SecurityEvent.Export
-                                        ? "Отпечаток файла: " : "Отпечаток тела: ")
-                                   + entry.BodyHash));
+            list.Children.Add(Note(HashCaption(entry.Event) + entry.BodyHash));
 
         list.Children.Add(Note("База данных: " + DatabaseName(entry.DbId)));
 
@@ -498,10 +497,25 @@ public sealed class SecurityJournalView : UserControl
         + (entry.Fields.Length > 0    ? $"поля: {entry.Fields}\n"            : "")
         + $"записей: {entry.Rows:N0} · объем: {Size(entry.Bytes)}\n"
         + (entry.BodyHash.Length > 0
-              ? (entry.Event == SecurityEvent.Export ? "отпечаток файла: " : "отпечаток тела: ")
-                + entry.BodyHash + "\n"
+              ? HashCaption(entry.Event).ToLowerInvariant() + entry.BodyHash + "\n"
               : "")
         + entry.Explanation;
+
+    // У выгрузки в «адресе» лежит путь к файлу, у копирования — «буфер обмена», у отправки —
+    // сетевой адрес. Слово называет то, что под ним.
+    private static string AddressCaption(SecurityEvent kind) => kind switch
+    {
+        SecurityEvent.Export => "Файл: ",
+        SecurityEvent.Copy   => "Куда: ",
+        _                    => "Адрес: ",
+    };
+
+    private static string HashCaption(SecurityEvent kind) => kind switch
+    {
+        SecurityEvent.Export => "Отпечаток файла: ",
+        SecurityEvent.Copy   => "Отпечаток текста: ",
+        _                    => "Отпечаток тела: ",
+    };
 
     // ── Файл ──────────────────────────────────────────────────────────────────
 

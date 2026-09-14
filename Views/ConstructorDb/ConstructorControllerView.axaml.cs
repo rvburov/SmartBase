@@ -120,6 +120,7 @@ public partial class ConstructorControllerView : UserControl
         // ВЫДЕЛЕННЫЕ записи, поэтому сценариев в списке нет: у сценария нет понятия «эти три
         // записи». Вся коллекция целиком — из контекстного меню сайдбара.
         TableViewCtrl.DataActions = DataActions;
+        TableViewCtrl.DatabaseId  = () => CurrentDbId;
 
         // Стартовое состояние: коллекция не выбрана — заголовок-плейсхолдер и подсказка.
         NavbarConstructor.SetTitle("");

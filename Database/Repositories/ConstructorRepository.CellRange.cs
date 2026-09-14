@@ -233,22 +233,6 @@ public sealed partial class ConstructorRepository
         return (writes, changes, conflicts);
     }
 
-    /// <summary>
-    /// Отметить в журнале, что значения ячеек ушли в буфер обмена.
-    ///
-    /// Копирование — такой же вынос данных наружу, как выгрузка в файл, только без файла:
-    /// скопированное уходит в любую другую программу. Выгрузка в этом проекте намеренно
-    /// оставляет след (см. ExportTrace), и оставлять копирование единственным бесследным
-    /// каналом нельзя — поэтому строка журнала пишется на КАЖДОЕ копирование, включая одну
-    /// ячейку. Строка одна на операцию, со счетом ячеек.
-    /// </summary>
-    public void LogCellsCopied(int collectionId, int cellCount)
-    {
-        if (cellCount <= 0) return;
-        var name = CollectionNameOf(collectionId) ?? "";
-        LogNow("copy", "records", name, name, count: cellCount);
-    }
-
     /// <summary>Значения ячеек прямоугольника одним запросом. Ключ — (запись, поле); ячейки без
     /// значения в словарь не попадают.</summary>
     public Dictionary<(int RecordId, int FieldId), string> GetCellValues(

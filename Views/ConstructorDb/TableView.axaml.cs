@@ -2598,6 +2598,10 @@ public partial class TableView : UserControl
     /// </summary>
     public Func<IReadOnlyList<DataAction>>? DataActions { get; set; }
 
+    /// <summary>Ключ открытой базы — для следа копирования в журнале безопасности. Таблица базу
+    /// по ключу не знает (у нее есть только репозиторий), спрашивает у раздела.</summary>
+    public Func<int>? DatabaseId { get; set; }
+
     // ── Пункт «Действия» в меню строки ────────────────────────────────────────
     //
     // Состав пересчитывается в menu.Opening: обмен могли настроить, пока таблица открыта, а

@@ -4,6 +4,7 @@ using SmartBase.Controls.Components;
 using SmartBase.Controls.Dialogs;
 using SmartBase.Controls.Widgets;
 using SmartBase.Core.Models;
+using SmartBase.Database;
 using SmartBase.Database.Repositories;
 using SmartBase.Utils;
 using SmartBase.ViewModels.ConstructorDb;
@@ -46,15 +47,29 @@ public partial class TableView
             .Select(row => (IReadOnlyList<string>)columns.Select(c => CellText(row, _colDefs[c])).ToList())
             .ToList();
 
-        var text  = TableClipboardFormat.Build(matrix);
-        var count = matrix.Count * columns.Count;
+        var text = TableClipboardFormat.Build(matrix);
 
-        if (!await SetClipboardTextAsync(text)) return false;
+        // След в журнале безопасности — ДО буфера: копирование выносит данные наружу так же, как
+        // выгрузка в файл, и копирования, о котором не осталось записи, быть не должно.
+        if (!CopyTrace.Ready) { AppNotifications.Error(CopyTrace.NoJournal); return false; }
+        if (!NoteCopy(columns, matrix.Count, text)) { AppNotifications.Error(CopyTrace.NotWritten); return false; }
 
-        // След в журнале: копирование выносит данные наружу так же, как выгрузка в файл.
-        try { _repository.LogCellsCopied(_collectionId, count); }
-        catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { }
-        return true;
+        return await SetClipboardTextAsync(text);
+    }
+
+    private bool NoteCopy(List<int> columns, int rows, string text)
+    {
+        if (_repository is null) return false;
+
+        // Метка — самая строгая среди базы и скопированных столбцов, как у выгрузки.
+        var label = _repository.GetDatabaseLabel();
+        foreach (var c in columns)
+            if (_fields.FirstOrDefault(f => f.Id?.ToString() == _colDefs[c].Key) is { } field)
+                label = Confidentiality.Strictest(label, Confidentiality.FromConfig(field.ConfigJson));
+
+        return CopyTrace.Note(DatabaseId?.Invoke() ?? 0, _repository.CollectionName(_collectionId),
+                              [.. columns.Select(c => _colDefs[c].Header)], rows, rows * columns.Count,
+                              text, label, DateTimeOffset.Now);
     }
 
     /// <summary>Вырезать: скопировать значения и сразу очистить ячейки. Отменяется Ctrl+Z, как
