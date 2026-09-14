@@ -1,17 +1,20 @@
 using SmartBase.Database;
 using SmartBase.Extensions;
-using SmartBase.Extensions.DocRegistry;
 using SmartBase.Integrations;
 
 namespace SmartBase.Tests.Integration;
 
 /// <summary>
-/// Шаг «файл из папки» и весь путь сообщения: файл в папке → разбор → регистрация → квитанция
+/// Шаг «файл из папки» и путь сообщения через сценарий: файл в папке → следующие шаги → квитанция
 /// отправителю (docs/ROADMAP-API.md, раздел 9, «как обкатать», шаг 1 — без сети вообще).
 ///
 /// Проверяется не файловый протокол — он свой у <see cref="InboxFolder"/> и закрыт
 /// <c>InboxFolderTests</c>, — а то, что добавляет сценарий: единица работы здесь СООБЩЕНИЕ
 /// целиком, ответ отправителю пишется по итогу всех шагов, а пустая папка не оставляет следов.
+///
+/// Следующие шаги здесь — стендовое расширение. Пилот целиком, с разбором и регистрацией на
+/// настоящем расширении, проверяют наборы самих расширений (<c>Tests/Extensions/</c>): тесты ядра
+/// не называют ни одного расширения, иначе удаление расширения роняло бы их сборку.
 /// </summary>
 [Collection(EgressCollection.Name)]
 public sealed class ScenarioIntakeTests : IDisposable
@@ -336,54 +339,5 @@ public sealed class ScenarioIntakeTests : IDisposable
 
         Assert.False(outcome.Ok);
         Assert.Contains("два шага", outcome.Problem, StringComparison.Ordinal);
-    }
-
-    // ── Весь путь ─────────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// <b>Пилот целиком, без сети вообще.</b> Файл кладут в папку — сценарий разбирает
-    /// сообщение, регистрирует документ по ГОСТ и отвечает отправителю квитанцией с
-    /// присвоенным обозначением.
-    ///
-    /// Ни одной строчки кода про регистрацию в оболочке при этом нет, а расширение ничего не
-    /// знает ни про папку, ни про сценарий: какая колонка сообщения в какое поле ложится,
-    /// решает настройка шага. Это и есть критерий приемки из плана — при переходе к другому
-    /// каналу меняется канал, а не расширение и не сопоставление.
-    /// </summary>
-    [Fact]
-    public async Task A_message_in_a_folder_becomes_a_registered_document()
-    {
-        AllowRoot();
-        Put("kd-100.txt", Message);
-
-        var journalId = RegistryStand.Create(_db.Constructor);
-
-        var outcome = await Run(
-            Of(ScenarioStep.OfIntake(_root),
-               ScenarioStep.OfAction(DocRegistryExtension.ExtensionId, ParseMessageAction.ActionKey,
-                                     0, 0),
-               ScenarioStep.OfAction(DocRegistryExtension.ExtensionId, RegisterAction.ActionKey,
-                                     DbId, journalId,
-                                     new Dictionary<string, string>
-                                     {
-                                         ["name"]    = "{{Наименование}}",
-                                         ["org"]     = $"{{{{{ParseMessageAction.OrgColumn}}}}}",
-                                         ["eskd"]    = $"{{{{{ParseMessageAction.EskdColumn}}}}}",
-                                         ["project"] = "{{Проект}}",
-                                         ["fio"]     = "{{ФИО регистрирующего}}",
-                                     })),
-            new DocRegistryExtension());
-
-        Assert.True(outcome.Ok, outcome.Problem);
-
-        var record = Assert.Single(_db.Constructor.GetRecords(journalId));
-        Assert.Equal("Кронштейн", record.Title);
-
-        var receipt = InboxReceipt.TryParse(
-            File.ReadAllText(Path.Combine(Layout().Receipts, "kd-100.json")));
-
-        Assert.True(receipt!.Accepted);
-        Assert.Contains("АБВГ.301121.001", receipt.Explanation, StringComparison.Ordinal);
-        Assert.Equal(1, receipt.Created);
     }
 }

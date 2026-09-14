@@ -5,8 +5,8 @@
 
 | Файл | Что делает | Кто пользуется |
 |---|---|---|
-| [TempDatabase.cs](TempDatabase.cs) | временная SQLite-БД, поднятая настоящим `DatabaseManager.Open` | `DocsCollection`, `TimeCollector`, `DocRegistry` |
-| [TempDir.cs](TempDir.cs) | временная папка, которая сама убирается | `DocsCollection`, `TimeCollector`, `PdfRename` |
+| [TempDatabase.cs](TempDatabase.cs) | временная SQLite-БД, поднятая настоящим `DatabaseManager.Open` | `DocsCollection`, `TimeCollector`, `DocRegistry`, `PdfWatermark` |
+| [TempDir.cs](TempDir.cs) | временная папка, которая сама убирается | `DocsCollection`, `TimeCollector`, `DocRegistry`, `PdfRename`, `PdfWatermark` |
 | [SyncProgress.cs](SyncProgress.cs) | приемник прогресса без фоновых потоков | почти все наборы со сквозным прогоном |
 
 Namespace и имя сборки — `SmartBase.Tests.Extensions.Shared`.

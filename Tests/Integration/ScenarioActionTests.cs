@@ -2,7 +2,6 @@ using Avalonia.Controls;
 using SmartBase.Core.Models;
 using SmartBase.Database;
 using SmartBase.Extensions;
-using SmartBase.Extensions.DocRegistry;
 using SmartBase.Integrations;
 
 namespace SmartBase.Tests.Integration;
@@ -14,8 +13,9 @@ namespace SmartBase.Tests.Integration;
 ///
 /// Расширения здесь стендовые, а не настоящие, и это не экономия: тест с зашитым расширением
 /// проверял бы заодно и его правила, а проверяется договор между сценарием и любым расширением
-/// — <c>Extensions/ExtensionAction.cs</c>. Настоящее расширение появляется в последнем тесте, и
-/// ровно затем, чтобы показать весь путь целиком.
+/// — <c>Extensions/ExtensionAction.cs</c>. Весь путь на настоящем расширении проверяют наборы
+/// самих расширений (<c>Tests/Extensions/</c>): тесты ядра не называют ни одного расширения,
+/// иначе удаление расширения роняло бы их сборку.
 ///
 /// Набор идет в общей очереди шлюза: он ходит на сокет за ответом запроса и пишет в журнал
 /// запусков, один на приложение.
@@ -494,46 +494,6 @@ public sealed class ScenarioActionTests : IDisposable
         Assert.False(outcome.Ok);
         Assert.Contains("сорвалось",           outcome.Problem, StringComparison.Ordinal);
         Assert.Contains("расширению поплохело", outcome.Problem, StringComparison.Ordinal);
-    }
-
-    // ── Настоящее расширение ──────────────────────────────────────────────────
-
-    /// <summary>
-    /// Весь путь целиком на НАСТОЯЩЕМ расширении: ответ чужой программы становится строкой
-    /// журнала регистрации с присвоенным по ГОСТ обозначением, и оболочка при этом не знает о
-    /// регистрации ничего.
-    ///
-    /// Коллекция-журнал собирается здесь же: стенд из тестов расширения лежит в другом проекте,
-    /// а имена столбцов — открытая часть расширения, и повторяются они по ней.
-    /// </summary>
-    [Fact]
-    public async Task A_real_registration_runs_as_a_scenario_step()
-    {
-        AllowLoopback();
-        using var server = new TinyServer(_ => TinyServer.Reply(200, Items(("Втулка", "Молоток"))));
-
-        var orders    = Orders();
-        var journal   = RegistryStand.Create(_db.Constructor);
-        var requestId = NewRequest(server, orders);
-
-        var outcome = await Run(
-            Of(ScenarioStep.OfRequest(requestId),
-               ScenarioStep.OfAction(DocRegistryExtension.ExtensionId, RegisterAction.ActionKey,
-                                     DbId, journal,
-                                     new Dictionary<string, string>
-                                     {
-                                         ["name"]    = "{{Название}}",
-                                         ["org"]     = "АБВГ",
-                                         ["eskd"]    = "301121",
-                                         ["project"] = "{{Проект}}",
-                                     })),
-            new DocRegistryExtension());
-
-        Assert.True(outcome.Ok, outcome.Problem);
-
-        var record = Assert.Single(_db.Constructor.GetRecords(journal));
-        Assert.Equal("Втулка", record.Title);
-        Assert.Contains("АБВГ.301121.001", string.Join(" ", outcome.Lines), StringComparison.Ordinal);
     }
 
     // ── Отбор строк ───────────────────────────────────────────────────────────
