@@ -86,7 +86,7 @@
 |---|---|---|
 | Тип нового свойства (`NewFieldType`) | тип в окне создания свойства; при изменении существующего не участвует | `PropertyEditorDialog`: `_selectedType` в ветке `editFieldId is null` |
 | Открывать новую запись (`OpenNewRecord`) | подставляется в `Open` события `RecordCreateRequested` | `TableView`: «+»-строка, меню пустой области, меню строки. «Список» открывает всегда |
-| Подтверждение удаления (`ConfirmDelete`) | снимает рутинный вопрос | `DeleteRecordsWithConfirm`, `DeletePropertiesWithConfirm`; при непустых `linkWarn`/`roleWarn` окно показывается всегда |
+| Подтверждение удаления (`ConfirmDelete`) | снимает рутинный вопрос | `DeleteRecordsWithConfirm`, `DeletePropertiesWithConfirm`; при непустых `linkWarn`/`roleWarn` окно показывается всегда. Он же — вопрос перед очисткой больше `ClearConfirmThreshold` (10) ячеек в `TableView.ClearCellsAsync` |
 | Цвет новой коллекции (`NewCollectionColor`) | «#RRGGBB», мусор → стандартный синий | `CollectionDialogViewModel` (создание), `SidebarTree` (создание из дерева) |
 | Плотность строк (`RowHeight`) | 28/36/44 → ресурс `RowHeightTable` | `TableView` (`RowHeight`, высота шапки, `StandardRowHeight`), `SidebarRow.CellHeight` — строки выровнены и двигаются вместе |
 | Ширина столбца (`ColWidth`) | база авто-режима и ширина колонки без ручной | `TableView.MinColWidth` (свойство, не константа); `MinManualColWidth` = 48 не меняется |

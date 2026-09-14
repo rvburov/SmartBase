@@ -5,8 +5,8 @@ namespace SmartBase.Tests.Unit;
 /// <summary>
 /// Формат прямоугольника ячеек в буфере обмена: табуляция между столбцами, перевод строки между
 /// строками, кавычки вокруг значений с разделителями внутри. Главное требование — круг
-/// «собрали и разобрали» не теряет и не подменяет значения, а текст, скопированный в Excel,
-/// разбирается здесь так же, как там.
+/// «собрали и разобрали» не теряет и не подменяет значения, а текст, скопированный в табличном
+/// редакторе, разбирается здесь так же, как там.
 /// </summary>
 public sealed class TableClipboardFormatTests
 {
@@ -63,6 +63,45 @@ public sealed class TableClipboardFormatTests
         Assert.Empty(TableClipboardFormat.Parse(null));
     }
 
+    /// <summary>Случайный пробел в буфере — не значение: разобрав его как ячейку, вставка по
+    /// выделенному столбцу стерла бы в нем все.</summary>
+    [Theory]
+    [InlineData(" ")]
+    [InlineData("   ")]
+    public void Spaces_only_parse_to_nothing(string text)
+    {
+        Assert.Empty(TableClipboardFormat.Parse(text));
+    }
+
+    /// <summary>А вот пустая ячейка, скопированная как ячейка (с переводом строки), остается
+    /// значением: ей очищают целевую.</summary>
+    [Fact]
+    public void Copied_empty_cell_is_still_a_value()
+    {
+        Assert.Equal([""], Assert.Single(TableClipboardFormat.Parse("\r\n")));
+    }
+
+    /// <summary>Метка порядка байтов — след кодировки, а не часть первого значения.</summary>
+    [Fact]
+    public void Byte_order_mark_is_dropped()
+    {
+        var parsed = TableClipboardFormat.Parse((char)0xFEFF + "Иванов\tМосква");
+
+        Assert.Equal(["Иванов", "Москва"], parsed[0]);
+    }
+
+    /// <summary>Незакрытая кавычка — просто символ: иначе она проглотила бы весь хвост буфера,
+    /// с табуляциями и переводами строк, в одно значение.</summary>
+    [Fact]
+    public void Unclosed_quote_is_an_ordinary_character()
+    {
+        var parsed = TableClipboardFormat.Parse("\"дюйм\tвторая\nтретья\tчетвертая");
+
+        Assert.Equal(2, parsed.Count);
+        Assert.Equal(["\"дюйм", "вторая"], parsed[0]);
+        Assert.Equal(["третья", "четвертая"], parsed[1]);
+    }
+
     /// <summary>Буфер приходит и из Windows-программ, где конец строки — «возврат каретки плюс
     /// перевод строки», и из старых, где только возврат каретки.</summary>
     [Theory]
@@ -87,7 +126,7 @@ public sealed class TableClipboardFormatTests
         Assert.Single(TableClipboardFormat.Parse("a\tb\r\n"));
     }
 
-    /// <summary>Excel обрезает хвостовые пустые значения, поэтому строки бывают разной длины —
+    /// <summary>Табличные редакторы обрезают хвостовые пустые значения, поэтому строки бывают разной длины —
     /// выравнивать их нельзя, это затерло бы лишние ячейки.</summary>
     [Fact]
     public void Rows_may_have_different_length()
@@ -107,7 +146,7 @@ public sealed class TableClipboardFormatTests
     }
 
     /// <summary>Кавычка в середине значения — обычный символ, а не начало экранирования: так же
-    /// ведет себя Excel, и без этого «размер 5" труба» разобрался бы неверно.</summary>
+    /// ведут себя табличные редакторы, и без этого «размер 5" труба» разобрался бы неверно.</summary>
     [Fact]
     public void Quote_inside_a_value_is_literal()
     {

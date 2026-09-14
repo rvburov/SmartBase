@@ -288,6 +288,60 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
         return null;
     }
 
+    /// <summary>
+    /// Строки с данными в диапазоне позиций [start, start + count) — для операций над выделенными
+    /// ячейками (копирование, вставка, очистка), которым нужны значения и id ВСЕХ строк диапазона,
+    /// а не только прокрученных. Загруженные страницы берутся из кеша; недостающие читаются из
+    /// базы синхронно и в кеш НЕ кладутся: на месте страницы, которая сейчас грузится в фоне, грид
+    /// уже держит заглушки «Загрузка…», и подмена массива оставила бы их незаполненными навсегда.
+    /// Прочитанные так строки — только для чтения значений и id: правка через них в таблицу не
+    /// попадет (после записи таблица перечитывает строки).
+    ///
+    /// Индексатор для этого не годится: на каждой незагруженной странице он стартует фоновую
+    /// загрузку, и обход столбца большой коллекции завел бы тысячи загрузок подряд.
+    /// </summary>
+    public IReadOnlyList<TableRowVm> MaterializeRange(int start, int count)
+    {
+        var end    = Math.Min((long)start + count, _dataCount);
+        var result = new List<TableRowVm>((int)Math.Max(0, end - start));
+
+        var index = Math.Max(0, start);
+        while (index < end)
+        {
+            var page = index / PageSize;
+            var skip = page * PageSize;
+            var take = Math.Min(PageSize, _dataCount - skip);
+
+            var rows = _pages.TryGetValue(page, out var cached) && !_pending.Contains(page)
+                ? cached
+                : ReadDetachedRows(skip, take);
+
+            for (var i = index - skip; i < take && skip + i < end && i < rows.Length; i++)
+                result.Add(rows[i]);
+
+            index = skip + take;
+        }
+        return result;
+    }
+
+    // Строки страницы прямо из базы, мимо кеша и без подписок: см. MaterializeRange.
+    private TableRowVm[] ReadDetachedRows(int skip, int take)
+    {
+        var records = LoadRecordsByOffset(skip, take);
+        var valMap  = _repo.GetFieldValuesBatch(records.Select(r => r.Id!.Value).ToList());
+
+        var rows = new TableRowVm[records.Count];
+        for (var i = 0; i < records.Count; i++)
+        {
+            var rec = records[i];
+            var id  = rec.Id!.Value;
+            rows[i] = new TableRowVm(_repo, id, skip + i + 1, valMap.TryGetValue(id, out var v) ? v : [],
+                                     rec.Title ?? "", rec.CreatedAt ?? "", rec.UpdatedAt ?? "",
+                                     rec.CreatedBy ?? "", rec.UpdatedBy ?? "");
+        }
+        return rows;
+    }
+
     /// <summary>Перечитывает данные ОДНОЙ записи и обновляет ее строку НА МЕСТЕ (если она сейчас в
     /// кеше) — для точечного обновления после правки записи в правой панели, без пересоздания списка
     /// и мелькания «Загрузка…». Строки нет в кеше (прокручена) → ничего не делаем (загрузится свежей).</summary>

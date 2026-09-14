@@ -3,14 +3,16 @@ using SmartBase.Core.Models;
 namespace SmartBase.Tests.Unit;
 
 /// <summary>
-/// Планировщик вставки: куда лягут значения из буфера и что будет пропущено. Правила — эксельные
-/// (выделенная ячейка = левый верхний угол блока, блок разливается вниз и вправо), но с двумя
+/// Планировщик вставки: куда лягут значения из буфера и что будет пропущено. Правила — привычные
+/// по табличным редакторам (выделенная ячейка = левый верхний угол блока, блок разливается вниз и
+/// вправо), но с двумя
 /// собственными ограничениями: строки при вставке НЕ добавляются, и значение приводится к формату
 /// хранения, а не к показанному на экране.
 /// </summary>
 public sealed class TablePastePlannerTests
 {
-    private static readonly PasteColumn Title  = new(TitleKey, "text");
+    private static readonly PasteColumn Title  = new(TitleKey, "text", IsTitle: true);
+    private static readonly PasteColumn User   = new("19", "user", Options: ["Иванов И.", "Петрова А."]);
     private static readonly PasteColumn Text   = new("10", "text");
     private static readonly PasteColumn Number = new("11", "number");
     private static readonly PasteColumn Date   = new("12", "date");
@@ -68,13 +70,49 @@ public sealed class TablePastePlannerTests
         Assert.Equal(1, plan.Skipped[PasteSkipReason.OutsideTable]);
     }
 
-    /// <summary>Пустая ячейка буфера очищает целевую — как в Excel.</summary>
+    /// <summary>Пустая ячейка буфера очищает целевую — как в табличном редакторе.</summary>
     [Fact]
     public void Empty_value_clears_the_target_cell()
     {
         var plan = TablePastePlanner.Plan(Values([""]), 0, 0, [Text], rowCount: 1);
 
         Assert.Equal("", Assert.Single(plan.Cells).StorageValue);
+    }
+
+    /// <summary>«Название» пустым не вставляется — как и очистка его не стирает: запись без
+    /// названия теряется в списках и связях. Остальные значения того же блока ложатся.</summary>
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void Empty_value_does_not_erase_the_title(string text)
+    {
+        var plan = TablePastePlanner.Plan(Values([text, "хвост"]), 0, 0, [Title, Text], rowCount: 1);
+
+        var cell = Assert.Single(plan.Cells);
+        Assert.Equal("10", cell.ColumnKey);
+        Assert.Equal(1, plan.Skipped[PasteSkipReason.EmptyTitle]);
+    }
+
+    /// <summary>Пробелы по краям текста — часть значения: срезать их молча значит портить данные.</summary>
+    [Fact]
+    public void Text_is_pasted_verbatim()
+    {
+        var plan = TablePastePlanner.Plan(Values(["  отступ  "]), 0, 0, [Text], rowCount: 1);
+
+        Assert.Equal("  отступ  ", Assert.Single(plan.Cells).StorageValue);
+    }
+
+    /// <summary>«Пользователь» — закрытый список: чужое имя в ячейке выглядело бы исполнителем,
+    /// но не нашлось бы ни в фильтре, ни в выборе.</summary>
+    [Fact]
+    public void User_must_be_one_of_the_approved_users()
+    {
+        var known   = TablePastePlanner.Plan(Values(["иванов и."]), 0, 0, [User], rowCount: 1);
+        var unknown = TablePastePlanner.Plan(Values(["Сидоров"]), 0, 0, [User], rowCount: 1);
+
+        Assert.Equal("Иванов И.", Assert.Single(known.Cells).StorageValue);
+        Assert.Empty(unknown.Cells);
+        Assert.Equal(1, unknown.Skipped[PasteSkipReason.NotInOptions]);
     }
 
     // ── Приведение к формату хранения ─────────────────────────────────────────
@@ -121,7 +159,7 @@ public sealed class TablePastePlannerTests
         Assert.Equal(1, plan.Skipped[PasteSkipReason.WrongFormat]);
     }
 
-    /// <summary>Чекбокс понимает и галочку из своей же таблицы, и «да»/«нет» из Excel.</summary>
+    /// <summary>Чекбокс понимает и галочку из своей же таблицы, и привычные «да»/«нет».</summary>
     [Theory]
     [InlineData("✓", "1")]
     [InlineData("1", "1")]
@@ -138,7 +176,7 @@ public sealed class TablePastePlannerTests
         else Assert.Equal(stored, Assert.Single(plan.Cells).StorageValue);
     }
 
-    /// <summary>Значение записывается ТОЧНО как в списке опций: «в работе» из Excel становится
+    /// <summary>Значение записывается ТОЧНО как в списке опций: «в работе» из чужой таблицы становится
     /// «В работе», иначе в колонке завелись бы два похожих значения.</summary>
     [Fact]
     public void Option_value_is_matched_case_insensitively_but_stored_exactly()
@@ -168,7 +206,7 @@ public sealed class TablePastePlannerTests
 
     // ── Размножение по выделению ──────────────────────────────────────────────
 
-    /// <summary>Одно значение на выделенный столбец — заполняет его целиком, как в Excel.</summary>
+    /// <summary>Одно значение на выделенный столбец — заполняет его целиком.</summary>
     [Fact]
     public void One_value_fills_the_whole_selection()
     {
@@ -223,7 +261,7 @@ public sealed class TablePastePlannerTests
     }
 
     /// <summary>Выделение МЕНЬШЕ блока — тоже не в счет: вставляем блок целиком, не обрезая его
-    /// по выделению (как в Excel, где лишнее просто выходит за границы).</summary>
+    /// по выделению: лишнее просто выходит за его границы.</summary>
     [Fact]
     public void Selection_smaller_than_the_block_does_not_cut_it()
     {
@@ -271,8 +309,8 @@ public sealed class TablePastePlannerTests
     }
 
     /// <summary>Read-only столбец пропускается, НО позицию в блоке занимает: соседи справа не
-    /// съезжают на колонку влево. Этим же признаком таблица помечает скрытые в «Отображении»
-    /// колонки — вставлять в то, чего человек не видит, нельзя.</summary>
+    /// съезжают на колонку влево. Скрытые в «Отображении» колонки сюда не попадают вовсе —
+    /// таблица передает только видимые, как их и копирует.</summary>
     [Fact]
     public void Read_only_column_is_skipped_but_keeps_its_place()
     {

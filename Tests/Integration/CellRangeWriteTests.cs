@@ -76,6 +76,43 @@ public sealed class CellRangeWriteTests
         Assert.Equal(0, repo.SetCellsBulk(colId, [new(r1, f1, "")]));
     }
 
+    /// <summary>Сосед удалил запись, пока ее строка была на экране. Раньше ее значение упиралось во
+    /// внешний ключ и откатывало ВЕСЬ пакет вместе с живыми записями; теперь удаленная запись
+    /// просто пропускается, а остальные значения ложатся.</summary>
+    [Fact]
+    public void Deleted_record_does_not_fail_the_batch()
+    {
+        using var db = new TempDatabase();
+        var (repo, colId, f1, f2, r1, r2) = Seed(db);
+        repo.DeleteRecord(r2);
+
+        var written = repo.SetCellsBulk(colId, [
+            new(r1, f1, "a1"), new(r1, f2, "b1"),
+            new(r2, f1, "a2"), new(r2, f2, "b2"),
+        ], [(r2, "Призрак")]);
+
+        Assert.Equal(2, written);
+        Assert.Equal("a1", repo.GetFieldValues(r1)[f1]);
+        Assert.Equal("b1", repo.GetFieldValues(r1)[f2]);
+    }
+
+    /// <summary>Запись чужой коллекции пакет не трогает, даже если ее id попал в список.</summary>
+    [Fact]
+    public void Record_of_another_collection_is_not_written()
+    {
+        using var db = new TempDatabase();
+        var (repo, colId, f1, _, r1, _) = Seed(db);
+        var other    = SampleData.AddCollection(repo, "Чужая");
+        var stranger = SampleData.AddRecord(repo, other.Id!.Value, "Чужак", 1000);
+
+        var written = repo.SetCellsBulk(colId, [new(r1, f1, "a1"), new(stranger.Id!.Value, f1, "x")],
+                                        [(stranger.Id!.Value, "Переименован")]);
+
+        Assert.Equal(1, written);
+        Assert.False(repo.GetFieldValues(stranger.Id!.Value).ContainsKey(f1));
+        Assert.Equal("Чужак", repo.GetRecord(stranger.Id!.Value)!.Title);
+    }
+
     [Fact]
     public void Titles_are_written_too()
     {

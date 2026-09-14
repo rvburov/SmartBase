@@ -40,9 +40,9 @@ public static class MenuIcons
     private static Geometry Palette        => Icon("IconPalette");
     private static Geometry Workflow       => Icon("IconWorkflow");
     private static Geometry Play           => Icon("IconPlay");
-    private static Geometry Clipboard      => Icon("IconClipboard");
+    private static Geometry ClipboardCopy  => Icon("IconClipboardCopy");
     private static Geometry ClipboardPaste => Icon("IconClipboardPaste");
-    private static Geometry Eraser         => Icon("IconRemoveFormatting");
+    private static Geometry Eraser         => Icon("IconEraser");
 
     private static SolidColorBrush Red => new(Color.Parse("#FF3B30"));
 
@@ -290,10 +290,11 @@ public static class MenuIcons
     }
 
     // Работа со значениями выделенных ячеек. Три пункта идут своей группой — отдельно от
-    // «Удалить», чтобы очистку значений не путали с удалением записи или столбца.
-    public static Control CopyTextHeader()  => Header(Clipboard,      "Копировать текст");
-    public static Control PasteTextHeader() => Header(ClipboardPaste, "Вставить текст");
-    public static Control ClearTextHeader() => Header(Eraser,         "Очистить текст");
+    // «Удалить», чтобы очистку значений не путали с удалением записи или столбца. «Значения», а
+    // не «текст»: те же пункты работают с галочками, датами и списками.
+    public static Control CopyValuesHeader()  => Header(ClipboardCopy,  "Копировать значения");
+    public static Control PasteValuesHeader() => Header(ClipboardPaste, "Вставить значения");
+    public static Control ClearValuesHeader() => Header(Eraser,         "Очистить значения");
 
     // Заголовок пункта «Удалить»: иконка корзины + красный текст.
     public static Control DeleteHeader()

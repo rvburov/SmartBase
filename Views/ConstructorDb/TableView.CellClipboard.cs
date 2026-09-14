@@ -1,5 +1,6 @@
 using Avalonia.Controls;
-using Avalonia.VisualTree;
+using Avalonia.Input;
+using SmartBase.Controls.Components;
 using SmartBase.Controls.Dialogs;
 using SmartBase.Controls.Widgets;
 using SmartBase.Core.Models;
@@ -11,7 +12,7 @@ namespace SmartBase.Views.ConstructorDb;
 
 /// <summary>
 /// Копирование, очистка и вставка значений выделенных ячеек — три действия, общие для трех
-/// контекстных меню (ячейки, строки, столбца) и трех горячих клавиш.
+/// контекстных меню (ячейки, строки, столбца) и горячих клавиш.
 ///
 /// Все они работают по ОДНОМУ прямоугольнику: меню строки и столбца перед вызовом просто
 /// расширяют выделение на всю строку или весь столбец, поэтому отдельной логики «скопировать
@@ -30,26 +31,22 @@ public partial class TableView
 
     // ── Копирование ───────────────────────────────────────────────────────────
 
-    /// <summary>Значения выделенных ячеек в буфер обмена, в формате Excel (табуляция между
-    /// столбцами, перевод строки между строками).</summary>
+    /// <summary>Значения выделенных ячеек в буфер обмена, в общем формате табличных редакторов
+    /// (табуляция между столбцами, перевод строки между строками).</summary>
     public async Task CopyCellsAsync()
     {
         if (_cellRange is not { } range || _repository is null) return;
 
-        var rows = new List<IReadOnlyList<string>>();
-        for (var r = range.Top; r <= range.Bottom; r++)
-        {
-            if (RowAt(r) is not { } row) continue;
-            var line = new List<string>();
-            for (var c = range.Left; c <= range.Right; c++)
-                if (IsDataColumn(c))
-                    line.Add(CellText(row, _colDefs[c]));
-            if (line.Count > 0) rows.Add(line);
-        }
-        if (rows.Count == 0) return;
+        var columns = VisibleDataColumns().Where(c => c >= range.Left && c <= range.Right).ToList();
+        if (columns.Count == 0) return;
+        if (RowsOfRange(range.Top, range.RowCount) is not { Count: > 0 } rows) return;
 
-        var text  = TableClipboardFormat.Build(rows);
-        var count = rows.Sum(r => r.Count);
+        var matrix = rows
+            .Select(row => (IReadOnlyList<string>)columns.Select(c => CellText(row, _colDefs[c])).ToList())
+            .ToList();
+
+        var text  = TableClipboardFormat.Build(matrix);
+        var count = matrix.Count * columns.Count;
 
         if (!await SetClipboardTextAsync(text)) return;
 
@@ -100,15 +97,15 @@ public partial class TableView
         if (!HasCellSelection || _repository is null) return;
         if (!Can(PermAction.EditRecord)) { PermissionNotice.Show(this, PermAction.EditRecord); return; }
 
-        var cells = SelectedCells();
+        if (SelectedCells() is not { } cells) return;
 
         // «Название» очистка не трогает: запись без названия превращается в «Без названия» и
         // теряется в списках, боковой панели и связях. Стереть его можно только осознанно —
-        // правкой самой записи. Вставке это не мешает: там название заменяется на другое.
+        // правкой самой записи. Вставка пустого названия пропускается по той же причине.
         var titles  = cells.Count(t => t.Column.Key == TableRowVm.TitleKey);
         var targets = cells
             .Where(t => t.Column.Key != TableRowVm.TitleKey
-                        && TablePastePlanner.IsWritable(PasteColumnOf(t.Column)))
+                        && TablePastePlanner.IsWritable(PasteColumnOf(t.Column, users: null)))
             .ToList();
 
         if (targets.Count == 0)
@@ -134,7 +131,7 @@ public partial class TableView
     // ── Вставка ───────────────────────────────────────────────────────────────
 
     /// <summary>Вставить значения из буфера. Выделенная ячейка — левый верхний угол блока,
-    /// дальше он разливается вниз и вправо, как в Excel.</summary>
+    /// дальше он разливается вниз и вправо.</summary>
     public async Task PasteCellsAsync()
     {
         if (_cellRange is not { } range || _repository is null) return;
@@ -146,35 +143,57 @@ public partial class TableView
         var values = TableClipboardFormat.Parse(text);
         if (values.Count == 0) return;
 
-        // Точка вставки — левый верхний угол выделения; размер выделения нужен планировщику,
-        // чтобы размножить по нему блок (одно значение — на все выделенные ячейки, пара
-        // значений — парами по кругу), как это делает Excel.
-        var columns = _colDefs.Select(PasteColumnOf).ToList();
-        var plan    = TablePastePlanner.Plan(values, range.Top, range.Left, columns, VisibleRowCount,
-                                             selectionRows:    range.Bottom - range.Top  + 1,
-                                             selectionColumns: range.Right  - range.Left + 1);
+        // Размножение блока по выделению разливает его на всю высоту выделения — проверяем объем
+        // ДО планирования: план на весь столбец большой коллекции сам по себе занял бы память и
+        // секунды.
+        if (TooManyRows(Math.Max(values.Count, range.RowCount))) return;
+
+        // Вставка идет только по ВИДИМЫМ столбцам — тем же, что копируются. Скрытый столбец
+        // копирование пропускает, и если бы вставка отводила ему место, скопированный блок ложился
+        // бы обратно со сдвигом на чужие столбцы.
+        var visible     = VisibleDataColumns();
+        var startColumn = visible.FindIndex(c => c >= range.Left);
+        if (startColumn < 0) return;
+
+        List<string>? users = null;
+        var columns = visible.Select(c => PasteColumnOf(_colDefs[c], users ??= UserOptions())).ToList();
+        var plan    = TablePastePlanner.Plan(values, range.Top, startColumn, columns, VisibleRowCount,
+                                             selectionRows:    range.RowCount,
+                                             selectionColumns: Math.Max(1, visible.Count(c => c >= range.Left && c <= range.Right)));
 
         var writes = new List<(TableRowVm Row, TableColumnDef Column, string Value)>();
-        foreach (var cell in plan.Cells)
+        if (plan.Cells.Count > 0)
         {
-            if (RowAt(cell.Row) is not { } row) continue;
-            writes.Add((row, _colDefs[cell.Column], cell.StorageValue));
+            var top    = plan.Cells.Min(c => c.Row);
+            var bottom = plan.Cells.Max(c => c.Row);
+            if (RowsOfRange(top, bottom - top + 1) is not { } rows) return;
+
+            var byPosition = new Dictionary<int, TableRowVm>(rows.Count);
+            foreach (var row in rows) byPosition[row.RowNumber - 1] = row;
+
+            foreach (var cell in plan.Cells)
+                if (byPosition.TryGetValue(cell.Row, out var row))
+                    writes.Add((row, _colDefs[visible[cell.Column]], cell.StorageValue));
         }
 
         var written = WriteCells(writes);
-        ReportPaste(written, plan.SkippedCount);
+        ReportPaste(written, plan.Skipped);
     }
 
+    // Список допущенных пользователей для столбцов «Пользователь»: вставка сверяет с ним имена,
+    // как выпадающий список правки. Читается один раз на вставку.
+    private List<string> UserOptions() => _repository?.GetUserOptions() ?? [];
+
     // Столбец таблицы глазами вставки: планировщик не должен знать про ViewModels.
-    // Скрытая колонка для вставки равна read-only: блок разливается ПО ПОЗИЦИЯМ, и значение,
-    // попавшее на скрытую колонку, ушло бы в невидимое поле — человек не увидел бы, что записал.
-    private PasteColumn PasteColumnOf(TableColumnDef def) =>
+    private static PasteColumn PasteColumnOf(TableColumnDef def, List<string>? users) =>
         new(def.Key, def.FieldType,
             // IsReadOnly у колонки означает «нет текстового редактора», а не «значение менять
             // нельзя»: чекбокс правится кликом и из буфера заполняется штатно («да», «1», «✓»).
             // Без этой оговорки вставка и очистка молча обходили бы все колонки-галочки.
-            (def.IsReadOnly && def.FieldType != "checkbox") || _hiddenColumns.Contains(def.Key),
-            def.Options, def.NumberFormat.DecimalSeparator);
+            IsReadOnly: def.IsReadOnly && def.FieldType != "checkbox",
+            Options: def.FieldType == "user" ? users : def.Options,
+            DecimalSeparator: def.NumberFormat.DecimalSeparator,
+            IsTitle: def.Key == TableRowVm.TitleKey);
 
     // ── Запись ────────────────────────────────────────────────────────────────
 
@@ -202,41 +221,86 @@ public partial class TableView
         return written;
     }
 
-    private void ReportPaste(int written, int skipped)
+    private static void ReportPaste(int written, IReadOnlyDictionary<PasteSkipReason, int> skipped)
     {
-        if (written == 0 && skipped == 0) return;
+        var skippedTotal = skipped.Values.Sum();
+        if (written == 0 && skippedTotal == 0) return;
 
         var message = written > 0
             ? $"Вставлено {written} {ValuesPlural(written)}"
             : "Вставлять было нечего";
-        if (skipped > 0) message += $", пропущено {skipped}";
+
+        // Итог говорит, ПОЧЕМУ пропущено: «пропущено 6» без причины заставляло гадать, что не так
+        // со вставкой, и перепроверять ячейки по одной.
+        if (skippedTotal > 0)
+            message += $", пропущено {skippedTotal}: " + string.Join(", ", skipped
+                .Where(kv => kv.Value > 0)
+                .OrderByDescending(kv => kv.Value)
+                .Select(kv => $"{kv.Value} {SkipPhrase(kv.Key)}"));
+
         AppNotifications.Info(message + ".");
     }
+
+    private static string SkipPhrase(PasteSkipReason reason) => reason switch
+    {
+        PasteSkipReason.WrongFormat    => "не подходят типу столбца",
+        PasteSkipReason.NotInOptions   => "нет в списке допустимых",
+        PasteSkipReason.ComputedColumn => "в столбцах, которые не правятся",
+        PasteSkipReason.NotTextColumn  => "в связях и файлах",
+        PasteSkipReason.OutsideTable   => "за краем таблицы",
+        PasteSkipReason.EmptyTitle     => "пустые названия",
+        _                              => "по другой причине",
+    };
+
+    // Действия с буфером запускаются из клавиш и пунктов меню, где результата ждать некому.
+    // async void здесь нарочно: непредвиденное исключение уйдет в общий обработчик приложения
+    // (журнал и окно ошибки), а не пропадет молча в незамеченной задаче.
+    private async void Fire(Func<Task> action) => await action();
 
     // ── Пункты меню ───────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Группа «Копировать / Очистить / Вставить текст» — одна и та же в меню ячейки, строки и
+    /// Группа «Копировать / Вставить / Очистить значения» — одна и та же в меню ячейки, строки и
     /// столбца. <paramref name="select"/> выделяет то, над чем меню открыли: для ячейки это уже
     /// сделано правым кликом, для строки и столбца — расширяет прямоугольник на всю строку или
     /// весь столбец. Дальше все три действия работают по общему выделению.
+    /// Справа у пунктов — их клавиши: так сочетания узнают там же, где ищут действие.
     /// </summary>
     private void AddCellValueItems(ContextMenu menu, Action select)
     {
         menu.Items.Add(new Separator());
 
-        var copy = new MenuItem { Header = Controls.Components.MenuIcons.CopyTextHeader() };
-        copy.Click += (_, _) => { select(); _ = CopyCellsAsync(); };
+        var command = CommandModifiers();
+
+        var copy = new MenuItem
+        {
+            Header       = MenuIcons.CopyValuesHeader(),
+            InputGesture = new KeyGesture(Key.C, command),
+        };
+        copy.Click += (_, _) => { select(); Fire(CopyCellsAsync); };
         menu.Items.Add(copy);
 
-        var paste = new MenuItem { Header = Controls.Components.MenuIcons.PasteTextHeader() };
-        Guarded(paste, PermAction.EditRecord, () => { select(); _ = PasteCellsAsync(); });
+        var paste = new MenuItem
+        {
+            Header       = MenuIcons.PasteValuesHeader(),
+            InputGesture = new KeyGesture(Key.V, command),
+        };
+        Guarded(paste, PermAction.EditRecord, () => { select(); Fire(PasteCellsAsync); });
         menu.Items.Add(paste);
 
-        var clear = new MenuItem { Header = Controls.Components.MenuIcons.ClearTextHeader() };
-        Guarded(clear, PermAction.EditRecord, () => { select(); _ = ClearCellsAsync(); });
+        var clear = new MenuItem
+        {
+            Header       = MenuIcons.ClearValuesHeader(),
+            InputGesture = new KeyGesture(Key.Delete),
+        };
+        Guarded(clear, PermAction.EditRecord, () => { select(); Fire(ClearCellsAsync); });
         menu.Items.Add(clear);
     }
+
+    // Модификатор команд платформы: Ctrl, а на macOS — Cmd. Подсказка в меню должна совпадать с
+    // тем, что реально нажимают.
+    private KeyModifiers CommandModifiers() =>
+        TopLevel.GetTopLevel(this)?.PlatformSettings?.HotkeyConfiguration.CommandModifiers ?? KeyModifiers.Control;
 
     // ── Меню самой ячейки ─────────────────────────────────────────────────────
 
@@ -257,29 +321,55 @@ public partial class TableView
     }
 
     /// <summary>
-    /// Меню ячейки: только то, что относится к значениям, — про саму запись есть свое меню на
-    /// столбце «№». Выделение к этому моменту уже стоит (правый клик его поставил), поэтому
-    /// пункты работают по нему и ничего не переустанавливают.
+    /// Меню ячейки: только то, что относится к значениям и их виду, — про саму запись есть свое
+    /// меню на столбце «№». Выделение к этому моменту уже стоит (правый клик его поставил),
+    /// поэтому пункты работают по нему и ничего не переустанавливают.
     /// </summary>
     private ContextMenu BuildCellContextMenu(TableRowVm row, TableColumnDef def)
     {
         var menu = new ContextMenu();
 
         // Шапка со свойством: меню ячейки и меню записи должны различаться с первого взгляда.
-        menu.Items.Add(MakeMenuHeaderItem(
-            Controls.Components.MenuIcons.PropertyMenuHeader(def.Header, def.FieldType)));
+        menu.Items.Add(MakeMenuHeaderItem(MenuIcons.PropertyMenuHeader(def.Header, def.FieldType)));
 
         AddCellValueItems(menu, () => { });
 
         menu.Items.Add(new Separator());
-
-        // Дорога к карточке: клик по ячейке больше не открывает запись (он выделяет ячейку),
-        // поэтому явный пункт обязателен — иначе до записи добираться только через «№».
-        var open = new MenuItem { Header = Controls.Components.MenuIcons.EditHeader() };
-        open.Click += (_, _) => { if (row.RecordId > 0) RecordClicked?.Invoke(this, row.RecordId); };
-        menu.Items.Add(open);
+        AddCellColorItems(menu, row, def);
 
         return menu;
+    }
+
+    // ── Цвет выделенных ячеек ─────────────────────────────────────────────────
+    //
+    // «Фон ячейки» и «Цвет текста ячейки» живут в меню самой ячейки: правый клик по ячейке
+    // открывает именно его, и в меню записи (столбец «№») адресата-ячейки нет. Цвет ложится на
+    // ВСЕ выделенные ячейки — как копирование и очистка. Отметка текущего цвета — у той ячейки, по
+    // которой кликнули; состав пересчитывается при открытии, потому что цвет могли сменить.
+    private void AddCellColorItems(ContextMenu menu, TableRowVm row, TableColumnDef def)
+    {
+        var host = new MenuItem { Header = MenuIcons.ColorHeader() };
+        MenuIcons.FixSubmenuGap(host);
+
+        menu.Opening += (_, _) =>
+        {
+            host.Items.Clear();
+            host.IsEnabled = Can(PermAction.EditRecord);
+
+            var current = row.CellStyle(def.Key);
+            host.Items.Add(ColorMenu.Build("Фон ячейки", current.Bg,
+                hex => ApplySelectedCellsStyle(StyleAspect.Background, hex)));
+            host.Items.Add(ColorMenu.Build("Цвет текста ячейки", current.Fg,
+                hex => ApplySelectedCellsStyle(StyleAspect.Text, hex)));
+        };
+
+        menu.Items.Add(host);
+    }
+
+    private void ApplySelectedCellsStyle(StyleAspect aspect, string? hex)
+    {
+        if (SelectedCells() is not { Count: > 0 } cells) return;
+        ApplyCellStyleChange(cells.Select(t => (t.Row.RecordId, t.Column.Key)).ToList(), aspect, hex);
     }
 
     /// <summary>Выделить все ячейки строки — для пунктов меню строки.</summary>

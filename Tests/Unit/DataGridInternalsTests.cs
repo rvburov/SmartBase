@@ -6,11 +6,21 @@ namespace SmartBase.Tests.Unit;
 
 /// <summary>
 /// Навигация нижней панели таблицы стоит на internal-членах Avalonia DataGrid (версия
-/// зафиксирована 11.2.x): видимые строки берутся из <c>DisplayData</c>, прокрутка идет
-/// через <c>VerticalScrollBar</c> + <c>ProcessVerticalScroll</c>, а брошенные в дереве
-/// строки отсеиваются по <c>IsRecycled</c>. Рефлексия отказывает МОЛЧА — кнопки перестают
-/// нажиматься, индикатор начинает врать, — поэтому имена и типы проверяются тестом: после
-/// апгрейда Avalonia он падает раньше, чем это увидит пользователь.
+/// зафиксирована 11.2.x): видимые строки берутся из <c>DisplayData</c>, а прокрутка идет
+/// через <c>VerticalScrollBar</c> + <c>ProcessVerticalScroll</c>. Рефлексия отказывает
+/// МОЛЧА — кнопки перестают нажиматься, индикатор начинает врать, — поэтому имена и типы
+/// проверяются тестом: после апгрейда Avalonia он падает раньше, чем это увидит пользователь.
+///
+/// ЧЕГО ЗДЕСЬ НЕТ. Брошенные в дереве строки (<c>IsStaleRow</c> в TableView) раньше
+/// отсеивались по internal-флагу <c>IsRecycled</c>, и тест сторожил его имя. Флаг оказался
+/// негодным критерием: он не сбрасывается, и после первой же перезагрузки строк брошенным
+/// считался весь экран. Теперь критерий — публичные <c>Clip</c> и <c>IsVisible</c>: рефлексии
+/// нет, имена сторожит компилятор. А то, на чем критерий держится, — ПОВЕДЕНИЕ internal-кода
+/// DataGrid (<c>FullyRecycleElements</c> прячет сироту через <c>IsVisible=false</c>,
+/// <c>ClearElements</c> закрывает паркованную строку пустым <c>Clip</c>), — проверкой имен не
+/// ловится: смена механики при тех же именах прошла бы мимо теста. Воспроизвести ее можно
+/// только разложенным гридом, а в этом наборе нет Avalonia.Headless, поэтому после апгрейда
+/// механику сверяет ручной прогон qa-checklists/table-navigation.md, раздел 3а.
 ///
 /// Разбор: docs/developer/features/constructor/table.md, «Навигация нижней панели».
 /// </summary>
@@ -39,15 +49,6 @@ public sealed class DataGridInternalsTests
 
         Assert.NotNull(slot);
         Assert.Equal(typeof(int), slot!.PropertyType);
-    }
-
-    [Fact]
-    public void Row_exposes_recycled_flag()
-    {
-        var recycled = typeof(DataGridRow).GetProperty("IsRecycled", Hidden);
-
-        Assert.NotNull(recycled);
-        Assert.Equal(typeof(bool), recycled!.PropertyType);
     }
 
     [Fact]

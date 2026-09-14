@@ -36,6 +36,16 @@ public sealed partial class ConstructorRepository
         Demand(PermAction.EditRecord, collectionId);
         if (cells.Count == 0 && (titles is null || titles.Count == 0)) return 0;
 
+        // Пишем только в записи, которые ЕЩЕ есть и принадлежат этой коллекции. Сосед мог удалить
+        // запись, пока таблица показывала ее строку: без отсева INSERT ее значения упирался бы во
+        // внешний ключ и откатывал ВЕСЬ пакет вместе с живыми записями — хотя правка одной ячейки
+        // в той же ситуации проходит. Удаленная запись просто пропускается.
+        var alive = AliveRecordIds(collectionId,
+            cells.Select(c => c.RecordId).Concat(titles?.Select(t => t.RecordId) ?? []));
+        cells  = [.. cells.Where(c => alive.Contains(c.RecordId))];
+        titles = titles is null ? null : [.. titles.Where(t => alive.Contains(t.RecordId))];
+        if (cells.Count == 0 && (titles is null || titles.Count == 0)) return 0;
+
         // Текущие значения затронутых ячеек — одним запросом: без них не отличить настоящую
         // правку от повторной вставки того же блока.
         var recordIds = cells.Select(c => c.RecordId).Distinct().ToList();
@@ -66,14 +76,16 @@ public sealed partial class ConstructorRepository
         }
 
         var titleChanges = TitleChanges(titles);
-        var changed = inserts.Count + updates.Count + deletes.Count + titleChanges.Count;
-        if (changed == 0) return 0;
+        if (inserts.Count + updates.Count + deletes.Count + titleChanges.Count == 0) return 0;
 
         var touched = inserts.Concat(updates).Concat(deletes).Select(c => c.RecordId)
             .Concat(titleChanges.Select(t => t.RecordId))
             .Distinct().ToList();
 
-        WriteCells(inserts, updates, deletes, titleChanges, touched);
+        // Счет — по строкам, которых запись РЕАЛЬНО коснулась: запись могли удалить и между
+        // отсевом выше и транзакцией, и тогда ее значения честно не записались.
+        var changed = WriteCells(collectionId, inserts, updates, deletes, titleChanges, touched);
+        if (changed == 0) return 0;
 
         // Локальный кеш EF сырые команды не видят: без синхронизации панель записи и повторное
         // чтение отдали бы прежние значения (та же оговорка, что у аудита в SetFieldValue).
@@ -117,6 +129,18 @@ public sealed partial class ConstructorRepository
             .ToDictionary(v => (v.RecordId, v.FieldId), v => v.Value);
     }
 
+    // Какие из записей еще живы и лежат в этой коллекции. Запись из чужой коллекции сюда попасть
+    // не должна вовсе, но проверка стоит той же строки запроса.
+    private HashSet<int> AliveRecordIds(int collectionId, IEnumerable<int> recordIds)
+    {
+        var ids = recordIds.Distinct().ToList();
+        if (ids.Count == 0) return [];
+        return db.DbRecords.AsNoTracking()
+            .Where(r => r.CollectionId == collectionId && ids.Contains(r.Id))
+            .Select(r => r.Id)
+            .ToHashSet();
+    }
+
     // Названия, которые реально меняются: сравниваем с текущими по той же причине, что и значения.
     private List<(int RecordId, string Title)> TitleChanges(IReadOnlyList<(int RecordId, string Title)>? titles)
     {
@@ -133,9 +157,10 @@ public sealed partial class ConstructorRepository
                          .Select(t => (t.RecordId, Title: t.Title ?? ""))];
     }
 
-    // Одна транзакция на все: значения, названия и аудит «последней правки».
-    private void WriteCells(List<CellWrite> inserts, List<CellWrite> updates, List<CellWrite> deletes,
-                            List<(int RecordId, string Title)> titles, List<int> touched)
+    // Одна транзакция на все: значения, названия и аудит «последней правки». Возвращает, сколько
+    // значений и названий реально записано.
+    private int WriteCells(int collectionId, List<CellWrite> inserts, List<CellWrite> updates, List<CellWrite> deletes,
+                           List<(int RecordId, string Title)> titles, List<int> touched)
     {
         var conn    = db.Database.GetDbConnection();
         var wasOpen = conn.State == ConnectionState.Open;
@@ -144,26 +169,35 @@ public sealed partial class ConstructorRepository
         try
         {
             using var tx = conn.BeginTransaction();
+            var written = 0;
 
+            // Вставка — через SELECT ... WHERE EXISTS: запись могли удалить уже после отсева, и
+            // простой INSERT уронил бы весь пакет на внешнем ключе. ON CONFLICT — на случай, когда
+            // сосед успел завести ту же ячейку: «последний побеждает», как у одиночной правки.
+            // WHERE у SELECT обязателен и по другой причине: без него SQLite не отличает ON
+            // конфликта от ON соединения. Синтаксис один и для SQLite, и для PostgreSQL.
             if (inserts.Count > 0)
-                Run(conn, tx, "INSERT INTO db_field_values (RecordId, FieldId, Value) VALUES (@rid, @fid, @val)",
-                    inserts, (p, c) => { p["@rid"].Value = c.RecordId; p["@fid"].Value = c.FieldId; p["@val"].Value = c.Value; },
-                    ["@rid", "@fid", "@val"]);
+                written += Run(conn, tx,
+                    "INSERT INTO db_field_values (RecordId, FieldId, Value) " +
+                    "SELECT @rid, @fid, @val WHERE EXISTS (SELECT 1 FROM db_records WHERE Id = @rid AND CollectionId = @cid) " +
+                    "ON CONFLICT (RecordId, FieldId) DO UPDATE SET Value = excluded.Value",
+                    inserts, (p, c) => { p["@rid"].Value = c.RecordId; p["@fid"].Value = c.FieldId; p["@val"].Value = c.Value; p["@cid"].Value = collectionId; },
+                    ["@rid", "@fid", "@val", "@cid"]);
 
             if (updates.Count > 0)
-                Run(conn, tx, "UPDATE db_field_values SET Value = @val WHERE RecordId = @rid AND FieldId = @fid",
+                written += Run(conn, tx, "UPDATE db_field_values SET Value = @val WHERE RecordId = @rid AND FieldId = @fid",
                     updates, (p, c) => { p["@rid"].Value = c.RecordId; p["@fid"].Value = c.FieldId; p["@val"].Value = c.Value; },
                     ["@rid", "@fid", "@val"]);
 
             if (deletes.Count > 0)
-                Run(conn, tx, "DELETE FROM db_field_values WHERE RecordId = @rid AND FieldId = @fid",
+                written += Run(conn, tx, "DELETE FROM db_field_values WHERE RecordId = @rid AND FieldId = @fid",
                     deletes, (p, c) => { p["@rid"].Value = c.RecordId; p["@fid"].Value = c.FieldId; },
                     ["@rid", "@fid"]);
 
             if (titles.Count > 0)
-                Run(conn, tx, "UPDATE db_records SET Title = @title WHERE Id = @rid",
-                    titles, (p, t) => { p["@rid"].Value = t.RecordId; p["@title"].Value = t.Title; },
-                    ["@rid", "@title"]);
+                written += Run(conn, tx, "UPDATE db_records SET Title = @title WHERE Id = @rid AND CollectionId = @cid",
+                    titles, (p, t) => { p["@rid"].Value = t.RecordId; p["@title"].Value = t.Title; p["@cid"].Value = collectionId; },
+                    ["@rid", "@title", "@cid"]);
 
             // Аудит «последней правки» — для столбцов «Дата изменения» и «Изменение пользователем».
             var stamp  = DateTime.Now.ToString("o");
@@ -180,6 +214,8 @@ public sealed partial class ConstructorRepository
                     tracked.UpdatedAt = stamp;
                     tracked.UpdatedBy = author;
                 }
+
+            return written;
         }
         finally
         {
@@ -187,10 +223,11 @@ public sealed partial class ConstructorRepository
         }
     }
 
-    // Prepared-команда, прогнанная по списку: один разбор запроса на весь пакет.
-    private static void Run<T>(DbConnection conn, DbTransaction tx, string sql,
-                               IReadOnlyList<T> items, Action<Dictionary<string, DbParameter>, T> bind,
-                               string[] parameterNames)
+    // Prepared-команда, прогнанная по списку: один разбор запроса на весь пакет. Возвращает
+    // сумму затронутых строк.
+    private static int Run<T>(DbConnection conn, DbTransaction tx, string sql,
+                              IReadOnlyList<T> items, Action<Dictionary<string, DbParameter>, T> bind,
+                              string[] parameterNames)
     {
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
@@ -198,14 +235,16 @@ public sealed partial class ConstructorRepository
 
         var ps = new Dictionary<string, DbParameter>(parameterNames.Length);
         foreach (var name in parameterNames)
-            ps[name] = AddParam(cmd, name, name is "@rid" or "@fid" ? DbType.Int32 : DbType.String);
+            ps[name] = AddParam(cmd, name, name is "@rid" or "@fid" or "@cid" ? DbType.Int32 : DbType.String);
         cmd.Prepare();
 
+        var affected = 0;
         foreach (var item in items)
         {
             bind(ps, item);
-            cmd.ExecuteNonQuery();
+            affected += cmd.ExecuteNonQuery();
         }
+        return affected;
     }
 
     private void SyncLocalCache(List<CellWrite> inserts, List<CellWrite> updates, List<CellWrite> deletes,

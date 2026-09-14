@@ -147,9 +147,6 @@ public partial class TableView : UserControl
     // (TableRowVm.CellStyles): оно приезжает постранично вместе с данными.
     private Dictionary<int, RowStyle>    _rowStyles    = [];
     private Dictionary<string, RowStyle> _columnStyles = [];
-    // Ключ колонки последнего правого клика по ячейке: своего меню у ячейки нет (его открывает
-    // строка), поэтому пункты «Фон ячейки»/«Цвет текста ячейки» узнают адресата отсюда.
-    private string? _menuCellKey;
 
     // ── Ручная высота строк ───────────────────────────────────────────────────
     // recordId → высота строки (px). Применяется в OnLoadingRow при ручном режиме;
@@ -203,13 +200,6 @@ public partial class TableView : UserControl
         Focusable = true;
         RecordsGrid.CellPointerPressed += OnCellPointerPressed;
         RecordsGrid.LoadingRow         += OnLoadingRow;
-        // Сбрасываем адресата пунктов «цвет ячейки» ДО того, как его поставит сама ячейка:
-        // туннелирование идет сверху вниз, поэтому этот обработчик всегда раньше. Иначе
-        // правый клик по «№» или по пустой области открывал бы меню со старой ячейкой.
-        RecordsGrid.AddHandler(PointerPressedEvent, (_, e) =>
-        {
-            if (e.GetCurrentPoint(RecordsGrid).Properties.IsRightButtonPressed) _menuCellKey = null;
-        }, RoutingStrategies.Tunnel);
         // Snap дробных Star-ширин до целочисленных весов — без этого DataGrid
         // не рисует вертикальные грид-линии в сабпиксельных позициях. Снап сходится
         // за один шаг (Σ весов = доступная ширина → каждая колонка == вес px).
@@ -347,24 +337,38 @@ public partial class TableView : UserControl
 
     private void OnTopLevelKeyDown(object? sender, KeyEventArgs e)
     {
-        if (!IsVisible) return;                       // таблица не на экране (режим «Список»)
+        // IsEffectivelyVisible, а не IsVisible: разделы прячутся через своего предка (модуль
+        // конструктора), и у самой таблицы IsVisible остается true. С прежней проверкой Delete в
+        // «Задачах» стирал значения невидимой таблицы и заодно удалял выделенную задачу.
+        if (!IsEffectivelyVisible) return;
         if (IsTextInputFocused(e)) return;            // печатают в поле — таблица молчит
+        if (IsCellEditing) return;                    // клавиши правят значение в редакторе
 
-        // Выделены ячейки — Ctrl+C, Ctrl+V и Delete работают по прямоугольнику, как в Excel.
-        // Проверяем ДО удаления записей: пока выделены ячейки, строки не выделены (одно гасит
-        // другое), и Delete должен стирать значения, а не записи.
-        if (HasCellSelection && !IsCellEditing)
+        // Выделены ячейки — Ctrl+C, Ctrl+V, Delete и Backspace работают по прямоугольнику.
+        // Только пока фокус В ТАБЛИЦЕ: иначе Delete по выделенным свойствам в панели записи уходил
+        // в ячейки, выделенные когда-то раньше. Проверяем ДО удаления записей: пока выделены
+        // ячейки, строки не выделены (одно гасит другое).
+        if (HasCellSelection && IsKeyboardFocusWithin && _selectedColumnKeys.Count == 0)
         {
-            var ctrl = e.KeyModifiers.HasFlag(KeyModifiers.Control)
-                    || e.KeyModifiers.HasFlag(KeyModifiers.Meta);   // macOS: Cmd
+            // Ровно Ctrl (Cmd): Ctrl+Shift+C и прочие сочетания принадлежат не таблице.
+            var command = e.KeyModifiers == KeyModifiers.Control || e.KeyModifiers == KeyModifiers.Meta;
 
-            if (ctrl && e.Key == Key.C) { _ = CopyCellsAsync();  e.Handled = true; return; }
-            if (ctrl && e.Key == Key.V) { _ = PasteCellsAsync(); e.Handled = true; return; }
-            if (e.Key is Key.Delete or Key.Back) { _ = ClearCellsAsync(); e.Handled = true; return; }
+            if (command && e.Key == Key.C) { Fire(CopyCellsAsync);  e.Handled = true; return; }
+            if (command && e.Key == Key.V) { Fire(PasteCellsAsync); e.Handled = true; return; }
+            if (e.KeyModifiers == KeyModifiers.None && e.Key is Key.Delete or Key.Back)
+            {
+                Fire(ClearCellsAsync);
+                e.Handled = true;
+                return;
+            }
         }
 
         if (e.Key != Key.Delete) return;
         if (_selectedColumnKeys.Count > 0) return;    // удаление колонок — в OnTableKeyDown
+
+        // Фокус в панели записи: там Delete удаляет выделенные свойства, и отнимать у нее
+        // клавишу ради записей таблицы нельзя — туннель окна идет раньше обработчика панели.
+        if (e.Source is Visual source && source.FindAncestorOfType<RecordPageView>() is not null) return;
 
         var ids = SelectedRecordIds();
         if (ids.Count == 0) return;
@@ -375,6 +379,12 @@ public partial class TableView : UserControl
 
     private void OnTableKeyDown(object? sender, KeyEventArgs e)
     {
+        if (IsCellEditing && e.Key == Key.Enter)
+        {
+            OnEnterWhileEditing(e);
+            return;
+        }
+
         if (e.Key != Key.Delete && e.Key != Key.Back) return;
 
         // Колонки имеют приоритет: их выделение — явный жест по заголовку.
@@ -407,13 +417,68 @@ public partial class TableView : UserControl
         e.Handled = true;
     }
 
-    // Выделенные записи (без строки «+») в виде списка их id.
+    /// <summary>
+    /// Enter в открытом редакторе. Штатно грид делает из Enter «стрелку вниз»: фиксирует правку и
+    /// переносит текущую ячейку и фокус на строку ниже, а наша рамка остается на прежней — горели
+    /// две разные ячейки, и следующий Delete или Ctrl+C уходил не туда. Здесь Enter только
+    /// фиксирует значение, и выделена остается та же ячейка.
+    ///
+    /// Alt+Enter в текстовой ячейке — перевод строки внутри значения. В остальных редакторах он
+    /// ничего не делает (перенос в числе или дате превратил бы значение в текст), но и гриду не
+    /// отдается: иначе тот увел бы выделение вниз.
+    /// </summary>
+    private void OnEnterWhileEditing(KeyEventArgs e)
+    {
+        // Раскрытый список выбирает пункт по Enter — эту клавишу у него не отнимаем.
+        if (e.Source is Visual source
+            && source.GetSelfAndVisualAncestors().OfType<ComboBox>().FirstOrDefault() is { IsDropDownOpen: true })
+            return;
+
+        e.Handled = true;
+
+        if (e.KeyModifiers == KeyModifiers.Alt)
+        {
+            InsertLineBreak(e.Source);
+            return;
+        }
+
+        RecordsGrid.CommitEdit();
+        // Редактор ушел вместе с фокусом: без возврата фокуса гриду следующий Ctrl+C или Delete
+        // до таблицы не дошел бы.
+        RecordsGrid.Focus();
+    }
+
+    // Перевод строки на месте каретки (выделенный текст заменяется) — только в тексте и ссылке.
+    // «Название» — одна строка: с переводом оно рвалось бы в списках, боковой панели и связях.
+    private void InsertLineBreak(object? source)
+    {
+        if (_editingCell is not { } cell || cell.Column < 0 || cell.Column >= _colDefs.Count) return;
+
+        var def = _colDefs[cell.Column];
+        if (def.Key == TableRowVm.TitleKey || def.FieldType is not ("text" or "url")) return;
+        if (source is not Visual visual
+            || visual.GetSelfAndVisualAncestors().OfType<TextBox>().FirstOrDefault() is not { } box) return;
+
+        var text  = box.Text ?? "";
+        var start = Math.Min(box.SelectionStart, box.SelectionEnd);
+        var end   = Math.Max(box.SelectionStart, box.SelectionEnd);
+
+        box.Text           = text[..start] + "\n" + text[end..];
+        box.SelectionStart = box.SelectionEnd = box.CaretIndex = start + 1;
+    }
+
+    // Выделенные записи (без строки «+») в виде списка их id. Пока выделены ЯЧЕЙКИ, записей
+    // выделенных нет: грид при этом может держать строку выделенной внутри себя (без этого не
+    // открывается правка), но на экране она не подсвечена — и попадать в удаление, дубль или
+    // «Действия» то, чего человек не видит выделенным, не должно.
     private List<int> SelectedRecordIds() =>
-        RecordsGrid.SelectedItems
-            .OfType<TableRowVm>()
-            .Where(r => !r.IsAddRow)
-            .Select(r => r.RecordId)
-            .ToList();
+        HasCellSelection
+            ? []
+            : RecordsGrid.SelectedItems
+                .OfType<TableRowVm>()
+                .Where(r => !r.IsAddRow)
+                .Select(r => r.RecordId)
+                .ToList();
 
     // Фокус внутри текстового поля ячейки — чтобы Delete правил текст, а не удалял строки.
     private static bool IsTextInputFocused(KeyEventArgs e) =>
@@ -1380,6 +1445,7 @@ public partial class TableView : UserControl
     // результат операции. Подсветка появится у тех строк, что сейчас в кеше (видимые/прогретые).
     public void SelectRecords(IReadOnlyList<int> recordIds)
     {
+        ClearCellSelection();   // выделяются записи — рамка ячеек гаснет, иначе Delete двусмыслен
         RecordsGrid.SelectedItems.Clear();
         if (_virtualRows is null) return;
         foreach (var id in recordIds)
@@ -1762,14 +1828,6 @@ public partial class TableView : UserControl
         // подключения шаблон еще не применен — надписей в дереве нет и красить нечего.
         host.Loaded += (_, _) => Apply();
 
-        // Правый клик по ячейке запоминает ее колонку: меню открывает СТРОКА, и без этого
-        // пункты «Фон ячейки»/«Цвет текста ячейки» не знали бы, какую ячейку красить.
-        // Ловим на туннелировании — до того, как событие дойдет до строки и откроет меню.
-        host.AddHandler(PointerPressedEvent, (_, e) =>
-        {
-            if (e.GetCurrentPoint(host).Properties.IsRightButtonPressed) _menuCellKey = key;
-        }, RoutingStrategies.Tunnel);
-
         TrackRowStyle(host, Apply);
         return host;
     }
@@ -1963,7 +2021,7 @@ public partial class TableView : UserControl
 
             // Числа выравниваем вправо (для этого TextBlock должен занять всю ширину ячейки).
             var isNumber = def.FieldType == "number";
-            return new TextBlock
+            var text = new TextBlock
             {
                 Margin              = new Thickness(6, 0, 6, 0),
                 VerticalAlignment   = VerticalAlignment.Center,
@@ -1972,7 +2030,48 @@ public partial class TableView : UserControl
                 TextTrimming        = TextTrimming.CharacterEllipsis,
                 [!TextBlock.TextProperty] = binding,
             };
+            if (!isNumber) FitLinesToCell(text);
+            return text;
         });
+
+    /// <summary>
+    /// Многострочное значение (перевод строки через Alt+Enter или из буфера) показывается ровно
+    /// столькими строками, сколько влезает в высоту ячейки. Без предела надпись центровалась бы
+    /// целиком и срезалась сверху и снизу — в строке стандартной высоты от двух строк оставались
+    /// бы две половинки. В строке, растянутой вручную, видно больше строк.
+    ///
+    /// Высота строки текста берется у самой надписи после ее разметки, пока ее нет — оценкой по
+    /// размеру шрифта. Пересчет — на смену размера ячейки: ее меняют ручная высота строк и зум.
+    /// </summary>
+    private static void FitLinesToCell(TextBlock text)
+    {
+        void Fit()
+        {
+            if (text.Parent is not Control cell || cell.Bounds.Height <= 0) return;
+
+            var line = text.TextLayout?.TextLines is { Count: > 0 } lines && lines[0].Height > 0
+                ? lines[0].Height
+                : text.FontSize * 1.35;
+            var fit = Math.Max(1, (int)((cell.Bounds.Height - text.Margin.Top - text.Margin.Bottom) / line));
+            if (text.MaxLines != fit) text.MaxLines = fit;
+        }
+
+        Control? sized = null;
+        void OnSized(object? _, SizeChangedEventArgs __) => Fit();
+
+        text.AttachedToVisualTree += (_, _) =>
+        {
+            if (sized is not null) sized.SizeChanged -= OnSized;
+            sized = text.Parent as Control;
+            if (sized is not null) sized.SizeChanged += OnSized;
+            Fit();
+        };
+        text.DetachedFromVisualTree += (_, _) =>
+        {
+            if (sized is not null) sized.SizeChanged -= OnSized;
+            sized = null;
+        };
+    }
 
     // Имя свойства TableRowVm-источника для «вычисляемого» типа свойства (аудит-метаданные).
     private static string ComputedBindingPath(string? fieldType) => fieldType switch
@@ -2163,6 +2262,10 @@ public partial class TableView : UserControl
         // Перехватываем до DataGrid (Handled), иначе он сделал бы выделение диапазоном.
         if (colIdx == 0)
         {
+            // Пока были выделены ячейки, грид мог держать строку выделенной внутри себя, невидимо
+            // (см. ScheduleRecordSelectionDrop). Ctrl+клик по номеру добавил бы новую строку к ЭТОЙ,
+            // и Delete удалил бы запись, которую человек выделенной не видел.
+            if (HasCellSelection) ClearRecordSelection();
             ClearCellSelection();
 
             if (props.IsLeftButtonPressed
@@ -2215,12 +2318,16 @@ public partial class TableView : UserControl
             return;
         }
 
-        // Правый клик: если ячейка вне выделения — переносим выделение на нее (как в Excel),
-        // внутри — прямоугольник оставляем, меню будет работать по всему диапазону.
+        // Правый клик: если ячейка вне выделения — переносим выделение на нее, внутри —
+        // прямоугольник оставляем, меню будет работать по всему диапазону.
         if (props.IsRightButtonPressed)
         {
             if (!IsCellSelected(rowIdx, colIdx))
                 SetCellSelection(CellRange.Single(rowIdx, colIdx));
+
+            // Грид выделит строку уже после нас — снимаем следом, как после левого клика: иначе
+            // она осталась бы выделенной невидимо и попала бы в операции над записями.
+            ScheduleRecordSelectionDrop();
 
             if (colIdx >= 0 && colIdx < _colDefs.Count)
                 ShowCellMenuOn(e.Cell, row, _colDefs[colIdx]);
@@ -2273,6 +2380,10 @@ public partial class TableView : UserControl
         // Служебные колонки № и + не выделяем. «Название»/«Описание» выделять можно
         // (заливка появляется), но при удалении они отфильтровываются.
         if (key == TableColumnDef.NumKey || key == TableColumnDef.AddPropKey) return;
+
+        // Выделение колонок гасит выделение ячеек, как и выделение записей: иначе Delete при
+        // выделенной колонке стирал бы значения выделенных ранее ячеек вместо удаления свойства.
+        ClearCellSelection();
 
         if (shift)
         {
@@ -2479,12 +2590,13 @@ public partial class TableView : UserControl
 
     // ── Пункты цвета в меню строки ────────────────────────────────────────────
     //
-    // Подменю с общей палитрой (ColorMenu): «Фон строки», «Цвет текста строки», а под
-    // чертой — «Фон ячейки» и «Цвет текста ячейки». Все это оформление ЭТОЙ таблицы: за ее
-    // пределами цвет не виден (сквозной цвет записи был и убран — см. RowStyle.Resolve).
-    // Все пункты применяются ко ВСЕМУ мультивыделению строк — как удаление и дубль.
-    // Состав пунктов пересчитывается в menu.Opening: цвета строки к моменту клика могли
-    // измениться, а «текущий» цвет в палитре должен быть отмечен верно.
+    // Подменю с общей палитрой (ColorMenu): «Фон строки» и «Цвет текста строки». Цвет ячейки
+    // живет в меню самой ячейки (AddCellColorItems): меню строки открывается только со столбца
+    // «№», и ячейки-адресата у него нет. Все это оформление ЭТОЙ таблицы: за ее пределами цвет
+    // не виден (сквозной цвет записи был и убран — см. RowStyle.Resolve). Пункты применяются ко
+    // ВСЕМУ мультивыделению строк — как удаление и дубль. Состав пересчитывается в menu.Opening:
+    // цвета строки к моменту клика могли измениться, а «текущий» цвет в палитре должен быть
+    // отмечен верно.
     private void AddColorItems(ContextMenu menu, DataGridRow row)
     {
         var host = new MenuItem { Header = Controls.Components.MenuIcons.ColorHeader() };
@@ -2494,7 +2606,6 @@ public partial class TableView : UserControl
         menu.Opening += (_, _) =>
         {
             host.Items.Clear();
-            var vm  = row.DataContext as TableRowVm;
             var ids = TargetRecordIds(row);
             if (ids.Count == 0) { host.IsEnabled = false; return; }
             host.IsEnabled = Can(PermAction.EditRecord);
@@ -2506,19 +2617,6 @@ public partial class TableView : UserControl
                 hex => ApplyRowStyle(ids, StyleAspect.Background, hex)));
             host.Items.Add(ColorMenu.Build("Цвет текста строки", rowStyle.Fg,
                 hex => ApplyRowStyle(ids, StyleAspect.Text, hex)));
-
-            // Ячейка — та, по которой был правый клик (запомнена в CellStyleHost). Своего
-            // контекстного меню у ячейки нет: меню открывает строка, поэтому пункты ячейки
-            // живут здесь же, отделенные чертой.
-            if (_menuCellKey is not { } cellKey) return;
-            var cells = ids.Select(id => (RecordId: id, Key: cellKey)).ToList();
-            var cur   = vm?.CellStyle(cellKey) ?? RowStyle.None;
-
-            host.Items.Add(new Separator());
-            host.Items.Add(ColorMenu.Build("Фон ячейки", cur.Bg,
-                hex => ApplyCellStyleChange(cells, StyleAspect.Background, hex)));
-            host.Items.Add(ColorMenu.Build("Цвет текста ячейки", cur.Fg,
-                hex => ApplyCellStyleChange(cells, StyleAspect.Text, hex)));
         };
 
         menu.Items.Add(new Separator());

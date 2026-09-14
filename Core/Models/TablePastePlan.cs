@@ -4,27 +4,34 @@ namespace SmartBase.Core.Models;
 /// причины крупные: дробить их мельче человеку не нужно.</summary>
 public enum PasteSkipReason
 {
-    /// <summary>Столбец заполняется сам (дата создания, автор) — вписать в него нечего.</summary>
+    /// <summary>Столбец заполняется сам (дата создания, автор) или закрыт для правки.</summary>
     ComputedColumn,
     /// <summary>Связь и файл: значение живет не текстом, его выбирают в своем окне.</summary>
     NotTextColumn,
     /// <summary>Текст не подходит типу столбца: «абв» в число, «вчера» в дату.</summary>
     WrongFormat,
-    /// <summary>Значения нет в списке допустимых (столбцы «Список» и «Статус»).</summary>
+    /// <summary>Значения нет в списке допустимых (столбцы «Список», «Статус», «Пользователь»).</summary>
     NotInOptions,
     /// <summary>Блок вышел за последнюю строку или последний столбец таблицы.</summary>
     OutsideTable,
+    /// <summary>Пустое значение пришлось на «Название»: запись без названия теряется в списках и
+    /// связях, поэтому стереть его вставкой нельзя — как и очисткой.</summary>
+    EmptyTitle,
 }
 
 /// <summary>Столбец глазами вставки: все, что нужно решить про одну ячейку, без ViewModels.
 /// <paramref name="DecimalSeparator"/> — канон хранения числа у ЭТОГО столбца: значение
-/// приводится к нему сразу, иначе в колонке смешались бы «42.5» и «42,5».</summary>
+/// приводится к нему сразу, иначе в колонке смешались бы «42.5» и «42,5».
+/// <paramref name="IsTitle"/> — системный столбец «Название»: у него свое правило пустого значения.
+/// <paramref name="Options"/> — допустимые значения закрытого списка; для «Пользователя» это
+/// допущенные пользователи базы (без списка «Пользователь» принимается как текст).</summary>
 public sealed record PasteColumn(
     string Key,
     string FieldType,
     bool IsReadOnly = false,
     IReadOnlyList<string>? Options = null,
-    DecimalMark DecimalSeparator = DecimalMark.Comma);
+    DecimalMark DecimalSeparator = DecimalMark.Comma,
+    bool IsTitle = false);
 
 /// <summary>Одно значение, готовое лечь в базу: координаты, столбец и значение В ФОРМАТЕ ХРАНЕНИЯ.</summary>
 public sealed record PasteCell(int Row, int Column, string ColumnKey, string StorageValue);
@@ -41,28 +48,33 @@ public sealed record TablePastePlan(
 /// Планировщик вставки: по матрице из буфера, точке вставки и описанию столбцов решает, что
 /// именно записать. Ничего не пишет сам — только считает, поэтому проверяется тестами целиком.
 ///
-/// Правило разлива — эксельное и зависит от того, ЧТО выделено:
+/// Правило разлива — привычное по табличным редакторам и зависит от того, ЧТО выделено:
 ///
 /// <list type="bullet">
 /// <item>выделена одна ячейка — она левый верхний угол, блок из буфера идет от нее вниз и
 ///       вправо, каков бы ни был его размер;</item>
 /// <item>выделено больше ячеек, чем лежит в буфере, — блок ПОВТОРЯЕТСЯ по выделению: одно
 ///       значение заполняет его целиком, два значения ложатся парами (два, снова два, снова
-///       два), и так для любого блока. Это и есть эксельное «размножить по диапазону»;</item>
+///       два), и так для любого блока;</item>
 /// <item>выделение меньше блока — выделение не в счет, работает первое правило.</item>
 /// </list>
+///
+/// Столбцы передаются ТОЛЬКО видимые, в порядке показа: скрытый в «Отображении» столбец
+/// копирование пропускает, и если бы вставка отводила ему место, скопированный блок ложился бы
+/// обратно со сдвигом на чужие столбцы.
 ///
 /// Все, что вышло за последнюю строку или последний столбец таблицы, отбрасывается: строки при
 /// вставке не добавляются — иначе один Ctrl+V молча заводил бы сотни записей.
 ///
 /// Значения приводятся к формату ХРАНЕНИЯ, а не к показанному на экране: дата уходит в базу
-/// каноном DateValue, число — с точкой, чекбокс — «1»/«0». Иначе сортировка и фильтр начали бы
-/// видеть два разных представления одного значения.
+/// каноном DateValue, число — с разделителем своего столбца, чекбокс — «1»/«0». Иначе сортировка
+/// и фильтр начали бы видеть два разных представления одного значения.
 /// </summary>
 public static class TablePastePlanner
 {
+    /// <param name="columns">Видимые столбцы таблицы в порядке показа.</param>
     /// <param name="selectionRows">Высота выделения в ячейках (1 — выделена одна ячейка).</param>
-    /// <param name="selectionColumns">Ширина выделения в ячейках.</param>
+    /// <param name="selectionColumns">Ширина выделения в видимых столбцах.</param>
     public static TablePastePlan Plan(
         IReadOnlyList<IReadOnlyList<string>> values,
         int startRow,
@@ -134,8 +146,21 @@ public static class TablePastePlanner
     {
         if (!IsWritable(column)) return null;
 
-        var raw = (text ?? "").Trim();
-        // Пустая ячейка буфера очищает целевую — как в Excel.
+        var source = text ?? "";
+
+        // «Название» пустым не вставляется — по той же причине, по какой его не стирает очистка:
+        // запись без названия превращается в «Без названия» и теряется в списках и связях.
+        // Непустое название пишется как есть: пробелы в тексте — тоже данные.
+        if (column.IsTitle)
+            return string.IsNullOrWhiteSpace(source) ? null : source;
+
+        // Текст, ссылка и все неизвестное — как есть, без обрезки: пробелы по краям в тексте могут
+        // быть частью значения, и молча их срезать значит портить данные. Пустая ячейка буфера
+        // очищает целевую.
+        if (!IsTyped(column.FieldType)) return source;
+
+        // Типизированным значениям краевые пробелы ничего не добавляют, зато мешают разбору.
+        var raw = source.Trim();
         if (raw.Length == 0) return "";
 
         switch (column.FieldType)
@@ -159,13 +184,23 @@ public static class TablePastePlanner
                 // фильтре, ни в выпадающем списке — то есть выглядело бы как порча данных.
                 return HasOption(column, raw, out var exact) ? exact : null;
 
+            case "user":
+                // «Пользователь» — тоже закрытый список: имя, которого нет среди допущенных, в
+                // ячейке выглядело бы исполнителем, но не нашлось бы ни в фильтре, ни в выборе.
+                if (column.Options is null) return raw;
+                return HasOption(column, raw, out var user) ? user : null;
+
             case "multiselect":
                 return ParseMultiSelect(raw, column);
 
             default:
-                return raw;   // text, url, user и все неизвестное — как есть
+                return raw;
         }
     }
+
+    // Типы, у которых значение разбирается, а не хранится текстом как есть.
+    private static bool IsTyped(string fieldType) =>
+        fieldType is "number" or "date" or "checkbox" or "select" or "status" or "multiselect" or "user";
 
     private static PasteSkipReason SkipReasonFor(PasteColumn column, string text)
     {
@@ -173,13 +208,14 @@ public static class TablePastePlanner
         if (FieldTypeInfo.IsRelation(column.FieldType) || column.FieldType == "file")
             return PasteSkipReason.NotTextColumn;
         if (column.IsReadOnly) return PasteSkipReason.ComputedColumn;
-        if (column.FieldType is "select" or "status" or "multiselect") return PasteSkipReason.NotInOptions;
+        if (column.IsTitle) return PasteSkipReason.EmptyTitle;
+        if (column.FieldType is "select" or "status" or "multiselect" or "user") return PasteSkipReason.NotInOptions;
         return PasteSkipReason.WrongFormat;
     }
 
-    // Чекбокс: понимаем и то, что показано в ячейке («✓»), и то, что лежит в базе, и то, что
-    // придет из Excel по-русски или по-английски. Иначе копирование из соседней колонки своей
-    // же таблицы не вставлялось бы обратно.
+    // Чекбокс: понимаем и то, что показано в ячейке («✓»), и то, что лежит в базе, и привычные
+    // слова по-русски и по-английски. Иначе копирование из соседней колонки своей же таблицы не
+    // вставлялось бы обратно.
     private static string? ParseCheckbox(string raw) => raw.ToLowerInvariant() switch
     {
         "1" or "true" or "да" or "yes" or "✓" or "x" or "х" => "1",
@@ -189,8 +225,8 @@ public static class TablePastePlanner
 
     private static bool HasOption(PasteColumn column, string value, out string exact)
     {
-        // Сравниваем без учета регистра, а пишем ТОЧНОЕ значение опции: «в работе» из Excel
-        // должно стать «В работе», иначе в колонке заведутся два похожих значения.
+        // Сравниваем без учета регистра, а пишем ТОЧНОЕ значение опции: «в работе» из чужой
+        // таблицы должно стать «В работе», иначе в колонке заведутся два похожих значения.
         foreach (var option in column.Options ?? [])
             if (string.Equals(option, value, StringComparison.OrdinalIgnoreCase))
             {

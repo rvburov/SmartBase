@@ -18,10 +18,13 @@
           ширину: ячейка заголовка при округлении растет вверх, и непрозрачный фон
           соседа закрашивал правую линию предыдущей — с общим фоном заголовки могут
           быть прозрачными (Background=Transparent в стиле TableView.axaml), и линии
-          заголовка больше не исчезают при смене числа/ширины колонок.
-       3. Кросс-файловые ссылки (DataGridTopLeftColumnHeader, BrushInactiveBg) — через
-          DynamicResource: StaticResource из подключаемого ResourceDictionary не видит
-          ресурсы стилей приложения на этапе загрузки.
+          заголовка больше не исчезают при смене числа/ширины колонок. У прямоугольника
+          RenderOptions.EdgeMode="Aliased": на дробных позициях (зум ≠ 1) мягкий край
+          заливки размазывался под четкой линией шапки.
+       3. Кросс-файловые ссылки — через DynamicResource: StaticResource из подключаемого
+          ResourceDictionary не видит ресурсы стилей приложения на этапе загрузки. В
+          оригинале так записан только DataGridTopLeftColumnHeader (там StaticResource);
+          BrushInactiveBg, BrushScrollbarTrack и RowHeightTable пришли с отличиями 2, 6 и 7.
        4. У PART_VerticalScrollbar / PART_HorizontalScrollbar УБРАНЫ локальные
           Width/Height (в оригинале — "{DynamicResource ScrollBarSize}", ресурс темы
           Fluent пакета DataGrid, ~12px). Локальное значение перебивало проектный стиль
@@ -41,6 +44,15 @@
        6. PART_BottomRightCorner залит BrushScrollbarTrack вместо белого
           DataGridScrollBarsSeparatorBackground — квадрат на пересечении полос был
           белым пятном между ними.
+       7. У DataGridCell MinHeight="32" заменен на {DynamicResource RowHeightTable}:
+          зашитые 32 не дают «компактной» плотности (28) сработать — Height опускает
+          строку до 28, а MinHeight тянет ячейку обратно к 32, и строки сайдбара
+          разъезжаются с таблицей.
+       8. У DataGridRow УБРАН стиль ^:pointerover для BackgroundRectangle (заливка
+          DataGridRowHoveredBackgroundColor). Курсор ходит по значениям, поэтому
+          наведение подсвечивает ЯЧЕЙКУ (DataGridCell:pointerover в TableView.axaml), а
+          строка целиком заливается, только когда выделена, — по клику в столбец «№».
+          Стили выделенной строки под курсором (^:selected ^:pointerover) не тронуты.
 
      Имена частей шаблонов сохранены — код DataGrid (EnsureGridLine и др.) и стили
      /template/ в TableView.axaml работают без изменений, X-координаты линий не

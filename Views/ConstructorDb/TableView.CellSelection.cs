@@ -5,21 +5,22 @@ using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
+using SmartBase.Controls.Widgets;
 using SmartBase.Core.Models;
 using SmartBase.ViewModels.ConstructorDb;
 
 namespace SmartBase.Views.ConstructorDb;
 
 /// <summary>
-/// Выделение ячеек прямоугольником — как в Excel: клик ставит рамку на одну ячейку, протягивание
-/// с зажатой кнопкой и Shift+клик растягивают ее до прямоугольника. Выделение СТРОК живет
-/// отдельно и переехало на служебный столбец «№»: клик по номеру выделяет строку целиком и
-/// открывает запись, Shift и Ctrl по номеру набирают несколько строк — на этом держатся
-/// пакетные операции (удаление, дубль, «Расположение»).
+/// Выделение ячеек прямоугольником, как в табличном редакторе: клик ставит рамку на одну ячейку,
+/// Shift+клик растягивает ее до прямоугольника. Выделение СТРОК живет отдельно и переехало на
+/// служебный столбец «№»: клик по номеру выделяет строку целиком и открывает запись, Shift и Ctrl
+/// по номеру набирают несколько строк — на этом держатся пакетные операции (удаление, дубль,
+/// «Расположение»).
 ///
 /// Координаты диапазона — индексы В ПОКАЗАННОЙ таблице (позиция строки и позиция столбца), а не
 /// идентификаторы: строки виртуализованы и переиспользуются при прокрутке, привязываться к ним
-/// нельзя. Идентификаторы резолвятся в момент операции (см. <see cref="CellsOf"/>).
+/// нельзя. Идентификаторы резолвятся в момент операции (см. <see cref="SelectedCells"/>).
 ///
 /// Рамка рисуется НЕ в ячейке, а отдельным слоем поверх сетки (как полоски ресайза): ячейка
 /// при прокрутке достается другой строке, и рамка «поехала» бы вместе с ней.
@@ -59,7 +60,7 @@ public partial class TableView
     private void SetCellSelection(CellRange range)
     {
         _cellRange = range;
-        ClearRecordSelection();   // либо ячейки, либо строки — как в Excel
+        ClearRecordSelection();   // либо ячейки, либо строки: иначе Delete был бы двусмысленным
         AfterSelectionChanged();
     }
 
@@ -84,7 +85,7 @@ public partial class TableView
 
     /// <summary>
     /// Клик по ячейке. Обычный выделяет одну; Shift дотягивает прямоугольник от той ячейки, с
-    /// которой начали, — как в Excel, одним куском на сколько угодно строк и столбцов.
+    /// которой начали, — одним куском на сколько угодно строк и столбцов.
     /// Других способов выделить ячейки нет: ни Ctrl, ни протягивания мышью.
     /// </summary>
     private void BeginCellSelection(int row, int column, bool extend)
@@ -121,21 +122,61 @@ public partial class TableView
         }
     }
 
+    /// <summary>
+    /// Сколько строк выделения обрабатывается за один раз. Строки, которые таблица еще не
+    /// подгрузила, читаются из базы синхронно (см. <see cref="VirtualRowList.MaterializeRange"/>),
+    /// и на столбце в миллионы записей это заняло бы окно на минуты. Предел равен кешу таблицы
+    /// (50 страниц по 200 строк): столько же таблица и так держит в памяти.
+    /// </summary>
+    private const int MaxRangeRows = 10_000;
+
+    /// <summary>Больше ли строк, чем обрабатывается за раз. Если да — человеку сказано, почему
+    /// ничего не произошло и что сделать: молча обработать часть столбца было бы хуже всего.</summary>
+    private static bool TooManyRows(int rows)
+    {
+        if (rows <= MaxRangeRows) return false;
+        AppNotifications.Info(
+            $"За один раз обрабатывается не больше {MaxRangeRows:N0} строк, а выделено {rows:N0}. " +
+            "Выделите меньше строк или сузьте таблицу фильтром.");
+        return true;
+    }
+
+    /// <summary>Строки с данными в позициях [top, top + count) — ВСЕ, а не только прокрученные.
+    /// null — строк больше, чем обрабатывается за раз (человеку уже сказано).</summary>
+    private IReadOnlyList<TableRowVm>? RowsOfRange(int top, int count)
+    {
+        var source = _activeRows ?? _virtualRows;
+        if (source is null || count <= 0) return [];
+        if (TooManyRows(count)) return null;
+        return source.MaterializeRange(top, count);
+    }
+
+    /// <summary>Видимые столбцы значений в порядке показа — ровно те, что копируются и
+    /// заполняются вставкой.</summary>
+    private List<int> VisibleDataColumns()
+    {
+        var columns = new List<int>();
+        for (var c = FirstDataColumn; c <= LastDataColumn; c++)
+            if (IsDataColumn(c)) columns.Add(c);
+        return columns;
+    }
+
     /// <summary>Все выделенные ячейки, разрешенные в строки и столбцы, в порядке обхода таблицы
-    /// (слева направо, сверху вниз). Строки, не успевшие подгрузиться, пропускаются: читать у них
-    /// нечего, а ждать загрузку посреди копирования — значит подвесить интерфейс.</summary>
-    private List<(TableRowVm Row, TableColumnDef Column)> SelectedCells()
+    /// (слева направо, сверху вниз). Строки, которые таблица еще не подгрузила, дочитываются —
+    /// обработать молча только прокрученную часть столбца значило бы соврать об итоге.
+    /// null — выделено больше строк, чем обрабатывается за раз.</summary>
+    private List<(TableRowVm Row, TableColumnDef Column)>? SelectedCells()
     {
         var cells = new List<(TableRowVm, TableColumnDef)>();
         if (_cellRange is not { } range) return cells;
 
-        for (var r = range.Top; r <= range.Bottom; r++)
-        {
-            if (RowAt(r) is not { } row) continue;
-            for (var c = range.Left; c <= range.Right; c++)
-                if (IsDataColumn(c))
-                    cells.Add((row, _colDefs[c]));
-        }
+        var columns = VisibleDataColumns().Where(c => c >= range.Left && c <= range.Right).ToList();
+        if (columns.Count == 0) return cells;
+        if (RowsOfRange(range.Top, range.RowCount) is not { } rows) return null;
+
+        foreach (var row in rows)
+            foreach (var c in columns)
+                cells.Add((row, _colDefs[c]));
         return cells;
     }
 
@@ -175,9 +216,9 @@ public partial class TableView
 
     // ── Отрисовка рамки ───────────────────────────────────────────────────────
     //
-    // Одна рамка на все выделение целиком (а не вокруг каждой ячейки): так же выглядит выделение
-    // в Excel, и внутри диапазона не появляется ни сетки из линий, ни «прямоугольника в
-    // прямоугольнике».
+    // Одна рамка на все выделение целиком (а не вокруг каждой ячейки): так выглядит выделение в
+    // табличных редакторах, и внутри диапазона не появляется ни сетки из линий, ни «прямоугольника
+    // в прямоугольнике».
     // Заливки нет: выделение — обводка, значение под ней должно читаться.
 
     // Геометрия уже нарисованной рамки. Пересчет идет из LayoutUpdated, а любая правка дерева
