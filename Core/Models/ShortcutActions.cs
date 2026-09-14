@@ -100,7 +100,9 @@ public static class ShortcutActions
         Cmd("table.moveRecordUp",    "Сдвинуть запись вверх",      ShortcutBlock.Table, ShortcutContext.Table, "Alt+Up"),
         Cmd("table.moveRecordDown",  "Сдвинуть запись вниз",       ShortcutBlock.Table, ShortcutContext.Table, "Alt+Down"),
         Cmd("table.rowHeightMode",   "Ручная высота строк",        ShortcutBlock.Table, ShortcutContext.Table, "Ctrl+Shift+H"),
-        Cmd("table.deleteRecords",   "Удалить выделенные записи",  ShortcutBlock.Table, ShortcutContext.Table, "Delete"),
+        // Delete остается вторым жестом: он удаляет то, что выделено, и так работал всегда.
+        // Основной — свой, чтобы в меню «Удалить» и «Очистить значения» не стояла одна клавиша.
+        Cmd("table.deleteRecords",   "Удалить выделенные записи",  ShortcutBlock.Table, ShortcutContext.Table, "Ctrl+Delete", "Delete"),
 
         // ── Таблица: свойства (столбцы) ─────────────────────────────────────────
         Cmd("table.createProperty",    "Создать свойство",            ShortcutBlock.Table, ShortcutContext.Table, "Alt+N"),
@@ -110,7 +112,7 @@ public static class ShortcutActions
         Cmd("table.moveColumnRight",   "Сдвинуть столбец вправо",     ShortcutBlock.Table, ShortcutContext.Table, "Alt+Right"),
         Cmd("table.moveColumnLeft",    "Сдвинуть столбец влево",      ShortcutBlock.Table, ShortcutContext.Table, "Alt+Left"),
         Cmd("table.columnWidthMode",   "Ручная ширина столбцов",      ShortcutBlock.Table, ShortcutContext.Table, "Alt+W"),
-        Cmd("table.deleteColumns",     "Удалить выделенные свойства", ShortcutBlock.Table, ShortcutContext.Table, "Delete", "Backspace"),
+        Cmd("table.deleteColumns",     "Удалить выделенные свойства", ShortcutBlock.Table, ShortcutContext.Table, "Alt+Delete", "Delete", "Backspace"),
 
         // ── Таблица: справочно ──────────────────────────────────────────────────
         RefLabel("table.ref.move",   "Перейти между ячейками", ShortcutBlock.Table, ShortcutContext.Table,

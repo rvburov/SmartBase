@@ -186,6 +186,23 @@ public sealed class ShortcutSettingsTests
         Assert.Null(ShortcutSettings.ConflictOf(G("Delete"), "table.deleteColumns"));
     }
 
+    [Fact]
+    public void Clearing_and_deleting_show_different_keys_but_delete_still_works_for_both()
+    {
+        Attach();
+
+        // В меню у «Очистить значения» и «Удалить» стоят РАЗНЫЕ клавиши — одна и та же
+        // читалась как ошибка.
+        Assert.Equal("Delete",      ShortcutSettings.PrimaryGesture("table.clearCells")?.Canonical);
+        Assert.Equal("Ctrl+Delete", ShortcutSettings.PrimaryGesture("table.deleteRecords")?.Canonical);
+        Assert.Equal("Alt+Delete",  ShortcutSettings.PrimaryGesture("table.deleteColumns")?.Canonical);
+
+        // При этом привычное поведение цело: Delete удаляет то, что выделено.
+        Assert.True(ShortcutSettings.Matches("table.deleteRecords", Key.Delete, KeyModifiers.None));
+        Assert.True(ShortcutSettings.Matches("table.deleteColumns", Key.Delete, KeyModifiers.None));
+        Assert.True(ShortcutSettings.Matches("table.deleteColumns", Key.Back, KeyModifiers.None));
+    }
+
     // ── Уборка сирот ──────────────────────────────────────────────────────────
 
     [Fact]

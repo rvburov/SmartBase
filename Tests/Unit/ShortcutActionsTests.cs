@@ -112,7 +112,7 @@ public sealed class ShortcutActionsTests
             // действующий синоним стандарта (Backspace у удалений). У справочных клавиш бывает
             // больше (стрелки — сразу четыре), они и показываются одной подписью.
             if (action.Rebindable)
-                Assert.True(action.Defaults.Count <= 2, $"слишком много стандартов: {action.Id}");
+                Assert.True(action.Defaults.Count <= 3, $"слишком много стандартов: {action.Id}");
             else
                 Assert.True(action.Defaults.Count == 1 || action.FixedLabel is not null,
                     $"несколько клавиш без общей подписи: {action.Id}");
