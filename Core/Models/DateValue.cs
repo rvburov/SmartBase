@@ -136,6 +136,118 @@ public readonly record struct DateValue(DateTime Start, DateTime End, bool AllDa
         DateTime.TryParseExact(s, ["dd.MM.yyyy", "d.M.yyyy", "dd.MM.yy", "d.M.yy"],
             CultureInfo.InvariantCulture, DateTimeStyles.None, out dt);
 
+    // ── Строгий разбор целой строки ──────────────────────────────────────────
+
+    // Дата в строгом разборе: дд.ММ.гггг и д.М.гг (как показываем сами), дд/ММ/гггг (день
+    // первым — так пишут в России и Европе; месяц первым не угадываем) и гггг-ММ-дд.
+    private const string ExactDate =
+        @"[0-9]{1,2}\.[0-9]{1,2}\.(?:[0-9]{4}|[0-9]{2})|[0-9]{1,2}/[0-9]{1,2}/[0-9]{4}|[0-9]{4}-[0-9]{2}-[0-9]{2}";
+
+    // Время: чч:мм и чч:мм:сс. Секунды принимаются, но отбрасываются — канон хранит минуты.
+    private const string ExactTime = @"[0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?";
+
+    // Тире между датами и между временами — любое: дефис, как в ToDisplay, или типографское.
+    private const string ExactDash = @"\s*[-–—]\s*";
+
+    // Все формы ToDisplay (день, диапазон дней, дата + время, время в дне, диапазон с временем) и
+    // те же формы с другими записями даты. Якоря ^…$ — главное: лишнее слово до или после даты
+    // делает строку не датой.
+    private static readonly Regex ExactDisplayRx = new(
+        "^(?<d1>" + ExactDate + ")(?:" + ExactDash + "(?<d2>" + ExactDate + "))?"
+        + @"(?:\s+(?<t1>" + ExactTime + ")(?:" + ExactDash + "(?<t2>" + ExactTime + "))?)?$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    // ISO с буквой T: гггг-ММ-ддTчч:мм[:сс] — так даты уходят из баз и программных выгрузок.
+    private static readonly Regex ExactIsoRx = new(
+        "^(?<d1>[0-9]{4}-[0-9]{2}-[0-9]{2})T(?<t1>" + ExactTime + ")$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// Строгий разбор: true, только если ВСЯ строка (без пробелов по краям) — дата или дата со
+    /// временем. Понимает все, что дает <see cref="ToDisplay"/>, канон хранения
+    /// (<see cref="ToStorage"/>), дд.ММ.гггг, д.М.гггг, дд.ММ.гг, дд/ММ/гггг, гггг-ММ-дд,
+    /// гггг-ММ-ддTчч:мм[:сс] и дату с временем через пробел.
+    ///
+    /// Нужен там, где текст приходит извне и неправильно понятая дата хуже отказа, — во
+    /// вставке из буфера. Терпимый <see cref="TryParse"/> вынимает дату из любого текста:
+    /// «Отчет от 01.02.2026» для него — 1 февраля, а остальное молча теряется. Здесь это отказ.
+    /// <see cref="TryParse"/> остается как был: на нем держится ручной ввод и календарь.
+    /// </summary>
+    public static bool TryParseExact(string? text, out DateValue value)
+    {
+        value = default;
+        if (string.IsNullOrWhiteSpace(text)) return false;
+
+        var s = text.Trim();
+        if (TryParseStorage(s, out value)) return true;
+        value = default;
+
+        var m = ExactDisplayRx.Match(s);
+        if (!m.Success) m = ExactIsoRx.Match(s);
+        if (!m.Success) return false;
+
+        if (!TryExactDate(m.Groups["d1"].Value, out var d1)) return false;
+        var d2 = d1;
+        if (m.Groups["d2"].Success && !TryExactDate(m.Groups["d2"].Value, out d2)) return false;
+
+        if (!m.Groups["t1"].Success)
+        {
+            value = new DateValue(d1, d2.Add(EndOfDay), true);
+            return true;
+        }
+
+        if (!TryExactTime(m.Groups["t1"].Value, out var t1)) return false;
+        var t2 = t1;
+        if (m.Groups["t2"].Success && !TryExactTime(m.Groups["t2"].Value, out t2)) return false;
+
+        // Та же сборка, что у TryParseDisplay: одна дата — время в дне, две — диапазон.
+        value = new DateValue(d1 + t1, d2 + t2, false);
+        return true;
+    }
+
+    // Дата из уже проверенной регуляркой записи. Числа разбираются руками, а не форматами
+    // DateTime: так однозначно, какая часть — день, а какая — год, и «31.02» честно не дата.
+    private static bool TryExactDate(string s, out DateTime date)
+    {
+        date = default;
+        int day, month, year;
+
+        if (s.Length == 10 && s[4] == '-')
+        {
+            year  = int.Parse(s.AsSpan(0, 4), CultureInfo.InvariantCulture);
+            month = int.Parse(s.AsSpan(5, 2), CultureInfo.InvariantCulture);
+            day   = int.Parse(s.AsSpan(8, 2), CultureInfo.InvariantCulture);
+        }
+        else
+        {
+            var parts = s.Split(s.Contains('/') ? '/' : '.');
+            day   = int.Parse(parts[0], CultureInfo.InvariantCulture);
+            month = int.Parse(parts[1], CultureInfo.InvariantCulture);
+            year  = int.Parse(parts[2], CultureInfo.InvariantCulture);
+            // Двузначный год — по тому же правилу, что и «дд.MM.yy» ручного ввода (до 2049 — XXI век).
+            if (parts[2].Length == 2) year = CultureInfo.InvariantCulture.Calendar.ToFourDigitYear(year);
+        }
+
+        if (year is < 1 or > 9999 || month is < 1 or > 12) return false;
+        if (day < 1 || day > DateTime.DaysInMonth(year, month)) return false;
+
+        date = new DateTime(year, month, day);
+        return true;
+    }
+
+    private static bool TryExactTime(string s, out TimeSpan time)
+    {
+        time = default;
+        var parts = s.Split(':');
+        var h = int.Parse(parts[0], CultureInfo.InvariantCulture);
+        var m = int.Parse(parts[1], CultureInfo.InvariantCulture);
+        var sec = parts.Length > 2 ? int.Parse(parts[2], CultureInfo.InvariantCulture) : 0;
+        if (h is < 0 or > 23 || m is < 0 or > 59 || sec is < 0 or > 59) return false;
+
+        time = new TimeSpan(h, m, 0);
+        return true;
+    }
+
     private static bool TryTime(string s, out TimeSpan ts)
     {
         ts = default;

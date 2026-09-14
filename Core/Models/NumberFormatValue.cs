@@ -157,6 +157,127 @@ public static class NumberFormatValue
         };
     }
 
+    /// <summary>
+    /// Число в том виде, в каком его показывают таблицы и табличные редакторы, — в канон хранения
+    /// с разделителем <paramref name="mark"/>. Понимает все, что дает <see cref="Format"/> для
+    /// любого формата столбца, и привычную чужую запись: разряды пробелом, неразрывным пробелом,
+    /// апострофом, точкой или запятой; знак валюты и «%» до или после числа; минус обычный и
+    /// типографский, отрицательное в скобках.
+    ///
+    /// Какой знак десятичный, когда в строке и точка, и запятая, — правый. Когда знак один и
+    /// встречается несколько раз — это разряды. Когда он один и встречается раз — разряды, только
+    /// если за ним ровно три цифры, он не совпадает с разделителем столбца и столбец сам
+    /// группирует разряды («1.500» в столбце с запятой и разрядами — полторы тысячи); иначе
+    /// десятичный. Без этих правил скопированное из своей же таблицы «1 234,50 ₽» обратно не
+    /// вставлялось, а «1,234» молча становилось единицей с дробью там, где имели в виду тысячу.
+    /// </summary>
+    public static bool TryParseDisplay(string? text, NumberFormat? format, DecimalMark mark, out string storage)
+    {
+        storage = "";
+        var s = (text ?? "").Trim();
+        if (s.Length == 0) return false;
+
+        if (TryParseShown(s, format, mark, out storage)) return true;
+
+        // Прежний путь — то, что понимал разбор числа всегда (экспонента и прочее): ничего из
+        // принимавшегося раньше вставка терять не должна.
+        if (!WriterHelpers.TryNumber(s, out _)) return false;
+        storage = NormalizeStorage(s, mark);
+        return true;
+    }
+
+    private static bool TryParseShown(string s, NumberFormat? format, DecimalMark mark, out string storage)
+    {
+        storage = "";
+
+        // Отрицательное в скобках — бухгалтерская запись.
+        var negative = false;
+        if (s.Length > 2 && s[0] == '(' && s[^1] == ')')
+        {
+            negative = true;
+            s = s[1..^1].Trim();
+        }
+
+        s = StripAffixes(s, format);
+        if (s.Length > 0 && s[0] is '-' or '−')
+        {
+            if (negative) return false;
+            negative = true;
+            s = StripAffixes(s[1..].Trim(), format);   // «-₽ 100»: знак валюты бывает и после минуса
+        }
+        if (s.Length == 0) return false;
+
+        // Пробелы и апострофы внутри числа — всегда разряды.
+        var compact = new System.Text.StringBuilder(s.Length);
+        foreach (var ch in s)
+            if (!char.IsWhiteSpace(ch) && ch is not ('\'' or '’'))
+                compact.Append(ch);
+        var body = compact.ToString();
+
+        var dots   = body.Count(c => c == '.');
+        var commas = body.Count(c => c == ',');
+
+        char? decimalChar;
+        if (dots > 0 && commas > 0)
+            decimalChar = body.LastIndexOf('.') > body.LastIndexOf(',') ? '.' : ',';
+        else if (dots + commas == 0)
+            decimalChar = null;
+        else
+        {
+            var ch    = dots > 0 ? '.' : ',';
+            var after = body.Length - body.IndexOf(ch) - 1;
+            decimalChar = dots + commas > 1
+                || (after == 3 && ch != MarkChar(mark) && format is { Thousands: true })
+                ? null
+                : ch;
+        }
+
+        var intPart  = body;
+        var fracPart = "";
+        if (decimalChar is { } d)
+        {
+            var at = body.LastIndexOf(d);
+            intPart  = body[..at];
+            fracPart = body[(at + 1)..];
+            if (fracPart.Length == 0) return false;
+        }
+
+        // Разряды точкой или запятой проверяем по форме: первая группа 1–3 цифры, остальные
+        // ровно по три. Иначе «1,2.3» сошло бы за число.
+        var groups = intPart.Split('.', ',');
+        if (groups.Length > 1 && (groups[0].Length is < 1 or > 3 || groups.Skip(1).Any(g => g.Length != 3)))
+            return false;
+
+        var digits = string.Concat(groups);
+        if (digits.Length == 0 && fracPart.Length == 0) return false;
+        if (!digits.All(char.IsAsciiDigit) || !fracPart.All(char.IsAsciiDigit)) return false;
+
+        storage = (negative ? "-" : "")
+                + (digits.Length == 0 ? "0" : digits)
+                + (fracPart.Length > 0 ? MarkChar(mark) + fracPart : "");
+        return true;
+    }
+
+    // Знаки валюты и процента по краям числа. Свой знак столбца — первым: он может быть любым
+    // («₸», «сум»), а общие знаки — самые частые в чужих таблицах.
+    private static readonly string[] CommonAffixes = ["руб.", "руб", "р.", "₽", "RUB", "USD", "EUR", "$", "€", "%"];
+
+    private static string StripAffixes(string s, NumberFormat? format)
+    {
+        IEnumerable<string> affixes = format is { CurrencySymbol.Length: > 0 }
+            ? CommonAffixes.Prepend(format.CurrencySymbol)
+            : CommonAffixes;
+
+        foreach (var affix in affixes.Distinct().OrderByDescending(a => a.Length))
+        {
+            if (s.StartsWith(affix, StringComparison.OrdinalIgnoreCase))
+                s = s[affix.Length..].Trim();
+            else if (s.EndsWith(affix, StringComparison.OrdinalIgnoreCase))
+                s = s[..^affix.Length].Trim();
+        }
+        return s;
+    }
+
     /// <summary>Канон хранения: приводит десятичный разделитель значения к выбранному (одиночная
     /// замena символа, цифры сохраняются). Нечисловое (пусто/текст/дата — TryNumber не разобрал)
     /// не трогаем. Используется на записи значения и при смене настройки разделителя.</summary>

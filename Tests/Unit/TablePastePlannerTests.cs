@@ -164,9 +164,12 @@ public sealed class TablePastePlannerTests
     [InlineData("✓", "1")]
     [InlineData("1", "1")]
     [InlineData("да", "1")]
-    [InlineData("ИСТИНА", null)]
+    [InlineData("ИСТИНА", "1")]
+    [InlineData("✔", "1")]
     [InlineData("0", "0")]
     [InlineData("нет", "0")]
+    [InlineData("ЛОЖЬ", "0")]
+    [InlineData("может быть", null)]
     [InlineData("", "")]
     public void Checkbox_understands_common_spellings(string text, string? stored)
     {
@@ -196,12 +199,35 @@ public sealed class TablePastePlannerTests
     }
 
     [Fact]
-    public void Multiselect_takes_known_values_and_drops_the_rest()
+    public void Multiselect_takes_known_values_in_their_exact_spelling()
     {
-        var plan = TablePastePlanner.Plan(Values(["Красный, Отменено, синий"]), 0, 0, [Multi], rowCount: 1);
+        var plan = TablePastePlanner.Plan(Values(["красный, Синий; Красный"]), 0, 0, [Multi], rowCount: 1);
 
         var stored = Assert.Single(plan.Cells).StorageValue;
         Assert.Equal(["Красный", "Синий"], MultiSelectValue.Parse(stored));
+    }
+
+    /// <summary>Незнакомый кусок — вся ячейка пропускается: молча оставить половину
+    /// скопированного значило бы потерять остальное без следа.</summary>
+    [Fact]
+    public void Multiselect_with_an_unknown_value_is_skipped_whole()
+    {
+        var plan = TablePastePlanner.Plan(Values(["Красный, Отменено"]), 0, 0, [Multi], rowCount: 1);
+
+        Assert.Empty(plan.Cells);
+        Assert.Equal(1, plan.Skipped[PasteSkipReason.NotInOptions]);
+    }
+
+    /// <summary>Опция с запятой внутри не разваливается на куски, а разделитель столбца (здесь —
+    /// точка с запятой) понимается так же, как запятая.</summary>
+    [Fact]
+    public void Multiselect_options_may_contain_separators()
+    {
+        var column = new PasteColumn("15", "multiselect", Options: ["Ул. Ленина, 5", "Склад"], Separator: "; ");
+
+        var plan = TablePastePlanner.Plan(Values(["ул. ленина, 5; Склад"]), 0, 0, [column], rowCount: 1);
+
+        Assert.Equal(["Ул. Ленина, 5", "Склад"], MultiSelectValue.Parse(Assert.Single(plan.Cells).StorageValue));
     }
 
     // ── Размножение по выделению ──────────────────────────────────────────────

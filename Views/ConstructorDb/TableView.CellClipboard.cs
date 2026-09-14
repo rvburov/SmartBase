@@ -238,7 +238,9 @@ public partial class TableView
             IsReadOnly: def.IsReadOnly && def.FieldType != "checkbox",
             Options: def.FieldType == "user" ? users : def.Options,
             DecimalSeparator: def.NumberFormat.DecimalSeparator,
-            IsTitle: def.Key == TableRowVm.TitleKey);
+            IsTitle: def.Key == TableRowVm.TitleKey,
+            NumberFormat: def.NumberFormat,
+            Separator: def.Separator);
 
     // ── Запись ────────────────────────────────────────────────────────────────
 

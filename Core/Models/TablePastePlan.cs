@@ -24,14 +24,19 @@ public enum PasteSkipReason
 /// приводится к нему сразу, иначе в колонке смешались бы «42.5» и «42,5».
 /// <paramref name="IsTitle"/> — системный столбец «Название»: у него свое правило пустого значения.
 /// <paramref name="Options"/> — допустимые значения закрытого списка; для «Пользователя» это
-/// допущенные пользователи базы (без списка «Пользователь» принимается как текст).</summary>
+/// допущенные пользователи базы (без списка «Пользователь» принимается как текст).
+/// <paramref name="NumberFormat"/> — формат показа числа: по нему разбирается скопированное из
+/// своей же таблицы («1 234,50 ₽»). <paramref name="Separator"/> — разделитель показа
+/// мультисписка.</summary>
 public sealed record PasteColumn(
     string Key,
     string FieldType,
     bool IsReadOnly = false,
     IReadOnlyList<string>? Options = null,
     DecimalMark DecimalSeparator = DecimalMark.Comma,
-    bool IsTitle = false);
+    bool IsTitle = false,
+    NumberFormat? NumberFormat = null,
+    string? Separator = null);
 
 /// <summary>Одно значение, готовое лечь в базу: координаты, столбец и значение В ФОРМАТЕ ХРАНЕНИЯ.</summary>
 public sealed record PasteCell(int Row, int Column, string ColumnKey, string StorageValue);
@@ -166,14 +171,16 @@ public static class TablePastePlanner
         switch (column.FieldType)
         {
             case "number":
-                // Формат числа в буфере может быть каким угодно («42.5», «42,5»), а в базе у
-                // столбца свой разделитель — приводим сразу, как это делает обычная правка ячейки.
-                return Exporters.TableWriters.WriterHelpers.TryNumber(raw, out _)
-                    ? NumberFormatValue.NormalizeStorage(raw, column.DecimalSeparator)
+                // Число в буфере — в любом виде («42.5», «1 234,50 ₽», «12 %»), а в базе у столбца
+                // свой разделитель — приводим сразу, как это делает обычная правка ячейки.
+                return NumberFormatValue.TryParseDisplay(raw, column.NumberFormat, column.DecimalSeparator, out var number)
+                    ? number
                     : null;
 
             case "date":
-                return DateValue.TryParse(raw, out var date) ? date.ToStorage() : null;
+                // Строгий разбор: дата — вся строка. Терпимый разбор ручного ввода вынул бы дату из
+                // «Отчет от 01.02.2026», и слова молча пропали бы.
+                return DateValue.TryParseExact(raw, out var date) ? date.ToStorage() : null;
 
             case "checkbox":
                 return ParseCheckbox(raw);
@@ -218,9 +225,9 @@ public static class TablePastePlanner
     // вставлялось бы обратно.
     private static string? ParseCheckbox(string raw) => raw.ToLowerInvariant() switch
     {
-        "1" or "true" or "да" or "yes" or "✓" or "x" or "х" => "1",
-        "0" or "false" or "нет" or "no" or "-"              => "0",
-        _                                                   => null,
+        "1" or "true" or "да" or "yes" or "истина" or "вкл" or "✓" or "✔" or "☑" or "✅" or "x" or "х" => "1",
+        "0" or "false" or "нет" or "no" or "ложь" or "выкл" or "-" or "☐" or "✗" or "✘"             => "0",
+        _                                                                                      => null,
     };
 
     private static bool HasOption(PasteColumn column, string value, out string exact)
@@ -237,15 +244,45 @@ public static class TablePastePlanner
         return false;
     }
 
-    // Мультисписок: в буфере он лежит перечислением через запятую (так же, как показан в
-    // ячейке), в базе — JSON-массивом. Ни одно значение не опознали — вставлять нечего.
+    /// <summary>
+    /// Мультисписок: в буфере он лежит перечислением через разделитель столбца (так, как показан в
+    /// ячейке), в чужих таблицах — через запятую, точку с запятой или с новой строки; в базе —
+    /// JSON-массивом.
+    ///
+    /// Резать строку по разделителю нельзя: опция сама может содержать запятую или точку («Ул.
+    /// Ленина, 5»), и она развалилась бы на куски, которых нет в списке. Поэтому строка читается
+    /// слева направо, и в каждом месте берется САМАЯ ДЛИННАЯ опция, которая там начинается и за
+    /// которой идет разделитель или конец.
+    ///
+    /// Любой кусок не из списка — ячейка пропускается целиком: молча оставить «Красный» из
+    /// «Красный, Отменено» значило бы потерять половину скопированного без следа.
+    /// </summary>
     private static string? ParseMultiSelect(string raw, PasteColumn column)
     {
-        var parts = raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var kept  = new List<string>();
-        foreach (var part in parts)
-            if (HasOption(column, part, out var exact) && !kept.Contains(exact))
-                kept.Add(exact);
+        var separators = new HashSet<char>([',', ';', '\n', '\r']);
+        foreach (var ch in column.Separator ?? "")
+            if (!char.IsWhiteSpace(ch)) separators.Add(ch);
+
+        bool IsBoundary(int at) => at >= raw.Length || separators.Contains(raw[at]) || char.IsWhiteSpace(raw[at]);
+
+        var options = (column.Options ?? []).Where(o => o.Length > 0).OrderByDescending(o => o.Length).ToList();
+        var kept    = new List<string>();
+        var pos     = 0;
+
+        while (pos < raw.Length)
+        {
+            if (separators.Contains(raw[pos]) || char.IsWhiteSpace(raw[pos])) { pos++; continue; }
+
+            var match = options.FirstOrDefault(o =>
+                pos + o.Length <= raw.Length
+                && string.Compare(raw, pos, o, 0, o.Length, StringComparison.OrdinalIgnoreCase) == 0
+                && IsBoundary(pos + o.Length));
+            if (match is null) return null;
+
+            if (!kept.Contains(match)) kept.Add(match);
+            pos += match.Length;
+        }
+
         return kept.Count > 0 ? MultiSelectValue.Serialize(kept) : null;
     }
 }
