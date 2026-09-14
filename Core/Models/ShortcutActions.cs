@@ -196,6 +196,7 @@ public static class ShortcutActions
         Ref("windows.ref.confirm",     "Подтвердить окно",                        ShortcutBlock.Windows, ShortcutContext.Windows, "Enter"),
         Ref("windows.ref.close",       "Закрыть окно, отменить",                  ShortcutBlock.Windows, ShortcutContext.Windows, "Escape"),
         Ref("windows.ref.titleSave",   "Записать заголовок коллекции или записи", ShortcutBlock.Windows, ShortcutContext.Windows, "Enter"),
+        Ref("windows.ref.textSelectAll", "Выделить весь текст в поле",            ShortcutBlock.Windows, ShortcutContext.Windows, "Ctrl+A"),
         Ref("windows.ref.textCopy",    "Копировать текст в поле",                 ShortcutBlock.Windows, ShortcutContext.Windows, "Ctrl+C"),
         Ref("windows.ref.textCut",     "Вырезать текст в поле",                   ShortcutBlock.Windows, ShortcutContext.Windows, "Ctrl+X"),
         Ref("windows.ref.textPaste",   "Вставить текст в поле",                   ShortcutBlock.Windows, ShortcutContext.Windows, "Ctrl+V"),

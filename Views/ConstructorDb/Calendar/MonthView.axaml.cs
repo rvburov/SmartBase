@@ -106,6 +106,8 @@ public partial class MonthView : UserControl
             _windowKeyHandler = (_, ke) =>
             {
                 if (!IsVisible) return;
+                // Клавишу уже забрала боковая панель (удаление коллекции) — второй раз не наша.
+                if (KeyClaim.Claimed(ke)) return;
                 if (_selections.Count == 0) return;
                 // Не перехватываем клавиши внутри текстовых полей (диалог правки и т.п.).
                 if (ke.Source is TextBox or AutoCompleteBox) return;

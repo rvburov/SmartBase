@@ -272,10 +272,27 @@
 из выделения, а не из строки под курсором (`TableView.MenuShortcuts.cs`). Само меню тоже
 открывается с клавиатуры — `app.contextMenu` (Shift+F10).
 
+**Меню собираются на показ, а не на старте.** Платформенный модификатор спрашивается у окна
+(`TopLevel.PlatformSettings`), поэтому меню, построенное до попадания контрола в дерево, знать
+его не может — и писало бы Ctrl (^) там, где на macOS жмут ⌘. Все меню приложения строятся в
+обработчике правого клика и этой ловушки лишены; исключение — редактор заметки, где меню висит
+на `TextArea` свойством: он пересобирает его в `OnAttachedToVisualTree` и по
+`ShortcutSettings.Changed` (`NoteEditorBox.RebuildContextMenu`). Запасной путь у
+`MenuGestures.CommandModifiers` — модификатор самого приложения, а не жесткий Ctrl.
+
+**Клавиша достается одному разделу.** Календарь и задачи слушают окно с `handledEventsToo`
+(иначе нажатие, обработанное внутренним списком, до них не доходит) и потому видят и чужие
+обработанные события. Чтобы один Delete не удалил разом коллекцию в боковой панели и выделенные
+события, тот, кто сработал первым, помечает событие через [KeyClaim](../../../Utils/KeyClaim.cs),
+а оконные обработчики начинаются с `if (KeyClaim.Claimed(ke)) return;`.
+
 **Где вплетено:** таблица ([TableView.axaml.cs](../../../Views/ConstructorDb/TableView.axaml.cs),
 пункты ее трех меню — `TableView.MenuShortcuts.cs`,
 `TableView.CellSelection.cs` — только `table.selectAll`, подписи меню в
-`TableView.CellClipboard.cs`), боковые панели (`SidebarTree`, `SidebarFiles`), шесть видов
+`TableView.CellClipboard.cs`), боковые панели (`SidebarTree` — один класс на ТРИ дерева
+коллекций: конструктор, календарь, задачи, поэтому клавиши панели работают во всех трех, а
+глобальные входы берут дерево активного раздела через `MainWindow.ActiveSidebarTree()`;
+`SidebarFiles`), шесть видов
 календаря, `TaskListView`, `RecordPageView`, заметки
 ([NoteEditorBox.CommandFor](../../../Controls/Widgets/NoteEditorBox.cs) — таблица «действие →
 `NoteCommand`»), глобальные — `MainWindow.InitGlobalShortcuts`. Действий, которых на клавиатуре

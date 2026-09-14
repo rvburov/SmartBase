@@ -297,6 +297,8 @@ public partial class DiagramView : UserControl
         _windowKeyHandler = (_, ke) =>
         {
             if (!IsVisible) return;
+            // Клавишу уже забрала боковая панель (удаление коллекции) — второй раз не наша.
+            if (KeyClaim.Claimed(ke)) return;
             if (_selection.Count == 0) return;
             if (ke.Source is TextBox or AutoCompleteBox) return;
 

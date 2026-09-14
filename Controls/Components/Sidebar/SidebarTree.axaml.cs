@@ -740,7 +740,12 @@ public partial class SidebarTree : UserControl
         // список сужался до одной, и галочки остальных ни на что не влияли.
         if (_mode is SidebarMode.Calendar or SidebarMode.Tasks)
         {
+            // Галочка решает, что показывать, а подсветка — с чем работают клавиши: в
+            // конструкторе цель действий задает открытая коллекция, а здесь открытой нет, и без
+            // выделения «Переименовать», «Расположение», «Дублировать» и «Удалить» с клавиатуры
+            // не знали бы, к какому узлу относятся.
             _selectedNodes.Clear();
+            _selectedNodes.Add(node);
             ToggleCollection(node);   // RebuildRows внутри
         }
         else
@@ -835,7 +840,9 @@ public partial class SidebarTree : UserControl
         if (ShortcutSettings.Matches("sidebar.delete", e))
         {
             _ = DeleteNodes(_selectedNodes.ToList());
-            e.Handled = true;
+            // Забираем клавишу себе: календарь и задачи слушают окно с handledEventsToo и без
+            // пометки удалили бы заодно выделенные события или задачи.
+            KeyClaim.Claim(e);
             return;
         }
 
@@ -849,7 +856,7 @@ public partial class SidebarTree : UserControl
             var can = RepoOf(node)?.Permissions?.Can(PermAction.EditCollection, node.IsGroup ? null : id) ?? true;
             PermissionNotice.Run(this, can, PermAction.EditCollection,
                 () => _ = node.IsGroup ? EditGroup(node.DbId, id) : EditCollection(node.DbId, id));
-            e.Handled = true;
+            KeyClaim.Claim(e);
             return;
         }
 
@@ -860,7 +867,7 @@ public partial class SidebarTree : UserControl
             var can = RepoOf(node)?.Permissions?.Can(PermAction.DeleteCollection, node.IsGroup ? null : id) ?? true;
             PermissionNotice.Run(this, can, PermAction.DeleteCollection,
                 () => RelocateSelectionOrNode(node));
-            e.Handled = true;
+            KeyClaim.Claim(e);
         }
     }
 

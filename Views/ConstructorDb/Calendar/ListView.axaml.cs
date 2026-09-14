@@ -47,6 +47,8 @@ public partial class ListView : UserControl
             _windowKeyHandler = (_, ke) =>
             {
                 if (!IsVisible) return;
+                // Клавишу уже забрала боковая панель (удаление коллекции) — второй раз не наша.
+                if (KeyClaim.Claimed(ke)) return;
                 if (ke.Source is TextBox or AutoCompleteBox) return;
                 var selected = SelectedRecords();
                 if (selected.Count == 0) return;

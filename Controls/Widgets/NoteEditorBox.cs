@@ -138,6 +138,8 @@ public sealed class NoteEditorBox : UserControl
 
         // Меню редактора: русские Вырезать/Копировать/Вставить плюс команды разметки. Свое,
         // потому что общее меню TextBox из Controls.axaml на TextEditor не распространяется.
+        // Здесь — чтобы меню было у редактора всегда; с подсказками сочетаний его пересоберет
+        // RebuildContextMenu, когда редактор окажется в окне.
         _editor.TextArea.ContextMenu = NoteEditorMenu.Build(Run, this);
 
         // AvaloniaEdit принудительно ставит свою англоязычную панель поиска в OnApplyTemplate.
@@ -399,13 +401,23 @@ public sealed class NoteEditorBox : UserControl
         FontScale.Changed += OnFontScaleChanged;
         // Размер могли изменить, пока раздел был закрыт, — догоняем.
         if (_renderedFontDelta != FontScale.Delta) OnFontScaleChanged();
+
+        // Меню пересобираем уже в дереве окна: только отсюда виден платформенный модификатор
+        // команд (на macOS ⌘). Собранное в конструкторе меню его не знало и писало Ctrl.
+        RebuildContextMenu();
+        ShortcutSettings.Changed += RebuildContextMenu;
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
         FontScale.Changed -= OnFontScaleChanged;
+        ShortcutSettings.Changed -= RebuildContextMenu;
         base.OnDetachedFromVisualTree(e);
     }
+
+    // Подсказки сочетаний в меню — из действующих привязок: переназначили сочетание в настройках,
+    // и меню говорит новое, не дожидаясь перезапуска.
+    private void RebuildContextMenu() => _editor.TextArea.ContextMenu = NoteEditorMenu.Build(Run, this);
 
     private void OnFontScaleChanged()
     {

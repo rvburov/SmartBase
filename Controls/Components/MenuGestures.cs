@@ -26,8 +26,15 @@ public static class MenuGestures
     public static KeyGesture? For(string actionId, Visual owner) =>
         ShortcutSettings.PrimaryGesture(actionId)?.ToKeyGesture(CommandModifiers(owner));
 
-    /// <summary>Модификатор команд платформы: Ctrl, а на macOS — Cmd.</summary>
+    /// <summary>
+    /// Модификатор команд платформы: Ctrl, а на macOS — Cmd (⌘).
+    ///
+    /// Спрашиваем сперва окно контрола, а если его еще нет (меню собрали до попадания в дерево) —
+    /// само приложение: иначе на macOS в подсказках оказывался бы Ctrl (^), которого там никто
+    /// не жмет.
+    /// </summary>
     public static KeyModifiers CommandModifiers(Visual owner) =>
-        TopLevel.GetTopLevel(owner)?.PlatformSettings?.HotkeyConfiguration.CommandModifiers
+        (TopLevel.GetTopLevel(owner)?.PlatformSettings ?? Application.Current?.PlatformSettings)
+        ?.HotkeyConfiguration.CommandModifiers
         ?? KeyModifiers.Control;
 }

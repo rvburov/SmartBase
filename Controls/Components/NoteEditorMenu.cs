@@ -25,6 +25,11 @@ public enum NoteCommand
 /// Свой набор «Вырезать / Копировать / Вставить» здесь не роскошь: русское меню из
 /// Assets/Styles/Controls.axaml объявлено для <c>TextBox</c> и на редактор заметки не
 /// распространяется.
+///
+/// Меню не строится раз и навсегда: <see cref="Widgets.NoteEditorBox"/> пересобирает его, когда
+/// редактор попадает в окно и когда меняются привязки. Подсказки сочетаний берутся из
+/// действующих привязок и из платформенного модификатора окна — на macOS это ⌘, и узнать его
+/// можно только из дерева окна.
 /// </summary>
 public static class NoteEditorMenu
 {
@@ -36,15 +41,13 @@ public static class NoteEditorMenu
     {
         var menu = new ContextMenu();
 
-        // Иконок у этих четырех нет намеренно — как и в Obsidian: иконка ничего не добавляет
-        // к слову «Копировать», зато отступ под нее держит текст в одну линию с остальными.
-        menu.Items.Add(Item(MenuIcons.PlainHeader("Вырезать"),     () => run(NoteCommand.Cut),       "windows.ref.textCut",   owner));
-        menu.Items.Add(Item(MenuIcons.PlainHeader("Копировать"),   () => run(NoteCommand.Copy),      "windows.ref.textCopy",  owner));
-        menu.Items.Add(Item(MenuIcons.PlainHeader("Вставить"),     () => run(NoteCommand.Paste),     "windows.ref.textPaste", owner));
-        menu.Items.Add(Item(MenuIcons.PlainHeader("Выделить все"), () => run(NoteCommand.SelectAll)));
+        menu.Items.Add(Item(MenuIcons.CutTextHeader(),       () => run(NoteCommand.Cut),       "windows.ref.textCut",       owner));
+        menu.Items.Add(Item(MenuIcons.CopyTextHeader(),      () => run(NoteCommand.Copy),      "windows.ref.textCopy",      owner));
+        menu.Items.Add(Item(MenuIcons.PasteTextHeader(),     () => run(NoteCommand.Paste),     "windows.ref.textPaste",     owner));
+        menu.Items.Add(Item(MenuIcons.SelectAllTextHeader(), () => run(NoteCommand.SelectAll), "windows.ref.textSelectAll", owner));
         menu.Items.Add(new Separator());
 
-        menu.Items.Add(Sub("Форматирование",
+        menu.Items.Add(Sub(MenuIcons.FormattingHeader(),
         [
             Item(MenuIcons.BoldHeader(),        () => run(NoteCommand.Bold),        "notes.bold",        owner),
             Item(MenuIcons.ItalicHeader(),      () => run(NoteCommand.Italic),      "notes.italic",      owner),
@@ -55,7 +58,7 @@ public static class NoteEditorMenu
             Item(MenuIcons.ClearFormatHeader(), () => run(NoteCommand.ClearFormat), "notes.clearFormat", owner),
         ]));
 
-        menu.Items.Add(Sub("Абзац",
+        menu.Items.Add(Sub(MenuIcons.ParagraphHeader(),
         [
             Item(MenuIcons.BulletListHeader(),  () => run(NoteCommand.BulletList),  "notes.bulletList",  owner),
             Item(MenuIcons.OrderedListHeader(), () => run(NoteCommand.OrderedList), "notes.orderedList", owner),
@@ -66,12 +69,12 @@ public static class NoteEditorMenu
             Item(MenuIcons.HeadingHeader("Заголовок 4"), () => run(NoteCommand.Heading4), "notes.heading4", owner),
             Item(MenuIcons.HeadingHeader("Заголовок 5"), () => run(NoteCommand.Heading5), "notes.heading5", owner),
             Item(MenuIcons.HeadingHeader("Заголовок 6"), () => run(NoteCommand.Heading6), "notes.heading6", owner),
-            Item(MenuIcons.PlainHeader("Обычный текст"), () => run(NoteCommand.PlainText), "notes.plainText", owner),
+            Item(MenuIcons.PlainTextHeader(), () => run(NoteCommand.PlainText), "notes.plainText", owner),
             new Separator(),
             Item(MenuIcons.QuoteHeader(),       () => run(NoteCommand.Quote),       "notes.quote",       owner),
         ]));
 
-        menu.Items.Add(Sub("Вставка",
+        menu.Items.Add(Sub(MenuIcons.InsertHeader(),
         [
             Item(MenuIcons.TableHeader(),     () => run(NoteCommand.Table),     "notes.table",     owner),
             Item(MenuIcons.CodeBlockHeader(), () => run(NoteCommand.CodeBlock), "notes.codeBlock", owner),
@@ -90,9 +93,9 @@ public static class NoteEditorMenu
         return item;
     }
 
-    private static MenuItem Sub(string title, IEnumerable<object> children)
+    private static MenuItem Sub(Control header, IEnumerable<object> children)
     {
-        var item = new MenuItem { Header = MenuIcons.PlainHeader(title) };
+        var item = new MenuItem { Header = header };
         // Без этого попап подменю наезжает на родителя: тема Fluent задает ему отрицательный
         // сдвиг локальным значением, которое стилем не перебить.
         MenuIcons.FixSubmenuGap(item);

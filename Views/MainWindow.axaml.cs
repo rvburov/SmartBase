@@ -1206,25 +1206,42 @@ public partial class MainWindow : Window
                 return;
             }
 
-            // Дальше — действия дерева конструктора: только в своем разделе и не поверх поля ввода.
-            if (_activeModule != "constructor" || IsTextInputFocused(e)) return;
+            // Дальше — действия дерева коллекций: в том разделе, чье дерево сейчас на экране,
+            // и не поверх поля ввода.
+            if (ActiveSidebarTree() is not { } tree || IsTextInputFocused(e)) return;
 
+            // Клавишу забираем пометкой: календарь и задачи слушают окно с handledEventsToo и
+            // обработанное событие тоже видят.
             if (ShortcutSettings.Matches("sidebar.createCollection", e))
             {
-                ConstructorSidebar.CreateCollectionShortcut();
-                e.Handled = true;
+                tree.CreateCollectionShortcut();
+                KeyClaim.Claim(e);
             }
             else if (ShortcutSettings.Matches("sidebar.createGroup", e))
             {
-                ConstructorSidebar.CreateGroupShortcut();
-                e.Handled = true;
+                tree.CreateGroupShortcut();
+                KeyClaim.Claim(e);
             }
             else if (ShortcutSettings.Matches("sidebar.duplicateCollection", e))
             {
-                if (ConstructorSidebar.DuplicateSelectionShortcut()) e.Handled = true;
+                if (tree.DuplicateSelectionShortcut()) KeyClaim.Claim(e);
             }
         };
     }
+
+    /// <summary>
+    /// Дерево коллекций текущего раздела. Их три — конструктор, календарь и задачи, — и все три
+    /// показывают одни и те же коллекции с одним и тем же меню, поэтому клавиши «Создать
+    /// коллекцию»/«Создать группу»/«Дублировать» работают в каждом. В разделах со своим сайдбаром
+    /// (настройки, профиль, заметки) коллекций нет — там null.
+    /// </summary>
+    private SidebarTree? ActiveSidebarTree() => _activeModule switch
+    {
+        "constructor" => ConstructorSidebar,
+        "calendar"    => CalendarSidebar,
+        "tasks"       => TasksSidebar,
+        _             => null,
+    };
 
     private static bool IsTextInputFocused(KeyEventArgs e) =>
         e.Source is TextBox or AutoCompleteBox

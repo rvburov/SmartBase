@@ -283,6 +283,9 @@ public partial class TaskListView : UserControl
             {
                 // Раздел скрыт (открыт календарь/конструктор) — клавиша не наша.
                 if (!IsEffectivelyVisible) return;
+                // Клавишу уже забрала боковая панель (удаление коллекции) — второй раз не наша:
+                // обработчик висит на окне с handledEventsToo и видит даже обработанное.
+                if (KeyClaim.Claimed(ke)) return;
                 // Ввод: название новой задачи, поиск в навбаре, поля срока — там Delete стирает текст.
                 // ComboBox тоже пропускаем: клавиша в списке коллекций/исполнителя не про задачи.
                 if (ke.Source is TextBox or AutoCompleteBox or ComboBox) return;

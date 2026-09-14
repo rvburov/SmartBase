@@ -179,6 +179,8 @@ public partial class WeekView : UserControl
             _windowKeyHandler = (_, ke) =>
             {
                 if (!IsVisible) return;
+                // Клавишу уже забрала боковая панель (удаление коллекции) — второй раз не наша.
+                if (KeyClaim.Claimed(ke)) return;
                 if (ke.Source is TextBox or AutoCompleteBox) return;
 
                 // Общий набор: выделенные в часовой сетке + в баре «весь день».

@@ -116,6 +116,18 @@ public static class MenuIcons
 
     // ── Меню редактора заметки ──────────────────────────────────────────────────
 
+    // Работа с буфером в тексте заметки. Иконки те же, что у значений ячеек таблицы
+    // (планшет со стрелкой), — одно действие в программе выглядит одинаково везде.
+    public static Control CutTextHeader()       => Header(Icon("IconScissors"),          "Вырезать");
+    public static Control CopyTextHeader()      => Header(ClipboardCopy,                 "Копировать");
+    public static Control PasteTextHeader()     => Header(ClipboardPaste,                "Вставить");
+    public static Control SelectAllTextHeader() => Header(Icon("IconTextSelect"),        "Выделить все");
+
+    // Названия подменю редактора: иконка говорит, что внутри, — стиль текста, абзац, вставка блока.
+    public static Control FormattingHeader()    => Header(Icon("IconType"),              "Форматирование");
+    public static Control ParagraphHeader()     => Header(Icon("IconPilcrow"),           "Абзац");
+    public static Control InsertHeader()        => Header(Icon("IconSquarePlus"),        "Вставка");
+
     public static Control BoldHeader()          => Header(Icon("IconBold"),              "Жирный");
     public static Control ItalicHeader()        => Header(Icon("IconItalic"),            "Курсив");
     public static Control StrikeHeader()        => Header(Icon("IconStrikethrough"),     "Зачеркнутый");
@@ -127,6 +139,8 @@ public static class MenuIcons
     public static Control OrderedListHeader()   => Header(Icon("IconListOrdered"),       "Нумерованный список");
     public static Control QuoteHeader()         => Header(Icon("IconQuote"),             "Цитата");
     public static Control HeadingHeader(string text) => Header(Icon("IconHeading"), text);
+    // «Обычный текст» — снятие заголовка: абзац без уровня, поэтому align-left, а не heading.
+    public static Control PlainTextHeader()     => Header(Icon("IconAlignLeft"),         "Обычный текст");
 
     public static Control TableHeader()         => Header(Icon("IconTable"),             "Таблица");
     public static Control CodeBlockHeader()     => Header(Icon("IconCode"),              "Блок кода");
