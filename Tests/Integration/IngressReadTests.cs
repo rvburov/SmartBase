@@ -128,6 +128,20 @@ public sealed class IngressReadTests : IDisposable
     private static JsonElement Body(IngressAnswer answer) =>
         JsonDocument.Parse(answer.Body).RootElement;
 
+    /// <summary>
+    /// Все строковые и числовые значения ответа на любой глубине. Утечку значения ищут среди
+    /// значений, а не подстрокой по тексту: «100» подстрокой находилось и в дробной части секунд
+    /// у отметки времени, и тест изредка падал на ровном месте.
+    /// </summary>
+    private static IEnumerable<string> Values(JsonElement element) => element.ValueKind switch
+    {
+        JsonValueKind.Object => element.EnumerateObject().SelectMany(p => Values(p.Value)),
+        JsonValueKind.Array  => element.EnumerateArray().SelectMany(Values),
+        JsonValueKind.String => new[] { element.GetString()! },
+        JsonValueKind.Number => new[] { element.GetRawText() },
+        _                    => Array.Empty<string>(),
+    };
+
     // ── Замок ─────────────────────────────────────────────────────────────────
 
     /// <summary>Маска есть, выдачи нет — и это НЕ то же самое, что «нет такого адреса»:
@@ -218,9 +232,10 @@ public sealed class IngressReadTests : IDisposable
         Assert.Equal("Молоток", values.GetProperty("Название").GetString());
         Assert.Equal("А-1",     values.GetProperty("Номер").GetString());
 
-        // «Сумма» в выдаче не названа — ее в ответе нет вовсе, ни у одной записи.
+        // «Сумма» в выдаче не названа — ее в ответе нет вовсе, ни у одной записи: ни имени поля,
+        // ни значений ни под каким именем.
         Assert.DoesNotContain("Сумма", answer.Body, StringComparison.Ordinal);
-        Assert.DoesNotContain("100",   answer.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain(Values(Body(answer)), value => value is "100" or "250");
     }
 
     /// <summary>Метка, поставленная ПОСЛЕ выдачи, останавливает чтение целиком — тем же вторым
