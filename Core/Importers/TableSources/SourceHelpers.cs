@@ -255,7 +255,7 @@ public static class SourceHelpers
     /// <summary>
     /// Кодировка и разделитель CSV по первым 64 КБ файла: BOM → UTF-8/UTF-16; иначе строгая
     /// проверка UTF-8 (оборванный на границе сэмпла многобайтовый символ не считается ошибкой),
-    /// невалидный UTF-8 → Windows-1251 (частая кодировка русских CSV из старого Excel/1С).
+    /// невалидный UTF-8 → Windows-1251 (частая кодировка русских CSV из старого Excel и учетных систем).
     /// Разделитель — по первой непустой строке: «;» (RU-Excel), таб или запятая.
     /// </summary>
     public static (Encoding Encoding, char Delimiter) SniffCsv(string path)

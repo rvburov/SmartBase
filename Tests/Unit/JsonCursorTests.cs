@@ -87,7 +87,7 @@ public sealed class JsonCursorTests
     [Fact]
     public void Descending_walks_past_foreign_fields()
     {
-        var cursor = Over("""{"мета":{"кто":"1С"},"data":{"items":[{"а":1}]},"хвост":7}""");
+        var cursor = Over("""{"мета":{"кто":"учетная система"},"data":{"items":[{"а":1}]},"хвост":7}""");
 
         cursor.Descend("data.items");
 
@@ -176,7 +176,7 @@ public sealed class JsonCursorTests
         Assert.Equal(100_000, Over(json.ToString()).Skip());
     }
 
-    /// <summary>Метка порядка байт снимается: ее кладут и Windows, и 1С.</summary>
+    /// <summary>Метка порядка байт снимается: ее кладут и Windows, и учетные системы.</summary>
     [Fact]
     public void A_byte_order_mark_is_not_data()
     {

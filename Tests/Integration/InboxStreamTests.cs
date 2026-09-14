@@ -124,7 +124,7 @@ public sealed class InboxStreamTests : IDisposable
     public void Foreign_envelope_fields_are_passed_over()
     {
         var path = Loose("заказы.json", """
-            { "выгрузил": "1С 8.3", "когда": {"дата":"2026-09-13","смена":2},
+            { "выгрузил": "учетная система", "когда": {"дата":"2026-09-13","смена":2},
               "collection": "Заказы", "mode": "add", "id": "m-9",
               "rows": [ { "Номер": "А-1" } ], "подпись": [1,2,3] }
             """);

@@ -43,7 +43,7 @@ public sealed class JsonCursor
 
     /// <summary>
     /// Встать в начало потока. Метка порядка байт (BOM) снимается здесь: ее кладут и Windows, и
-    /// 1С, а <see cref="Utf8JsonReader"/> считает ее мусором перед первым токеном.
+    /// учетные системы, а <see cref="Utf8JsonReader"/> считает ее мусором перед первым токеном.
     /// </summary>
     public JsonCursor(Stream stream)
     {
