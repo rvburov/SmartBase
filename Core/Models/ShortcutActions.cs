@@ -141,10 +141,18 @@ public static class ShortcutActions
         Cmd("record.deleteProperties",  "Удалить выделенные свойства", ShortcutBlock.RecordPage, ShortcutContext.RecordPage, "Delete", "Backspace"),
 
         // ── Календарь ───────────────────────────────────────────────────────────
+        Cmd("calendar.openEvent", "Открыть событие",
+            ShortcutBlock.Calendar, ShortcutContext.Calendar, "Ctrl+Enter"),
+        Cmd("calendar.duplicateSelection", "Дублировать выделенные события",
+            ShortcutBlock.Calendar, ShortcutContext.Calendar, "Ctrl+D"),
         Cmd("calendar.deleteSelection", "Удалить выделенные события",
             ShortcutBlock.Calendar, ShortcutContext.Calendar, "Delete", "Backspace"),
 
         // ── Задачи ──────────────────────────────────────────────────────────────
+        Cmd("tasks.openTask", "Открыть задачу",
+            ShortcutBlock.Tasks, ShortcutContext.Tasks, "Ctrl+Enter"),
+        Cmd("tasks.duplicateSelection", "Дублировать выделенные задачи",
+            ShortcutBlock.Tasks, ShortcutContext.Tasks, "Ctrl+D"),
         Cmd("tasks.deleteSelection", "Удалить выделенные задачи",
             ShortcutBlock.Tasks, ShortcutContext.Tasks, "Delete", "Backspace"),
         Ref("tasks.ref.quickAdd", "Создать задачу из строки быстрого добавления",

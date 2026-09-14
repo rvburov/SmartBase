@@ -296,23 +296,39 @@ public partial class DiagramView : UserControl
         if (e.Root is not Window win) return;
         _windowKeyHandler = (_, ke) =>
         {
-            if (!ShortcutSettings.Matches("calendar.deleteSelection", ke)) return;
             if (!IsVisible) return;
             if (_selection.Count == 0) return;
             if (ke.Source is TextBox or AutoCompleteBox) return;
-            if (_selection.Count == 1)
+
+            if (ShortcutSettings.Matches("calendar.deleteSelection", ke))
             {
-                var only = _selection[0].Ev;
-                DeselectAll();
-                RecordDeleteRequested?.Invoke(this, only);
+                if (_selection.Count == 1)
+                {
+                    var only = _selection[0].Ev;
+                    DeselectAll();
+                    RecordDeleteRequested?.Invoke(this, only);
+                }
+                else
+                {
+                    var batch = _selection.Select(b => b.Ev).ToList();
+                    DeselectAll();
+                    RecordsDeleteRequested?.Invoke(this, batch);
+                }
+                ke.Handled = true;
             }
-            else
+            else if (ShortcutSettings.Matches("calendar.duplicateSelection", ke))
             {
                 var batch = _selection.Select(b => b.Ev).ToList();
                 DeselectAll();
-                RecordsDeleteRequested?.Invoke(this, batch);
+                if (batch.Count == 1) RecordDuplicateRequested?.Invoke(this, batch[0]);
+                else                  RecordsDuplicateRequested?.Invoke(this, batch);
+                ke.Handled = true;
             }
-            ke.Handled = true;
+            else if (ShortcutSettings.Matches("calendar.openEvent", ke))
+            {
+                RecordClicked?.Invoke(this, _selection[0].Ev);
+                ke.Handled = true;
+            }
         };
         win.AddHandler(KeyDownEvent, _windowKeyHandler, handledEventsToo: true);
     }
@@ -1354,13 +1370,13 @@ public partial class DiagramView : UserControl
             var batch = _selection.Select(b => b.Ev).ToList();
             return EventContextMenu.Multi(
                 onDeleteAll:    () => { DeselectAll(); RecordsDeleteRequested?.Invoke(this, batch); },
-                onDuplicateAll: () => { DeselectAll(); RecordsDuplicateRequested?.Invoke(this, batch); });
+                onDuplicateAll: () => { DeselectAll(); RecordsDuplicateRequested?.Invoke(this, batch); }, keys: Controls.Components.EventContextMenu.Keys.Calendar, owner: this);
         }
         var ev = _selection[0].Ev;
         return EventContextMenu.Single(
             onEdit:      () => { DeselectAll(); RecordClicked?.Invoke(this, ev); },
             onDelete:    () => { DeselectAll(); RecordDeleteRequested?.Invoke(this, ev); },
-            onDuplicate: () => { DeselectAll(); RecordDuplicateRequested?.Invoke(this, ev); });
+            onDuplicate: () => { DeselectAll(); RecordDuplicateRequested?.Invoke(this, ev); }, keys: Controls.Components.EventContextMenu.Keys.Calendar, owner: this);
     }
 
     // ── геометрия/дата-хелперы ──────────────────────────────────────────────────

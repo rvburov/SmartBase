@@ -46,16 +46,29 @@ public partial class ListView : UserControl
         {
             _windowKeyHandler = (_, ke) =>
             {
-                if (!ShortcutSettings.Matches("calendar.deleteSelection", ke)) return;
                 if (!IsVisible) return;
                 if (ke.Source is TextBox or AutoCompleteBox) return;
                 var selected = SelectedRecords();
                 if (selected.Count == 0) return;
-                // Выделение НЕ снимаем: пока открыт диалог подтверждения, видно, ЧТО удаляется
-                // (после удаления строки исчезнут, после «Отмена» — останутся подсвеченными).
-                if (selected.Count == 1) RecordDeleteRequested?.Invoke(this, selected[0]);
-                else                     RecordsDeleteRequested?.Invoke(this, selected);
-                ke.Handled = true;
+
+                if (ShortcutSettings.Matches("calendar.deleteSelection", ke))
+                {
+                    // Выделение НЕ снимаем: пока открыт диалог подтверждения, видно, ЧТО
+                    // удаляется (после «Отмена» строки останутся подсвеченными).
+                    if (selected.Count == 1) RecordDeleteRequested?.Invoke(this, selected[0]);
+                    else                     RecordsDeleteRequested?.Invoke(this, selected);
+                    ke.Handled = true;
+                }
+                else if (ShortcutSettings.Matches("calendar.duplicateSelection", ke))
+                {
+                    RecordsDuplicateRequested?.Invoke(this, selected);
+                    ke.Handled = true;
+                }
+                else if (ShortcutSettings.Matches("calendar.openEvent", ke))
+                {
+                    RecordClicked?.Invoke(this, selected[0]);
+                    ke.Handled = true;
+                }
             };
             win.AddHandler(KeyDownEvent, _windowKeyHandler, handledEventsToo: true);
         }
@@ -418,7 +431,7 @@ public partial class ListView : UserControl
             // Выделение НЕ снимаем: во время диалога подтверждения видно, ЧТО удаляется/дублируется.
             menu = SmartBase.Controls.Components.EventContextMenu.Multi(
                 () => RecordsDeleteRequested?.Invoke(this, selected),
-                onDuplicateAll: () => RecordsDuplicateRequested?.Invoke(this, selected));
+                onDuplicateAll: () => RecordsDuplicateRequested?.Invoke(this, selected), keys: Controls.Components.EventContextMenu.Keys.Calendar, owner: this);
         }
         else
         {
@@ -428,7 +441,7 @@ public partial class ListView : UserControl
             menu = SmartBase.Controls.Components.EventContextMenu.Single(
                 onEdit:      () => RecordClicked?.Invoke(this, item.OriginalEvent!),
                 onDelete:    () => RecordDeleteRequested?.Invoke(this, item.OriginalEvent!),
-                onDuplicate: () => RecordsDuplicateRequested?.Invoke(this, [item.OriginalEvent!]));
+                onDuplicate: () => RecordsDuplicateRequested?.Invoke(this, [item.OriginalEvent!]), keys: Controls.Components.EventContextMenu.Keys.Calendar, owner: this);
         }
         menu.Open(border);
         e.Handled = true;
@@ -440,7 +453,7 @@ public partial class ListView : UserControl
         // сработает OnEventContextRequested и пометит e.Handled).
         DeselectAll();
         var menu = SmartBase.Controls.Components.EventContextMenu.Background(
-            () => CreateRequested?.Invoke(this, _currentDate));
+            () => CreateRequested?.Invoke(this, _currentDate), keys: Controls.Components.EventContextMenu.Keys.Calendar, owner: this);
         if (sender is Control c) menu.Open(c);
         e.Handled = true;
     }

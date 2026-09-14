@@ -105,24 +105,40 @@ public partial class MonthView : UserControl
 
             _windowKeyHandler = (_, ke) =>
             {
-                if (!ShortcutSettings.Matches("calendar.deleteSelection", ke)) return;
                 if (!IsVisible) return;
                 if (_selections.Count == 0) return;
-                // Не перехватываем Delete внутри текстовых полей (диалог редактирования и т.п.).
+                // Не перехватываем клавиши внутри текстовых полей (диалог правки и т.п.).
                 if (ke.Source is TextBox or AutoCompleteBox) return;
-                if (_selections.Count == 1)
+
+                if (ShortcutSettings.Matches("calendar.deleteSelection", ke))
                 {
-                    var only = _selections.Keys.First();
-                    _Deselect();
-                    RecordDeleteRequested?.Invoke(this, only);
+                    if (_selections.Count == 1)
+                    {
+                        var only = _selections.Keys.First();
+                        _Deselect();
+                        RecordDeleteRequested?.Invoke(this, only);
+                    }
+                    else
+                    {
+                        var batch = _selections.Keys.ToList();
+                        _Deselect();
+                        RecordsDeleteRequested?.Invoke(this, batch);
+                    }
+                    ke.Handled = true;
                 }
-                else
+                else if (ShortcutSettings.Matches("calendar.duplicateSelection", ke))
                 {
                     var batch = _selections.Keys.ToList();
                     _Deselect();
-                    RecordsDeleteRequested?.Invoke(this, batch);
+                    if (batch.Count == 1) RecordDuplicateRequested?.Invoke(this, batch[0]);
+                    else                  RecordsDuplicateRequested?.Invoke(this, batch);
+                    ke.Handled = true;
                 }
-                ke.Handled = true;
+                else if (ShortcutSettings.Matches("calendar.openEvent", ke))
+                {
+                    RecordClicked?.Invoke(this, _selections.Keys.First());
+                    ke.Handled = true;
+                }
             };
             win.AddHandler(KeyDownEvent, _windowKeyHandler, handledEventsToo: true);
         }
@@ -1237,17 +1253,17 @@ public partial class MonthView : UserControl
             {
                 var batch = _selections.Keys.ToList();
                 menu.Items.Add(SmartBase.Controls.Components.EventContextMenu.MakeDuplicateItem(
-                    () => { _Deselect(); RecordsDuplicateRequested?.Invoke(this, batch); }));
+                    () => { _Deselect(); RecordsDuplicateRequested?.Invoke(this, batch); }, Controls.Components.EventContextMenu.Keys.Calendar.Duplicate, this));
                 menu.Items.Add(SmartBase.Controls.Components.EventContextMenu.MakeDeleteItem(
-                    () => { _Deselect(); RecordsDeleteRequested?.Invoke(this, batch); }));
+                    () => { _Deselect(); RecordsDeleteRequested?.Invoke(this, batch); }, Controls.Components.EventContextMenu.Keys.Calendar.Delete, this));
                 return;
             }
             menu.Items.Add(SmartBase.Controls.Components.EventContextMenu.MakeEditItem(
-                () => { _Deselect(); RecordClicked?.Invoke(this, ev); }));
+                () => { _Deselect(); RecordClicked?.Invoke(this, ev); }, Controls.Components.EventContextMenu.Keys.Calendar.Open, this));
             menu.Items.Add(SmartBase.Controls.Components.EventContextMenu.MakeDuplicateItem(
-                () => { _Deselect(); RecordDuplicateRequested?.Invoke(this, ev); }));
+                () => { _Deselect(); RecordDuplicateRequested?.Invoke(this, ev); }, Controls.Components.EventContextMenu.Keys.Calendar.Duplicate, this));
             menu.Items.Add(SmartBase.Controls.Components.EventContextMenu.MakeDeleteItem(
-                () => { _Deselect(); RecordDeleteRequested?.Invoke(this, ev); }));
+                () => { _Deselect(); RecordDeleteRequested?.Invoke(this, ev); }, Controls.Components.EventContextMenu.Keys.Calendar.Delete, this));
         };
         return menu;
     }
@@ -1260,7 +1276,7 @@ public partial class MonthView : UserControl
             _Deselect();
             menu.Items.Clear();
             menu.Items.Add(SmartBase.Controls.Components.EventContextMenu.MakeCreateItem(
-                () => DayAddClicked?.Invoke(this, date)));
+                () => DayAddClicked?.Invoke(this, date), Controls.Components.EventContextMenu.Keys.Calendar.Create, this));
         };
         return menu;
     }

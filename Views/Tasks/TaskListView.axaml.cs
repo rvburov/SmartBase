@@ -255,11 +255,11 @@ public partial class TaskListView : UserControl
         var menu = selected.Count > 1 && _selection.Contains(vm.Task)
             ? Controls.Components.EventContextMenu.Multi(
                 () => TasksDeleteRequested?.Invoke(this, selected),
-                onDuplicateAll: () => TasksDuplicateRequested?.Invoke(this, selected))
+                onDuplicateAll: () => TasksDuplicateRequested?.Invoke(this, selected), keys: Controls.Components.EventContextMenu.Keys.Tasks, owner: this)
             : Controls.Components.EventContextMenu.Single(
                 onEdit:      () => TaskActivated?.Invoke(this, vm.Task),
                 onDelete:    () => TasksDeleteRequested?.Invoke(this, [vm.Task]),
-                onDuplicate: () => TasksDuplicateRequested?.Invoke(this, [vm.Task]));
+                onDuplicate: () => TasksDuplicateRequested?.Invoke(this, [vm.Task]), keys: Controls.Components.EventContextMenu.Keys.Tasks, owner: this);
 
         menu.Open(card);
         e.Handled = true;
@@ -281,7 +281,6 @@ public partial class TaskListView : UserControl
         {
             _windowKeyHandler = (_, ke) =>
             {
-                if (!ShortcutSettings.Matches("tasks.deleteSelection", ke)) return;
                 // Раздел скрыт (открыт календарь/конструктор) — клавиша не наша.
                 if (!IsEffectivelyVisible) return;
                 // Ввод: название новой задачи, поиск в навбаре, поля срока — там Delete стирает текст.
@@ -290,8 +289,23 @@ public partial class TaskListView : UserControl
 
                 var selected = _selection.In(VisibleTasks);
                 if (selected.Count == 0) return;
-                TasksDeleteRequested?.Invoke(this, selected);
-                ke.Handled = true;
+
+                // Пункты меню карточки с клавиатуры — по выделению, тем же путем.
+                if (ShortcutSettings.Matches("tasks.deleteSelection", ke))
+                {
+                    TasksDeleteRequested?.Invoke(this, selected);
+                    ke.Handled = true;
+                }
+                else if (ShortcutSettings.Matches("tasks.duplicateSelection", ke))
+                {
+                    TasksDuplicateRequested?.Invoke(this, selected);
+                    ke.Handled = true;
+                }
+                else if (ShortcutSettings.Matches("tasks.openTask", ke))
+                {
+                    TaskActivated?.Invoke(this, selected[0]);
+                    ke.Handled = true;
+                }
             };
             win.AddHandler(KeyDownEvent, _windowKeyHandler, handledEventsToo: true);
         }

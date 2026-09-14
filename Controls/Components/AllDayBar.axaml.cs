@@ -778,19 +778,19 @@ public partial class AllDayBar : UserControl
                 {
                     menu.Items.Add(EventContextMenu.MakeDuplicateItem(
                         () => (DuplicateAllSelected ??
-                            (() => { var batch = _selections.Keys.ToList(); _DeselectAll(); RecordsDuplicateRequested?.Invoke(this, batch); }))()));
+                            (() => { var batch = _selections.Keys.ToList(); _DeselectAll(); RecordsDuplicateRequested?.Invoke(this, batch); }))(), Controls.Components.EventContextMenu.Keys.Calendar.Duplicate, this));
                     menu.Items.Add(EventContextMenu.MakeDeleteItem(
                         () => (DeleteAllSelected ??
-                            (() => { var batch = _selections.Keys.ToList(); _DeselectAll(); RecordsDeleteRequested?.Invoke(this, batch); }))()));
+                            (() => { var batch = _selections.Keys.ToList(); _DeselectAll(); RecordsDeleteRequested?.Invoke(this, batch); }))(), Controls.Components.EventContextMenu.Keys.Calendar.Delete, this));
                     return;
                 }
 
                 menu.Items.Add(EventContextMenu.MakeEditItem(
-                    () => { _DeselectAll(); RecordClicked?.Invoke(this, ev); }));
+                    () => { _DeselectAll(); RecordClicked?.Invoke(this, ev); }, Controls.Components.EventContextMenu.Keys.Calendar.Open, this));
                 menu.Items.Add(EventContextMenu.MakeDuplicateItem(
-                    () => { _DeselectAll(); RecordDuplicateRequested?.Invoke(this, ev); }));
+                    () => { _DeselectAll(); RecordDuplicateRequested?.Invoke(this, ev); }, Controls.Components.EventContextMenu.Keys.Calendar.Duplicate, this));
                 menu.Items.Add(EventContextMenu.MakeDeleteItem(
-                    () => { _DeselectAll(); RecordDeleteRequested?.Invoke(this, ev); }));
+                    () => { _DeselectAll(); RecordDeleteRequested?.Invoke(this, ev); }, Controls.Components.EventContextMenu.Keys.Calendar.Delete, this));
                 return;
             }
 
@@ -804,7 +804,7 @@ public partial class AllDayBar : UserControl
             var col = Math.Clamp((int)(_menuPos.X / colW), 0, _currentDays.Count - 1);
             var day = _currentDays[col];
             menu.Items.Add(EventContextMenu.MakeCreateItem(
-                () => RecordCreationRequested?.Invoke(this, day)));
+                () => RecordCreationRequested?.Invoke(this, day), Controls.Components.EventContextMenu.Keys.Calendar.Create, this));
         };
         return menu;
     }

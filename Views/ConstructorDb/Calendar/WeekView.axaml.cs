@@ -178,14 +178,27 @@ public partial class WeekView : UserControl
         {
             _windowKeyHandler = (_, ke) =>
             {
-                if (!ShortcutSettings.Matches("calendar.deleteSelection", ke)) return;
                 if (!IsVisible) return;
                 if (ke.Source is TextBox or AutoCompleteBox) return;
 
                 // Общий набор: выделенные в часовой сетке + в баре «весь день».
-                if (_SelectedAll().Count == 0) return;
-                _DeleteSelectedAll();
-                ke.Handled = true;
+                if (_SelectedAll() is not { Count: > 0 } selected) return;
+
+                if (ShortcutSettings.Matches("calendar.deleteSelection", ke))
+                {
+                    _DeleteSelectedAll();
+                    ke.Handled = true;
+                }
+                else if (ShortcutSettings.Matches("calendar.duplicateSelection", ke))
+                {
+                    RecordsDuplicateRequested?.Invoke(this, selected);
+                    ke.Handled = true;
+                }
+                else if (ShortcutSettings.Matches("calendar.openEvent", ke))
+                {
+                    RecordClicked?.Invoke(this, selected[0]);
+                    ke.Handled = true;
+                }
             };
             win.AddHandler(KeyDownEvent, _windowKeyHandler, handledEventsToo: true);
         }
@@ -2159,17 +2172,17 @@ public partial class WeekView : UserControl
             if (all.Count > 1 && all.Any(r => r.Id == ev.Id))
             {
                 menu.Items.Add(SmartBase.Controls.Components.EventContextMenu.MakeDuplicateItem(
-                    _DuplicateSelectedAll));
+                    _DuplicateSelectedAll, Controls.Components.EventContextMenu.Keys.Calendar.Duplicate, this));
                 menu.Items.Add(SmartBase.Controls.Components.EventContextMenu.MakeDeleteItem(
-                    _DeleteSelectedAll));
+                    _DeleteSelectedAll, Controls.Components.EventContextMenu.Keys.Calendar.Delete, this));
                 return;
             }
             menu.Items.Add(SmartBase.Controls.Components.EventContextMenu.MakeEditItem(
-                () => { _Deselect(); RecordClicked?.Invoke(this, ev); }));
+                () => { _Deselect(); RecordClicked?.Invoke(this, ev); }, Controls.Components.EventContextMenu.Keys.Calendar.Open, this));
             menu.Items.Add(SmartBase.Controls.Components.EventContextMenu.MakeDuplicateItem(
-                () => { _Deselect(); _ClearAllDaySelection(); RecordDuplicateRequested?.Invoke(this, ev); }));
+                () => { _Deselect(); _ClearAllDaySelection(); RecordDuplicateRequested?.Invoke(this, ev); }, Controls.Components.EventContextMenu.Keys.Calendar.Duplicate, this));
             menu.Items.Add(SmartBase.Controls.Components.EventContextMenu.MakeDeleteItem(
-                () => { _Deselect(); _ClearAllDaySelection(); RecordDeleteRequested?.Invoke(this, ev); }));
+                () => { _Deselect(); _ClearAllDaySelection(); RecordDeleteRequested?.Invoke(this, ev); }, Controls.Components.EventContextMenu.Keys.Calendar.Delete, this));
         };
         return menu;
     }
@@ -2219,7 +2232,7 @@ public partial class WeekView : UserControl
 
             menu.Items.Clear();
             menu.Items.Add(SmartBase.Controls.Components.EventContextMenu.MakeCreateItem(
-                () => TimeSlotCreationRequested?.Invoke(this, dt)));
+                () => TimeSlotCreationRequested?.Invoke(this, dt), Controls.Components.EventContextMenu.Keys.Calendar.Create, this));
         };
         return menu;
     }
