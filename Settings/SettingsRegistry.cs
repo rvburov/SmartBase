@@ -21,6 +21,7 @@ public static class SettingsRegistry
         new("tasks",      "Задачи",                    "IconSquareCheck"),
         new("constructor","Конструктор базы данных",   "IconDatabaseCheck"),
         new("notes",      "Заметки",                   "IconNotebook"),
+        new("shortcuts",  "Сочетания клавиш",          "IconKeyboard"),
         new("extensions", "Расширения",                "IconBlocks"),
         new("integrations", "Интеграции",              "IconWorkflow"),
         new("guide",      "Инструкция пользователя",   "IconBook"),

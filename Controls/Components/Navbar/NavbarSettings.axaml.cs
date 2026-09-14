@@ -23,6 +23,9 @@ public partial class NavbarSettings : UserControl
     /// <summary>Выбрана вкладка раздела «Интеграции»; в аргументе — ее ключ.</summary>
     public event EventHandler<string>? IntegrationTabRequested;
 
+    /// <summary>Изменился текст поиска по сочетаниям клавиш; в аргументе — строка отбора.</summary>
+    public event EventHandler<string>? ShortcutSearchChanged;
+
     // Гасит событие, пока список наполняется кодом: смена ItemsSource дергает
     // SelectionChanged, и без флага открытие раздела перезаписывало бы сохраненную вкладку.
     private bool _integrationsBuilding;
@@ -59,6 +62,12 @@ public partial class NavbarSettings : UserControl
 
             IntegrationTabRequested?.Invoke(this, Settings.IntegrationTabs.All[index].Key);
         };
+
+        ShortcutSearchBox.PropertyChanged += (_, e) =>
+        {
+            if (e.Property == Widgets.SearchInput.TextProperty)
+                ShortcutSearchChanged?.Invoke(this, e.NewValue as string ?? "");
+        };
     }
 
     /// <summary>Заголовок раздела настроек.</summary>
@@ -87,6 +96,17 @@ public partial class NavbarSettings : UserControl
 
     /// <summary>Показать/скрыть выгрузку в CSV (видна только в «Диагностике»).</summary>
     public bool ShowLogsActions { set => ExportLogsBtn.IsVisible = value; }
+
+    /// <summary>Показать/скрыть поиск по сочетаниям. Уход из раздела очищает строку: отбор —
+    /// это лупа на сейчас, а не режим работы (как отбор в журналах).</summary>
+    public bool ShowShortcutSearch
+    {
+        set
+        {
+            ShortcutSearchBox.IsVisible = value;
+            if (!value) ShortcutSearchBox.Text = "";
+        }
+    }
 
     private void OnExportLogsClick(object? sender, RoutedEventArgs e) =>
         ExportLogsRequested?.Invoke(this, EventArgs.Empty);

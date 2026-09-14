@@ -7,6 +7,7 @@ using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using SmartBase.Core.Models;
 using SmartBase.Database.Repositories;
+using SmartBase.Utils;
 
 namespace SmartBase.Views.ConstructorDb.Calendar;
 
@@ -49,7 +50,7 @@ public partial class JournalView : UserControl
         {
             _windowKeyHandler = (_, ke) =>
             {
-                if (ke.Key != Key.Delete && ke.Key != Key.Back) return;
+                if (!ShortcutSettings.Matches("calendar.deleteSelection", ke)) return;
                 if (!IsVisible) return;
                 if (ke.Source is TextBox or AutoCompleteBox) return;
                 var selected = SelectedRecords();

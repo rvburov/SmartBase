@@ -351,17 +351,33 @@ public partial class TableView : UserControl
         if (IsTextInputFocused(e)) return;            // печатают в поле — таблица молчит
         if (IsCellEditing) return;                    // клавиши правят значение в редакторе
 
-        // Ctrl+Z — отмена последней вставки, очистки или вырезания в этой таблице. Выделение для
-        // нее не нужно (после вставки его могли снять), нужен лишь фокус в таблице.
-        if (HasUndo && IsKeyboardFocusWithin && e.Key == Key.Z
-            && (e.KeyModifiers == KeyModifiers.Control || e.KeyModifiers == KeyModifiers.Meta))
+        // Создание и дублирование записи — тот же путь, что у пунктов меню записи (контроллер
+        // сам спросит права и покажет прогресс). Дублировать без выделения нечего: клавиша
+        // тогда не наша.
+        if (ShortcutSettings.Matches("table.createRecord", e))
+        {
+            RecordCreateRequested?.Invoke(this, (ConstructorSettings.OpenNewRecord, null));
+            e.Handled = true;
+            return;
+        }
+
+        if (ShortcutSettings.Matches("table.duplicateRecord", e) && SelectedRecordIds() is { Count: > 0 } toCopy)
+        {
+            RecordDuplicateRequested?.Invoke(this, toCopy);
+            e.Handled = true;
+            return;
+        }
+
+        // Отмена последней вставки, очистки или вырезания в этой таблице. Выделение для нее не
+        // нужно (после вставки его могли снять), нужен лишь фокус в таблице.
+        if (HasUndo && IsKeyboardFocusWithin && ShortcutSettings.Matches("table.undo", e))
         {
             Fire(UndoLastCellChangeAsync);
             e.Handled = true;
             return;
         }
 
-        // Выделены ячейки — Ctrl+C, Ctrl+V, Delete и Backspace работают по прямоугольнику.
+        // Выделены ячейки — копирование, вставка и очистка работают по прямоугольнику.
         // Только пока фокус В ТАБЛИЦЕ: иначе Delete по выделенным свойствам в панели записи уходил
         // в ячейки, выделенные когда-то раньше. Проверяем ДО удаления записей: пока выделены
         // ячейки, строки не выделены (одно гасит другое).
@@ -369,13 +385,12 @@ public partial class TableView : UserControl
         {
             if (HandleSelectionKey(e)) { e.Handled = true; return; }
 
-            // Ровно Ctrl (Cmd): Ctrl+Shift+C и прочие сочетания принадлежат не таблице.
-            var command = e.KeyModifiers == KeyModifiers.Control || e.KeyModifiers == KeyModifiers.Meta;
-
-            if (command && e.Key == Key.C) { Fire(CopyCellsAsync);  e.Handled = true; return; }
-            if (command && e.Key == Key.X) { Fire(CutCellsAsync);   e.Handled = true; return; }
-            if (command && e.Key == Key.V) { Fire(PasteCellsAsync); e.Handled = true; return; }
-            if (e.KeyModifiers == KeyModifiers.None && e.Key is Key.Delete or Key.Back)
+            // Сравнение идет с ЦЕЛЫМ сочетанием, поэтому Ctrl+Shift+C и прочие соседи по клавише
+            // таблице по-прежнему не принадлежат — ими владеет тот, кому они назначены.
+            if (ShortcutSettings.Matches("table.copy",  e)) { Fire(CopyCellsAsync);  e.Handled = true; return; }
+            if (ShortcutSettings.Matches("table.cut",   e)) { Fire(CutCellsAsync);   e.Handled = true; return; }
+            if (ShortcutSettings.Matches("table.paste", e)) { Fire(PasteCellsAsync); e.Handled = true; return; }
+            if (ShortcutSettings.Matches("table.clearCells", e))
             {
                 Fire(() => ClearCellsAsync());
                 e.Handled = true;
@@ -383,7 +398,7 @@ public partial class TableView : UserControl
             }
         }
 
-        if (e.Key != Key.Delete) return;
+        if (!ShortcutSettings.Matches("table.deleteRecords", e)) return;
         if (_selectedColumnKeys.Count > 0) return;    // удаление колонок — в OnTableKeyDown
 
         // Фокус в панели записи: там Delete удаляет выделенные свойства, и отнимать у нее
@@ -433,10 +448,12 @@ public partial class TableView : UserControl
             return;
         }
 
-        if (e.Key != Key.Delete && e.Key != Key.Back) return;
+        var deleteColumns = ShortcutSettings.Matches("table.deleteColumns", e);
+        var deleteRecords = ShortcutSettings.Matches("table.deleteRecords", e);
+        if (!deleteColumns && !deleteRecords) return;
 
         // Колонки имеют приоритет: их выделение — явный жест по заголовку.
-        if (_selectedColumnKeys.Count > 0)
+        if (deleteColumns && _selectedColumnKeys.Count > 0)
         {
             // Удаляемые = только пользовательские поля (ключ = id поля). Системные
             // («__title__») и №/+ не парсятся в int → отсекаются.
@@ -454,9 +471,9 @@ public partial class TableView : UserControl
             return;
         }
 
-        // Записи: только Delete (Backspace для строк не используем — слишком легко задеть)
-        // и не пока редактируется ячейка (тогда клавиша правит текст, а не удаляет строки).
-        if (e.Key != Key.Delete || IsTextInputFocused(e)) return;
+        // Записи: свое сочетание (стандартно только Delete — Backspace для строк не используем,
+        // слишком легко задеть) и не пока редактируется ячейка (тогда клавиша правит текст).
+        if (!deleteRecords || IsTextInputFocused(e)) return;
 
         var ids = SelectedRecordIds();
         if (ids.Count == 0) return;

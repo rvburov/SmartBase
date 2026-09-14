@@ -281,7 +281,7 @@ public partial class TaskListView : UserControl
         {
             _windowKeyHandler = (_, ke) =>
             {
-                if (ke.Key is not (Key.Delete or Key.Back)) return;
+                if (!ShortcutSettings.Matches("tasks.deleteSelection", ke)) return;
                 // Раздел скрыт (открыт календарь/конструктор) — клавиша не наша.
                 if (!IsEffectivelyVisible) return;
                 // Ввод: название новой задачи, поиск в навбаре, поля срока — там Delete стирает текст.

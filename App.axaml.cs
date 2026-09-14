@@ -158,6 +158,14 @@ public partial class App : Application
                 Log.Information("Скрытые расширения, которых больше нет, убраны из app.db: {Count}",
                                 hiddenOrphans);
 
+            // Привязки сочетаний клавиш: действие переименовали или удалили между версиями —
+            // его ключ «shortcut.<id>» не должен жить в app.db вечно.
+            var shortcutOrphans = AppSettings.RemoveOrphanShortcutSettings(
+                Core.Models.ShortcutActions.All.Where(a => a.Rebindable).Select(a => a.Id));
+            if (shortcutOrphans > 0)
+                Log.Information("Привязки исчезнувших сочетаний клавиш убраны из app.db: {Count}",
+                                shortcutOrphans);
+
             // Автозапуск: сверяем запись в системе с настройкой — вернуть пропавшую (переустановка,
             // чистилка автозагрузки), переписать устаревшую (сменилась папка установки; у версий до
             // 1.0.5 в команде оставался --background), снять лишнюю. Именно здесь, а не в Program:
@@ -178,6 +186,9 @@ public partial class App : Application
             // Настройки конструктора: до создания окна, потому что по ним строится таблица
             // (высота строк, ширина столбцов) и заводится поллер чужих правок.
             ConstructorSettings.Init();
+            // Пользовательские привязки клавиш: до создания окна — обработчики спрашивают
+            // ShortcutSettings.Matches с первого нажатия.
+            ShortcutSettings.Init();
 
             // Уровень масштабирования: прочитать сохраненный масштаб до создания окна
             // (MainWindow применит его к корню при инициализации).

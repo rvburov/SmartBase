@@ -457,12 +457,10 @@ public partial class TableView
     {
         menu.Items.Add(new Separator());
 
-        var command = CommandModifiers();
-
         var copy = new MenuItem
         {
             Header       = MenuIcons.CopyValuesHeader(),
-            InputGesture = new KeyGesture(Key.C, command),
+            InputGesture = MenuGesture("table.copy"),
         };
         copy.Click += (_, _) => { select(); Fire(CopyCellsAsync); };
         menu.Items.Add(copy);
@@ -470,7 +468,7 @@ public partial class TableView
         var paste = new MenuItem
         {
             Header       = MenuIcons.PasteValuesHeader(),
-            InputGesture = new KeyGesture(Key.V, command),
+            InputGesture = MenuGesture("table.paste"),
         };
         Guarded(paste, PermAction.EditRecord, () => { select(); Fire(PasteCellsAsync); });
         menu.Items.Add(paste);
@@ -488,11 +486,16 @@ public partial class TableView
         var clear = new MenuItem
         {
             Header       = MenuIcons.ClearValuesHeader(),
-            InputGesture = new KeyGesture(Key.Delete),
+            InputGesture = MenuGesture("table.clearCells"),
         };
         Guarded(clear, PermAction.EditRecord, () => { select(); Fire(() => ClearCellsAsync()); });
         menu.Items.Add(clear);
     }
+
+    // Подсказка в пункте меню — действующее сочетание действия, включая переназначенное
+    // («Настройки → Сочетания клавиш»): подпись и нажатие расходиться не должны.
+    private KeyGesture? MenuGesture(string actionId) =>
+        ShortcutSettings.PrimaryGesture(actionId)?.ToKeyGesture(CommandModifiers());
 
     // Модификатор команд платформы: Ctrl, а на macOS — Cmd. Подсказка в меню должна совпадать с
     // тем, что реально нажимают.

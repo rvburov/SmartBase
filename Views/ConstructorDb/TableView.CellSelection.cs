@@ -7,6 +7,7 @@ using Avalonia.Threading;
 using Avalonia.VisualTree;
 using SmartBase.Controls.Widgets;
 using SmartBase.Core.Models;
+using SmartBase.Utils;
 using SmartBase.ViewModels.ConstructorDb;
 
 namespace SmartBase.Views.ConstructorDb;
@@ -212,6 +213,15 @@ public partial class TableView
     {
         if (_cellRange is not { } range) return false;
 
+        // Выделить все — единственная переназначаемая клавиша этого обработчика; навигация,
+        // Escape и вход в правку вшиты в поведение таблицы и в настройках только показываются.
+        if (ShortcutSettings.Matches("table.selectAll", e))
+        {
+            if (CellRangeNavigation.SelectAll(VisibleRowCount, VisibleDataColumns()) is { } all)
+                SetCellSelection(all);
+            return true;
+        }
+
         var mods  = e.KeyModifiers;
         if (mods.HasFlag(KeyModifiers.Alt)) return false;
         var ctrl  = mods.HasFlag(KeyModifiers.Control) || mods.HasFlag(KeyModifiers.Meta);
@@ -221,11 +231,6 @@ public partial class TableView
         {
             case Key.Escape when mods == KeyModifiers.None:
                 ClearCellSelection();
-                return true;
-
-            case Key.A when ctrl && !shift:
-                if (CellRangeNavigation.SelectAll(VisibleRowCount, VisibleDataColumns()) is { } all)
-                    SetCellSelection(all);
                 return true;
 
             // Правка с клавиатуры — активной ячейки (якоря), как двойной клик.

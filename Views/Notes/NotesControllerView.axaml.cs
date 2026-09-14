@@ -295,10 +295,7 @@ public partial class NotesControllerView : UserControl
     // это собственная история правок AvaloniaEdit, перехватывать ее нечем и незачем.
     private void OnPanelKeyDown(object? sender, KeyEventArgs e)
     {
-        var mod = e.KeyModifiers.HasFlag(KeyModifiers.Control) || e.KeyModifiers.HasFlag(KeyModifiers.Meta);
-        if (!mod) return;
-
-        if (e.Key == Key.S)
+        if (ShortcutSettings.Matches("notes.save", e))
         {
             FlushPendingSave();
             e.Handled = true;

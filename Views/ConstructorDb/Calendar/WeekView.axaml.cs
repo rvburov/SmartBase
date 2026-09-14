@@ -178,7 +178,7 @@ public partial class WeekView : UserControl
         {
             _windowKeyHandler = (_, ke) =>
             {
-                if (ke.Key != Key.Delete && ke.Key != Key.Back) return;
+                if (!ShortcutSettings.Matches("calendar.deleteSelection", ke)) return;
                 if (!IsVisible) return;
                 if (ke.Source is TextBox or AutoCompleteBox) return;
 

@@ -129,6 +129,9 @@ public partial class SettingsView : UserControl
 
         // Переключатель вкладок «Интеграций» — там же, в навбаре (виден только в этом разделе).
         HeaderBar.IntegrationTabRequested  += (_, key) => ShowIntegrationTab(key);
+
+        // Поиск по сочетаниям клавиш — тоже в навбаре; каждая правка строки пересобирает список.
+        HeaderBar.ShortcutSearchChanged    += (_, text) => OnShortcutSearchChanged(text);
     }
 
     // ── Оформление: что открывается по умолчанию и что вообще показывать ─────
@@ -1131,6 +1134,7 @@ public partial class SettingsView : UserControl
         IntegrationsPanel.IsVisible = key == "integrations";
         GuidePanel.IsVisible      = key == "guide";
         NotesPanel.IsVisible      = key == "notes";
+        ShortcutsPanel.IsVisible  = key == "shortcuts";
         LogsPanel.IsVisible       = key == "logs";
         AboutPanel.IsVisible      = key == "about";
         // Панель деталей журнала живет в корне (во всю высоту) — при уходе из «Диагностики»
@@ -1145,6 +1149,8 @@ public partial class SettingsView : UserControl
         HeaderBar.ShowDatabaseActions = key == "database";
         HeaderBar.ShowLogsActions     = key == "logs";
         HeaderBar.ShowIntegrationTabs = key == "integrations";
+        // Поиск по действиям нужен только своему разделу; уход очищает строку отбора.
+        HeaderBar.ShowShortcutSearch  = key == "shortcuts";
 
         if (key == "logs")       RebuildLogsPanel();
         if (key == "guide")      BuildGuide();
@@ -1154,6 +1160,7 @@ public partial class SettingsView : UserControl
         if (key == "calendar")   RebuildCalendarPanel();
         if (key == "tasks")      RebuildTasksPanel();
         if (key == "constructor") RebuildConstructorPanel();
+        if (key == "shortcuts")  RebuildShortcutsPanel();
     }
 
     // ── Управление базой данных ──────────────────────────────────────────────

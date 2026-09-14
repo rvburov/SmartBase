@@ -648,7 +648,7 @@ public partial class RecordPageView : UserControl
     // Путь тот же, что у меню «Удалить», — пакетный, с подтверждением у контроллера.
     private void OnPanelKeyDown(object? sender, KeyEventArgs e)
     {
-        if (e.Key != Key.Delete && e.Key != Key.Back) return;
+        if (!ShortcutSettings.Matches("record.deleteProperties", e)) return;
         if (_selectedFieldIds.Count == 0) return;
         if (e.Source is TextBox || (e.Source is Visual v && v.FindAncestorOfType<TextBox>() is not null)) return;
 

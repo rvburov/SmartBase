@@ -760,12 +760,12 @@ public partial class SidebarFiles : UserControl
     private void OnTopLevelPointerPressed(object? sender, PointerPressedEventArgs e) =>
         _lastPressInSidebar = e.Source is Visual v && (ReferenceEquals(v, this) || this.IsVisualAncestorOf(v));
 
-    // Delete удаляет выделение — тот же путь, что и пункт меню. Срабатывает, только если
+    // Клавиша удаления сносит выделение — тот же путь, что и пункт меню. Срабатывает, только если
     // последний клик был в этом сайдбаре: иначе клавиша принадлежит редактору справа (а в окне
     // такой же хук стоит у дерева конструктора).
     private void OnTopLevelKeyDown(object? sender, KeyEventArgs e)
     {
-        if (e.Handled || e.Key != Key.Delete) return;
+        if (e.Handled || !ShortcutSettings.Matches("notesTree.delete", e)) return;
         if (!IsVisible || _selected.Count == 0) return;
         if (IsTextInputFocused(e)) return;
         if (!_lastPressInSidebar) return;

@@ -1231,6 +1231,52 @@ public static class AppSettings
         return orphans.Count;
     }
 
+    // ── Сочетания клавиш ──────────────────────────────────────────────────────
+    //
+    // Стандартные жесты — в реестре действий (Core/Models/ShortcutActions.cs), здесь только
+    // пользовательские привязки: ключ «shortcut.<id действия>», значение — каноническая
+    // строка жеста («Ctrl+Shift+K»). Привязка = отличие от стандарта, сброс = удаление ключа.
+    // Разбор строк и живой кэш — у ShortcutSettings; этот слой строки не проверяет.
+
+    /// <summary>Пользовательская привязка действия — строка жеста как лежит в базе; null — стандарт.</summary>
+    public static string? LoadShortcut(string actionId) => _store?.Get(ShortcutKey(actionId));
+
+    /// <summary>Сохранить привязку. null или пустая строка — сброс к стандарту (удаление ключа).</summary>
+    public static void SaveShortcut(string actionId, string? canonical)
+    {
+        if (string.IsNullOrEmpty(canonical)) _store?.Remove(ShortcutKey(actionId));
+        else                                 _store?.Set(ShortcutKey(actionId), canonical);
+    }
+
+    /// <summary>Все сохраненные привязки: id действия → строка жеста (как лежит в базе).</summary>
+    public static IReadOnlyList<(string ActionId, string Value)> LoadShortcuts()
+    {
+        if (_store is null) return [];
+        return _store.KeysWithPrefix(ShortcutKeyPrefix)
+                     .Select(key => (key[ShortcutKeyPrefix.Length..], _store.Get(key) ?? ""))
+                     .ToList();
+    }
+
+    /// <summary>
+    /// Убрать привязки действий, которых в реестре больше нет (действие переименовали или
+    /// удалили между версиями) — как <see cref="RemoveOrphanExtensionSettings"/>. Вызывается
+    /// на старте после AttachStore; возвращает число убранных ключей.
+    /// </summary>
+    public static int RemoveOrphanShortcutSettings(IEnumerable<string> liveActionIds)
+    {
+        if (_store is null) return 0;
+
+        var live = liveActionIds.Select(ShortcutKey).ToHashSet(StringComparer.Ordinal);
+        var orphans = _store.KeysWithPrefix(ShortcutKeyPrefix)
+                            .Where(key => !live.Contains(key))
+                            .ToList();
+
+        foreach (var key in orphans) _store.Remove(key);
+        return orphans.Count;
+    }
+
+    private static string ShortcutKey(string actionId) => $"{ShortcutKeyPrefix}{actionId}";
+
     // ── Галочки коллекций в боковой панели (календарь и задачи) ───────────────
     //
     // Хранятся СНЯТЫЕ галочки, а не отмеченные: по умолчанию видно все, поэтому пустая
@@ -1406,6 +1452,9 @@ public static class AppSettings
     // Тоже приставка: имена источников политики задает Integrations/PolicySources.cs, и
     // перечислять их здесь значило бы держать список в двух местах.
     private const string PolicySnapshotPrefix    = "integrations.policy.";
+    // Приставка привязок сочетаний клавиш: список действий задает реестр
+    // Core/Models/ShortcutActions.cs — полный ключ собирает ShortcutKey.
+    private const string ShortcutKeyPrefix       = "shortcut.";
 
     // ── Приватное ─────────────────────────────────────────────────────────────
 

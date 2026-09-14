@@ -1313,6 +1313,13 @@
             </ScrollViewer>
 
             <!-- ── Заметки ───────────────────────────────────────── -->
+            <!-- Сочетания клавиш: строки собираются кодом из реестра действий
+                 (SettingsShortcutsPanel.cs) — список зависит от состава программы. -->
+            <ScrollViewer x:Name="ShortcutsPanel" IsVisible="False"
+                          VerticalScrollBarVisibility="Auto">
+                <StackPanel x:Name="ShortcutsList" Margin="16,0,16,32" />
+            </ScrollViewer>
+
             <ScrollViewer x:Name="NotesPanel" IsVisible="False"
                           VerticalScrollBarVisibility="Auto">
                 <Grid>

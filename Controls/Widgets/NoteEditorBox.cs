@@ -327,30 +327,34 @@ public sealed class NoteEditorBox : UserControl
         _editor.Focus();
     }
 
-    /// <summary>Сочетание клавиш в команду; null — сочетание не наше.</summary>
+    /// <summary>Действия разметки и их id в реестре сочетаний: одна таблица на сочетание и на
+    /// команду редактора. Порядок значения не имеет — сочетания в пределах блока уникальны
+    /// (сторожит ShortcutActionsTests).</summary>
+    private static readonly (string ActionId, NoteCommand Command)[] Commands =
+    [
+        ("notes.bold",       NoteCommand.Bold),
+        ("notes.italic",     NoteCommand.Italic),
+        ("notes.inlineCode", NoteCommand.InlineCode),
+        ("notes.link",       NoteCommand.Link),
+        ("notes.strike",     NoteCommand.Strike),
+        ("notes.bulletList", NoteCommand.BulletList),
+        ("notes.plainText",  NoteCommand.PlainText),
+        ("notes.heading1",   NoteCommand.Heading1),
+        ("notes.heading2",   NoteCommand.Heading2),
+        ("notes.heading3",   NoteCommand.Heading3),
+        ("notes.heading4",   NoteCommand.Heading4),
+        ("notes.heading5",   NoteCommand.Heading5),
+        ("notes.heading6",   NoteCommand.Heading6),
+    ];
+
+    /// <summary>Сочетание клавиш в команду; null — сочетание не наше. Сочетания берутся из
+    /// настроек («Настройки → Сочетания клавиш»), стандартные — из реестра действий.</summary>
     public static NoteCommand? CommandFor(Key key, KeyModifiers modifiers)
     {
-        var mod   = modifiers.HasFlag(KeyModifiers.Control) || modifiers.HasFlag(KeyModifiers.Meta);
-        var shift = modifiers.HasFlag(KeyModifiers.Shift);
-        if (!mod) return null;
-
-        return (key, shift) switch
-        {
-            (Key.B, false) => NoteCommand.Bold,
-            (Key.I, false) => NoteCommand.Italic,
-            (Key.E, false) => NoteCommand.InlineCode,
-            (Key.K, false) => NoteCommand.Link,
-            (Key.K, true)  => NoteCommand.Strike,
-            (Key.L, true)  => NoteCommand.BulletList,
-            (Key.D0, _)    => NoteCommand.PlainText,
-            (Key.D1, _)    => NoteCommand.Heading1,
-            (Key.D2, _)    => NoteCommand.Heading2,
-            (Key.D3, _)    => NoteCommand.Heading3,
-            (Key.D4, _)    => NoteCommand.Heading4,
-            (Key.D5, _)    => NoteCommand.Heading5,
-            (Key.D6, _)    => NoteCommand.Heading6,
-            _              => null,
-        };
+        foreach (var (actionId, command) in Commands)
+            if (ShortcutSettings.Matches(actionId, key, modifiers))
+                return command;
+        return null;
     }
 
     private void UpdateWatermark() =>

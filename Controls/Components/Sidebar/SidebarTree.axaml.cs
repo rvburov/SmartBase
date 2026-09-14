@@ -822,12 +822,12 @@ public partial class SidebarTree : UserControl
     private void OnTopLevelPointerPressed(object? sender, PointerPressedEventArgs e) =>
         _lastPressInSidebar = e.Source is Visual v && (ReferenceEquals(v, this) || this.IsVisualAncestorOf(v));
 
-    // Delete — удалить выделенные узлы (как пункт «Удалить» в меню), с тем же диалогом и
+    // Клавиша удаления сносит выделенные узлы (как пункт «Удалить» в меню), с тем же диалогом и
     // подсчетом. Срабатывает, только если последний клик был в сайдбаре (иначе клавиша
     // принадлежит таблице/полю справа).
     private void OnTopLevelKeyDown(object? sender, KeyEventArgs e)
     {
-        if (e.Handled || e.Key != Key.Delete) return;
+        if (e.Handled || !ShortcutSettings.Matches("sidebar.delete", e)) return;
         if (_selectedNodes.Count == 0) return;
         if (IsTextInputFocused(e)) return;       // печатают в поле — Delete правит текст
         if (!_lastPressInSidebar) return;        // пользователь работает не в сайдбаре
@@ -838,6 +838,38 @@ public partial class SidebarTree : UserControl
 
     private static bool IsTextInputFocused(KeyEventArgs e) =>
         e.Source is TextBox || (e.Source is Visual v && v.FindAncestorOfType<TextBox>() is not null);
+
+    // ── Действия по сочетаниям клавиш ─────────────────────────────────────────
+    //
+    // Входы для глобальных сочетаний («Настройки → Сочетания клавиш»): тот же путь и та же
+    // проверка прав, что у пунктов контекстного меню, — клавиша не должна обходить запрет
+    // администратора. Целевая БД — та же, что у кнопки «+»: первая доступная (DefaultDbId).
+
+    /// <summary>Создать коллекцию в первой доступной базе — как кнопка «+» тулбара.</summary>
+    public void CreateCollectionShortcut() => CreateFromShortcut("collection");
+
+    /// <summary>Создать группу в первой доступной базе.</summary>
+    public void CreateGroupShortcut() => CreateFromShortcut("group");
+
+    private void CreateFromShortcut(string presetType)
+    {
+        var can = RepoFor(DefaultDbId)?.Permissions?.Can(PermAction.CreateCollection) ?? true;
+        PermissionNotice.Run(this, can, PermAction.CreateCollection,
+            () => _ = CreateItem(presetType, DefaultDbId, parentId: null));
+    }
+
+    /// <summary>Дублировать выделенные коллекции и группы. false — выделять нечего
+    /// (сочетание тогда достается другому владельцу клавиши).</summary>
+    public bool DuplicateSelectionShortcut()
+    {
+        var node = _selectedNodes.FirstOrDefault(n => n.Id.HasValue && !n.IsDatabase);
+        if (node is null) return false;
+
+        var can = RepoOf(node)?.Permissions?.Can(PermAction.DuplicateCollection) ?? true;
+        PermissionNotice.Run(this, can, PermAction.DuplicateCollection,
+            () => DuplicateSelectionOrNode(node));
+        return true;
+    }
 
     private void OnChevronTapped(object? sender, TappedEventArgs e)
     {

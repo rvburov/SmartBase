@@ -296,7 +296,7 @@ public partial class DiagramView : UserControl
         if (e.Root is not Window win) return;
         _windowKeyHandler = (_, ke) =>
         {
-            if (ke.Key != Key.Delete && ke.Key != Key.Back) return;
+            if (!ShortcutSettings.Matches("calendar.deleteSelection", ke)) return;
             if (!IsVisible) return;
             if (_selection.Count == 0) return;
             if (ke.Source is TextBox or AutoCompleteBox) return;

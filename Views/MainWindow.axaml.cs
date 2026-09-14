@@ -1177,13 +1177,58 @@ public partial class MainWindow : Window
                 ? "Фоновый режим включен: значок в трее создан, закрытие окна прячет программу"
                 : "Фоновый режим включен в настройках, но значок в трее недоступен — закрытие окна завершит программу");
 
-        // ⌘Q (macOS — через штатное меню Avalonia, CloseReason=ApplicationShutdown) уже завершает
-        // приложение; для Windows/Linux добавляем Ctrl+Q как явный выход, когда окно в фокусе.
+        InitGlobalShortcuts();
+    }
+
+    /// <summary>
+    /// Сочетания, действующие во всем окне: выход, масштаб интерфейса и создание коллекций и
+    /// групп. Все — из реестра действий, поэтому переназначаются в «Настройки → Сочетания
+    /// клавиш». Действия с модификаторами текст не печатают, но создание и дублирование все
+    /// равно пропускаем мимо полей ввода: в поле пользователь работает с текстом.
+    ///
+    /// ⌘Q на macOS приходит штатным меню Avalonia (CloseReason=ApplicationShutdown) и завершает
+    /// программу независимо от этой настройки.
+    /// </summary>
+    private void InitGlobalShortcuts()
+    {
         KeyDown += (_, e) =>
         {
-            if (e.Key == Key.Q && e.KeyModifiers.HasFlag(KeyModifiers.Control)) QuitExplicit();
+            if (e.Handled) return;
+
+            if (ShortcutSettings.Matches("app.quit", e)) { QuitExplicit(); e.Handled = true; return; }
+
+            if (ShortcutSettings.Matches("app.zoomIn", e))  { Scaling.ZoomIn();  e.Handled = true; return; }
+            if (ShortcutSettings.Matches("app.zoomOut", e)) { Scaling.ZoomOut(); e.Handled = true; return; }
+            if (ShortcutSettings.Matches("app.zoomReset", e))
+            {
+                Scaling.SetScale(AppSettings.ScaleDefault);
+                e.Handled = true;
+                return;
+            }
+
+            // Дальше — действия дерева конструктора: только в своем разделе и не поверх поля ввода.
+            if (_activeModule != "constructor" || IsTextInputFocused(e)) return;
+
+            if (ShortcutSettings.Matches("sidebar.createCollection", e))
+            {
+                ConstructorSidebar.CreateCollectionShortcut();
+                e.Handled = true;
+            }
+            else if (ShortcutSettings.Matches("sidebar.createGroup", e))
+            {
+                ConstructorSidebar.CreateGroupShortcut();
+                e.Handled = true;
+            }
+            else if (ShortcutSettings.Matches("sidebar.duplicateCollection", e))
+            {
+                if (ConstructorSidebar.DuplicateSelectionShortcut()) e.Handled = true;
+            }
         };
     }
+
+    private static bool IsTextInputFocused(KeyEventArgs e) =>
+        e.Source is TextBox or AutoCompleteBox
+        || (e.Source is Visual v && v.FindAncestorOfType<TextBox>() is not null);
 
     // Значок в системной области с меню «Открыть»/«Выход». Иконка — та же, что у окна (icon.ico).
     private void SetupTray()
