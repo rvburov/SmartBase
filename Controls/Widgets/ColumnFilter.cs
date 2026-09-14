@@ -15,7 +15,7 @@ namespace SmartBase.Controls.Widgets;
 public sealed record ColumnFilterValue(string Value, string Text, int Count);
 
 /// <summary>
-/// Отбор по колонке в шапке таблицы — «как в Excel» (docs/ROADMAP-API.md, шаг 14).
+/// Отбор по колонке в шапке таблицы — «как в табличном редакторе» (docs/ROADMAP-API.md, шаг 14).
 ///
 /// Виджет общий и нарочно маленький: заголовок колонки, воронка, а во всплывающем списке —
 /// поиск, «выделить все» и значения с числом строк. Ничего о своих данных он не знает; какие

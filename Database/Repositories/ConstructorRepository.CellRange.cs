@@ -233,19 +233,6 @@ public sealed partial class ConstructorRepository
         return (writes, changes, conflicts);
     }
 
-    /// <summary>Значения ячеек прямоугольника одним запросом. Ключ — (запись, поле); ячейки без
-    /// значения в словарь не попадают.</summary>
-    public Dictionary<(int RecordId, int FieldId), string> GetCellValues(
-        IReadOnlyList<int> recordIds, IReadOnlyList<int> fieldIds)
-    {
-        if (recordIds.Count == 0 || fieldIds.Count == 0) return [];
-        return db.DbFieldValues.AsNoTracking()
-            .Where(v => recordIds.Contains(v.RecordId) && fieldIds.Contains(v.FieldId))
-            .Select(v => new { v.RecordId, v.FieldId, v.Value })
-            .ToList()
-            .ToDictionary(v => (v.RecordId, v.FieldId), v => v.Value);
-    }
-
     // Какие из записей еще живы и лежат в этой коллекции. Запись из чужой коллекции сюда попасть
     // не должна вовсе, но проверка стоит той же строки запроса.
     private HashSet<int> AliveRecordIds(int collectionId, IEnumerable<int> recordIds)

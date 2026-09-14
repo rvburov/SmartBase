@@ -4,7 +4,7 @@ using SmartBase.Database.Repositories;
 namespace SmartBase.Tests.Integration;
 
 /// <summary>
-/// Excel-каскад счетчиков в окне фильтра колонки (<c>ConstructorRepository.GetColumnCounts</c>):
+/// Каскад счетчиков в окне фильтра колонки (<c>ConstructorRepository.GetColumnCounts</c>):
 /// список значений колонки считается только по записям, прошедшим фильтры ОСТАЛЬНЫХ колонок
 /// и не скрытым в «Отображении записей». Свой фильтр колонки список не режет — иначе снятое
 /// значение нельзя вернуть в отбор. Счетчики и сам фильтр (<c>GetFilteredRecordIds</c>)

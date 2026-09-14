@@ -139,6 +139,38 @@ public static class TablePastePlanner
         return new TablePastePlan(cells, skipped);
     }
 
+    /// <summary>
+    /// Вставка в сетку таблицы, где часть столбцов скрыта в «Отображении».
+    /// <paramref name="visibleColumns"/> — позиции видимых столбцов с данными в сетке по
+    /// возрастанию, <paramref name="columns"/> — их описание в том же порядке.
+    ///
+    /// Скрытый столбец копирование пропускает, поэтому и здесь он места не занимает: блок встает от
+    /// первого видимого столбца не левее выделения, а ширина выделения считается в видимых столбцах
+    /// (<see cref="CellRange.VisibleColumns"/>). Иначе скопированный блок ложился бы обратно со
+    /// сдвигом на чужие столбцы. В итоге <see cref="PasteCell.Column"/> — позиция в сетке.
+    /// </summary>
+    public static TablePastePlan PlanInGrid(
+        IReadOnlyList<IReadOnlyList<string>> values,
+        CellRange selection,
+        IReadOnlyList<int> visibleColumns,
+        IReadOnlyList<PasteColumn> columns,
+        int rowCount)
+    {
+        if (visibleColumns.Count != columns.Count)
+            throw new ArgumentException("Позиций столбцов и их описаний должно быть поровну.", nameof(columns));
+
+        var start = -1;
+        for (var i = 0; i < visibleColumns.Count; i++)
+            if (visibleColumns[i] >= selection.Left) { start = i; break; }
+        if (start < 0) return new TablePastePlan([], new Dictionary<PasteSkipReason, int>());
+
+        var plan = Plan(values, selection.Top, start, columns, rowCount,
+                        selectionRows:    selection.RowCount,
+                        selectionColumns: Math.Max(1, selection.VisibleColumns(visibleColumns).Count));
+
+        return plan with { Cells = [.. plan.Cells.Select(c => c with { Column = visibleColumns[c.Column] })] };
+    }
+
     /// <summary>Можно ли вообще писать в такой столбец. Отдельно от <see cref="Convert"/>, потому
     /// что этим же вопросом задается очистка: очищать вычисляемое и файлы нельзя. Связь пишется
     /// названиями записей (их находит база), кроме межбазовой — ее цель в другом файле.</summary>

@@ -28,6 +28,51 @@ public sealed class TablePastePlannerTests
     private static IReadOnlyList<IReadOnlyList<string>> Values(params string[][] rows) =>
         rows.Select(r => (IReadOnlyList<string>)r).ToList();
 
+    // ── Скрытые столбцы ───────────────────────────────────────────────────────
+
+    // Позиции в сетке: 0 — «№», 1 — «Название», 2…5 — свойства, 3 скрыт в «Отображении».
+    private static readonly int[] VisibleWithHidden = [1, 2, 4, 5];
+    private static readonly PasteColumn[] ColumnsWithHidden = [Title, Text, new("20", "text"), new("21", "text")];
+
+    /// <summary>Блок, скопированный из столбцов 2, 4 и 5 при скрытом 3, ложится обратно ровно в 2, 4
+    /// и 5: скрытый столбец копирование пропустило — и вставка не отводит ему места. Раньше он
+    /// занимал позицию, и значения съезжали на чужие столбцы.</summary>
+    [Fact]
+    public void Hidden_column_takes_no_place_in_the_pasted_block()
+    {
+        var copied = new CellRange(0, 2, 0, 5).VisibleColumns(VisibleWithHidden);
+        Assert.Equal([2, 4, 5], copied);
+
+        var plan = TablePastePlanner.PlanInGrid(Values(["a", "b", "c"]), CellRange.Single(1, 2),
+                                                VisibleWithHidden, ColumnsWithHidden, rowCount: 3);
+
+        Assert.Equal(0, plan.SkippedCount);
+        Assert.Equal([2, 4, 5], plan.Cells.Select(c => c.Column));
+        Assert.Equal(["a", "b", "c"], plan.Cells.Select(c => c.StorageValue));
+    }
+
+    /// <summary>Ширина выделения — в видимых столбцах: одно значение на выделение 2…5 при скрытом 3
+    /// заполняет по три ячейки в строке, а скрытую не трогает.</summary>
+    [Fact]
+    public void Selection_width_counts_only_visible_columns()
+    {
+        var plan = TablePastePlanner.PlanInGrid(Values(["x"]), new CellRange(0, 2, 1, 5),
+                                                VisibleWithHidden, ColumnsWithHidden, rowCount: 3);
+
+        Assert.Equal(6, plan.Cells.Count);
+        Assert.DoesNotContain(plan.Cells, c => c.Column == 3);
+    }
+
+    /// <summary>Правее выделения видимых столбцов нет — вставлять некуда, а не «в последний».</summary>
+    [Fact]
+    public void Nothing_is_planned_right_of_the_last_visible_column()
+    {
+        var plan = TablePastePlanner.PlanInGrid(Values(["x"]), CellRange.Single(0, 6),
+                                                VisibleWithHidden, ColumnsWithHidden, rowCount: 3);
+
+        Assert.Empty(plan.Cells);
+    }
+
     // ── Разлив блока ──────────────────────────────────────────────────────────
 
     [Fact]

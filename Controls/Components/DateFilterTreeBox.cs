@@ -106,7 +106,7 @@ public sealed class DateFilterTreeBox
             checkedRaws, fontBase, secondary);
 
     /// <summary>Сырые значения, показанные сейчас (с учетом поиска) — по ним хозяин строит
-    /// «(Выделить все)» и Excel-режим «Заменить», где фильтр = отмеченные СРЕДИ найденного.</summary>
+    /// «(Выделить все)» и режим «Заменить», где фильтр = отмеченные СРЕДИ найденного.</summary>
     public IReadOnlyList<string> VisibleRaws { get; private set; } = [];
 
     /// <summary>Все ли показанные значения отмечены (состояние «(Выделить все)»).</summary>

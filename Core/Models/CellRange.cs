@@ -37,27 +37,17 @@ public readonly record struct CellRange(int AnchorRow, int AnchorColumn, int Foc
         row >= Top && row <= Bottom && column >= Left && column <= Right;
 
     /// <summary>
-    /// Обрезать по размерам таблицы. Нужно после того, как строки или колонки исчезли (удалили
-    /// поле, отфильтровали записи): выделение, уехавшее за край, иначе привело бы к чтению
-    /// несуществующих ячеек. Если пересечения нет вовсе — null, выделение снимается.
+    /// Видимые столбцы диапазона: из <paramref name="visibleColumns"/> (позиции видимых столбцов с
+    /// данными по возрастанию) — те, что между <see cref="Left"/> и <see cref="Right"/>. Ровно они
+    /// копируются, заполняются вставкой и считаются в «Выделено: R × C»: скрытый в «Отображении»
+    /// столбец внутри диапазона человек не видит, и трогать его нельзя.
     /// </summary>
-    public CellRange? ClampTo(int rowCount, int columnCount)
+    public List<int> VisibleColumns(IReadOnlyList<int> visibleColumns)
     {
-        if (rowCount <= 0 || columnCount <= 0) return null;
-        if (Top >= rowCount || Left >= columnCount) return null;
-
-        var top    = Math.Clamp(Top,    0, rowCount - 1);
-        var bottom = Math.Clamp(Bottom, 0, rowCount - 1);
-        var left   = Math.Clamp(Left,   0, columnCount - 1);
-        var right  = Math.Clamp(Right,  0, columnCount - 1);
-
-        // Порядок якоря и фокуса сохраняем: человек тянул снизу вверх — пусть так и остается,
-        // иначе следующий Shift-клик прыгнет от другого угла.
-        var anchorRow = AnchorRow <= FocusRow ? top : bottom;
-        var focusRow  = AnchorRow <= FocusRow ? bottom : top;
-        var anchorCol = AnchorColumn <= FocusColumn ? left : right;
-        var focusCol  = AnchorColumn <= FocusColumn ? right : left;
-        return new CellRange(anchorRow, anchorCol, focusRow, focusCol);
+        var inside = new List<int>();
+        foreach (var column in visibleColumns)
+            if (column >= Left && column <= Right) inside.Add(column);
+        return inside;
     }
 
     /// <summary>Координаты всех ячеек диапазона, слева направо и сверху вниз — в том порядке,

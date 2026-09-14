@@ -43,7 +43,7 @@ public partial class TableView
         FollowSelectionIdentity();
         if (_cellRange is not { } range || _repository is null) return false;
 
-        var columns = VisibleDataColumns().Where(c => c >= range.Left && c <= range.Right).ToList();
+        var columns = range.VisibleColumns(VisibleDataColumns());
         if (columns.Count == 0 || TooManyCells((long)range.RowCount * columns.Count)) return false;
         if (await RowsOfRangeAsync(range.Top, range.RowCount, FieldIdsOf(columns)) is not { Count: > 0 } rows) return false;
 
@@ -209,18 +209,13 @@ public partial class TableView
         // секунды.
         if (TooManyRows(Math.Max(values.Count, range.RowCount))) return;
 
-        // Вставка идет только по ВИДИМЫМ столбцам — тем же, что копируются. Скрытый столбец
-        // копирование пропускает, и если бы вставка отводила ему место, скопированный блок ложился
-        // бы обратно со сдвигом на чужие столбцы.
-        var visible     = VisibleDataColumns();
-        var startColumn = visible.FindIndex(c => c >= range.Left);
-        if (startColumn < 0) return;
-
+        // Вставка идет только по ВИДИМЫМ столбцам — тем же, что копируются: скрытый столбец места в
+        // блоке не занимает (PlanInGrid), иначе скопированный блок ложился бы обратно со сдвигом на
+        // чужие столбцы. В плане столбец — уже позиция в сетке.
+        var visible = VisibleDataColumns();
         List<string>? users = null;
         var columns = visible.Select(c => PasteColumnOf(_colDefs[c], users ??= UserOptions())).ToList();
-        var plan    = TablePastePlanner.Plan(values, range.Top, startColumn, columns, VisibleRowCount,
-                                             selectionRows:    range.RowCount,
-                                             selectionColumns: Math.Max(1, visible.Count(c => c >= range.Left && c <= range.Right)));
+        var plan    = TablePastePlanner.PlanInGrid(values, range, visible, columns, VisibleRowCount);
 
         if (TooManyCells(plan.Cells.Count)) return;
 
@@ -249,7 +244,7 @@ public partial class TableView
 
             foreach (var cell in plan.Cells)
                 if (byPosition.TryGetValue(cell.Row, out var row))
-                    writes.Add((row, _colDefs[visible[cell.Column]], cell.StorageValue));
+                    writes.Add((row, _colDefs[cell.Column], cell.StorageValue));
         }
 
         var outcome = await WriteCellsAsync(writes, "Вставка");
@@ -479,6 +474,16 @@ public partial class TableView
         };
         Guarded(paste, PermAction.EditRecord, () => { select(); Fire(PasteCellsAsync); });
         menu.Items.Add(paste);
+
+        // Пустой буфер — вставлять нечего: пункт гаснет при открытии меню, а не молчит по нажатию.
+        // Буфер спрашивается на КАЖДОЕ открытие: его могли заполнить в другой программе. Занятый
+        // буфер считается непустым — пусть нажатие скажет, что он занят, а не пункт молча погаснет.
+        menu.Opening += async (_, _) =>
+        {
+            if (TopLevel.GetTopLevel(this)?.Clipboard is not { } clipboard) return;
+            try { paste.IsEnabled = !string.IsNullOrWhiteSpace(await clipboard.GetTextAsync()); }
+            catch (Exception) { paste.IsEnabled = true; }
+        };
 
         var clear = new MenuItem
         {

@@ -3,7 +3,7 @@ using SmartBase.Core.Models;
 namespace SmartBase.Tests.Unit;
 
 /// <summary>
-/// Галочки чеклиста в окне фильтра колонки (<see cref="FilterSelection"/>) — правила Excel,
+/// Галочки чеклиста в окне фильтра колонки (<see cref="FilterSelection"/>) — правила табличных редакторов,
 /// общие для плоского списка и дерева дат: ввод в поиске отмечает найденное, очистка
 /// возвращает прежние галочки, «Готово» при поиске берет отмеченное среди найденного,
 /// отмечено все — фильтра нет, отобранные раньше значения идут первыми.
@@ -40,7 +40,7 @@ public sealed class FilterSelectionTests
     [Fact]
     public void Every_change_of_text_rechecks_found()
     {
-        // Сняли галочку внутри поиска и продолжили печатать — найденное отмечено заново (Excel).
+        // Сняли галочку внутри поиска и продолжили печатать — найденное отмечено заново.
         var sel = new FilterSelection([]);
         sel.OnSearch("mam", Found("mam"));
         sel.Checked.Remove("mama");

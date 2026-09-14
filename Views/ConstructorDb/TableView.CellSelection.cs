@@ -121,7 +121,7 @@ public partial class TableView
     private string? SelectionLabel()
     {
         if (_cellRange is not { } range) return null;
-        var columns = VisibleDataColumns().Count(c => c >= range.Left && c <= range.Right);
+        var columns = range.VisibleColumns(VisibleDataColumns()).Count;
         if ((long)range.RowCount * columns <= 1) return null;
         return $"Выделено: {range.RowCount:N0} × {columns:N0}";
     }
@@ -404,7 +404,7 @@ public partial class TableView
     /// перепутало бы результаты. null — работу отменили.
     /// </summary>
     private async Task<T?> WithProgressAsync<T>(string phase, Func<IProgress<double>, CancellationToken, Task<T>> work,
-                                               bool cancellable = true) where T : class
+                                               bool cancellable = true)
     {
         using var cts = new CancellationTokenSource();
         Controls.Dialogs.ProgressDialog? dialog = null;
@@ -423,7 +423,7 @@ public partial class TableView
         }
 
         try { return await task; }
-        catch (OperationCanceledException) { return null; }
+        catch (OperationCanceledException) { return default; }
     }
 
     // Числовые ключи столбцов — id полей, значения которых нужны операции.
@@ -451,7 +451,7 @@ public partial class TableView
         var cells = new List<(TableRowVm, TableColumnDef)>();
         if (_cellRange is not { } range) return cells;
 
-        var columns = VisibleDataColumns().Where(c => c >= range.Left && c <= range.Right).ToList();
+        var columns = range.VisibleColumns(VisibleDataColumns());
         if (columns.Count == 0) return cells;
         if (TooManyCells((long)range.RowCount * columns.Count)) return null;
         // Очистке и цвету нужны только id записей — значения полей не читаются.
@@ -465,28 +465,13 @@ public partial class TableView
 
     // ── Текст ячейки ──────────────────────────────────────────────────────────
 
-    /// <summary>
-    /// Что показано в ячейке — именно это уходит в буфер обмена. Повторяет правила конвертеров
-    /// таблицы: дата человекочитаемо, чекбокс галочкой, число в формате столбца, мультисписок
-    /// через свой разделитель. Копировать сырое хранение нельзя: человек ждет в буфере то, что
-    /// видит на экране.
-    /// </summary>
-    private static string CellText(TableRowVm row, TableColumnDef def)
-    {
-        if (FieldTypeInfo.IsComputed(def.FieldType))
-            return FieldTypeInfo.FormatComputedDisplay(ComputedRaw(row, def.FieldType), def.FieldType);
-
-        var raw = row[def.Key];
-        return def.FieldType switch
-        {
-            "checkbox"    => raw is "1" or "true" or "True" ? "✓" : "",
-            "date"        => DateValue.TryParse(raw, out var dv) ? dv.ToDisplay() : raw,
-            "multiselect" => MultiSelectValue.Display(raw, def.Separator),
-            "number"      => NumberFormatValue.Format(raw, def.NumberFormat),
-            "file"        => FileValue.DisplayName(raw),
-            _             => raw,
-        };
-    }
+    /// <summary>Что показано в ячейке — именно это уходит в буфер обмена (правила показа — в
+    /// <see cref="CellDisplayText"/>, там же их проверяет круговой тест). Вычисляемые столбцы берут
+    /// значение из аудита записи.</summary>
+    private static string CellText(TableRowVm row, TableColumnDef def) =>
+        FieldTypeInfo.IsComputed(def.FieldType)
+            ? FieldTypeInfo.FormatComputedDisplay(ComputedRaw(row, def.FieldType), def.FieldType)
+            : CellDisplayText.Of(def.FieldType, row[def.Key], def.NumberFormat, def.Separator);
 
     private static string ComputedRaw(TableRowVm row, string fieldType) => fieldType switch
     {
@@ -637,7 +622,7 @@ public partial class TableView
     {
         if (RowsPresenter is not { } presenter) return null;
 
-        var columns = VisibleDataColumns().Where(c => c >= range.Left && c <= range.Right).ToList();
+        var columns = range.VisibleColumns(VisibleDataColumns());
         if (columns.Count == 0) return null;
         int[] edges = columns.Count == 1 ? [columns[0]] : [columns[0], columns[^1]];
 

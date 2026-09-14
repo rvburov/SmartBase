@@ -225,18 +225,41 @@ public sealed class CellRangeWriteTests
         Assert.Contains(events, e => e.Id == rec.Id!.Value);
     }
 
+    /// <summary>Большой пакет (таблица пишет так все, что больше 5 000 значений) идет на отдельном
+    /// подключении: итог тот же, что у записи на общем, общий контекст после него отдает свежие
+    /// значения, а строки выделения читаются порциями — keyset без пропусков и повторов, и только
+    /// нужные поля.</summary>
     [Fact]
-    public void Reading_a_rectangle_returns_only_filled_cells()
+    public async System.Threading.Tasks.Task Large_batch_on_a_separate_connection_is_written_and_read_in_portions()
     {
         using var db = new TempDatabase();
-        var (repo, colId, f1, f2, r1, r2) = Seed(db);
-        repo.SetCellsBulk(colId, [new(r1, f1, "a1"), new(r2, f2, "b2")]);
+        var (repo, colId, f1, f2, r1, _) = Seed(db);
+        repo.SetFieldValue(r1, f1, "старое");
+        Assert.Equal("старое", repo.GetFieldValues(r1)[f1]);
 
-        var values = repo.GetCellValues([r1, r2], [f1, f2]);
+        var records = SampleData.AddRecords(repo, colId, 3_000);
+        var cells = records
+            .SelectMany(r => new ConstructorRepository.CellWrite[] { new(r.Id!.Value, f1, "a"), new(r.Id!.Value, f2, "b") })
+            .Append(new ConstructorRepository.CellWrite(r1, f1, "новое"))
+            .ToList();
 
-        Assert.Equal(2, values.Count);
-        Assert.Equal("a1", values[(r1, f1)]);
-        Assert.Equal("b2", values[(r2, f2)]);
-        Assert.False(values.ContainsKey((r1, f2)));
+        var written = await repo.SetCellsBulkIsolatedAsync(colId, cells, null, "Вставка");
+
+        Assert.Equal(6_001, written.Changed);
+        Assert.False(written.ChangesTruncated);
+        Assert.Equal("новое", repo.GetFieldValues(r1)[f1]);
+        Assert.Equal("b", repo.GetFieldValues(records[^1].Id!.Value)[f2]);
+
+        var none  = System.Threading.CancellationToken.None;
+        var first = await repo.ReadCellRowsAsync(colId, excludeHidden: false, idSlice: null, skip: 0, take: 2_000,
+                                                 afterPos: null, afterId: null, fieldIds: [f2], none);
+        var last  = first[^1];
+        var rest  = await repo.ReadCellRowsAsync(colId, excludeHidden: false, idSlice: null, skip: 0, take: 2_000,
+                                                 afterPos: last.Position, afterId: last.RecordId, fieldIds: [f2], none);
+
+        Assert.Equal(2_000, first.Count);
+        Assert.Equal(3_002, first.Concat(rest).Select(r => r.RecordId).Distinct().Count());
+        Assert.Equal(3_002, first.Count + rest.Count);
+        Assert.All(first.Concat(rest), r => Assert.False(r.Values.ContainsKey(f1)));
     }
 }

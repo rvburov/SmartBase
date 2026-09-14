@@ -25,7 +25,7 @@ namespace SmartBase.Views.Profile;
 
 /// <summary>
 /// «История изменений» — таблица журнала выбранной базы в стиле таблицы конструктора
-/// (TableView): те же линии/шапка и тот же Excel-фильтр с сортировкой в заголовке
+/// (TableView): те же линии/шапка и тот же фильтр-чеклист с сортировкой в заголовке
 /// каждой колонки. Выбор базы — в навбаре (NavbarProfile). Строки подгружаются
 /// keyset-страницами по 200 при прокрутке к концу (GetChangeLogPageAsync, отдельное
 /// подключение) — миллионы строк не фризят UI. Фильтры и сортировка считаются в SQL.
@@ -478,7 +478,7 @@ public partial class ProfileView
         };
     }
 
-    // ── Фильтр и сортировка колонок (Excel-стиль, зеркало BuildFilterPanel TableView) ──
+    // ── Фильтр и сортировка колонок (чеклист значений, зеркало BuildFilterPanel TableView) ──
 
     private void ShowHistoryFilterFlyout(Control anchor, string key)
     {
@@ -746,7 +746,7 @@ public partial class ProfileView
 
             if (loaded)
             {
-                // Excel-режим «Заменить»: при активном поиске фильтр = отмеченные СРЕДИ
+                // Режим «Заменить»: при активном поиске фильтр = отмеченные СРЕДИ
                 // найденного; поиск пуст — все отмеченные галки по всему домену.
                 var hasSearch = !string.IsNullOrWhiteSpace(search.Text);
                 var effective = hasSearch

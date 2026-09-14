@@ -44,7 +44,7 @@ public sealed class SecurityJournalView : UserControl
     private int            _days = 30;
     private int            _shown;
 
-    // Отбор по колонкам — «как в Excel»: колонка и выбранные в ее воронке значения.
+    // Отбор по колонкам — «как в табличном редакторе»: колонка и выбранные в ее воронке значения.
     private readonly Dictionary<string, HashSet<string>> _picked = new(StringComparer.Ordinal);
 
     // Ключ строки с раскрытыми подробностями; 0 — ни одной.
@@ -401,7 +401,7 @@ public sealed class SecurityJournalView : UserControl
 
     /// <summary>
     /// Шапка таблицы. У колонок, по которым есть что отбирать, — воронка с отбором «как в
-    /// Excel»; отбор уходит в SQL, а не отсеивает показанную пачку: журнал никто не чистит, он
+    /// табличном редакторе»; отбор уходит в SQL, а не отсеивает показанную пачку: журнал никто не чистит, он
     /// копится годами, и одно заблокированное событие полугодовой давности иначе не найти.
     /// </summary>
     private Control HeaderLine()

@@ -4,8 +4,7 @@ namespace SmartBase.Tests.Unit;
 
 /// <summary>
 /// Прямоугольник выделенных ячеек: нормализация в любую сторону протягивания, перечисление ячеек
-/// в порядке буфера обмена и обрезка по размерам таблицы (строки и столбцы могли исчезнуть, пока
-/// выделение жило).
+/// в порядке буфера обмена и видимые столбцы диапазона (скрытые в «Отображении» не в счет).
 /// </summary>
 public sealed class CellRangeTests
 {
@@ -69,36 +68,17 @@ public sealed class CellRangeTests
         Assert.False(range.Contains(2, 4));
     }
 
-    // ── Обрезка по таблице ────────────────────────────────────────────────────
+    // ── Видимые столбцы ───────────────────────────────────────────────────────
 
+    /// <summary>Скрытый в «Отображении» столбец внутри диапазона не копируется, не заполняется и не
+    /// считается в размере выделения.</summary>
     [Fact]
-    public void Range_is_clamped_to_the_table()
+    public void Hidden_columns_inside_the_range_are_not_counted()
     {
-        var clamped = new CellRange(1, 1, 9, 9).ClampTo(rowCount: 4, columnCount: 3);
+        int[] visible = [1, 2, 4, 5];   // 3 скрыт
 
-        Assert.NotNull(clamped);
-        Assert.Equal(3, clamped!.Value.Bottom);
-        Assert.Equal(2, clamped.Value.Right);
-    }
-
-    /// <summary>Направление протягивания переживает обрезку: иначе следующий Shift-клик поехал
-    /// бы от другого угла.</summary>
-    [Fact]
-    public void Clamping_keeps_the_drag_direction()
-    {
-        var clamped = new CellRange(9, 9, 1, 1).ClampTo(rowCount: 4, columnCount: 4);
-
-        Assert.NotNull(clamped);
-        Assert.Equal(3, clamped!.Value.AnchorRow);
-        Assert.Equal(1, clamped.Value.FocusRow);
-    }
-
-    /// <summary>Выделение уехало за край целиком (удалили столбцы, отфильтровали строки) —
-    /// его не остается, а не «схлопывается в угол».</summary>
-    [Fact]
-    public void Range_fully_outside_the_table_disappears()
-    {
-        Assert.Null(new CellRange(7, 7, 9, 9).ClampTo(rowCount: 4, columnCount: 4));
-        Assert.Null(CellRange.Single(0, 0).ClampTo(rowCount: 0, columnCount: 0));
+        Assert.Equal([2, 4, 5], new CellRange(0, 5, 3, 2).VisibleColumns(visible));
+        Assert.Equal([4], new CellRange(0, 3, 0, 4).VisibleColumns(visible));
+        Assert.Empty(CellRange.Single(0, 3).VisibleColumns(visible));
     }
 }
