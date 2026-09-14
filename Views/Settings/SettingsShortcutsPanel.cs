@@ -10,18 +10,22 @@ using static SmartBase.Controls.Widgets.SettingRows;
 namespace SmartBase.Views.Settings;
 
 /// <summary>
-/// Раздел «Сочетания клавиш» (partial SettingsView): все действия программы по блокам, у
+/// Раздел «Сочетания клавиш» (partial SettingsView): все действия программы одним списком, у
 /// каждого — действующее сочетание. Список собирается кодом из реестра
 /// <see cref="ShortcutActions"/>: появилось действие в реестре — появилась строка здесь, без
 /// правки разметки.
+///
+/// Блок стоит приставкой в названии строки («Таблица: Копировать значения ячеек»), а не
+/// заголовком над группой: список читается сплошняком, и строка сама говорит, где действует ее
+/// клавиша. Пояснений под названием нет — строка это название, сочетание и две кнопки.
 ///
 /// Строки двух видов. Команды переназначаются: справа кнопка «+» (окно захвата) и кнопка
 /// сброса к стандарту, активная только пока сочетание отличается от стандартного. Справочные
 /// строки (стрелки, Tab, Enter, Escape) показывают клавишу без кнопок: навигация вшита в
 /// поведение таблицы, редакторов и окон, и подменять ее нечем.
 ///
-/// Поиск живет в навбаре (NavbarSettings) и отбирает по названию, пояснению, блоку и самому
-/// сочетанию — «ctrl+c» находит копирование так же, как слово «копировать».
+/// Поиск живет в навбаре (NavbarSettings) и отбирает по названию строки — вместе с приставкой
+/// блока — и по самому сочетанию: «ctrl+c» находит копирование так же, как слово «таблица».
 /// </summary>
 public partial class SettingsView
 {
@@ -53,6 +57,8 @@ public partial class SettingsView
         var rows = ShortcutsList.Children;
         rows.Clear();
 
+        // Блок — приставка в названии строки, а не заголовок над группой: список читается
+        // сплошняком, и строка сама говорит, где действует ее клавиша.
         var shown = ShortcutActions.All.Where(MatchesSearch).ToList();
         if (shown.Count == 0)
         {
@@ -61,26 +67,15 @@ public partial class SettingsView
             return;
         }
 
-        foreach (var block in shown.Select(a => a.Block).Distinct())
-        {
-            rows.Add(BlockHeader(ShortcutActions.BlockTitle(block)));
-
-            var inBlock = shown.Where(a => a.Block == block).ToList();
-            for (var i = 0; i < inBlock.Count; i++)
-                Add(rows, ActionRow(inBlock[i]), last: i == inBlock.Count - 1);
-        }
+        for (var i = 0; i < shown.Count; i++)
+            Add(rows, ActionRow(shown[i]), last: i == shown.Count - 1);
     }
 
     private bool MatchesSearch(ShortcutAction action)
     {
         if (_shortcutSearch.Length == 0) return true;
 
-        var haystack = string.Join(' ',
-            action.Title,
-            action.Description,
-            ShortcutActions.BlockTitle(action.Block),
-            GestureLabel(action));
-
+        var haystack = ShortcutActions.FullTitle(action) + " " + GestureLabel(action);
         return haystack.Contains(_shortcutSearch, StringComparison.CurrentCultureIgnoreCase);
     }
 
@@ -93,35 +88,16 @@ public partial class SettingsView
         return string.Join(", ", gestures.Select(g => g.Display()));
     }
 
-    private static TextBlock BlockHeader(string title) => new()
-    {
-        Text       = title,
-        Margin     = new Thickness(0, 24, 0, 0),
-        FontSize   = Metric("FontSizeMedium", 16),
-        FontWeight = FontWeight.SemiBold,
-    };
-
     private Border ActionRow(ShortcutAction action)
     {
-        var text = new StackPanel
+        var text = new TextBlock
         {
-            Spacing           = 4,
+            Classes           = { "title" },
+            Text              = ShortcutActions.FullTitle(action),
+            TextWrapping      = TextWrapping.Wrap,
             VerticalAlignment = VerticalAlignment.Center,
             Margin            = new Thickness(0, 0, 32, 0),
         };
-        text.Children.Add(new TextBlock { Classes = { "title" }, Text = action.Title });
-
-        var note = action.Description;
-        // Стандартный псевдоним (Backspace у удалений) действует, только пока сочетание свое
-        // не назначено, — про него честнее сказать в пояснении, чем в самой плашке.
-        if (!ShortcutSettings.IsCustomized(action.Id) && ShortcutSettings.GesturesFor(action.Id) is { Count: > 1 } many)
-        {
-            var extra = "также " + string.Join(", ", many.Skip(1).Select(g => g.Display()));
-            note = note.Length > 0 ? note + " " + char.ToUpper(extra[0]) + extra[1..] + "." : extra[..1].ToUpper() + extra[1..] + ".";
-        }
-        if (ShortcutSettings.IsCustomized(action.Id))
-            note = note.Length > 0 ? note + " Изменено." : "Изменено.";
-        if (note.Length > 0) text.Children.Add(Note(note));
 
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto") };
         Grid.SetColumn(text, 0);

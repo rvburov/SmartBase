@@ -97,12 +97,19 @@ public sealed class ShortcutActionsTests
         foreach (var action in ShortcutActions.All)
         {
             Assert.False(string.IsNullOrWhiteSpace(action.Title), $"без названия: {action.Id}");
-            Assert.DoesNotContain('ё', action.Title + action.Description + (action.FixedLabel ?? ""));
-            Assert.DoesNotContain('Ё', action.Title + action.Description + (action.FixedLabel ?? ""));
+            Assert.DoesNotContain('ё', action.Title + (action.FixedLabel ?? ""));
+            Assert.DoesNotContain('Ё', action.Title + (action.FixedLabel ?? ""));
         }
 
         foreach (var block in Enum.GetValues<ShortcutBlock>())
             Assert.False(string.IsNullOrWhiteSpace(ShortcutActions.BlockTitle(block)));
+    }
+
+    [Fact]
+    public void A_row_is_named_block_colon_action()
+    {
+        var copy = ShortcutActions.Find("table.copy")!;
+        Assert.Equal("Таблица: Копировать значения ячеек", ShortcutActions.FullTitle(copy));
     }
 
     [Fact]
