@@ -106,6 +106,22 @@ public sealed class ShortcutActionsTests
     }
 
     [Fact]
+    public void One_row_shows_one_gesture_and_never_a_list()
+    {
+        // Строка «В начало и конец таблицы — Ctrl+Home, Ctrl+End» слепляет два разных действия:
+        // назначать такую клавишу нечем, а читать неудобно. Каждому жесту — своя строка.
+        foreach (var action in ShortcutActions.All)
+        {
+            if (action.FixedLabel is { } label)
+                Assert.False(label.Contains(','), $"в строке несколько сочетаний: {action.Id} — {label}");
+
+            // У переназначаемых в списке показывается только основной жест, псевдоним — молча
+            // действующий синоним стандарта (Backspace у удалений).
+            Assert.True(action.Defaults.Count <= 2, $"слишком много стандартов: {action.Id}");
+        }
+    }
+
+    [Fact]
     public void A_row_is_named_block_colon_action()
     {
         var copy = ShortcutActions.Find("table.copy")!;

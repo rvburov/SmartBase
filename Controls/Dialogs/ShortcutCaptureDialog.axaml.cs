@@ -28,7 +28,7 @@ public partial class ShortcutCaptureDialog : Window
         InitializeComponent();
         _action = action;
 
-        ActionText.Text  = action.Title;
+        ActionText.Text  = ShortcutActions.FullTitle(action);
         GestureText.Text = "Нажмите сочетание клавиш";
 
         CancelBtn.Click  += (_, _) => Close(null);
@@ -37,6 +37,10 @@ public partial class ShortcutCaptureDialog : Window
         // Туннелем и поверх уже обработанных: иначе Tab ушел бы на перевод фокуса, а стрелки —
         // кнопкам, и до захвата эти клавиши не дошли бы.
         AddHandler(KeyDownEvent, OnCaptureKeyDown, RoutingStrategies.Tunnel, handledEventsToo: true);
+
+        // Фокус — в зону захвата: нажатия идут к сфокусированному элементу, и без него окно
+        // клавиш не увидит вовсе. Кнопкам фокус не отдаем — на них Enter сработал бы нажатием.
+        Opened += (_, _) => { if (!CaptureBox.Focus()) Focus(); };
     }
 
     private void OnCaptureKeyDown(object? sender, KeyEventArgs e)

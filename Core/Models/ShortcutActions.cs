@@ -76,17 +76,25 @@ public static class ShortcutActions
         Cmd("table.createRecord",    "Создать запись",             ShortcutBlock.Table, ShortcutContext.Table, "Ctrl+N"),
         Cmd("table.duplicateRecord", "Дублировать запись",         ShortcutBlock.Table, ShortcutContext.Table, "Ctrl+D"),
 
-        Ref("table.ref.move",    "Перейти между ячейками",           ShortcutBlock.Table, "Стрелки"),
-        Ref("table.ref.extend",  "Растянуть выделение",              ShortcutBlock.Table, "Shift+Стрелки"),
-        Ref("table.ref.jump",    "К краю таблицы",                   ShortcutBlock.Table, "Ctrl+Стрелки"),
-        Ref("table.ref.homeEnd", "В начало и конец строки",          ShortcutBlock.Table, "Home, End"),
-        Ref("table.ref.corners", "В начало и конец таблицы",         ShortcutBlock.Table, "Ctrl+Home, Ctrl+End"),
-        Ref("table.ref.page",    "Листать страницами",               ShortcutBlock.Table, "PageUp, PageDown"),
-        Ref("table.ref.tab",     "К соседней ячейке",                ShortcutBlock.Table, "Tab, Shift+Tab"),
-        Ref("table.ref.edit",    "Начать правку ячейки",             ShortcutBlock.Table, "Enter, F2"),
-        Ref("table.ref.commit",  "Записать значение",                ShortcutBlock.Table, "Enter"),
-        Ref("table.ref.newline", "Перенос строки в тексте и ссылке", ShortcutBlock.Table, "Alt+Enter"),
-        Ref("table.ref.escape",  "Снять выделение, отменить правку", ShortcutBlock.Table, "Escape"),
+        Ref("table.ref.move",       "Перейти между ячейками",            ShortcutBlock.Table, "Стрелки"),
+        Ref("table.ref.extend",     "Растянуть выделение",               ShortcutBlock.Table, "Shift+Стрелки"),
+        Ref("table.ref.jump",       "К краю таблицы",                    ShortcutBlock.Table, "Ctrl+Стрелки"),
+        Ref("table.ref.rowStart",   "В начало строки",                   ShortcutBlock.Table, "Home"),
+        Ref("table.ref.rowEnd",     "В конец строки",                    ShortcutBlock.Table, "End"),
+        Ref("table.ref.tableStart", "В начало таблицы",                  ShortcutBlock.Table, "Ctrl+Home"),
+        Ref("table.ref.tableEnd",   "В конец таблицы",                   ShortcutBlock.Table, "Ctrl+End"),
+        Ref("table.ref.pageUp",     "На экран вверх",                    ShortcutBlock.Table, "PageUp"),
+        Ref("table.ref.pageDown",   "На экран вниз",                     ShortcutBlock.Table, "PageDown"),
+        Ref("table.ref.tabNext",    "К ячейке правее",                   ShortcutBlock.Table, "Tab"),
+        Ref("table.ref.tabPrev",    "К ячейке левее",                    ShortcutBlock.Table, "Shift+Tab"),
+        Ref("table.ref.edit",       "Начать правку ячейки",              ShortcutBlock.Table, "Enter"),
+        Ref("table.ref.editF2",     "Начать правку ячейки второй клавишей", ShortcutBlock.Table, "F2"),
+        Ref("table.ref.commit",     "Записать значение",                 ShortcutBlock.Table, "Enter"),
+        Ref("table.ref.commitNext", "Записать значение и перейти правее", ShortcutBlock.Table, "Tab"),
+        Ref("table.ref.commitPrev", "Записать значение и перейти левее",  ShortcutBlock.Table, "Shift+Tab"),
+        Ref("table.ref.newline",    "Перенос строки в тексте и ссылке",  ShortcutBlock.Table, "Alt+Enter"),
+        Ref("table.ref.clearSel",   "Снять выделение ячеек",             ShortcutBlock.Table, "Escape"),
+        Ref("table.ref.cancelEdit", "Отменить правку ячейки",            ShortcutBlock.Table, "Escape"),
 
         // ── Панель записи ───────────────────────────────────────────────────────
         Cmd("record.deleteProperties", "Удалить выделенные свойства",
@@ -117,17 +125,21 @@ public static class ShortcutActions
         Cmd("notes.heading5",   "Заголовок 5",             ShortcutBlock.Notes, ShortcutContext.Notes, "Ctrl+5"),
         Cmd("notes.heading6",   "Заголовок 6",             ShortcutBlock.Notes, ShortcutContext.Notes, "Ctrl+6"),
         Cmd("notes.plainText",  "Снять заголовок",         ShortcutBlock.Notes, ShortcutContext.Notes, "Ctrl+0"),
-        Ref("notes.ref.history", "Отменить и вернуть правку текста", ShortcutBlock.Notes, "Ctrl+Z, Ctrl+Y"),
+        Ref("notes.ref.undo", "Отменить правку текста",           ShortcutBlock.Notes, "Ctrl+Z"),
+        Ref("notes.ref.redo", "Вернуть отмененную правку текста", ShortcutBlock.Notes, "Ctrl+Y"),
 
         // ── Дерево заметок ──────────────────────────────────────────────────────
         Cmd("notesTree.delete", "Переместить в корзину",
             ShortcutBlock.NotesTree, ShortcutContext.NotesTree, "Delete"),
 
         // ── Окна и поля ─────────────────────────────────────────────────────────
-        Ref("windows.ref.confirm",       "Подтвердить окно",                      ShortcutBlock.Windows, "Enter"),
-        Ref("windows.ref.close",         "Закрыть окно, отменить",                ShortcutBlock.Windows, "Escape"),
-        Ref("windows.ref.titleEdit",     "Правка заголовка коллекции или записи", ShortcutBlock.Windows, "Enter, Escape"),
-        Ref("windows.ref.textClipboard", "Буфер в текстовых полях",               ShortcutBlock.Windows, "Ctrl+C, Ctrl+X, Ctrl+V"),
+        Ref("windows.ref.confirm",     "Подтвердить окно",                       ShortcutBlock.Windows, "Enter"),
+        Ref("windows.ref.close",       "Закрыть окно, отменить",                 ShortcutBlock.Windows, "Escape"),
+        Ref("windows.ref.titleSave",   "Записать заголовок коллекции или записи", ShortcutBlock.Windows, "Enter"),
+        Ref("windows.ref.titleCancel", "Отменить правку заголовка",              ShortcutBlock.Windows, "Escape"),
+        Ref("windows.ref.textCopy",    "Копировать текст в поле",                ShortcutBlock.Windows, "Ctrl+C"),
+        Ref("windows.ref.textCut",     "Вырезать текст в поле",                  ShortcutBlock.Windows, "Ctrl+X"),
+        Ref("windows.ref.textPaste",   "Вставить текст в поле",                  ShortcutBlock.Windows, "Ctrl+V"),
     ];
 
     private static readonly Dictionary<string, ShortcutAction> ById = All.ToDictionary(a => a.Id);

@@ -20,8 +20,12 @@
                    FontWeight="{StaticResource FontWeightBold}"
                    Foreground="{StaticResource BrushSecondaryText}" />
 
-        <!-- Зона захвата: пока клавиши не нажаты — подсказка, дальше нажатое сочетание. -->
-        <Border Classes="dataBox"
+        <!-- Зона захвата: пока клавиши не нажаты — подсказка, дальше нажатое сочетание.
+             Focusable и получает фокус при открытии — без фокусируемого элемента внутри окна
+             нажатия некуда маршрутизировать, и окно не увидело бы ни одной клавиши. -->
+        <Border x:Name="CaptureBox"
+                Classes="dataBox"
+                Focusable="True"
                 MinHeight="56"
                 Margin="0,0,0,12">
             <!-- Цвет и размер заданы на самом блоке: у ячеек dataBox текст по стандарту
