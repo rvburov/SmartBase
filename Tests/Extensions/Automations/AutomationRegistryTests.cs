@@ -87,6 +87,6 @@ public sealed class AutomationRegistryTests
     [Fact]
     public void The_template_is_not_an_automation()
     {
-        Assert.DoesNotContain(AutomationRegistry.All, a => a.Key == "моя-автоматизация");
+        Assert.DoesNotContain(AutomationRegistry.All, a => a.Key == "my-automation");
     }
 }
