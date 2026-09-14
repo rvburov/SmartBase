@@ -406,7 +406,8 @@ gzip -9 -c PT_Sans-Web-Regular.ttf > Extensions/PdfWatermark/ptsans-regular.ttf.
 > (см. `ViewCatalogTests`): сборка без расширений — законное состояние, и набор ядра обязан
 > оставаться зеленым. Единственная проверка, которой нужен сам реестр, — зеркало «пункты =
 > `ExtensionRegistry.All`» — живет в `Tests/Extensions/Registry` (`ViewCatalogContractTests`):
-> в тесты ядра пространство имен расширений не попадает, за этим следит сторож в CI.
+> тесты ядра не обращаются ни к конкретным расширениям, ни к реестру, который их создает, — за
+> этим следит сторож в CI.
 
 **Уборка после удаления.** На старте (`App.OnFrameworkInitializationCompleted`, сразу после
 `AttachStore`) вызывается `AppSettings.RemoveOrphanExtensionSettings` со списком Id из

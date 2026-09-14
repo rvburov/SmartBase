@@ -55,8 +55,6 @@ public sealed class ScenarioIntakeTests : IDisposable
 
     private IntegrationsRegistry Cards => _registry.Integrations;
 
-    private int DbId => _db.Manager.DbId;
-
     // ── Обвязка ───────────────────────────────────────────────────────────────
 
     /// <summary>Политика, разрешающая ровно этот корень обмена: шаг спрашивает ее сам.</summary>
