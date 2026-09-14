@@ -356,7 +356,7 @@ public partial class TableView : UserControl
         if (HasUndo && IsKeyboardFocusWithin && e.Key == Key.Z
             && (e.KeyModifiers == KeyModifiers.Control || e.KeyModifiers == KeyModifiers.Meta))
         {
-            UndoLastCellChange();
+            Fire(UndoLastCellChangeAsync);
             e.Handled = true;
             return;
         }

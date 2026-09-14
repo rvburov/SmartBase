@@ -20,7 +20,7 @@ namespace SmartBase.Views.ConstructorDb;
 ///
 /// Координаты диапазона — индексы В ПОКАЗАННОЙ таблице (позиция строки и позиция столбца), а не
 /// идентификаторы: строки виртуализованы и переиспользуются при прокрутке, привязываться к ним
-/// нельзя. Идентификаторы резолвятся в момент операции (см. <see cref="SelectedCells"/>), а чтобы
+/// нельзя. Идентификаторы резолвятся в момент операции (см. <see cref="SelectedCellsAsync"/>), а чтобы
 /// выделение не указывало на чужие данные после сортировки или сдвига колонки, рядом хранятся
 /// метки записи и столбцов (см. <see cref="FollowSelectionIdentity"/>).
 ///
@@ -347,12 +347,16 @@ public partial class TableView
     }
 
     /// <summary>
-    /// Сколько строк выделения обрабатывается за один раз. Строки, которые таблица еще не
-    /// подгрузила, читаются из базы синхронно (см. <see cref="VirtualRowList.MaterializeRange"/>),
-    /// и на столбце в миллионы записей это заняло бы окно на минуты. Предел равен кешу таблицы
-    /// (50 страниц по 200 строк): столько же таблица и так держит в памяти.
+    /// Сколько строк выделения обрабатывается за один раз. Больше <see cref="SyncRangeRows"/>
+    /// строки читаются в фоне порциями с окном прогресса, но и так столбец в миллионы записей —
+    /// это минуты работы и сотни мегабайт в памяти; для него человеку предлагается сузить
+    /// таблицу фильтром.
     /// </summary>
-    private const int MaxRangeRows = 10_000;
+    private const int MaxRangeRows = 100_000;
+
+    /// <summary>До скольких строк выделение читается сразу, без фона: такие диапазоны в основном
+    /// уже лежат в кеше таблицы, а недостающее дочитывается за доли секунды.</summary>
+    private const int SyncRangeRows = 2_000;
 
     /// <summary>Больше ли строк, чем обрабатывается за раз. Если да — человеку сказано, почему
     /// ничего не произошло и что сделать: молча обработать часть столбца было бы хуже всего.</summary>
@@ -379,14 +383,52 @@ public partial class TableView
     }
 
     /// <summary>Строки с данными в позициях [top, top + count) — ВСЕ, а не только прокрученные.
-    /// null — строк больше, чем обрабатывается за раз (человеку уже сказано).</summary>
-    private IReadOnlyList<TableRowVm>? RowsOfRange(int top, int count)
+    /// Большой диапазон читается в фоне порциями и берет значения только
+    /// <paramref name="fieldIds"/>. null — строк больше, чем обрабатывается за раз, или чтение
+    /// отменили (человеку уже сказано или он сам нажал «Отмена»).</summary>
+    private async Task<IReadOnlyList<TableRowVm>?> RowsOfRangeAsync(int top, int count, IReadOnlyList<int> fieldIds)
     {
         var source = _activeRows ?? _virtualRows;
         if (source is null || count <= 0) return [];
         if (TooManyRows(count)) return null;
-        return source.MaterializeRange(top, count);
+        if (count <= SyncRangeRows) return source.MaterializeRange(top, count);
+
+        return await WithProgressAsync<IReadOnlyList<TableRowVm>>("Чтение выделенных строк…",
+            async (progress, ct) => await source.MaterializeRangeAsync(top, count, fieldIds, progress, ct));
     }
+
+    /// <summary>
+    /// Долгая работа над выделением — с окном прогресса, но только если она не уложилась в
+    /// 0,4 секунды: окно, мелькающее на каждую вставку пары ячеек, раздражало бы сильнее ожидания.
+    /// Пока окно открыто, таблица недоступна — второе действие поверх недописанного первого
+    /// перепутало бы результаты. null — работу отменили.
+    /// </summary>
+    private async Task<T?> WithProgressAsync<T>(string phase, Func<IProgress<double>, CancellationToken, Task<T>> work,
+                                               bool cancellable = true) where T : class
+    {
+        using var cts = new CancellationTokenSource();
+        Controls.Dialogs.ProgressDialog? dialog = null;
+        var progress = new Progress<double>(f => dialog?.SetProgress(f, phase));
+        var task     = work(progress, cts.Token);
+
+        if (VisualRoot is Window window && await Task.WhenAny(task, Task.Delay(400)) != task)
+        {
+            dialog = new Controls.Dialogs.ProgressDialog { Title = "Выделенные ячейки" };
+            dialog.SetProgress(0, phase);
+            if (cancellable) dialog.EnableCancel(() => cts.Cancel());
+            var closed = dialog.ShowDialog(window);
+            try { await task; } catch { /* исход разбирается ниже */ }
+            dialog.Done();
+            await closed;
+        }
+
+        try { return await task; }
+        catch (OperationCanceledException) { return null; }
+    }
+
+    // Числовые ключи столбцов — id полей, значения которых нужны операции.
+    private List<int> FieldIdsOf(IEnumerable<int> columns) =>
+        [.. columns.Select(c => int.TryParse(_colDefs[c].Key, out var id) ? id : 0).Where(id => id > 0)];
 
     /// <summary>Видимые столбцы значений в порядке показа — ровно те, что копируются и
     /// заполняются вставкой.</summary>
@@ -402,7 +444,7 @@ public partial class TableView
     /// (слева направо, сверху вниз). Строки, которые таблица еще не подгрузила, дочитываются —
     /// обработать молча только прокрученную часть столбца значило бы соврать об итоге.
     /// null — выделено больше строк, чем обрабатывается за раз.</summary>
-    private List<(TableRowVm Row, TableColumnDef Column)>? SelectedCells()
+    private async Task<List<(TableRowVm Row, TableColumnDef Column)>?> SelectedCellsAsync()
     {
         FollowSelectionIdentity();
 
@@ -412,7 +454,8 @@ public partial class TableView
         var columns = VisibleDataColumns().Where(c => c >= range.Left && c <= range.Right).ToList();
         if (columns.Count == 0) return cells;
         if (TooManyCells((long)range.RowCount * columns.Count)) return null;
-        if (RowsOfRange(range.Top, range.RowCount) is not { } rows) return null;
+        // Очистке и цвету нужны только id записей — значения полей не читаются.
+        if (await RowsOfRangeAsync(range.Top, range.RowCount, []) is not { } rows) return null;
 
         foreach (var row in rows)
             foreach (var c in columns)

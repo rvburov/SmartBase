@@ -45,10 +45,11 @@ public partial class TableView
     }
 
     /// <summary>Отменить последнее действие со значениями ячеек.</summary>
-    public void UndoLastCellChange()
+    public async Task UndoLastCellChangeAsync()
     {
         if (_repository is null || _undoSteps.Count == 0) return;
         if (!Can(PermAction.EditRecord)) { PermissionNotice.Show(this, PermAction.EditRecord); return; }
+        var repository = _repository;
 
         var step = _undoSteps[^1];
         _undoSteps.RemoveAt(_undoSteps.Count - 1);
@@ -62,25 +63,35 @@ public partial class TableView
             .Where(c => c.FieldId is null)
             .Select(c => new ConstructorRepository.TitleWrite(c.RecordId, c.OldValue, ExpectedOld: c.NewValue))
             .ToList();
-
         var links = step.Links
             .Select(l => new ConstructorRepository.LinkWrite(l.RecordId, l.FieldId, l.OldIds,
                                                              ExpectedOldIds: ConstructorRepository.LinkIdsKey(l.NewIds)))
             .ToList();
         var journal = $"Отмена: {step.Operation.ToLowerInvariant()}";
 
+        // Большой шаг возвращается в фоне, с окном прогресса, — как и писался.
+        var large = cells.Count + titles.Count + links.Count > SyncWriteCells;
+
         var values = ConstructorRepository.CellBulkResult.Nothing;
         var edges  = ConstructorRepository.LinkBulkResult.Nothing;
         try
         {
-            if (cells.Count > 0 || titles.Count > 0) values = _repository.SetCellsBulk(_collectionId, cells, titles, journal);
-            if (links.Count > 0)                     edges  = _repository.SetLinksBulk(_collectionId, links, journal);
+            if (cells.Count > 0 || titles.Count > 0)
+                values = large
+                    ? await WithProgressAsync($"{Undone(step.Operation)}: запись в базу…",
+                          (_, _) => repository.SetCellsBulkIsolatedAsync(_collectionId, cells, titles, journal),
+                          cancellable: false) ?? values
+                    : repository.SetCellsBulk(_collectionId, cells, titles, journal);
+
+            if (links.Count > 0)
+                edges = large
+                    ? await repository.SetLinksBulkIsolatedAsync(_collectionId, links, journal)
+                    : repository.SetLinksBulk(_collectionId, links, journal);
         }
-        catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath))
+        catch (Exception ex) when (DbErrors.Handle(ex, repository.DbPath))
         {
-            // База была занята. Ничего не записалось — шаг возвращается, Ctrl+Z можно нажать снова;
-            // значения успели вернуться, а связи нет — повтор вернет оставшееся (вернувшееся он
-            // пропустит по ожидаемому значению).
+            // База была занята. Шаг возвращается, Ctrl+Z можно нажать снова: вернувшееся уже
+            // повтор пропустит по ожидаемому значению, а оставшееся вернет.
             _undoSteps.Add(step);
             if (values.Changed > 0) ReloadRows();
             return;

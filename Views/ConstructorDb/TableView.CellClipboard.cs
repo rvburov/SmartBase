@@ -21,7 +21,7 @@ namespace SmartBase.Views.ConstructorDb;
 ///
 /// Запись всегда идет пакетным путем репозитория (одна транзакция, одна строка журнала со
 /// счетом): обычная правка ячейки дает около 18 значений в секунду, и диапазон в пару тысяч
-/// ячеек подвесил бы окно на минуты.
+/// ячеек подвесил бы окно на минуты. Большой пакет пишется в фоне, на отдельном подключении.
 /// </summary>
 public partial class TableView
 {
@@ -29,6 +29,10 @@ public partial class TableView
     /// «Спрашивать подтверждение при удалении»: стереть полсотни значений одним нажатием и
     /// заметить это потом — дороже, чем лишний вопрос.</summary>
     private const int ClearConfirmThreshold = 10;
+
+    /// <summary>До скольких значений пакет пишется сразу, на общем подключении. Больше — в фоне с
+    /// окном прогресса: на сетевой папке запись десятков тысяч значений — это секунды.</summary>
+    private const int SyncWriteCells = 5_000;
 
     // ── Копирование ───────────────────────────────────────────────────────────
 
@@ -41,15 +45,15 @@ public partial class TableView
 
         var columns = VisibleDataColumns().Where(c => c >= range.Left && c <= range.Right).ToList();
         if (columns.Count == 0 || TooManyCells((long)range.RowCount * columns.Count)) return false;
-        if (RowsOfRange(range.Top, range.RowCount) is not { Count: > 0 } rows) return false;
+        if (await RowsOfRangeAsync(range.Top, range.RowCount, FieldIdsOf(columns)) is not { Count: > 0 } rows) return false;
 
         // Связь уходит в буфер названиями связанных записей через разделитель столбца — так ее
-        // показывает ячейка, и так она вставляется обратно. Названия одним запросом на столбец.
+        // показывает ячейка, и так она вставляется обратно. Названия порциями на столбец.
         var recordIds = rows.Select(r => r.RecordId).ToList();
         var links     = new Dictionary<int, Dictionary<int, List<(int Id, string Title)>>>();
         foreach (var c in columns)
             if (FieldTypeInfo.IsRelation(_colDefs[c].FieldType) && int.TryParse(_colDefs[c].Key, out var relationField))
-                links[c] = _repository.GetLinksBatch(relationField, recordIds);
+                links[c] = LinksOf(relationField, recordIds);
 
         string Text(TableRowVm row, int c) =>
             links.TryGetValue(c, out var byRecord)
@@ -69,6 +73,18 @@ public partial class TableView
         if (!NoteCopy(columns, matrix.Count, text)) { AppNotifications.Error(CopyTrace.NotWritten); return false; }
 
         return await SetClipboardTextAsync(text);
+    }
+
+    // Связи столбца для многих записей — порциями: список id уходит в запрос параметром.
+    private Dictionary<int, List<(int Id, string Title)>> LinksOf(int fieldId, List<int> recordIds)
+    {
+        var all = new Dictionary<int, List<(int Id, string Title)>>();
+        if (_repository is null) return all;
+
+        foreach (var chunk in recordIds.Chunk(5_000))
+            foreach (var (recordId, list) in _repository.GetLinksBatch(fieldId, chunk.ToList()))
+                all[recordId] = list;
+        return all;
     }
 
     private bool NoteCopy(List<int> columns, int rows, string text)
@@ -137,7 +153,7 @@ public partial class TableView
         if (!HasCellSelection || _repository is null) return;
         if (!Can(PermAction.EditRecord)) { PermissionNotice.Show(this, PermAction.EditRecord); return; }
 
-        if (SelectedCells() is not { } cells) return;
+        if (await SelectedCellsAsync() is not { } cells) return;
 
         // «Название» очистка не трогает: запись без названия превращается в «Без названия» и
         // теряется в списках, боковой панели и связях. Стереть его можно только осознанно —
@@ -167,7 +183,7 @@ public partial class TableView
             if (await dlg.ShowDialog<bool>(win) != true) return;
         }
 
-        WriteCells(targets.Select(t => (t.Row, t.Column, Value: "")).ToList(), operation);
+        await WriteCellsAsync(targets.Select(t => (t.Row, t.Column, Value: "")).ToList(), operation);
 
         if (titles > 0) AppNotifications.Info("Названия записей очисткой не стираются.");
     }
@@ -223,9 +239,10 @@ public partial class TableView
         var writes = new List<(TableRowVm Row, TableColumnDef Column, string Value)>();
         if (plan.Cells.Count > 0)
         {
+            // Вставке нужны только id записей — значения полей не читаются.
             var top    = plan.Cells.Min(c => c.Row);
             var bottom = plan.Cells.Max(c => c.Row);
-            if (RowsOfRange(top, bottom - top + 1) is not { } rows) return;
+            if (await RowsOfRangeAsync(top, bottom - top + 1, []) is not { } rows) return;
 
             var byPosition = new Dictionary<int, TableRowVm>(rows.Count);
             foreach (var row in rows) byPosition[row.RowNumber - 1] = row;
@@ -235,7 +252,7 @@ public partial class TableView
                     writes.Add((row, _colDefs[visible[cell.Column]], cell.StorageValue));
         }
 
-        var outcome = WriteCells(writes, "Вставка");
+        var outcome = await WriteCellsAsync(writes, "Вставка");
         ReportPaste(outcome, plan.Skipped);
     }
 
@@ -263,12 +280,18 @@ public partial class TableView
     /// <summary>Итог записи ячеек: сколько изменилось и сколько связей не нашлось по названию.</summary>
     private readonly record struct WriteOutcome(int Changed, int RelationNotFound, int RelationAmbiguous);
 
+    /// <summary>Итог одного пакета — и значения, и связи; для отмены нужны оба.</summary>
+    private sealed record WriteBatch(ConstructorRepository.CellBulkResult Values,
+                                     ConstructorRepository.LinkBulkResult Links,
+                                     int RelationNotFound, int RelationAmbiguous);
+
     // Одним пакетом: значения полей, названия записей и связи разделяются здесь — «Название» живет
     // в самой записи, связи — ребрами, а не текстом. operation — имя действия для журнала и отмены.
-    private WriteOutcome WriteCells(
+    private async Task<WriteOutcome> WriteCellsAsync(
         IReadOnlyList<(TableRowVm Row, TableColumnDef Column, string Value)> writes, string operation)
     {
         if (writes.Count == 0 || _repository is null) return default;
+        var repository = _repository;
 
         var cells     = new List<ConstructorRepository.CellWrite>();
         var titles    = new List<ConstructorRepository.TitleWrite>();
@@ -282,46 +305,108 @@ public partial class TableView
             else cells.Add(new ConstructorRepository.CellWrite(row.RecordId, fieldId, value));
         }
 
+        var batch = writes.Count <= SyncWriteCells
+            ? WriteNow(repository, cells, titles, relations, operation)
+            : await WithProgressAsync($"{operation}: запись в базу…",
+                                      (_, _) => WriteInBackgroundAsync(repository, cells, titles, relations, operation),
+                                      cancellable: false);
+        if (batch is null) return default;
+
+        RememberForUndo(operation, batch.Values, batch.Links);
+        var changed = batch.Values.Changed + batch.Links.Changed;
+        if (changed > 0) ReloadRows();   // строки перечитываем целиком: правок много и они разные
+        return new WriteOutcome(changed, batch.RelationNotFound, batch.RelationAmbiguous);
+    }
+
+    // Небольшой пакет — сразу, на общем подключении. null — значения не записались (база занята или
+    // недоступна, человеку уже сказано).
+    private WriteBatch? WriteNow(ConstructorRepository repository,
+                                 List<ConstructorRepository.CellWrite> cells, List<ConstructorRepository.TitleWrite> titles,
+                                 List<(int RecordId, int FieldId, string Text)> relations, string operation)
+    {
         var values = ConstructorRepository.CellBulkResult.Nothing;
         if (cells.Count > 0 || titles.Count > 0)
         {
-            try { values = _repository.SetCellsBulk(_collectionId, cells, titles, operation); }
-            catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { return default; }
+            try { values = repository.SetCellsBulk(_collectionId, cells, titles, operation); }
+            catch (Exception ex) when (DbErrors.Handle(ex, repository.DbPath)) { return null; }
         }
 
         // Связи — вторым пакетом: значения к этому моменту уже записаны, и сбой здесь не должен
         // лишить их отмены.
-        var links     = ConstructorRepository.LinkBulkResult.Nothing;
-        var notFound  = 0;
-        var ambiguous = 0;
+        var links = ConstructorRepository.LinkBulkResult.Nothing;
+        var (notFound, ambiguous) = (0, 0);
         if (relations.Count > 0)
         {
             try
             {
-                var linkWrites = new List<ConstructorRepository.LinkWrite>();
-                foreach (var byField in relations.GroupBy(r => r.FieldId))
-                {
-                    var found = _repository.ResolveRelationTitles(byField.Key, [.. byField.Select(r => r.Text).Distinct()]);
-                    foreach (var (recordId, fieldId, text) in byField)
-                    {
-                        if (!found.TryGetValue(text, out var resolution)) { notFound++; continue; }
-                        switch (resolution.Match)
-                        {
-                            case ConstructorRepository.TitleMatch.NotFound:  notFound++;  break;
-                            case ConstructorRepository.TitleMatch.Ambiguous: ambiguous++; break;
-                            default: linkWrites.Add(new(recordId, fieldId, resolution.Ids)); break;
-                        }
-                    }
-                }
-                links = _repository.SetLinksBulk(_collectionId, linkWrites, operation);
+                var found = relations.GroupBy(r => r.FieldId).ToDictionary(
+                    g => g.Key, g => repository.ResolveRelationTitles(g.Key, [.. g.Select(r => r.Text).Distinct()]));
+                (var linkWrites, notFound, ambiguous) = LinkWritesOf(relations, found);
+                links = repository.SetLinksBulk(_collectionId, linkWrites, operation);
             }
-            catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { }
+            catch (Exception ex) when (DbErrors.Handle(ex, repository.DbPath)) { }
         }
 
-        RememberForUndo(operation, values, links);
-        var changed = values.Changed + links.Changed;
-        if (changed > 0) ReloadRows();   // строки перечитываем целиком: правок много и они разные
-        return new WriteOutcome(changed, notFound, ambiguous);
+        return new WriteBatch(values, links, notFound, ambiguous);
+    }
+
+    // Большой пакет — в фоне, на отдельном подключении: окно остается живым, прогресс виден.
+    private async Task<WriteBatch?> WriteInBackgroundAsync(ConstructorRepository repository,
+                                                          List<ConstructorRepository.CellWrite> cells, List<ConstructorRepository.TitleWrite> titles,
+                                                          List<(int RecordId, int FieldId, string Text)> relations, string operation)
+    {
+        var values = ConstructorRepository.CellBulkResult.Nothing;
+        if (cells.Count > 0 || titles.Count > 0)
+        {
+            try { values = await repository.SetCellsBulkIsolatedAsync(_collectionId, cells, titles, operation); }
+            catch (Exception ex) when (DbErrors.Handle(ex, repository.DbPath)) { return null; }
+        }
+
+        var links = ConstructorRepository.LinkBulkResult.Nothing;
+        var (notFound, ambiguous) = (0, 0);
+        if (relations.Count > 0)
+        {
+            try
+            {
+                var found = new Dictionary<int, Dictionary<string, ConstructorRepository.TitleResolution>>();
+                foreach (var byField in relations.GroupBy(r => r.FieldId))
+                    found[byField.Key] = await repository.ResolveRelationTitlesIsolatedAsync(
+                        byField.Key, [.. byField.Select(r => r.Text).Distinct()]);
+                (var linkWrites, notFound, ambiguous) = LinkWritesOf(relations, found);
+                links = await repository.SetLinksBulkIsolatedAsync(_collectionId, linkWrites, operation);
+            }
+            catch (Exception ex) when (DbErrors.Handle(ex, repository.DbPath)) { }
+        }
+
+        return new WriteBatch(values, links, notFound, ambiguous);
+    }
+
+    // Найденные по названиям связи — в записи ребер; ненайденные и тезки идут в счет пропуска.
+    private static (List<ConstructorRepository.LinkWrite> Writes, int NotFound, int Ambiguous) LinkWritesOf(
+        List<(int RecordId, int FieldId, string Text)> relations,
+        IReadOnlyDictionary<int, Dictionary<string, ConstructorRepository.TitleResolution>> found)
+    {
+        var writes    = new List<ConstructorRepository.LinkWrite>();
+        var notFound  = 0;
+        var ambiguous = 0;
+
+        foreach (var (recordId, fieldId, text) in relations)
+        {
+            if (!found.TryGetValue(fieldId, out var byText) || !byText.TryGetValue(text, out var resolution))
+            {
+                notFound++;
+                continue;
+            }
+
+            switch (resolution.Match)
+            {
+                case ConstructorRepository.TitleMatch.NotFound:  notFound++;  break;
+                case ConstructorRepository.TitleMatch.Ambiguous: ambiguous++; break;
+                default: writes.Add(new(recordId, fieldId, resolution.Ids)); break;
+            }
+        }
+
+        return (writes, notFound, ambiguous);
     }
 
     private static void ReportPaste(WriteOutcome outcome, IReadOnlyDictionary<PasteSkipReason, int> skipped)
@@ -465,17 +550,17 @@ public partial class TableView
 
             var current = row.CellStyle(def.Key);
             host.Items.Add(ColorMenu.Build("Фон ячейки", current.Bg,
-                hex => ApplySelectedCellsStyle(StyleAspect.Background, hex)));
+                hex => Fire(() => ApplySelectedCellsStyleAsync(StyleAspect.Background, hex))));
             host.Items.Add(ColorMenu.Build("Цвет текста ячейки", current.Fg,
-                hex => ApplySelectedCellsStyle(StyleAspect.Text, hex)));
+                hex => Fire(() => ApplySelectedCellsStyleAsync(StyleAspect.Text, hex))));
         };
 
         menu.Items.Add(host);
     }
 
-    private void ApplySelectedCellsStyle(StyleAspect aspect, string? hex)
+    private async Task ApplySelectedCellsStyleAsync(StyleAspect aspect, string? hex)
     {
-        if (SelectedCells() is not { Count: > 0 } cells) return;
+        if (await SelectedCellsAsync() is not { Count: > 0 } cells) return;
         ApplyCellStyleChange(cells.Select(t => (t.Row.RecordId, t.Column.Key)).ToList(), aspect, hex);
     }
 

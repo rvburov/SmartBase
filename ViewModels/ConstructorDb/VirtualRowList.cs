@@ -336,6 +336,56 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
         return result;
     }
 
+    /// <summary>
+    /// То же, что <see cref="MaterializeRange"/>, но для большого диапазона: чтение идет в фоне
+    /// порциями на отдельном подключении, с прогрессом и отменой, и берет значения только
+    /// <paramref name="fieldIds"/> — операции над выделением больше не нужно. Кеш не трогается:
+    /// строки-результаты отдельные, только для чтения.
+    ///
+    /// Порции идут keyset'ом по позиции (в обычном режиме) и срезами списка id (при фильтре или
+    /// сортировке): смещение на каждой порции стоило бы O(глубины) и складывалось бы в квадрат.
+    /// </summary>
+    public async Task<IReadOnlyList<TableRowVm>> MaterializeRangeAsync(int start, int count, IReadOnlyList<int> fieldIds,
+                                                                     IProgress<double>? progress, CancellationToken ct)
+    {
+        const int Chunk = 2000;
+
+        var end    = (int)Math.Min((long)start + count, _dataCount);
+        var from   = Math.Max(0, start);
+        var result = new List<TableRowVm>(Math.Max(0, end - from));
+
+        int? afterPos = null, afterId = null;
+        for (var index = from; index < end;)
+        {
+            ct.ThrowIfCancellationRequested();
+            var take = Math.Min(Chunk, end - index);
+
+            List<int>? slice = null;
+            if (_recordIds is not null)
+            {
+                slice = new List<int>(take);
+                for (var k = 0; k < take; k++) slice.Add(_recordIds[index + k]);
+            }
+
+            var rows = await _repo.ReadCellRowsAsync(_collectionId, _excludeHidden, slice, index, take,
+                                                     afterPos, afterId, fieldIds, ct);
+            if (rows.Count == 0) break;
+
+            for (var i = 0; i < rows.Count; i++)
+            {
+                var row = rows[i];
+                result.Add(new TableRowVm(_repo, row.RecordId, index + i + 1, row.Values, row.Title,
+                                          row.CreatedAt, row.UpdatedAt, row.CreatedBy, row.UpdatedBy));
+            }
+
+            if (_recordIds is null) (afterPos, afterId) = (rows[^1].Position, rows[^1].RecordId);
+            index += take;
+            progress?.Report((double)(index - from) / Math.Max(1, end - from));
+        }
+
+        return result;
+    }
+
     // Строки страницы прямо из базы, мимо кеша и без подписок: см. MaterializeRange.
     private TableRowVm[] ReadDetachedRows(int skip, int take)
     {
