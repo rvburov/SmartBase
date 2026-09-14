@@ -1,6 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Controls.Shapes;
+using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Threading;
@@ -13,28 +13,44 @@ namespace SmartBase.Views.ConstructorDb;
 
 /// <summary>
 /// Выделение ячеек прямоугольником, как в табличном редакторе: клик ставит рамку на одну ячейку,
-/// Shift+клик растягивает ее до прямоугольника. Выделение СТРОК живет отдельно и переехало на
-/// служебный столбец «№»: клик по номеру выделяет строку целиком и открывает запись, Shift и Ctrl
-/// по номеру набирают несколько строк — на этом держатся пакетные операции (удаление, дубль,
-/// «Расположение»).
+/// Shift+клик и протягивание мышью растягивают ее до прямоугольника, стрелки двигают, Shift+стрелки
+/// растягивают. Выделение СТРОК живет отдельно и переехало на служебный столбец «№»: клик по
+/// номеру выделяет строку целиком и открывает запись, Shift и Ctrl по номеру набирают несколько
+/// строк — на этом держатся пакетные операции (удаление, дубль, «Расположение»).
 ///
 /// Координаты диапазона — индексы В ПОКАЗАННОЙ таблице (позиция строки и позиция столбца), а не
 /// идентификаторы: строки виртуализованы и переиспользуются при прокрутке, привязываться к ним
-/// нельзя. Идентификаторы резолвятся в момент операции (см. <see cref="SelectedCells"/>).
+/// нельзя. Идентификаторы резолвятся в момент операции (см. <see cref="SelectedCells"/>), а чтобы
+/// выделение не указывало на чужие данные после сортировки или сдвига колонки, рядом хранятся
+/// метки записи и столбцов (см. <see cref="FollowSelectionIdentity"/>).
 ///
 /// Рамка рисуется НЕ в ячейке, а отдельным слоем поверх сетки (как полоски ресайза): ячейка
 /// при прокрутке достается другой строке, и рамка «поехала» бы вместе с ней.
 /// </summary>
 public partial class TableView
 {
-    // Выделение — РОВНО ОДИН прямоугольник (или ничего). Держать список кусков было бы нечем
-    // набрать: выделение ставится только кликом и Shift-кликом, а они всегда дают сплошной
-    // прямоугольник. Отсюда и главное свойство картинки: рамка всегда одна, «прямоугольника
-    // в прямоугольнике» не бывает в принципе.
+    // Выделение — РОВНО ОДИН прямоугольник (или ничего). Все способы его поставить — клик,
+    // Shift-клик, протягивание, стрелки — дают сплошной прямоугольник. Отсюда и главное свойство
+    // картинки: рамка всегда одна, «прямоугольника в прямоугольнике» не бывает в принципе.
     private CellRange? _cellRange;
+
+    /// <summary>
+    /// Чьи это ячейки: запись под якорем и ключи столбцов якоря и фокуса. Позиции после
+    /// сортировки, фильтра, фонового обновления от соседа или сдвига колонки указывают уже на
+    /// ДРУГИЕ данные — и Delete стер бы не то, что выделяли. По меткам выделение переезжает за
+    /// своими записью и столбцами, а если их больше нет на экране — снимается.
+    /// <c>AnchorRecordId</c> = 0 — строка якоря еще не загрузилась, метка допишется позже.
+    /// </summary>
+    private sealed record SelectionIdentity(int AnchorRecordId, string AnchorKey, string FocusKey);
+    private SelectionIdentity? _selectionIdentity;
 
     /// <summary>Выделены ли сейчас ячейки (для пунктов меню и горячих клавиш).</summary>
     public bool HasCellSelection => _cellRange is not null;
+
+    /// <summary>Размер выделения изменился: подпись «Выделено: 3 × 2» для нижней панели или
+    /// null, когда выделена одна ячейка или ничего.</summary>
+    public event EventHandler<string?>? CellSelectionChanged;
+    private string? _lastSelectionLabel;
 
     private bool IsCellSelected(int row, int column) =>
         _cellRange is { } range && range.Contains(row, column);
@@ -55,20 +71,23 @@ public partial class TableView
 
     // ── Установка выделения ───────────────────────────────────────────────────
 
-    /// <summary>Выделить прямоугольник — из клика и из пунктов меню («вся строка», «весь
+    /// <summary>Выделить прямоугольник — из клика, клавиш и пунктов меню («вся строка», «весь
     /// столбец»).</summary>
     private void SetCellSelection(CellRange range)
     {
-        _cellRange = range;
+        _cellRange         = range;
+        _selectionIdentity = IdentityOf(range);
         ClearRecordSelection();   // либо ячейки, либо строки: иначе Delete был бы двусмысленным
         AfterSelectionChanged();
     }
 
-    /// <summary>Снять выделение ячеек (уход из коллекции, выделение строк).</summary>
+    /// <summary>Снять выделение ячеек (уход из коллекции, выделение строк и колонок, Escape).</summary>
     public void ClearCellSelection()
     {
+        _dragSelecting = false;
         if (_cellRange is null) return;
-        _cellRange = null;
+        _cellRange         = null;
+        _selectionIdentity = null;
         AfterSelectionChanged();
     }
 
@@ -76,6 +95,35 @@ public partial class TableView
     {
         ApplyCellSelectionClass();
         RefreshCellSelectionOverlay();
+        RaiseSelectionLabel();
+    }
+
+    private SelectionIdentity? IdentityOf(CellRange range)
+    {
+        if (range.AnchorColumn < 0 || range.AnchorColumn >= _colDefs.Count
+            || range.FocusColumn < 0 || range.FocusColumn >= _colDefs.Count) return null;
+
+        return new SelectionIdentity(CachedRowAt(range.AnchorRow)?.RecordId ?? 0,
+                                     _colDefs[range.AnchorColumn].Key,
+                                     _colDefs[range.FocusColumn].Key);
+    }
+
+    // Подпись только при изменении: пересчет идет и из раскладки, а панель на каждый проход
+    // перерисовывать незачем.
+    private void RaiseSelectionLabel()
+    {
+        var label = SelectionLabel();
+        if (label == _lastSelectionLabel) return;
+        _lastSelectionLabel = label;
+        CellSelectionChanged?.Invoke(this, label);
+    }
+
+    private string? SelectionLabel()
+    {
+        if (_cellRange is not { } range) return null;
+        var columns = VisibleDataColumns().Count(c => c >= range.Left && c <= range.Right);
+        if ((long)range.RowCount * columns <= 1) return null;
+        return $"Выделено: {range.RowCount:N0} × {columns:N0}";
     }
 
     // Пока выделены ячейки, строка не должна выглядеть выделенной — хотя внутри DataGrid она
@@ -84,9 +132,9 @@ public partial class TableView
     private void ApplyCellSelectionClass() => RecordsGrid.Classes.Set("cellselect", HasCellSelection);
 
     /// <summary>
-    /// Клик по ячейке. Обычный выделяет одну; Shift дотягивает прямоугольник от той ячейки, с
-    /// которой начали, — одним куском на сколько угодно строк и столбцов.
-    /// Других способов выделить ячейки нет: ни Ctrl, ни протягивания мышью.
+    /// Клик по ячейке. Обычный выделяет одну и начинает протягивание; Shift дотягивает
+    /// прямоугольник от той ячейки, с которой начали, — одним куском на сколько угодно строк и
+    /// столбцов.
     /// </summary>
     private void BeginCellSelection(int row, int column, bool extend)
     {
@@ -96,21 +144,197 @@ public partial class TableView
             ? current.WithFocus(row, column)   // якорь стоит, двигается только дальний угол
             : CellRange.Single(row, column));
 
+        _dragSelecting = !extend;
+
         // Фокус себе НЕ забираем. Кнопка в Avalonia на потере фокуса сбрасывает IsPressed, а без
         // него PointerReleased не поднимает Click — забрав фокус здесь, мы убивали бы клик по
         // галочке и по скрепке «Файла» (их ячейки — обычные кнопки). Фокус и так остается внутри
         // таблицы: обычной ячейке его ставит сам грид, а в ячейке с кнопкой — сама кнопка.
     }
 
+    /// <summary>
+    /// Выделение следует за своими записью и столбцами (см. <see cref="SelectionIdentity"/>).
+    /// Столбцы ищутся по ключу всегда — их порядок знает таблица. Запись — только среди
+    /// загруженных строк: пока строка под якорем грузится, судить не о чем, и выделение ждет.
+    /// Своя запись не нашлась — выделение снимается: оставить рамку на чужих данных хуже.
+    /// </summary>
+    private void FollowSelectionIdentity()
+    {
+        if (_cellRange is not { } range || _selectionIdentity is not { } id) return;
+
+        var anchorCol = _colDefs.FindIndex(d => d.Key == id.AnchorKey);
+        var focusCol  = _colDefs.FindIndex(d => d.Key == id.FocusKey);
+        var rowCount  = VisibleRowCount;
+        if (!IsDataColumn(anchorCol) || !IsDataColumn(focusCol) || rowCount <= 0 || range.Top >= rowCount)
+        {
+            ClearCellSelection();
+            return;
+        }
+
+        var anchorRow = range.AnchorRow;
+        var focusRow  = range.FocusRow;
+
+        if (CachedRowAt(anchorRow) is { } atAnchor)
+        {
+            if (id.AnchorRecordId == 0)
+                _selectionIdentity = id with { AnchorRecordId = atAnchor.RecordId };
+            else if (atAnchor.RecordId != id.AnchorRecordId)
+            {
+                if ((_activeRows ?? _virtualRows)?.FindCachedByRecordId(id.AnchorRecordId) is not { } moved)
+                {
+                    ClearCellSelection();
+                    return;
+                }
+                // Форма выделения сохраняется: сдвигаем прямоугольник целиком за якорем.
+                var shift = moved.RowNumber - 1 - anchorRow;
+                anchorRow += shift;
+                focusRow  += shift;
+            }
+        }
+
+        var next = new CellRange(Math.Clamp(anchorRow, 0, rowCount - 1), anchorCol,
+                                 Math.Clamp(focusRow,  0, rowCount - 1), focusCol);
+        if (next != range) _cellRange = next;
+    }
+
+    // ── Клавиатура ────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Клавиши, которые двигают или меняют выделение ячеек: стрелки, Home/End, PageUp/PageDown,
+    /// Tab (с Ctrl — к краю таблицы, с Shift — растянуть), Ctrl+A, Escape; Enter и F2 открывают
+    /// правку активной ячейки. true — клавиша обработана. Сама арифметика — в
+    /// <see cref="CellRangeNavigation"/>.
+    ///
+    /// Гриду эти клавиши отдавать нельзя: он двигает СВОЮ текущую ячейку и выделяет строки, а
+    /// рамка осталась бы на месте — горели бы две разные ячейки.
+    /// </summary>
+    private bool HandleSelectionKey(KeyEventArgs e)
+    {
+        if (_cellRange is not { } range) return false;
+
+        var mods  = e.KeyModifiers;
+        if (mods.HasFlag(KeyModifiers.Alt)) return false;
+        var ctrl  = mods.HasFlag(KeyModifiers.Control) || mods.HasFlag(KeyModifiers.Meta);
+        var shift = mods.HasFlag(KeyModifiers.Shift);
+
+        switch (e.Key)
+        {
+            case Key.Escape when mods == KeyModifiers.None:
+                ClearCellSelection();
+                return true;
+
+            case Key.A when ctrl && !shift:
+                if (CellRangeNavigation.SelectAll(VisibleRowCount, VisibleDataColumns()) is { } all)
+                    SetCellSelection(all);
+                return true;
+
+            // Правка с клавиатуры — активной ячейки (якоря), как двойной клик.
+            case Key.Enter or Key.F2 when mods == KeyModifiers.None:
+                BeginEditAt(range.AnchorRow, range.AnchorColumn);
+                return true;
+        }
+
+        CellNavKey? nav = e.Key switch
+        {
+            Key.Up                   => ctrl ? CellNavKey.CtrlUp    : CellNavKey.Up,
+            Key.Down                 => ctrl ? CellNavKey.CtrlDown  : CellNavKey.Down,
+            Key.Left                 => ctrl ? CellNavKey.CtrlLeft  : CellNavKey.Left,
+            Key.Right                => ctrl ? CellNavKey.CtrlRight : CellNavKey.Right,
+            Key.Home                 => ctrl ? CellNavKey.CtrlHome  : CellNavKey.Home,
+            Key.End                  => ctrl ? CellNavKey.CtrlEnd   : CellNavKey.End,
+            Key.PageUp   when !ctrl  => CellNavKey.PageUp,
+            Key.PageDown when !ctrl  => CellNavKey.PageDown,
+            Key.Tab      when !ctrl  => shift ? CellNavKey.ShiftTab : CellNavKey.Tab,
+            _                        => null,
+        };
+        if (nav is not { } key) return false;
+
+        var moved = CellRangeNavigation.Navigate(range, key, extend: shift, VisibleRowCount,
+                                                 VisibleDataColumns(), PageRows());
+        if (moved is not { } next) return true;
+
+        SetCellSelection(next);
+        ScrollCellIntoView(next.FocusRow, next.FocusColumn);
+        return true;
+    }
+
+    // На сколько строк листают PageUp/PageDown: сколько их сейчас на экране.
+    private int PageRows() =>
+        DisplayedSlots() is { } slots ? Math.Max(1, slots.Last - slots.First) : 10;
+
+    /// <summary>Прокрутить таблицу к ячейке. Индексатор списка заведет загрузку только ОДНОЙ
+    /// страницы — той, куда едем.</summary>
+    private void ScrollCellIntoView(int row, int column)
+    {
+        var source = _activeRows ?? _virtualRows;
+        if (source is null || row < 0 || row >= VisibleRowCount) return;
+        if (column < 0 || column >= RecordsGrid.Columns.Count) return;
+
+        RecordsGrid.ScrollIntoView(source[row], RecordsGrid.Columns[column]);
+    }
+
+    /// <summary>
+    /// Открыть редактор в ячейке с клавиатуры. Правка в гриде живет только у ТЕКУЩЕЙ ячейки
+    /// ВЫДЕЛЕННОЙ строки (<c>BeginEdit</c> иначе отказывает), поэтому строку выделяем и ставим
+    /// текущий столбец — видимого выделения строки при этом нет (класс «cellselect»), а после
+    /// правки его снимает <c>CellEditEnded</c>.
+    /// </summary>
+    private void BeginEditAt(int row, int column)
+    {
+        if (!IsDataColumn(column) || CachedRowAt(row) is not { } item) return;
+
+        var col = RecordsGrid.Columns[column];
+        if (col.IsReadOnly || !Can(PermAction.EditRecord)) return;   // галочка, файл, вычисляемые — без редактора
+
+        RecordsGrid.ScrollIntoView(item, col);
+        RecordsGrid.SelectedItem  = item;
+        RecordsGrid.CurrentColumn = col;
+        if (!RecordsGrid.BeginEdit()) ScheduleRecordSelectionDrop();
+    }
+
+    // ── Протягивание мышью ────────────────────────────────────────────────────
+
+    // Идет протягивание: левая кнопка нажата на ячейке (без Shift) и еще не отпущена.
+    private bool _dragSelecting;
+
+    private void OnGridPointerMoved(object? sender, PointerEventArgs e)
+    {
+        if (!_dragSelecting || _cellRange is not { } range) return;
+
+        // Кнопку отпустили где-то вне таблицы, или началась правка (в редакторе мышь выделяет текст).
+        if (!e.GetCurrentPoint(RecordsGrid).Properties.IsLeftButtonPressed || IsCellEditing)
+        {
+            _dragSelecting = false;
+            return;
+        }
+
+        if (CellAt(e.GetPosition(RecordsGrid)) is not { } hit) return;
+        if (hit.Row == range.FocusRow && hit.Column == range.FocusColumn) return;
+
+        SetCellSelection(range.WithFocus(hit.Row, hit.Column));
+    }
+
+    private void OnGridPointerReleased(object? sender, PointerEventArgs e) => _dragSelecting = false;
+
+    /// <summary>Ячейка значения под точкой (координаты грида); null — служебный столбец, строка
+    /// «+», заглушка или вовсе не ячейка.</summary>
+    private (int Row, int Column)? CellAt(Point point)
+    {
+        if (RecordsGrid.InputHitTest(point) is not Visual hit) return null;
+        if (hit.GetSelfAndVisualAncestors().OfType<DataGridCell>().FirstOrDefault() is not { } cell) return null;
+        if (cell.FindAncestorOfType<DataGridRow>() is not { DataContext: TableRowVm { IsAddRow: false, IsLoading: false } vm } gridRow)
+            return null;
+
+        for (var c = FirstDataColumn; c <= LastDataColumn; c++)
+            if (IsDataColumn(c) && ReferenceEquals(RecordsGrid.Columns[c].GetCellContent(gridRow), cell.Content))
+                return (vm.RowNumber - 1, c);
+        return null;
+    }
+
     // ── Разрешение координат в данные ─────────────────────────────────────────
 
-    /// <summary>Строка по позиции в показанной таблице; null — строки нет или она еще грузится.</summary>
-    private TableRowVm? RowAt(int index)
-    {
-        var source = _activeRows ?? (System.Collections.IList?)_virtualRows;
-        if (source is null || index < 0 || index >= source.Count) return null;
-        return source[index] as TableRowVm is { IsAddRow: false, IsLoading: false } row ? row : null;
-    }
+    /// <summary>Строка по позиции, только если она уже загружена; загрузку не заводит.</summary>
+    private TableRowVm? CachedRowAt(int index) => (_activeRows ?? _virtualRows)?.TryGetCached(index);
 
     /// <summary>Сколько строк с данными показано сейчас (без строки «+»).</summary>
     private int VisibleRowCount
@@ -167,6 +391,8 @@ public partial class TableView
     /// null — выделено больше строк, чем обрабатывается за раз.</summary>
     private List<(TableRowVm Row, TableColumnDef Column)>? SelectedCells()
     {
+        FollowSelectionIdentity();
+
         var cells = new List<(TableRowVm, TableColumnDef)>();
         if (_cellRange is not { } range) return cells;
 
@@ -218,15 +444,16 @@ public partial class TableView
     //
     // Одна рамка на все выделение целиком (а не вокруг каждой ячейки): так выглядит выделение в
     // табличных редакторах, и внутри диапазона не появляется ни сетки из линий, ни «прямоугольника
-    // в прямоугольнике».
-    // Заливки нет: выделение — обводка, значение под ней должно читаться.
+    // в прямоугольнике». Выделение больше одной ячейки слегка тонируется — значения под тонировкой
+    // читаются, а размер прямоугольника виден сразу, без поиска его краев.
 
-    // Геометрия уже нарисованной рамки. Пересчет идет из LayoutUpdated, а любая правка дерева
-    // Canvas оттуда запускает новый проход разметки — тот снова зовет пересчет, и цикл кормит
-    // сам себя, пока Avalonia не уронит приложение с «Infinite layout loop detected». Сверка
-    // «ничего не изменилось» разрывает петлю; та же защита стоит у полосок ресайза строк и
-    // рамок выделения колонок.
+    // Геометрия уже нарисованной рамки и обрезки. Пересчет идет из LayoutUpdated, а любая правка
+    // дерева Canvas оттуда запускает новый проход разметки — тот снова зовет пересчет, и цикл
+    // кормит сам себя, пока Avalonia не уронит приложение с «Infinite layout loop detected».
+    // Сверка «ничего не изменилось» разрывает петлю; та же защита стоит у полосок ресайза строк.
     private readonly List<Rect> _lastCellBoxes = [];
+    private Rect? _lastCellClip;
+    private bool _lastCellTinted;
     private bool _cellOverlayPending;
 
     /// <summary>Пересчет рамок после прокрутки и ресайза. Менять дерево прямо в LayoutUpdated
@@ -247,36 +474,60 @@ public partial class TableView
 
     private void RefreshCellSelectionOverlay()
     {
+        // Данные под выделением могли смениться (сортировка, обновление от соседа) — сначала
+        // выделение догоняет свои записи, потом рисуется.
+        FollowSelectionIdentity();
+        RaiseSelectionLabel();
+
         // Сначала считаем целевую геометрию, НЕ трогая дерево.
         var target = new List<Rect>();
         if (_cellRange is { } range && !HidesOverlayWhileEditing(range) && SelectionBounds(range) is { } bounds)
             target.Add(bounds);
+        var clip   = RowsViewportInLayer();
+        var tinted = _cellRange is { IsSingleCell: false };
 
-        if (SameBoxes(target, _lastCellBoxes)) return;
+        if (SameBoxes(target, _lastCellBoxes) && SameClip(clip, _lastCellClip) && tinted == _lastCellTinted) return;
 
         _lastCellBoxes.Clear();
         _lastCellBoxes.AddRange(target);
+        _lastCellClip   = clip;
+        _lastCellTinted = tinted;
 
+        // Рамка не должна вылезать за область строк: при горизонтальной прокрутке и у края
+        // таблицы она иначе ложилась на шапку колонок, боковую панель и полосы прокрутки.
+        CellSelectionLayer.Clip = clip is { } c ? new RectangleGeometry(c) : null;
         CellSelectionLayer.Children.Clear();
+
+        var accent = this.TryFindResource("BrushAccent", out var res) && res is ISolidColorBrush brush
+            ? brush.Color
+            : Colors.DodgerBlue;
+
         foreach (var rect in target)
         {
-            var box = new Rectangle
+            // Border, а не Rectangle со Stroke: обводка прямоугольника ложится по оси края, наполовину
+            // наружу, и после округления раскладки одни стороны выходили в пиксель, другие — в два.
+            // Рамка Border рисуется ВНУТРИ своих границ и одинакова со всех сторон; толщина
+            // подогнана к физическому пикселю, чтобы при зуме и масштабе экрана не размывалась.
+            var box = new Border
             {
-                Width           = rect.Width,
-                Height          = rect.Height,
-                // Прямые углы: рамка садится ровно на линии сетки, скругление оставляло бы
-                // разрывы по углам ячейки.
-                RadiusX         = 0,
-                RadiusY         = 0,
-                Stroke          = this.TryFindResource("BrushAccent", out var accent) && accent is IBrush b
-                                      ? b : Brushes.DodgerBlue,
-                StrokeThickness = 2,
+                Width            = rect.Width,
+                Height           = rect.Height,
+                BorderBrush      = new SolidColorBrush(accent),
+                BorderThickness  = new Thickness(FrameThickness()),
+                Background       = tinted ? new SolidColorBrush(accent, 0.08) : null,
                 IsHitTestVisible = false,
             };
             Canvas.SetLeft(box, rect.X);
             Canvas.SetTop(box, rect.Y);
             CellSelectionLayer.Children.Add(box);
         }
+    }
+
+    // Два пикселя экрана при любом масштабе: толщина в DIP, кратная физическому пикселю.
+    private double FrameThickness()
+    {
+        var scale = TopLevel.GetTopLevel(this)?.RenderScaling ?? 1.0;
+        return Math.Max(1.0, Math.Round(2.0 * scale)) / scale;
     }
 
     /// <summary>
@@ -298,53 +549,64 @@ public partial class TableView
     {
         if (a.Count != b.Count) return false;
         for (var i = 0; i < a.Count; i++)
-            if (Math.Abs(a[i].X      - b[i].X)      > 0.5 || Math.Abs(a[i].Y      - b[i].Y)      > 0.5
-             || Math.Abs(a[i].Width  - b[i].Width)  > 0.5 || Math.Abs(a[i].Height - b[i].Height) > 0.5)
-                return false;
+            if (!SameRect(a[i], b[i])) return false;
         return true;
     }
 
-    /// <summary>Прямоугольник диапазона в координатах слоя; null — на экране не видно ни одной
-    /// его ячейки (прокрутили мимо).</summary>
-    private Rect? SelectionBounds(CellRange range)
+    private static bool SameClip(Rect? a, Rect? b) =>
+        a is { } x ? b is { } y && SameRect(x, y) : b is null;
+
+    private static bool SameRect(Rect a, Rect b) =>
+        Math.Abs(a.X - b.X) <= 0.5 && Math.Abs(a.Y - b.Y) <= 0.5
+        && Math.Abs(a.Width - b.Width) <= 0.5 && Math.Abs(a.Height - b.Height) <= 0.5;
+
+    // Область строк (без шапки и полос прокрутки) в координатах слоя рамки.
+    private Rect? RowsViewportInLayer()
     {
-        Rect? union = null;
-
-        foreach (var cell in RealizedCells())
-        {
-            if (!range.Contains(cell.Row, cell.Column)) continue;
-            // Ячейка скрытой колонки и служебная filler-ячейка живут в дереве, но имеют нулевой
-            // размер: их прямоугольник растянул бы рамку к началу координат.
-            if (!cell.Cell.IsVisible || cell.Cell.Bounds.Width <= 0 || cell.Cell.Bounds.Height <= 0) continue;
-
-            var bounds = CellBoundsInLayer(cell.Cell);
-            if (bounds is not { } r) continue;
-            union = union is { } u ? u.Union(r) : r;
-        }
-
-        return union;
+        if (RowsPresenter is not { } rows || rows.Bounds.Width <= 0 || rows.Bounds.Height <= 0) return null;
+        return rows.TranslatePoint(default, CellSelectionLayer) is { } p ? new Rect(p, rows.Bounds.Size) : null;
     }
 
-    // Ячейки, реально построенные сейчас (виртуализация строит только видимые строки).
-    //
-    // Номер колонки берем по ПОРЯДКУ ячейки в строке: публичного «какая у тебя колонка» у
-    // DataGridCell в Avalonia 11.2.3 нет (свойство internal), а порядок ячеек в презентере
-    // совпадает с порядком колонок. Ячейки идут слева направо, включая служебные «№» и «+».
-    private IEnumerable<(int Row, int Column, DataGridCell Cell)> RealizedCells()
+    /// <summary>
+    /// Прямоугольник диапазона в координатах слоя; null — на экране не видно ни одной его строки.
+    ///
+    /// Ячейка находится через <c>GetCellContent</c> САМОГО столбца, а не по порядку ячеек в
+    /// строке: порядок держался только до первой перестройки колонок (сдвиг, «Отображение»,
+    /// новое свойство), после нее рамка могла встать на соседний столбец. Обходятся только
+    /// реализованные строки презентера и только крайние столбцы диапазона — рамке нужны края,
+    /// а не каждая ячейка.
+    /// </summary>
+    private Rect? SelectionBounds(CellRange range)
     {
-        foreach (var gridRow in RecordsGrid.GetVisualDescendants().OfType<DataGridRow>())
+        if (RowsPresenter is not { } presenter) return null;
+
+        var columns = VisibleDataColumns().Where(c => c >= range.Left && c <= range.Right).ToList();
+        if (columns.Count == 0) return null;
+        int[] edges = columns.Count == 1 ? [columns[0]] : [columns[0], columns[^1]];
+
+        Rect? union = null;
+        foreach (var child in presenter.Children)
         {
             // Строка в правке или с фокусом, уехавшая за экран, остается в дереве со старой
             // раскладкой (см. IsStaleRow) — ее прямоугольник растянул бы рамку мимо экрана и
             // заставил бы геометрию дрожать от прохода к проходу.
-            if (IsStaleRow(gridRow)) continue;
-            if (gridRow.DataContext is not TableRowVm vm || vm.IsAddRow) continue;
-            var rowIndex = vm.RowNumber - 1;
+            if (child is not DataGridRow gridRow || IsStaleRow(gridRow)) continue;
+            if (gridRow.DataContext is not TableRowVm { IsAddRow: false } vm) continue;
 
-            var colIndex = 0;
-            foreach (var cell in gridRow.GetVisualDescendants().OfType<DataGridCell>())
-                yield return (rowIndex, colIndex++, cell);
+            var rowIndex = vm.RowNumber - 1;
+            if (rowIndex < range.Top || rowIndex > range.Bottom) continue;
+
+            foreach (var column in edges)
+            {
+                if (RecordsGrid.Columns[column].GetCellContent(gridRow)?.FindAncestorOfType<DataGridCell>() is not { } cell)
+                    continue;
+                if (!cell.IsVisible || cell.Bounds.Width <= 0 || cell.Bounds.Height <= 0) continue;
+                if (CellBoundsInLayer(cell) is not { } r) continue;
+                union = union is { } u ? u.Union(r) : r;
+            }
         }
+
+        return union;
     }
 
     private Rect? CellBoundsInLayer(DataGridCell cell)

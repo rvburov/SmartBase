@@ -114,6 +114,7 @@ public partial class ConstructorControllerView : UserControl
         FooterConstructor.NextPageClicked += (_, _) => TableViewCtrl.ScrollRowsPageForward();
         FooterConstructor.LastRowClicked  += (_, _) => TableViewCtrl.ScrollRowsToEnd();
         TableViewCtrl.VisibleRangeChanged += (_, range) => FooterConstructor.SetRange(range);
+        TableViewCtrl.CellSelectionChanged += (_, label) => FooterConstructor.SetSelection(label);
 
         // Точки вызова обмена: список собирается здесь, а показывает его таблица. Охват здесь —
         // ВЫДЕЛЕННЫЕ записи, поэтому сценариев в списке нет: у сценария нет понятия «эти три
@@ -331,7 +332,11 @@ public partial class ConstructorControllerView : UserControl
         // Навигация нижней панели двигает таблицу — в «Списке» ее гасим (индикатор от
         // прошлой таблицы врал бы про видимые строки). В таблицу диапазон вернется
         // первым же проходом разметки.
-        if (mode == "list") FooterConstructor.SetRange(TableViewportRange.Empty);
+        if (mode == "list")
+        {
+            FooterConstructor.SetRange(TableViewportRange.Empty);
+            FooterConstructor.SetSelection(null);   // выделение ячеек — у таблицы, в «Списке» его нет
+        }
 
         if (_currentCollectionId.HasValue && _repository is not null)
         {

@@ -19,6 +19,16 @@
         <Grid ColumnDefinitions="*,Auto"
               Margin="16,0">
 
+            <!-- Размер выделения ячеек («Выделено: 3 × 2») — только когда выделено больше одной
+                 ячейки: так видно, по скольким значениям пройдут копирование, вставка и очистка,
+                 даже если прямоугольник уходит за экран. -->
+            <TextBlock x:Name="SelectionLabel"
+                       Grid.Column="0"
+                       IsVisible="False"
+                       VerticalAlignment="Center"
+                       FontSize="{DynamicResource FontSizeSmall}"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+
             <!-- Навигация по строкам: «в начало · экран назад · 10 – 50 из 125 437 ·
                  экран вперед · в конец». Страниц фиксированного размера у таблицы нет
                  (она виртуализирована и прокручивается непрерывно), поэтому индикатор

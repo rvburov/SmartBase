@@ -31,6 +31,13 @@ public partial class FooterConstructor : UserControl
         SetRange(TableViewportRange.Empty);
     }
 
+    /// <summary>Подпись размера выделения ячеек слева; null — спрятать.</summary>
+    public void SetSelection(string? label)
+    {
+        SelectionLabel.Text      = label ?? "";
+        SelectionLabel.IsVisible = label is not null;
+    }
+
     /// <summary>
     /// Индикатор видимых строк («10 – 50 из 125 437») и активность кнопок навигации.
     /// Кнопки к краю, у которого уже стоим, гаснут: у начала — «в начало» и «экран назад»,

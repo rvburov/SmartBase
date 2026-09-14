@@ -200,6 +200,11 @@ public partial class TableView : UserControl
         Focusable = true;
         RecordsGrid.CellPointerPressed += OnCellPointerPressed;
         RecordsGrid.LoadingRow         += OnLoadingRow;
+        // Протягивание выделения мышью. handledEventsToo: кнопки внутри ячеек (галочка, скрепка
+        // «Файла») забирают события указателя себе, а тянуть выделение через них тоже должно.
+        RecordsGrid.AddHandler(PointerMovedEvent,    OnGridPointerMoved,    RoutingStrategies.Bubble, handledEventsToo: true);
+        RecordsGrid.AddHandler(PointerReleasedEvent, OnGridPointerReleased, RoutingStrategies.Bubble, handledEventsToo: true);
+        RecordsGrid.AddHandler(PointerCaptureLostEvent, (_, _) => _dragSelecting = false, RoutingStrategies.Bubble, handledEventsToo: true);
         // Snap дробных Star-ширин до целочисленных весов — без этого DataGrid
         // не рисует вертикальные грид-линии в сабпиксельных позициях. Снап сходится
         // за один шаг (Σ весов = доступная ширина → каждая колонка == вес px).
@@ -270,6 +275,7 @@ public partial class TableView : UserControl
         base.OnAttachedToVisualTree(e);
         _keyHookTopLevel = TopLevel.GetTopLevel(this);
         _keyHookTopLevel?.AddHandler(KeyDownEvent, OnTopLevelKeyDown, RoutingStrategies.Tunnel);
+        _keyHookTopLevel?.AddHandler(KeyUpEvent,   OnTopLevelKeyUp,   RoutingStrategies.Tunnel);
 
         // Размер шрифта меняется живьем: ячейки строятся с размером из ресурса → пересобрать.
         FontScale.Changed += OnFontScaleChanged;
@@ -289,6 +295,7 @@ public partial class TableView : UserControl
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
         _keyHookTopLevel?.RemoveHandler(KeyDownEvent, OnTopLevelKeyDown);
+        _keyHookTopLevel?.RemoveHandler(KeyUpEvent,   OnTopLevelKeyUp);
         _keyHookTopLevel = null;
         FontScale.Changed -= OnFontScaleChanged;
         LineMetrics.Changed -= OnLineMetricsChanged;
@@ -350,6 +357,8 @@ public partial class TableView : UserControl
         // ячейки, строки не выделены (одно гасит другое).
         if (HasCellSelection && IsKeyboardFocusWithin && _selectedColumnKeys.Count == 0)
         {
+            if (HandleSelectionKey(e)) { e.Handled = true; return; }
+
             // Ровно Ctrl (Cmd): Ctrl+Shift+C и прочие сочетания принадлежат не таблице.
             var command = e.KeyModifiers == KeyModifiers.Control || e.KeyModifiers == KeyModifiers.Meta;
 
@@ -377,11 +386,39 @@ public partial class TableView : UserControl
         e.Handled = true;
     }
 
+    // Отпускание Tab грид обрабатывает сам: если строка не выделена, он ВЫДЕЛЯЕТ текущую — и
+    // после Tab по ячейкам строка оставалась выделенной невидимо. Нажатие Tab таблица уже
+    // забрала себе (HandleSelectionKey), отпускание забираем следом.
+    private void OnTopLevelKeyUp(object? sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Tab && IsEffectivelyVisible && HasCellSelection && IsKeyboardFocusWithin)
+            e.Handled = true;
+    }
+
     private void OnTableKeyDown(object? sender, KeyEventArgs e)
     {
         if (IsCellEditing && e.Key == Key.Enter)
         {
             OnEnterWhileEditing(e);
+            return;
+        }
+
+        // Tab в редакторе: записать значение и перейти к соседней ячейке — выделением, а не
+        // правкой. Грид штатно переносит в соседнюю ячейку саму ПРАВКУ, и рамка оставалась бы
+        // на прежней ячейке.
+        if (IsCellEditing && e.Key == Key.Tab && e.KeyModifiers is KeyModifiers.None or KeyModifiers.Shift)
+        {
+            e.Handled = true;
+            RecordsGrid.CommitEdit();
+            RecordsGrid.Focus();
+
+            var key = e.KeyModifiers == KeyModifiers.Shift ? CellNavKey.ShiftTab : CellNavKey.Tab;
+            if (_cellRange is { } range
+                && CellRangeNavigation.Navigate(range, key, extend: false, VisibleRowCount, VisibleDataColumns(), PageRows()) is { } next)
+            {
+                SetCellSelection(next);
+                ScrollCellIntoView(next.FocusRow, next.FocusColumn);
+            }
             return;
         }
 

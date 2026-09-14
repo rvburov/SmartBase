@@ -288,6 +288,18 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
         return null;
     }
 
+    /// <summary>Строка по позиции, если ее страница уже загружена и заполнена; загрузку не
+    /// заводит (в отличие от индексатора) — для проверок, которые идут на каждой раскладке.</summary>
+    public TableRowVm? TryGetCached(int index)
+    {
+        if (index < 0 || index >= _dataCount) return null;
+        var slot = index % PageSize;
+        return _pages.TryGetValue(index / PageSize, out var rows) && slot < rows.Length
+               && rows[slot] is { IsLoading: false } row
+            ? row
+            : null;
+    }
+
     /// <summary>
     /// Строки с данными в диапазоне позиций [start, start + count) — для операций над выделенными
     /// ячейками (копирование, вставка, очистка), которым нужны значения и id ВСЕХ строк диапазона,
