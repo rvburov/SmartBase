@@ -123,6 +123,13 @@ public partial class RecordPageView : UserControl
     // Гасит авто-сейв описания на время служебной установки текста (Show/ReloadFromDb), чтобы
     // программное MarkdownEditor.Text не приняли за правку пользователя (иначе перечитанное из БД
     // значение тут же писалось бы обратно и дергало таблицу). Имя гасит сам NavbarPage (SetTitle).
+    //
+    // ВАЖНО: TextBox поднимает TextChanged ОТЛОЖЕННО, через диспетчер, — событие приходит уже
+    // после снятия флага, в том числе на установку текста при построении карточки. Поэтому флаг —
+    // не единственная защита: обработчики еще сверяют текст со значением и молчат, если оно не
+    // изменилось. Без этой сверки каждое построение карточек писало то же значение в базу и
+    // поднимало RecordChanged, а таблица по нему отменяла открытую правку ячейки — набор текста в
+    // таблице обрывался на первой паузе.
     private bool _suppressAutoSave;
 
     // ── Нижний блок = редактор активного ТЕКСТОВОГО свойства ───────────────────
@@ -190,6 +197,7 @@ public partial class RecordPageView : UserControl
         {
             if (_vm is null || _suppressAutoSave || _bottomTarget is null) return;
             var text = MarkdownEditor.Text ?? "";
+            if (text == _bottomTarget.Read()) return;   // отложенное TextChanged от установки текста — не правка
             _bottomTarget.Write(text);   // сохраняет значение и уведомляет таблицу
 
             if (_bottomTarget.Inline is { } inline) ApplyInlineText(inline, text);
@@ -1219,7 +1227,12 @@ public partial class RecordPageView : UserControl
                 tb.TextChanged += (_, _) =>
                 {
                     if (suppress) return;   // программная подмена показа/сырого — не значение
-                    row.Value = tb.Text ?? "";
+                    // Событие отложенное и приходит после снятия suppress: тот же текст — сырой
+                    // или показанный по формату — это установка, а не правка. Без сверки в базу
+                    // уходила бы отформатированная строка («1 234,50 ₽») вместо числа.
+                    var text = tb.Text ?? "";
+                    if (text == (row.Value ?? "") || text == NumberFormatValue.Format(row.Value, fmt)) return;
+                    row.Value = text;
                     PersistProperty(row);
                 };
                 input = tb;
@@ -1292,7 +1305,13 @@ public partial class RecordPageView : UserControl
             case "url":
             {
                 var tb = FlatValueBox(row.Value, "https://");
-                tb.TextChanged += (_, _) => { row.Value = tb.Text ?? ""; PersistProperty(row); };
+                tb.TextChanged += (_, _) =>
+                {
+                    var text = tb.Text ?? "";
+                    if (text == (row.Value ?? "")) return;   // отложенное TextChanged от установки текста — не правка
+                    row.Value = text;
+                    PersistProperty(row);
+                };
                 input = tb;
                 break;
             }
@@ -1355,7 +1374,9 @@ public partial class RecordPageView : UserControl
                     // писать ее обратно нельзя, иначе остальные строки пропали бы. Проверка
                     // дублирует guard выше: TextChanged приходит и после его снятия.
                     if (tb.IsReadOnly) return;
-                    row.Value = tb.Text ?? "";
+                    var text = tb.Text ?? "";
+                    if (text == (row.Value ?? "")) return;   // отложенное TextChanged от установки текста — не правка
+                    row.Value = text;
                     PersistProperty(row);
                     SyncBottomFromInline(tb);          // если поле открыто снизу — обновить большой редактор
                 };

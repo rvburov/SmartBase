@@ -292,6 +292,10 @@ public partial class TableView
         if (col.IsReadOnly || !Can(PermAction.EditRecord)) return;   // галочка, файл, вычисляемые — без редактора
 
         RecordsGrid.ScrollIntoView(item, col);
+        // Через сброс: после ClearRecordSelection свойство SelectedItem остается прежним, и
+        // повторная установка того же значения строку не выделяет и текущей не делает — BeginEdit
+        // отказывал на строке, которую правили в прошлый раз.
+        RecordsGrid.SelectedItem  = null;
         RecordsGrid.SelectedItem  = item;
         RecordsGrid.CurrentColumn = col;
         if (!RecordsGrid.BeginEdit()) ScheduleRecordSelectionDrop();

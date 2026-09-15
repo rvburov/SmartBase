@@ -221,10 +221,21 @@ public partial class TableView : UserControl
                 PermissionNotice.Show(this, PermAction.EditRecord);
                 return;
             }
-            IsCellEditing = true;
-            _editingCell  = e.Row.DataContext is TableRowVm vm
+            var cell = e.Row.DataContext is TableRowVm vm
                 ? (vm.RowNumber - 1, RecordsGrid.Columns.IndexOf(e.Column))
-                : null;
+                : ((int, int)?)null;
+            // Правка по мыши — только вторым кликом по ТОЙ ЖЕ ячейке (двойным или медленным) либо
+            // клавишами (Enter, F2 — EditingEventArgs пуст). Штатно грид открывает редактор уже по
+            // ПЕРВОМУ клику в любую ячейку ТЕКУЩЕЙ строки: после правки одной ячейки клик по
+            // соседней, чтобы выделить ее, открывал правку — и Delete стирал букву вместо значений,
+            // а Enter закрывал редактор, которого человек не открывал.
+            if (e.EditingEventArgs is PointerPressedEventArgs { ClickCount: 1 } && cell != _pressPrevCell)
+            {
+                e.Cancel = true;
+                return;
+            }
+            IsCellEditing = true;
+            _editingCell  = cell;
             RefreshCellSelectionOverlay();   // убрать свою рамку: у редактора есть собственная
         };
         // Правка кончилась — строка больше не обязана быть выделенной: возвращаем картинку
@@ -234,8 +245,24 @@ public partial class TableView : UserControl
         {
             IsCellEditing = false;
             _editingCell  = null;
+            DropEditingBox();
             RefreshCellSelectionOverlay();   // рамка возвращается на место
             ScheduleRecordSelectionDrop();
+        };
+        // Текстовый редактор ячейки известен с PreparingCellForEdit; его значение уходит в базу
+        // ОДИН раз — при коммите правки (Enter, Tab, клик в другую ячейку), а не на каждую букву:
+        // см. BuildEditTemplate и FlushEditingBox. Escape — Cancel, набранное не пишется.
+        RecordsGrid.PreparingCellForEdit += (_, e) =>
+        {
+            var column = RecordsGrid.Columns.IndexOf(e.Column);
+            _editingBox    = e.EditingElement as TextBox;
+            _editingBoxRow = e.Row.DataContext as TableRowVm;
+            _editingBoxKey = column >= 0 && column < _colDefs.Count ? _colDefs[column].Key : null;
+        };
+        RecordsGrid.CellEditEnding += (_, e) =>
+        {
+            if (e.EditAction == DataGridEditAction.Commit) FlushEditingBox();
+            DropEditingBox();
         };
         // Delete по выделенным колонкам. Tunnel — чтобы перехватить раньше, чем
         // DataGrid обработает клавишу для редактирования/навигации.
@@ -249,6 +276,11 @@ public partial class TableView : UserControl
     // клик ВНУТРИ открытого редактора от клика по другой ячейке — см. OnCellPointerPressed.
     private (int Row, int Column)? _editingCell;
 
+    // Две последние ячейки, по которым нажали левой кнопкой: правка по мыши открывается, только
+    // если ПРЕДЫДУЩИЙ клик пришелся в ту же ячейку (см. BeginningEdit).
+    private (int Row, int Column)? _pressPrevCell;
+    private (int Row, int Column)? _pressLastCell;
+
     /// <summary>
     /// Забыть открытую правку: источник строк заменили, и редактор умер вместе со старыми
     /// строками. При подмене <c>ItemsSource</c> грид <c>CellEditEnded</c> НЕ поднимает, поэтому
@@ -258,9 +290,53 @@ public partial class TableView : UserControl
     private void ForgetCellEditing()
     {
         if (!IsCellEditing) return;
+        FlushEditingBox();   // редактор умирает молча — набранное пишем, а не теряем
+        DropEditingBox();
         IsCellEditing = false;
         _editingCell  = null;
         RefreshCellSelectionOverlay();
+    }
+
+    // Открытый текстовый редактор ячейки (текст, ссылка, число, «Название»): сам TextBox, его
+    // строка и ключ столбца. В базу значение уходит из FlushEditingBox: при коммите правки, при
+    // уходе фокуса из редактора (человек кликнул в панель записи, а редактор остался открыт — у
+    // шаблонных колонок грид правку при потере фокуса не закрывает) и когда редактор умирает
+    // вместе со строками (ForgetCellEditing). Раньше TextBox был привязан к строке TwoWay, и
+    // каждая буква шла в базу отдельной транзакцией: на сетевой папке — заметная задержка на
+    // нажатие, а каждый коммит еще и будил перечитывание панели записи.
+    private TextBox?    _editingBox;
+    private TableRowVm? _editingBoxRow;
+    private string?     _editingBoxKey;
+
+    private void FlushEditingBox()
+    {
+        if (_editingBox is not { } box || _editingBoxRow is not { } row || _editingBoxKey is not { } key) return;
+        try { row[key] = box.Text ?? ""; }   // строка пишет в базу сама и совпавшее пропускает
+        catch (Exception ex)
+        {
+            // База уже отключена (редактор закрывается вместе с ней) — набранное не спасти, но и
+            // ронять закрытие нельзя.
+            Serilog.Log.Warning(ex, "Значение ячейки при закрытии редактора не записалось");
+        }
+    }
+
+    private void DropEditingBox()
+    {
+        _editingBox    = null;
+        _editingBoxRow = null;
+        _editingBoxKey = null;
+    }
+
+    private void OnEditingBoxLostFocus(object? sender, RoutedEventArgs e)
+    {
+        if (ReferenceEquals(sender, _editingBox)) FlushEditingBox();
+    }
+
+    /// <summary>Закрыть открытую правку ячейки с записью значения — перед закрытием окна и уходом
+    /// в фоновый режим: иначе набранное в редакторе пропало бы вместе с ним.</summary>
+    public void CommitCellEdit()
+    {
+        if (IsCellEditing) RecordsGrid.CommitEdit();
     }
 
     // Окно, на которое навешен обработчик Delete для записей (см. OnTopLevelKeyDown).
@@ -1485,11 +1561,14 @@ public partial class TableView : UserControl
     // множеством колонок давал тяжелую перезагрузку при каждой правке.
     public void RefreshRecordRow(int recordId)
     {
-        // Снимаем активное редактирование ячейки. Редакторы даты/выбора задают значение императивно
-        // (Storage/SelectedItem ставятся один раз) и НЕ обновляются по NotifyAllCells — открытый
-        // редактор показывал бы устаревшее значение, а при коммите еще и затер бы свежее из панели.
-        // CancelEdit отменяет (не коммитит) правку, после чего ячейка показывает биндинг-дисплей.
-        RecordsGrid.CancelEdit();
+        // Снимаем правку ячейки — только если правится ЭТА ЖЕ запись. Редакторы даты/выбора задают
+        // значение императивно (Storage/SelectedItem ставятся один раз) и НЕ обновляются по
+        // NotifyAllCells — открытый редактор показывал бы устаревшее значение, а при коммите еще и
+        // затер бы свежее из панели. CancelEdit отменяет (не коммитит) правку, после чего ячейка
+        // показывает биндинг-дисплей. Правка ДРУГОЙ записи к обновлению отношения не имеет: раньше
+        // ее закрывало любое перечитывание панели, и набор текста в таблице обрывался на паузе.
+        if (IsCellEditing && _editingCell is { } cell && CachedRowAt(cell.Row)?.RecordId == recordId)
+            RecordsGrid.CancelEdit();
         _activeRows?.RefreshRecord(recordId);
         // Строки, чьи связи ссылаются на измененную запись, тоже обновляем — иначе название цели в их
         // ячейке-связи оставалось бы старым до прокрутки/перезагрузки. Адресуем ВИДИМОМУ списку
@@ -2232,6 +2311,8 @@ public partial class TableView : UserControl
                     return rel;
                 }
 
+                // Текстовые редакторы — БЕЗ привязки к строке: значение уходит в базу при коммите
+                // правки, а не на каждую букву (см. FlushEditingBox).
                 case "number":
                 {
                     var tb = new TextBox
@@ -2239,21 +2320,26 @@ public partial class TableView : UserControl
                         BorderThickness          = new Thickness(0),
                         VerticalContentAlignment = VerticalAlignment.Center,
                         TextAlignment            = TextAlignment.Right,
-                        [!TextBox.TextProperty]  = new Binding($"[{def.Key}]", BindingMode.TwoWay),
+                        Text                     = row[def.Key],
                     };
                     // Пропускаем только цифры, один разделитель и ведущий минус.
                     tb.AddHandler(InputElement.TextInputEvent, OnNumberTextInput, RoutingStrategies.Tunnel);
+                    tb.LostFocus += OnEditingBoxLostFocus;
                     return tb;
                 }
 
                 default:
-                    return new TextBox
+                {
+                    var tb = new TextBox
                     {
                         BorderThickness          = new Thickness(0),
                         VerticalContentAlignment = VerticalAlignment.Center,
                         Watermark                = def.FieldType == "url" ? "https://" : null,
-                        [!TextBox.TextProperty]  = new Binding($"[{def.Key}]", BindingMode.TwoWay),
+                        Text                     = row[def.Key],
                     };
+                    tb.LostFocus += OnEditingBoxLostFocus;
+                    return tb;
+                }
             }
         });
 
@@ -2314,6 +2400,12 @@ public partial class TableView : UserControl
         // забрал редактор. Без нее первый же клик по тексту закрывал бы правку — снятие
         // выделения строки внутри делает CommitEdit.
         if (IsCellEditing && _editingCell == (rowIdx, colIdx)) return;
+
+        if (props.IsLeftButtonPressed)
+        {
+            _pressPrevCell = _pressLastCell;
+            _pressLastCell = (rowIdx, colIdx);
+        }
 
         // ── Столбец «№»: он и только он работает со СТРОКАМИ ──────────────────
         // Shift/Ctrl по номеру — точечно добавить или убрать строку из выделения (toggle).

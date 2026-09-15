@@ -272,6 +272,9 @@ public partial class ConstructorControllerView : UserControl
     /// чужих правок (ChangePoller) откладывает обновление, чтобы не затирать ввод.</summary>
     public bool IsCellEditing => TableViewCtrl.IsVisible && TableViewCtrl.IsCellEditing;
 
+    /// <summary>Закрыть открытую правку ячейки с записью значения (закрытие окна, уход в фон).</summary>
+    public void CommitCellEdit() => TableViewCtrl.CommitCellEdit();
+
     /// <summary>Чужие правки записей из другой копии приложения (мультипользовательская
     /// синхронизация): обновить строки открытой коллекции на месте — без пересборки
     /// колонок и мелькания (число записей могло измениться → структурный путь).</summary>

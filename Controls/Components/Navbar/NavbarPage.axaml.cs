@@ -21,6 +21,11 @@ public partial class NavbarPage : UserControl
     // Гасит TitleChanged на время служебной установки имени (SetTitle), чтобы ее не приняли за правку.
     private bool _suppressTitleChange;
 
+    // Имя, которое поле показывало в последний раз — от SetTitle или от правки. TextChanged у
+    // TextBox приходит отложенно, через диспетчер, уже после снятия _suppressTitleChange, поэтому
+    // одного флага мало: событие с тем же текстом — это установка имени, а не правка.
+    private string _knownTitle = "";
+
     public NavbarPage()
     {
         InitializeComponent();
@@ -41,8 +46,10 @@ public partial class NavbarPage : UserControl
 
         TitleBox.TextChanged += (_, _) =>
         {
-            if (_suppressTitleChange) return;
-            TitleChanged?.Invoke(this, TitleBox.Text ?? "");
+            var text = TitleBox.Text ?? "";
+            if (_suppressTitleChange || text == _knownTitle) return;
+            _knownTitle = text;
+            TitleChanged?.Invoke(this, text);
         };
 
         CollectionPanelBtn.IsCheckedChanged += (_, _) =>
@@ -61,6 +68,7 @@ public partial class NavbarPage : UserControl
     public void SetTitle(string title)
     {
         _suppressTitleChange = true;
+        _knownTitle   = title ?? "";
         TitleBox.Text = title ?? "";
         ExitTitleEdit();
         _suppressTitleChange = false;
