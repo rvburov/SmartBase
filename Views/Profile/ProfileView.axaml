@@ -301,6 +301,26 @@
                     </Border>
                     <Border Classes="separator h" />
 
+                    <!-- Доступ других пользователей по паролю: политика в db_meta самой
+                         базы (SQLite и PostgreSQL одинаково), рядом с паролем. Выключено —
+                         замок открывает только разрешение администратора; пароль при этом
+                         не удаляется. Включить без пароля — сперва окно установки пароля. -->
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Доступ других пользователей по паролю" />
+                                <TextBlock Classes="desc"
+                                           Text="Включено — новый пользователь открывает базу сам, введя пароль базы данных. Выключено — входит только после разрешения администратора. Настройка хранится в базе и действует на всех машинах." />
+                            </StackPanel>
+                            <ToggleSwitch Grid.Column="1" x:Name="PasswordAccessToggle"
+                                          OnContent="" OffContent=""
+                                          VerticalAlignment="Center"
+                                          IsCheckedChanged="OnPasswordAccessToggled" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
                     <!-- Пароль базы -->
                     <Border Classes="settingRow">
                         <Grid ColumnDefinitions="*,Auto">
@@ -308,7 +328,7 @@
                                         VerticalAlignment="Center" Margin="0,0,32,0">
                                 <TextBlock Classes="title" Text="Пароль базы данных" />
                                 <TextBlock Classes="desc"
-                                           Text="Пароль позволяет новому пользователю получить доступ к базе самостоятельно, не дожидаясь подтверждения администратором." />
+                                           Text="Им другие пользователи открывают базу сами, пока включен доступ по паролю. Выключенный доступ пароль не удаляет." />
                                 <TextBlock x:Name="PasswordStateText" Classes="desc" Text="" />
                             </StackPanel>
                             <StackPanel Grid.Column="1" Orientation="Horizontal"
@@ -497,7 +517,7 @@
                  и крестик справа. Нижнюю границу шапки рисует общая линия окна на y=56
                  (MainWindow) — своей линии нет, иначе удвоение. -->
             <Grid x:Name="UsersPanel" IsVisible="False"
-                  RowDefinitions="Auto,Auto,*"
+                  RowDefinitions="Auto,*"
                   Background="{StaticResource BrushBg}">
 
                 <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto"
@@ -535,32 +555,15 @@
                     </Button>
                 </Grid>
 
-                <!-- Область «Все базы данных»: куда уйдут правки и куда не уйдут. Стоит НАД
-                     таблицей и до первого щелчка — область действия галки человек должен
-                     знать заранее, а не узнавать из отчета о сделанном. Вторая строка —
-                     итог последней массовой правки (ProfileAdminAcross.cs). -->
-                <Border Grid.Row="1" x:Name="AcrossNote" IsVisible="False"
-                        Background="{StaticResource BrushSecondaryBg}"
-                        Padding="16,10">
-                    <StackPanel Spacing="4">
-                        <TextBlock x:Name="AcrossNoteText"
-                                   FontSize="{DynamicResource FontSizeSmall}"
-                                   Foreground="{StaticResource BrushSecondaryText}"
-                                   TextWrapping="Wrap" />
-                        <TextBlock x:Name="AcrossOutcomeText" IsVisible="False"
-                                   FontSize="{DynamicResource FontSizeSmall}"
-                                   Foreground="{StaticResource BrushPrimaryText}"
-                                   TextWrapping="Wrap" />
-                    </StackPanel>
-                </Border>
-
                 <!-- Матрица «пользователь × действия»: колонки строятся в коде
                      (ProfileAdminUsers.cs) — вид таблицы конструктора: иконка типа
                      в шапке, шеврон фильтра/сортировки, те же линии и высота строки.
                      Первая колонка закреплена — имя видно при горизонтальной прокрутке
                      (полосу под ней освобождает стиль на PART_FrozenColumnScrollBarSpacer
-                     выше). -->
-                <Panel Grid.Row="2">
+                     выше). Под шапкой сразу таблица, в том числе в области «Все базы
+                     данных»: итог массовой правки появляется окном и только при сбое
+                     (ProfileAdminAcross.cs). -->
+                <Panel Grid.Row="1">
                     <DataGrid x:Name="UsersGrid"
                               AutoGenerateColumns="False"
                               RowHeight="{StaticResource RowHeightStandard}"

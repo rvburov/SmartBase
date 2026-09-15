@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using SmartBase.Controls.Dialogs;
 using SmartBase.Core.Models;
 using SmartBase.Database.Entities;
 
@@ -25,16 +26,16 @@ public sealed record AdminScope(bool AllDatabases, int? Collection)
 /// «все базы» здесь честно значит «все базы, открытые прямо сейчас и там, где вы
 /// администратор», а не «вообще все, что было заведено»: в закрытый файл правку положить некуда.
 ///
-/// Отсюда два следствия, и оба видны человеку.
+/// <b>Кто в таблице.</b> Люди базы, выбранной в панели администратора, — с их правами во всех
+/// открытых базах, где вы администратор и где они есть (<see cref="AcrossPeople"/>). Человек, ни
+/// разу не подключавшийся к выбранной базе, в таблице и в фильтрах не появляется.
 ///
-/// <b>Первое — сводная галка трехсостоянная.</b> Разрешено везде, запрещено везде или
-/// «по-разному». Показывать «разрешено», когда в одной базе запрещено, значило бы соврать — и
-/// узнали бы об этом по отказу в работе.
+/// <b>Сводная галка трехсостоянная.</b> Разрешено везде, запрещено везде или «по-разному».
+/// Показывать «разрешено», когда в одной базе запрещено, значило бы соврать — и узнали бы об этом
+/// по отказу в работе.
 ///
-/// <b>Второе — строка «куда уйдут правки».</b> Она стоит НАД таблицей и до первого щелчка:
-/// человек должен знать область действия заранее, а не узнавать ее из отчета о сделанном.
-/// Базы, которых правка не коснется, названы по имени и с причиной — «не открыта» и «вы не
-/// администратор» лечатся по-разному.
+/// <b>Над таблицей ничего нет</b> — только таблица. Итог массовой правки появляется окном и лишь
+/// тогда, когда какая-то база правку не приняла (<see cref="AcrossReport"/>).
 ///
 /// Роль, допуск и удаление в этой области не правятся, и колонок их тут нет: все три — про
 /// конкретный файл базы (кого туда пускать и кто там главный), и выдавать их пачкой одной галкой
@@ -43,20 +44,15 @@ public sealed record AdminScope(bool AllDatabases, int? Collection)
 /// </summary>
 public partial class ProfileView
 {
-    // Итог последней массовой правки — вторая строка над таблицей. Живет до следующей правки
-    // или смены области: это отчет о действии, а не состояние экрана.
-    private string _acrossOutcome = "";
-
     // ── Строки ────────────────────────────────────────────────────────────────
 
-    /// <summary>
-    /// Собрать сводные строки: один человек — все базы, где он есть. Люди сводятся по ключу
-    /// «учетная запись@компьютер»: он один на машину, а номер пользователя у каждой базы свой.
-    /// </summary>
+    /// <summary>Собрать сводные строки: люди выбранной базы и все их места среди админских баз.</summary>
     private void LoadRowsAcrossDatabases()
     {
-        var places = new Dictionary<string, List<AdminUserPlace>>(StringComparer.Ordinal);
-        var names  = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (_adminDb is null) return;
+
+        var members = new HashSet<string>(StringComparer.Ordinal);
+        var entries = new List<AcrossPeople.Entry>();
 
         foreach (var db in _adminDbs)
         {
@@ -72,25 +68,17 @@ public partial class ProfileView
                 continue;
             }
 
+            if (ReferenceEquals(db, _adminDb))
+                members.UnionWith(users.Select(u => u.UserKey));
+
             foreach (var user in users)
-            {
-                if (!places.TryGetValue(user.UserKey, out var list))
-                    places[user.UserKey] = list = [];
-
-                list.Add(new AdminUserPlace(
-                    db.DbId, db.Name, user.Id, perms.GetMask(user.Id, null),
-                    user.IsAdmin, user.IsApproved, user.CreatedAt, user.LastSeenAt));
-
-                // Имя берем самое свежее: человек мог поправить профиль, а в старую базу
-                // новое имя еще не заезжало.
-                if (!names.TryGetValue(user.UserKey, out var known)
-                    || string.CompareOrdinal(user.LastSeenAt, known) > 0)
-                    names[user.UserKey] = user.DisplayName;
-            }
+                entries.Add(new AcrossPeople.Entry(user.UserKey, user.DisplayName, user.LastSeenAt,
+                    new AdminUserPlace(db.DbId, db.Name, user.Id, perms.GetMask(user.Id, null),
+                                       user.IsAdmin, user.IsApproved, user.CreatedAt, user.LastSeenAt)));
         }
 
-        foreach (var (key, list) in places)
-            _allUserRows.Add(new AdminUserRow(key, names.GetValueOrDefault(key, key), list)
+        foreach (var person in AcrossPeople.Collect(members, entries))
+            _allUserRows.Add(new AdminUserRow(person.UserKey, person.DisplayName, person.Places)
             {
                 RightChanged = OnUserRightChanged,
             });
@@ -142,54 +130,14 @@ public partial class ProfileView
             }
         }
 
-        _acrossOutcome = AcrossReport.Outcome(action, allowed, done, failed, skipped);
+        // Нормальный исход видно по самой галке; о базе, которая правку не приняла, говорим окном —
+        // иначе разнобой прав остался бы незамеченным.
+        if (failed.Count > 0 && TopLevel.GetTopLevel(this) is Window owner)
+            _ = ConfirmDialog.Info(AcrossReport.Outcome(action, allowed, done, failed, skipped)).ShowDialog(owner);
 
         // Перечитываем ВСЕ строки, а не правим маску на месте: соседние базы могли ответить
         // по-разному, и сводная галка должна показать то, что получилось, а не то, что просили.
         ReloadUserRows();
-    }
-
-    // ── Строка «куда уйдут правки» ────────────────────────────────────────────
-
-    /// <summary>
-    /// Показать или спрятать пояснение над таблицей. В сводной области оно обязательно: без него
-    /// галка выглядит как «право во всей программе», а правка кладется только в открытые файлы.
-    /// </summary>
-    private void ShowScopeNote()
-    {
-        if (!AcrossDatabases)
-        {
-            AcrossNote.IsVisible = false;
-            _acrossOutcome       = "";
-            return;
-        }
-
-        AcrossNote.IsVisible  = true;
-        AcrossNoteText.Text   = ScopeNoteText();
-
-        AcrossOutcomeText.Text      = _acrossOutcome;
-        AcrossOutcomeText.IsVisible = _acrossOutcome.Length > 0;
-    }
-
-    /// <summary>Куда уйдут правки и куда не уйдут — собрано из того, что открыто сейчас.</summary>
-    private string ScopeNoteText()
-    {
-        // Открыта, но администратором там не вы: править чужие права нельзя, и молчать об этом
-        // тоже — иначе база просто «пропала» из сводного вида.
-        var foreign = (_workspace?.Mounted ?? [])
-            .Where(db => !db.Permissions.IsAdmin)
-            .Select(db => db.Name)
-            .ToList();
-
-        // Заведена в реестре, но не открыта: права лежат в ее файле, а файл сейчас не читается.
-        var openIds = (_workspace?.Mounted ?? []).Select(d => d.DbId).ToHashSet();
-
-        var closed = (_workspace?.Registry.GetAll() ?? [])
-            .Where(entry => !openIds.Contains(entry.Id))
-            .Select(entry => entry.Name)
-            .ToList();
-
-        return AcrossReport.Where([.. _adminDbs.Select(d => d.Name)], foreign, closed);
     }
 
     // ── Колонки, которых в сводном виде нет ───────────────────────────────────
@@ -201,8 +149,6 @@ public partial class ProfileView
     /// </summary>
     private void ShowScopeColumns()
     {
-        ShowScopeNote();
-
         if (!_usersHooked) return;
 
         var perDatabase = !AcrossDatabases;

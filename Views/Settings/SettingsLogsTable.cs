@@ -11,6 +11,7 @@ using Avalonia.Media;
 using Avalonia.Styling;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
+using SmartBase.Core.Models;
 using SmartBase.Logging;
 using SmartBase.Utils;
 using SmartBase.Controls.Behaviors;
@@ -24,9 +25,10 @@ namespace SmartBase.Views.Settings;
 /// <summary>
 /// «Диагностика» — таблица журнала logs.db (Serilog) с панелью деталей выбранной строки.
 /// Раздел «Настройки» (единый файл на приложение — системная, а не пользовательская вещь,
-/// поэтому здесь, а не в «Профиле»). Тот же фильтр-чеклист с сортировкой в заголовке колонки,
-/// что и в «Истории изменений»; данные читаются через <see cref="LogReader"/> (raw SQL по
-/// logs.db). Строки подгружаются keyset-страницами по 200 при прокрутке к концу.
+/// поэтому здесь, а не в «Профиле»). Фильтр и сортировка в заголовке колонки — то же окно, что
+/// у таблицы конструктора (<see cref="ColumnFilterPanel"/>: каскад фильтров, автоотметка
+/// найденного, Enter); данные читаются через <see cref="LogReader"/> (raw SQL по logs.db).
+/// Строки подгружаются keyset-страницами по 200 при прокрутке к концу.
 /// </summary>
 public partial class SettingsView
 {
@@ -53,7 +55,6 @@ public partial class SettingsView
     private bool _logsSortAsc;
 
     private readonly Dictionary<string, Path> _logsChevrons = [];
-    private Flyout? _logsFlyout;
     private ScrollBar? _logsScroll;
 
     // ── Панель деталей выбранной строки ─────────────────────────────────────────
@@ -136,7 +137,7 @@ public partial class SettingsView
                 AfterId    = last?.Id,
                 AfterValue = last is null || _logsSortKey is null
                     ? null
-                    : LogsRawValue(_logsSortKey, last),
+                    : LogReader.SortValue(_logsSortKey, last),
             };
             var page = await _logReader.GetPageAsync(query, LogsPageSize);
 
@@ -145,11 +146,26 @@ public partial class SettingsView
 
             _logsRows.AddRange(page);
             if (page.Count < LogsPageSize) _logsEnd = true;
+            // Пустая таблица объясняет себя: фильтры ничего не пропустили или журнал пуст.
+            LogsEmptyText.Text      = _logsFilters.Count > 0 ? "Нет записей, подходящих под фильтры." : "Записей пока нет.";
             LogsEmptyText.IsVisible = _logsRows.Count == 0;
 
             Dispatcher.UIThread.Post(EnsureLogsScrollHook, DispatcherPriority.Background);
         }
-        finally { _logsLoading = false; }
+        catch (Exception ex)
+        {
+            // logs.db занят или поврежден — таблица остается с тем, что уже показано. Прокрутка
+            // повторяет чтение на каждый шаг, поэтому запись не чаще раза в минуту.
+            if (Diag.Throttle("logs-table-page", TimeSpan.FromMinutes(1)))
+                Serilog.Log.Warning(ex, "Страница журнала диагностики не прочиталась");
+        }
+        finally
+        {
+            _logsLoading = false;
+            // Пока шло чтение, таблицу перезапросили (фильтр, сортировка): первая страница нового
+            // запроса не стартовала — чтение было занято. Догоняем, иначе таблица осталась бы пустой.
+            if (gen != _logsGen) _ = LoadMoreLogsAsync();
+        }
     }
 
     // Следующая страница — при прокрутке к концу (порог ~300px до низа).
@@ -167,16 +183,6 @@ public partial class SettingsView
                 _ = LoadMoreLogsAsync();
         };
     }
-
-    // Сырое значение колонки строки лога — для фильтров и keyset-курсора сортировки.
-    private static string LogsRawValue(string key, LogRow row) => key switch
-    {
-        "level"     => row.Level,
-        "message"   => row.Message,
-        "exception" => row.Exception ?? "",
-        "date"      => row.Timestamp.Length >= 10 ? row.Timestamp[..10] : row.Timestamp,
-        _           => "",
-    };
 
     // ── Выгрузка в CSV ────────────────────────────────────────────────────────
     //
@@ -464,488 +470,34 @@ public partial class SettingsView
         };
     }
 
-    // ── Фильтр и сортировка колонок (чеклист значений, зеркало ProfileHistoryTable) ──
+    // ── Фильтр и сортировка колонок (общее окно, как в таблице конструктора) ──
 
     private void ShowLogsFilterFlyout(Control anchor, string key)
     {
-        var flyout = new Flyout { Placement = PlacementMode.BottomEdgeAlignedRight };
-        flyout.FlyoutPresenterClasses.Add("filterFlyout");
-        flyout.Content = WindowZoom.WrapPopupContent(BuildLogsFilterPanel(key, () => flyout.Hide()));
-        flyout.Closed += (_, _) => { if (ReferenceEquals(_logsFlyout, flyout)) _logsFlyout = null; };
-        _logsFlyout = flyout;
-        flyout.ShowAt(anchor);
-    }
+        // Снимок фильтров остальных колонок — на UI-потоке: список значений считается в фоне
+        // по строкам, прошедшим их (каскад), а живой словарь фон не читает.
+        var others = ColumnCascade.Others(_logsFilters, key);
+        var date   = key == "date";
 
-    private Control BuildLogsFilterPanel(string key, Action close)
-    {
-        var secondary = (IBrush)this.FindResource("BrushSecondaryText")!;
-        var fontBase  = (double)this.FindResource("FontSizeBase")!;
-        var radius    = (CornerRadius)this.FindResource("RadiusBase")!;
-        var family    = this.TryFindResource("FontFamilyBase", out var f) ? f as FontFamily : null;
-        // Ширины строк и закрепленный справа счетчик — см. FilterValueMetrics.
-        var metrics   = new FilterValueMetrics();
-
-        var panel = new StackPanel
+        ColumnFilterPanel.Show(this, anchor, new ColumnFilterSpec
         {
-            // Общий стандарт всплывающих списков (Controls.axaml).
-            Width   = (double)this.FindResource("PopupContentWidth")!,
-            Margin  = new Thickness(12),
-            Spacing = 2,
-            Cursor  = new Cursor(StandardCursorType.Arrow),
-        };
-
-        var baseCounts = new List<(string Value, int Count)>();
-        var domain     = new HashSet<string>();
-        var loaded     = false;
-
-        var (ascLabel, descLabel) = key == "date"
-            ? ("Сначала старые", "Сначала новые")
-            : ("От А до Я", "От Я до А");
-        bool? pendingSort = _logsSortKey == key ? _logsSortAsc : null;
-
-        var sortSection = new StackPanel { Spacing = 2 };
-        panel.Children.Add(sortSection);
-
-        Action rebuildListRef = () => { };
-
-        List<(string Raw, int Count)> counts = [];
-        void ReloadCounts()
-        {
-            bool? asc = pendingSort ?? (_logsSortKey == key ? _logsSortAsc : (bool?)null);
-            counts = SortLogsValueCounts(baseCounts, key, asc);
-        }
-        ReloadCounts();
-
-        void RenderSort()
-        {
-            sortSection.Children.Clear();
-            sortSection.Children.Add(MakeLogsFlatItem(ascLabel,
-                () => { pendingSort = true;  RenderSort(); ReloadCounts(); rebuildListRef(); },
-                LogsIcon("IconSortAz"), active: pendingSort == true));
-            sortSection.Children.Add(MakeLogsFlatItem(descLabel,
-                () => { pendingSort = false; RenderSort(); ReloadCounts(); rebuildListRef(); },
-                LogsIcon("IconSortZa"), active: pendingSort == false));
-            sortSection.Children.Add(MakeLogsFlatItem("Снять сортировку",
-                () => { pendingSort = null;  RenderSort(); ReloadCounts(); rebuildListRef(); },
-                LogsIcon("IconClose")));
-        }
-        RenderSort();
-
-        panel.Children.Add(MakeLogsSeparator());
-
-        var search = new TextBox
-        {
-            Watermark    = "Поиск значений...",
-            Height       = 30,
-            CornerRadius = radius,
-            Background   = Brushes.White,
-            Margin       = new Thickness(0, 0, 0, 4),
-            VerticalContentAlignment = VerticalAlignment.Center,
-        };
-        panel.Children.Add(search);
-
-        var checkedSet       = new HashSet<string>();
-        var syncingSelectAll = false;
-
-        var selectAll = new CheckBox
-        {
-            Content   = "(Выделить все)",
-            FontSize  = fontBase,
-            IsChecked = !_logsFilters.ContainsKey(key),
-            Cursor    = new Cursor(StandardCursorType.Hand),
-        };
-
-        var shown   = new AvaloniaList<LogsFilterValueVm>();
-        var vmCache = new Dictionary<string, LogsFilterValueVm>();
-        LogsFilterValueVm Vm(string raw, int count) =>
-            vmCache.TryGetValue(raw, out var v) ? v
-                : vmCache[raw] = new LogsFilterValueVm(raw, LogsDisplayValue(key, raw), count,
-                                                       checkedSet, () => SyncSelectAll());
-
-        var valuesList = new ListBox
-        {
-            // Высоты нет: список занимает остаток строки карточки фиксированной высоты и
-            // сам ужимается, когда снизу появляется горизонтальная полоса.
-            Background      = Brushes.Transparent,
-            BorderThickness = new Thickness(0),
-            Padding         = new Thickness(0),
-            ItemsSource     = shown,
-            ItemTemplate    = BuildLogsFilterValueTemplate(fontBase, secondary, metrics),
-        };
-        valuesList.Styles.Add(new Style(x => x.OfType<ListBoxItem>())
-        {
-            Setters = { new Setter(ListBoxItem.PaddingProperty, new Thickness(0, 2)),
-                        new Setter(ListBoxItem.MinHeightProperty, 0.0) },
-        });
-
-        void FlatRow(params string[] pseudo) =>
-            valuesList.Styles.Add(new Style(x =>
+            Key        = key,
+            AscLabel   = date ? "Сначала старые" : "От А до Я",
+            DescLabel  = date ? "Сначала новые"  : "От Я до А",
+            Sort       = _logsSortKey == key ? _logsSortAsc : null,
+            Filter     = _logsFilters.GetValueOrDefault(key),
+            Display    = raw => LogsDisplayValue(key, raw),
+            IsDate     = date,
+            LoadValues = () => _logReader.GetCountsAsync(key, others),
+            LoadFailed = ex => Serilog.Log.Warning(ex, "Список значений фильтра диагностики не посчитан: колонка {Column:l}", key),
+            Apply      = result =>
             {
-                Selector s = x.OfType<ListBoxItem>();
-                foreach (var p in pseudo) s = s.Class(p);
-                return s.Template().OfType<Avalonia.Controls.Presenters.ContentPresenter>().Name("PART_ContentPresenter");
-            })
-            {
-                Setters = { new Setter(Avalonia.Controls.Presenters.ContentPresenter.BackgroundProperty, Brushes.Transparent) },
-            });
-        FlatRow();
-        FlatRow(":pointerover");
-        FlatRow(":selected");
-        FlatRow(":selected", ":pointerover");
-
-        // «Выделить все» — закрепленная шапка списка; полоса прокрутки стоит на ее уровне
-        // (отдельной колонкой), как вертикальная полоса таблицы стоит на уровне шапки колонок.
-        // gap=2: вместе с верхним отступом первой строки (Padding 0,2) дает под шапкой
-        // ровно такой же просвет, как между значениями.
-        var valuesBox = ScrollBarLink.HeaderedList(selectAll, valuesList, gap: 2,
-                                                   scroller: metrics.Track);
-
-        var loadingText = new TextBlock
-        {
-            Text                = "Загрузка…",
-            Foreground          = secondary,
-            FontSize            = fontBase,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment   = VerticalAlignment.Center,
-        };
-        var valuesHost = new Border
-        {
-            Background   = Brushes.White,
-            BorderBrush  = (IBrush)this.FindResource("BrushSeparator")!,
-            CornerRadius = radius,
-            // Padding НУЛЕВОЙ: полосы прокрутки списка прилегают ко всем краям карточки без
-            // белого зазора, а воздух вокруг содержимого задает ScrollBarLink.HeaderedList.
-            // ClipToBounds — квадратные углы полос срезаются скруглением карточки.
-            Padding      = new Thickness(0),
-            ClipToBounds = true,
-            // Фикс высота (стандарт) — список не «прыгает» при замене «Загрузка…».
-            Height       = (double)this.FindResource("PopupListHeight")!,
-            Child        = loadingText,
-        };
-        valuesHost.Bind(Border.BorderThicknessProperty, valuesHost.GetResourceObservable("BorderLine"));
-        panel.Children.Add(valuesHost);
-
-        // Колонка «Время» показывает дерево «Год → Месяц → День» (DateFilterTreeBox) —
-        // тот же чеклист, что у свойств-дат в таблице конструктора. Дерево появляется
-        // вместе с данными (см. фоновую загрузку ниже).
-        var isDate = key == "date";
-        DateFilterTreeBox? tree = null;
-        var treeNewestFirst = false;
-
-        void MountTree(bool newestFirst)
-        {
-            treeNewestFirst = newestFirst;
-            tree = DateFilterTreeBox.ForIsoDates(counts, checkedSet, fontBase, secondary, newestFirst);
-            tree.SelectionChanged += (_, _) => SyncSelectAll();
-            // «(Выделить все)» — общий чекбокс обоих режимов, а шапку HeaderedList он
-            // получает во владение. Снимаем его с прежнего родителя: он уже стоит в шапке
-            // плоского списка (та строится до загрузки данных), а при смене сортировки —
-            // в шапке предыдущего дерева. Иначе Avalonia бросает «already has a visual parent».
-            (selectAll.Parent as Panel)?.Children.Remove(selectAll);
-            // Пустой результат поиска показывает «Ничего не найдено» — как у плоского списка.
-            valuesHost.Child = Controls.Components.EmptyListHint.Wrap(
-                tree.List, search, secondary, fontBase,
-                content: ScrollBarLink.HeaderedList(selectAll, tree.List, gap: 2));
-            tree.Search(search.Text);
-        }
-
-        List<(string Raw, int Count)> Matched()
-        {
-            var q = search.Text?.Trim() ?? "";
-            return q.Length == 0
-                ? counts
-                : counts.Where(c => LogsDisplayValue(key, c.Raw)
-                    .Contains(q, StringComparison.OrdinalIgnoreCase)).ToList();
-        }
-
-        // Показанные сейчас сырые значения — общий язык обоих режимов списка.
-        IEnumerable<string> MatchedRaws() =>
-            tree is not null ? tree.VisibleRaws : Matched().Select(c => c.Raw);
-
-        void RebuildList()
-        {
-            if (isDate)
-            {
-                if (tree is null) return;   // значения еще грузятся
-                // Сменили сортировку — дерево пересобираем в новом порядке.
-                if (treeNewestFirst != (pendingSort != true)) MountTree(pendingSort != true);
-                else tree.Search(search.Text);
-                return;
-            }
-
-            shown.Clear();
-            shown.AddRange(Matched().Select(c => Vm(c.Raw, c.Count)));
-            // Ширина строки фиксируется по текущему набору — иначе экстент горизонтальной
-            // прокрутки считался бы только по видимым строкам и полоса прыгала бы.
-            metrics.Measure(shown.Select(v => v.Display), shown.Select(v => v.CountText),
-                            fontBase, family);
-        }
-        rebuildListRef = RebuildList;
-
-        void SyncSelectAll()
-        {
-            syncingSelectAll    = true;
-            selectAll.IsChecked = tree is not null
-                ? tree.AllVisibleChecked
-                : Matched().All(c => checkedSet.Contains(c.Raw));
-            syncingSelectAll    = false;
-        }
-
-        search.TextChanged += (_, _) => { RebuildList(); SyncSelectAll(); };
-        selectAll.IsCheckedChanged += (_, _) =>
-        {
-            if (syncingSelectAll) return;
-            var on = selectAll.IsChecked == true;
-            if (tree is not null) { tree.SetAllVisible(on); return; }
-
-            foreach (var (raw, _) in Matched())
-            {
-                if (on) checkedSet.Add(raw);
-                else    checkedSet.Remove(raw);
-            }
-            RebuildList();
-        };
-
-        panel.Children.Add(MakeLogsSeparator());
-
-        var okBtn = new Button
-        {
-            Content             = "Готово",
-            HorizontalAlignment = HorizontalAlignment.Right,
-            Margin              = new Thickness(0, 4, 0, 0),
-        };
-        okBtn.Classes.Add("dialog");
-        okBtn.Click += (_, _) =>
-        {
-            if (pendingSort is bool asc) { _logsSortKey = key; _logsSortAsc = asc; }
-            else if (_logsSortKey == key) _logsSortKey = null;
-
-            if (loaded)
-            {
-                var hasSearch = !string.IsNullOrWhiteSpace(search.Text);
-                var effective = hasSearch
-                    ? MatchedRaws().Where(checkedSet.Contains).ToHashSet()
-                    : [.. checkedSet];
-
-                if (domain.SetEquals(effective)) _logsFilters.Remove(key);
-                else _logsFilters[key] = effective;
-            }
-
-            UpdateLogsChevrons();
-            ReloadLogsRows();
-            close();
-        };
-        panel.Children.Add(okBtn);
-
-        // Фоновая загрузка значений (SQL-агрегат по logs.db, отдельное подключение).
-        _logReader.GetCountsAsync(key).ContinueWith(t =>
-        {
-            if (t.IsFaulted || t.IsCanceled) return;
-            var data = t.Result;
-            Dispatcher.UIThread.Post(() =>
-            {
-                baseCounts.Clear();
-                baseCounts.AddRange(data);
-                domain.Clear();
-                foreach (var c in data) domain.Add(c.Value);
-
-                checkedSet.Clear();
-                if (_logsFilters.TryGetValue(key, out var ff)) checkedSet.UnionWith(ff);
-                else checkedSet.UnionWith(domain);
-
-                ReloadCounts();
-
-                if (isDate)
-                {
-                    // Дерево строится по текущей сортировке: без выбора — новыми сверху,
-                    // как раньше шел плоский список дат.
-                    MountTree(newestFirst: pendingSort != true);
-                }
-                else
-                {
-                    // «Загрузка…» → список значений; пустой список показывает надпись
-                    // «Список пуст» / «Ничего не найдено» вместо голой белой карточки.
-                    valuesHost.Child = Controls.Components.EmptyListHint.Wrap(
-                        valuesList, search, secondary, fontBase, content: valuesBox);
-                }
-
-                RebuildList();
-                SyncSelectAll();
-                loaded = true;
-            });
-        });
-
-        return panel;
-    }
-
-    // Порядок значений в окне фильтра: выбранная сортировка; без нее — дата новыми
-    // сверху, остальные по подписи, «(Пусто)» в конце.
-    private static List<(string Raw, int Count)> SortLogsValueCounts(
-        List<(string Value, int Count)> src, string key, bool? asc)
-    {
-        var items = src.Select(c => (Raw: c.Value, c.Count)).ToList();
-        var empty = items.Where(c => c.Raw.Length == 0).ToList();
-        items = items.Where(c => c.Raw.Length > 0).ToList();
-
-        if (key == "date")
-        {
-            items = asc == true
-                ? items.OrderBy(c => c.Raw, StringComparer.Ordinal).ToList()
-                : items.OrderByDescending(c => c.Raw, StringComparer.Ordinal).ToList();
-        }
-        else
-        {
-            items = asc == false
-                ? items.OrderByDescending(c => LogsDisplayValue(key, c.Raw),
-                                          StringComparer.CurrentCultureIgnoreCase).ToList()
-                : items.OrderBy(c => LogsDisplayValue(key, c.Raw),
-                                StringComparer.CurrentCultureIgnoreCase).ToList();
-        }
-
-        items.AddRange(empty);
-        return items;
-    }
-
-    private Viewbox MakeLogsStrokeIcon(Geometry data, IBrush stroke) => new()
-    {
-        Width  = LogsIconSize("IconSizeMedium"),
-        Height = LogsIconSize("IconSizeMedium"),
-        VerticalAlignment = VerticalAlignment.Center,
-        Child  = new Canvas
-        {
-            Width  = 24,
-            Height = 24,
-            Children =
-            {
-                new Path
-                {
-                    Data            = data,
-                    Stroke          = stroke,
-                    StrokeThickness = LogsIconSize("IconStrokeMedium"),
-                    StrokeLineCap   = PenLineCap.Round,
-                    StrokeJoin      = PenLineJoin.Round,
-                },
+                result.ApplyTo(_logsFilters, ref _logsSortKey, ref _logsSortAsc);
+                UpdateLogsChevrons();
+                ReloadLogsRows();
             },
-        },
-    };
-
-    private Button MakeLogsFlatItem(string text, Action onClick, Geometry? icon = null, bool active = false)
-    {
-        var fg = (IBrush)this.FindResource(active ? "BrushAccent" : "BrushPrimaryText")!;
-
-        object content = text;
-        if (icon is not null)
-        {
-            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
-
-            var iconBox = MakeLogsStrokeIcon(icon, fg);
-            Grid.SetColumn(iconBox, 0);
-            row.Children.Add(iconBox);
-
-            var label = new TextBlock
-            {
-                Text                = text,
-                Foreground          = fg,
-                Margin              = new Thickness(8, 0, 0, 0),
-                VerticalAlignment   = VerticalAlignment.Center,
-                HorizontalAlignment = HorizontalAlignment.Left,
-            };
-            Grid.SetColumn(label, 1);
-            row.Children.Add(label);
-
-            if (active)
-            {
-                var check = MakeLogsStrokeIcon(LogsIcon("IconCheck"), fg);
-                Grid.SetColumn(check, 2);
-                row.Children.Add(check);
-            }
-
-            content = row;
-        }
-
-        var btn = new Button
-        {
-            Content         = content,
-            Background      = Brushes.Transparent,
-            BorderThickness = new Thickness(0),
-            Padding         = new Thickness(8, 6),
-            FontSize        = (double)this.FindResource("FontSizeBase")!,
-            Foreground      = fg,
-            CornerRadius    = (CornerRadius)this.FindResource("RadiusBase")!,
-            HorizontalAlignment        = HorizontalAlignment.Stretch,
-            HorizontalContentAlignment = icon is not null
-                ? HorizontalAlignment.Stretch
-                : HorizontalAlignment.Left,
-        };
-        btn.Click += (_, _) => onClick();
-        return btn;
-    }
-
-    private Border MakeLogsSeparator()
-    {
-        var sep = new Border
-        {
-            Background = (IBrush)this.FindResource("BrushSeparator")!,
-            Margin     = new Thickness(0, 6),
-        };
-        sep.Bind(HeightProperty, sep.GetResourceObservable("SeparatorThickness"));
-        sep.Bind(UseLayoutRoundingProperty, sep.GetResourceObservable("LineUseLayoutRounding"));
-        RenderOptions.SetEdgeMode(sep, EdgeMode.Aliased);
-        return sep;
-    }
-
-    private static IDataTemplate BuildLogsFilterValueTemplate(double fontBase, IBrush secondary,
-                                                              FilterValueMetrics metrics) =>
-        new FuncDataTemplate<LogsFilterValueVm>((_, _) =>
-        {
-            var name = new TextBlock { TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
-            name.Bind(TextBlock.TextProperty, new Binding(nameof(LogsFilterValueVm.Display)));
-            // Ширина ВСЕХ строк одинаковая (по самому широкому значению) — иначе экстент
-            // горизонтальной прокрутки считался бы по видимым строкам и полоса дергалась.
-            name.Bind(Layoutable.MinWidthProperty,
-                      new Binding(nameof(FilterValueMetrics.TextMinWidth)) { Source = metrics });
-
-            var cb = new CheckBox
-            {
-                Content   = name,
-                FontSize  = fontBase,
-                HorizontalAlignment        = HorizontalAlignment.Stretch,
-                HorizontalContentAlignment = HorizontalAlignment.Left,
-                Margin    = new Thickness(0),
-                Cursor    = new Cursor(StandardCursorType.Hand),
-            };
-            cb.Bind(ToggleButton.IsCheckedProperty, new Binding(nameof(LogsFilterValueVm.Checked)) { Mode = BindingMode.TwoWay });
-
-            var cnt = new TextBlock { Foreground = secondary, VerticalAlignment = VerticalAlignment.Center };
-            cnt.Bind(TextBlock.TextProperty, new Binding(nameof(LogsFilterValueVm.CountText)));
-
-            // Счетчик ЗАКРЕПЛЕН у правого края видимой области: сдвиг компенсирует
-            // горизонтальную прокрутку, фон непрозрачный — длинный текст уезжает под него.
-            // Плашка обхватывает САМО число (Gap слева), поэтому просвет до закрываемого
-            // текста одинаковый в любой строке — не зависит от количества цифр.
-            var pin = new TranslateTransform();
-            pin.Bind(TranslateTransform.XProperty,
-                     new Binding(nameof(FilterValueMetrics.Pin)) { Source = metrics });
-            var cntHost = new Border
-            {
-                Background          = Brushes.White,
-                Padding             = new Thickness(FilterValueMetrics.Gap, 0, 0, 0),
-                HorizontalAlignment = HorizontalAlignment.Right,
-                Child               = cnt,
-                RenderTransform     = pin,
-            };
-
-            // Прозрачное МЕСТО под счетчик — одинаковой ширины во всех строках, чтобы от
-            // количества цифр не зависела ширина строки, а с ней и экстент прокрутки.
-            var cntSlot = new Border { Child = cntHost };
-            cntSlot.Bind(Layoutable.MinWidthProperty,
-                         new Binding(nameof(FilterValueMetrics.CountMinWidth)) { Source = metrics });
-
-            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
-            Grid.SetColumn(cb, 0);      row.Children.Add(cb);
-            Grid.SetColumn(cntSlot, 1); row.Children.Add(cntSlot);
-            return row;
         });
+    }
 
     // ── Детали выбранной строки (карточки полей + полный текст) ─────────────────
     //
@@ -1253,34 +805,5 @@ public partial class SettingsView
             VerticalAlignment = VerticalAlignment.Center,
             Child             = new Canvas { Width = 24, Height = 24, Children = { path } },
         };
-    }
-
-    private sealed class LogsFilterValueVm : System.ComponentModel.INotifyPropertyChanged
-    {
-        public string Raw       { get; }
-        public string Display   { get; }
-        public string CountText { get; }
-
-        private readonly HashSet<string> _checked;
-        private readonly Action _onChanged;
-
-        public LogsFilterValueVm(string raw, string display, int count, HashSet<string> checkedSet, Action onChanged)
-        {
-            Raw = raw; Display = display; CountText = count.ToString();
-            _checked = checkedSet; _onChanged = onChanged;
-        }
-
-        public bool Checked
-        {
-            get => _checked.Contains(Raw);
-            set
-            {
-                if (value) _checked.Add(Raw); else _checked.Remove(Raw);
-                PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(Checked)));
-                _onChanged();
-            }
-        }
-
-        public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
     }
 }

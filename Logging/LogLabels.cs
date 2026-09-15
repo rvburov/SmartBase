@@ -7,16 +7,23 @@ namespace SmartBase.Logging;
 /// </summary>
 public static class LogLabels
 {
-    public static string LevelLabel(string level) => level switch
+    /// <summary>
+    /// Уровни Serilog → подписи. Словарь, а не switch: из него же <c>LogReader</c> собирает
+    /// сортировку колонки — «От А до Я» идет по подписи в ячейке, а не по «Error», «Warning».
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, string> Levels = new Dictionary<string, string>
     {
-        "Verbose"     => "Подробно",
-        "Debug"       => "Отладка",
-        "Information" => "Информация",
-        "Warning"     => "Предупреждение",
-        "Error"       => "Ошибка",
-        "Fatal"       => "Критическая",
-        _             => level,
+        ["Verbose"]     = "Подробно",
+        ["Debug"]       = "Отладка",
+        ["Information"] = "Информация",
+        ["Warning"]     = "Предупреждение",
+        ["Error"]       = "Ошибка",
+        ["Fatal"]       = "Критическая",
     };
+
+    /// <summary>Подпись уровня; незнакомый уровень показывается как есть.</summary>
+    public static string LevelLabel(string level) =>
+        Levels.TryGetValue(level, out var label) ? label : level;
 
     /// <summary>
     /// Метка времени Serilog (UTC, без суффикса Z) → локальное «дд.MM.гггг ЧЧ:мм:сс».

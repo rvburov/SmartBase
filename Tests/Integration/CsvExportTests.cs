@@ -202,8 +202,10 @@ public sealed class CsvExportTests
     /// <summary>
     /// Сортировка по колонке (не по дате) листается курсором «значение + Id».
     /// Главный инвариант выгрузки: в файле — ровно та же последовательность строк,
-    /// что показала бы таблица с этими настройками (сортировка идет по СЫРЫМ значениям,
-    /// поэтому сверяемся с таблицей, а не с алфавитом русских подписей).
+    /// что показала бы таблица с этими настройками. Курсор таблицы — подпись в ячейке
+    /// (<see cref="ConstructorRepository.ChangeLogSortValue"/>), а не код «record»: «Тип»
+    /// сортируется по подписи, и курсор из кода сравнивался бы с подписями — латиница
+    /// меньше кириллицы, каждая страница была бы «первой», и таблица листала бы ее вечно.
     /// </summary>
     [Fact]
     public async Task Change_log_export_matches_what_the_table_would_show()
@@ -222,12 +224,16 @@ public sealed class CsvExportTests
         ConstructorRepository.ChangeLogRow? last = null;
         while (true)
         {
-            var page = await db.Constructor.GetChangeLogPageAsync(
-                query with { AfterId = last?.Id, AfterValue = last?.TargetType }, 20);
+            var page = await db.Constructor.GetChangeLogPageAsync(query with
+            {
+                AfterId    = last?.Id,
+                AfterValue = last is null ? null : ConstructorRepository.ChangeLogSortValue("type", last),
+            }, 20);
             onScreen.AddRange(page.Select(r => ChangeLogLabels.TypeLabel(r.TargetType)));
             if (page.Count < 20) break;
             last = page[^1];
         }
+        Assert.Equal(onScreen.OrderBy(l => l, StringComparer.Ordinal), onScreen);
 
         var path = dir.File("сортировка.csv");
         var written = CsvDump.Write(path, ConstructorRepository.ChangeLogCsvHeaders,

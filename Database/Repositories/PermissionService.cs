@@ -210,6 +210,7 @@ public sealed partial class PermissionService(AppDbContext db)
         IsAdmin       = me?.IsAdmin    ?? false;
         IsApproved    = me?.IsApproved ?? false;
         HasPassword   = _db.DbMeta.Any(m => m.Key == MetaPasswordHash);
+        PasswordAccessEnabled = GetMeta(MetaPasswordAccess) != "0";
         RetentionEnabled = GetMeta(MetaRetentionEnabled) == "1";
         RetentionMonths  = int.TryParse(GetMeta(MetaRetentionMonths), out var rm) && rm > 0
             ? rm : DefaultRetentionMonths;
@@ -403,15 +404,74 @@ public sealed partial class PermissionService(AppDbContext db)
         Reload();
     }
 
+    // Доступ других пользователей по паролю — политика базы в db_meta рядом с самим паролем, и
+    // потому одинаковая для SQLite и PostgreSQL и для всех машин. Нет строки — включено: так
+    // работали базы, где пароль поставили до появления тумблера. Ключ нарочно не «password.*»:
+    // «Убрать пароль» стирает пароль, а не решение администратора о входе паролем.
+    private const string MetaPasswordAccess = "access.password.enabled";
+
+    /// <summary>Администратор не выключал вход паролем (сам пароль при этом может быть не задан).</summary>
+    public bool PasswordAccessEnabled { get; private set; } = true;
+
+    /// <summary>Замок базы открывается паролем: пароль задан и вход по нему не выключен.</summary>
+    public bool PasswordAccess => HasPassword && PasswordAccessEnabled;
+
+    /// <summary>
+    /// Включить или выключить доступ других пользователей по паролю. Только администратор.
+    /// Выключенный — ждущий допуска входит только после разрешения администратора, даже зная
+    /// пароль; пароль при этом сохраняется.
+    /// </summary>
+    public void SetPasswordAccess(bool enabled)
+    {
+        DemandAdmin();
+        SetMeta(MetaPasswordAccess, enabled ? "1" : "0");
+        _db.SaveChanges();
+        Log.Information("Доступ других пользователей по паролю {State:l}: {Db:l}",
+                        enabled ? "включен" : "выключен", _db.DisplayPath);
+        Reload();
+    }
+
+    /// <summary>
+    /// Попросить доступ к базе — щелчок по замку. Нужен тому, кого администратор убрал из базы,
+    /// пока она была у него открыта: строки пользователя больше нет, и без нее администратор не
+    /// видит ни человека, ни запроса до следующего открытия базы. Строка заводится так же, как при
+    /// открытии, — ждущей допуска (<see cref="EnsureCurrentUserRegistered"/>, событие user.join),
+    /// и доступ снова дает только администратор или пароль базы. Строка есть — запрос уже виден.
+    /// </summary>
+    public void RequestAccess()
+    {
+        if (FreshUsers.Any(u => u.UserKey == CurrentUser.Key)) return;
+
+        // Удаленная соседом строка могла остаться в кеше общего контекста — отцепляем ее, иначе EF
+        // держал бы за живую строку, которой в базе уже нет.
+        foreach (var stale in _db.ChangeTracker.Entries<DbUserEntity>()
+                     .Where(en => en.Entity.UserKey == CurrentUser.Key)
+                     .ToList())
+            stale.State = Microsoft.EntityFrameworkCore.EntityState.Detached;
+
+        EnsureCurrentUserRegistered();
+    }
+
     /// <summary>
     /// Попытка открыть базу паролем: верный пароль выдает текущему пользователю допуск
     /// (IsApproved) — повторно пароль не спрашивается.
     /// </summary>
-    public bool TryUnlock(string password)
+    public bool TryUnlock(string password) => Unlock(password).Length == 0;
+
+    /// <summary>
+    /// То же, что <see cref="TryUnlock"/>, но с причиной отказа словами (пусто — вошел): окно ввода
+    /// показывает ее как есть. «Неверный пароль» и «вход паролем выключен» лечатся по-разному.
+    /// </summary>
+    public string Unlock(string password)
     {
+        // Политика читается свежей, а не из снимка: окно ввода могло быть открыто до того, как
+        // администратор выключил вход паролем.
+        if (GetMeta(MetaPasswordAccess) == "0")
+            return "Вход по паролю выключен администратором базы данных";
+
         var hash = GetMeta(MetaPasswordHash);
         var salt = GetMeta(MetaPasswordSalt);
-        if (hash is null || salt is null) return false;
+        if (hash is null || salt is null) return "У базы данных нет пароля";
         var iterations = int.TryParse(GetMeta(MetaPasswordIterations), out var it)
             ? it : PasswordIterations;
 
@@ -421,8 +481,12 @@ public sealed partial class PermissionService(AppDbContext db)
         {
             // Неверный пароль — событие безопасности: кто и в какую базу пытался войти.
             Log.Warning("Неверный пароль базы {Db:l} (пользователь {User:l})", _db.DisplayPath, CurrentUser.DisplayName);
-            return false;
+            return "Неверный пароль";
         }
+
+        // Убрали из базы, пока она была открыта, — верный пароль сначала возвращает человека в
+        // список пользователей, иначе допуск выдавать было бы некому.
+        RequestAccess();
 
         var me = Tracked(_db.DbUsers.FirstOrDefault(u => u.UserKey == CurrentUser.Key));
         if (me is not null && !me.IsApproved &&
@@ -436,7 +500,7 @@ public sealed partial class PermissionService(AppDbContext db)
             Log.Information("Допуск по паролю базы: {User:l} ({Db:l})", CurrentUser.DisplayName, _db.DisplayPath);
         }
         Reload();
-        return true;
+        return "";
     }
 
     private static byte[] Pbkdf2(string password, byte[] salt, int iterations) =>

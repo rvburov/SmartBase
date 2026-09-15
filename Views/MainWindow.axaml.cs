@@ -1354,6 +1354,7 @@ public partial class MainWindow : Window
         CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
         TasksModule.SetActiveIds(TasksSidebar.GetActiveIds());
         SettingsModule.RefreshDatabases();   // обновить статус «подключена/не подключена»
+        ProfileModule.OnDatabasesChanged();  // история — только базы с допуском, панель администратора — свои базы
     }
 
     // ── Живой состав пользователей базы ───────────────────────────────────────
@@ -1398,19 +1399,31 @@ public partial class MainWindow : Window
         if (_recordPanelLogicalOpen && _currentConstructorDbId == dbId) RecordPanel.ReloadFromDb();
     }
 
-    // Клик по запертой базе в сайдбаре: с паролем — диалог ввода (верный пароль дает
-    // допуск сразу), без пароля — пояснение про подтверждение администратором (запрос
-    // на доступ уже создан при монтировании).
+    // Клик по запертой базе в сайдбаре — это и есть просьба о доступе. Включен доступ по
+    // паролю — диалог ввода (верный пароль дает допуск сразу), выключен или пароля нет —
+    // пояснение про подтверждение администратором.
     private async Task RequestDatabaseUnlock(int dbId)
     {
         var db = _workspace.Get(dbId);
         if (db is null) return;
+
+        try
+        {
+            // Допуск и политику читаем свежими: пока висел замок, администратор мог уже пустить
+            // или выключить вход паролем.
+            db.Permissions.Reload(notify: false);
+            // Убрали из базы, пока она была открыта, — запрос заводится заново: иначе администратор
+            // не увидел бы ни человека, ни запроса до следующего открытия базы.
+            db.Permissions.RequestAccess();
+        }
+        catch (Exception ex) when (DbErrors.Handle(ex, db.Constructor.DbPath)) { return; }
+
         if (db.Permissions.AccessGranted) { SyncMountedToUi(); return; }
 
-        if (db.Permissions.HasPassword)
+        if (db.Permissions.PasswordAccess)
         {
             var unlocked = await PasswordDialog
-                .ForUnlock(db.Name, db.Permissions.TryUnlock)
+                .ForUnlock(db.Name, db.Permissions.Unlock)
                 .ShowDialog<bool>(this);
             if (unlocked) SyncMountedToUi();
         }

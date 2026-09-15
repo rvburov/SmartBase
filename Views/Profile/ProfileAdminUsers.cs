@@ -34,8 +34,9 @@ namespace SmartBase.Views.Profile;
 ///
 /// Вид таблицы — как у таблицы конструктора и журналов: иконка типа + подпись + шеврон
 /// фильтра в шапке, те же линии, высота строки RowHeightStandard. Фильтр и сортировка
-/// считаются в памяти (пользователей десятки), но окно — то же самое, что в «Диагностике»
-/// и «Истории изменений».
+/// считаются в памяти (пользователей десятки), а окно — общее с «Диагностикой» и «Историей
+/// изменений» (<see cref="ColumnFilterPanel"/>) и ведет себя как в конструкторе: каскад
+/// фильтров, автоотметка найденного, Enter; даты — деревом «год → месяц → день».
 ///
 /// Ячейки биндятся к строке-VM (<see cref="AdminUserRow"/>), а не выставляются императивно:
 /// DataGrid переиспользует контейнеры ячеек при прокрутке, и обработчик из замыкания шаблона
@@ -82,7 +83,6 @@ public partial class ProfileView
     private readonly Dictionary<string, Path>            _userChevrons = [];
     private string? _userSortKey;
     private bool    _userSortAsc = true;
-    private Flyout? _userFlyout;
 
     // Области прав в порядке ScopeCombo.
     private List<AdminScope> _scopes = [];
@@ -228,30 +228,34 @@ public partial class ProfileView
     // строку прямо под курсором.
     private void ApplyUserFilters()
     {
-        IEnumerable<AdminUserRow> rows = _allUserRows;
-
-        foreach (var (key, allowed) in _userFilters)
-            rows = rows.Where(r => allowed.Contains(UsersCellValue(key, r)));
+        var rows = ColumnCascade.Pass(_allUserRows, _userFilters, UsersFilterValue);
 
         var sortKey = _userSortKey ?? UsersKeyName;
         var asc     = _userSortKey is null || _userSortAsc;
+        // Даты сравниваются как моменты времени, а не как текст «дд.ММ.гггг»: иначе «Сначала
+        // старые» шло бы по числу месяца.
+        var comparer = IsUsersDateKey(sortKey) ? StringComparer.Ordinal : StringComparer.CurrentCultureIgnoreCase;
         rows = asc
-            ? rows.OrderBy(r => UsersCellValue(sortKey, r), StringComparer.CurrentCultureIgnoreCase)
-            : rows.OrderByDescending(r => UsersCellValue(sortKey, r), StringComparer.CurrentCultureIgnoreCase);
+            ? rows.OrderBy(r => UsersSortValue(sortKey, r), comparer)
+            : rows.OrderByDescending(r => UsersSortValue(sortKey, r), comparer);
 
         _userRows.Clear();
         _userRows.AddRange(rows);
     }
 
-    // Значение колонки строкой — общий источник для фильтра, сортировки и окна значений.
-    private static string UsersCellValue(string key, AdminUserRow row) => key switch
+    private static bool IsUsersDateKey(string key) => key is UsersKeyCreated or UsersKeySeen;
+
+    // Сырое значение колонки — общий источник для фильтра и окна значений. Даты — день
+    // «yyyy-MM-dd» по местному времени (тот же день, что в ячейке): из него строится дерево
+    // «год → месяц → день».
+    private static string UsersFilterValue(string key, AdminUserRow row) => key switch
     {
         UsersKeyName     => row.DisplayName,
         UsersKeyId       => row.UserKey,
         UsersKeyRole     => row.Role,
         UsersKeyApproved => row.IsApproved ? "Есть" : "Нет",
-        UsersKeyCreated  => row.CreatedAtText,
-        UsersKeySeen     => row.LastSeenText,
+        UsersKeyCreated  => LocalDay(row.CreatedAt),
+        UsersKeySeen     => LocalDay(row.LastSeenAt),
         _ when key.StartsWith("act", StringComparison.Ordinal) &&
                int.TryParse(key.AsSpan(3), out var bit)
                          => row[bit] switch
@@ -262,6 +266,25 @@ public partial class ProfileView
                             },
         _                => "",
     };
+
+    // Значение для сортировки: у дат — момент времени в UTC (ISO сравнивается как текст по
+    // порядку), у остальных колонок — то же, что в фильтре.
+    private static string UsersSortValue(string key, AdminUserRow row) => key switch
+    {
+        UsersKeyCreated => UtcMoment(row.CreatedAt),
+        UsersKeySeen    => UtcMoment(row.LastSeenAt),
+        _               => UsersFilterValue(key, row),
+    };
+
+    private static string LocalDay(string iso) =>
+        DateTime.TryParse(iso, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt)
+            ? dt.ToLocalTime().ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture)
+            : "";
+
+    private static string UtcMoment(string iso) =>
+        DateTime.TryParse(iso, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt)
+            ? dt.ToUniversalTime().ToString("o", System.Globalization.CultureInfo.InvariantCulture)
+            : "";
 
     // Правки пишутся сразу; после них строки перечитываются — роль и допуск меняют
     // доступность соседних ячеек, а сосед мог тем временем поправить свое.
@@ -585,377 +608,32 @@ public partial class ProfileView
             ? g
             : throw new KeyNotFoundException($"Icon resource '{key}' not found in Icons.axaml");
 
-    // ── Фильтр и сортировка колонки (то же окно, что в «Диагностике») ──────────
+    // ── Фильтр и сортировка колонки (общее окно, как в таблице конструктора) ──────
 
     private void ShowUsersFilterFlyout(Control anchor, string key)
     {
-        var flyout = new Flyout { Placement = PlacementMode.BottomEdgeAlignedRight };
-        flyout.FlyoutPresenterClasses.Add("filterFlyout");
-        flyout.Content = WindowZoom.WrapPopupContent(BuildUsersFilterPanel(key, () => flyout.Hide()));
-        flyout.Closed += (_, _) => { if (ReferenceEquals(_userFlyout, flyout)) _userFlyout = null; };
-        _userFlyout = flyout;
-        flyout.ShowAt(anchor);
-    }
+        // Каскад в памяти: значения колонки — по строкам, прошедшим фильтры остальных колонок.
+        var counts = ColumnCascade.Counts(_allUserRows, key, _userFilters, UsersFilterValue);
+        var date   = IsUsersDateKey(key);
 
-    private Control BuildUsersFilterPanel(string key, Action close)
-    {
-        var secondary = Brush("BrushSecondaryText", "#8E8E93");
-        var fontBase  = FontSizeToken("FontSizeBase", 13);
-        var radius    = this.TryFindResource("RadiusBase", out var r) && r is CornerRadius cr
-            ? cr : new CornerRadius(6);
-        var family    = this.TryFindResource("FontFamilyBase", out var f) ? f as FontFamily : null;
-        var metrics   = new FilterValueMetrics();
-
-        var panel = new StackPanel
+        ColumnFilterPanel.Show(this, anchor, new ColumnFilterSpec
         {
-            // Общий стандарт всплывающих списков (Controls.axaml).
-            Width   = (double)this.FindResource("PopupContentWidth")!,
-            Margin  = new Thickness(12),
-            Spacing = 2,
-            Cursor  = new Cursor(StandardCursorType.Arrow),
-        };
-
-        // Значения колонки со счетчиками — по всем строкам базы (фильтры других колонок
-        // список значений не режут: так же ведет себя фильтр в диагностике).
-        var counts = _allUserRows
-            .GroupBy(row => UsersCellValue(key, row))
-            .Select(g => (Value: g.Key, Count: g.Count()))
-            .ToList();
-        var domain = counts.Select(c => c.Value).ToHashSet();
-
-        var (ascLabel, descLabel) = key is UsersKeyCreated or UsersKeySeen
-            ? ("Сначала старые", "Сначала новые")
-            : ("От А до Я", "От Я до А");
-        bool? pendingSort = _userSortKey == key ? _userSortAsc : null;
-
-        var sortSection = new StackPanel { Spacing = 2 };
-        panel.Children.Add(sortSection);
-
-        Action rebuildListRef = () => { };
-        var ordered = SortUsersValueCounts(counts, pendingSort);
-
-        void ReloadCounts() => ordered = SortUsersValueCounts(counts, pendingSort);
-
-        void RenderSort()
-        {
-            sortSection.Children.Clear();
-            sortSection.Children.Add(MakeUsersFlatItem(ascLabel,
-                () => { pendingSort = true;  RenderSort(); ReloadCounts(); rebuildListRef(); },
-                UsersIcon("IconSortAz"), active: pendingSort == true));
-            sortSection.Children.Add(MakeUsersFlatItem(descLabel,
-                () => { pendingSort = false; RenderSort(); ReloadCounts(); rebuildListRef(); },
-                UsersIcon("IconSortZa"), active: pendingSort == false));
-            sortSection.Children.Add(MakeUsersFlatItem("Снять сортировку",
-                () => { pendingSort = null;  RenderSort(); ReloadCounts(); rebuildListRef(); },
-                UsersIcon("IconClose")));
-        }
-        RenderSort();
-
-        panel.Children.Add(MakeUsersSeparator());
-
-        var search = new TextBox
-        {
-            Watermark    = "Поиск значений...",
-            Height       = 30,
-            CornerRadius = radius,
-            Background   = Brushes.White,
-            Margin       = new Thickness(0, 0, 0, 4),
-            VerticalContentAlignment = VerticalAlignment.Center,
-        };
-        panel.Children.Add(search);
-
-        var checkedSet = new HashSet<string>(
-            _userFilters.TryGetValue(key, out var saved) ? saved : domain);
-        var syncingSelectAll = false;
-
-        var selectAll = new CheckBox
-        {
-            Content   = "(Выделить все)",
-            FontSize  = fontBase,
-            IsChecked = !_userFilters.ContainsKey(key),
-            Cursor    = new Cursor(StandardCursorType.Hand),
-        };
-
-        var shown   = new AvaloniaList<UsersFilterValueVm>();
-        var vmCache = new Dictionary<string, UsersFilterValueVm>();
-
-        var valuesList = new ListBox
-        {
-            Background      = Brushes.Transparent,
-            BorderThickness = new Thickness(0),
-            Padding         = new Thickness(0),
-            ItemsSource     = shown,
-            ItemTemplate    = BuildUsersFilterValueTemplate(fontBase, secondary, metrics),
-        };
-        valuesList.Styles.Add(new Style(x => x.OfType<ListBoxItem>())
-        {
-            Setters = { new Setter(ListBoxItem.PaddingProperty, new Thickness(0, 2)),
-                        new Setter(ListBoxItem.MinHeightProperty, 0.0) },
-        });
-
-        void FlatRow(params string[] pseudo) =>
-            valuesList.Styles.Add(new Style(x =>
+            Key        = key,
+            AscLabel   = date ? "Сначала старые" : "От А до Я",
+            DescLabel  = date ? "Сначала новые"  : "От Я до А",
+            Sort       = _userSortKey == key ? _userSortAsc : null,
+            Filter     = _userFilters.GetValueOrDefault(key),
+            Display    = raw => raw.Length == 0 ? "(Пусто)" : raw,
+            IsDate     = date,
+            LoadValues = () => Task.FromResult(counts),
+            Apply      = result =>
             {
-                Selector s = x.OfType<ListBoxItem>();
-                foreach (var p in pseudo) s = s.Class(p);
-                return s.Template().OfType<ContentPresenter>().Name("PART_ContentPresenter");
-            })
-            {
-                Setters = { new Setter(ContentPresenter.BackgroundProperty, Brushes.Transparent) },
-            });
-        FlatRow();
-        FlatRow(":pointerover");
-        FlatRow(":selected");
-        FlatRow(":selected", ":pointerover");
-
-        var valuesBox = ScrollBarLink.HeaderedList(selectAll, valuesList, gap: 2,
-                                                   scroller: metrics.Track);
-
-        var valuesHost = new Border
-        {
-            Background   = Brushes.White,
-            BorderBrush  = Brush("BrushSeparator", "#E5E5EA"),
-            CornerRadius = radius,
-            Padding      = new Thickness(0),
-            ClipToBounds = true,
-            // Фикс высота (стандарт) — список не «прыгает» при замене «Загрузка…».
-            Height       = (double)this.FindResource("PopupListHeight")!,
-            Child        = EmptyListHint.Wrap(valuesList, search, secondary, fontBase, content: valuesBox),
-        };
-        valuesHost.Bind(Border.BorderThicknessProperty, valuesHost.GetResourceObservable("BorderLine"));
-        panel.Children.Add(valuesHost);
-
-        List<(string Value, int Count)> Matched()
-        {
-            var q = search.Text?.Trim() ?? "";
-            return q.Length == 0
-                ? ordered
-                : ordered.Where(c => UsersDisplayValue(c.Value)
-                    .Contains(q, StringComparison.OrdinalIgnoreCase)).ToList();
-        }
-
-        void SyncSelectAll()
-        {
-            syncingSelectAll    = true;
-            selectAll.IsChecked = Matched().All(c => checkedSet.Contains(c.Value));
-            syncingSelectAll    = false;
-        }
-
-        UsersFilterValueVm Vm(string raw, int count) =>
-            vmCache.TryGetValue(raw, out var v) ? v
-                : vmCache[raw] = new UsersFilterValueVm(raw, UsersDisplayValue(raw), count,
-                                                        checkedSet, SyncSelectAll);
-
-        void RebuildList()
-        {
-            shown.Clear();
-            shown.AddRange(Matched().Select(c => Vm(c.Value, c.Count)));
-            metrics.Measure(shown.Select(v => v.Display), shown.Select(v => v.CountText),
-                            fontBase, family);
-        }
-        rebuildListRef = RebuildList;
-        RebuildList();
-        SyncSelectAll();
-
-        search.TextChanged += (_, _) => { RebuildList(); SyncSelectAll(); };
-        selectAll.IsCheckedChanged += (_, _) =>
-        {
-            if (syncingSelectAll) return;
-            var on = selectAll.IsChecked == true;
-            foreach (var (value, _) in Matched())
-            {
-                if (on) checkedSet.Add(value);
-                else    checkedSet.Remove(value);
-            }
-            RebuildList();
-        };
-
-        panel.Children.Add(MakeUsersSeparator());
-
-        var okBtn = new Button
-        {
-            Content             = "Готово",
-            HorizontalAlignment = HorizontalAlignment.Right,
-            Margin              = new Thickness(0, 4, 0, 0),
-        };
-        okBtn.Classes.Add("dialog");
-        okBtn.Click += (_, _) =>
-        {
-            if (pendingSort is bool asc) { _userSortKey = key; _userSortAsc = asc; }
-            else if (_userSortKey == key) _userSortKey = null;
-
-            var hasSearch = !string.IsNullOrWhiteSpace(search.Text);
-            var effective = hasSearch
-                ? Matched().Select(c => c.Value).Where(checkedSet.Contains).ToHashSet()
-                : [.. checkedSet];
-
-            if (domain.SetEquals(effective)) _userFilters.Remove(key);
-            else                             _userFilters[key] = effective;
-
-            UpdateUsersChevrons();
-            ApplyUserFilters();
-            close();
-        };
-        panel.Children.Add(okBtn);
-
-        return panel;
-    }
-
-    // Порядок значений в окне фильтра: выбранная сортировка, «(Пусто)» в конце.
-    private static List<(string Value, int Count)> SortUsersValueCounts(
-        List<(string Value, int Count)> src, bool? asc)
-    {
-        var items = src.Where(c => c.Value.Length > 0).ToList();
-        var empty = src.Where(c => c.Value.Length == 0).ToList();
-
-        items = asc == false
-            ? items.OrderByDescending(c => c.Value, StringComparer.CurrentCultureIgnoreCase).ToList()
-            : items.OrderBy(c => c.Value, StringComparer.CurrentCultureIgnoreCase).ToList();
-
-        items.AddRange(empty);
-        return items;
-    }
-
-    private static string UsersDisplayValue(string raw) => raw.Length == 0 ? "(Пусто)" : raw;
-
-    private Viewbox MakeUsersStrokeIcon(Geometry data, IBrush stroke) => new()
-    {
-        Width  = FontSizeToken("IconSizeMedium", 18),
-        Height = FontSizeToken("IconSizeMedium", 18),
-        VerticalAlignment = VerticalAlignment.Center,
-        Child  = new Canvas
-        {
-            Width  = 24,
-            Height = 24,
-            Children =
-            {
-                new Path
-                {
-                    Data            = data,
-                    Stroke          = stroke,
-                    StrokeThickness = FontSizeToken("IconStrokeMedium", 1.2),
-                    StrokeLineCap   = PenLineCap.Round,
-                    StrokeJoin      = PenLineJoin.Round,
-                },
+                result.ApplyTo(_userFilters, ref _userSortKey, ref _userSortAsc);
+                UpdateUsersChevrons();
+                ApplyUserFilters();
             },
-        },
-    };
-
-    private Button MakeUsersFlatItem(string text, Action onClick, Geometry? icon = null, bool active = false)
-    {
-        var fg = Brush(active ? "BrushAccent" : "BrushPrimaryText", active ? "#007AFF" : "#1C1C1E");
-
-        object content = text;
-        if (icon is not null)
-        {
-            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
-
-            var iconBox = MakeUsersStrokeIcon(icon, fg);
-            Grid.SetColumn(iconBox, 0);
-            row.Children.Add(iconBox);
-
-            var label = new TextBlock
-            {
-                Text                = text,
-                Foreground          = fg,
-                Margin              = new Thickness(8, 0, 0, 0),
-                VerticalAlignment   = VerticalAlignment.Center,
-                HorizontalAlignment = HorizontalAlignment.Left,
-            };
-            Grid.SetColumn(label, 1);
-            row.Children.Add(label);
-
-            if (active)
-            {
-                var check = MakeUsersStrokeIcon(UsersIcon("IconCheck"), fg);
-                Grid.SetColumn(check, 2);
-                row.Children.Add(check);
-            }
-
-            content = row;
-        }
-
-        var btn = new Button
-        {
-            Content         = content,
-            Background      = Brushes.Transparent,
-            BorderThickness = new Thickness(0),
-            Padding         = new Thickness(8, 6),
-            FontSize        = FontSizeToken("FontSizeBase", 13),
-            Foreground      = fg,
-            CornerRadius    = this.TryFindResource("RadiusBase", out var r) && r is CornerRadius cr
-                ? cr : new CornerRadius(6),
-            HorizontalAlignment        = HorizontalAlignment.Stretch,
-            HorizontalContentAlignment = icon is not null
-                ? HorizontalAlignment.Stretch
-                : HorizontalAlignment.Left,
-        };
-        btn.Click += (_, _) => onClick();
-        return btn;
-    }
-
-    private Border MakeUsersSeparator()
-    {
-        var sep = new Border
-        {
-            Background = Brush("BrushSeparator", "#E5E5EA"),
-            Margin     = new Thickness(0, 6),
-        };
-        sep.Bind(HeightProperty, sep.GetResourceObservable("SeparatorThickness"));
-        sep.Bind(UseLayoutRoundingProperty, sep.GetResourceObservable("LineUseLayoutRounding"));
-        RenderOptions.SetEdgeMode(sep, EdgeMode.Aliased);
-        return sep;
-    }
-
-    private static IDataTemplate BuildUsersFilterValueTemplate(double fontBase, IBrush secondary,
-                                                               FilterValueMetrics metrics) =>
-        new FuncDataTemplate<UsersFilterValueVm>((_, _) =>
-        {
-            var name = new TextBlock
-            {
-                TextTrimming      = TextTrimming.CharacterEllipsis,
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            name.Bind(TextBlock.TextProperty, new Binding(nameof(UsersFilterValueVm.Display)));
-            name.Bind(Layoutable.MinWidthProperty,
-                      new Binding(nameof(FilterValueMetrics.TextMinWidth)) { Source = metrics });
-
-            var cb = new CheckBox
-            {
-                Content   = name,
-                FontSize  = fontBase,
-                HorizontalAlignment        = HorizontalAlignment.Stretch,
-                HorizontalContentAlignment = HorizontalAlignment.Left,
-                Margin    = new Thickness(0),
-                Cursor    = new Cursor(StandardCursorType.Hand),
-            };
-            cb.Bind(ToggleButton.IsCheckedProperty,
-                    new Binding(nameof(UsersFilterValueVm.Checked)) { Mode = BindingMode.TwoWay });
-
-            var cnt = new TextBlock { Foreground = secondary, VerticalAlignment = VerticalAlignment.Center };
-            cnt.Bind(TextBlock.TextProperty, new Binding(nameof(UsersFilterValueVm.CountText)));
-
-            var pin = new TranslateTransform();
-            pin.Bind(TranslateTransform.XProperty,
-                     new Binding(nameof(FilterValueMetrics.Pin)) { Source = metrics });
-            var cntHost = new Border
-            {
-                Background          = Brushes.White,
-                Padding             = new Thickness(FilterValueMetrics.Gap, 0, 0, 0),
-                HorizontalAlignment = HorizontalAlignment.Right,
-                Child               = cnt,
-                RenderTransform     = pin,
-            };
-
-            var cntSlot = new Border { Child = cntHost };
-            cntSlot.Bind(Layoutable.MinWidthProperty,
-                         new Binding(nameof(FilterValueMetrics.CountMinWidth)) { Source = metrics });
-
-            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
-            Grid.SetColumn(cb, 0);      row.Children.Add(cb);
-            Grid.SetColumn(cntSlot, 1); row.Children.Add(cntSlot);
-            return row;
         });
+    }
 
     // ── Ячейки (только биндинги: контейнеры переиспользуются) ──────────────────
 
@@ -1082,42 +760,6 @@ public partial class ProfileView
             };
             return button;
         });
-
-    /// <summary>Строка окна фильтра: значение колонки, счетчик и галка (зеркало
-    /// LogsFilterValueVm «Диагностики» — окно фильтра во всех таблицах одинаковое).</summary>
-    private sealed class UsersFilterValueVm : INotifyPropertyChanged
-    {
-        private readonly HashSet<string> _checked;
-        private readonly Action _onToggle;
-
-        public UsersFilterValueVm(string raw, string display, int count,
-                                  HashSet<string> checkedSet, Action onToggle)
-        {
-            Raw       = raw;
-            Display   = display;
-            CountText = count.ToString("N0");
-            _checked  = checkedSet;
-            _onToggle = onToggle;
-        }
-
-        public string Raw       { get; }
-        public string Display   { get; }
-        public string CountText { get; }
-
-        public bool Checked
-        {
-            get => _checked.Contains(Raw);
-            set
-            {
-                if (value) _checked.Add(Raw);
-                else       _checked.Remove(Raw);
-                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Checked)));
-                _onToggle();
-            }
-        }
-
-        public event PropertyChangedEventHandler? PropertyChanged;
-    }
 }
 
 /// <summary>
@@ -1166,8 +808,10 @@ public sealed class AdminUserRow : INotifyPropertyChanged
         UserKey     = user.UserKey;
         DisplayName = user.DisplayName;
         IsSelf      = user.UserKey == CurrentUser.Key;
-        CreatedAtText = FormatTs(user.CreatedAt);
-        LastSeenText  = FormatTs(user.LastSeenAt);
+        CreatedAt   = user.CreatedAt;
+        LastSeenAt  = user.LastSeenAt;
+        CreatedAtText = FormatTs(CreatedAt);
+        LastSeenText  = FormatTs(LastSeenAt);
         _mask       = mask;
         _isAdmin    = user.IsAdmin;
         _isApproved = user.IsApproved;
@@ -1193,10 +837,12 @@ public sealed class AdminUserRow : INotifyPropertyChanged
 
         // Даты сводим краями: «подключен» — когда впервые открыл хоть одну базу, «последняя
         // активность» — когда в последний раз открывал хоть какую-нибудь.
-        CreatedAtText = FormatTs(places.Select(p => p.CreatedAt).Where(s => s.Length > 0)
-                                       .OrderBy(s => s, StringComparer.Ordinal).FirstOrDefault() ?? "");
-        LastSeenText  = FormatTs(places.Select(p => p.LastSeenAt).Where(s => s.Length > 0)
-                                       .OrderByDescending(s => s, StringComparer.Ordinal).FirstOrDefault() ?? "");
+        CreatedAt  = places.Select(p => p.CreatedAt).Where(s => s.Length > 0)
+                           .OrderBy(s => s, StringComparer.Ordinal).FirstOrDefault() ?? "";
+        LastSeenAt = places.Select(p => p.LastSeenAt).Where(s => s.Length > 0)
+                           .OrderByDescending(s => s, StringComparer.Ordinal).FirstOrDefault() ?? "";
+        CreatedAtText = FormatTs(CreatedAt);
+        LastSeenText  = FormatTs(LastSeenAt);
 
         // Маска, действующая в каждой базе: у администратора — все биты, у остальных своя.
         var masks = places.Select(p => p.IsAdmin ? AllBits : p.Mask).ToList();
@@ -1220,6 +866,12 @@ public sealed class AdminUserRow : INotifyPropertyChanged
     public string UserKey     { get; }
     public string DisplayName { get; }
     public bool   IsSelf      { get; }
+
+    /// <summary>Когда впервые открыл базу и когда в последний раз — ISO, как в db_users. По ним
+    /// считаются сортировка по времени и дерево дат в фильтре; ячейка показывает текст ниже.</summary>
+    public string CreatedAt   { get; }
+    public string LastSeenAt  { get; }
+
     public string CreatedAtText { get; }
     public string LastSeenText  { get; }
 

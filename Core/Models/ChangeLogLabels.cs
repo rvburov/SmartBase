@@ -11,42 +11,54 @@ namespace SmartBase.Core.Models;
 /// </summary>
 public static class ChangeLogLabels
 {
-    public static string ActionLabel(string action) => action switch
+    /// <summary>
+    /// Коды действий → подписи. Словарь, а не switch: из него же репозиторий собирает сортировку
+    /// колонки (<c>ConstructorRepository.SortChangeLog</c>) — «От А до Я» обязано идти по тому, что
+    /// написано в ячейке, а не по внутренним кодам («create», «delete», «update»).
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, string> Actions = new Dictionary<string, string>
     {
-        "create"       => "Создание",
-        "update"       => "Изменение",
-        "delete"       => "Удаление",
-        "duplicate"    => "Дублирование",
-        "import"       => "Импорт",
-        "export"       => "Экспорт",
-        "copy"         => "Копирование",
-        "move"         => "Перенос",
-        "user.join"    => "Присоединение",
-        "user.approve" => "Допуск",
-        "user.revoke"  => "Отзыв допуска",
-        "user.rights"  => "Изменение прав",
-        "user.role"    => "Смена роли",
-        "user.remove"  => "Удаление пользователя",
-        "user.unlock"  => "Доступ по паролю",
-        "user.rename"  => "Смена имени",
+        ["create"]       = "Создание",
+        ["update"]       = "Изменение",
+        ["delete"]       = "Удаление",
+        ["duplicate"]    = "Дублирование",
+        ["import"]       = "Импорт",
+        ["export"]       = "Экспорт",
+        ["copy"]         = "Копирование",
+        ["move"]         = "Перенос",
+        ["user.join"]    = "Присоединение",
+        ["user.approve"] = "Допуск",
+        ["user.revoke"]  = "Отзыв допуска",
+        ["user.rights"]  = "Изменение прав",
+        ["user.role"]    = "Смена роли",
+        ["user.remove"]  = "Удаление пользователя",
+        ["user.unlock"]  = "Доступ по паролю",
+        ["user.rename"]  = "Смена имени",
         // Метки конфиденциальности. Понижение — отдельным кодом, а не просто «Изменение»:
         // именно его ищут в журнале, когда разбираются, как данные ушли наружу.
-        "label"        => "Метка конфиденциальности",
-        "label.lower"  => "Понижение метки",
-        _              => action,
+        ["label"]        = "Метка конфиденциальности",
+        ["label.lower"]  = "Понижение метки",
     };
 
-    public static string TypeLabel(string targetType) => targetType switch
+    /// <summary>Типы объектов → подписи; как и <see cref="Actions"/>, источник и для сортировки.</summary>
+    public static readonly IReadOnlyDictionary<string, string> Types = new Dictionary<string, string>
     {
-        "collection" => "Коллекция",
-        "group"      => "Группа",
-        "field"      => "Свойство",
-        "record"     => "Запись",
-        "records"    => "Записи",
-        "user"       => "Пользователь",
-        "database"   => "База данных",
-        _            => targetType,
+        ["collection"] = "Коллекция",
+        ["group"]      = "Группа",
+        ["field"]      = "Свойство",
+        ["record"]     = "Запись",
+        ["records"]    = "Записи",
+        ["user"]       = "Пользователь",
+        ["database"]   = "База данных",
     };
+
+    /// <summary>Подпись действия; незнакомый код показывается как есть.</summary>
+    public static string ActionLabel(string action) =>
+        Actions.TryGetValue(action, out var label) ? label : action;
+
+    /// <summary>Подпись типа объекта; незнакомый код показывается как есть.</summary>
+    public static string TypeLabel(string targetType) =>
+        Types.TryGetValue(targetType, out var label) ? label : targetType;
 
     /// <summary>
     /// Объект строки: правки с «до → после» показывают готовый Detail («„А" → „Б"»,

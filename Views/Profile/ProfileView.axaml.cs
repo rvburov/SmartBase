@@ -175,11 +175,33 @@ public partial class ProfileView : UserControl
 
     /// <summary>Чужие события пользователей этой базы (присоединение, допуск, права, роль —
     /// принес поллер через MainWindow): перечитать открытую панель пользователей, сохранив
-    /// выбранную область. Панель закрыта или база другая — не трогаем (откроется свежей).</summary>
+    /// выбранную область, и список баз истории — допуск могли отозвать или вернуть. Панель
+    /// закрыта или база ее не касается — не трогаем (откроется свежей).</summary>
     public void OnRemoteUserChanges(int dbId)
     {
-        if (!AdminPanel.IsVisible || _adminDb is null || _adminDb.DbId != dbId) return;
-        RefreshUsersPanel();
+        RefreshHistoryAccess();
+
+        // Панель пользователей открыта ВМЕСТО панели администратора, и та в это время скрыта, —
+        // смотреть надо на саму панель. В области «все базы» ее касается любая из админских баз.
+        if (!UsersPanelOpen || _adminDb is null) return;
+        if (_adminDb.DbId == dbId || (AcrossDatabases && _adminDbs.Any(d => d.DbId == dbId)))
+            RefreshUsersPanel();
+    }
+
+    /// <summary>
+    /// Набор смонтированных баз или доступ к ним поменялся (MainWindow.SyncMountedToUi): открытые
+    /// разделы следуют за ним сразу — история показывает только базы с допуском, панель
+    /// администратора — только базы, где вы администратор.
+    /// </summary>
+    public void OnDatabasesChanged()
+    {
+        RefreshHistoryAccess();
+
+        if (!AdminPanel.IsVisible && !UsersPanelOpen) return;
+        var admins = _workspace?.Mounted.Where(m => m.Permissions.IsAdmin).ToList() ?? [];
+        if (admins.SequenceEqual(_adminDbs)) return;
+        CloseUsersPanel();
+        RebuildAdminPanel();
     }
 
     // Загрузить выбранную базу: пароль, автоочистка. Панель пользователей относится
@@ -195,13 +217,50 @@ public partial class ProfileView : UserControl
         RefreshRetentionRow();
     }
 
+    // Программное выставление тумблера доступа по паролю не должно писать политику в базу.
+    private bool _suppressPasswordAccess;
+
     private void RefreshPasswordRow()
     {
         if (_adminDb is null) return;
-        var has = _adminDb.Permissions.HasPassword;
+        var perms = _adminDb.Permissions;
+        var has   = perms.HasPassword;
         PasswordStateText.Text     = has ? "Пароль установлен." : "Пароль не установлен.";
         PasswordSetBtn.Content     = has ? "Сменить пароль" : "Установить пароль";
         PasswordRemoveBtn.IsVisible = has;
+
+        // Тумблер показывает, открывает ли замок пароль сейчас: без пароля открывать нечем, даже
+        // если вход паролем не выключали.
+        _suppressPasswordAccess = true;
+        PasswordAccessToggle.IsChecked = perms.PasswordAccess;
+        _suppressPasswordAccess = false;
+    }
+
+    // «Доступ других пользователей по паролю». Выключение пароль не удаляет — включили обратно, и
+    // прежний пароль снова работает. Включение без пароля — сначала придумать пароль: доступ по
+    // паролю без пароля никого бы не пустил. Отказались от окна — тумблер возвращается.
+    private async void OnPasswordAccessToggled(object? sender, RoutedEventArgs e)
+    {
+        if (_suppressPasswordAccess || _adminDb is not { } db || TopLevel.GetTopLevel(this) is not Window owner)
+            return;
+
+        var on = PasswordAccessToggle.IsChecked == true;
+
+        if (on && !db.Permissions.HasPassword)
+        {
+            var name     = string.IsNullOrWhiteSpace(db.Name) ? "База данных" : db.Name;
+            var password = await PasswordDialog.ForSet(name, hasPassword: false).ShowDialog<string?>(owner);
+
+            // Пока окно было открыто, в панели могли выбрать другую базу — пароль чужой базе не ставим.
+            if (string.IsNullOrEmpty(password) || !ReferenceEquals(db, _adminDb))
+            {
+                RefreshPasswordRow();
+                return;
+            }
+            if (!RunAdminAction(() => db.Permissions.SetPassword(password))) return;
+        }
+
+        if (RunAdminAction(() => db.Permissions.SetPasswordAccess(on))) RefreshPasswordRow();
     }
 
     // ── Очистка журнала ────────────────────────────────────────────────────────

@@ -367,11 +367,13 @@ public partial class ConstructorRepository(AppDbContext db)
     private static IQueryable<ChangeLogEntity> SortChangeLog(IQueryable<ChangeLogEntity> q,
         string column, bool asc, string? afterValue, long? afterId)
     {
+        // «Действие» и «Тип» сортируются по ПОДПИСИ, а не по коду: в ячейке написано
+        // «Изменение», и «От А до Я» по коду «update» ставило бы его после «Удаления».
         Expression<Func<ChangeLogEntity, string>> sel = column switch
         {
             "user"       => e => e.UserName,
-            "action"     => e => e.Action,
-            "type"       => e => e.TargetType,
+            "action"     => Labeled(e => e.Action, ChangeLogLabels.Actions),
+            "type"       => Labeled(e => e.TargetType, ChangeLogLabels.Types),
             "object"     => e => e.TargetName,
             "collection" => e => e.CollectionName ?? "",
             _            => e => e.UserName,
@@ -397,19 +399,54 @@ public partial class ConstructorRepository(AppDbContext db)
         return ordered.ThenByDescending(e => e.Id);
     }
 
+    // Код → подпись прямо в SQL: вложенные «код = X ? подпись : …» EF переводит в CASE, незнакомый
+    // код остается как есть — ровно как ChangeLogLabels.ActionLabel/TypeLabel в ячейке.
+    private static Expression<Func<ChangeLogEntity, string>> Labeled(
+        Expression<Func<ChangeLogEntity, string>> code, IReadOnlyDictionary<string, string> labels)
+    {
+        Expression body = code.Body;
+        foreach (var (raw, label) in labels)
+            body = Expression.Condition(Expression.Equal(code.Body, Expression.Constant(raw)),
+                                        Expression.Constant(label), body);
+        return Expression.Lambda<Func<ChangeLogEntity, string>>(body, code.Parameters);
+    }
+
+    /// <summary>
+    /// Значение сортируемой колонки у строки — вторая половина keyset-курсора
+    /// (<see cref="ChangeLogQuery.AfterValue"/>). Живет рядом с <see cref="SortChangeLog"/>:
+    /// курсор обязан совпадать с выражением ORDER BY, иначе страницы теряют или дублируют строки.
+    /// </summary>
+    public static string ChangeLogSortValue(string column, ChangeLogRow row) => column switch
+    {
+        "user"       => row.UserName,
+        "action"     => ChangeLogLabels.ActionLabel(row.Action),
+        "type"       => ChangeLogLabels.TypeLabel(row.TargetType),
+        "object"     => row.TargetName,
+        "collection" => row.CollectionName ?? "",
+        "date"       => row.Ts.Length >= 10 ? row.Ts[..10] : row.Ts,
+        _            => row.UserName,
+    };
+
     /// <summary>
     /// Значения колонки журнала с количеством — для окна фильтра таблицы истории
     /// (SQL-агрегат на фоновом потоке, отдельное подключение — как GetColumnCountsAsync).
     /// Ключи колонок — как в <see cref="ChangeLogQuery"/>; date группируется по дню.
+    ///
+    /// Каскад, как у таблицы конструктора: считаются только строки, прошедшие
+    /// <paramref name="filters"/> ОСТАЛЬНЫХ колонок. Свой фильтр колонки отбрасывается здесь
+    /// же — иначе снятое значение пропало бы из списка и вернуть его в отбор было бы нечем.
     /// </summary>
-    public Task<List<(string Value, int Count)>> GetChangeLogCountsAsync(string column)
+    public Task<List<(string Value, int Count)>> GetChangeLogCountsAsync(string column,
+        IReadOnlyDictionary<string, IReadOnlyCollection<string>>? filters = null)
     {
-        var path = db.DbPath;
+        var path   = db.DbPath;
+        var others = filters?.Where(kv => kv.Key != column).ToDictionary(kv => kv.Key, kv => kv.Value)
+                     ?? new Dictionary<string, IReadOnlyCollection<string>>();
         return Task.Run(() =>
         {
             using var ctx = new AppDbContext(path);
             ctx.ApplyPerformancePragmas();
-            var src = ctx.ChangeLog.AsNoTracking();
+            var src = FilterChangeLog(ctx.ChangeLog.AsNoTracking(), others);
             var groups = column switch
             {
                 "user"       => src.GroupBy(e => e.UserName),

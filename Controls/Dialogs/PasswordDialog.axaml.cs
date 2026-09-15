@@ -42,17 +42,22 @@ public partial class PasswordDialog : Window
         var dlg = new PasswordDialog(tryUnlock: null);
         dlg.Title = hasPassword ? "Сменить пароль" : "Установить пароль";
         dlg.InfoText.Text =
-            $"База данных: {dbName}. Пароль позволяет новому пользователю получить доступ " +
-            "к базе без подтверждения администратором.";
+            $"База данных: {dbName}. Пока включен доступ других пользователей по паролю, новый " +
+            "пользователь открывает им базу без подтверждения администратором.";
         dlg.PasswordLabel.Text = hasPassword ? "Новый пароль" : "Пароль";
         dlg.ConfirmBtn.Content = "Сохранить";
         return dlg;
     }
 
-    /// <summary>Разблокировка запертой базы. ShowDialog&lt;bool&gt; → true при верном пароле.</summary>
-    public static PasswordDialog ForUnlock(string dbName, Func<string, bool> tryUnlock)
+    /// <summary>
+    /// Разблокировка запертой базы. ShowDialog&lt;bool&gt; → true при верном пароле. Колбэк
+    /// (PermissionService.Unlock) возвращает причину отказа словами: «неверный пароль» и «вход по
+    /// паролю выключен администратором» лечатся по-разному, и второе, названное первым, отправило
+    /// бы человека искать опечатку.
+    /// </summary>
+    public static PasswordDialog ForUnlock(string dbName, Func<string, string> unlock)
     {
-        var dlg = new PasswordDialog(password => tryUnlock(password) ? "" : "Неверный пароль");
+        var dlg = new PasswordDialog(unlock);
         dlg.Title = "База данных защищена";
         dlg.InfoText.Text =
             $"База данных «{dbName}» доступна после подтверждения администратором или " +

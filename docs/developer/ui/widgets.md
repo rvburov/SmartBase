@@ -83,7 +83,7 @@ Note.Hide();                       // прячет
 [EmptyListHint](../../../Controls/Components/EmptyListHint.cs) кладет список и надпись-заглушку
 в общий `Panel`: заглушка видна, пока в списке нет строк — «Список пуст», а при непустом
 поиске «Ничего не найдено». Применяется в чеклистах «Мультисписка» и «Связи» и в панелях
-фильтра (таблица, логи, история). У нативных `ComboBox` то же делает копия темы
+фильтра (таблица конструктора и общее окно служебных таблиц `ColumnFilterPanel`). У нативных `ComboBox` то же делает копия темы
 (см. [theming.md](theming.md#выпадающие-списки-стандарт)).
 
 ## Компоненты ([Controls/Components/](../../../Controls/Components/))
@@ -97,7 +97,8 @@ Note.Hide();                       // прячет
 | [ConstructorNavbar](../../../Controls/Components/Navbar/NavbarConstructor.axaml) | навбар конструктора: заголовок-коллекция (редактируемый), переключатель вида, toggle панели записи |
 | [ConstructorFooter](../../../Controls/Components/Footer/FooterConstructor.axaml) | нижняя панель: навигация по строкам таблицы («‹‹ ‹ 10 – 50 из 125 437 › ››», см. [../features/constructor/table.md](../features/constructor/table.md#навигация-нижней-панели)) и размер выделения ячеек «Выделено: 3 × 2» (`SetSelection`; при одной выделенной ячейке и в виде «Список» надписи нет). Больше в панели ничего нет: кнопки «Фильтр»/«Сортировка» удалены (их события никто не слушал, живые вызовы — из меню заголовка колонки), счетчик «Всего: N» — как дубль числа после «из» |
 | [AllDayBar](../../../Controls/Components/AllDayBar.axaml) | полоса событий «весь день» в режимах «День»/«Неделя» |
-| [DateFilterTreeBox](../../../Controls/Components/DateFilterTreeBox.cs) | чеклист дат в окне фильтра колонки: дерево «год → месяц → день» с каскадом галочек; общий для таблицы конструктора, «Диагностики» и «Истории изменений» (логика — [DateFilterTree](../../../Core/Models/DateFilterTree.cs)) |
+| [DateFilterTreeBox](../../../Controls/Components/DateFilterTreeBox.cs) | чеклист дат в окне фильтра колонки: дерево «год → месяц → день» с каскадом галочек; общий для таблицы конструктора, «Диагностики», «Истории изменений» и таблицы пользователей (логика — [DateFilterTree](../../../Core/Models/DateFilterTree.cs)) |
+| [ColumnFilterPanel](../../../Controls/Components/ColumnFilterPanel.cs) | окно фильтра и сортировки колонки служебных таблиц — «Диагностика», «История изменений», «Пользователи»: поведение таблицы конструктора (каскад фильтров, автоотметка найденного, Enter, отобранные первыми) на общей модели [FilterSelection](../../../Core/Models/FilterSelection.cs). Таблица отдает ему `ColumnFilterSpec` (подписи, загрузку значений с фильтрами остальных колонок) и получает `ColumnFilterResult`; каскад в памяти — [ColumnCascade](../../../Core/Models/ColumnCascade.cs) |
 | [EventContextMenu](../../../Controls/Components/EventContextMenu.cs) | фабрика контекстных меню событий: `Single` / `Multi` / `Background` |
 
 `Navbar` шлет наверх `TodayClicked/PrevClicked/NextClicked/AddClicked/ViewChanged/

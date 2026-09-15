@@ -588,4 +588,117 @@ public sealed class DbAccessLifecycleTests
         using var check = new AppDbContext(db.Path);
         Assert.False(check.DbMeta.Any(m => m.Key.StartsWith("password.")));
     }
+
+    // ── 9. Доступ других пользователей по паролю ──────────────────────────────
+
+    /// <summary>
+    /// Тумблер «Доступ других пользователей по паролю». Базы, где пароль поставили до тумблера,
+    /// работают как раньше — вход паролем включен. Выключенный вход не пускает даже с верным
+    /// паролем и говорит это словами (а не «неверный пароль»), пароль при этом не удаляется;
+    /// включенный с другой машины — тот же пароль снова открывает базу, без перезапуска.
+    /// Не администратор переключить его не может.
+    /// </summary>
+    [Fact]
+    public void Password_access_switched_off_keeps_the_lock_until_admin_decides()
+    {
+        using var db = new TempDatabase();
+        db.Permissions.SetPassword("секрет");
+        Assert.True(db.Permissions.PasswordAccess);
+
+        db.Permissions.SetPasswordAccess(false);
+        Assert.False(db.Permissions.PasswordAccess);
+        Assert.True(db.Permissions.HasPassword);
+
+        Demote(db, admin: false, approved: false);
+        Assert.Throws<InvalidOperationException>(() => db.Permissions.SetPasswordAccess(true));
+
+        Assert.Equal("Вход по паролю выключен администратором базы данных", db.Permissions.Unlock("секрет"));
+        Assert.False(db.Permissions.AccessGranted);
+        using (var locked = new AppDbContext(db.Path))
+            Assert.False(locked.DbUsers.Single(u => u.UserKey == CurrentUser.Key).IsApproved);
+
+        // Администратор на своей машине включил вход паролем обратно.
+        using (var admin = new AppDbContext(db.Path))
+        {
+            admin.DbMeta.Single(m => m.Key == "access.password.enabled").Value = "1";
+            admin.SaveChanges();
+        }
+
+        Assert.Equal("Неверный пароль", db.Permissions.Unlock("не тот"));
+        Assert.Equal("", db.Permissions.Unlock("секрет"));
+        Assert.True(db.Permissions.AccessGranted);
+    }
+
+    /// <summary>
+    /// Администратор убрал человека, пока база была у того открыта. Щелчок по замку — снова
+    /// запрос доступа: строка появляется ждущей допуска (администратору приходит user.join), и
+    /// пускает ее опять только администратор или пароль базы. Повторный щелчок строк не плодит.
+    /// </summary>
+    [Fact]
+    public void User_removed_while_database_is_open_requests_access_again()
+    {
+        var path = TempDatabase.NewTempPath();
+        try
+        {
+            // Базу создал сосед (с паролем) — админ он, я прихожу вторым.
+            using (var owner = DatabaseManager.Open(1, "общая", path))
+            {
+                owner.Permissions.SetPassword("секрет");
+                var me = owner.Context.DbUsers.Single(u => u.UserKey == CurrentUser.Key);
+                me.UserKey     = "boss@other-pc";
+                me.DisplayName = "Чужой Админ";
+                owner.Context.SaveChanges();
+            }
+
+            using var mine = DatabaseManager.Open(1, "общая", path);
+            var myId = mine.Permissions.CurrentUserId;
+            Assert.True(mine.Permissions.PasswordAccess);
+
+            // Допустили, потом убрали — база у меня все это время открыта.
+            using (var admin = new AppDbContext(path))
+            {
+                admin.DbUsers.Single(u => u.Id == myId).IsApproved = true;
+                admin.SaveChanges();
+            }
+            mine.Permissions.Reload(notify: false);
+            Assert.True(mine.Permissions.AccessGranted);
+
+            using (var admin = new AppDbContext(path))
+            {
+                admin.DbUsers.Remove(admin.DbUsers.Single(u => u.Id == myId));
+                admin.SaveChanges();
+            }
+            mine.Permissions.Reload(notify: false);
+            Assert.False(mine.Permissions.AccessGranted);
+
+            int joins;
+            using (var before = new AppDbContext(path)) joins = before.ChangeLog.Count(e => e.Action == "user.join");
+
+            mine.Permissions.RequestAccess();
+            mine.Permissions.RequestAccess();
+
+            Assert.False(mine.Permissions.AccessGranted);
+            using (var check = new AppDbContext(path))
+            {
+                var again = check.DbUsers.Single(u => u.UserKey == CurrentUser.Key);
+                Assert.NotEqual(myId, again.Id);
+                Assert.False(again.IsApproved);
+                Assert.Equal(joins + 1, check.ChangeLog.Count(e => e.Action == "user.join"));
+            }
+
+            // Убрали еще раз — верный пароль возвращает человека сам: сначала запрос, затем допуск.
+            using (var admin = new AppDbContext(path))
+            {
+                admin.DbUsers.Remove(admin.DbUsers.Single(u => u.UserKey == CurrentUser.Key));
+                admin.SaveChanges();
+            }
+            mine.Permissions.Reload(notify: false);
+
+            Assert.Equal("", mine.Permissions.Unlock("секрет"));
+            Assert.True(mine.Permissions.AccessGranted);
+            using (var check = new AppDbContext(path))
+                Assert.True(check.DbUsers.Single(u => u.UserKey == CurrentUser.Key).IsApproved);
+        }
+        finally { TempDatabase.Cleanup(path); }
+    }
 }

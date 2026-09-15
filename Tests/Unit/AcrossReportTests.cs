@@ -4,69 +4,14 @@ using SmartBase.Views.Profile;
 namespace SmartBase.Tests.Unit;
 
 /// <summary>
-/// Две фразы области «все базы данных» (docs/ROADMAP-API.md, шаг 15).
+/// Итог массовой правки области «все базы данных» (docs/ROADMAP-API.md, шаг 15). Показывается
+/// окном, когда какая-то база правку не приняла.
 ///
-/// Проверяется не форматирование, а обещания, которые эти фразы дают человеку: область действия
-/// массовой правки названа ДО щелчка, базы названы по имени, а «не записалось» и «пропущено»
-/// не сваливаются в одно.
+/// Проверяется не форматирование, а обещания, которые фраза дает человеку: базы названы по имени,
+/// а «не записалось» и «пропущено» не сваливаются в одно.
 /// </summary>
 public sealed class AcrossReportTests
 {
-    // ── Куда уйдут правки ─────────────────────────────────────────────────────
-
-    [Fact]
-    public void Every_touched_database_is_named()
-    {
-        var text = AcrossReport.Where(["Продажи", "Склад"], [], []);
-
-        Assert.Contains("Продажи", text);
-        Assert.Contains("Склад", text);
-    }
-
-    /// <summary>
-    /// Закрытая база названа по имени и с причиной: права лежат в ее файле, и человеку надо
-    /// понять, что делать, — открыть базу и повторить.
-    /// </summary>
-    [Fact]
-    public void A_closed_database_is_named_with_its_reason()
-    {
-        var text = AcrossReport.Where(["Продажи"], [], ["Архив"]);
-
-        Assert.Contains("Архив — не открыта", text);
-        Assert.Contains("в закрытый файл их не положить", text);
-    }
-
-    /// <summary>«Открыта, но админ не вы» лечится не тем же, чем «не открыта», — и сказано иначе.</summary>
-    [Fact]
-    public void Not_being_an_admin_is_a_different_reason_than_being_closed()
-    {
-        var text = AcrossReport.Where(["Продажи"], ["Кадры"], ["Архив"]);
-
-        Assert.Contains("Кадры — вы не администратор", text);
-        Assert.Contains("Архив — не открыта", text);
-    }
-
-    /// <summary>Нечего править — сказано прямо, а не пустой строкой.</summary>
-    [Fact]
-    public void Nowhere_to_write_is_said_out_loud()
-    {
-        var text = AcrossReport.Where([], [], ["Архив"]);
-
-        Assert.Contains("сейчас нет", text);
-        Assert.Contains("Архив", text);
-    }
-
-    /// <summary>Все базы открыты и все ваши — лишней фразы про «не затронуты» нет.</summary>
-    [Fact]
-    public void Nothing_left_aside_means_no_aside_sentence()
-    {
-        var text = AcrossReport.Where(["Продажи", "Склад"], [], []);
-
-        Assert.DoesNotContain("Не затронуты", text);
-    }
-
-    // ── Что вышло ─────────────────────────────────────────────────────────────
-
     [Fact]
     public void The_outcome_names_the_right_and_the_decision()
     {

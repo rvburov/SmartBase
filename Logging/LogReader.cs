@@ -44,7 +44,7 @@ public sealed class LogReader
     /// <summary>Файл лога еще не создан (Serilog пишет его при первой записи).</summary>
     public bool Exists => File.Exists(_path);
 
-    // SQL-выражение колонки по ключу — для WHERE-фильтров, keyset и агрегатов фильтра.
+    // SQL-выражение колонки по ключу — для WHERE-фильтров и агрегатов фильтра.
     // exception нормализуем через IFNULL: NULL и '' в фильтре — одно значение «(Пусто)».
     private static string ColumnExpr(string key) => key switch
     {
@@ -53,6 +53,31 @@ public sealed class LogReader
         "message"   => "RenderedMessage",
         "exception" => "IFNULL(Exception,'')",
         _           => "Level",
+    };
+
+    // Выражение сортировки и keyset. «Уровень» сортируется по ПОДПИСИ: в ячейке «Ошибка»,
+    // «Предупреждение», и «От А до Я» по «Error»/«Warning» шло бы вразнобой с тем, что видно.
+    private static string SortExpr(string key) => key == "level" ? LevelLabelSql : ColumnExpr(key);
+
+    private static readonly string LevelLabelSql =
+        "CASE Level " +
+        string.Join(" ", LogLabels.Levels.Select(kv => $"WHEN '{Quote(kv.Key)}' THEN '{Quote(kv.Value)}'")) +
+        " ELSE Level END";
+
+    private static string Quote(string s) => s.Replace("'", "''");
+
+    /// <summary>
+    /// Значение сортируемой колонки у строки — вторая половина keyset-курсора
+    /// (<see cref="LogQuery.AfterValue"/>). Обязано совпадать с выражением ORDER BY
+    /// (<see cref="SortExpr"/>), иначе страницы теряют или дублируют строки.
+    /// </summary>
+    public static string SortValue(string column, LogRow row) => column switch
+    {
+        "level"     => LogLabels.LevelLabel(row.Level),
+        "message"   => row.Message,
+        "exception" => row.Exception ?? "",
+        "date"      => row.Timestamp.Length >= 10 ? row.Timestamp[..10] : row.Timestamp,
+        _           => LogLabels.LevelLabel(row.Level),
     };
 
     /// <summary>
@@ -199,10 +224,16 @@ public sealed class LogReader
     /// <summary>
     /// Значения колонки с количеством — для окна фильтра таблицы логов (SQL-агрегат на
     /// фоне). Аналог <c>GetChangeLogCountsAsync</c>. date группируется по дню.
+    ///
+    /// Каскад, как у таблицы конструктора: считаются строки, прошедшие <paramref name="filters"/>
+    /// ОСТАЛЬНЫХ колонок; свой фильтр колонки отбрасывается — снятое значение остается в списке.
     /// </summary>
-    public Task<List<(string Value, int Count)>> GetCountsAsync(string column)
+    public Task<List<(string Value, int Count)>> GetCountsAsync(string column,
+        IReadOnlyDictionary<string, IReadOnlyCollection<string>>? filters = null)
     {
-        var path = _path;
+        var path   = _path;
+        var others = filters?.Where(kv => kv.Key != column).ToDictionary(kv => kv.Key, kv => kv.Value)
+                     ?? new Dictionary<string, IReadOnlyCollection<string>>();
         return Task.Run(() =>
         {
             var result = new List<(string, int)>();
@@ -210,8 +241,12 @@ public sealed class LogReader
 
             using var conn = OpenRead(path);
             using var cmd  = conn.CreateCommand();
-            var expr = ColumnExpr(column);
-            cmd.CommandText = $"SELECT {expr} AS v, COUNT(*) FROM logs GROUP BY v";
+            var expr  = ColumnExpr(column);
+            var where = new List<string>();
+            AppendFilters(cmd, others, where);
+            cmd.CommandText = $"SELECT {expr} AS v, COUNT(*) FROM logs" +
+                              (where.Count > 0 ? " WHERE " + string.Join(" AND ", where) : "") +
+                              " GROUP BY v";
 
             using var r = cmd.ExecuteReader();
             while (r.Read())
@@ -270,7 +305,7 @@ public sealed class LogReader
         }
         else
         {
-            var col = ColumnExpr(query.SortColumn!);
+            var col = SortExpr(query.SortColumn!);
             var cmp = query.SortAsc ? ">" : "<";
             where.Add($"({col} COLLATE NOCASE {cmp} @afterValue " +
                       $"OR ({col} COLLATE NOCASE = @afterValue AND id < @afterId))");
@@ -286,7 +321,7 @@ public sealed class LogReader
         if (IsIdOrder(query))
             return query.SortColumn == "date" && query.SortAsc ? "id ASC" : "id DESC";
 
-        var col = ColumnExpr(query.SortColumn!);
+        var col = SortExpr(query.SortColumn!);
         var dir = query.SortAsc ? "ASC" : "DESC";
         return $"{col} COLLATE NOCASE {dir}, id DESC";
     }

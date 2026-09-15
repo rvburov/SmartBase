@@ -25,8 +25,9 @@ namespace SmartBase.Views.Profile;
 
 /// <summary>
 /// «История изменений» — таблица журнала выбранной базы в стиле таблицы конструктора
-/// (TableView): те же линии/шапка и тот же фильтр-чеклист с сортировкой в заголовке
-/// каждой колонки. Выбор базы — в навбаре (NavbarProfile). Строки подгружаются
+/// (TableView): те же линии/шапка и то же окно фильтра и сортировки в заголовке колонки
+/// (<see cref="ColumnFilterPanel"/>: каскад фильтров, автоотметка найденного, Enter). Выбор
+/// базы — в навбаре (NavbarProfile), только среди баз с допуском. Строки подгружаются
 /// keyset-страницами по 200 при прокрутке к концу (GetChangeLogPageAsync, отдельное
 /// подключение) — миллионы строк не фризят UI. Фильтры и сортировка считаются в SQL.
 /// </summary>
@@ -63,16 +64,15 @@ public partial class ProfileView
 
     // Шевроны шапки: ключ колонки → Path, чтобы подсвечивать активный фильтр/сортировку.
     private readonly Dictionary<string, Path> _historyChevrons = [];
-    private Flyout? _historyFlyout;
     private ScrollBar? _historyScroll;
 
     // ── Панель ────────────────────────────────────────────────────────────────
 
     private void RebuildHistoryPanel()
     {
-        _historyDbs = _workspace?.Mounted.Where(m => m.Permissions.AccessGranted).ToList() ?? [];
+        _historyDbs = GrantedHistoryDbs();
 
-        // Список баз — в навбаре; выбор сохраняется, если база еще смонтирована.
+        // Список баз — в навбаре; выбор сохраняется, если база еще смонтирована и доступна.
         var keepDbId = _historyDb?.DbId;
         var names = _historyDbs
             .Select(d => string.IsNullOrWhiteSpace(d.Name) ? "База данных" : d.Name)
@@ -87,6 +87,24 @@ public partial class ProfileView
         }
         HookHistoryDetail();
         OnHistoryDbChanged();
+    }
+
+    // Базы, чью историю можно смотреть, — только те, к содержимому которых есть допуск. Историю
+    // базы, откуда человека убрали или где у него отозвали допуск, он не видит так же, как ее
+    // данные; вернули допуск — снова видны все строки, и свои, и чужие.
+    private List<DatabaseManager> GrantedHistoryDbs() =>
+        _workspace?.Mounted.Where(m => m.Permissions.AccessGranted).ToList() ?? [];
+
+    /// <summary>
+    /// Доступ к базам поменялся на ходу (допуск отозвали или вернули, базу подключили или
+    /// отключили): открытая история следует за ним сразу, а не при следующем заходе в раздел.
+    /// Набор баз прежний — таблицу под руками не перечитываем.
+    /// </summary>
+    private void RefreshHistoryAccess()
+    {
+        if (!HistoryPanel.IsVisible) return;
+        if (GrantedHistoryDbs().SequenceEqual(_historyDbs)) return;
+        RebuildHistoryPanel();
     }
 
     // Выбор базы в навбаре (и первичное применение при открытии раздела).
@@ -114,6 +132,7 @@ public partial class ProfileView
         _historyRows.Clear();
         _historyEnd = _historyDb is null;
         HistoryEmptyText.IsVisible = false;
+        if (_historyDb is null) { ShowHistoryEmptyText(); return; }
         _ = LoadMoreHistoryAsync();
     }
 
@@ -128,14 +147,13 @@ public partial class ProfileView
             var last  = _historyRows.Count > 0 ? _historyRows[^1] : null;
             var query = new ConstructorRepository.ChangeLogQuery
             {
-                Filters = _historyFilters.ToDictionary(
-                    kv => kv.Key, kv => (IReadOnlyCollection<string>)kv.Value),
+                Filters    = HistoryFiltersSnapshot(),
                 SortColumn = _historySortKey,
                 SortAsc    = _historySortAsc,
                 AfterId    = last?.Id,
                 AfterValue = last is null || _historySortKey is null
                     ? null
-                    : HistoryRawValue(_historySortKey, last),
+                    : ConstructorRepository.ChangeLogSortValue(_historySortKey, last),
             };
             var page = await requestDb.Constructor.GetChangeLogPageAsync(query, HistoryPageSize);
 
@@ -144,13 +162,38 @@ public partial class ProfileView
 
             _historyRows.AddRange(page);
             if (page.Count < HistoryPageSize) _historyEnd = true;
-            HistoryEmptyText.IsVisible = _historyRows.Count == 0;
+            ShowHistoryEmptyText();
 
             // Подписка на вертикальный скролл — после того, как шаблон DataGrid построен.
             Dispatcher.UIThread.Post(EnsureHistoryScrollHook, DispatcherPriority.Background);
         }
-        finally { _historyLoading = false; }
+        catch (Exception ex)
+        {
+            // Страница не прочиталась (база недоступна, файл занят): таблица остается с тем, что
+            // уже показано, а монитор доступности узнает о пропаже базы.
+            DbErrors.HandleRead(ex, requestDb.Constructor.DbPath);
+        }
+        finally
+        {
+            _historyLoading = false;
+            // Пока шло чтение, таблицу перезапросили (база, фильтр, сортировка): первая страница
+            // нового запроса не стартовала — чтение было занято. Догоняем, иначе таблица так и
+            // осталась бы пустой.
+            if (gen != _historyGen) _ = LoadMoreHistoryAsync();
+        }
     }
+
+    // Пустая таблица объясняет себя: нет доступных баз, фильтры ничего не пропустили или журнал пуст.
+    private void ShowHistoryEmptyText()
+    {
+        HistoryEmptyText.Text = _historyDb is null        ? "Нет баз данных, к которым у вас есть доступ."
+                              : _historyFilters.Count > 0 ? "Нет записей, подходящих под фильтры."
+                              : "Записей в журнале пока нет.";
+        HistoryEmptyText.IsVisible = _historyRows.Count == 0;
+    }
+
+    private Dictionary<string, IReadOnlyCollection<string>> HistoryFiltersSnapshot() =>
+        _historyFilters.ToDictionary(kv => kv.Key, kv => (IReadOnlyCollection<string>)kv.Value);
 
     // Следующая страница — при прокрутке к концу (порог ~300px до низа).
     private void EnsureHistoryScrollHook()
@@ -167,18 +210,6 @@ public partial class ProfileView
                 _ = LoadMoreHistoryAsync();
         };
     }
-
-    // Сырое значение колонки строки журнала — для фильтров и keyset-курсора сортировки.
-    private static string HistoryRawValue(string key, ChangeLogRow row) => key switch
-    {
-        "user"       => row.UserName,
-        "action"     => row.Action,
-        "type"       => row.TargetType,
-        "object"     => row.TargetName,
-        "collection" => row.CollectionName ?? "",
-        "date"       => row.Ts.Length >= 10 ? row.Ts[..10] : row.Ts,
-        _            => "",
-    };
 
     // ── Выгрузка в CSV ────────────────────────────────────────────────────────
     //
@@ -478,534 +509,37 @@ public partial class ProfileView
         };
     }
 
-    // ── Фильтр и сортировка колонок (чеклист значений, зеркало BuildFilterPanel TableView) ──
+    // ── Фильтр и сортировка колонок (общее окно, как в таблице конструктора) ──
 
     private void ShowHistoryFilterFlyout(Control anchor, string key)
     {
-        if (_historyDb is null) return;
+        if (_historyDb is not { } db) return;
 
-        var flyout = new Flyout { Placement = PlacementMode.BottomEdgeAlignedRight };
-        flyout.FlyoutPresenterClasses.Add("filterFlyout");
-        // Флайаут рендерится в отдельном попап-окне вне зума приложения — контент
-        // оборачивается в зум-трансформ (плашка-презентер остается вне зума).
-        flyout.Content = WindowZoom.WrapPopupContent(BuildHistoryFilterPanel(key, () => flyout.Hide()));
-        flyout.Closed += (_, _) => { if (ReferenceEquals(_historyFlyout, flyout)) _historyFlyout = null; };
-        _historyFlyout = flyout;
-        flyout.ShowAt(anchor);
-    }
+        // Снимок фильтров остальных колонок — на UI-потоке: список значений считается в фоне
+        // по строкам, прошедшим их (каскад), а живой словарь фон не читает.
+        var others = ColumnCascade.Others(_historyFilters, key);
+        var date   = key == "date";
 
-    private Control BuildHistoryFilterPanel(string key, Action close)
-    {
-        var secondary = (IBrush)this.FindResource("BrushSecondaryText")!;
-        var fontBase  = (double)this.FindResource("FontSizeBase")!;
-        var radius    = (CornerRadius)this.FindResource("RadiusBase")!;
-        var family    = this.TryFindResource("FontFamilyBase", out var f) ? f as FontFamily : null;
-        // Ширины строк и закрепленный справа счетчик — см. FilterValueMetrics.
-        var metrics   = new FilterValueMetrics();
-
-        var panel = new StackPanel
+        ColumnFilterPanel.Show(this, anchor, new ColumnFilterSpec
         {
-            // Общий стандарт всплывающих списков (Controls.axaml).
-            Width   = (double)this.FindResource("PopupContentWidth")!,
-            Margin  = new Thickness(12),
-            Spacing = 2,
-            Cursor  = new Cursor(StandardCursorType.Arrow),
-        };
-
-        // ── Данные (грузятся в фоне; окно открывается мгновенно) ──
-        var baseCounts = new List<(string Value, int Count)>();
-        var domain     = new HashSet<string>();
-        var loaded     = false;
-
-        // ── Сортировка: копится в pendingSort, применяется по «Готово» ──
-        var (ascLabel, descLabel) = key == "date"
-            ? ("Сначала старые", "Сначала новые")
-            : ("От А до Я", "От Я до А");
-        bool? pendingSort = _historySortKey == key ? _historySortAsc : null;
-
-        var sortSection = new StackPanel { Spacing = 2 };
-        panel.Children.Add(sortSection);
-
-        Action rebuildListRef = () => { };
-
-        List<(string Raw, int Count)> counts = [];
-        void ReloadCounts()
-        {
-            bool? asc = pendingSort ?? (_historySortKey == key ? _historySortAsc : (bool?)null);
-            counts = SortHistoryValueCounts(baseCounts, key, asc);
-        }
-        ReloadCounts();
-
-        void RenderSort()
-        {
-            sortSection.Children.Clear();
-            sortSection.Children.Add(MakeHistoryFlatItem(ascLabel,
-                () => { pendingSort = true;  RenderSort(); ReloadCounts(); rebuildListRef(); },
-                HistoryIcon("IconSortAz"), active: pendingSort == true));
-            sortSection.Children.Add(MakeHistoryFlatItem(descLabel,
-                () => { pendingSort = false; RenderSort(); ReloadCounts(); rebuildListRef(); },
-                HistoryIcon("IconSortZa"), active: pendingSort == false));
-            sortSection.Children.Add(MakeHistoryFlatItem("Снять сортировку",
-                () => { pendingSort = null;  RenderSort(); ReloadCounts(); rebuildListRef(); },
-                HistoryIcon("IconClose")));
-        }
-        RenderSort();
-
-        panel.Children.Add(MakeHistorySeparator());
-
-        // ── Поиск по значениям ──
-        var search = new TextBox
-        {
-            Watermark    = "Поиск значений...",
-            Height       = 30,
-            CornerRadius = radius,
-            Background   = Brushes.White,
-            Margin       = new Thickness(0, 0, 0, 4),
-            VerticalContentAlignment = VerticalAlignment.Center,
-        };
-        panel.Children.Add(search);
-
-        var checkedSet       = new HashSet<string>();
-        var syncingSelectAll = false;
-
-        var selectAll = new CheckBox
-        {
-            Content   = "(Выделить все)",
-            FontSize  = fontBase,
-            IsChecked = !_historyFilters.ContainsKey(key),
-            Cursor    = new Cursor(StandardCursorType.Hand),
-        };
-
-        // Виртуализирующий ListBox — все уникальные значения без лимита и зависаний.
-        var shown   = new AvaloniaList<HistoryFilterValueVm>();
-        var vmCache = new Dictionary<string, HistoryFilterValueVm>();
-        HistoryFilterValueVm Vm(string raw, int count) =>
-            vmCache.TryGetValue(raw, out var v) ? v
-                : vmCache[raw] = new HistoryFilterValueVm(raw, HistoryDisplayValue(key, raw), count,
-                                                          checkedSet, () => SyncSelectAll());
-
-        var valuesList = new ListBox
-        {
-            // Высоты нет: список занимает остаток строки карточки фиксированной высоты и
-            // сам ужимается, когда снизу появляется горизонтальная полоса.
-            Background      = Brushes.Transparent,
-            BorderThickness = new Thickness(0),
-            Padding         = new Thickness(0),
-            ItemsSource     = shown,
-            ItemTemplate    = BuildHistoryFilterValueTemplate(fontBase, secondary, metrics),
-        };
-        valuesList.Styles.Add(new Style(x => x.OfType<ListBoxItem>())
-        {
-            Setters = { new Setter(ListBoxItem.PaddingProperty, new Thickness(0, 2)),
-                        new Setter(ListBoxItem.MinHeightProperty, 0.0) },
-        });
-
-        // Строки без подсветки наведения/выбора — взаимодействуем только с чекбоксом.
-        void FlatRow(params string[] pseudo) =>
-            valuesList.Styles.Add(new Style(x =>
+            Key        = key,
+            AscLabel   = date ? "Сначала старые" : "От А до Я",
+            DescLabel  = date ? "Сначала новые"  : "От Я до А",
+            Sort       = _historySortKey == key ? _historySortAsc : null,
+            Filter     = _historyFilters.GetValueOrDefault(key),
+            Display    = raw => HistoryDisplayValue(key, raw),
+            IsDate     = date,
+            LoadValues = () => db.Constructor.GetChangeLogCountsAsync(key, others),
+            LoadFailed = ex => DbErrors.HandleRead(ex, db.Constructor.DbPath),
+            Apply      = result =>
             {
-                Selector s = x.OfType<ListBoxItem>();
-                foreach (var p in pseudo) s = s.Class(p);
-                return s.Template().OfType<Avalonia.Controls.Presenters.ContentPresenter>().Name("PART_ContentPresenter");
-            })
-            {
-                Setters = { new Setter(Avalonia.Controls.Presenters.ContentPresenter.BackgroundProperty, Brushes.Transparent) },
-            });
-        FlatRow();
-        FlatRow(":pointerover");
-        FlatRow(":selected");
-        FlatRow(":selected", ":pointerover");
-
-        // «Выделить все» — закрепленная шапка списка; полоса прокрутки стоит на ее уровне
-        // (отдельной колонкой), как вертикальная полоса таблицы стоит на уровне шапки колонок.
-        // gap=2: вместе с верхним отступом первой строки (Padding 0,2) дает под шапкой
-        // ровно такой же просвет, как между значениями.
-        var valuesBox = ScrollBarLink.HeaderedList(selectAll, valuesList, gap: 2,
-                                                   scroller: metrics.Track);
-
-        var loadingText = new TextBlock
-        {
-            Text                = "Загрузка…",
-            Foreground          = secondary,
-            FontSize            = fontBase,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment   = VerticalAlignment.Center,
-        };
-        var valuesHost = new Border
-        {
-            Background   = Brushes.White,
-            BorderBrush  = (IBrush)this.FindResource("BrushSeparator")!,
-            CornerRadius = radius,
-            // Padding НУЛЕВОЙ: полосы прокрутки списка прилегают ко всем краям карточки без
-            // белого зазора, а воздух вокруг содержимого задает ScrollBarLink.HeaderedList.
-            // ClipToBounds — квадратные углы полос срезаются скруглением карточки.
-            Padding      = new Thickness(0),
-            ClipToBounds = true,
-            // Фикс высота (стандарт) — список не «прыгает» при замене «Загрузка…».
-            Height       = (double)this.FindResource("PopupListHeight")!,
-            Child        = loadingText,
-        };
-        valuesHost.Bind(Border.BorderThicknessProperty, valuesHost.GetResourceObservable("BorderLine"));
-        panel.Children.Add(valuesHost);
-
-        // Колонка «Дата и время» показывает дерево «Год → Месяц → День» (DateFilterTreeBox) —
-        // тот же чеклист, что у свойств-дат конструктора и «Времени» в «Диагностике».
-        var isDate = key == "date";
-        DateFilterTreeBox? tree = null;
-        var treeNewestFirst = false;
-
-        void MountTree(bool newestFirst)
-        {
-            treeNewestFirst = newestFirst;
-            tree = DateFilterTreeBox.ForIsoDates(counts, checkedSet, fontBase, secondary, newestFirst);
-            tree.SelectionChanged += (_, _) => SyncSelectAll();
-            // «(Выделить все)» — общий чекбокс обоих режимов, а шапку HeaderedList он
-            // получает во владение. Снимаем его с прежнего родителя: он уже стоит в шапке
-            // плоского списка (та строится до загрузки данных), а при смене сортировки —
-            // в шапке предыдущего дерева. Иначе Avalonia бросает «already has a visual parent».
-            (selectAll.Parent as Panel)?.Children.Remove(selectAll);
-            // Пустой результат поиска показывает «Ничего не найдено» — как у плоского списка.
-            valuesHost.Child = Controls.Components.EmptyListHint.Wrap(
-                tree.List, search, secondary, fontBase,
-                content: ScrollBarLink.HeaderedList(selectAll, tree.List, gap: 2));
-            tree.Search(search.Text);
-        }
-
-        List<(string Raw, int Count)> Matched()
-        {
-            var q = search.Text?.Trim() ?? "";
-            return q.Length == 0
-                ? counts
-                : counts.Where(c => HistoryDisplayValue(key, c.Raw)
-                    .Contains(q, StringComparison.OrdinalIgnoreCase)).ToList();
-        }
-
-        // Показанные сейчас сырые значения — общий язык обоих режимов списка.
-        IEnumerable<string> MatchedRaws() =>
-            tree is not null ? tree.VisibleRaws : Matched().Select(c => c.Raw);
-
-        void RebuildList()
-        {
-            if (isDate)
-            {
-                if (tree is null) return;   // значения еще грузятся
-                // Сменили сортировку — дерево пересобираем в новом порядке. Без выбора
-                // даты идут новыми сверху (как и плоский список раньше).
-                if (treeNewestFirst != (pendingSort != true)) MountTree(pendingSort != true);
-                else tree.Search(search.Text);
-                return;
-            }
-
-            shown.Clear();
-            shown.AddRange(Matched().Select(c => Vm(c.Raw, c.Count)));
-            // Ширина строки фиксируется по текущему набору — иначе экстент горизонтальной
-            // прокрутки считался бы только по видимым строкам и полоса прыгала бы.
-            metrics.Measure(shown.Select(v => v.Display), shown.Select(v => v.CountText),
-                            fontBase, family);
-        }
-        rebuildListRef = RebuildList;
-
-        void SyncSelectAll()
-        {
-            syncingSelectAll    = true;
-            selectAll.IsChecked = tree is not null
-                ? tree.AllVisibleChecked
-                : Matched().All(c => checkedSet.Contains(c.Raw));
-            syncingSelectAll    = false;
-        }
-
-        search.TextChanged += (_, _) => { RebuildList(); SyncSelectAll(); };
-        selectAll.IsCheckedChanged += (_, _) =>
-        {
-            if (syncingSelectAll) return;
-            var on = selectAll.IsChecked == true;
-            if (tree is not null) { tree.SetAllVisible(on); return; }
-
-            foreach (var (raw, _) in Matched())
-            {
-                if (on) checkedSet.Add(raw);
-                else    checkedSet.Remove(raw);
-            }
-            RebuildList();
-        };
-
-        panel.Children.Add(MakeHistorySeparator());
-
-        // ── «Готово»: сортировка и фильтр применяются разом ──
-        var okBtn = new Button
-        {
-            Content             = "Готово",
-            HorizontalAlignment = HorizontalAlignment.Right,
-            Margin              = new Thickness(0, 4, 0, 0),
-        };
-        okBtn.Classes.Add("dialog");
-        okBtn.Click += (_, _) =>
-        {
-            if (pendingSort is bool asc) { _historySortKey = key; _historySortAsc = asc; }
-            else if (_historySortKey == key) _historySortKey = null;
-
-            if (loaded)
-            {
-                // Режим «Заменить»: при активном поиске фильтр = отмеченные СРЕДИ
-                // найденного; поиск пуст — все отмеченные галки по всему домену.
-                var hasSearch = !string.IsNullOrWhiteSpace(search.Text);
-                var effective = hasSearch
-                    ? MatchedRaws().Where(checkedSet.Contains).ToHashSet()
-                    : [.. checkedSet];
-
-                if (domain.SetEquals(effective)) _historyFilters.Remove(key);
-                else _historyFilters[key] = effective;
-            }
-
-            UpdateHistoryChevrons();
-            ReloadHistoryRows();
-            close();
-        };
-        panel.Children.Add(okBtn);
-
-        // ── Фоновая загрузка значений (SQL-агрегат, отдельное подключение) ──
-        _historyDb!.Constructor.GetChangeLogCountsAsync(key).ContinueWith(t =>
-        {
-            if (t.IsFaulted || t.IsCanceled) return;
-            var data = t.Result;
-            Dispatcher.UIThread.Post(() =>
-            {
-                baseCounts.Clear();
-                baseCounts.AddRange(data);
-                domain.Clear();
-                foreach (var c in data) domain.Add(c.Value);
-
-                checkedSet.Clear();
-                if (_historyFilters.TryGetValue(key, out var ff)) checkedSet.UnionWith(ff);
-                else checkedSet.UnionWith(domain);
-
-                ReloadCounts();
-
-                if (isDate)
-                {
-                    // Дерево строится по текущей сортировке: без выбора — новыми сверху,
-                    // как раньше шел плоский список дат.
-                    MountTree(newestFirst: pendingSort != true);
-                }
-                else
-                {
-                    // «Загрузка…» → список значений; пустой список показывает надпись
-                    // «Список пуст» / «Ничего не найдено» вместо голой белой карточки.
-                    valuesHost.Child = Controls.Components.EmptyListHint.Wrap(
-                        valuesList, search, secondary, fontBase, content: valuesBox);
-                }
-
-                RebuildList();
-                SyncSelectAll();
-                loaded = true;
-            });
-        });
-
-        return panel;
-    }
-
-    // Порядок значений в окне фильтра: выбранная сортировка колонки; без нее — дата
-    // новыми сверху (сырое ISO сортируется хронологически), остальные по подписи,
-    // «(Пусто)» в конце.
-    private static List<(string Raw, int Count)> SortHistoryValueCounts(
-        List<(string Value, int Count)> src, string key, bool? asc)
-    {
-        var items = src.Select(c => (Raw: c.Value, c.Count)).ToList();
-        var empty = items.Where(c => c.Raw.Length == 0).ToList();
-        items = items.Where(c => c.Raw.Length > 0).ToList();
-
-        if (key == "date")
-        {
-            items = asc == true
-                ? items.OrderBy(c => c.Raw, StringComparer.Ordinal).ToList()
-                : items.OrderByDescending(c => c.Raw, StringComparer.Ordinal).ToList();
-        }
-        else
-        {
-            items = asc == false
-                ? items.OrderByDescending(c => HistoryDisplayValue(key, c.Raw),
-                                          StringComparer.CurrentCultureIgnoreCase).ToList()
-                : items.OrderBy(c => HistoryDisplayValue(key, c.Raw),
-                                StringComparer.CurrentCultureIgnoreCase).ToList();
-        }
-
-        items.AddRange(empty);
-        return items;
-    }
-
-    // Иконка в стандарте сайдбара: Viewbox «Средний» поверх сетки 24×24 (как в TableView).
-    private Viewbox MakeHistoryStrokeIcon(Geometry data, IBrush stroke) => new()
-    {
-        Width  = HistoryIconSize("IconSizeMedium"),
-        Height = HistoryIconSize("IconSizeMedium"),
-        VerticalAlignment = VerticalAlignment.Center,
-        Child  = new Canvas
-        {
-            Width  = 24,
-            Height = 24,
-            Children =
-            {
-                new Path
-                {
-                    Data            = data,
-                    Stroke          = stroke,
-                    StrokeThickness = (double)this.FindResource("IconStrokeMedium")!,
-                    StrokeLineCap   = PenLineCap.Round,
-                    StrokeJoin      = PenLineJoin.Round,
-                },
+                // Окно открывали у одной базы, а «Готово» нажали, когда в навбаре уже другая, —
+                // значения чужого журнала в фильтр этой базы не кладем.
+                if (!ReferenceEquals(db, _historyDb)) return;
+                result.ApplyTo(_historyFilters, ref _historySortKey, ref _historySortAsc);
+                UpdateHistoryChevrons();
+                ReloadHistoryRows();
             },
-        },
-    };
-
-    private Button MakeHistoryFlatItem(string text, Action onClick, Geometry? icon = null, bool active = false)
-    {
-        var fg = (IBrush)this.FindResource(active ? "BrushAccent" : "BrushPrimaryText")!;
-
-        object content = text;
-        if (icon is not null)
-        {
-            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
-
-            var iconBox = MakeHistoryStrokeIcon(icon, fg);
-            Grid.SetColumn(iconBox, 0);
-            row.Children.Add(iconBox);
-
-            var label = new TextBlock
-            {
-                Text                = text,
-                Foreground          = fg,
-                Margin              = new Thickness(8, 0, 0, 0),
-                VerticalAlignment   = VerticalAlignment.Center,
-                HorizontalAlignment = HorizontalAlignment.Left,
-            };
-            Grid.SetColumn(label, 1);
-            row.Children.Add(label);
-
-            if (active)
-            {
-                var check = MakeHistoryStrokeIcon(HistoryIcon("IconCheck"), fg);
-                Grid.SetColumn(check, 2);
-                row.Children.Add(check);
-            }
-
-            content = row;
-        }
-
-        var btn = new Button
-        {
-            Content         = content,
-            Background      = Brushes.Transparent,
-            BorderThickness = new Thickness(0),
-            Padding         = new Thickness(8, 6),
-            FontSize        = (double)this.FindResource("FontSizeBase")!,
-            Foreground      = fg,
-            CornerRadius    = (CornerRadius)this.FindResource("RadiusBase")!,
-            HorizontalAlignment        = HorizontalAlignment.Stretch,
-            HorizontalContentAlignment = icon is not null
-                ? HorizontalAlignment.Stretch
-                : HorizontalAlignment.Left,
-        };
-        btn.Click += (_, _) => onClick();
-        return btn;
-    }
-
-    // Разделитель в попапе фильтра (контент обернут в зум-трансформ — токен обычный).
-    private Border MakeHistorySeparator()
-    {
-        var sep = new Border
-        {
-            Background = (IBrush)this.FindResource("BrushSeparator")!,
-            Margin     = new Thickness(0, 6),
-        };
-        sep.Bind(HeightProperty, sep.GetResourceObservable("SeparatorThickness"));
-        sep.Bind(UseLayoutRoundingProperty, sep.GetResourceObservable("LineUseLayoutRounding"));
-        RenderOptions.SetEdgeMode(sep, EdgeMode.Aliased);
-        return sep;
-    }
-
-    // Шаблон строки списка значений (чекбокс + количество) — для виртуализированного
-    // ListBox: привязки следуют за DataContext при переиспользовании контейнеров.
-    private static IDataTemplate BuildHistoryFilterValueTemplate(double fontBase, IBrush secondary,
-                                                                 FilterValueMetrics metrics) =>
-        new FuncDataTemplate<HistoryFilterValueVm>((_, _) =>
-        {
-            var name = new TextBlock { TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
-            name.Bind(TextBlock.TextProperty, new Binding(nameof(HistoryFilterValueVm.Display)));
-            // Ширина ВСЕХ строк одинаковая (по самому широкому значению) — иначе экстент
-            // горизонтальной прокрутки считался бы по видимым строкам и полоса дергалась.
-            name.Bind(Layoutable.MinWidthProperty,
-                      new Binding(nameof(FilterValueMetrics.TextMinWidth)) { Source = metrics });
-
-            var cb = new CheckBox
-            {
-                Content   = name,
-                FontSize  = fontBase,
-                HorizontalAlignment        = HorizontalAlignment.Stretch,
-                HorizontalContentAlignment = HorizontalAlignment.Left,
-                Margin    = new Thickness(0),
-                Cursor    = new Cursor(StandardCursorType.Hand),
-            };
-            cb.Bind(ToggleButton.IsCheckedProperty, new Binding(nameof(HistoryFilterValueVm.Checked)) { Mode = BindingMode.TwoWay });
-
-            var cnt = new TextBlock { Foreground = secondary, VerticalAlignment = VerticalAlignment.Center };
-            cnt.Bind(TextBlock.TextProperty, new Binding(nameof(HistoryFilterValueVm.CountText)));
-
-            // Счетчик ЗАКРЕПЛЕН у правого края видимой области: сдвиг компенсирует
-            // горизонтальную прокрутку, фон непрозрачный — длинный текст уезжает под него.
-            // Плашка обхватывает САМО число (Gap слева), поэтому просвет до закрываемого
-            // текста одинаковый в любой строке — не зависит от количества цифр.
-            var pin = new TranslateTransform();
-            pin.Bind(TranslateTransform.XProperty,
-                     new Binding(nameof(FilterValueMetrics.Pin)) { Source = metrics });
-            var cntHost = new Border
-            {
-                Background          = Brushes.White,
-                Padding             = new Thickness(FilterValueMetrics.Gap, 0, 0, 0),
-                HorizontalAlignment = HorizontalAlignment.Right,
-                Child               = cnt,
-                RenderTransform     = pin,
-            };
-
-            // Прозрачное МЕСТО под счетчик — одинаковой ширины во всех строках, чтобы от
-            // количества цифр не зависела ширина строки, а с ней и экстент прокрутки.
-            var cntSlot = new Border { Child = cntHost };
-            cntSlot.Bind(Layoutable.MinWidthProperty,
-                         new Binding(nameof(FilterValueMetrics.CountMinWidth)) { Source = metrics });
-
-            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
-            Grid.SetColumn(cb, 0);      row.Children.Add(cb);
-            Grid.SetColumn(cntSlot, 1); row.Children.Add(cntSlot);
-            return row;
         });
-
-    // Строка списка значений фильтра. Checked читает/пишет общий checkedSet; onChanged
-    // обновляет состояние «(Выделить все)».
-    private sealed class HistoryFilterValueVm : System.ComponentModel.INotifyPropertyChanged
-    {
-        public string Raw       { get; }
-        public string Display   { get; }
-        public string CountText { get; }
-
-        private readonly HashSet<string> _checked;
-        private readonly Action _onChanged;
-
-        public HistoryFilterValueVm(string raw, string display, int count, HashSet<string> checkedSet, Action onChanged)
-        {
-            Raw = raw; Display = display; CountText = count.ToString();
-            _checked = checkedSet; _onChanged = onChanged;
-        }
-
-        public bool Checked
-        {
-            get => _checked.Contains(Raw);
-            set
-            {
-                if (value) _checked.Add(Raw); else _checked.Remove(Raw);
-                PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(Checked)));
-                _onChanged();
-            }
-        }
-
-        public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
     }
 }
