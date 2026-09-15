@@ -174,8 +174,10 @@ public sealed partial class DatabaseManager : IDisposable
         // незачем. Тоже в фоне и тоже best-effort.
         _maintenance.Add(Constructor.ApplyTaskEventsRetention());
 
-        // NULL в «Названии» записей старых файлов — разовый ремонт в фоне (см. RepairNullTitles).
-        if (provider != "postgres") _maintenance.Add(RepairNullTitles(Context));
+        // NULL в «Названии» записей старых файлов и числа, записанные показом, — разовые ремонты
+        // в фоне, друг за другом на одном подключении (см. RepairNullTitles, RepairFormattedNumbers).
+        if (provider != "postgres")
+            _maintenance.Add(RepairNullTitles(Context).ContinueWith(_ => RepairFormattedNumbers(Context)).Unwrap());
 
         Categories.SeedDefaults();
 
@@ -381,6 +383,104 @@ public sealed partial class DatabaseManager : IDisposable
             }
             catch { /* best-effort: повторится при следующем монтировании */ }
         });
+    }
+
+    // Разовый ремонт данных: числа, записанные ПОКАЗОМ. До 15.09.2026 панель записи при каждом
+    // открытии принимала отложенный TextChanged поля «Число» за правку и писала в базу
+    // отформатированную строку («1 234 567,50 ₽») вместо числа — у всех свойств с форматом показа
+    // (разряды, деньги, проценты; «обычное число» показывается как есть и не пострадало). На
+    // экране такое значение выглядит так же, но для сортировки, фильтра, экспорта и расширений
+    // это текст, а в панели его нельзя править: фильтр ввода числа не пропускает буквы.
+    // Чинятся значения таких полей, которые не число, но разбираются TryParseDisplay по формату
+    // поля; прочий текст (после смены типа из текстового) не трогается. Один раз на файл (флаг в
+    // db_meta), в фоне на свежем подключении, сначала чтением — как RepairNullTitles. Кандидаты
+    // отбираются GLOB по индексу (FieldId, Value): в здоровом поле совпадений нет, и запись не идет.
+    private const string NumberRepairKey = "repair.number-display";
+
+    private static Task RepairFormattedNumbers(AppDbContext db)
+    {
+        var path = db.DbPath;
+        return Task.Run(() =>
+        {
+            try
+            {
+                using var ctx = new AppDbContext(path);
+                ctx.ApplyPerformancePragmas();
+                ctx.Database.OpenConnection();
+                try
+                {
+                    var conn = ctx.Database.GetDbConnection();
+                    if (ReadMetaLong(conn, NumberRepairKey) is not null) return;
+
+                    var repaired = 0;
+                    foreach (var (fieldId, format) in FormattedNumberFields(conn))
+                        repaired += RepairFieldValues(conn, fieldId, format);
+                    if (repaired > 0)
+                        Log.Information("Ремонт чисел в {Path:l}: значений, записанных показом вместо числа, — {Count}", path, repaired);
+
+                    using var mark = conn.CreateCommand();
+                    mark.CommandText = "INSERT INTO db_meta (\"Key\", \"Value\") VALUES ('" + NumberRepairKey + "', '1') " +
+                                       "ON CONFLICT(\"Key\") DO UPDATE SET \"Value\" = '1';";
+                    mark.ExecuteNonQuery();
+                }
+                finally { ctx.Database.CloseConnection(); }
+            }
+            catch { /* best-effort: повторится при следующем монтировании */ }
+        });
+    }
+
+    // Поля «Число» с форматом показа: у «обычного числа» показ равен хранению, чинить нечего.
+    private static List<(int Id, Core.Models.NumberFormat Format)> FormattedNumberFields(System.Data.Common.DbConnection conn)
+    {
+        var fields = new List<(int, Core.Models.NumberFormat)>();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT \"Id\", \"ConfigJson\" FROM db_fields WHERE \"FieldType\" = 'number';";
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            var format = Core.Models.NumberFormatValue.FromConfig(reader.IsDBNull(1) ? null : reader.GetString(1));
+            if (format.Kind != Core.Models.NumberFormatKind.Plain) fields.Add((reader.GetInt32(0), format));
+        }
+        return fields;
+    }
+
+    private static int RepairFieldValues(System.Data.Common.DbConnection conn, int fieldId, Core.Models.NumberFormat format)
+    {
+        var fixes = new List<(int RecordId, string Value)>();
+        using (var cmd = conn.CreateCommand())
+        {
+            // Кандидаты — значения, в которых есть что-то кроме цифр, знака и разделителей.
+            cmd.CommandText = "SELECT \"RecordId\", \"Value\" FROM db_field_values WHERE \"FieldId\" = @f AND \"Value\" GLOB '*[^0-9.,-]*';";
+            var pf = cmd.CreateParameter(); pf.ParameterName = "@f"; pf.Value = fieldId; cmd.Parameters.Add(pf);
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                var raw = reader.IsDBNull(1) ? "" : reader.GetString(1);
+                if (Core.Exporters.TableWriters.WriterHelpers.TryNumber(raw, out _)) continue;
+                if (!Core.Models.NumberFormatValue.TryParseDisplay(raw, format, format.DecimalSeparator, out var storage)) continue;
+                if (!Core.Exporters.TableWriters.WriterHelpers.TryNumber(storage, out _)) continue;
+                fixes.Add((reader.GetInt32(0), storage));
+            }
+        }
+        if (fixes.Count == 0) return 0;
+
+        using var tx = conn.BeginTransaction();
+        using (var upd = conn.CreateCommand())
+        {
+            upd.Transaction = tx;
+            upd.CommandText = "UPDATE db_field_values SET \"Value\" = @v WHERE \"RecordId\" = @r AND \"FieldId\" = @f;";
+            var pv = upd.CreateParameter(); pv.ParameterName = "@v"; upd.Parameters.Add(pv);
+            var pr = upd.CreateParameter(); pr.ParameterName = "@r"; upd.Parameters.Add(pr);
+            var pf = upd.CreateParameter(); pf.ParameterName = "@f"; pf.Value = fieldId; upd.Parameters.Add(pf);
+            foreach (var (recordId, value) in fixes)
+            {
+                pv.Value = value;
+                pr.Value = recordId;
+                upd.ExecuteNonQuery();
+            }
+        }
+        tx.Commit();
+        return fixes.Count;
     }
 
     // Прагмы скорости (на соединение):
