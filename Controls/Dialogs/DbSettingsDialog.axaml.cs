@@ -95,7 +95,8 @@ public partial class DbSettingsDialog : Window
             // Размер файла — снимок, снятый при монтировании; та же строка, что в списке баз.
             if (storage is not null)
             {
-                StorageText.Text = DatabaseRow.FormatStorage(storage);
+                // Без слов «размер файла»: они уже стоят заголовком над этой строкой.
+                StorageText.Text = DatabaseRow.StorageValue(storage);
                 StorageText.Foreground = Brush(
                     storage.NeedsCompaction ? "BrushRed" : "BrushSecondaryText",
                     storage.NeedsCompaction ? "#FF3B30" : "#8E8E93");

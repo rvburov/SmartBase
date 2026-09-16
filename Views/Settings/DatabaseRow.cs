@@ -91,9 +91,21 @@ public sealed partial class DatabaseRow : ObservableObject
         StorageIsWarning ? "BrushRed" : "BrushSecondaryText",
         StorageIsWarning ? "#FF3B30" : "#8E8E93");
 
-    public static string FormatStorage(DatabaseManager.StorageStats s)
+    /// <summary>
+    /// «размер файла 1,7 ГБ · свободно 1,1 ГБ (64 %)» — для строки списка и для вопроса перед
+    /// сжатием: там рядом нет заголовка, и величину приходится называть словами. Прежнее
+    /// «файл 1,7 ГБ» называло предмет, а не величину, и читалось как обрывок.
+    /// </summary>
+    public static string FormatStorage(DatabaseManager.StorageStats s) =>
+        "размер файла " + StorageValue(s);
+
+    /// <summary>
+    /// То же без слов «размер файла» — для окна настроек базы, где они уже стоят заголовком
+    /// над строкой и вторым разом читались бы как заикание.
+    /// </summary>
+    public static string StorageValue(DatabaseManager.StorageStats s)
     {
-        var text = $"файл {Size(s.FileBytes)}";
+        var text = Size(s.FileBytes);
         if (s.FreeBytes > 0)
             text += $" · свободно {Size(s.FreeBytes)} ({s.FreeRatio * 100:0} %)";
         if (s.NeedsCompaction)

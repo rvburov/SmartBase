@@ -1,3 +1,4 @@
+using SmartBase.Database;
 using SmartBase.Views.Settings;
 
 namespace SmartBase.Tests.Unit;
@@ -67,6 +68,25 @@ public sealed class DatabaseRowTests
     public void Only_the_database_admin_edits_the_name_and_the_password(
         bool mounted, bool isAdmin, bool allowed) =>
         Assert.Equal(allowed, DatabaseRow.CanManage(mounted, isAdmin));
+
+    /// <summary>
+    /// Строка размера пишется двумя способами, и различие не косметическое. В списке баз и в
+    /// вопросе перед сжатием рядом нет заголовка — величину надо назвать словами. В окне
+    /// настроек базы над строкой уже стоит заголовок «Размер файла», и повтор читался бы как
+    /// заикание.
+    /// </summary>
+    [Fact]
+    public void The_size_names_itself_in_the_list_and_stays_bare_under_the_heading()
+    {
+        var stats = new DatabaseManager.StorageStats(
+            FileBytes: 268 * 1024, LiveBytes: 212 * 1024, FreeBytes: 56 * 1024,
+            FreeRatio: 0.21, WalBytes: 0);
+
+        Assert.StartsWith("размер файла ", DatabaseRow.FormatStorage(stats));
+        Assert.DoesNotContain("размер файла", DatabaseRow.StorageValue(stats));
+        Assert.EndsWith(DatabaseRow.StorageValue(stats), DatabaseRow.FormatStorage(stats));
+        Assert.Contains("свободно", DatabaseRow.StorageValue(stats));
+    }
 
     /// <summary>Корзина не предлагается у базы по умолчанию: удалить ее нельзя.</summary>
     [Theory]
