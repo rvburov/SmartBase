@@ -4,7 +4,7 @@ using SmartBase.Core.Importers.TableSources;
 namespace SmartBase.Tests.Unit;
 
 /// <summary>
-/// Источник импорта поверх ответа чужой программы (<see cref="JsonTextSource"/>).
+/// Источник импорта поверх ответа сторонней программы (<see cref="JsonTextSource"/>).
 ///
 /// Правила у него те же, что у файлового <see cref="JsonTableSource"/>, и это проверяется
 /// отдельно: один и тот же набор записей, пришедший файлом и по сети, обязан ложиться в
@@ -37,7 +37,7 @@ public sealed class JsonTextSourceTests
         Assert.Equal(["120", "А"], rows[0].FieldValues);
     }
 
-    /// <summary>Ключи объединяются по всем записям — чужие программы редко отдают ровный список.</summary>
+    /// <summary>Ключи объединяются по всем записям — сторонние программы редко отдают ровный список.</summary>
     [Fact]
     public void Keys_are_united_across_records()
     {

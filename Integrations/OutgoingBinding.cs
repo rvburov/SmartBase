@@ -7,7 +7,7 @@ using SmartBase.Core.Models;
 namespace SmartBase.Integrations;
 
 /// <summary>
-/// Как обернуто тело исходящего запроса. Чужие программы просят по-разному, и подогнать их под
+/// Как обернуто тело исходящего запроса. Сторонние программы просят по-разному, и подогнать их под
 /// один вид нельзя: обмен либо принимается той стороной, либо нет.
 /// </summary>
 public enum OutgoingShape
@@ -26,7 +26,7 @@ public enum OutgoingShape
 /// Одно поле, уходящее наружу.
 /// </summary>
 /// <param name="FieldId">Свойство коллекции; <c>null</c> — название записи.</param>
-/// <param name="Name">Имя этого поля в JSON — так, как его ждет чужая программа. Оно почти
+/// <param name="Name">Имя этого поля в JSON — так, как его ждет сторонняя программа. Оно почти
 /// никогда не совпадает с названием свойства: у нас «Номер заказа», у них <c>order_no</c>.</param>
 public sealed record OutgoingField(int? FieldId, string Name);
 
@@ -248,7 +248,7 @@ public static class OutgoingBody
             {
                 case OutgoingShape.Single:
                     // Записей нет — уходит пустой объект, а не «ничего»: тело обязано остаться
-                    // разбираемым JSON, иначе чужая программа ответит невнятной ошибкой разбора.
+                    // разбираемым JSON, иначе сторонняя программа ответит невнятной ошибкой разбора.
                     WriteRow(writer, names, columns, rows.Count > 0 ? rows[0] : []);
                     break;
 

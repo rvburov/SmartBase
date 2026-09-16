@@ -216,7 +216,7 @@ public partial class MainWindow : Window
             dbId => _workspace.Get(dbId) is { Provider: "sqlite" } m && m.Permissions.IsAdmin,
             // Стадии задач всех допущенных баз — для списка «Стадия новой задачи».
             taskStages: () => GrantedDbs().SelectMany(m => m.Constructor.GetTaskStages()).Distinct().ToList(),
-            // Открытые базы — «Интеграциям»: ответ чужой программы укладывается в коллекцию
+            // Открытые базы — «Интеграциям»: ответ сторонней программы укладывается в коллекцию
             // выбранной базы, и список должен быть тем, что есть на экране прямо сейчас.
             databases: GrantedDbs,
             // Кнопка «Проверить папку» ведет ту же службу, что ходит по расписанию: две

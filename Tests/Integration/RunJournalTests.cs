@@ -36,7 +36,7 @@ public sealed class RunJournalTests : IDisposable
     private static RunEntry Request(string name, long bytes, DateTimeOffset at, bool ok = true,
                                     int direction = 7) =>
         RunEntry.New(RunChannel.Request, name, "https://api.zavod.local/orders?key=***", ok,
-                     ok ? "" : "чужая программа ответила 500", rows: 10, bytes: bytes,
+                     ok ? "" : "сторонняя программа ответила 500", rows: 10, bytes: bytes,
                      elapsed: TimeSpan.FromMilliseconds(250), dbId: 0, at: at, counts: true,
                      direction: direction);
 
@@ -123,7 +123,7 @@ public sealed class RunJournalTests : IDisposable
     }
 
     /// <summary>
-    /// Неудачный запуск считается тоже: отказ чужой программы все равно был обращением к ней,
+    /// Неудачный запуск считается тоже: отказ сторонней программы все равно был обращением к ней,
     /// и не считать его значило бы разрешить бесконечный перебор в ответ на ошибки.
     /// </summary>
     [Fact]
@@ -323,7 +323,7 @@ public sealed class RunJournalTests : IDisposable
 
         journal.Write(RunEntry.New(
             RunChannel.Request, "Заказы", "https://api.zavod.local/orders", ok: false,
-            "чужая программа ответила 422", rows: 0, bytes: 120,
+            "сторонняя программа ответила 422", rows: 0, bytes: 120,
             elapsed: TimeSpan.FromMilliseconds(30), dbId: 0, at: Now, counts: true, direction: 7,
             sentBody: """{"since":"2026-09-10"}""",
             gotBody:  """{"error":"unknown field since"}"""));

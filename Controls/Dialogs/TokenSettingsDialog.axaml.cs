@@ -59,7 +59,7 @@ public partial class TokenSettingsDialog : Window
     /// <summary>Пояснение о токене: робот, база, выдача, обращения и почему его не показать.</summary>
     internal static string Explain(string name, string database,
                                    DateTimeOffset? created, DateTimeOffset? used) =>
-        $"Токен робота «{name}»: им чужая программа пишет в базу «{database}» как "
+        $"Токен робота «{name}»: им сторонняя программа пишет в базу «{database}» как "
         + "пользователь-робот со своими правами. "
         + (created is { } issued
             ? $"Выдан {issued.ToLocalTime():dd.MM.yyyy HH:mm}. "

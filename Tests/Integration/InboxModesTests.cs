@@ -263,7 +263,7 @@ public sealed class InboxModesTests : IDisposable
         Assert.Equal(["Номер", "Сумма"], fields.Select(f => f.Name).ToArray());
         Assert.Equal("number", fields.Single(f => f.Name == "Сумма").FieldType);
 
-        // Повтор находит все готовым — в этом весь смысл «ensure»: чужая программа шлет его
+        // Повтор находит все готовым — в этом весь смысл «ensure»: сторонняя программа шлет его
         // при каждом своем запуске, не проверяя ничего.
         var second = Post(secret, message);
 

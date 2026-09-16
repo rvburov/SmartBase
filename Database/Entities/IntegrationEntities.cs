@@ -3,7 +3,7 @@ using System.ComponentModel.DataAnnotations;
 namespace SmartBase.Database.Entities;
 
 /// <summary>
-/// Соединение с чужой программой (системная БД app.db, таблица «integration_connections»).
+/// Соединение со сторонней программой (системная БД app.db, таблица «integration_connections»).
 ///
 /// Лежит именно в app.db, а не в файле базы данных, и это решение, а не случайность: файл
 /// базы ездит по сетевой папке и открыт на нескольких машинах разом. Секрет в нем оказался бы
@@ -48,7 +48,7 @@ public class IntegrationConnectionEntity
 }
 
 /// <summary>
-/// Запрос к чужой программе (системная БД app.db, таблица «integration_requests»).
+/// Запрос к сторонней программе (системная БД app.db, таблица «integration_requests»).
 ///
 /// Живет рядом с соединением и по тем же причинам — локально: запрос без соединения
 /// бессмыслен, а соединение хранится в app.db, потому что содержит секрет.

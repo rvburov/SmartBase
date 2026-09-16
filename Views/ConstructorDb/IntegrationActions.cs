@@ -185,7 +185,7 @@ public static class IntegrationActions
         using var cts = new CancellationTokenSource();
 
         // Отмена останавливает сценарий МЕЖДУ шагами: обещать большее нечестно — начатый запрос
-        // к чужой программе не отменяется по нажатию.
+        // к сторонней программе не отменяется по нажатию.
         progress.EnableCancel(cts.Cancel);
         progress.SetSaving($"Сценарий «{scenario.Name}»…");
 

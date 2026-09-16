@@ -121,7 +121,7 @@ public partial class SettingsView
     /// <summary>
     /// Загрузить настройки из файла. Существующее не переписывается, тезка приезжает рядом под
     /// свободным именем, а приехавшие сценарии выключены: файл открывают, чтобы посмотреть, а не
-    /// чтобы немедленно начать обмен с чужой системой.
+    /// чтобы немедленно начать обмен со сторонней системой.
     /// </summary>
     private async Task ImportScenariosAsync(Database.IntegrationsRegistry registry)
     {
@@ -442,7 +442,7 @@ public partial class SettingsView
         using var cts = new CancellationTokenSource();
 
         // Отмена останавливает сценарий МЕЖДУ шагами: обещать большее нечестно — начатый запрос
-        // к чужой программе не отменяется по нажатию.
+        // к сторонней программе не отменяется по нажатию.
         progress.EnableCancel(cts.Cancel);
         progress.SetSaving($"Сценарий «{scenario.Name}»…");
 

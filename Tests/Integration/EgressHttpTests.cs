@@ -227,7 +227,7 @@ public sealed class EgressHttpTests : IDisposable
         Assert.Empty(elsewhere.Seen);
     }
 
-    /// <summary>Потолок ответа: чужая программа не должна уметь занять всю память.</summary>
+    /// <summary>Потолок ответа: сторонняя программа не должна уметь занять всю память.</summary>
     [Fact]
     public async Task Answer_longer_than_the_ceiling_is_cut()
     {

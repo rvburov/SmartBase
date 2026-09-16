@@ -1,6 +1,6 @@
 namespace SmartBase.Integrations;
 
-/// <summary>Способ авторизации у чужой программы. Строкой хранится ключ, а не подпись.</summary>
+/// <summary>Способ авторизации у сторонней программы. Строкой хранится ключ, а не подпись.</summary>
 public enum ConnectionAuth
 {
     /// <summary>Без авторизации — открытый адрес во внутренней сети.</summary>

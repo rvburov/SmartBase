@@ -28,7 +28,7 @@
                  VerticalContentAlignment="Center"
                  CornerRadius="{StaticResource RadiusBase}" />
 
-        <TextBlock Text="Под этим именем чужая программа появится в списке пользователей базы и в истории изменений: «создал запись» будет написано про нее."
+        <TextBlock Text="Под этим именем сторонняя программа появится в списке пользователей базы и в истории изменений: «создал запись» будет написано про нее."
                    Margin="0,0,0,12"
                    TextWrapping="Wrap"
                    FontSize="{DynamicResource FontSizeSmall}"

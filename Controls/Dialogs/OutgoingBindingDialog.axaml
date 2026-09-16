@@ -27,7 +27,7 @@
                    TextWrapping="Wrap"
                    FontSize="{DynamicResource FontSizeSmall}"
                    Foreground="{StaticResource BrushSecondaryText}"
-                   Text="Наружу уйдет только отмеченное здесь. Имя справа — то, под которым поле ждет чужая программа: у нас «Номер заказа», у них order_no. Помеченные свойства выбрать нельзя." />
+                   Text="Наружу уйдет только отмеченное здесь. Имя справа — то, под которым поле ждет сторонняя программа: у нас «Номер заказа», у них order_no. Помеченные свойства выбрать нельзя." />
 
         <Grid ColumnDefinitions="*,12,*" Margin="0,0,0,12">
             <StackPanel Grid.Column="0">

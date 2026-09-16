@@ -163,7 +163,7 @@ public sealed class ScenarioTransferTests : IDisposable
 
     /// <summary>
     /// Приехавший сценарий выключен всегда: файл открывают, чтобы посмотреть, а не чтобы
-    /// немедленно начать обмен с чужой системой.
+    /// немедленно начать обмен со сторонней системой.
     /// </summary>
     [Fact]
     public void An_imported_scenario_never_starts_by_itself()

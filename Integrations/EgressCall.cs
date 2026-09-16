@@ -171,7 +171,7 @@ public sealed record EgressPlan(
     /// <summary>
     /// Тип содержимого: заданный человеком главнее догадки. Догадка повторяет поведение cURL —
     /// строки для обмена чаще всего приходят именно оттуда, и запрос должен вести себя так же,
-    /// как вел себя в чужой документации.
+    /// как вел себя в документации сторонней программы.
     /// </summary>
     private static string ContentTypeFor(List<IntegrationHeader> headers, string body)
     {
@@ -227,7 +227,7 @@ public sealed record EgressResponse(
     /// <summary>Ответ получен и он успешный.</summary>
     public bool Ok => Sent && StatusCode is >= 200 and < 300;
 
-    /// <summary>Чужая программа ответила перенаправлением, а за ним программа не идет.</summary>
+    /// <summary>Сторонняя программа ответила перенаправлением, а за ним программа не идет.</summary>
     public bool Redirected => Sent && StatusCode is >= 300 and < 400;
 
     /// <summary>Шлюз не пустил: запрос не отправлялся.</summary>

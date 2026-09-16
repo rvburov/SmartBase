@@ -9,7 +9,7 @@ namespace SmartBase.Database.Repositories;
 /// Что делать со строками входящего файла: привязка, выведенная из имен, и колонки, которым в
 /// коллекции места не нашлось.
 /// </summary>
-/// <param name="Binding">Готовая привязка — та же, что рисует человек для ответа чужой программы.</param>
+/// <param name="Binding">Готовая привязка — та же, что рисует человек для ответа сторонней программы.</param>
 /// <param name="Ignored">Колонки файла, которые не переносятся. Отправитель узнает о них из
 /// квитанции: молча выбросить присланное — худшее, что может сделать приемник.</param>
 public sealed record InboxPlan(CollectionBinding Binding, IReadOnlyList<string> Ignored);
@@ -393,7 +393,7 @@ public partial class ConstructorRepository
         }
 
         // Повторное сообщение находит все готовым и не делает ничего — в этом весь смысл
-        // «ensure»: чужая программа шлет его при каждом своем запуске, не проверяя ничего.
+        // «ensure»: сторонняя программа шлет его при каждом своем запуске, не проверяя ничего.
         var createdCollection = false;
 
         if (found is not { } collectionId)

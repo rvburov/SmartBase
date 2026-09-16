@@ -8,7 +8,7 @@ using SmartBase.Utils;
 namespace SmartBase.Tests.Integration;
 
 /// <summary>
-/// Укладка ответа чужой программы в существующую коллекцию (<c>ConstructorRepository.ApplyRows</c>).
+/// Укладка ответа сторонней программы в существующую коллекцию (<c>ConstructorRepository.ApplyRows</c>).
 ///
 /// Обычный импорт заводит новую коллекцию; обмен так работать не может — он повторяется по
 /// расписанию, и каждый запуск обязан ложиться в ту же таблицу. Отсюда и главные проверки:
@@ -80,7 +80,7 @@ public sealed class CollectionBindingTests
         Assert.Equal("новый", Value(db.Constructor, records[0].Id!.Value, stateId));
     }
 
-    /// <summary>Колонку можно и не переносить: чужая программа отдает лишнее почти всегда.</summary>
+    /// <summary>Колонку можно и не переносить: сторонняя программа отдает лишнее почти всегда.</summary>
     [Fact]
     public void Columns_outside_the_binding_are_not_transferred()
     {

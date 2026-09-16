@@ -12,7 +12,7 @@ namespace SmartBase.Database.Repositories;
 /// удалили; в обоих случаях писать нечем.</param>
 /// <param name="Approved">Администратор базы допустил робота. Недопущенный ждет так же, как
 /// человек, и это не досадная мелочь: допуск — единственное место, где живой человек соглашается
-/// пустить чужую программу в свою базу.</param>
+/// пустить стороннюю программу в свою базу.</param>
 /// <param name="Mask">Маска действий уровня базы.</param>
 public sealed record RobotAccess(bool Known, bool Approved, int Mask)
 {

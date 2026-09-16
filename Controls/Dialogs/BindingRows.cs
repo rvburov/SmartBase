@@ -17,7 +17,7 @@ namespace SmartBase.Controls.Dialogs;
 /// <param name="selected">Что выбрано сейчас.</param>
 /// <param name="sample">Настоящие значения этой колонки из первых строк ответа — через запятую;
 /// пусто — значений нет. Раздел 2 обещает «показ первых 20 строк», и обещает не ради полноты:
-/// раскладка подбирается ПО ИМЕНАМ, а у чужих программ имена похожи до неразличимости
+/// раскладка подбирается ПО ИМЕНАМ, а у сторонних программ имена похожи до неразличимости
 /// (<c>name</c> и <c>title</c>, <c>sum</c> и <c>total</c>). Ошибку в них без значений видно
 /// только после укладки — то есть по испорченной коллекции.</param>
 public sealed class BindingMapRow(string column, IReadOnlyList<string> options, int selected,
@@ -96,7 +96,7 @@ public sealed class OutgoingFieldRow(int fieldId, string title, bool allowed) : 
         }
     }
 
-    /// <summary>Под каким именем его ждет чужая программа; пусто — под своим.</summary>
+    /// <summary>Под каким именем его ждет сторонняя программа; пусто — под своим.</summary>
     public string Alias
     {
         get => _alias;
