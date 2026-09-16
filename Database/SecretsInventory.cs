@@ -57,10 +57,10 @@ public enum SecretTone
 /// <param name="Title">Название: «Пароль базы SQLite «Заказы»».</param>
 /// <param name="Status">Состояние словами — вторая строка.</param>
 /// <param name="Tone">Цвет второй строки.</param>
-/// <param name="Where">Путь, адрес или сервер — третья строка.</param>
-/// <param name="What">Для чего секрет — первая половина подсказки к строке.</param>
-/// <param name="Guard">Где хранится и почему его нельзя (или можно) показать — вторая половина
-/// подсказки. Отсутствие кнопки «Показать» без объяснения читается как недоделка.</param>
+/// <param name="Setup">Где секрет настраивается — путь по разделам программы, третья строка.
+/// Стоит в самой строке, а не в подсказке: подсказку надо вызвать и дождаться, а «куда идти
+/// менять» нужно сразу — ради этого вопроса в опись и заходят.</param>
+/// <param name="Where">Путь, адрес или сервер — четвертая строка.</param>
 /// <param name="State">Установлен ли пароль в этом месте.</param>
 /// <param name="Since">Момент, от которого считается простой: последнее пользование, а у ни разу
 /// не использованного токена — его выдача.</param>
@@ -73,9 +73,8 @@ public sealed record SecretEntry(SecretKind      Kind,
                                  string          Title,
                                  string          Status,
                                  SecretTone      Tone,
+                                 string          Setup,
                                  string          Where,
-                                 string          What,
-                                 string          Guard,
                                  SecretState     State,
                                  DateTimeOffset? Since,
                                  bool            Watched,
@@ -263,10 +262,6 @@ public static class SecretsInventory
         && entry.Watched
         && (entry.Since is null || now - entry.Since.Value > TimeSpan.FromDays(StaleDays));
 
-    /// <summary>Подсказка к строке: для чего секрет и где он хранится.</summary>
-    public static string Tip(SecretEntry entry) =>
-        entry.Guard.Length == 0 ? entry.What : entry.What + "\n\n" + entry.Guard;
-
     /// <summary>
     /// Вопрос перед снятием пароля базы — один на менеджер паролей и панель администратора.
     /// Обещать «больше не смогут открыть доступ сами» можно, только пока вход по паролю
@@ -282,6 +277,20 @@ public static class SecretsInventory
               + "изменится: их и сейчас допускает администратор. Включить вход по паролю снова "
               + "можно будет, только задав новый пароль.");
 
+    /// <summary>
+    /// Цвет состояния — одно правило на всю опись, и живет оно здесь, а не в каждой строке: пять
+    /// копий правила разошлись бы при первой же правке.
+    ///
+    /// Зеленый значит «пароль тут есть», а не «пускает прямо сейчас». Выключенный вход по паролю
+    /// и выключенный токен остаются зелеными: пароль задан, никуда не делся и снова заработает,
+    /// как только тумблер вернут, — серым он звал бы чинить исправное. Что он сейчас не пускает,
+    /// сказано словами в самом статусе.
+    /// </summary>
+    public static SecretTone ToneOf(SecretState state, bool stale) =>
+        stale                      ? SecretTone.Alarm
+        : state == SecretState.Set ? SecretTone.Good
+                                   : SecretTone.Muted;
+
     /// <summary>Сервер базы PostgreSQL одной строкой: «хост:порт/база».</summary>
     public static string ServerOf(string host, int port, string database) =>
         host.Length == 0 ? "сервер не указан" : $"{host}:{port}/{database}";
@@ -295,25 +304,15 @@ public static class SecretsInventory
     /// </summary>
     private static SecretEntry DatabasePassword(InventoryDatabase database)
     {
-        var (status, tone) = !database.HasPassword
-            ? ("не установлен", SecretTone.Muted)
+        var status = !database.HasPassword
+            ? "не установлен"
             : !database.PasswordAccessEnabled
-                // Серым, а не зеленым: пароль задан, но сейчас никого не пускает.
-                ? ("установлен · вход по паролю выключен", SecretTone.Muted)
+                ? "установлен · вход по паролю выключен"
                 : database.LastPasswordUnlock is { } at
-                    ? ($"установлен · последний вход по паролю {at.ToLocalTime():dd.MM.yyyy}",
-                       SecretTone.Good)
-                    : ("установлен", SecretTone.Good);
+                    ? $"установлен · последний вход по паролю {at.ToLocalTime():dd.MM.yyyy}"
+                    : "установлен";
 
-        // Подсказка короткая и по делу: что это, можно ли показать и куда идти настраивать. Длинные
-        // объяснения в плашке не читают, а путь в программе ищут глазами.
-        var guard = !database.HasPassword
-            ? "Пароль не задан: доступ выдает администратор. "
-            : database.PasswordAccessEnabled
-                ? "Хранится отпечатком, показать нельзя. "
-                : "Вход по паролю выключен: пароль сохранен, но не пускает. ";
-
-        guard += "Настройка: «Профиль → Панель администратора».";
+        var state = database.HasPassword ? SecretState.Set : SecretState.NotSet;
 
         return new SecretEntry(
             SecretKind.DatabasePassword,
@@ -321,14 +320,13 @@ public static class SecretsInventory
             database.IsPostgres
                 ? $"Пароль базы PostgreSQL «{database.Name}»"
                 : $"Пароль базы SQLite «{database.Name}»",
-            status, tone,
+            status,
+            ToneOf(state, stale: false),
+            "Настройка: «Профиль → Панель администратора»",
             database.IsPostgres
                 ? ServerOf(database.PgHost, database.PgPort, database.PgDatabase)
                 : database.Path,
-            "Доступ к базе без администратора: пользователь вводит пароль и получает права по "
-            + "умолчанию.",
-            guard,
-            database.HasPassword ? SecretState.Set : SecretState.NotSet,
+            state,
             Since: null, Watched: false, Revealable: false);
     }
 
@@ -341,13 +339,9 @@ public static class SecretsInventory
             database.Id,
             $"Пароль сервера PostgreSQL для базы «{database.Name}»",
             database.HasServerPassword ? "установлен" : "не установлен",
-            database.HasServerPassword ? SecretTone.Good : SecretTone.Muted,
+            ToneOf(database.HasServerPassword ? SecretState.Set : SecretState.NotSet, stale: false),
+            "Настройка: «Настройки → Управление базой данных», шестеренка у базы",
             ServerOf(database.PgHost, database.PgPort, database.PgDatabase),
-            "Подключение к серверу PostgreSQL, где лежит база.",
-            (database.HasServerPassword
-                ? "Хранится вне базы, показать нельзя. "
-                : "Пароль не задан: сервер пускает по доверию к машине. ")
-            + "Настройка: «Настройки → Управление базой данных», шестеренка у базы.",
             database.HasServerPassword ? SecretState.Set : SecretState.NotSet,
             Since: null, Watched: false, Revealable: false);
 
@@ -363,31 +357,22 @@ public static class SecretsInventory
             connection.Id,
             $"Соединение «{connection.Name}»",
             "", SecretTone.Muted,
+            "Настройка: «Настройки → Интеграции → Соединения»",
             connection.Address.Length > 0 ? connection.Address : "адрес не указан",
-            "Авторизация запросов к чужой программе.",
-            "",
             connection.HasSecret ? SecretState.Set : SecretState.NotSet,
             connection.LastRun,
             Watched:    connection.HasSecret,
             Revealable: connection.HasSecret);
 
         if (!connection.HasSecret)
-            return entry with
-            {
-                Status = "не установлен",
-                Guard  = "Секрет не задан: обмен идет без авторизации. Настройка: «Настройки → "
-                       + "Интеграции → Соединения».",
-            };
+            return entry with { Status = "не установлен" };
 
         var stale = Stale(entry, now);
 
         return entry with
         {
             Status = stale ? "давно не нужен" : "установлен",
-            Tone   = stale ? SecretTone.Alarm : SecretTone.Good,
-            Guard  = (stale ? $"Запросов не было больше {StaleDays} дней. " : "")
-                     + "Показ под мастер-паролем, с записью в журнал безопасности. Настройка: "
-                     + "«Настройки → Интеграции → Соединения».",
+            Tone   = ToneOf(SecretState.Set, stale),
         };
     }
 
@@ -402,9 +387,8 @@ public static class SecretsInventory
             token.Id,
             $"Токен «{token.Name}»",
             "", SecretTone.Muted,
+            "Выдача и отзыв: «Настройки → Интеграции → Доступ извне»",
             $"база «{database}»",
-            "Запись в базу от имени пользователя-робота.",
-            "",
             SecretState.Set,
             // Ни разу не использованный токен отсчитывает простой от выдачи: выданный вчера еще
             // не мертв, а выданный полгода назад и ни разу не пришедший — да.
@@ -417,14 +401,7 @@ public static class SecretsInventory
         return entry with
         {
             Status = !token.Enabled ? "выключен" : stale ? "давно не нужен" : "установлен",
-            Tone   = !token.Enabled ? SecretTone.Muted : stale ? SecretTone.Alarm : SecretTone.Good,
-            Guard  = (!token.Enabled
-                         ? "Выключен: обращения отклоняются, выдачи чтения сохранены. "
-                         : stale
-                             ? $"Обращений не было больше {StaleDays} дней. Хранится отпечатком, "
-                               + "показать нельзя. "
-                             : "Хранится отпечатком, показывается один раз при выдаче. ")
-                     + "Выдача и отзыв: «Настройки → Интеграции → Доступ извне».",
+            Tone   = ToneOf(SecretState.Set, stale),
         };
     }
 
@@ -437,16 +414,13 @@ public static class SecretsInventory
             0,
             "Мастер-пароль организации",
             master.Defined ? "задан" : "не задан",
-            master.Defined ? SecretTone.Good : SecretTone.Muted,
+            ToneOf(master.Defined ? SecretState.Set : SecretState.NotSet, stale: false),
+            // Единственная строка описи, которую в программе не настраивают вовсе: путь назван
+            // тем, что есть, — политикой. Строку для нее считает окно «Мастер-пароль».
+            "Настройка: политика организации, вне программы",
             master.Defined && master.Sources.Count > 0
                 ? string.Join(", ", master.Sources)
                 : "политика организации",
-            "Подтверждение отправок наружу, выдач на чтение, понижения меток и показа секретов.",
-            // Куда положить политику и чем ее защищают, здесь не пишется: администратор машины
-            // этого не решает (решает ответственный за интеграции), а плашка отвечает на два
-            // вопроса — что это и где это в программе.
-            "Задается в политике организации, вне программы. Строку считает окно «Мастер-пароль "
-            + "для политики…».",
             master.Defined ? SecretState.Set : SecretState.NotSet,
             Since: null, Watched: false, Revealable: false);
 

@@ -228,18 +228,20 @@ public sealed class SecretsInventoryTests
     }
 
     /// <summary>
-    /// Пароль задан, но вход по паролю выключен — серым: пароль сейчас никого не пускает, и
-    /// зеленый цвет обещал бы дверь, которой нет. Дата последнего входа при этом не показывается.
+    /// Пароль задан, но вход по паролю выключен — ЗЕЛЕНЫМ: строка отвечает на вопрос «пароль тут
+    /// есть?», а не «пускает ли он прямо сейчас». Пароль никуда не делся и заработает, как только
+    /// тумблер вернут; серым он звал бы чинить исправное. Что он сейчас не пускает, сказано
+    /// словами в самом статусе. Дата последнего входа при этом не показывается.
     /// </summary>
     [Fact]
-    public void A_password_behind_a_switched_off_login_is_grey()
+    public void A_password_behind_a_switched_off_login_stays_green()
     {
         var entry = Only(Build([Sqlite(1, "Склад", hasPassword: true, access: false,
                                        unlock: Now.AddDays(-3))]),
                          SecretKind.DatabasePassword);
 
         Assert.Equal("установлен · вход по паролю выключен", entry.Status);
-        Assert.Equal(SecretTone.Muted, entry.Tone);
+        Assert.Equal(SecretTone.Good, entry.Tone);
         Assert.Equal(SecretState.Set, entry.State);
     }
 
@@ -335,17 +337,18 @@ public sealed class SecretsInventoryTests
         Assert.Equal(SecretTone.Muted, entry.Tone);
         Assert.Equal(SecretState.NotSet, entry.State);
         Assert.False(SecretsInventory.Stale(entry, Now));
-        Assert.NotEmpty(entry.Guard);
+        Assert.NotEmpty(entry.Setup);
     }
 
     // ── Токены ────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Выключенный токен — не открытая дверь: его выключили нарочно, и «давно не нужным» он не
-    /// считается, сколько бы им ни пользовались.
+    /// Выключенный токен «давно не нужным» не считается, сколько бы им ни пользовались: его
+    /// выключили нарочно. Цвет при этом зеленый, как у выключенного входа по паролю: токен выдан
+    /// и существует, а что он сейчас не пускает — сказано словом «выключен».
     /// </summary>
     [Fact]
-    public void A_disabled_token_is_grey_and_never_dead()
+    public void A_disabled_token_stays_green_and_never_dead()
     {
         var entry = Only(Build([Sqlite(1, "Склад")],
                                tokens: [Token(1, "Обмен", dbId: 1, enabled: false,
@@ -353,7 +356,7 @@ public sealed class SecretsInventoryTests
                          SecretKind.RobotToken);
 
         Assert.Equal("выключен", entry.Status);
-        Assert.Equal(SecretTone.Muted, entry.Tone);
+        Assert.Equal(SecretTone.Good, entry.Tone);
         Assert.False(SecretsInventory.Stale(entry, Now));
     }
 
@@ -429,16 +432,7 @@ public sealed class SecretsInventoryTests
         Assert.Equal([1], listing.Entries.Where(e => e.Revealable).Select(e => e.Id));
         Assert.All(listing.Entries.Where(e => e.Revealable),
                    e => Assert.Equal(SecretKind.Connection, e.Kind));
-        Assert.All(listing.Entries, e => Assert.NotEmpty(e.Guard));
-        Assert.All(listing.Entries, e => Assert.NotEmpty(e.What));
-    }
-
-    [Fact]
-    public void The_tip_joins_what_and_where_it_is_kept()
-    {
-        var entry = Only(Build([Sqlite(1, "Склад", hasPassword: true)]), SecretKind.DatabasePassword);
-
-        Assert.Equal(entry.What + "\n\n" + entry.Guard, SecretsInventory.Tip(entry));
+        Assert.All(listing.Entries, e => Assert.NotEmpty(e.Setup));
     }
 
     // ── Порядок ───────────────────────────────────────────────────────────────
@@ -466,27 +460,13 @@ public sealed class SecretsInventoryTests
     // ── Тексты, сверенные с кодом ─────────────────────────────────────────────
 
     /// <summary>
-    /// Подсказка пароля базы говорит главное: этим паролем человек входит без администратора и
-    /// получает права по умолчанию. Про устройство хранения — одной фразой, без разбора того, где
-    /// какой файл лежит: плашку читают на бегу.
+    /// Каждая строка называет место в ПРОГРАММЕ, где секрет настраивается целиком: человек пришел
+    /// сюда, чтобы не рыскать по разделам, и уйти отсюда с пустыми руками не должен. Раньше путь
+    /// лежал в подсказке — ее надо было вызвать и дождаться; теперь он стоит строкой сразу под
+    /// состоянием.
     /// </summary>
     [Fact]
-    public void The_database_password_says_whom_it_lets_in()
-    {
-        var entry = Only(Build([Sqlite(1, "Склад", hasPassword: true)]), SecretKind.DatabasePassword);
-
-        Assert.Contains("без администратора", entry.What);
-        Assert.Contains("права по умолчанию", entry.What);
-    }
-
-    /// <summary>
-    /// Каждая подсказка называет место в ПРОГРАММЕ, где секрет настраивается целиком: человек
-    /// пришел сюда, чтобы не рыскать по разделам, и уйти отсюда с пустыми руками не должен.
-    /// Устройство хранения (какой файл, какое хранилище системы) в плашке не разбирается — на
-    /// решение «что делать дальше» оно не влияет.
-    /// </summary>
-    [Fact]
-    public void Every_tip_names_where_the_secret_is_set_up()
+    public void Every_row_names_where_the_secret_is_set_up()
     {
         var listing = Build([Sqlite(1, "Склад", hasPassword: true), Postgres(2, "Заказы")],
                             [Connection(1, "Обмен", lastRun: Now)],
@@ -495,32 +475,50 @@ public sealed class SecretsInventoryTests
 
         // Не Only: баз в описи две, и строк пароля базы тоже две — здесь проверяется текст рода,
         // а не то, сколько строк этого рода вышло.
-        string Tip(SecretKind kind) => listing.Entries.First(e => e.Kind == kind).Guard;
+        string Setup(SecretKind kind) => listing.Entries.First(e => e.Kind == kind).Setup;
 
-        Assert.Contains("Профиль → Панель администратора", Tip(SecretKind.DatabasePassword));
-        Assert.Contains("Настройки → Управление базой данных", Tip(SecretKind.PgPassword));
-        Assert.Contains("Настройки → Интеграции → Соединения", Tip(SecretKind.Connection));
-        Assert.Contains("Настройки → Интеграции → Доступ извне", Tip(SecretKind.RobotToken));
-        Assert.Contains("Мастер-пароль для политики", Tip(SecretKind.PolicyMaster));
+        Assert.Contains("Профиль → Панель администратора", Setup(SecretKind.DatabasePassword));
+        Assert.Contains("Настройки → Управление базой данных", Setup(SecretKind.PgPassword));
+        Assert.Contains("Настройки → Интеграции → Соединения", Setup(SecretKind.Connection));
+        Assert.Contains("Настройки → Интеграции → Доступ извне", Setup(SecretKind.RobotToken));
+        Assert.Contains("вне программы", Setup(SecretKind.PolicyMaster));
 
-        // Ни устройства хранения политики, ни имен операционных систем: это не помогает решить,
-        // что делать со строкой, а плашку удлиняет вдвое.
+        // Ни устройства хранения, ни имен операционных систем: строка отвечает на вопрос «куда
+        // идти менять», и все остальное в ней только мешает его прочитать.
         foreach (var entry in listing.Entries)
             foreach (var noise in new[] { "Windows", "macOS", "Linux", "DPAPI", "policy.json",
                                           "HKLM", "/etc/smartbase", "app.db" })
-                Assert.DoesNotContain(noise, SecretsInventory.Tip(entry));
+                Assert.DoesNotContain(noise, entry.Setup);
     }
 
-    [Fact]
-    public void The_master_password_says_it_opens_the_secret_reveal_too()
-    {
-        var entry = Only(Build([Sqlite(1, "Склад")]), SecretKind.PolicyMaster);
+    /// <summary>
+    /// Цвет состояния идет по одному правилу на всю опись: место без пароля серое, заброшенный
+    /// секрет красный, все остальное зеленое. Правило проверяется на самой функции — иначе
+    /// шестая строка описи заведет себе шестой оттенок.
+    /// </summary>
+    [Theory]
+    [InlineData(SecretState.NotSet, false, SecretTone.Muted)]
+    [InlineData(SecretState.Set,    false, SecretTone.Good)]
+    [InlineData(SecretState.Set,    true,  SecretTone.Alarm)]
+    public void The_tone_follows_one_rule(SecretState state, bool stale, SecretTone expected) =>
+        Assert.Equal(expected, SecretsInventory.ToneOf(state, stale));
 
-        Assert.Contains("отправок наружу", entry.What);
-        Assert.Contains("выдач на чтение", entry.What);
-        Assert.Contains("меток", entry.What);
-        Assert.Contains("показа секретов", entry.What);
-        Assert.Contains("вне программы", entry.Guard);
+    /// <summary>Каждая строка описи красится этим же правилом, а не своим собственным.</summary>
+    [Fact]
+    public void Every_row_takes_its_tone_from_that_rule()
+    {
+        var listing = Build(
+            [Sqlite(1, "Склад", hasPassword: true, access: false), Sqlite(2, "Пустая"),
+             Postgres(3, "Заказы")],
+            [Connection(1, "Живой", lastRun: Now), Connection(2, "Забытый", lastRun: Now.AddYears(-1)),
+             Connection(3, "Без секрета", secret: false)],
+            [Token(1, "Выключенный", dbId: 1, enabled: false, created: Now.AddYears(-1)),
+             Token(2, "Рабочий", dbId: 1, used: Now)],
+            new InventoryMaster(true, ["политика"]));
+
+        Assert.All(listing.Entries,
+                   e => Assert.Equal(SecretsInventory.ToneOf(e.State, SecretsInventory.Stale(e, Now)),
+                                     e.Tone));
     }
 
     /// <summary>
@@ -535,9 +533,9 @@ public sealed class SecretsInventoryTests
     {
         var entry = Only(Build([Postgres(1, "Заказы", serverPassword: saved)]), SecretKind.PgPassword);
 
-        Assert.Contains("Управление базой данных", entry.Guard);
-        Assert.Contains("шестеренка у базы", entry.Guard);
-        Assert.DoesNotContain("«Изменить»", entry.Guard);
+        Assert.Contains("Управление базой данных", entry.Setup);
+        Assert.Contains("шестеренка у базы", entry.Setup);
+        Assert.DoesNotContain("«Изменить»", entry.Setup);
         Assert.False(entry.Revealable);
     }
 
@@ -557,15 +555,5 @@ public sealed class SecretsInventoryTests
         Assert.StartsWith("Убрать пароль базы «Склад»?", closed);
         Assert.DoesNotContain("больше не смогут", closed);
         Assert.Contains("уже выключен", closed);
-    }
-
-    /// <summary>У мертвого секрета подсказка говорит, почему он красный.</summary>
-    [Fact]
-    public void A_dead_secret_explains_itself_in_the_tip()
-    {
-        var entry = Only(Build([Sqlite(1, "Склад")], [Connection(1, "Забытое", lastRun: Now.AddYears(-1))]),
-                         SecretKind.Connection);
-
-        Assert.Contains($"{SecretsInventory.StaleDays} дней", SecretsInventory.Tip(entry));
     }
 }
