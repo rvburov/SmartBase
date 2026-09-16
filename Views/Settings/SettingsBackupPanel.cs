@@ -103,7 +103,7 @@ public partial class SettingsView
         // Метка та же, что в «Управлении базой данных»: движок у каждой строки, у базы по
         // умолчанию — пометка в скобках.
         header.Children.Add(BadgeText(
-            (entry.IsPostgres ? "PostgreSQL" : "SQLite")
+            DatabaseRow.EngineName(entry.IsPostgres)
             + (entry.IsDefault ? " (По умолчанию)" : "")));
 
         // ── Редактор расписания ───────────────────────────────────────────────

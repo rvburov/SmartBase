@@ -40,6 +40,34 @@ public sealed class DatabaseRowTests
                 Assert.NotEmpty(Badge(postgres, isDefault));
     }
 
+    /// <summary>
+    /// Движок называется одним методом на три места: строка списка, заголовок окна «Настройки
+    /// базы данных» и список «Резервного копирования». Разъедутся написания — разъедется и
+    /// ощущение, что это одна и та же база.
+    /// </summary>
+    [Theory]
+    [InlineData(false, "SQLite")]
+    [InlineData(true,  "PostgreSQL")]
+    public void The_engine_is_named_the_same_way_everywhere(bool postgres, string expected)
+    {
+        Assert.Equal(expected, DatabaseRow.EngineName(postgres));
+        Assert.StartsWith(DatabaseRow.EngineName(postgres), Badge(postgres, false));
+    }
+
+    /// <summary>
+    /// Название в списке и пароль подключения правит администратор базы. Исключение одно:
+    /// неподключенная база прав не показывает вовсе, и поля открыты — иначе база с устаревшим
+    /// паролем не чинится никогда (войти нельзя, а без входа не видно и прав).
+    /// </summary>
+    [Theory]
+    [InlineData(true,  true,  true)]    // подключена, администратор — правит
+    [InlineData(true,  false, false)]   // подключена, обычный пользователь — поля серые
+    [InlineData(false, false, true)]    // не подключена — прав не видно, поля открыты
+    [InlineData(false, true,  true)]
+    public void Only_the_database_admin_edits_the_name_and_the_password(
+        bool mounted, bool isAdmin, bool allowed) =>
+        Assert.Equal(allowed, DatabaseRow.CanManage(mounted, isAdmin));
+
     /// <summary>Корзина не предлагается у базы по умолчанию: удалить ее нельзя.</summary>
     [Theory]
     [InlineData(true,  false)]

@@ -212,8 +212,10 @@ public partial class MainWindow : Window
                 : null,
             // Сведения о файле — снимок, снятый при монтировании (без обращения к файлу с UI-потока).
             dbId => _workspace.Get(dbId)?.Storage,
-            // Обслуживать файл (сжать/копия) может администратор базы.
-            dbId => _workspace.Get(dbId) is { Provider: "sqlite" } m && m.Permissions.IsAdmin,
+            // Администратор базы: он обслуживает файл (сжать/копия) и правит в окне настроек
+            // название с паролем подключения. Провайдер здесь не при чем — где нужен именно
+            // SQLite, это проверяется на месте.
+            dbId => _workspace.Get(dbId) is { } m && m.Permissions.IsAdmin,
             // Стадии задач всех допущенных баз — для списка «Стадия новой задачи».
             taskStages: () => GrantedDbs().SelectMany(m => m.Constructor.GetTaskStages()).Distinct().ToList(),
             // Открытые базы — «Интеграциям»: ответ сторонней программы укладывается в коллекцию

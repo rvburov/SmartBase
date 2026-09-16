@@ -50,7 +50,24 @@ public sealed partial class DatabaseRow : ObservableObject
     /// тем более рядом со строкой, у которой метка есть. Теперь движок назван у каждой строки.
     /// </summary>
     public string EngineBadge =>
-        (IsPostgres ? "PostgreSQL" : "SQLite") + (IsDefault ? " (По умолчанию)" : "");
+        EngineName(IsPostgres) + (IsDefault ? " (По умолчанию)" : "");
+
+    /// <summary>
+    /// Чем база хранится, одним словом. Живет здесь, потому что пишется в трех местах: строка
+    /// списка, заголовок окна настроек базы и список в «Резервном копировании». Три отдельных
+    /// тернарника разошлись бы на первой же правке написания.
+    /// </summary>
+    public static string EngineName(bool isPostgres) => isPostgres ? "PostgreSQL" : "SQLite";
+
+    /// <summary>
+    /// Может ли человек править название в списке и пароль подключения (окно «Настройки базы
+    /// данных»): это дело администратора базы, у остальных поля серые.
+    ///
+    /// Пока база НЕ подключена, прав не видно вовсе — и поля открыты. Иначе база с устаревшим
+    /// паролем становится мертвой навсегда: войти нельзя, а раз войти нельзя, то и прав она
+    /// никогда не покажет, и вписать верный пароль будет некому.
+    /// </summary>
+    public static bool CanManage(bool mounted, bool isAdmin) => !mounted || isAdmin;
 
     public bool ShowDeleteButton => !IsDefault;
     public bool ShowStatus       => StatusText is not null;

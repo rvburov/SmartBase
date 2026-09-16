@@ -64,7 +64,7 @@ public partial class SettingsView
         Add(rows, AccessModeRow());
 
         Add(rows, FolderRow(folder));
-        Add(rows, DatabaseRow(databases));
+        Add(rows, DbRow(databases));
         Add(rows, AutoRow(folder, databases));
         Add(rows, CheckRow(folder, databases));
 
@@ -157,7 +157,9 @@ public partial class SettingsView
 
     // ── База ──────────────────────────────────────────────────────────────────
 
-    private Border DatabaseRow(IReadOnlyList<DatabaseManager> databases)
+    // Не «DatabaseRow»: так зовется модель строки списка баз, и внутри SettingsView имя метода
+    // перекрыло бы тип — обращение DatabaseRow.EngineName перестало бы собираться.
+    private Border DbRow(IReadOnlyList<DatabaseManager> databases)
     {
         if (databases.Count == 0)
             return Row("База данных",

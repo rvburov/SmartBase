@@ -371,8 +371,11 @@ public sealed class SecretsView : UserControl
             return;
         }
 
+        // canManage: права администратора базы уже проверены выше (AdminDatabaseAsync) —
+        // сюда без них не попасть.
         var result = await new DbSettingsDialog(entry, storage: null, canMaintain: false,
-                                                onCompact: null, repo: db.Constructor)
+                                                canManage: true, onCompact: null,
+                                                repo: db.Constructor)
             .ShowDialog<DbSettingsResult?>(win);
 
         if (result?.NewName is { } newName)

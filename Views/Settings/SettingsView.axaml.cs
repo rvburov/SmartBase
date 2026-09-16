@@ -1041,7 +1041,8 @@ public partial class SettingsView : UserControl
     // Вызывается из MainWindow: реестр + способ узнать, смонтирована ли БД сейчас,
     // + статус фоновой очереди монтирования для еще не подключенных, + сведения о файле
     // смонтированной SQLite-базы (снятые при монтировании, без обращения к файлу отсюда)
-    // и право текущего пользователя обслуживать файл (администратор базы).
+    // и признак «текущий пользователь — администратор этой базы» (он обслуживает файл и
+    // правит в окне настроек название с паролем подключения).
     /// <param name="taskStages">Стадии задач всех допущенных баз — для списка «Стадия новой
     /// задачи» в разделе «Задачи»; null — только три стандартные.</param>
     /// <param name="databases">Открытые базы, к которым допущен текущий пользователь. Зовется
@@ -1057,7 +1058,7 @@ public partial class SettingsView : UserControl
     public void Initialize(DatabaseRegistry registry, Func<int, bool> isMounted,
                            Func<int, (string Text, bool Failed)?>? queueStatus = null,
                            Func<int, DatabaseManager.StorageStats?>? storage = null,
-                           Func<int, bool>? canMaintain = null,
+                           Func<int, bool>? isDbAdmin = null,
                            Func<IReadOnlyList<string>>? taskStages = null,
                            Func<IReadOnlyList<DatabaseManager>>? databases = null,
                            Func<CancellationToken, Task<InboxRun>>? inboxSweep = null,
@@ -1069,7 +1070,7 @@ public partial class SettingsView : UserControl
         _queueStatus = queueStatus;
         _storage     = storage;
         _taskStages  = taskStages;
-        _canMaintain = canMaintain;
+        _isDbAdmin   = isDbAdmin;
         _databases   = databases;
         _inboxSweep  = inboxSweep;
         _scenarioRun = scenarioRun;
@@ -1078,7 +1079,7 @@ public partial class SettingsView : UserControl
     }
 
     private Func<int, DatabaseManager.StorageStats?>? _storage;
-    private Func<int, bool>?                          _canMaintain;
+    private Func<int, bool>?                          _isDbAdmin;
     private Func<IReadOnlyList<DatabaseManager>>?     _databases;
     private Func<CancellationToken, Task<InboxRun>>? _inboxSweep;
     private Func<Scenario, CancellationToken, Task<ScenarioOutcome>>? _scenarioRun;
@@ -1186,7 +1187,7 @@ public partial class SettingsView : UserControl
                 // Сведения о файле и право на «Сжать файл» — только у смонтированной
                 // SQLite-базы (PG-файла нет; отцепленную не трогаем).
                 Storage       = mounted && !d.IsPostgres ? _storage?.Invoke(d.Id) : null,
-                CanMaintain   = mounted && !d.IsPostgres && (_canMaintain?.Invoke(d.Id) ?? false),
+                CanMaintain   = mounted && !d.IsPostgres && (_isDbAdmin?.Invoke(d.Id) ?? false),
                 StatusText    = mounted ? _mountedStatus.GetValueOrDefault(d.Id) : queue?.Text
                     ?? (d.IsPostgres ? "Не подключена (сервер недоступен)"
                                      : "Не подключена (файл недоступен)"),
@@ -1327,7 +1328,11 @@ public partial class SettingsView : UserControl
 
         var mounted     = _isMounted?.Invoke(id) ?? false;
         var storage     = mounted && !entry.IsPostgres ? _storage?.Invoke(id) : null;
-        var canMaintain = mounted && !entry.IsPostgres && (_canMaintain?.Invoke(id) ?? false);
+        var isAdmin     = _isDbAdmin?.Invoke(id) ?? false;
+        var canMaintain = mounted && !entry.IsPostgres && isAdmin;
+        // Название и пароль подключения правит администратор базы; у неподключенной базы
+        // прав не видно, и поля открыты — иначе устаревший пароль вписать будет некому.
+        var canManage   = DatabaseRow.CanManage(mounted, isAdmin);
 
         // Метка конфиденциальности лежит ВНУТРИ файла базы, поэтому окну нужен репозиторий
         // подключенной базы. Не подключена — строки метки в окне просто не будет: читать и
@@ -1335,7 +1340,7 @@ public partial class SettingsView : UserControl
         // устройство хранения.
         var repo = (_databases?.Invoke() ?? []).FirstOrDefault(d => d.DbId == id)?.Constructor;
 
-        var result = await new DbSettingsDialog(entry, storage, canMaintain,
+        var result = await new DbSettingsDialog(entry, storage, canMaintain, canManage,
                 onCompact: () => DatabaseCompactRequested?.Invoke(this, id),
                 repo: repo)
             .ShowDialog<DbSettingsResult?>(win);
