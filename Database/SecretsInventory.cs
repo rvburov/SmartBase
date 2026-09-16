@@ -135,16 +135,24 @@ public sealed record InventoryMaster(bool                  Defined,
 /// <summary>Все, из чего складывается опись.</summary>
 /// <param name="Databases">ОТКРЫТЫЕ базы: у закрытой, недоступной или сжимаемой читать нечего,
 /// и в описи ее нет вовсе.</param>
+/// <param name="IntegrationsAllowed">Разрешена ли человеку настройка обмена — право
+/// <see cref="SmartBase.Core.Models.PermAction.IntegrationsSetup"/> во ВСЕХ допущенных базах, то
+/// самое, которым проверяются кнопки этих строк и экраны раздела «Интеграции».</param>
 public sealed record InventoryFacts(IReadOnlyList<InventoryDatabase>   Databases,
                                     IReadOnlyList<InventoryConnection> Connections,
                                     IReadOnlyList<InventoryToken>      Tokens,
-                                    InventoryMaster                    Master);
+                                    InventoryMaster                    Master,
+                                    bool                               IntegrationsAllowed);
 
 /// <summary>Итог описи.</summary>
 /// <param name="Admin">Текущий пользователь — администратор хотя бы одной открытой базы. Ложь —
 /// экран показывает одну строку-заглушку (<see cref="SecretsInventory.NoAccessTitle"/>).</param>
+/// <param name="Integrations">В описи есть то, что заводит меню «Добавить пароль»: соединения,
+/// токены, мастер-пароль. Ложь — меню прячут целиком: все три его пункта уперлись бы в отказ.</param>
 /// <param name="Entries">Строки по порядку показа.</param>
-public sealed record InventoryListing(bool Admin, IReadOnlyList<SecretEntry> Entries);
+public sealed record InventoryListing(bool                       Admin,
+                                      bool                       Integrations,
+                                      IReadOnlyList<SecretEntry> Entries);
 
 /// <summary>
 /// Опись секретов машины — «что где заведено», а не просмотрщик паролей
@@ -155,10 +163,12 @@ public sealed record InventoryListing(bool Admin, IReadOnlyList<SecretEntry> Ent
 /// время и разные люди, а спрашивают потом одним вопросом — «что у нас тут заведено и что из
 /// этого давно мертво». Опись отвечает на него одним списком.
 ///
-/// <b>Кто что видит.</b> Пароли видит и меняет администратор, и граница проведена по базе:
-/// пароль базы, пароль ее сервера и токены роботов этой базы — только ее администратору;
-/// соединения и мастер-пароль общие на машину — администратору хотя бы одной открытой базы (тем
-/// же признаком открывается панель администратора). Закрытых баз в описи нет: пароль базы лежит
+/// <b>Кто что видит.</b> Пароли видит и меняет администратор, и границ у описи две. Первая по
+/// базе: пароль базы и пароль ее сервера — только ее администратору. Вторая по праву на обмен:
+/// соединения, токены роботов и мастер-пароль показываются, только если человеку разрешена
+/// настройка интеграций (<see cref="InventoryFacts.IntegrationsAllowed"/>) — тем же правом
+/// проверяются кнопки этих строк, и показывать то, чего трогать нельзя, значит дразнить, а не
+/// защищать. Токену вдобавок нужно админство его базы. Закрытых баз в описи нет: пароль базы лежит
 /// внутри ее файла, у закрытой читать его негде, а строка «неизвестно» ничего не дает тому, кто
 /// пришел что-то поменять. Человек без админства видит одну строку с объяснением — пустой экран
 /// читался бы как поломка.
@@ -196,9 +206,9 @@ public static class SecretsInventory
     /// </summary>
     public const string NoAccessText =
         "Пароли видит и меняет только администратор. Пароль базы данных, пароль ее сервера "
-        + "PostgreSQL и токены роботов этой базы — администратор самой базы; соединения с чужими "
-        + "программами и мастер-пароль организации — администратор хотя бы одной открытой базы. "
-        + "Вы не администратор ни одной из открытых баз данных.";
+        + "PostgreSQL и токены роботов этой базы доступны администратору самой базы. Соединения "
+        + "с чужими программами и мастер-пароль организации доступны тому, кому разрешена "
+        + "настройка интеграций. Вы не администратор ни одной из открытых баз данных.";
 
     // ── Опись ─────────────────────────────────────────────────────────────────
 
@@ -210,7 +220,7 @@ public static class SecretsInventory
     {
         var admins = facts.Databases.Where(d => d.IsAdmin).ToList();
 
-        if (admins.Count == 0) return new InventoryListing(false, []);
+        if (admins.Count == 0) return new InventoryListing(false, false, []);
 
         var entries = new List<SecretEntry>();
 
@@ -221,18 +231,26 @@ public static class SecretsInventory
             if (database.IsPostgres) entries.Add(ServerPassword(database));
         }
 
-        foreach (var connection in facts.Connections)
-            entries.Add(Connection(connection, now));
+        // Соединения, токены и мастер-пароль общие на машину, и порог у них общий: право
+        // «Интеграции: настройка» во всех допущенных базах. Тем же правом проверяются кнопки этих
+        // строк и весь раздел «Интеграции» — одно правило вместо двух. Разъедься они, и человек
+        // видел бы ровно то, чего ему делать нельзя, а администратор соседней базы не мог бы
+        // закрыть ему обмен целиком: открыл бы ту базу, где право осталось.
+        if (facts.IntegrationsAllowed)
+        {
+            foreach (var connection in facts.Connections)
+                entries.Add(Connection(connection, now));
 
-        // Токен — только базы, которую человек администрирует: права роботу выдает ее
-        // администратор, и чужой токен ему здесь нечем ни настроить, ни отозвать осмысленно.
-        foreach (var token in facts.Tokens)
-            if (admins.FirstOrDefault(d => d.Id == token.DbId) is { } owner)
-                entries.Add(RobotToken(token, owner.Name, now));
+            // Токен — только базы, которую человек администрирует: права роботу выдает ее
+            // администратор, и чужой токен ему здесь нечем ни настроить, ни отозвать осмысленно.
+            foreach (var token in facts.Tokens)
+                if (admins.FirstOrDefault(d => d.Id == token.DbId) is { } owner)
+                    entries.Add(RobotToken(token, owner.Name, now));
 
-        entries.Add(Master(facts.Master));
+            entries.Add(Master(facts.Master));
+        }
 
-        return new InventoryListing(true, Ordered(entries, now));
+        return new InventoryListing(true, facts.IntegrationsAllowed, Ordered(entries, now));
     }
 
     /// <summary>

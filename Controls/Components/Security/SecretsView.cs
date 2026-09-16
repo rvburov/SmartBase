@@ -44,11 +44,12 @@ public sealed class SecretsView : UserControl
         };
 
     /// <summary>
-    /// Текущий пользователь — администратор хотя бы одной открытой базы (по последней сборке
-    /// списка). По нему хозяин экрана показывает кнопку «Добавить пароль»: кнопка, ведущая туда,
-    /// куда человека не пустят, хуже отсутствующей.
+    /// В списке есть то, что заводит меню «Добавить пароль»: соединения, токены, мастер-пароль
+    /// (по последней сборке). По нему хозяин экрана показывает само меню: все три его пункта
+    /// спрашивают право на настройку обмена, а кнопка, ведущая туда, куда человека не пустят,
+    /// хуже отсутствующей.
     /// </summary>
-    public bool ForAdmin { get; private set; }
+    public bool ForIntegrations { get; private set; }
 
     /// <summary>Список перестроен — хозяин экрана сверяет с ним свой навбар.</summary>
     public event EventHandler? Built;
@@ -79,7 +80,8 @@ public sealed class SecretsView : UserControl
         rows.Clear();
 
         var listing = SecretsInventory.Build(Collect(), DateTimeOffset.Now);
-        ForAdmin = listing.Admin;
+
+        ForIntegrations = listing.Integrations;
 
         // Над списком ничего нет: ни пояснения, ни сводки. Строки говорят сами за себя, а
         // объяснение каждой — в ее подсказке.
@@ -99,10 +101,14 @@ public sealed class SecretsView : UserControl
     /// </summary>
     private InventoryFacts Collect()
     {
-        var connections = new List<InventoryConnection>();
-        var tokens      = new List<InventoryToken>();
+        var connections  = new List<InventoryConnection>();
+        var tokens       = new List<InventoryToken>();
+        var integrations = CanIntegrations();
 
-        if (Integrations is { } registry)
+        // Без права на настройку обмена соединения и токены не читаются вовсе. Отсеял бы их и
+        // сам SecretsInventory.Build, но незачем поднимать в память сведения о секретах, которые
+        // человеку в этом сеансе не покажут ни строкой, ни кнопкой.
+        if (integrations && Integrations is { } registry)
         {
             var requests = registry.Requests();
 
@@ -151,7 +157,7 @@ public sealed class SecretsView : UserControl
             policy.HasMaster,
             [.. policy.Sources.Where(p => p.HasMaster).Select(p => p.Source)]);
 
-        return new InventoryFacts(databases, connections, tokens, master);
+        return new InventoryFacts(databases, connections, tokens, master, integrations);
     }
 
     private static string NameOf(DatabaseManager database) =>
@@ -642,21 +648,30 @@ public sealed class SecretsView : UserControl
     // ── Права ─────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Право на настройку обмена. Спрашиваются ВСЕ открытые базы разом — тем же правилом, что и
-    /// на экранах интеграций: настройки обмена общие на машину, и спроси одну базу — человек,
-    /// которому соседняя запретила, обошел бы запрет, открыв ту, где разрешено.
+    /// Есть ли право на настройку обмена. Спрашиваются ВСЕ открытые базы разом — тем же правилом,
+    /// что и на экранах интеграций: настройки обмена общие на машину, и спроси одну базу —
+    /// человек, которому соседняя запретила, обошел бы запрет, открыв ту, где разрешено.
+    ///
+    /// Этим же правом решается, ПОКАЗЫВАТЬ ли соединения, токены и мастер-пароль
+    /// (<see cref="InventoryFacts.IntegrationsAllowed"/>): показ и действие обязаны идти по одному
+    /// правилу, иначе человек видит строки, до которых его кнопки не допустят.
     /// </summary>
-    /// <param name="anchor">От чьего окна показать отказ: из окна токена — поверх него, а не за
-    /// ним.</param>
-    private bool AllowIntegrations(Visual anchor)
+    private bool CanIntegrations()
     {
         // Спрашиваются ДОПУЩЕННЫЕ базы, а не все открытые: у базы, куда человека еще не пустили,
         // права не спрашивают — там их нет ни на что, и такая база, стоящая в очереди на допуск,
         // запирала бы обмен целиком. Тот же набор, что у экранов интеграций (MainWindow.GrantedDbs).
         var bases = Databases.Where(d => d.Permissions.AccessGranted).ToList();
 
-        if (bases.Count > 0 && bases.All(d => d.Permissions.Can(PermAction.IntegrationsSetup)))
-            return true;
+        return bases.Count > 0 && bases.All(d => d.Permissions.Can(PermAction.IntegrationsSetup));
+    }
+
+    /// <summary>Пустить действие или объяснить отказ окном.</summary>
+    /// <param name="anchor">От чьего окна показать отказ: из окна токена — поверх него, а не за
+    /// ним.</param>
+    private bool AllowIntegrations(Visual anchor)
+    {
+        if (CanIntegrations()) return true;
 
         PermissionNotice.Show(anchor, PermAction.IntegrationsSetup);
         return false;

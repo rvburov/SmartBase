@@ -5,8 +5,9 @@ namespace SmartBase.Tests.Unit;
 /// <summary>
 /// Опись секретов машины — менеджер паролей (docs/ROADMAP-API.md, шаг 16).
 ///
-/// Проверяются обещания описи, а не форматирование строк: кто что видит (граница — админство
-/// открытой базы); что человек без админства получает объяснение, а не пустоту; что состояние
+/// Проверяются обещания описи, а не форматирование строк: кто что видит (границы две — админство
+/// базы и право на настройку обмена); что человек без админства получает объяснение, а не
+/// пустоту; что состояние
 /// строки не зовет чинить исправное и не молчит о мертвом; что показать можно ровно там, где
 /// секрет восстановим по построению; что мертвые секреты стоят наверху.
 /// </summary>
@@ -43,11 +44,14 @@ public sealed class SecretsInventoryTests
     private static readonly InventoryMaster NoMaster = new(false, []);
 
     private static InventoryListing Build(IReadOnlyList<InventoryDatabase>    databases,
-                                          IReadOnlyList<InventoryConnection>? connections = null,
-                                          IReadOnlyList<InventoryToken>?      tokens      = null,
-                                          InventoryMaster?                    master      = null) =>
+                                          IReadOnlyList<InventoryConnection>? connections  = null,
+                                          IReadOnlyList<InventoryToken>?      tokens       = null,
+                                          InventoryMaster?                    master       = null,
+                                          bool                                integrations = true) =>
         SecretsInventory.Build(
-            new InventoryFacts(databases, connections ?? [], tokens ?? [], master ?? NoMaster), Now);
+            new InventoryFacts(databases, connections ?? [], tokens ?? [], master ?? NoMaster,
+                               integrations),
+            Now);
 
     private static SecretEntry Only(InventoryListing listing, SecretKind kind) =>
         Assert.Single(listing.Entries, e => e.Kind == kind);
@@ -73,7 +77,7 @@ public sealed class SecretsInventoryTests
 
         Assert.Equal("Нет прав администратора", SecretsInventory.NoAccessTitle);
         Assert.Contains("только администратор", SecretsInventory.NoAccessText);
-        Assert.Contains("хотя бы одной открытой базы", SecretsInventory.NoAccessText);
+        Assert.Contains("настройка интеграций", SecretsInventory.NoAccessText);
     }
 
     /// <summary>Открытых баз нет — спрашивать об админстве некого, и видеть нечего.</summary>
@@ -124,8 +128,8 @@ public sealed class SecretsInventoryTests
     }
 
     /// <summary>
-    /// Соединения и мастер-пароль общие на машину — их видит администратор ХОТЯ БЫ ОДНОЙ открытой
-    /// базы, тем же признаком, что открывает панель администратора.
+    /// Соединения и мастер-пароль общие на машину, к отдельной базе их не привязать — их видит
+    /// администратор хотя бы одной открытой базы, которому разрешена настройка обмена.
     /// </summary>
     [Fact]
     public void Connections_and_master_password_need_admin_of_any_open_database()
@@ -135,6 +139,39 @@ public sealed class SecretsInventoryTests
 
         Assert.Equal(2, listing.Entries.Count(e => e.Kind == SecretKind.Connection));
         Only(listing, SecretKind.PolicyMaster);
+    }
+
+    /// <summary>
+    /// Без права на настройку обмена не видно ни соединений, ни токенов, ни мастер-пароля: показ
+    /// и действие идут по одному правилу, а кнопки этих строк все равно откажут. Свои базы видны
+    /// как прежде — их пароли к обмену отношения не имеют.
+    /// </summary>
+    [Fact]
+    public void Without_the_integrations_right_only_the_databases_remain()
+    {
+        var listing = Build([Sqlite(1, "Склад"), Postgres(2, "Заказы")],
+                            [Connection(1, "Учетная система")],
+                            [Token(10, "Обмен склада", dbId: 1)],
+                            new InventoryMaster(true, ["политика организации"]),
+                            integrations: false);
+
+        Assert.True(listing.Admin);
+        Assert.Equal(3, listing.Entries.Count);
+        Assert.All(listing.Entries,
+                   e => Assert.True(e.Kind is SecretKind.DatabasePassword or SecretKind.PgPassword));
+    }
+
+    /// <summary>
+    /// Признак для навбара: меню «Добавить пароль» показывают ровно тогда, когда в описи есть то,
+    /// что оно заводит. Администратор без права на обмен видит свои базы, но заводить ему нечего,
+    /// и меню, все три пункта которого упрутся в отказ, лучше не показывать вовсе.
+    /// </summary>
+    [Fact]
+    public void The_listing_tells_the_navbar_whether_adding_makes_sense()
+    {
+        Assert.True(Build([Sqlite(1, "Склад")]).Integrations);
+        Assert.False(Build([Sqlite(1, "Склад")], integrations: false).Integrations);
+        Assert.False(Build([Sqlite(1, "Склад", admin: false)]).Integrations);
     }
 
     // ── Названия и пути ───────────────────────────────────────────────────────

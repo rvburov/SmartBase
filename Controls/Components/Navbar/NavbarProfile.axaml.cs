@@ -68,7 +68,7 @@ public partial class NavbarProfile : UserControl
     }
 
     /// <summary>Показать/скрыть «Добавить пароль» (виден только в «Менеджере паролей» и только
-    /// администратору хотя бы одной открытой базы).</summary>
+    /// тому, кому разрешена настройка обмена: все три пункта спрашивают это право).</summary>
     public bool ShowSecretsActions { set => AddSecretCombo.IsVisible = value; }
 
     private void OnExportHistoryClick(object? sender, RoutedEventArgs e) =>
