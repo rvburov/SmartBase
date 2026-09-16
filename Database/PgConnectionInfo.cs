@@ -36,6 +36,9 @@ public sealed record PgConnectionInfo(
             CommandTimeout  = 60,
             KeepAlive       = 30,
             MaxPoolSize     = 16,
+            // Массовые пути шлют один и тот же SQL тысячами команд (DbBatch): авто-препейр
+            // избавляет сервер от парсинга каждой команды заново. По умолчанию выключен (0).
+            MaxAutoPrepare  = 16,
             ApplicationName = "SmartBase",
         };
         if (Enum.TryParse<SslMode>(SslMode, ignoreCase: true, out var ssl))

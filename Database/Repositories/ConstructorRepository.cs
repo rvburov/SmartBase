@@ -325,8 +325,9 @@ public partial class ConstructorRepository(AppDbContext db)
             // Сортировка по колонке: один ORDER BY на всю выгрузку, строки тянутся
             // ридером по мере записи в файл (без ToList — материализации нет).
             // Временный файл сортировки пусть живет на диске: temp_store=MEMORY из
-            // общих прагм на миллионах строк съел бы сотни мегабайт.
-            ctx.Database.ExecuteSqlRaw("PRAGMA temp_store=FILE;");
+            // общих прагм на миллионах строк съел бы сотни мегабайт. На PostgreSQL
+            // прагм нет — размещением временных файлов сортировки управляет сервер.
+            if (!ctx.IsPostgres) ctx.Database.ExecuteSqlRaw("PRAGMA temp_store=FILE;");
             var filtered = FilterChangeLog(ctx.ChangeLog.AsNoTracking(), query.Filters);
             var sorted   = SortChangeLog(filtered, query.SortColumn!, query.SortAsc,
                                          afterValue: null, afterId: null);
@@ -970,18 +971,39 @@ public partial class ConstructorRepository(AppDbContext db)
 
             using var tx = db.Database.BeginTransaction();
             var dbTx = tx.GetDbTransaction();
+            var useBatch = conn.CanCreateBatch;   // PostgreSQL: пакет команд = один сетевой ход
             insRec.Transaction = dbTx;
             insVal.Transaction = dbTx;
-            if (!prepared) { insRec.Prepare(); insVal.Prepare(); prepared = true; }
+            if (!prepared && !useBatch) { insRec.Prepare(); insVal.Prepare(); prepared = true; }
 
             newIds.Clear();
-            for (var i = 0; i < batch.Count; i++)
+            if (useBatch)
             {
-                rPos.Value   = (written + i + 1) * posStep;
-                rTitle.Value = batch[i].Title ?? "";
-                newIds.Add(Convert.ToInt64(insRec.ExecuteScalar()!));
+                for (var chunk = 0; chunk < batch.Count; chunk += NetBatchCommands)
+                {
+                    using var nb = conn.CreateBatch();
+                    nb.Transaction = dbTx;
+                    var chunkEnd = Math.Min(chunk + NetBatchCommands, batch.Count);
+                    for (var i = chunk; i < chunkEnd; i++)
+                    {
+                        rPos.Value   = (written + i + 1) * posStep;
+                        rTitle.Value = batch[i].Title ?? "";
+                        AddBatchCommand(nb, insRec);
+                    }
+                    // RETURNING Id: один результат на команду, строго в порядке команд пакета.
+                    using var r = nb.ExecuteReader();
+                    do { r.Read(); newIds.Add(Convert.ToInt64(r.GetValue(0))); } while (r.NextResult());
+                }
             }
+            else
+                for (var i = 0; i < batch.Count; i++)
+                {
+                    rPos.Value   = (written + i + 1) * posStep;
+                    rTitle.Value = batch[i].Title ?? "";
+                    newIds.Add(Convert.ToInt64(insRec.ExecuteScalar()!));
+                }
 
+            using var net = useBatch ? new NetBatcher(conn, dbTx) : null;
             for (var i = 0; i < batch.Count; i++)
             {
                 var row = batch[i];
@@ -995,9 +1017,11 @@ public partial class ConstructorRepository(AppDbContext db)
                     if (string.IsNullOrEmpty(value)) continue;
                     vFid.Value = fieldIds[f];
                     vVal.Value = value;
-                    insVal.ExecuteNonQuery();
+                    if (net is not null) net.Add(insVal);
+                    else insVal.ExecuteNonQuery();
                 }
             }
+            net?.Flush();
 
             tx.Commit();
             written += batch.Count;
@@ -1079,18 +1103,39 @@ public partial class ConstructorRepository(AppDbContext db)
 
             using var tx = db.Database.BeginTransaction();
             var dbTx = tx.GetDbTransaction();
+            var useBatch = conn.CanCreateBatch;   // PostgreSQL: пакет команд = один сетевой ход
             insRec.Transaction = dbTx;
             insVal.Transaction = dbTx;
-            if (!prepared) { insRec.Prepare(); insVal.Prepare(); prepared = true; }
+            if (!prepared && !useBatch) { insRec.Prepare(); insVal.Prepare(); prepared = true; }
 
             var first = ids.Count;
-            for (var i = 0; i < batch.Count; i++)
+            if (useBatch)
             {
-                rPos.Value   = (written + i + 1) * posStep;
-                rTitle.Value = batch[i].Title ?? "";
-                ids.Add(Convert.ToInt32(insRec.ExecuteScalar()!));
+                for (var chunk = 0; chunk < batch.Count; chunk += NetBatchCommands)
+                {
+                    using var nb = conn.CreateBatch();
+                    nb.Transaction = dbTx;
+                    var chunkEnd = Math.Min(chunk + NetBatchCommands, batch.Count);
+                    for (var i = chunk; i < chunkEnd; i++)
+                    {
+                        rPos.Value   = (written + i + 1) * posStep;
+                        rTitle.Value = batch[i].Title ?? "";
+                        AddBatchCommand(nb, insRec);
+                    }
+                    // RETURNING Id: один результат на команду, строго в порядке команд пакета.
+                    using var r = nb.ExecuteReader();
+                    do { r.Read(); ids.Add(Convert.ToInt32(r.GetValue(0))); } while (r.NextResult());
+                }
             }
+            else
+                for (var i = 0; i < batch.Count; i++)
+                {
+                    rPos.Value   = (written + i + 1) * posStep;
+                    rTitle.Value = batch[i].Title ?? "";
+                    ids.Add(Convert.ToInt32(insRec.ExecuteScalar()!));
+                }
 
+            using var net = useBatch ? new NetBatcher(conn, dbTx) : null;
             for (var i = 0; i < batch.Count; i++)
             {
                 var values = batch[i].Values;
@@ -1103,9 +1148,11 @@ public partial class ConstructorRepository(AppDbContext db)
                     if (string.IsNullOrEmpty(value)) continue;
                     vFid.Value = fieldIds[f];
                     vVal.Value = value;
-                    insVal.ExecuteNonQuery();
+                    if (net is not null) net.Add(insVal);
+                    else insVal.ExecuteNonQuery();
                 }
             }
+            net?.Flush();
 
             tx.Commit();
             written += batch.Count;
@@ -2692,8 +2739,8 @@ public partial class ConstructorRepository(AppDbContext db)
         {
             upd.Transaction = tx;
             upd.CommandText = $"UPDATE db_field_values SET Value = @val WHERE RecordId = @rid AND FieldId = {fieldId}";
-            var pVal = AddParam(upd, "@val");
-            var pRid = AddParam(upd, "@rid");
+            var pVal = AddParam(upd, "@val", System.Data.DbType.String);
+            var pRid = AddParam(upd, "@rid", System.Data.DbType.Int32);
             upd.Prepare();
 
             foreach (var (recordId, value) in updates)
@@ -2879,8 +2926,8 @@ public partial class ConstructorRepository(AppDbContext db)
                 using var ins = conn.CreateCommand();
                 ins.Transaction = tx;
                 ins.CommandText = $"INSERT INTO db_field_values (RecordId, FieldId, Value) VALUES (@rid, {fieldId}, @val)";
-                var pRid = AddParam(ins, "@rid");
-                var pVal = AddParam(ins, "@val");
+                var pRid = AddParam(ins, "@rid", System.Data.DbType.Int32);
+                var pVal = AddParam(ins, "@val", System.Data.DbType.String);
                 ins.Prepare();
                 for (var i = 0; i < rows.Count; i++)
                 {
@@ -2999,8 +3046,8 @@ public partial class ConstructorRepository(AppDbContext db)
         {
             upd.Transaction = tx;
             upd.CommandText = $"UPDATE db_field_values SET Value = @val WHERE RecordId = @rid AND FieldId = {fieldId}";
-            var pVal = AddParam(upd, "@val");
-            var pRid = AddParam(upd, "@rid");
+            var pVal = AddParam(upd, "@val", System.Data.DbType.String);
+            var pRid = AddParam(upd, "@rid", System.Data.DbType.Int32);
             upd.Prepare();
 
             foreach (var (recordId, value) in updates)
@@ -5661,13 +5708,15 @@ public partial class ConstructorRepository(AppDbContext db)
             $"ON CONFLICT (CollectionId, RecordId) DO UPDATE SET {column} = excluded.{column}";
         var pCid = AddParam(cmd, "@cid", System.Data.DbType.Int32);
         var pRid = AddParam(cmd, "@rid", System.Data.DbType.Int32);
-        // Visible/Level — дефолты сущности. Через параметры, а не литералами: bool на SQLite
-        // это 0/1, а на PostgreSQL — boolean, и «1» там бы не прошло.
-        var pVis = AddParam(cmd, "@visible", System.Data.DbType.Boolean);
+        // Visible/Level — дефолты сущности. Visible — ЧИСЛО 0/1, а не DbType.Boolean:
+        // bool-колонки в схемах ОБОИХ провайдеров хранятся как integer (BoolToZeroOneConverter,
+        // см. AppDbContext.OnModelCreating), и boolean-параметр на PostgreSQL падает уже на
+        // Prepare: 42804 «столбец visible имеет тип integer, а выражение — boolean».
+        var pVis = AddParam(cmd, "@visible", System.Data.DbType.Int32);
         var pLvl = AddParam(cmd, "@level",   System.Data.DbType.Int32);
         var pVal = AddParam(cmd, "@val",     System.Data.DbType.String);
         pCid.Value = collectionId;
-        pVis.Value = true;
+        pVis.Value = 1;
         pLvl.Value = 1;
         pVal.Value = hex;
 
@@ -5707,27 +5756,105 @@ public partial class ConstructorRepository(AppDbContext db)
 
     // Пакетный прогон подготовленной команды: пакет = транзакция (WAL не разрастается на весь
     // объем, отмена срабатывает между пакетами), Prepare один раз на все пакеты.
+    // На PostgreSQL строки внутри транзакции уходят пачками DbBatch (см. NetBatcher):
+    // поштучный ExecuteNonQuery — это сетевой ход на каждую строку.
     private void RunBatched(DbCommand cmd, int count, int batchSize, CancellationToken ct,
                             Action<int> bind)
     {
+        var useBatch = db.Database.GetDbConnection().CanCreateBatch;
         var prepared = false;
         for (var start = 0; start < count; start += batchSize)
         {
             ct.ThrowIfCancellationRequested();
 
             using var tx = db.Database.BeginTransaction();
-            cmd.Transaction = tx.GetDbTransaction();
-            if (!prepared) { cmd.Prepare(); prepared = true; }
+            var dbTx = tx.GetDbTransaction();
+            var end  = Math.Min(start + batchSize, count);
 
-            var end = Math.Min(start + batchSize, count);
-            for (var i = start; i < end; i++)
+            if (useBatch)
             {
-                bind(i);
-                cmd.ExecuteNonQuery();
+                using var net = new NetBatcher(db.Database.GetDbConnection(), dbTx);
+                for (var i = start; i < end; i++)
+                {
+                    bind(i);
+                    net.Add(cmd);
+                }
+                net.Flush();
+            }
+            else
+            {
+                cmd.Transaction = dbTx;
+                if (!prepared) { cmd.Prepare(); prepared = true; }
+                for (var i = start; i < end; i++)
+                {
+                    bind(i);
+                    cmd.ExecuteNonQuery();
+                }
             }
 
             tx.Commit();
         }
+    }
+
+    // ── Пакетная отправка команд (PostgreSQL) ──────────────────────────────────
+    //
+    // На SQLite поштучная prepared-команда в транзакции — самый быстрый путь: файл рядом,
+    // раунд-трипов нет (13 тыс. строк/с у заливки). На PostgreSQL каждый Execute* — синхронный
+    // сетевой ход, и свод в 600 тыс. строк превращался в ~4,2 млн ходов — десятки минут одной
+    // латентности. DbBatch (NpgsqlBatch) шлет пакет команд одним ходом и выполняет их строго
+    // по порядку; Microsoft.Data.Sqlite DbBatch не поддерживает, поэтому признак ветки —
+    // CanCreateBatch, и SQLite-путь остается прежним. Одинаковый текст команд пакета
+    // авто-препарится сервером (MaxAutoPrepare в PgConnectionInfo).
+
+    /// <summary>Команд в одном сетевом ходе DbBatch — потолок памяти Bind-сообщения,
+    /// на порядок меньше лимита протокола (65535 параметров на команду тут не грозит:
+    /// параметры считаются на команду, а не на пакет).</summary>
+    private const int NetBatchCommands = 2_000;
+
+    /// <summary>Снимок команды в пакет: текст и ТЕКУЩИЕ значения параметров копируются,
+    /// поэтому вызывающий продолжает мутировать одни и те же параметры, как при
+    /// поштучном prepared-прогоне.</summary>
+    private static void AddBatchCommand(DbBatch batch, DbCommand cmd)
+    {
+        var bc = batch.CreateBatchCommand();
+        bc.CommandText = cmd.CommandText;
+        foreach (DbParameter p in cmd.Parameters)
+        {
+            var np = bc.CreateParameter();
+            np.ParameterName = p.ParameterName;
+            np.DbType        = p.DbType;
+            np.Value         = p.Value;
+            bc.Parameters.Add(np);
+        }
+        batch.BatchCommands.Add(bc);
+    }
+
+    /// <summary>Копилка команд без результата: шлет пакет, когда набирается
+    /// <see cref="NetBatchCommands"/>, остаток — <see cref="Flush"/> (обязателен перед коммитом).</summary>
+    private sealed class NetBatcher(DbConnection conn, DbTransaction tx) : IDisposable
+    {
+        private DbBatch? _batch;
+
+        public void Add(DbCommand cmd)
+        {
+            if (_batch is null)
+            {
+                _batch = conn.CreateBatch();
+                _batch.Transaction = tx;
+            }
+            AddBatchCommand(_batch, cmd);
+            if (_batch.BatchCommands.Count >= NetBatchCommands) Flush();
+        }
+
+        public void Flush()
+        {
+            if (_batch is null) return;
+            _batch.ExecuteNonQuery();
+            _batch.Dispose();
+            _batch = null;
+        }
+
+        public void Dispose() { _batch?.Dispose(); _batch = null; }
     }
 
     public void SetCellStyle(int collectionId, IReadOnlyList<(int RecordId, string Key)> cells,

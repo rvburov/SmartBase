@@ -311,8 +311,10 @@ public partial class ConstructorRepository
         var parts = ViewParts(collectionId, stats, view, dated);
         if (!parts.Ok) return (0, 0);
 
+        // Алиас capped обязателен: PostgreSQL не принимает подзапрос во FROM без алиаса
+        // (SQLite прощает), а битый счет тут глотается вызывающим — пилюли просто врали бы.
         var sql = cap > 0
-            ? $"SELECT COUNT(*), 0 FROM (SELECT 1 {parts.Body} LIMIT {cap})"
+            ? $"SELECT COUNT(*), 0 FROM (SELECT 1 {parts.Body} LIMIT {cap}) AS capped"
             : $"SELECT COUNT(*), SUM(CASE WHEN {parts.DoneExpr} = @done THEN 1 ELSE 0 END) {parts.Body}";
 
         var conn = db.Database.GetDbConnection();
