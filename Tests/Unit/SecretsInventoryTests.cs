@@ -40,7 +40,7 @@ public sealed class SecretsInventoryTests
                                         DateTimeOffset? used = null) =>
         new(id, name, dbId, enabled, created, used);
 
-    private static readonly InventoryMaster NoMaster = new(false, [], SignatureKeyPresent: false);
+    private static readonly InventoryMaster NoMaster = new(false, []);
 
     private static InventoryListing Build(IReadOnlyList<InventoryDatabase>    databases,
                                           IReadOnlyList<InventoryConnection>? connections = null,
@@ -66,7 +66,7 @@ public sealed class SecretsInventoryTests
             [Sqlite(1, "Склад", admin: false, hasPassword: true)],
             [Connection(1, "Учетная система")],
             [Token(1, "Обмен склада", dbId: 1)],
-            new InventoryMaster(true, ["реестр HKLM"], false));
+            new InventoryMaster(true, ["реестр HKLM"]));
 
         Assert.False(listing.Admin);
         Assert.Empty(listing.Entries);
@@ -356,7 +356,7 @@ public sealed class SecretsInventoryTests
     public void A_defined_master_password_names_its_sources()
     {
         var entry = Only(Build([Sqlite(1, "Склад")],
-                               master: new InventoryMaster(true, ["реестр HKLM", "папка установки"], false)),
+                               master: new InventoryMaster(true, ["реестр HKLM", "папка установки"])),
                          SecretKind.PolicyMaster);
 
         Assert.Equal("задан", entry.Status);
@@ -387,7 +387,7 @@ public sealed class SecretsInventoryTests
         var listing = Build([Sqlite(1, "Склад", hasPassword: true), Postgres(2, "Заказы")],
                             [Connection(1, "С секретом", lastRun: Now), Connection(2, "Без", secret: false)],
                             [Token(1, "Обмен", dbId: 1, created: Now)],
-                            new InventoryMaster(true, ["реестр HKLM"], false));
+                            new InventoryMaster(true, ["реестр HKLM"]));
 
         Assert.Equal([1], listing.Entries.Where(e => e.Revealable).Select(e => e.Id));
         Assert.All(listing.Entries.Where(e => e.Revealable),
@@ -418,7 +418,7 @@ public sealed class SecretsInventoryTests
                              Connection(2, "Забытое", lastRun: Now.AddYears(-1)),
                              Connection(3, "Без секрета", secret: false),
                              Connection(4, "Архив", lastRun: Now)],
-                            master: new InventoryMaster(true, ["реестр HKLM"], false));
+                            master: new InventoryMaster(true, ["реестр HKLM"]));
 
         Assert.Equal(["Соединение «Забытое»",
                       "Соединение «Архив»", "Соединение «Живое»", "Мастер-пароль организации",
@@ -429,43 +429,49 @@ public sealed class SecretsInventoryTests
     // ── Тексты, сверенные с кодом ─────────────────────────────────────────────
 
     /// <summary>
-    /// Пароль базы открывает доступ не только новичку: и человеку со снятым допуском, и
-    /// удаленному из базы (PermissionService.Unlock сначала возвращает его в список) — пока
-    /// администратор не выключил вход по паролю.
+    /// Подсказка пароля базы говорит главное: этим паролем человек входит без администратора и
+    /// получает права по умолчанию. Про устройство хранения — одной фразой, без разбора того, где
+    /// какой файл лежит: плашку читают на бегу.
     /// </summary>
     [Fact]
     public void The_database_password_says_whom_it_lets_in()
     {
         var entry = Only(Build([Sqlite(1, "Склад", hasPassword: true)]), SecretKind.DatabasePassword);
 
-        Assert.Contains("новичок", entry.What);
-        Assert.Contains("снятым допуском", entry.What);
-        Assert.Contains("удаленный из базы", entry.What);
-        Assert.Contains("выключил вход по паролю", entry.What);
+        Assert.Contains("без администратора", entry.What);
+        Assert.Contains("права по умолчанию", entry.What);
     }
 
     /// <summary>
-    /// Мастер-пароль задают только места, которые политику ПРИНИМАЮТ. Без вшитого ключа
-    /// подписанная папка раздачи отклоняется, и назвать ее местом для мастер-пароля значило бы
-    /// отправить администратора класть файл туда, где его не примут.
+    /// Каждая подсказка называет место в ПРОГРАММЕ, где секрет настраивается целиком: человек
+    /// пришел сюда, чтобы не рыскать по разделам, и уйти отсюда с пустыми руками не должен.
+    /// Устройство хранения (какой файл, какое хранилище системы) в плашке не разбирается — на
+    /// решение «что делать дальше» оно не влияет.
     /// </summary>
     [Fact]
-    public void The_master_password_names_only_places_that_accept_the_policy()
+    public void Every_tip_names_where_the_secret_is_set_up()
     {
-        var unsigned = Only(Build([Sqlite(1, "Склад")], master: new InventoryMaster(true, [], false)),
-                            SecretKind.PolicyMaster);
+        var listing = Build([Sqlite(1, "Склад", hasPassword: true), Postgres(2, "Заказы")],
+                            [Connection(1, "Обмен", lastRun: Now)],
+                            [Token(1, "Робот", dbId: 1, created: Now)],
+                            new InventoryMaster(true, ["реестр"]));
 
-        Assert.Contains("реестра HKLM", unsigned.Guard);
-        Assert.Contains("/etc/smartbase", unsigned.Guard);
-        Assert.Contains("policy.json", unsigned.Guard);
-        Assert.Contains("не вшит", unsigned.Guard);
-        Assert.DoesNotContain("подписанном файле", unsigned.Guard);
+        // Не Only: баз в описи две, и строк пароля базы тоже две — здесь проверяется текст рода,
+        // а не то, сколько строк этого рода вышло.
+        string Tip(SecretKind kind) => listing.Entries.First(e => e.Kind == kind).Guard;
 
-        var signed = Only(Build([Sqlite(1, "Склад")], master: new InventoryMaster(true, [], true)),
-                          SecretKind.PolicyMaster);
+        Assert.Contains("Профиль → Панель администратора", Tip(SecretKind.DatabasePassword));
+        Assert.Contains("Настройки → Управление базой данных", Tip(SecretKind.PgPassword));
+        Assert.Contains("Настройки → Интеграции → Соединения", Tip(SecretKind.Connection));
+        Assert.Contains("Настройки → Интеграции → Доступ извне", Tip(SecretKind.RobotToken));
+        Assert.Contains("Мастер-пароль для политики", Tip(SecretKind.PolicyMaster));
 
-        Assert.Contains("с подписью организации", signed.Guard);
-        Assert.DoesNotContain("не вшит", signed.Guard);
+        // Ни устройства хранения политики, ни имен операционных систем: это не помогает решить,
+        // что делать со строкой, а плашку удлиняет вдвое.
+        foreach (var entry in listing.Entries)
+            foreach (var noise in new[] { "Windows", "macOS", "Linux", "DPAPI", "policy.json",
+                                          "HKLM", "/etc/smartbase", "app.db" })
+                Assert.DoesNotContain(noise, SecretsInventory.Tip(entry));
     }
 
     [Fact]
@@ -473,16 +479,17 @@ public sealed class SecretsInventoryTests
     {
         var entry = Only(Build([Sqlite(1, "Склад")]), SecretKind.PolicyMaster);
 
-        Assert.Contains("исходящие направления", entry.What);
-        Assert.Contains("выдачи на чтение", entry.What);
-        Assert.Contains("метки", entry.What);
-        Assert.Contains("показ секрета соединения", entry.What);
+        Assert.Contains("отправок наружу", entry.What);
+        Assert.Contains("выдач на чтение", entry.What);
+        Assert.Contains("меток", entry.What);
+        Assert.Contains("показа секретов", entry.What);
+        Assert.Contains("вне программы", entry.Guard);
     }
 
     /// <summary>
-    /// Опись обязана сказать, ГДЕ менять пароль сервера, — и назвать путь, который существует:
-    /// шестеренка в этой строке либо поле «Сменить пароль подключения» в окне настроек базы.
-    /// Где он хранится, сказано честно: обратимо, и на Linux — открытым текстом.
+    /// Опись обязана сказать, ГДЕ менять пароль сервера, и назвать путь, который существует:
+    /// «Управление базой данных» и шестеренка у базы. Прежний путь «Настройки → Базы данных →
+    /// Изменить» в программе не существовал вовсе.
     /// </summary>
     [Theory]
     [InlineData(true)]
@@ -491,13 +498,10 @@ public sealed class SecretsInventoryTests
     {
         var entry = Only(Build([Postgres(1, "Заказы", serverPassword: saved)]), SecretKind.PgPassword);
 
-        Assert.Contains("шестеренкой в этой строке", entry.Guard);
         Assert.Contains("Управление базой данных", entry.Guard);
-        Assert.Contains("Сменить пароль подключения", entry.Guard);
+        Assert.Contains("шестеренка у базы", entry.Guard);
         Assert.DoesNotContain("«Изменить»", entry.Guard);
         Assert.False(entry.Revealable);
-
-        if (saved) Assert.Contains("Linux", entry.Guard);
     }
 
     /// <summary>

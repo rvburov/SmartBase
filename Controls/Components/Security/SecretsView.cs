@@ -149,8 +149,7 @@ public sealed class SecretsView : UserControl
 
         var master = new InventoryMaster(
             policy.HasMaster,
-            [.. policy.Sources.Where(p => p.HasMaster).Select(p => p.Source)],
-            PolicySignature.KeyPresent);
+            [.. policy.Sources.Where(p => p.HasMaster).Select(p => p.Source)]);
 
         return new InventoryFacts(databases, connections, tokens, master);
     }
@@ -178,6 +177,9 @@ public sealed class SecretsView : UserControl
             Classes      = { "title" },
             Text         = entry.Title,
             TextTrimming = TextTrimming.CharacterEllipsis,
+            // Прозрачный фон — чтобы курсор ловился по всей строке названия, а не по самим буквам:
+            // иначе подсказка выскакивает только между засечками и кажется случайной.
+            Background   = Brushes.Transparent,
         };
 
         var state = new TextBlock
@@ -199,15 +201,13 @@ public sealed class SecretsView : UserControl
             TextTrimming = TextTrimming.CharacterEllipsis,
         };
 
-        var row = ListRow(Icon(KindIcon(entry.Kind), Ink("BrushSecondaryText", "#8E8E93")),
-                          [title, state, where], buttons);
+        // Подсказка висит на НАЗВАНИИ, а не на всей строке: наводя курсор на строку, человек чаще
+        // всего целится в кнопку, и плашка во весь абзац перекрывала бы их подписи. Название —
+        // единственное место строки, по которому не нажимают.
+        ToolTip.SetTip(title, SecretsInventory.Tip(entry));
 
-        // Подсказка висит на всей строке, а не только на буквах: без фона пустое место строки
-        // курсор не ловит. У кнопок подсказки свои, и над кнопкой показывается ее.
-        row.Background = Brushes.Transparent;
-        ToolTip.SetTip(row, SecretsInventory.Tip(entry));
-
-        return row;
+        return ListRow(Icon(KindIcon(entry.Kind), Ink("BrushSecondaryText", "#8E8E93")),
+                       [title, state, where], buttons);
     }
 
     /// <summary>Иконка рода секрета.</summary>
