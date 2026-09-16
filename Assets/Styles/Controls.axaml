@@ -620,6 +620,88 @@
         <Setter Property="Background" Value="{StaticResource BrushBg}" />
     </Style>
 
+    <!-- ===== Поле секрета: точки вместо букв и глаз ===== -->
+    <!-- Пароль, секрет соединения, мастер-пароль набираются вслепую, и опечатка в них видна
+         только по отказу: повтор ловит расхождение двух наборов, а не саму опечатку, и есть он
+         не везде. Глаз показывает набранное, пока его держат открытым.
+
+         Закрыт по умолчанию, и это не настройка, а устройство: RevealPassword у нового поля
+         ложь, а поля создаются заново с каждым окном. Открытый глаз не переживает закрытие
+         окна, и подсмотренное не остается на экране у того, кто отошел.
+
+         PasswordChar задан здесь же: точки и глаз — одна вещь, и поле, где забыли одно из
+         двух, показывало бы пароль всем. Ставится класс, а не PasswordChar в разметке.
+
+         Глаз не берет фокус (Focusable=False): Tab ведет в следующее поле, а щелчок по глазу
+         не выбивает курсор из набора. -->
+    <Style Selector="TextBox.password">
+        <Setter Property="PasswordChar" Value="●" />
+        <!-- Через Template, а не значением: контрол у каждого поля должен быть свой, одно и то
+             же дерево в двух полях Avalonia не разложит. -->
+        <Setter Property="InnerRightContent">
+            <Template>
+                <ToggleButton Classes="icon reveal"
+                              Width="24" Height="24"
+                              Focusable="False"
+                              IsChecked="{Binding $parent[TextBox].RevealPassword, Mode=TwoWay}">
+                    <Panel>
+                        <Viewbox Classes="eyeOff"
+                                 Width="{StaticResource IconSizeSmall}"
+                                 Height="{StaticResource IconSizeSmall}">
+                            <Canvas Width="24" Height="24">
+                                <Path Data="{StaticResource IconEyeOff}"
+                                      Stroke="{Binding $parent[ToggleButton].Foreground}"
+                                      StrokeThickness="{StaticResource IconStrokeSmall}"
+                                      StrokeLineCap="Round" StrokeJoin="Round" />
+                            </Canvas>
+                        </Viewbox>
+                        <Viewbox Classes="eyeOn"
+                                 Width="{StaticResource IconSizeSmall}"
+                                 Height="{StaticResource IconSizeSmall}">
+                            <Canvas Width="24" Height="24">
+                                <Path Data="{StaticResource IconEye}"
+                                      Stroke="{Binding $parent[ToggleButton].Foreground}"
+                                      StrokeThickness="{StaticResource IconStrokeSmall}"
+                                      StrokeLineCap="Round" StrokeJoin="Round" />
+                            </Canvas>
+                        </Viewbox>
+                    </Panel>
+                </ToggleButton>
+            </Template>
+        </Setter>
+    </Style>
+
+    <!-- Какой из двух глаз виден. Оба лежат стопкой и переключаются видимостью: менять Data
+         одного пришлось бы привязкой с конвертером ради той же пары путей. -->
+    <Style Selector="ToggleButton.reveal Viewbox.eyeOn">
+        <Setter Property="IsVisible" Value="False" />
+    </Style>
+    <Style Selector="ToggleButton.reveal:checked Viewbox.eyeOn">
+        <Setter Property="IsVisible" Value="True" />
+    </Style>
+    <Style Selector="ToggleButton.reveal:checked Viewbox.eyeOff">
+        <Setter Property="IsVisible" Value="False" />
+    </Style>
+
+    <!-- Подпись меняется вместе с состоянием: тултип «Показать» у уже открытого глаза врал бы. -->
+    <Style Selector="ToggleButton.reveal">
+        <Setter Property="ToolTip.Tip" Value="Показать набранное" />
+    </Style>
+    <Style Selector="ToggleButton.reveal:checked">
+        <Setter Property="ToolTip.Tip" Value="Скрыть набранное" />
+        <Setter Property="Foreground"  Value="{StaticResource BrushAccent}" />
+    </Style>
+
+    <!-- Тема Fluent заливает нажатый ToggleButton акцентным фоном — глазу он не нужен: это
+         переключатель показа, а не кнопка выбора. Открытое состояние видно самой иконкой
+         и ее цветом. -->
+    <Style Selector="ToggleButton.reveal:checked /template/ ContentPresenter">
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="ToggleButton.reveal:checked:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
+
     <!-- Заголовок «в строку» (имя коллекции в навбаре, имя записи в RecordPageView).
          Не показывает рамку/фон ни в одном состоянии. Watermark наследует
          текущие FontSize/FontWeight, чтобы плейсхолдер выглядел как сам заголовок,

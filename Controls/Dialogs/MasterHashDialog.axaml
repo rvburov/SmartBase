@@ -25,7 +25,7 @@
                    Foreground="{StaticResource BrushSecondaryText}" />
 
         <TextBox x:Name="PasswordBox"
-                 PasswordChar="●"
+                 Classes="password"
                  Watermark="Придумайте пароль"
                  Height="34"
                  VerticalContentAlignment="Center"
@@ -38,7 +38,7 @@
                    Foreground="{StaticResource BrushSecondaryText}" />
 
         <TextBox x:Name="RepeatBox"
-                 PasswordChar="●"
+                 Classes="password"
                  Watermark="Введите пароль еще раз"
                  Height="34"
                  VerticalContentAlignment="Center"
