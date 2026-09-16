@@ -15,11 +15,15 @@ public sealed class DatabaseRowTests
     private static string Badge(bool postgres, bool @default) =>
         new DatabaseRow { IsPostgres = postgres, IsDefault = @default }.EngineBadge;
 
+    // База по умолчанию всегда SQLite: «Основную» заводит сама программа файлом
+    // (DatabaseRegistry.EnsureDefault), а все добавленные записи, включая PostgreSQL, приходят
+    // с IsDefault = false, и перенести флаг нечем. Сочетания «PostgreSQL по умолчанию» здесь нет
+    // намеренно: тест на состояние, которого не бывает, обещает поведение, которого никто не
+    // проверял.
     [Theory]
     [InlineData(false, false, "SQLite")]
     [InlineData(true,  false, "PostgreSQL")]
     [InlineData(false, true,  "SQLite (По умолчанию)")]
-    [InlineData(true,  true,  "PostgreSQL (По умолчанию)")]
     public void The_badge_names_the_engine_and_marks_the_default(bool postgres, bool isDefault,
                                                                  string expected) =>
         Assert.Equal(expected, Badge(postgres, isDefault));
