@@ -486,8 +486,10 @@ public sealed partial class DatabaseManager : IDisposable
     // Прагмы скорости (на соединение):
     //  • synchronous=NORMAL — с WAL безопасно и заметно быстрее коммитов (импорт пачками);
     //  • temp_store=MEMORY  — временные индексы/сортировки в RAM, не на диск;
-    //  • mmap_size=256MB    — чтение через memory-map: меньше syscalls на больших скан-ах;
-    //  • cache_size=-65536  — страничный кеш ~64 МБ (значение в КБ со знаком «−»), дефолт ~2 МБ.
+    //  • mmap_size          — чтение через memory-map: меньше syscalls на больших скан-ах;
+    //  • cache_size         — страничный кеш вместо дефолтных ~2 МБ.
+    // Объемы двух последних считаются от памяти машины (AppDbContext.CacheKib/MmapBytes):
+    // прежние 256 МБ и ~64 МБ остались потолком для машин с 32 ГБ и выше.
     // Прагмы скорости (на соединение) — единый набор для основного и фоновых подключений,
     // см. AppDbContext.ApplyPerformancePragmas (busy_timeout/synchronous/temp_store/mmap/cache).
     private static void TunePerformancePragmas(AppDbContext db) => db.ApplyPerformancePragmas();

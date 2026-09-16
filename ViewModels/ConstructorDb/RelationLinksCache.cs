@@ -13,9 +13,10 @@ namespace SmartBase.ViewModels.ConstructorDb;
 /// </summary>
 public sealed class RelationLinksCache
 {
-    // Предохранитель от роста на огромных таблицах: кеш страниц держит ≤ MaxPages×PageSize строк,
-    // здесь даем запас под несколько колонок-связей. Переполнение → чистим целиком (ячейки просто
-    // упадут на GetLinks — корректность не страдает).
+    // Предохранитель от роста на огромных таблицах: кеш страниц таблицы держит от 11 до 50
+    // страниц по 200 строк (предел считается от числа колонок, см. VirtualRowList), здесь даем
+    // запас под несколько колонок-связей. Переполнение → чистим целиком (ячейки просто упадут
+    // на GetLinks — корректность не страдает).
     private const int MaxEntries = 20000;
 
     private readonly Dictionary<(int Field, int Record), List<(int Id, string Title)>> _map = new();

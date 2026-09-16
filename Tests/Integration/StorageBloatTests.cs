@@ -95,6 +95,40 @@ public sealed class StorageBloatTests
         Assert.Equal(5000, db.Constructor.CountRecords(colId));
     }
 
+    /// <summary>
+    /// Массовому профилю чекпоинт не надо звать руками: его делает ЗАКРЫТИЕ контекста
+    /// (<c>AppDbContext.Dispose</c>). Это обязательная пара к широкому окну
+    /// <c>wal_autocheckpoint</c> того же профиля — без переноса журнал оставался бы на
+    /// десятки мегабайт до случайного чекпоинта чужого подключения. Проверяем именно
+    /// закрытие: <c>CheckpointWal</c> здесь никто не вызывает.
+    ///
+    /// Признак — РОСТ основного файла: в режиме WAL запись идет только в журнал, и тело
+    /// файла прирастает ровно чекпоинтом. Спросить у базы «перенесен ли журнал» нельзя:
+    /// <c>PRAGMA wal_checkpoint</c> сам выполняет перенос, то есть собственным вызовом
+    /// сделал бы проверку пустой.
+    /// </summary>
+    [Fact]
+    public void Disposing_bulk_context_checkpoints_wal()
+    {
+        using var db = new TempDatabase();
+        var (colId, fid) = Shell(db.Constructor, "WAL");
+
+        long mainBefore;
+        using (var ctx = new AppDbContext(db.Path))
+        {
+            ctx.ApplyBulkPerformancePragmas();
+            new ConstructorRepository(ctx).BulkAddRecords(colId, [fid], Rows(5000, 300), 5000,
+                                                          CancellationToken.None);
+            Assert.True(new FileInfo(db.Path + "-wal").Length > 0, "после заливки WAL должен быть непустым");
+            mainBefore = new FileInfo(db.Path).Length;
+        }
+
+        var mainAfter = new FileInfo(db.Path).Length;
+        Assert.True(mainAfter > mainBefore,
+                    $"закрытие массового контекста должно перенести журнал в файл: было {mainBefore}, стало {mainAfter}");
+        Assert.Equal(5000, db.Constructor.CountRecords(colId));
+    }
+
     // ── 3. Политика свободного места ──────────────────────────────────────────
 
     [Theory]

@@ -12,12 +12,40 @@ namespace SmartBase.ViewModels.ConstructorDb;
 /// Виртуальная коллекция строк таблицы с LRU-кешем страниц.
 /// DataGrid обращается к элементам по индексу через IList, при этом
 /// данные загружаются из БД постранично — в памяти хранится не более
-/// <see cref="MaxPages"/> × <see cref="PageSize"/> строк одновременно.
+/// <c>_maxPages</c> × <see cref="PageSize"/> строк одновременно, а сам предел страниц
+/// зависит от числа колонок (см. <see cref="CellBudget"/>).
 /// </summary>
 internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollectionChanged
 {
     private const int PageSize = 200;
-    private const int MaxPages = 50;   // 50 × 200 = 10 000 строк в кеше
+
+    // Сколько страниц держим в кеше. Считается от ШИРИНЫ коллекции, а не константой: строка
+    // несет значения ВСЕХ своих колонок (GetFieldValuesBatch не фильтрует по видимым), поэтому
+    // при 1000 свойствах прежние жесткие 50 страниц = 10 000 строк — это до миллионов записей
+    // словаря в памяти, в сотню раз больше, чем на обычной таблице в десяток колонок. Бюджет
+    // считаем в ЯЧЕЙКАХ: CellBudget / (колонок × PageSize), но не больше прежних 50 страниц
+    // (узкие таблицы ведут себя ровно как раньше) и не меньше MinPages.
+    //
+    // Важно понимать предел этой меры: MinPages сам по себе стоит примерно 180 колонок, и на
+    // более широких таблицах бюджет в ячейках уже не соблюдается — объем снова растет линейно
+    // по числу колонок. Это сознательный размен: урезать кеш ниже SyncRangeRows нельзя, иначе
+    // выделение диапазона пойдет читать строки на UI-потоке, то есть фриз просто переедет из
+    // памяти в задержку. Настоящее лечение широких таблиц — не в кеше, а в UI (см. ROADMAP,
+    // «Что ломается на 1000 полей»).
+    private const int CellBudget = 400_000;
+    private const int MaxPagesCap = 50;
+
+    /// <summary>До скольких строк выделение диапазона читается СИНХРОННО, без фона
+    /// (<c>TableView.CellSelection</c> берет значение отсюда). Живет рядом с кешем, потому что
+    /// связан с ним жестко: кеш обязан вмещать такой диапазон, иначе синхронный путь пойдет
+    /// читать строки из базы прямо на UI-потоке — на широкой таблице это секунды фриза.</summary>
+    internal const int SyncRangeRows = 2_000;
+
+    // Нижняя граница числа страниц — из SyncRangeRows: диапазон не выровнен по границе
+    // страницы, поэтому нужен еще один запас сверху от деления.
+    private const int MinPages = SyncRangeRows / PageSize + 1;
+
+    private readonly int _maxPages;
 
     private readonly ConstructorRepository _repo;
     private readonly int                   _collectionId;
@@ -79,6 +107,8 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
         _relLinks      = relLinks;
         _relationFieldIds = fields.Where(f => f.FieldType == "relation" && f.Id is not null)
                                   .Select(f => f.Id!.Value).ToArray();
+        _maxPages      = Math.Clamp(CellBudget / (Math.Max(1, fields.Count) * PageSize),
+                                    MinPages, MaxPagesCap);
         // Режим списка id (фильтр/сортировка): длина списка. Иначе — из снимка открытия
         // коллекции (посчитан в фоне), а без него — считаем из БД.
         _dataCount     = recordIds?.Count ?? knownCount ?? repo.CountRecords(collectionId, excludeHidden);
@@ -101,7 +131,8 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
 
             var page = index / PageSize;
             var slot = index % PageSize;
-            if (!_pages.TryGetValue(page, out var rows)) rows = LoadPage(page);
+            if (_pages.TryGetValue(page, out var rows)) Touch(page);
+            else rows = LoadPage(page);
             return rows[slot];
         }
         set => throw new NotSupportedException();
@@ -261,9 +292,23 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
         _pageEnd[page]   = (last.Position,  last.Id!.Value);
     }
 
+    // Страница, к которой обратились, уезжает в хвост LRU. Без этого список был FIFO:
+    // порядок задавала только загрузка, и страница, на которой пользователь стоит, вылетала
+    // из кеша просто потому, что загружена давно. На прежних 50 страницах это оставалось
+    // незаметным, но кеш широкой таблицы куда короче — там видимая страница уходила бы в
+    // «Загрузка…» после нескольких прыжков по таблице.
+    private void Touch(int page)
+    {
+        var node = _lru.Last;
+        while (node is not null && node.Value != page) node = node.Previous;
+        if (node is null || node == _lru.Last) return;
+        _lru.Remove(node);
+        _lru.AddLast(node);
+    }
+
     private void EvictOldestIfFull()
     {
-        if (_pages.Count < MaxPages) return;
+        if (_pages.Count < _maxPages) return;
         var oldest = _lru.First!.Value;
         _lru.RemoveFirst();
         _pages.Remove(oldest);

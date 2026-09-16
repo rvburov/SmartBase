@@ -737,7 +737,7 @@ public partial class ConstructorRepository(AppDbContext db)
     /// чистка UI-строк без FK), затем строки групп ветки. <paramref name="progress"/> — нарастающее
     /// число удаленных записей по всей ветке (для %).
     /// </summary>
-    public void DeleteGroupData(int groupId, IProgress<int>? progress = null, int batchSize = 10000,
+    public void DeleteGroupData(int groupId, IProgress<int>? progress = null, int batchSize = DeleteBatch,
                                 bool log = true)
     {
         var groupName = db.DbGroups.Where(g => g.Id == groupId).Select(g => g.Name).FirstOrDefault();
@@ -1183,6 +1183,16 @@ public partial class ConstructorRepository(AppDbContext db)
         db.SaveChanges();
     }
 
+    /// <summary>
+    /// Записей в одном пакете удаления. Пакет — это и транзакция, и шаг прогресса, поэтому
+    /// число компромиссное. Прежние 10 000 давали на коллекции в 650 тыс. записей 65 коммитов,
+    /// и после каждого SQLite переносил журнал в тело файла, пачкая одни и те же индексные
+    /// страницы заново (замер: ~5-6 ГБ физической записи на 0,5 ГБ данных). 50 000 сокращают
+    /// число коммитов вшестеро и оставляют полосе прогресса 13 отсечек на таком объеме —
+    /// а вот 100-200 тыс. двигали бы ее шагами по 15-30%, и она читалась бы как зависшая.
+    /// </summary>
+    private const int DeleteBatch = 50_000;
+
     public void DeleteCollection(int collectionId)
     {
         Demand(PermAction.DeleteCollection, collectionId);
@@ -1206,6 +1216,7 @@ public partial class ConstructorRepository(AppDbContext db)
         using var ctx = new AppDbContext(db.DbPath);
         ctx.ApplyBulkPerformancePragmas();
         new ConstructorRepository(ctx).DeleteCollectionData(collectionId, progress);
+        // Хвост журнала переносит закрытие контекста (AppDbContext.Dispose массового профиля).
     }
 
     /// <summary>
@@ -1218,8 +1229,8 @@ public partial class ConstructorRepository(AppDbContext db)
     /// коллекций SQLite переиспользует (фантомные настройки у будущей коллекции с тем же id).
     /// <paramref name="progress"/> — нарастающее число удаленных записей.
     /// </summary>
-    public void DeleteCollectionData(int collectionId, IProgress<int>? progress = null, int batchSize = 10000,
-                                     bool log = true)
+    public void DeleteCollectionData(int collectionId, IProgress<int>? progress = null,
+                                     int batchSize = DeleteBatch, bool log = true)
     {
         var name     = CollectionNameOf(collectionId);
         var recCount = db.DbRecords.Count(r => r.CollectionId == collectionId);
@@ -2205,7 +2216,9 @@ public partial class ConstructorRepository(AppDbContext db)
         {
             using var srcCtx = new AppDbContext(sourceDbPath);
             srcCtx.ApplyBulkPerformancePragmas();
-            new ConstructorRepository(srcCtx).DeleteCollectionData(srcCollectionId, new BaseProgress(progress, recCount));
+            // batchSize тот же, что у копирования: обе фазы двигают одну полосу прогресса.
+            new ConstructorRepository(srcCtx).DeleteCollectionData(srcCollectionId,
+                new BaseProgress(progress, recCount), batchSize);
         }
         catch
         {

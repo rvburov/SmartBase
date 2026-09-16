@@ -1527,12 +1527,19 @@ public partial class TableView : UserControl
     }
 
     // Можно ли двигать колонку влево/вправо (не крайняя ли она среди движимых).
+    // Позицию ищем прямо в _colDefs, без MovableKeysInOrder(): тот строил и возвращал НОВЫЙ
+    // список ключей на каждый вызов, а зовут метод по два раза на каждый пункт сдвига.
     private bool CanMoveColumn(string key, bool left)
     {
-        var keys = MovableKeysInOrder();
-        var idx  = keys.IndexOf(key);
-        if (idx < 0) return false;
-        return left ? idx > 0 : idx < keys.Count - 1;
+        static bool Movable(TableColumnDef d) =>
+            d.Key != TableColumnDef.NumKey && d.Key != TableColumnDef.AddPropKey;
+
+        var idx = _colDefs.FindIndex(d => d.Key == key);
+        if (idx < 0 || !Movable(_colDefs[idx])) return false;
+
+        for (var i = left ? idx - 1 : idx + 1; i >= 0 && i < _colDefs.Count; i += left ? -1 : 1)
+            if (Movable(_colDefs[i])) return true;
+        return false;
     }
 
     // Перемещение записи вверх/вниз: пишем порядок в БД и обновляем уже загруженные строки НА МЕСТЕ
@@ -1675,14 +1682,38 @@ public partial class TableView : UserControl
         // диапазон от последней обычной выделенной колонки.
         cell.PointerPressed += (_, e) =>
         {
-            if (e.GetCurrentPoint(cell).Properties.IsLeftButtonPressed)
+            var props = e.GetCurrentPoint(cell).Properties;
+            if (props.IsLeftButtonPressed)
                 SelectColumn(def.Key, e.KeyModifiers.HasFlag(KeyModifiers.Shift));
+            // Меню шапки собираем на правом НАЖАТИИ, а не заранее на каждую колонку: оно
+            // открывается на отпускании кнопки, так что к показу уже на месте. Тем же
+            // приемом живет меню ячейки (ShowCellMenuOn, TableView.CellClipboard.cs).
+            //
+            // Раньше меню строилось в момент создания колонки — а это полтора десятка пунктов,
+            // у каждого свой составной заголовок с иконкой: около сотни контролов на КАЖДУЮ
+            // колонку, включая те, что скрыты в окне «Отображение» и никогда не видны. На
+            // обычной таблице это незаметно, на коллекции в 1000 свойств — десятки тысяч
+            // объектов и десятки мегабайт, построенные на UI-потоке до появления первой строки.
+            else if (props.IsRightButtonPressed && def.BuildHeaderMenu is { } factory)
+                ShowHeaderMenuOn(cell, def, factory);
         };
 
-        if (def.BuildHeaderMenu is { } menuFactory)
-            cell.ContextMenu = menuFactory(def);
-
         return cell;
+    }
+
+    // Меню носит ровно одна шапка: у прежней снимаем (как у меню ячейки). Состав меню зависит
+    // от КОНКРЕТНОЙ колонки — имя и тип в карточке-шапке, «Удалить» по IsRequired, пункты сдвига
+    // отсутствуют у крайних, отметка цвета по текущему стилю, — поэтому общего меню на таблицу
+    // тут быть не может, только свое на колонку в момент клика.
+    private Control? _headerMenuHost;
+
+    private void ShowHeaderMenuOn(Control cell, TableColumnDef def,
+                                  Func<TableColumnDef, ContextMenu?> factory)
+    {
+        if (_headerMenuHost is { } prev && !ReferenceEquals(prev, cell)) prev.ContextMenu = null;
+
+        _headerMenuHost  = cell;
+        cell.ContextMenu = factory(def);
     }
 
     // Ячейка шапки строится КОНСТРУКЦИЕЙ 1-в-1 как шаблон DataGridCell: Grid "*,Auto",

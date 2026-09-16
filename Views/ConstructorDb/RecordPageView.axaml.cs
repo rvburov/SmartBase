@@ -433,6 +433,20 @@ public partial class RecordPageView : UserControl
     private readonly List<int> _selectedFieldIds = [];
     private readonly Dictionary<int, Border> _cardsByField = [];
 
+    // Допущенные пользователи базы — ОДИН запрос на сборку панели, а не на каждое поле типа
+    // «пользователь»: список у всех таких полей одинаков и отличается только текущим значением
+    // поля, которое подмешивается уже в памяти. На записи с десятками таких свойств это были
+    // десятки одинаковых запросов подряд с UI-потока (на PostgreSQL — столько же обращений к
+    // серверу, и там это и есть разница между «открылась сразу» и «думала секунды»).
+    private List<string>? _userOptions;
+
+    private List<string> UserOptions(string? current)
+    {
+        _userOptions ??= _repo?.GetUserOptions() ?? [];
+        if (string.IsNullOrEmpty(current) || _userOptions.Contains(current)) return _userOptions;
+        return [.. _userOptions, current];   // историческое имя видно, но общий список не портит
+    }
+
     private void BuildProperties()
     {
         PropertiesHost.Children.Clear();
@@ -444,6 +458,7 @@ public partial class RecordPageView : UserControl
         _descTarget   = null;
         _bottomTarget = null;
         _selectedCard = null;
+        _userOptions  = null;   // состав читаем заново на каждую сборку панели, но ОДИН раз
         if (_vm is null) return;
 
         // Порядок строго как в таблице: VM уже отсортировала элементы по эффективной позиции
@@ -582,7 +597,17 @@ public partial class RecordPageView : UserControl
         if (row.Field.Id is int id)
         {
             _cardsByField[id] = card;
-            card.ContextMenu  = BuildPropertyMenu(row);
+            // Меню — на правом НАЖАТИИ, а не на каждую карточку заранее: показывается оно на
+            // отпускании кнопки, так что к этому моменту уже на месте (тот же прием, что у
+            // шапки колонки и ячейки таблицы). Панель строит карточку на КАЖДОЕ свойство
+            // записи, а меню свойства — это полтора десятка составных пунктов; на коллекции
+            // с сотнями свойств они и составляли большую часть веса открытия карточки, при
+            // том что открывают меню от силы у одного свойства.
+            card.AddHandler(InputElement.PointerPressedEvent, (_, e) =>
+            {
+                if (e.GetCurrentPoint(card).Properties.IsRightButtonPressed)
+                    card.ContextMenu = BuildPropertyMenu(row);
+            }, RoutingStrategies.Tunnel);
         }
         return card;
     }
@@ -1256,7 +1281,7 @@ public partial class RecordPageView : UserControl
             case "status":  // как select: опции — строки из ConfigJson
             case "user":   // как select: опции — допущенные пользователи базы (живые)
             {
-                // Опции пользователей читаются при каждом построении поля: состав меняют
+                // Опции пользователей читаются при каждом построении ПАНЕЛИ: состав меняют
                 // соседи. Текущее значение добавляется к ним, даже если такого пользователя
                 // в базе уже нет, — историческое имя остается видимым и не затирается.
                 var combo = new ComboBox
@@ -1264,7 +1289,7 @@ public partial class RecordPageView : UserControl
                     HorizontalAlignment = HorizontalAlignment.Stretch,
                     Classes             = { "propValue" },
                     ItemsSource         = f.FieldType == "user"
-                        ? _repo?.GetUserOptions(row.Value) ?? []
+                        ? UserOptions(row.Value)
                         : SelectOptions(f),
                     SelectedItem        = row.Value,
                 };

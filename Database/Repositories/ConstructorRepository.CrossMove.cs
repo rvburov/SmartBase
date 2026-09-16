@@ -47,8 +47,10 @@ public partial class ConstructorRepository
         {
             using var delCtx = new AppDbContext(sourceDbPath);
             delCtx.ApplyBulkPerformancePragmas();
+            // batchSize тот же, что у копирования: обе фазы двигают одну полосу прогресса,
+            // и разные шаги читались бы как рывок на середине.
             new ConstructorRepository(delCtx).DeleteCollectionData(srcCollectionId,
-                new BaseProgress(progress, recCount));
+                new BaseProgress(progress, recCount), batchSize);
         }
         catch
         {
@@ -127,7 +129,8 @@ public partial class ConstructorRepository
         {
             using var delCtx = new AppDbContext(sourceDbPath);
             delCtx.ApplyBulkPerformancePragmas();
-            new ConstructorRepository(delCtx).DeleteGroupData(srcGroupId, new BaseProgress(progress, total));
+            new ConstructorRepository(delCtx).DeleteGroupData(srcGroupId, new BaseProgress(progress, total),
+                                                             batchSize);   // см. MoveCollectionGeneric
         }
         catch
         {
