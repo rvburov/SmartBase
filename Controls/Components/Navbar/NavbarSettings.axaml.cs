@@ -38,11 +38,14 @@ public partial class NavbarSettings : UserControl
         {
             var idx = AddDatabaseCombo.SelectedIndex;
             if (idx < 0) return;   // сброс выбора ниже — не действие
-            // Действие и сброс — после закрытия выпадашки (Post), чтобы модальное окно
-            // не открывалось внутри обработки выбора и плейсхолдер вернулся на место.
+
+            // Сброс — СРАЗУ, в этом же такте: отложенный успевает показать выбранный пункт на
+            // месте плейсхолдера, и надпись «Добавить базу данных» моргает выбранным словом.
+            AddDatabaseCombo.SelectedIndex = -1;
+
+            // Действие — отложенно: модальное окно не должно открываться внутри обработки выбора.
             Dispatcher.UIThread.Post(() =>
             {
-                AddDatabaseCombo.SelectedIndex = -1;
                 switch (idx)
                 {
                     case 0: CreateSqliteRequested?.Invoke(this, EventArgs.Empty); break;

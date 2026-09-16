@@ -22,7 +22,7 @@
              и серверов в меню нет: у каждой открытой базы их строка в списке уже есть. -->
         <ComboBox Grid.Column="1" x:Name="AddSecretCombo"
                   IsVisible="False"
-                  Width="210" Height="{StaticResource ControlHeightStandard}"
+                  Width="170" Height="{StaticResource ControlHeightStandard}"
                   VerticalAlignment="Center"
                   PlaceholderText="Добавить пароль"
                   PlaceholderForeground="{StaticResource BrushPrimaryText}">

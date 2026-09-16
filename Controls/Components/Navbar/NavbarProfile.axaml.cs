@@ -38,11 +38,17 @@ public partial class NavbarProfile : UserControl
         {
             var idx = AddSecretCombo.SelectedIndex;
             if (idx < 0) return;   // сброс выбора ниже — не действие
-            // Действие и сброс — после закрытия выпадашки (Post), чтобы модальное окно
-            // не открывалось внутри обработки выбора и плейсхолдер вернулся на место.
+
+            // Сброс — СРАЗУ, в этом же такте. Отложенный (в Post) успевал показать выбранный
+            // пункт на месте плейсхолдера, и надпись «Добавить пароль» моргала выбранным
+            // словом. Присваивание входит в этот же обработчик с idx = -1 и гасится проверкой
+            // выше.
+            AddSecretCombo.SelectedIndex = -1;
+
+            // А вот действие — отложенно: модальное окно не должно открываться внутри обработки
+            // выбора, иначе выпадашка остается открытой за ним.
             Dispatcher.UIThread.Post(() =>
             {
-                AddSecretCombo.SelectedIndex = -1;
                 switch (idx)
                 {
                     case 0: AddConnectionRequested?.Invoke(this, EventArgs.Empty); break;
