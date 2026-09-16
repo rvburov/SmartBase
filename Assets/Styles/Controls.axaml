@@ -642,20 +642,21 @@
             <Template>
                 <ToggleButton Classes="icon reveal"
                               Width="24" Height="24"
+                              Margin="0,0,6,0"
                               Focusable="False"
                               IsChecked="{Binding $parent[TextBox].RevealPassword, Mode=TwoWay}">
                     <Panel>
-                        <Viewbox Classes="eyeOff"
+                        <Viewbox Classes="eyeClosed"
                                  Width="{StaticResource IconSizeSmall}"
                                  Height="{StaticResource IconSizeSmall}">
                             <Canvas Width="24" Height="24">
-                                <Path Data="{StaticResource IconEyeOff}"
+                                <Path Data="{StaticResource IconEyeClosed}"
                                       Stroke="{Binding $parent[ToggleButton].Foreground}"
                                       StrokeThickness="{StaticResource IconStrokeSmall}"
                                       StrokeLineCap="Round" StrokeJoin="Round" />
                             </Canvas>
                         </Viewbox>
-                        <Viewbox Classes="eyeOn"
+                        <Viewbox Classes="eyeOpen"
                                  Width="{StaticResource IconSizeSmall}"
                                  Height="{StaticResource IconSizeSmall}">
                             <Canvas Width="24" Height="24">
@@ -673,13 +674,13 @@
 
     <!-- Какой из двух глаз виден. Оба лежат стопкой и переключаются видимостью: менять Data
          одного пришлось бы привязкой с конвертером ради той же пары путей. -->
-    <Style Selector="ToggleButton.reveal Viewbox.eyeOn">
+    <Style Selector="ToggleButton.reveal Viewbox.eyeOpen">
         <Setter Property="IsVisible" Value="False" />
     </Style>
-    <Style Selector="ToggleButton.reveal:checked Viewbox.eyeOn">
+    <Style Selector="ToggleButton.reveal:checked Viewbox.eyeOpen">
         <Setter Property="IsVisible" Value="True" />
     </Style>
-    <Style Selector="ToggleButton.reveal:checked Viewbox.eyeOff">
+    <Style Selector="ToggleButton.reveal:checked Viewbox.eyeClosed">
         <Setter Property="IsVisible" Value="False" />
     </Style>
 
