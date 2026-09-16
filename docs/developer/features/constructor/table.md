@@ -720,7 +720,8 @@ Ctrl+A, Escape, протягивание, счетчик, обрезка рам�
 [VirtualCollectionView](../../../../ViewModels/ConstructorDb/VirtualCollectionView.cs)
 (`IDataGridCollectionView`): DataGrid не материализует источник, а запрашивает строки по
 индексу только для видимых. Данные тянет [VirtualRowList](../../../../ViewModels/ConstructorDb/VirtualRowList.cs)
-постранично (200 строк, LRU ≈10k) — `Count` из `CountRecords` без загрузки, последовательный
+постранично (200 строк, страниц в кеше от 11 до 50 по числу колонок, вытеснение по LRU —
+см. [[../../architecture/performance/hot-paths]]) — `Count` из `CountRecords` без загрузки, последовательный
 скролл по keyset **в обе стороны** (row-value сик `(Position, Id)`, 0.3 мс на любой глубине),
 прыжки — offset по покрывающему индексу `(CollectionId, Position)`. Подгрузка строк — в фоновом
 потоке с заглушками «Загрузка…» (флаг в настройках). Фильтр/сортировка — в SQL (список id +
