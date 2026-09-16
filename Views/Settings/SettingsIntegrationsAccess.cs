@@ -310,55 +310,18 @@ public partial class SettingsView
         + "же, где человеку. По умолчанию роботу разрешено только создавать и изменять записи — "
         + "читать базу через этот канал нельзя вовсе.";
 
+    /// <summary>
+    /// Выдать токен под одну из открытых баз. Сам поток — окно, робот, единственный показ текста —
+    /// общий с менеджером паролей (<see cref="TokenIssue"/>): порядок его шагов забывать нельзя, и
+    /// держать его в двух местах значило бы однажды забыть в одном.
+    /// </summary>
     private async Task IssueTokenAsync(Database.IntegrationsRegistry registry)
     {
         if (VisualRoot is not Window win) return;
         if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
 
-        var opened = _databases?.Invoke() ?? [];
-
-        if (opened.Count == 0)
-        {
-            await ConfirmDialog.Info("Сначала откройте базу данных: токен выдается под нее.")
-                               .ShowDialog(win);
-            return;
-        }
-
-        var made  = "";
-        var owner = "";
-
-        var dialog = new TokenDialog(
-            [.. opened.Select(d => (d.DbId, d.Name))],
-            (name, dbId) =>
-            {
-                var target = opened.FirstOrDefault(d => d.DbId == dbId);
-                if (target is null) return "эта база сейчас не открыта";
-
-                var (token, secret) = registry.Issue(name, dbId, Environment.MachineName,
-                                                     DateTimeOffset.Now);
-
-                // Робот заводится СРАЗУ: токен, которому не соответствует пользователь, работать
-                // не будет, и узнавать об этом из отказа первой посылки — потерянный вечер.
-                target.Permissions.EnsureRobot(token.RobotKey, token.Name, DateTimeOffset.Now);
-
-                made  = secret;
-                owner = target.Name;
-                return null;
-            });
-
-        if (await dialog.ShowDialog<bool>(win) != true || made.Length == 0) return;
-
-        BuildIntegrationsInbox();
-
-        // Текст токена показывается ОДИН раз: хранилище, из которого секрет можно прочитать
-        // обратно, рано или поздно прочитают. Отсюда и кнопка «Скопировать» рядом.
-        await ConfirmDialog.Info(
-            $"Токен для базы «{owner}» создан.\n\n{made}\n\n"
-            + "Скопируйте его сейчас: показать второй раз программа не сможет — она хранит "
-            + "только проверочный отпечаток. Потеряется — выдайте новый.",
-            "Скопировать и закрыть").ShowDialog(win);
-
-        await (TopLevel.GetTopLevel(this)?.Clipboard?.SetTextAsync(made) ?? Task.CompletedTask);
+        await TokenIssue.RunAsync(win, registry, _databases?.Invoke() ?? [],
+                                  issued: BuildIntegrationsInbox);
     }
 
     private async Task RemoveTokenAsync(Database.IntegrationsRegistry registry, AccessToken token)

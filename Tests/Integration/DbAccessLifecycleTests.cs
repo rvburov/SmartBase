@@ -701,4 +701,98 @@ public sealed class DbAccessLifecycleTests
         }
         finally { TempDatabase.Cleanup(path); }
     }
+
+    // ── 10. Последний вход по паролю ──────────────────────────────────────────
+
+    /// <summary>
+    /// Менеджер паролей показывает администратору, когда паролем базы входили в последний раз.
+    /// Момент пишется одной строкой db_meta вместе с допуском — искать его в журнале нельзя: у
+    /// change_log нет вторичных индексов, и на медленном сетевом диске скан миллионов строк ради
+    /// одной даты недопустим. Дата относится к конкретному паролю: смена пароля и его снятие ее
+    /// стирают, иначе новый пароль унаследовал бы чужой «последний вход». Неверный пароль и
+    /// повторный ввод уже допущенным даты не трогают. Сосед видит ее одним Reload.
+    /// </summary>
+    [Fact]
+    public void Password_unlock_moment_lives_until_the_password_changes()
+    {
+        using var db = new TempDatabase();
+        db.Permissions.SetPassword("секрет");
+        Assert.Null(db.Permissions.LastPasswordUnlock);
+
+        Demote(db, admin: false, approved: false);
+        Assert.Equal("Неверный пароль", db.Permissions.Unlock("не тот"));
+        Assert.Null(db.Permissions.LastPasswordUnlock);
+        using (var wrong = new AppDbContext(db.Path))
+            Assert.False(wrong.DbMeta.Any(m => m.Key == "password.unlocked_at"));
+
+        var before = DateTimeOffset.UtcNow;
+        Assert.Equal("", db.Permissions.Unlock("секрет"));
+        var after = DateTimeOffset.UtcNow;
+
+        var moment = db.Permissions.LastPasswordUnlock;
+        Assert.NotNull(moment);
+        Assert.InRange(moment.Value, before.AddSeconds(-1), after.AddSeconds(1));
+
+        // В файле — ISO 8601 «o»; сосед со своим контекстом видит ту же дату одним Reload.
+        using (var nctx = new AppDbContext(db.Path))
+        {
+            var raw = nctx.DbMeta.Single(m => m.Key == "password.unlocked_at").Value;
+            Assert.Equal(moment.Value, DateTimeOffset.ParseExact(
+                raw, "o", System.Globalization.CultureInfo.InvariantCulture));
+
+            var neighbour = new PermissionService(nctx);
+            neighbour.Reload(notify: false);
+            Assert.Equal(moment, neighbour.LastPasswordUnlock);
+        }
+
+        // Уже допущенный ввел пароль еще раз — это не вход, дата прежняя.
+        Assert.Equal("", db.Permissions.Unlock("секрет"));
+        Assert.Equal(moment, db.Permissions.LastPasswordUnlock);
+
+        // Смена пароля стирает дату: новым паролем еще никто не входил.
+        Demote(db, admin: true, approved: true);
+        db.Permissions.SetPassword("новый");
+        Assert.Null(db.Permissions.LastPasswordUnlock);
+        using (var changed = new AppDbContext(db.Path))
+            Assert.False(changed.DbMeta.Any(m => m.Key == "password.unlocked_at"));
+
+        // Вошли новым паролем — и пароль сняли: дата уходит вместе с ним.
+        Demote(db, admin: false, approved: false);
+        Assert.Equal("", db.Permissions.Unlock("новый"));
+        Assert.NotNull(db.Permissions.LastPasswordUnlock);
+
+        Demote(db, admin: true, approved: true);
+        db.Permissions.RemovePassword();
+        Assert.Null(db.Permissions.LastPasswordUnlock);
+        using (var removed = new AppDbContext(db.Path))
+            Assert.False(removed.DbMeta.Any(m => m.Key.StartsWith("password.")));
+    }
+
+    /// <summary>
+    /// Мусор в строке даты не роняет открытие базы. Значение лежит в db_meta — то есть внутри
+    /// файла, который ездит по сетевой папке и открывается разными версиями программы: чужая
+    /// запись, обрезанная строка или старый формат рано или поздно случатся. Ответ на такой случай
+    /// один — «даты нет», как будто паролем еще не входили: монтирование базы не может падать
+    /// из-за подписи в менеджере паролей.
+    /// </summary>
+    [Theory]
+    [InlineData("вчера")]
+    [InlineData("")]
+    [InlineData("2026-13-45T99:99:99")]
+    public void Garbage_in_the_unlock_moment_reads_as_no_date(string garbage)
+    {
+        using var db = new TempDatabase();
+        db.Permissions.SetPassword("секрет");
+
+        using (var ctx = new AppDbContext(db.Path))
+        {
+            ctx.DbMeta.Add(new DbMetaEntity { Key = "password.unlocked_at", Value = garbage });
+            ctx.SaveChanges();
+        }
+
+        db.Permissions.Reload(notify: false);
+
+        Assert.Null(db.Permissions.LastPasswordUnlock);
+        Assert.True(db.Permissions.HasPassword);   // сам пароль от мусора рядом не пострадал
+    }
 }

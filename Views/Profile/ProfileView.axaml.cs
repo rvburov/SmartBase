@@ -72,6 +72,12 @@ public partial class ProfileView : UserControl
         // Выбор базы журнала живет в навбаре (правый край «Истории изменений»).
         HeaderBar.HistoryDbChanged      += (_, _) => OnHistoryDbChanged();
         HeaderBar.ExportHistoryRequested += (_, _) => _ = ExportHistoryToCsv();
+
+        // Меню «Добавить пароль» живет в навбаре (правый край «Менеджера паролей»), а окна и права
+        // — у самой описи: навбар только передает выбранный пункт.
+        HeaderBar.AddConnectionRequested += (_, _) => _ = _secrets?.AddConnectionAsync();
+        HeaderBar.AddTokenRequested      += (_, _) => _ = _secrets?.AddTokenAsync();
+        HeaderBar.MasterHashRequested    += (_, _) => _ = _secrets?.MasterHashAsync();
     }
 
     /// <summary>Рабочее пространство для панелей администратора и истории.</summary>
@@ -94,15 +100,15 @@ public partial class ProfileView : UserControl
         // обычный вид с навбаром. То же с контуром безопасности и его журналом.
         CloseUsersPanel();
         CloseSecurityPanels();
-        // Показанный секрет живет, пока человек на его экране: уйти и вернуться через час
-        // к открытому паролю — то же, что оставить его на бумажке.
-        if (key != "secrets") _secrets?.Forget();
         // Детали строки журнала живут в отдельной колонке окна и разделом не скрываются —
         // закрываем их вместе с уходом из «Истории изменений».
         CloseHistoryDetail();
         HeaderBar.Title = (ProfileRegistry.FindByKey(key) ?? ProfileRegistry.All[0]).Label;
         // Действия истории (выбор базы, очистка журнала) — только для истории.
         HeaderBar.ShowHistoryActions = key == "history";
+        // «Добавить пароль» — только в «Менеджере паролей»; в нем самом видимость уточнит
+        // сборка списка (ShowSecrets → SyncSecretsActions).
+        SyncSecretsActions();
 
         if (key == "admin")    RebuildAdminPanel();
         if (key == "security") ShowSecurityContour();
@@ -180,6 +186,8 @@ public partial class ProfileView : UserControl
     public void OnRemoteUserChanges(int dbId)
     {
         RefreshHistoryAccess();
+        // Сосед мог выдать или отозвать админство — опись показывает только свое.
+        RefreshSecrets();
 
         // Панель пользователей открыта ВМЕСТО панели администратора, и та в это время скрыта, —
         // смотреть надо на саму панель. В области «все базы» ее касается любая из админских баз.
@@ -196,6 +204,8 @@ public partial class ProfileView : UserControl
     public void OnDatabasesChanged()
     {
         RefreshHistoryAccess();
+        // Опись — только открытые базы: открылась, закрылась, стала сжиматься — список за ней.
+        RefreshSecrets();
 
         if (!AdminPanel.IsVisible && !UsersPanelOpen) return;
         var admins = _workspace?.Mounted.Where(m => m.Permissions.IsAdmin).ToList() ?? [];
@@ -347,15 +357,18 @@ public partial class ProfileView : UserControl
 
     private async void OnPasswordRemove(object? sender, RoutedEventArgs e)
     {
-        if (_adminDb is null || TopLevel.GetTopLevel(this) is not Window owner) return;
+        if (_adminDb is not { } db || TopLevel.GetTopLevel(this) is not Window owner) return;
+        var name = string.IsNullOrWhiteSpace(db.Name) ? "База данных" : db.Name;
+        // Вопрос общий с менеджером паролей: при выключенном входе по паролю он не обещает, что
+        // пользователи «больше не смогут открыть доступ сами», — они и так не могут.
         var confirmed = await new ConfirmDialog(
-                "Убрать пароль базы данных? Новые пользователи смогут получить доступ " +
-                "только после вашего подтверждения.", confirmText: "Убрать")
+                SecretsInventory.RemovePasswordQuestion(name, db.Permissions.PasswordAccessEnabled),
+                confirmText: "Убрать")
             .ShowDialog<bool>(owner);
-        if (!confirmed) return;
+        // Пока окно было открыто, в панели могли выбрать другую базу — чужой базе пароль не снимаем.
+        if (!confirmed || !ReferenceEquals(db, _adminDb)) return;
 
-        _adminDb.Permissions.RemovePassword();
-        RefreshPasswordRow();
+        if (RunAdminAction(() => db.Permissions.RemovePassword())) RefreshPasswordRow();
     }
 
     // ── Хелперы ресурсов (fallback — как в SidebarRow) ────────────────────────

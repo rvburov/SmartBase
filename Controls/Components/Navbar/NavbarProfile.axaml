@@ -6,7 +6,7 @@
 
     <!-- Заголовок слева, действия раздела справа — как в остальных навбарах
          (NavbarSettings: «Добавить базу данных» тем же стилем). -->
-    <Grid ColumnDefinitions="*,Auto,Auto" Margin="16,0">
+    <Grid ColumnDefinitions="*,Auto,Auto,Auto" Margin="16,0">
 
         <TextBlock Grid.Column="0" x:Name="TitleText"
                    Text="Общие данные"
@@ -15,17 +15,33 @@
                    FontWeight="{StaticResource FontWeightBold}"
  />
 
+        <!-- «Добавить пароль» — только в разделе «Менеджер паролей» и только администратору
+             хотя бы одной открытой базы. Тот же прием, что «Добавить базу данных» в
+             NavbarSettings: стандартный ComboBox работает как меню действий — выбранный пункт
+             открывает свое окно, а выбор тут же сбрасывается (см. код-behind). Паролей баз
+             и серверов в меню нет: у каждой открытой базы их строка в списке уже есть. -->
+        <ComboBox Grid.Column="1" x:Name="AddSecretCombo"
+                  IsVisible="False"
+                  Width="210" Height="{StaticResource ControlHeightStandard}"
+                  VerticalAlignment="Center"
+                  PlaceholderText="Добавить пароль"
+                  PlaceholderForeground="{StaticResource BrushPrimaryText}">
+            <ComboBoxItem Content="Соединение с чужой программой…" />
+            <ComboBoxItem Content="Токен робота…" />
+            <ComboBoxItem Content="Мастер-пароль для политики…" />
+        </ComboBox>
+
         <!-- Выбор базы журнала — только в разделе «История изменений». Обычный
              стейтфул-ComboBox: выбранная база остается видимой (в отличие от
              меню-действий NavbarSettings). Наполняет ProfileView. -->
-        <ComboBox Grid.Column="1" x:Name="HistoryDbCombo"
+        <ComboBox Grid.Column="2" x:Name="HistoryDbCombo"
                   IsVisible="False"
                   Width="240" Height="{StaticResource ControlHeightStandard}"
                   VerticalAlignment="Center" />
 
         <!-- Выгрузка журнала в CSV — крайняя кнопка навбара, тем же видом, что
              «Импорт/Экспорт» в сайдбаре конструктора (navbtn 30×30, lucide download). -->
-        <Button Grid.Column="2" x:Name="ExportHistoryBtn"
+        <Button Grid.Column="3" x:Name="ExportHistoryBtn"
                 Classes="navbtn" Width="30" Height="30"
                 IsVisible="False"
                 VerticalAlignment="Center"

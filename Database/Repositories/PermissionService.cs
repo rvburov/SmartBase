@@ -211,6 +211,11 @@ public sealed partial class PermissionService(AppDbContext db)
         IsApproved    = me?.IsApproved ?? false;
         HasPassword   = _db.DbMeta.Any(m => m.Key == MetaPasswordHash);
         PasswordAccessEnabled = GetMeta(MetaPasswordAccess) != "0";
+        LastPasswordUnlock = System.DateTimeOffset.TryParse(
+                GetMeta(MetaPasswordUnlockedAt), System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.RoundtripKind, out var unlockedAt)
+            ? unlockedAt
+            : null;
         RetentionEnabled = GetMeta(MetaRetentionEnabled) == "1";
         RetentionMonths  = int.TryParse(GetMeta(MetaRetentionMonths), out var rm) && rm > 0
             ? rm : DefaultRetentionMonths;
@@ -363,6 +368,21 @@ public sealed partial class PermissionService(AppDbContext db)
     private const string MetaPasswordIterations = "password.iterations";
     private const int    PasswordIterations     = 100_000;
 
+    // Момент последнего входа паролем (ISO 8601 «o», инвариантная культура). Хранится отдельной
+    // строкой в db_meta, а не выводится из журнала: у change_log нет вторичных индексов, и искать
+    // в нем последний user.unlock значило бы сканировать миллионы строк на медленном сетевом
+    // диске ради одной даты в менеджере паролей. Ключ «password.*» нарочно: дата относится к
+    // конкретному паролю, и смена или снятие пароля стирают ее вместе с ним.
+    private const string MetaPasswordUnlockedAt = "password.unlocked_at";
+
+    /// <summary>
+    /// Когда кто-то в последний раз открыл себе доступ паролем этой базы; <c>null</c> — с тех пор,
+    /// как пароль задан, так никто не входил (или входили до того, как программа начала это
+    /// отмечать). Показывает менеджер паролей: пароль, которым давно не пользуются, стоит
+    /// выключить.
+    /// </summary>
+    public DateTimeOffset? LastPasswordUnlock { get; private set; }
+
     // Политика автоочистки журнала — в db_meta самой базы (как пароль): ее видят все
     // машины, открывающие файл, и чистят одинаково. Применяет ConstructorRepository
     // при монтировании (DatabaseManager). Задает только администратор.
@@ -390,6 +410,8 @@ public sealed partial class PermissionService(AppDbContext db)
         SetMeta(MetaPasswordHash, Convert.ToBase64String(hash));
         SetMeta(MetaPasswordSalt, Convert.ToBase64String(salt));
         SetMeta(MetaPasswordIterations, PasswordIterations.ToString());
+        // Дата последнего входа относится к прежнему паролю: новым еще никто не входил.
+        _db.DbMeta.RemoveRange(_db.DbMeta.Where(m => m.Key == MetaPasswordUnlockedAt));
         _db.SaveChanges();
         Reload();
     }
@@ -399,7 +421,8 @@ public sealed partial class PermissionService(AppDbContext db)
     {
         DemandAdmin();
         _db.DbMeta.RemoveRange(_db.DbMeta.Where(m =>
-            m.Key == MetaPasswordHash || m.Key == MetaPasswordSalt || m.Key == MetaPasswordIterations));
+            m.Key == MetaPasswordHash || m.Key == MetaPasswordSalt || m.Key == MetaPasswordIterations
+            || m.Key == MetaPasswordUnlockedAt));
         _db.SaveChanges();
         Reload();
     }
@@ -496,6 +519,11 @@ public sealed partial class PermissionService(AppDbContext db)
             // Событие в журнал: в открытой панели администратора строка пользователя
             // сменит «Ожидает допуска» на допущенного без перезахода.
             LogUser("user.unlock", CurrentUser.DisplayName);
+            // Момент входа — рядом с паролем, одной строкой db_meta: менеджер паролей показывает
+            // его администратору, не сканируя журнал (см. MetaPasswordUnlockedAt). Коммитится
+            // вместе с допуском — вход без отметки или отметка без входа невозможны.
+            SetMeta(MetaPasswordUnlockedAt,
+                    DateTimeOffset.UtcNow.ToString("o", System.Globalization.CultureInfo.InvariantCulture));
             _db.SaveChanges();
             Log.Information("Допуск по паролю базы: {User:l} ({Db:l})", CurrentUser.DisplayName, _db.DisplayPath);
         }

@@ -3,352 +3,528 @@ using SmartBase.Database;
 namespace SmartBase.Tests.Unit;
 
 /// <summary>
-/// Опись секретов машины (docs/ROADMAP-API.md, шаг 16).
+/// Опись секретов машины — менеджер паролей (docs/ROADMAP-API.md, шаг 16).
 ///
-/// Проверяются обещания описи, а не форматирование строк: что показать можно ровно там, где
-/// секрет восстановим по построению; что «мы не считаем» и «не пользовались» — разные ответы;
-/// что мертвые секреты стоят наверху, потому что за ними сюда и приходят.
+/// Проверяются обещания описи, а не форматирование строк: кто что видит (граница — админство
+/// открытой базы); что человек без админства получает объяснение, а не пустоту; что состояние
+/// строки не зовет чинить исправное и не молчит о мертвом; что показать можно ровно там, где
+/// секрет восстановим по построению; что мертвые секреты стоят наверху.
 /// </summary>
 public sealed class SecretsInventoryTests
 {
     private static readonly DateTimeOffset Now = new(2026, 9, 13, 12, 0, 0, TimeSpan.Zero);
 
-    // ── Что можно показать ────────────────────────────────────────────────────
+    // ── Данные ────────────────────────────────────────────────────────────────
+
+    private static InventoryDatabase Sqlite(int id, string name, bool admin = true,
+                                            bool hasPassword = false, bool access = true,
+                                            DateTimeOffset? unlock = null) =>
+        new(id, name, admin, IsPostgres: false,
+            Path: $@"C:\Базы\{name}.db", PgHost: "", PgPort: 5432, PgDatabase: "",
+            HasServerPassword: false,
+            HasPassword: hasPassword, PasswordAccessEnabled: access, LastPasswordUnlock: unlock);
+
+    private static InventoryDatabase Postgres(int id, string name, bool admin = true,
+                                              bool serverPassword = true) =>
+        new(id, name, admin, IsPostgres: true,
+            Path: "postgres://pg.zavod.local:5433/orders", PgHost: "pg.zavod.local", PgPort: 5433,
+            PgDatabase: "orders", HasServerPassword: serverPassword,
+            HasPassword: false, PasswordAccessEnabled: true, LastPasswordUnlock: null);
+
+    private static InventoryConnection Connection(int id, string name, bool secret = true,
+                                                  DateTimeOffset? lastRun = null) =>
+        new(id, name, $"https://api{id}.example.org", secret, lastRun);
+
+    private static InventoryToken Token(int id, string name, int dbId, bool enabled = true,
+                                        DateTimeOffset? created = null,
+                                        DateTimeOffset? used = null) =>
+        new(id, name, dbId, enabled, created, used);
+
+    private static readonly InventoryMaster NoMaster = new(false, [], SignatureKeyPresent: false);
+
+    private static InventoryListing Build(IReadOnlyList<InventoryDatabase>    databases,
+                                          IReadOnlyList<InventoryConnection>? connections = null,
+                                          IReadOnlyList<InventoryToken>?      tokens      = null,
+                                          InventoryMaster?                    master      = null) =>
+        SecretsInventory.Build(
+            new InventoryFacts(databases, connections ?? [], tokens ?? [], master ?? NoMaster), Now);
+
+    private static SecretEntry Only(InventoryListing listing, SecretKind kind) =>
+        Assert.Single(listing.Entries, e => e.Kind == kind);
+
+    // ── Кто что видит ─────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Секрет соединения показать можно: им подписывается каждый запрос, и программа достает его
-    /// сама при каждой отправке. Прятать то, что программа достает сама, — притворство.
+    /// Человек, который не администрирует ни одной открытой базы, не видит ни одного пароля — ни
+    /// баз, ни соединений, ни мастер-пароля. Экран показывает ему строку-заглушку, и в ней названа
+    /// граница целиком: иначе пустота читается как поломка.
     /// </summary>
     [Fact]
-    public void A_connection_secret_can_be_revealed()
+    public void Someone_who_administers_no_open_database_sees_only_the_stub()
     {
-        var entry = SecretsInventory.Connection(5, "Учетная система", "api.example.org",
-                                                requests: 3, lastRun: Now, created: null);
+        var listing = Build(
+            [Sqlite(1, "Склад", admin: false, hasPassword: true)],
+            [Connection(1, "Учетная система")],
+            [Token(1, "Обмен склада", dbId: 1)],
+            new InventoryMaster(true, ["реестр HKLM"], false));
 
-        Assert.True(entry.Revealable);
-        Assert.Empty(entry.Guard);
+        Assert.False(listing.Admin);
+        Assert.Empty(listing.Entries);
+
+        Assert.Equal("Нет прав администратора", SecretsInventory.NoAccessTitle);
+        Assert.Contains("только администратор", SecretsInventory.NoAccessText);
+        Assert.Contains("хотя бы одной открытой базы", SecretsInventory.NoAccessText);
+    }
+
+    /// <summary>Открытых баз нет — спрашивать об админстве некого, и видеть нечего.</summary>
+    [Fact]
+    public void Without_open_databases_there_is_no_admin()
+    {
+        var listing = Build([], [Connection(1, "Учетная система")]);
+
+        Assert.False(listing.Admin);
+        Assert.Empty(listing.Entries);
+    }
+
+    /// <summary>Пароль базы — только ее администратору: чужой базой он не распоряжается.</summary>
+    [Fact]
+    public void A_database_password_is_shown_only_to_its_admin()
+    {
+        var listing = Build([Sqlite(1, "Склад"), Sqlite(2, "Бухгалтерия", admin: false)]);
+
+        Assert.True(listing.Admin);
+        Assert.Equal([1], listing.Entries.Where(e => e.Kind == SecretKind.DatabasePassword)
+                                         .Select(e => e.Id));
+    }
+
+    /// <summary>Пароль сервера — только у базы PostgreSQL и только ее администратору.</summary>
+    [Fact]
+    public void A_server_password_needs_postgres_and_admin()
+    {
+        var listing = Build([Postgres(1, "Заказы"), Postgres(2, "Чужая", admin: false),
+                             Sqlite(3, "Склад")]);
+
+        Assert.Equal([1], listing.Entries.Where(e => e.Kind == SecretKind.PgPassword)
+                                         .Select(e => e.Id));
     }
 
     /// <summary>
-    /// Все остальное не показывается никогда — и у каждого написано ПОЧЕМУ. Отсутствие кнопки
-    /// без объяснения читается как недоделка, и человек идет искать ее в другом месте.
+    /// Токен — только если его база открыта и человек ее администратор. Токен закрытой базы и
+    /// токен чужой базы в описи не появляются.
     /// </summary>
     [Fact]
-    public void Everything_else_is_hidden_and_says_why()
+    public void Tokens_follow_the_rights_on_their_database()
     {
-        SecretEntry[] hidden =
-        [
-            SecretsInventory.RobotToken(1, "Обмен склада", "Склад", Now, Now, enabled: true),
-            SecretsInventory.DatabasePassword(2, "Заказы"),
-            SecretsInventory.PgPassword(3, "Заказы", "pg.example.org:5432/orders"),
-            SecretsInventory.PolicyMaster(defined: true, "policy.json"),
-        ];
+        var listing = Build([Sqlite(1, "Склад"), Sqlite(2, "Бухгалтерия", admin: false)],
+                            tokens: [Token(10, "Свой", dbId: 1), Token(11, "Чужой", dbId: 2),
+                                     Token(12, "Закрытой базы", dbId: 99)]);
 
-        foreach (var entry in hidden)
-        {
-            Assert.False(entry.Revealable);
-            Assert.NotEmpty(entry.Guard);
-        }
+        Assert.Equal([10], listing.Entries.Where(e => e.Kind == SecretKind.RobotToken)
+                                          .Select(e => e.Id));
     }
 
-    /// <summary>Мастер-пароля может не быть вовсе — и тогда об этом сказано, а строка остается.</summary>
+    /// <summary>
+    /// Соединения и мастер-пароль общие на машину — их видит администратор ХОТЯ БЫ ОДНОЙ открытой
+    /// базы, тем же признаком, что открывает панель администратора.
+    /// </summary>
     [Fact]
-    public void A_missing_master_password_is_still_a_row()
+    public void Connections_and_master_password_need_admin_of_any_open_database()
     {
-        var entry = SecretsInventory.PolicyMaster(defined: false, "");
+        var listing = Build([Sqlite(1, "Бухгалтерия", admin: false), Sqlite(2, "Склад")],
+                            [Connection(1, "Учетная система"), Connection(2, "Банк", secret: false)]);
 
-        Assert.Contains("не задан", entry.Where);
+        Assert.Equal(2, listing.Entries.Count(e => e.Kind == SecretKind.Connection));
+        Only(listing, SecretKind.PolicyMaster);
+    }
+
+    // ── Названия и пути ───────────────────────────────────────────────────────
+
+    [Fact]
+    public void Titles_name_the_kind_and_the_engine()
+    {
+        var listing = Build([Sqlite(1, "Склад"), Postgres(2, "Заказы")],
+                            [Connection(1, "Учетная система")],
+                            [Token(1, "Обмен склада", dbId: 1)]);
+
+        Assert.Equal(
+            ["Мастер-пароль организации",
+             "Пароль базы PostgreSQL «Заказы»",
+             "Пароль базы SQLite «Склад»",
+             "Пароль сервера PostgreSQL для базы «Заказы»",
+             "Соединение «Учетная система»",
+             "Токен «Обмен склада»"],
+            listing.Entries.Select(e => e.Title).Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void The_third_line_says_where_the_secret_lives()
+    {
+        var listing = Build([Sqlite(1, "Склад"), Postgres(2, "Заказы")],
+                            [Connection(7, "Учетная система")],
+                            [Token(1, "Обмен склада", dbId: 1)]);
+
+        Assert.Equal(@"C:\Базы\Склад.db",
+                     listing.Entries.Single(e => e.Kind == SecretKind.DatabasePassword && e.Id == 1).Where);
+        Assert.Equal("pg.zavod.local:5433/orders",
+                     listing.Entries.Single(e => e.Kind == SecretKind.DatabasePassword && e.Id == 2).Where);
+        Assert.Equal("pg.zavod.local:5433/orders", Only(listing, SecretKind.PgPassword).Where);
+        Assert.Equal("https://api7.example.org", Only(listing, SecretKind.Connection).Where);
+        Assert.Equal("база «Склад»", Only(listing, SecretKind.RobotToken).Where);
+    }
+
+    [Fact]
+    public void A_server_without_a_host_says_so()
+    {
+        Assert.Equal("сервер не указан", SecretsInventory.ServerOf("", 5432, "orders"));
+    }
+
+    // ── Пароль базы ───────────────────────────────────────────────────────────
+
+    [Fact]
+    public void A_database_without_a_password_is_a_grey_empty_place()
+    {
+        var entry = Only(Build([Sqlite(1, "Склад")]), SecretKind.DatabasePassword);
+
+        Assert.Equal("не установлен", entry.Status);
+        Assert.Equal(SecretTone.Muted, entry.Tone);
+        Assert.Equal(SecretState.NotSet, entry.State);
+    }
+
+    /// <summary>
+    /// Пароль задан, но вход по паролю выключен — серым: пароль сейчас никого не пускает, и
+    /// зеленый цвет обещал бы дверь, которой нет. Дата последнего входа при этом не показывается.
+    /// </summary>
+    [Fact]
+    public void A_password_behind_a_switched_off_login_is_grey()
+    {
+        var entry = Only(Build([Sqlite(1, "Склад", hasPassword: true, access: false,
+                                       unlock: Now.AddDays(-3))]),
+                         SecretKind.DatabasePassword);
+
+        Assert.Equal("установлен · вход по паролю выключен", entry.Status);
+        Assert.Equal(SecretTone.Muted, entry.Tone);
+        Assert.Equal(SecretState.Set, entry.State);
+    }
+
+    [Fact]
+    public void A_working_password_shows_the_last_login_by_password()
+    {
+        var moment = new DateTimeOffset(2026, 9, 1, 12, 0, 0, TimeSpan.Zero);
+
+        var entry = Only(Build([Sqlite(1, "Склад", hasPassword: true, unlock: moment)]),
+                         SecretKind.DatabasePassword);
+
+        Assert.Equal($"установлен · последний вход по паролю {moment.ToLocalTime():dd.MM.yyyy}",
+                     entry.Status);
+        Assert.Equal(SecretTone.Good, entry.Tone);
+    }
+
+    [Fact]
+    public void A_working_password_without_a_known_login_is_just_set()
+    {
+        var entry = Only(Build([Sqlite(1, "Склад", hasPassword: true)]),
+                         SecretKind.DatabasePassword);
+
+        Assert.Equal("установлен", entry.Status);
+        Assert.Equal(SecretTone.Good, entry.Tone);
+    }
+
+    /// <summary>
+    /// Пароль базы «давно не нужным» не называется никогда: паролем входит новичок, а новички
+    /// приходят раз в год. Снимать пароль по такой отметке значило бы ломать прием людей.
+    /// </summary>
+    [Fact]
+    public void A_database_password_is_never_called_dead()
+    {
+        var listing = Build([Sqlite(1, "Склад", hasPassword: true, unlock: Now.AddYears(-2))]);
+        var entry   = Only(listing, SecretKind.DatabasePassword);
+
+        Assert.False(SecretsInventory.Stale(entry, Now));
+        Assert.DoesNotContain("давно", entry.Status);
+        Assert.Equal(SecretTone.Good, entry.Tone);
+    }
+
+    // ── Пароль сервера ────────────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData(true,  "установлен",    SecretTone.Good)]
+    [InlineData(false, "не установлен", SecretTone.Muted)]
+    public void A_server_password_is_set_or_not(bool saved, string status, SecretTone tone)
+    {
+        var entry = Only(Build([Postgres(1, "Заказы", serverPassword: saved)]), SecretKind.PgPassword);
+
+        Assert.Equal(status, entry.Status);
+        Assert.Equal(tone, entry.Tone);
+        Assert.False(SecretsInventory.Stale(entry, Now));
+    }
+
+    // ── Соединения ────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void A_connection_used_yesterday_is_green()
+    {
+        var entry = Only(Build([Sqlite(1, "Склад")], [Connection(1, "Учетная система",
+                                                                 lastRun: Now.AddDays(-1))]),
+                         SecretKind.Connection);
+
+        Assert.Equal("установлен", entry.Status);
+        Assert.Equal(SecretTone.Good, entry.Tone);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void A_connection_untouched_for_a_quarter_or_never_is_red(bool neverRun)
+    {
+        var lastRun = neverRun ? (DateTimeOffset?)null : Now.AddDays(-SecretsInventory.StaleDays - 1);
+
+        var entry = Only(Build([Sqlite(1, "Склад")], [Connection(1, "Учетная система",
+                                                                 lastRun: lastRun)]),
+                         SecretKind.Connection);
+
+        Assert.True(SecretsInventory.Stale(entry, Now));
+        Assert.Equal("давно не нужен", entry.Status);
+        Assert.Equal(SecretTone.Alarm, entry.Tone);
+    }
+
+    /// <summary>Место без секрета — серое «не установлен», и мертвым оно не бывает: нечему быть забытым.</summary>
+    [Fact]
+    public void A_connection_without_a_secret_is_a_grey_empty_place()
+    {
+        var entry = Only(Build([Sqlite(1, "Склад")], [Connection(1, "Открытый обмен", secret: false)]),
+                         SecretKind.Connection);
+
+        Assert.Equal("не установлен", entry.Status);
+        Assert.Equal(SecretTone.Muted, entry.Tone);
+        Assert.Equal(SecretState.NotSet, entry.State);
+        Assert.False(SecretsInventory.Stale(entry, Now));
         Assert.NotEmpty(entry.Guard);
     }
 
-    // ── Мертвые секреты ───────────────────────────────────────────────────────
+    // ── Токены ────────────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Выключенный токен — не открытая дверь: его выключили нарочно, и «давно не нужным» он не
+    /// считается, сколько бы им ни пользовались.
+    /// </summary>
     [Fact]
-    public void A_secret_used_yesterday_is_alive()
+    public void A_disabled_token_is_grey_and_never_dead()
     {
-        var entry = SecretsInventory.Connection(5, "Учетная система", "api.example.org",
-                                                requests: 1, lastRun: Now.AddDays(-1), created: null);
+        var entry = Only(Build([Sqlite(1, "Склад")],
+                               tokens: [Token(1, "Обмен", dbId: 1, enabled: false,
+                                              created: Now.AddYears(-1))]),
+                         SecretKind.RobotToken);
 
+        Assert.Equal("выключен", entry.Status);
+        Assert.Equal(SecretTone.Muted, entry.Tone);
         Assert.False(SecretsInventory.Stale(entry, Now));
     }
 
     [Fact]
-    public void A_secret_untouched_for_a_quarter_is_dead()
+    public void An_enabled_token_nobody_used_for_a_quarter_is_red()
     {
-        var entry = SecretsInventory.Connection(5, "Учетная система", "api.example.org",
-                                                requests: 1,
-                                                lastRun: Now.AddDays(-SecretsInventory.StaleDays - 1),
-                                                created: null);
+        var listing = Build([Sqlite(1, "Склад")],
+                            tokens: [Token(1, "Забытый", dbId: 1, created: Now.AddDays(-200)),
+                                     Token(2, "Замолчавший", dbId: 1, created: Now.AddDays(-400),
+                                           used: Now.AddDays(-SecretsInventory.StaleDays - 1))]);
 
-        Assert.True(SecretsInventory.Stale(entry, Now));
-    }
-
-    /// <summary>Ни разу не пользовались — тоже мертвый: заведен и забыт в тот же день.</summary>
-    [Fact]
-    public void A_secret_never_used_is_dead()
-    {
-        var entry = SecretsInventory.RobotToken(1, "Обмен склада", "Склад",
-                                                created: Now.AddDays(-200), used: null,
-                                                enabled: true);
-
-        Assert.True(SecretsInventory.Stale(entry, Now));
+        foreach (var entry in listing.Entries.Where(e => e.Kind == SecretKind.RobotToken))
+        {
+            Assert.Equal("давно не нужен", entry.Status);
+            Assert.Equal(SecretTone.Alarm, entry.Tone);
+        }
     }
 
     /// <summary>
-    /// Секрет, о пользовании которым программа не знает, мертвым НЕ считается. Отозвать рабочий
-    /// пароль базы по догадке хуже, чем не отозвать заброшенный: первое ломает работу сегодня.
+    /// Токен, выданный вчера, еще не мертв, даже если обращений не было: простой считается от
+    /// выдачи. Иначе каждый новый токен рождался бы красным.
     /// </summary>
     [Fact]
-    public void A_secret_whose_use_is_not_tracked_is_never_called_dead()
+    public void A_fresh_token_is_green_before_the_first_call()
     {
-        Assert.False(SecretsInventory.Stale(SecretsInventory.DatabasePassword(2, "Заказы"), Now));
-        Assert.False(SecretsInventory.Stale(SecretsInventory.PgPassword(3, "Заказы", "pg:5432"), Now));
-        Assert.False(SecretsInventory.Stale(SecretsInventory.PolicyMaster(true, "policy.json"), Now));
+        var entry = Only(Build([Sqlite(1, "Склад")],
+                               tokens: [Token(1, "Новый", dbId: 1, created: Now.AddDays(-1))]),
+                         SecretKind.RobotToken);
+
+        Assert.Equal("установлен", entry.Status);
+        Assert.Equal(SecretTone.Good, entry.Tone);
     }
 
-    /// <summary>Разницу видно и человеку: «не отмечается» — это не «ни разу».</summary>
+    // ── Мастер-пароль ─────────────────────────────────────────────────────────
+
     [Fact]
-    public void Not_tracking_use_is_stated_in_the_row()
+    public void A_defined_master_password_names_its_sources()
     {
-        Assert.False(SecretsInventory.DatabasePassword(2, "Заказы").UseKnown);
-        Assert.True(SecretsInventory.RobotToken(1, "Обмен", "Склад", Now, null, true).UseKnown);
+        var entry = Only(Build([Sqlite(1, "Склад")],
+                               master: new InventoryMaster(true, ["реестр HKLM", "папка установки"], false)),
+                         SecretKind.PolicyMaster);
+
+        Assert.Equal("задан", entry.Status);
+        Assert.Equal(SecretTone.Good, entry.Tone);
+        Assert.Equal("реестр HKLM, папка установки", entry.Where);
+    }
+
+    [Fact]
+    public void A_missing_master_password_is_a_grey_row_about_the_policy()
+    {
+        var entry = Only(Build([Sqlite(1, "Склад")]), SecretKind.PolicyMaster);
+
+        Assert.Equal("не задан", entry.Status);
+        Assert.Equal(SecretTone.Muted, entry.Tone);
+        Assert.Equal("политика организации", entry.Where);
+        Assert.Equal(SecretState.NotSet, entry.State);
+    }
+
+    // ── Что можно показать ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Показать можно только секрет соединения, и только заданный: им подписывается каждый
+    /// запрос, и программа достает его сама. У всего остального написано, почему нельзя.
+    /// </summary>
+    [Fact]
+    public void Only_a_connection_secret_can_be_revealed_and_the_rest_say_why()
+    {
+        var listing = Build([Sqlite(1, "Склад", hasPassword: true), Postgres(2, "Заказы")],
+                            [Connection(1, "С секретом", lastRun: Now), Connection(2, "Без", secret: false)],
+                            [Token(1, "Обмен", dbId: 1, created: Now)],
+                            new InventoryMaster(true, ["реестр HKLM"], false));
+
+        Assert.Equal([1], listing.Entries.Where(e => e.Revealable).Select(e => e.Id));
+        Assert.All(listing.Entries.Where(e => e.Revealable),
+                   e => Assert.Equal(SecretKind.Connection, e.Kind));
+        Assert.All(listing.Entries, e => Assert.NotEmpty(e.Guard));
+        Assert.All(listing.Entries, e => Assert.NotEmpty(e.What));
+    }
+
+    [Fact]
+    public void The_tip_joins_what_and_where_it_is_kept()
+    {
+        var entry = Only(Build([Sqlite(1, "Склад", hasPassword: true)]), SecretKind.DatabasePassword);
+
+        Assert.Equal(entry.What + "\n\n" + entry.Guard, SecretsInventory.Tip(entry));
     }
 
     // ── Порядок ───────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Мертвые наверх: список из тридцати строк, где две нужные лежат в середине, отвечает на
-    /// вопрос хуже, чем не отвечает вовсе.
+    /// Мертвое — наверх, пустые места — вниз, внутри — по роду и имени. За мертвыми сюда и
+    /// приходят; пустые не требуют действия, но и пропасть не должны.
     /// </summary>
     [Fact]
-    public void Dead_secrets_come_first()
+    public void Dead_first_empty_last_then_kind_and_name()
     {
-        var alive = SecretsInventory.Connection(1, "Живое", "a.example.org",
-                                                requests: 1, lastRun: Now, created: null);
-        var dead  = SecretsInventory.Connection(2, "Забытое", "b.example.org",
-                                                requests: 1, lastRun: Now.AddYears(-1), created: null);
+        var listing = Build([Sqlite(1, "Склад")],
+                            [Connection(1, "Живое", lastRun: Now),
+                             Connection(2, "Забытое", lastRun: Now.AddYears(-1)),
+                             Connection(3, "Без секрета", secret: false),
+                             Connection(4, "Архив", lastRun: Now)],
+                            master: new InventoryMaster(true, ["реестр HKLM"], false));
 
-        var order = SecretsInventory.Ordered([alive, dead], Now);
-
-        Assert.Equal("Соединение «Забытое»", order[0].Title);
+        Assert.Equal(["Соединение «Забытое»",
+                      "Соединение «Архив»", "Соединение «Живое»", "Мастер-пароль организации",
+                      "Соединение «Без секрета»", "Пароль базы SQLite «Склад»"],
+                     listing.Entries.Select(e => e.Title));
     }
 
-    /// <summary>Внутри — по роду и имени: список не должен перетасовываться между заходами.</summary>
-    [Fact]
-    public void Live_secrets_are_grouped_by_kind_then_name()
-    {
-        var token = SecretsInventory.RobotToken(1, "Обмен", "Склад", Now, Now, true);
-        var conn2 = SecretsInventory.Connection(2, "Банк", "b.example.org", 1, Now, null);
-        var conn1 = SecretsInventory.Connection(3, "Авто", "a.example.org", 1, Now, null);
-
-        var order = SecretsInventory.Ordered([token, conn2, conn1], Now);
-
-        Assert.Equal(["Соединение «Авто»", "Соединение «Банк»", "Токен «Обмен»"],
-                     order.Select(e => e.Title));
-    }
-
-    // ── Ключи ─────────────────────────────────────────────────────────────────
-
-    /// <summary>Ключ строки переживает обратный разбор: по нему экран находит, что менять.</summary>
-    [Theory]
-    [InlineData(SecretKind.Connection,       5)]
-    [InlineData(SecretKind.RobotToken,       7)]
-    [InlineData(SecretKind.DatabasePassword, 2)]
-    [InlineData(SecretKind.PgPassword,       9)]
-    public void A_key_survives_a_round_trip(SecretKind kind, int id)
-    {
-        Assert.Equal((kind, id), SecretsInventory.Parse(SecretsInventory.KeyOf(kind, id)));
-    }
-
-    /// <summary>У мастер-пароля ключа нет — он один на машину.</summary>
-    [Fact]
-    public void The_master_password_has_a_single_key()
-    {
-        Assert.Equal((SecretKind.PolicyMaster, 0), SecretsInventory.Parse("master"));
-        Assert.Equal("master", SecretsInventory.KeyOf(SecretKind.PolicyMaster, 0));
-    }
-
-    /// <summary>Мусор в ключе не роняет экран, а читается как мастер-пароль — строка без действий.</summary>
-    [Theory]
-    [InlineData("")]
-    [InlineData("conn")]
-    [InlineData("conn:abc")]
-    [InlineData("что-то:5")]
-    public void Garbage_in_a_key_does_not_throw(string key)
-    {
-        var (kind, id) = SecretsInventory.Parse(key);
-
-        Assert.True(kind == SecretKind.PolicyMaster || id == 0);
-    }
-
-    // ── Где применяется ───────────────────────────────────────────────────────
+    // ── Тексты, сверенные с кодом ─────────────────────────────────────────────
 
     /// <summary>
-    /// Соединение без единого запроса названо прямо: секрет заведен, а ходить им некуда — первый
-    /// кандидат на отзыв.
+    /// Пароль базы открывает доступ не только новичку: и человеку со снятым допуском, и
+    /// удаленному из базы (PermissionService.Unlock сначала возвращает его в список) — пока
+    /// администратор не выключил вход по паролю.
     /// </summary>
     [Fact]
-    public void A_connection_without_requests_says_so()
+    public void The_database_password_says_whom_it_lets_in()
     {
-        var entry = SecretsInventory.Connection(5, "Учетная система", "api.example.org",
-                                                requests: 0, lastRun: null, created: null);
+        var entry = Only(Build([Sqlite(1, "Склад", hasPassword: true)]), SecretKind.DatabasePassword);
 
-        Assert.Contains("запросов нет", entry.Where);
-        Assert.True(SecretsInventory.Stale(entry, Now));
-    }
-
-    /// <summary>Выключенный токен помечен: он не работает, но и не удален.</summary>
-    [Fact]
-    public void A_disabled_token_is_marked()
-    {
-        var entry = SecretsInventory.RobotToken(1, "Обмен", "Склад", Now, Now, enabled: false);
-
-        Assert.Contains("выключен", entry.Where);
-    }
-
-    /// <summary>Токен базы, которой сейчас нет на машине, не притворяется, что она есть.</summary>
-    [Fact]
-    public void A_token_of_a_missing_database_says_so()
-    {
-        var entry = SecretsInventory.RobotToken(1, "Обмен", "", Now, Now, enabled: true);
-
-        Assert.Contains("не найдена", entry.Where);
-    }
-
-    // ── Места без пароля (что где установлено) ────────────────────────────────
-
-    /// <summary>
-    /// Место без пароля — это ответ, а не пропуск. Вопрос «где я поставил пароль, а где нет» —
-    /// ровно тот, ради которого опись и заводят, и молчание на него читается как «такого места
-    /// нет».
-    /// </summary>
-    [Fact]
-    public void A_place_without_a_password_is_still_a_row()
-    {
-        var db   = SecretsInventory.DatabasePassword(2, "Заказы", SecretState.NotSet);
-        var conn = SecretsInventory.Connection(5, "Открытый обмен", "api.example.org",
-                                               requests: 2, lastRun: Now, created: null,
-                                               hasSecret: false);
-        var pg   = SecretsInventory.PgPassword(3, "Заказы", "pg:5432", hasPassword: false);
-
-        foreach (var entry in new[] { db, conn, pg })
-        {
-            Assert.Equal(SecretState.NotSet, entry.State);
-            Assert.NotEmpty(entry.Guard);          // сказано, почему пусто
-            Assert.False(entry.Revealable);        // показывать нечего
-        }
-    }
-
-    /// <summary>Пустое место не может быть «давно не нужным»: нечему быть забытым.</summary>
-    [Fact]
-    public void An_empty_place_is_never_called_dead()
-    {
-        var conn = SecretsInventory.Connection(5, "Открытый обмен", "api.example.org",
-                                               requests: 0, lastRun: null, created: null,
-                                               hasSecret: false);
-
-        Assert.False(SecretsInventory.Stale(conn, Now));
-        Assert.Equal("не установлен", SecretsInventory.StateText(conn, Now));
+        Assert.Contains("новичок", entry.What);
+        Assert.Contains("снятым допуском", entry.What);
+        Assert.Contains("удаленный из базы", entry.What);
+        Assert.Contains("выключил вход по паролю", entry.What);
     }
 
     /// <summary>
-    /// У закрытой базы — третий ответ. Сказать про нее «пароля нет» значило бы соврать ровно в
-    /// том вопросе, ради которого опись заведена: пароль лежит внутри ее файла.
+    /// Мастер-пароль задают только места, которые политику ПРИНИМАЮТ. Без вшитого ключа
+    /// подписанная папка раздачи отклоняется, и назвать ее местом для мастер-пароля значило бы
+    /// отправить администратора класть файл туда, где его не примут.
     /// </summary>
     [Fact]
-    public void A_closed_database_answers_unknown()
+    public void The_master_password_names_only_places_that_accept_the_policy()
     {
-        var entry = SecretsInventory.DatabasePassword(2, "Архив", SecretState.Unknown);
+        var unsigned = Only(Build([Sqlite(1, "Склад")], master: new InventoryMaster(true, [], false)),
+                            SecretKind.PolicyMaster);
 
-        Assert.Equal(SecretState.Unknown, entry.State);
-        Assert.Equal("неизвестно", SecretsInventory.StateText(entry, Now));
-        Assert.Contains("закрыт", entry.Where);
-        Assert.Contains("Откройте базу", entry.Guard);
-        Assert.False(SecretsInventory.Stale(entry, Now));
+        Assert.Contains("реестра HKLM", unsigned.Guard);
+        Assert.Contains("/etc/smartbase", unsigned.Guard);
+        Assert.Contains("policy.json", unsigned.Guard);
+        Assert.Contains("не вшит", unsigned.Guard);
+        Assert.DoesNotContain("подписанном файле", unsigned.Guard);
+
+        var signed = Only(Build([Sqlite(1, "Склад")], master: new InventoryMaster(true, [], true)),
+                          SecretKind.PolicyMaster);
+
+        Assert.Contains("с подписью организации", signed.Guard);
+        Assert.DoesNotContain("не вшит", signed.Guard);
     }
 
-    /// <summary>Незаданный мастер-пароль — тоже «не установлен», а не строка-обманка.</summary>
     [Fact]
-    public void A_missing_master_password_reads_as_not_set()
+    public void The_master_password_says_it_opens_the_secret_reveal_too()
     {
-        Assert.Equal(SecretState.NotSet, SecretsInventory.PolicyMaster(false, "").State);
-        Assert.Equal(SecretState.Set,    SecretsInventory.PolicyMaster(true, "policy.json").State);
+        var entry = Only(Build([Sqlite(1, "Склад")]), SecretKind.PolicyMaster);
+
+        Assert.Contains("исходящие направления", entry.What);
+        Assert.Contains("выдачи на чтение", entry.What);
+        Assert.Contains("метки", entry.What);
+        Assert.Contains("показ секрета соединения", entry.What);
     }
 
     /// <summary>
-    /// Порядок: мертвое — наверх, пустые места — вниз. Пустое не требует действия, но и пропасть
-    /// не должно, иначе вопрос «где я пароль не поставил» остается без ответа.
-    /// </summary>
-    [Fact]
-    public void Empty_places_sink_below_the_filled_ones()
-    {
-        var dead  = SecretsInventory.Connection(1, "Забытое", "a.example.org",
-                                                1, Now.AddYears(-1), null);
-        var alive = SecretsInventory.Connection(2, "Живое", "b.example.org", 1, Now, null);
-        var empty = SecretsInventory.Connection(3, "Без секрета", "c.example.org",
-                                                1, Now, null, hasSecret: false);
-        var closed = SecretsInventory.DatabasePassword(4, "Архив", SecretState.Unknown);
-
-        var order = SecretsInventory.Ordered([empty, closed, alive, dead], Now);
-
-        Assert.Equal(["Соединение «Забытое»", "Соединение «Живое»",
-                      "Пароль базы «Архив»",  "Соединение «Без секрета»"],
-                     order.Select(e => e.Title));
-    }
-
-    /// <summary>Состояние словами — одно на колонку и на сводку.</summary>
-    [Fact]
-    public void The_state_is_said_in_words()
-    {
-        var alive = SecretsInventory.Connection(1, "Живое", "a.example.org", 1, Now, null);
-        var dead  = SecretsInventory.Connection(2, "Забытое", "b.example.org",
-                                                1, Now.AddYears(-1), null);
-
-        Assert.Equal("установлен",     SecretsInventory.StateText(alive, Now));
-        Assert.Equal("давно не нужен", SecretsInventory.StateText(dead, Now));
-    }
-
-
-    // ── Куда идти, если отсюда нельзя ─────────────────────────────────────────
-
-    /// <summary>
-    /// У пароля сервера PostgreSQL нет своих действий, и опись обязана сказать, ГДЕ его менять.
-    /// В этом весь смысл описи: человек пришел сюда, чтобы не рыскать по программе, — и уйти
-    /// отсюда с пустыми руками он не должен.
-    ///
-    /// Своих «заменить» и «удалить» у строки нет намеренно: пароль сервера — часть строки
-    /// подключения, и менять его отдельно от адреса, порта, базы и пользователя значило бы
-    /// разрешить задать пароль к серверу, которого не назвали.
+    /// Опись обязана сказать, ГДЕ менять пароль сервера, — и назвать путь, который существует:
+    /// шестеренка в этой строке либо поле «Сменить пароль подключения» в окне настроек базы.
+    /// Где он хранится, сказано честно: обратимо, и на Linux — открытым текстом.
     /// </summary>
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public void The_server_password_says_where_it_is_changed(bool hasPassword)
+    public void The_server_password_says_where_it_is_changed(bool saved)
     {
-        var entry = SecretsInventory.PgPassword(1, "Заказы", "srv:5432/orders", hasPassword);
+        var entry = Only(Build([Postgres(1, "Заказы", serverPassword: saved)]), SecretKind.PgPassword);
 
-        Assert.Contains("Настройки", entry.Guard, StringComparison.Ordinal);
-        Assert.Contains("Базы данных", entry.Guard, StringComparison.Ordinal);
+        Assert.Contains("шестеренкой в этой строке", entry.Guard);
+        Assert.Contains("Управление базой данных", entry.Guard);
+        Assert.Contains("Сменить пароль подключения", entry.Guard);
+        Assert.DoesNotContain("«Изменить»", entry.Guard);
         Assert.False(entry.Revealable);
+
+        if (saved) Assert.Contains("Linux", entry.Guard);
     }
 
     /// <summary>
-    /// «Когда заведен» знает только секрет, который выпустила САМА программа, — токен робота. У
-    /// остальных момента появления нет и быть не может: пароль базы лежит в ее файле, пароль
-    /// сервера — в хранилище операционной системы, мастер-пароль — в чужом подписанном файле.
-    /// Тест закрепляет это как решение, а не как недоделку.
+    /// Снятие пароля при уже выключенном входе ничего не меняет для пользователей — и вопрос не
+    /// пугает последствием, которого не будет.
     /// </summary>
     [Fact]
-    public void Only_secrets_the_program_issued_know_when_they_were_made()
+    public void Removing_a_password_does_not_promise_what_the_switch_already_did()
     {
-        var moment = new DateTimeOffset(2026, 9, 1, 10, 0, 0, TimeSpan.Zero);
+        var open   = SecretsInventory.RemovePasswordQuestion("Склад", passwordAccessEnabled: true);
+        var closed = SecretsInventory.RemovePasswordQuestion("Склад", passwordAccessEnabled: false);
 
-        Assert.NotNull(SecretsInventory.RobotToken(1, "Робот", "Заказы", moment, null, true).Created);
+        Assert.StartsWith("Убрать пароль базы «Склад»?", open);
+        Assert.Contains("больше не смогут", open);
 
-        Assert.Null(SecretsInventory.Connection(1, "Учетная система", "https://srv",
-                                                requests: 1, lastRun: null, created: null).Created);
-        Assert.Null(SecretsInventory.DatabasePassword(1, "Заказы").Created);
-        Assert.Null(SecretsInventory.PgPassword(1, "Заказы", "srv:5432/orders").Created);
-        Assert.Null(SecretsInventory.PolicyMaster(true, "реестр").Created);
+        Assert.StartsWith("Убрать пароль базы «Склад»?", closed);
+        Assert.DoesNotContain("больше не смогут", closed);
+        Assert.Contains("уже выключен", closed);
+    }
+
+    /// <summary>У мертвого секрета подсказка говорит, почему он красный.</summary>
+    [Fact]
+    public void A_dead_secret_explains_itself_in_the_tip()
+    {
+        var entry = Only(Build([Sqlite(1, "Склад")], [Connection(1, "Забытое", lastRun: Now.AddYears(-1))]),
+                         SecretKind.Connection);
+
+        Assert.Contains($"{SecretsInventory.StaleDays} дней", SecretsInventory.Tip(entry));
     }
 }

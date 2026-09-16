@@ -1,0 +1,49 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:b="clr-namespace:SmartBase.Controls.Behaviors"
+        x:Class="SmartBase.Controls.Dialogs.TokenSettingsDialog"
+        Title="Токен"
+        Width="{StaticResource DialogWidthBase}"
+        MinWidth="{StaticResource DialogWidthBase}"
+        MaxWidth="{StaticResource DialogWidthBase}"
+        MinHeight="0"
+        SizeToContent="Height"
+        b:DialogFit.LimitToScreen="True"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="{StaticResource BrushBg}">
+
+    <StackPanel Spacing="0" Margin="{StaticResource DialogPadding}">
+
+        <!-- Что это за токен: робот, база, когда выдан, было ли обращение и почему его нельзя
+             показать. Собирается в коде — половина фразы зависит от того, что записано. -->
+        <TextBlock x:Name="InfoText"
+                   Margin="0,0,0,12"
+                   TextWrapping="Wrap"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <!-- Тумблер действует сразу, без «Сохранить»: выключают токен в ту минуту, когда
+             стало ясно, что он утек. -->
+        <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,12">
+            <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center" Margin="0,0,16,0">
+                <TextBlock Text="Включен"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <TextBlock Text="Выключенный токен не пускает отправителя, но сам токен и его выдачи чтения сохраняются: включите — и он снова заработает."
+                           TextWrapping="Wrap"
+                           FontSize="{DynamicResource FontSizeSmall}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+            </StackPanel>
+            <ToggleSwitch Grid.Column="1" x:Name="EnabledToggle"
+                          OnContent="" OffContent=""
+                          VerticalAlignment="Center" />
+        </Grid>
+
+        <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,4,0,0">
+            <Button Grid.Column="0" x:Name="RevokeBtn" Classes="dialog" Content="Отозвать" />
+            <Button Grid.Column="2" x:Name="CloseBtn" Classes="dialog" Content="Закрыть" />
+        </Grid>
+
+    </StackPanel>
+
+</Window>

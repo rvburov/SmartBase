@@ -224,6 +224,12 @@
     <StreamGeometry x:Key="IconMinus">M5 12 H19</StreamGeometry>
     <!-- Ключ (lucide key-round) — раздел «Менеджер паролей» -->
     <StreamGeometry x:Key="IconKey">M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z M16.5 7 A0.5 0.5 0 1 0 17.5 7 A0.5 0.5 0 1 0 16.5 7 Z</StreamGeometry>
+    <!-- Сервер (lucide server) — «Менеджер паролей»: пароль подключения к серверу PostgreSQL -->
+    <StreamGeometry x:Key="IconServer">M4 2 H20 A2 2 0 0 1 22 4 V8 A2 2 0 0 1 20 10 H4 A2 2 0 0 1 2 8 V4 A2 2 0 0 1 4 2 Z M4 14 H20 A2 2 0 0 1 22 16 V20 A2 2 0 0 1 20 22 H4 A2 2 0 0 1 2 20 V16 A2 2 0 0 1 4 14 Z M6 6 H6.01 M6 18 H6.01</StreamGeometry>
+    <!-- Робот (lucide bot) — «Менеджер паролей»: токен пользователя-робота -->
+    <StreamGeometry x:Key="IconBot">M12 8 V4 H8 M6 8 H18 A2 2 0 0 1 20 10 V18 A2 2 0 0 1 18 20 H6 A2 2 0 0 1 4 18 V10 A2 2 0 0 1 6 8 Z M2 14 H4 M20 14 H22 M15 13 V15 M9 13 V15</StreamGeometry>
+    <!-- Щит с галочкой (lucide shield-check) — «Менеджер паролей»: мастер-пароль организации -->
+    <StreamGeometry x:Key="IconShieldCheck">M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z M9 12 L11 14 L15 10</StreamGeometry>
 
     <!-- ─── Поля и баннеры ─── -->
 

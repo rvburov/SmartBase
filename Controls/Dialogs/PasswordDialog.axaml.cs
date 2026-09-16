@@ -9,8 +9,8 @@ namespace SmartBase.Controls.Dialogs;
 /// «Установить/сменить» (<see cref="ForSet"/>): два поля, возвращает введенный пароль
 /// (ShowDialog&lt;string?&gt;) — хеширует и сохраняет вызывающий (PermissionService.SetPassword).
 /// «Разблокировать» (<see cref="ForUnlock"/>): одно поле, проверка через переданный
-/// колбэк (PermissionService.TryUnlock) — неверный пароль показывает баннер, окно не
-/// закрывается; успех возвращает true (ShowDialog&lt;bool&gt;).
+/// колбэк (PermissionService.Unlock) — он возвращает причину отказа словами, баннер показывает
+/// ее как есть, окно не закрывается; успех возвращает true (ShowDialog&lt;bool&gt;).
 /// «Мастер-пароль» (<see cref="ForMaster"/>): то же одно поле, но колбэк возвращает ПРИЧИНУ
 /// отказа словами, а не «да/нет». Причин тут несколько и они разные — пароль не подошел, пароля
 /// нет ни в одном источнике политики, след не записался в журнал, — и «Неверный пароль» вместо
@@ -119,25 +119,6 @@ public partial class PasswordDialog : Window
         return dlg;
     }
 
-    /// <summary>
-    /// Ввод нового секрета соединения — менеджер паролей, «Заменить»
-    /// (docs/ROADMAP-API.md, шаг 16). ShowDialog&lt;string?&gt; → секрет или null.
-    /// </summary>
-    public static PasswordDialog ForSecret(string what)
-    {
-        var dlg = new PasswordDialog(tryUnlock: null);
-        dlg.Title = "Новый секрет";
-        dlg.InfoText.Text =
-            $"Секрет {what} будет заменен. Прежний удаляется из хранилища операционной системы "
-            + "и восстановить его будет нечем: возьмите новый там, где выдают доступ к чужой "
-            + "программе.";
-        dlg.PasswordLabel.Text    = "Новый секрет";
-        dlg.PasswordBox.Watermark = "Вставьте токен или пароль";
-        dlg.RepeatBlock.IsVisible = false;
-        dlg.ConfirmBtn.Content    = "Сохранить";
-        return dlg;
-    }
-
     private void TryConfirm()
     {
         var password = PasswordBox.Text ?? "";
@@ -160,15 +141,6 @@ public partial class PasswordDialog : Window
                 PasswordBox.Focus();
                 PasswordBox.SelectAll();
             }
-            return;
-        }
-
-        // Секрет чужой программы: повтора нет, и сверять нечего. Его не придумывают, а
-        // вставляют из буфера — второе поле тут не ловит опечатку, а лишь просит вставить
-        // дважды.
-        if (!RepeatBlock.IsVisible)
-        {
-            Close(password);
             return;
         }
 

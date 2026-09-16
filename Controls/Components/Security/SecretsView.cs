@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
+using Avalonia.Media;
 using SmartBase.Controls.Dialogs;
 using SmartBase.Core.Models;
 using SmartBase.Database;
@@ -13,40 +14,27 @@ namespace SmartBase.Controls.Components.Security;
 /// <summary>
 /// Менеджер паролей — опись секретов машины (docs/ROADMAP-API.md, шаг 16).
 ///
-/// <b>Это опись, а не просмотрщик.</b> Экран отвечает на вопрос «что у нас где заведено и что из
-/// этого давно мертво». Значения он не показывает — кроме одного случая, где секрет восстановим
-/// по построению (секрет соединения: им подписывается каждый запрос, и программа достает его
-/// сама при каждой отправке). Прятать от человека то, что программа достает сама, было бы
-/// притворством; показывать остальное — враньем: от мастер-пароля, токенов роботов и паролей баз
-/// хранится один отпечаток, и показать их нельзя физически, а не «не положено».
+/// <b>Вид — как «Управление базой данных».</b> Строка на секрет: слева иконка рода, посередине
+/// название, состояние и путь, справа иконки-кнопки действий. Строки не раскрываются и больше
+/// ничего не показывают: для чего секрет и где он хранится — подсказкой при наведении, а за
+/// подробностями (когда выдан токен, было ли обращение) — окно действия. Список, в котором каждая
+/// строка разворачивается в полэкрана, отвечает на вопрос «что у нас заведено» хуже списка из
+/// коротких строк.
 ///
-/// Поэтому у каждой строки, где кнопки «Показать» нет, написано ПОЧЕМУ ее нет
-/// (<see cref="SecretEntry.Guard"/>): отсутствие кнопки без объяснения читается как недоделка, и
-/// человек идет искать ее в другом месте.
+/// <b>Это опись, а не просмотрщик.</b> Значения экран не показывает — кроме одного случая, где
+/// секрет восстановим по построению (секрет соединения: им подписывается каждый запрос, и
+/// программа достает его сама при каждой отправке). Показ идет под мастер-паролем организации,
+/// оставляет строку в журнале безопасности и открывается отдельным окном: закрыли окно — значения
+/// на экране больше нет, и хранить его здесь не приходится.
 ///
-/// <b>Главная польза — мертвые секреты.</b> Тем, чем не пользовались три месяца, скорее всего не
-/// пользуются вовсе, а дверь открыта. Такие строки помечены и стоят наверху списка: за ними сюда
-/// и приходят.
-///
-/// <b>Показ секрета — событие безопасности.</b> Он идет под мастер-паролем организации и
-/// оставляет строку в журнале — и удачная попытка, и неудачная. Своей проверки пароля здесь нет:
-/// спрашивается та же политика, что и при подтверждении направления.
-///
-/// Сами правила описи (что чем является, что мертво, в каком порядке показывать) живут в
-/// <see cref="SecretsInventory"/> — там их проверяют тесты. Здесь только показ и действия.
+/// <b>Кто что видит и какие у строки состояния</b> — решает <see cref="SecretsInventory"/>: там
+/// эти правила проверяют тесты. Здесь только выборка данных, рисование и действия.
 /// </summary>
 public sealed class SecretsView : UserControl
 {
     private readonly StackPanel _rows = new() { Spacing = 0, Margin = new Thickness(16, 0, 16, 32) };
 
     private Workspace? _workspace;
-
-    // Показанные секреты: ключ строки → значение. Живут, пока открыт экран, и стираются при
-    // уходе из раздела: секрет, оставшийся на экране до завтра, — это тот же секрет на бумажке.
-    private readonly Dictionary<string, string> _shown = new(StringComparer.Ordinal);
-
-    // Раскрытая строка (подробности и действия); пусто — ни одной.
-    private string _open = "";
 
     public SecretsView() =>
         Content = new ScrollViewer
@@ -55,21 +43,28 @@ public sealed class SecretsView : UserControl
             Content                     = _rows,
         };
 
-    /// <summary>Показать опись заново — при каждом заходе в раздел.</summary>
+    /// <summary>
+    /// Текущий пользователь — администратор хотя бы одной открытой базы (по последней сборке
+    /// списка). По нему хозяин экрана показывает кнопку «Добавить пароль»: кнопка, ведущая туда,
+    /// куда человека не пустят, хуже отсутствующей.
+    /// </summary>
+    public bool ForAdmin { get; private set; }
+
+    /// <summary>Список перестроен — хозяин экрана сверяет с ним свой навбар.</summary>
+    public event EventHandler? Built;
+
+    /// <summary>
+    /// База переименована окном настроек базы (шестеренка у пароля сервера PostgreSQL). Имя уже
+    /// записано в реестр; переименовать смонтированную базу и перечитать сайдбары — дело главного
+    /// окна.
+    /// </summary>
+    public event EventHandler<(int Id, string Name)>? DatabaseRenamed;
+
+    /// <summary>Показать опись заново — при каждом заходе в раздел и при смене открытых баз.</summary>
     public void Show(Workspace? workspace)
     {
         _workspace = workspace;
         Build();
-    }
-
-    /// <summary>
-    /// Забыть показанные секреты — при уходе из раздела. Экран, к которому вернулись через час с
-    /// открытым секретом, ничем не лучше записки с ним на столе.
-    /// </summary>
-    public void Forget()
-    {
-        _shown.Clear();
-        _open = "";
     }
 
     private IntegrationsRegistry? Integrations => _workspace?.Registry.Integrations;
@@ -83,293 +78,372 @@ public sealed class SecretsView : UserControl
         var rows = _rows.Children;
         rows.Clear();
 
-        var now     = DateTimeOffset.Now;
-        var entries = SecretsInventory.Ordered(Collect(), now);
-        var dead    = entries.Count(e => SecretsInventory.Stale(e, now));
+        var listing = SecretsInventory.Build(Collect(), DateTimeOffset.Now);
+        ForAdmin = listing.Admin;
 
-        Add(rows, Row("Что это за список",
-            "ВСЕ места, где на этой машине бывает пароль: соединения с чужими программами, токены "
-            + "роботов, базы данных, серверы PostgreSQL и мастер-пароль организации. Места без "
-            + "пароля показаны наравне с остальными — иначе на вопрос «где я его не поставил» "
-            + "пришлось бы искать ответ по всей программе. Значения здесь не хранятся и почти "
-            + "нигде не показываются.",
-            DataBox(Summary(entries, dead))));
+        // Над списком ничего нет: ни пояснения, ни сводки. Строки говорят сами за себя, а
+        // объяснение каждой — в ее подсказке.
+        if (!listing.Admin)
+            rows.Add(Widgets.SettingRows.Row(SecretsInventory.NoAccessTitle,
+                                             SecretsInventory.NoAccessText));
+        else
+            foreach (var entry in listing.Entries)
+                Add(rows, Row(entry, entry.Status, ToneBrush(entry.Tone), Buttons(entry)));
 
-        if (entries.Count == 0)
-        {
-            Add(rows, Row("Мест для паролей нет",
-                "Ни баз данных, ни соединений с чужими программами на этой машине пока не "
-                + "заведено."), last: true);
-            return;
-        }
-
-        var list = new StackPanel { Spacing = 0 };
-
-        list.Children.Add(HeaderLine());
-
-        foreach (var entry in entries)
-            list.Children.Add(Line(entry, now));
-
-        Add(rows, Row("Секреты",
-            "Нажмите на строку — под ней раскроются подробности и действия.",
-            list), last: true);
+        Built?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>
-    /// Сводка над списком. Считаются все три ответа, и «неизвестно» названо отдельно: строка
-    /// «паролей: 4» рядом с тремя закрытыми базами была бы правдой ровно наполовину.
+    /// Собрать то, из чего складывается опись. Решений здесь нет — только чтение: кто что видит,
+    /// решает <see cref="SecretsInventory.Build"/>.
     /// </summary>
-    private static string Summary(IReadOnlyList<SecretEntry> entries, int dead)
+    private InventoryFacts Collect()
     {
-        var set     = entries.Count(e => e.State == SecretState.Set);
-        var empty   = entries.Count(e => e.State == SecretState.NotSet);
-        var unknown = entries.Count(e => e.State == SecretState.Unknown);
-
-        var text = $"Мест, где бывает пароль: {entries.Count}. Установлено: {set}";
-
-        if (empty   > 0) text += $" · без пароля: {empty}";
-        if (unknown > 0) text += $" · не проверить: {unknown}";
-
-        text += ".";
-
-        if (unknown > 0)
-            text += " «Не проверить» — это закрытые базы: пароль лежит внутри файла базы, "
-                  + "и у закрытой читать его негде. Откройте базу — ответ появится.";
-
-        text += dead == 0
-            ? " Давно не используемых нет."
-            : $" Давно не используемых: {dead}. «Давно» — это больше {SecretsInventory.StaleDays} "
-              + "дней: за такой срок срабатывает и месячный отчет, и квартальная выгрузка.";
-
-        return text;
-    }
-
-    /// <summary>
-    /// Собрать опись из того, что знает программа. Сами строки делает
-    /// <see cref="SecretsInventory"/>: здесь только выборка данных.
-    /// </summary>
-    private List<SecretEntry> Collect()
-    {
-        var entries = new List<SecretEntry>();
+        var connections = new List<InventoryConnection>();
+        var tokens      = new List<InventoryToken>();
 
         if (Integrations is { } registry)
         {
             var requests = registry.Requests();
 
-            // Соединения ВСЕ, а не только с секретом: «здесь пароля нет» — такой же ответ, и
-            // пропущенная строка читается как «такого соединения нет».
             foreach (var connection in registry.Connections())
             {
-                var mine = requests.Where(r => r.ConnectionId == connection.Id).ToList();
-
                 // Последнее пользование секретом — последний запуск любого из запросов этого
-                // соединения: секрет подписывает каждый из них, и отдельной отметки ему не надо.
-                var last = mine.Select(r => registry.LastRun(r.Id))
-                               .Where(m => m is not null)
-                               .OrderByDescending(m => m!.Value)
-                               .FirstOrDefault();
+                // соединения: секрет подписывает каждый из них.
+                var last = requests.Where(r => r.ConnectionId == connection.Id)
+                                   .Select(r => registry.LastRun(r.Id))
+                                   .Max();
 
-                entries.Add(SecretsInventory.Connection(
+                connections.Add(new InventoryConnection(
                     connection.Id, connection.Name, connection.Address,
-                    mine.Count, last, created: null,
-                    hasSecret: registry.HasSecret(connection.Id)));
+                    registry.HasSecret(connection.Id), last));
             }
 
             foreach (var token in registry.Tokens())
-                entries.Add(SecretsInventory.RobotToken(
-                    token.Id, token.Name,
-                    Databases.FirstOrDefault(d => d.DbId == token.DbId)?.Name ?? "",
-                    token.Created, token.Used, token.Enabled));
+                tokens.Add(new InventoryToken(token.Id, token.Name, token.DbId, token.Enabled,
+                                              token.Created, token.Used));
         }
 
-        // Базы ВСЕ, что заведены на машине, а не только открытые. Пароль лежит внутри файла
-        // базы: у открытой видно, есть он или нет, у закрытой — не видно ничего, и это третий
-        // ответ, а не повод молчать о самой базе.
-        foreach (var entry in _workspace?.Registry.GetAll() ?? [])
+        var registered = _workspace?.Registry.GetAll() ?? [];
+        var databases  = new List<InventoryDatabase>();
+
+        // Только ОТКРЫТЫЕ базы: у закрытой, недоступной или сжимаемой пароль лежит в файле,
+        // который сейчас не читается, и менять его отсюда нечем.
+        foreach (var manager in Databases)
         {
-            var open = Databases.FirstOrDefault(d => d.DbId == entry.Id);
+            // Базу отключили, пока она монтировалась: записи в реестре уже нет, и главное окно
+            // вот-вот ее размонтирует.
+            if (registered.FirstOrDefault(d => d.Id == manager.DbId) is not { } entry) continue;
 
-            entries.Add(SecretsInventory.DatabasePassword(
-                entry.Id,
-                open?.Name ?? entry.Name,
-                open is null                  ? SecretState.Unknown
-                : open.Permissions.HasPassword ? SecretState.Set
-                :                                SecretState.NotSet));
+            var permissions = manager.Permissions;
 
-            // Пароль сервера PostgreSQL живет в реестре машины и виден даже у закрытой базы.
-            if (entry.IsPostgres)
-                entries.Add(SecretsInventory.PgPassword(
-                    entry.Id, entry.Name, PgServer(entry),
-                    hasPassword: !string.IsNullOrEmpty(entry.PgPassword)));
+            databases.Add(new InventoryDatabase(
+                manager.DbId, NameOf(manager), permissions.IsAdmin, entry.IsPostgres,
+                entry.Path, entry.PgHost ?? "", entry.PgPort ?? PgConnectionInfo.DefaultPort,
+                entry.PgDatabase ?? "", !string.IsNullOrEmpty(entry.PgPassword),
+                permissions.HasPassword, permissions.PasswordAccessEnabled,
+                permissions.LastPasswordUnlock));
         }
 
         var policy = EgressSetup.Last.Set;
 
-        entries.Add(SecretsInventory.PolicyMaster(
+        var master = new InventoryMaster(
             policy.HasMaster,
-            string.Join(", ", policy.Sources.Where(p => p.HasMaster).Select(p => p.Source))));
+            [.. policy.Sources.Where(p => p.HasMaster).Select(p => p.Source)],
+            PolicySignature.KeyPresent);
 
-        return entries;
+        return new InventoryFacts(databases, connections, tokens, master);
     }
 
-    private static string PgServer(Database.Entities.DatabaseRefEntity entry) =>
-        entry.PgHost is { Length: > 0 } host
-            ? $"{host}:{entry.PgPort}/{entry.PgDatabase}"
-            : "";
+    private static string NameOf(DatabaseManager database) =>
+        string.IsNullOrWhiteSpace(database.Name) ? "База данных" : database.Name;
 
-    // ── Таблица ───────────────────────────────────────────────────────────────
-
-    /// <summary>Ширины колонок общие у шапки и строк — иначе таблица «поедет».</summary>
-    private static ColumnDefinitions Columns() => new("*,8,150,8,140,8,96");
-
-    private static Control HeaderLine()
-    {
-        var grid = new Grid { ColumnDefinitions = Columns() };
-
-        Put(grid, 0, Head("Секрет"));
-        Put(grid, 2, Head("Где применяется"));
-        Put(grid, 4, Head("Пользовались"));
-        Put(grid, 6, Head("Состояние"));
-
-        return TableHead(grid);
-    }
-
-    private Control Line(SecretEntry entry, DateTimeOffset now)
-    {
-        var open  = _open == entry.Key;
-        var stale = SecretsInventory.Stale(entry, now);
-
-        var grid = new Grid { ColumnDefinitions = Columns() };
-
-        Put(grid, 0, Cell(entry.Title));
-        Put(grid, 2, Cell(entry.Where, secondary: true));
-        Put(grid, 4, Cell(UsedText(entry), secondary: true));
-
-        var state = Cell(SecretsInventory.StateText(entry, now));
-
-        // Цветом отмечается только то, что требует внимания. «Не установлен» — не беда и не
-        // достижение: бывает открытый обмен и база без пароля, и красить это тревожным цветом
-        // значило бы звать чинить исправное.
-        state.Foreground = stale
-            ? Ink("BrushRed", "#FF3B30")
-            : entry.State == SecretState.Set
-                ? Ink("BrushGreen", "#34C759")
-                : Ink("BrushSecondaryText", "#8E8E93");
-
-        Put(grid, 6, state);
-
-        return TableRow(grid, open ? Details(entry, stale) : null, open, () =>
-        {
-            _open = open ? "" : entry.Key;
-            Build();
-        });
-    }
+    // ── Строка ────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Когда пользовались. «Не считаем» и «не пользовались» — разные ответы, и путать их нельзя:
-    /// по первому отзывать секрет не за что, по второму — пора.
+    /// Строка секрета: иконка рода, название, состояние (одним цветом), путь и кнопки, прижатые к
+    /// правому краю. Статическая и без рабочего пространства — чтобы раскладку можно было померить
+    /// безголовым стендом, не открывая ни одной базы.
     /// </summary>
-    private static string UsedText(SecretEntry entry) =>
-        !entry.UseKnown            ? "не отмечается"
-        : entry.Used is { } moment ? moment.ToLocalTime().ToString("dd.MM.yyyy")
-        :                            "ни разу";
-
-    private Control Details(SecretEntry entry, bool stale)
+    /// <param name="entry">Строка описи.</param>
+    /// <param name="status">Состояние словами.</param>
+    /// <param name="statusBrush">Цвет состояния.</param>
+    /// <param name="buttons">Только те кнопки, что у строки есть: пустых мест под отсутствующие
+    /// нет, и кнопки всех строк стоят у одного края.</param>
+    public static Border Row(SecretEntry entry, string status, IBrush statusBrush,
+                               IReadOnlyList<Button> buttons)
     {
-        var list = new StackPanel { Spacing = 4 };
-
-        list.Children.Add(Note(entry.What));
-
-        // «Заведен» знает только тот секрет, который выпустила САМА программа, — токен робота.
-        // У остальных момент появления не записан и записан быть не может: пароль базы лежит в
-        // ее файле, пароль сервера — в хранилище ОС, мастер-пароль — в чужом подписанном файле.
-        // Сказано вслух, иначе пустое место читается как «не заполнили».
-        list.Children.Add(Note(entry.Created is { } created
-            ? "Заведен: " + created.ToLocalTime().ToString("dd.MM.yyyy HH:mm")
-            : "Когда заведен — неизвестно: этот секрет выпускала не программа."));
-
-        if (stale)
-            list.Children.Add(Note($"Им не пользовались дольше {SecretsInventory.StaleDays} дней. "
-                + "Забытый секрет — открытая дверь, о которой никто не думает: если он больше не "
-                + "нужен, удалите его."));
-
-        if (entry.Guard.Length > 0) list.Children.Add(Note(entry.Guard));
-
-        var block = new StackPanel { Spacing = 6, Children = { DataBox(list) } };
-
-        // Показанное значение — своей ячейкой, а не строкой в общей: это единственное место
-        // экрана, где на виду лежит сам секрет, и смешивать его с описанием нельзя.
-        if (_shown.TryGetValue(entry.Key, out var secret))
+        var title = new TextBlock
         {
-            block.Children.Add(CodeBox(secret));
-            block.Children.Add(ButtonLine(
-                RowButton("Скопировать", () =>
-                    _ = TopLevel.GetTopLevel(this)?.Clipboard?.SetTextAsync(secret)),
-                RowButton("Скрыть", () => { _shown.Remove(entry.Key); Build(); })));
-        }
+            Classes      = { "title" },
+            Text         = entry.Title,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
 
-        if (Actions(entry) is { Count: > 0 } actions)
-            block.Children.Add(ButtonLine([.. actions]));
+        var state = new TextBlock
+        {
+            Classes      = { "desc" },
+            Text         = status,
+            Foreground   = statusBrush,
+            TextWrapping = TextWrapping.NoWrap,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
 
-        return block;
+        // Путь бывает длиннее строки — обрезается многоточием, а не переносится: строка списка
+        // обязана оставаться строкой.
+        var where = new TextBlock
+        {
+            Classes      = { "desc" },
+            Text         = entry.Where,
+            TextWrapping = TextWrapping.NoWrap,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
+
+        var row = ListRow(Icon(KindIcon(entry.Kind), Ink("BrushSecondaryText", "#8E8E93")),
+                          [title, state, where], buttons);
+
+        // Подсказка висит на всей строке, а не только на буквах: без фона пустое место строки
+        // курсор не ловит. У кнопок подсказки свои, и над кнопкой показывается ее.
+        row.Background = Brushes.Transparent;
+        ToolTip.SetTip(row, SecretsInventory.Tip(entry));
+
+        return row;
     }
 
-    // ── Действия ──────────────────────────────────────────────────────────────
-
-    private List<Control> Actions(SecretEntry entry)
+    /// <summary>Иконка рода секрета.</summary>
+    public static string KindIcon(SecretKind kind) => kind switch
     {
-        var buttons = new List<Control>();
+        SecretKind.DatabasePassword => "IconDatabase",
+        SecretKind.PgPassword       => "IconServer",
+        SecretKind.Connection       => "IconWorkflow",
+        SecretKind.RobotToken       => "IconBot",
+        _                           => "IconShieldCheck",
+    };
 
-        // У закрытой базы действий нет и быть не может: пароль лежит в ее файле, а файл не
-        // открыт. Кнопка, которая откроет базу «заодно», — не то, чего ждут от списка паролей.
-        if (entry.State == SecretState.Unknown) return buttons;
+    private static IBrush ToneBrush(SecretTone tone) => tone switch
+    {
+        SecretTone.Good  => Ink("BrushGreen", "#34C759"),
+        SecretTone.Alarm => Ink("BrushRed", "#FF3B30"),
+        _                => Ink("BrushSecondaryText", "#8E8E93"),
+    };
 
+    /// <summary>
+    /// Кнопки строки слева направо: шестеренка, ключ, корзина. Ключ и корзина — только там, где
+    /// есть что показать и что убрать: корзина у пустого места удаляла бы ничто.
+    /// </summary>
+    private List<Button> Buttons(SecretEntry entry)
+    {
+        var id  = entry.Id;
         var set = entry.State == SecretState.Set;
 
-        if (entry.Revealable && !_shown.ContainsKey(entry.Key))
-            buttons.Add(RowButton("Показать…", () => _ = RevealAsync(entry)));
+        var buttons = new List<Button>();
 
         switch (entry.Kind)
         {
-            case SecretKind.Connection:
-                // Слово на кнопке отвечает состоянию: «заменить» там, где нечего заменять,
-                // заставляет гадать, что произойдет.
-                buttons.Add(RowButton(set ? "Заменить…" : "Задать…",
-                                      () => _ = ReplaceConnectionAsync(entry)));
+            case SecretKind.DatabasePassword:
+                buttons.Add(Gear(set ? "Сменить пароль" : "Установить пароль",
+                                 () => _ = SetDatabasePasswordAsync(id)));
+                if (set) buttons.Add(Trash("Убрать пароль", () => _ = RemoveDatabasePasswordAsync(id)));
+                break;
 
-                if (set) buttons.Add(RowButton("Удалить", () => _ = ForgetConnectionAsync(entry)));
+            case SecretKind.PgPassword:
+                // Корзины нет: без пароля сервер пускает только по доверию к машине, и «убрать
+                // пароль» здесь значило бы молча сломать подключение.
+                buttons.Add(Gear("Настройки базы данных", () => _ = ServerSettingsAsync(id)));
+                break;
+
+            case SecretKind.Connection:
+                buttons.Add(Gear("Настроить соединение", () => _ = EditConnectionAsync(id)));
+                if (set)
+                {
+                    buttons.Add(IconButton("IconKey", "Показать секрет", () => _ = RevealAsync(id)));
+                    buttons.Add(Trash("Удалить секрет", () => _ = ForgetConnectionAsync(id)));
+                }
                 break;
 
             case SecretKind.RobotToken:
-                // Заменить токен — значит выдать новый: старый секрет не хранится, и «сменить
-                // его» нечем. Выдача живет на своем экране вместе с выбором базы и правами робота.
-                buttons.Add(RowButton("Отозвать", () => _ = RemoveTokenAsync(entry)));
+                buttons.Add(Gear("Настроить токен", () => _ = TokenSettingsAsync(id)));
+                buttons.Add(Trash("Отозвать токен", () => _ = RemoveTokenAsync(id)));
                 break;
 
-            case SecretKind.DatabasePassword:
-                buttons.Add(RowButton(set ? "Заменить…" : "Установить…",
-                                      () => _ = ReplaceDatabasePasswordAsync(entry)));
-
-                if (set)
-                    buttons.Add(RowButton("Удалить", () => _ = RemoveDatabasePasswordAsync(entry)));
+            default:
+                buttons.Add(Gear("Мастер-пароль для политики", () => _ = MasterHashAsync()));
                 break;
         }
 
         return buttons;
     }
 
-    /// <summary>
-    /// Показать секрет соединения. Пароль проверяет политика — та же, что подтверждает
-    /// направления; след пишется в журнал безопасности В ОБОИХ случаях: и когда показали, и
-    /// когда не сошелся пароль. Вторая половина важнее первой — подбор мастер-пароля выглядит
-    /// именно так.
-    /// </summary>
-    private async Task RevealAsync(SecretEntry entry)
+    private static Button Gear(string tip, Action click) => IconButton("IconSettings", tip, click);
+
+    private static Button Trash(string tip, Action click) =>
+        IconButton("IconTrash", tip, click, red: true);
+
+    // ── Пароль базы ───────────────────────────────────────────────────────────
+
+    private async Task SetDatabasePasswordAsync(int dbId)
     {
         if (VisualRoot is not Window win) return;
-        if (Integrations is not { } registry) return;
+        if (await AdminDatabaseAsync(win, dbId) is not { } db) return;
 
-        var (_, id) = SecretsInventory.Parse(entry.Key);
+        var password = await PasswordDialog.ForSet(NameOf(db), db.Permissions.HasPassword)
+                                           .ShowDialog<string?>(win);
+
+        if (!string.IsNullOrEmpty(password))
+            await RunAdminAsync(win, db, () => db.Permissions.SetPassword(password));
+
+        Build();
+    }
+
+    private async Task RemoveDatabasePasswordAsync(int dbId)
+    {
+        if (VisualRoot is not Window win) return;
+        if (await AdminDatabaseAsync(win, dbId) is not { } db) return;
+
+        var yes = await new ConfirmDialog(
+                SecretsInventory.RemovePasswordQuestion(NameOf(db), db.Permissions.PasswordAccessEnabled),
+                confirmText: "Убрать")
+            .ShowDialog<bool>(win);
+
+        if (yes) await RunAdminAsync(win, db, () => db.Permissions.RemovePassword());
+
+        Build();
+    }
+
+    /// <summary>
+    /// База, если она еще открыта и текущий пользователь все еще ее администратор. Строка могла
+    /// провисеть на экране дольше, чем длилось админство: сосед понизил, базу отключили.
+    /// </summary>
+    private async Task<DatabaseManager?> AdminDatabaseAsync(Window win, int dbId)
+    {
+        var db = Databases.FirstOrDefault(d => d.DbId == dbId);
+
+        if (db is not null && db.Permissions.IsAdmin) return db;
+
+        await ConfirmDialog.Info(db is null
+                ? "Эта база данных больше не открыта."
+                : "Этим распоряжается только администратор базы данных, а вы им больше не являетесь.")
+            .ShowDialog(win);
+
+        Build();
+        return null;
+    }
+
+    /// <summary>
+    /// Действие администратора базы. Админство могли отозвать, пока было открыто окно ввода, —
+    /// тогда служба прав бросает, и причина показывается словами, как в панели администратора
+    /// (<c>ProfileView.RunAdminAction</c>); список после этого перестраивается и строка уходит.
+    /// </summary>
+    private static async Task RunAdminAsync(Window win, DatabaseManager db, Action action)
+    {
+        try
+        {
+            action();
+        }
+        catch (InvalidOperationException error)
+        {
+            await ConfirmDialog.Info(error.Message).ShowDialog(win);
+        }
+        catch (Exception error) when (DbErrors.Handle(error, db.Constructor.DbPath))
+        {
+            // Сетевая база отвалилась посреди записи: уведомление уже показано.
+        }
+    }
+
+    // ── Пароль сервера PostgreSQL ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Окно настроек базы — то же, что открывает шестеренка в «Управлении базой данных»: пароль
+    /// сервера меняется вместе с пробой подключения, и вторая, урезанная форма ввода здесь
+    /// разошлась бы с той при первой же правке. Сжатия и сведений о файле у серверной базы нет.
+    /// </summary>
+    private async Task ServerSettingsAsync(int dbId)
+    {
+        if (VisualRoot is not Window win || _workspace is not { } workspace) return;
+        if (await AdminDatabaseAsync(win, dbId) is not { } db) return;
+
+        if (workspace.Registry.GetAll().FirstOrDefault(d => d.Id == dbId && d.IsPostgres) is not { } entry)
+        {
+            Build();
+            return;
+        }
+
+        var result = await new DbSettingsDialog(entry, storage: null, canMaintain: false,
+                                                onCompact: null, repo: db.Constructor)
+            .ShowDialog<DbSettingsResult?>(win);
+
+        if (result?.NewName is { } newName)
+        {
+            workspace.Registry.Rename(dbId, newName);
+            DatabaseRenamed?.Invoke(this, (dbId, newName));
+        }
+
+        // База открыта — переподключать ее не нужно: новый пароль уже проверен пробой в окне и
+        // пригодится при следующем открытии.
+        if (result?.NewPgPassword is { } password)
+            workspace.Registry.UpdatePgPassword(dbId, password);
+
+        Build();
+    }
+
+    // ── Соединения ────────────────────────────────────────────────────────────
+
+    /// <summary>Новое соединение — из меню «Добавить пароль» в навбаре.</summary>
+    public async Task AddConnectionAsync()
+    {
+        if (VisualRoot is not Window win || Integrations is not { } registry) return;
+        if (!AllowIntegrations(this)) return;
+
+        var result = await new IntegrationConnectionDialog(IntegrationConnection.New())
+            .ShowDialog<ConnectionDialogResult?>(win);
+
+        if (result is not null) registry.Save(result.Connection, result.Secret);
+
+        Build();
+    }
+
+    /// <summary>Карточка соединения — то же окно, что в «Настройки → Интеграции».</summary>
+    private async Task EditConnectionAsync(int id)
+    {
+        if (VisualRoot is not Window win || Integrations is not { } registry) return;
+        if (!AllowIntegrations(this)) return;
+
+        if (registry.Find(id) is not { } card)
+        {
+            Build();
+            return;
+        }
+
+        var hasSecret = registry.HasSecret(id);
+        var secret    = hasSecret ? registry.Secret(id) : "";
+
+        var result = await new IntegrationConnectionDialog(card, hasSecret, secret)
+            .ShowDialog<ConnectionDialogResult?>(win);
+
+        if (result is not null) registry.Save(result.Connection, result.Secret);
+
+        Build();
+    }
+
+    /// <summary>
+    /// Показать секрет соединения. Пароль проверяет политика — та же, что подтверждает
+    /// направления; след пишется в журнал безопасности В ОБОИХ исходах: и когда показали, и
+    /// когда не сошелся пароль. Вторая половина важнее первой — подбор мастер-пароля выглядит
+    /// именно так.
+    ///
+    /// Показанное значение живет только в окне показа: закрыли его — на экране и в этом контроле
+    /// секрета нет, и возвращаться к нему через час некуда.
+    /// </summary>
+    private async Task RevealAsync(int id)
+    {
+        if (VisualRoot is not Window win || Integrations is not { } registry) return;
+        if (!AllowIntegrations(this)) return;
+
+        if (registry.Find(id) is not { } connection)
+        {
+            Build();
+            return;
+        }
 
         var policy = EgressSetup.Last.Set;
 
@@ -378,77 +452,83 @@ public sealed class SecretsView : UserControl
             await ConfirmDialog.Info(
                     "Мастер-пароль организации не задан политикой, и показать секрет нечем.\n\n"
                     + "Это не поломка: без мастер-пароля программа не подтверждает и исходящие "
-                    + "направления — см. раздел «Безопасность».")
+                    + "направления. Строку для политики посчитает окно «Мастер-пароль для "
+                    + "политики…» — оно есть в меню «Добавить пароль» этого раздела и в разделе "
+                    + "«Безопасность» у администратора; вписывает ее в политику ответственный за "
+                    + "интеграции.")
                 .ShowDialog(win);
             return;
         }
 
-        await PasswordDialog.ForReveal($"«{entry.Title}»", password =>
+        var shown = "";
+
+        var revealed = await PasswordDialog.ForReveal($"соединения «{connection.Name}»", password =>
         {
-            var ok = policy.MasterMatches(password);
-
-            // «Не записалось — не показываем»: то же правило, что у отправки и выгрузки. Журнал
-            // и есть единственное, что помнит о показанном секрете.
-            if (!Trace(entry, ok)) return "След не записался в журнал безопасности — показ отменен";
-
-            if (!ok) return "Мастер-пароль не подошел";
+            if (!policy.MasterMatches(password))
+                return Trace(connection.Name, allowed: false,
+                             "Показ секрета отклонен: мастер-пароль не подошел.")
+                    ? "Мастер-пароль не подошел"
+                    : "След не записался в журнал безопасности — показ отменен";
 
             var secret = registry.Secret(id);
 
+            // Пароль сошелся, а секрета нет: хранилище ОС его потеряло (app.db приехал с другой
+            // машины, профиль пересоздан). Показа не было, но мастер-пароль предъявили верно — и
+            // это событие журнала: иначе удачные предъявления оставались бы невидимыми.
             if (secret.Length == 0)
+            {
+                Trace(connection.Name, allowed: false,
+                      "Показ секрета не состоялся: мастер-пароль подошел, но секрет не читается "
+                      + "из хранилища операционной системы.");
                 return "Секрет не читается: хранилище операционной системы его потеряло";
+            }
 
-            _shown[entry.Key] = secret;
+            // «Не записалось — не показываем»: то же правило, что у отправки и выгрузки. Журнал
+            // и есть единственное, что помнит о показанном секрете.
+            if (!Trace(connection.Name, allowed: true,
+                       "Секрет соединения показан на экране в менеджере паролей."))
+                return "След не записался в журнал безопасности — показ отменен";
+
+            shown = secret;
             return "";
         }).ShowDialog<bool>(win);
 
+        if (revealed && shown.Length > 0)
+            await new SecretRevealDialog(connection.Name, shown).ShowDialog(win);
+
+        shown = "";
         Build();
     }
 
-    /// <summary>Строка в журнал безопасности о показе секрета; ложь — записать не удалось.</summary>
-    private bool Trace(SecretEntry entry, bool allowed) =>
+    /// <summary>
+    /// Строка в журнал безопасности о показе секрета; ложь — записать не удалось. Исходов у
+    /// показа три, а не два: показали, не подошел пароль и «пароль подошел, а секрет не читается»,
+    /// — поэтому текст решения приходит готовым, а не выводится из одного признака.
+    /// </summary>
+    private static bool Trace(string connection, bool allowed, string explanation) =>
         SecurityJournal.Add(SecurityEntry.New(
             SecurityEvent.Reveal, allowed,
             who:         CurrentUser.DisplayName,
             scenario:    "",
-            address:     entry.Title,
+            address:     $"Соединение «{connection}»",
             fields:      "",
             rows:        0,
             bytes:       0,
             bodyHash:    "",
-            explanation: allowed
-                ? "Секрет соединения показан на экране в менеджере паролей."
-                : "Показ секрета отклонен: мастер-пароль не подошел.",
+            explanation: explanation,
             dbId:        0,
             at:          DateTimeOffset.Now));
 
-    private async Task ReplaceConnectionAsync(SecretEntry entry)
+    private async Task ForgetConnectionAsync(int id)
     {
-        if (VisualRoot is not Window win) return;
-        if (Integrations is not { } registry) return;
-        if (!AllowIntegrations(win)) return;
+        if (VisualRoot is not Window win || Integrations is not { } registry) return;
+        if (!AllowIntegrations(this)) return;
 
-        var (_, id) = SecretsInventory.Parse(entry.Key);
-
-        if (registry.Find(id) is not { } connection) return;
-
-        var secret = await PasswordDialog.ForSecret($"«{entry.Title}»").ShowDialog<string?>(win);
-        if (secret is null) return;
-
-        registry.Save(connection, secret);
-        _shown.Remove(entry.Key);
-        Build();
-    }
-
-    private async Task ForgetConnectionAsync(SecretEntry entry)
-    {
-        if (VisualRoot is not Window win) return;
-        if (Integrations is not { } registry) return;
-        if (!AllowIntegrations(win)) return;
-
-        var (_, id) = SecretsInventory.Parse(entry.Key);
-
-        if (registry.Find(id) is not { } connection) return;
+        if (registry.Find(id) is not { } connection)
+        {
+            Build();
+            return;
+        }
 
         var yes = await new ConfirmDialog(
                 $"Удалить секрет соединения «{connection.Name}»?\n\n"
@@ -457,81 +537,106 @@ public sealed class SecretsView : UserControl
                 confirmText: "Удалить")
             .ShowDialog<bool>(win);
 
-        if (!yes) return;
+        if (yes) registry.Save(connection, "");
 
-        registry.Save(connection, "");
-        _shown.Remove(entry.Key);
         Build();
     }
 
-    private async Task RemoveTokenAsync(SecretEntry entry)
-    {
-        if (VisualRoot is not Window win) return;
-        if (Integrations is not { } registry) return;
-        if (!AllowIntegrations(win)) return;
+    // ── Токены ────────────────────────────────────────────────────────────────
 
-        var (_, id) = SecretsInventory.Parse(entry.Key);
+    /// <summary>
+    /// Новый токен — из меню «Добавить пароль». Базы в окне выдачи — только те, где человек
+    /// администратор: права роботу потом выдает администратор базы, и выдать токен туда, где
+    /// распоряжаться роботом будет некому из присутствующих, значило бы завести робота-сироту.
+    /// </summary>
+    public async Task AddTokenAsync()
+    {
+        if (VisualRoot is not Window win || Integrations is not { } registry) return;
+        if (!AllowIntegrations(this)) return;
+
+        await TokenIssue.RunAsync(win, registry,
+                                  [.. Databases.Where(d => d.Permissions.IsAdmin)],
+                                  issued: Build);
+        Build();
+    }
+
+    /// <summary>
+    /// Окно токена: пояснение, тумблер «Включен» и отзыв. Тумблер действует сразу — выключить
+    /// токен нужно в ту минуту, когда стало ясно, что он утек, а не по кнопке «Сохранить».
+    /// </summary>
+    private async Task TokenSettingsAsync(int id)
+    {
+        if (VisualRoot is not Window win || Integrations is not { } registry) return;
+        if (!AllowIntegrations(this)) return;
+
+        if (registry.Token(id) is not { } token)
+        {
+            Build();
+            return;
+        }
+
+        var database = Databases.FirstOrDefault(d => d.DbId == token.DbId) is { } owner
+            ? NameOf(owner)
+            : "";
+
+        await new TokenSettingsDialog(
+                token.Name, database, token.Created, token.Used, token.Enabled,
+                enable: (dialog, on) =>
+                {
+                    if (!AllowIntegrations(dialog)) return false;
+
+                    registry.EnableToken(id, on);
+                    return true;
+                },
+                revoke: dialog => RevokeAsync(dialog, registry, token))
+            .ShowDialog(win);
+
+        Build();
+    }
+
+    private async Task RemoveTokenAsync(int id)
+    {
+        if (VisualRoot is not Window win || Integrations is not { } registry) return;
+        if (!AllowIntegrations(this)) return;
+
+        if (registry.Token(id) is { } token) await RevokeAsync(win, registry, token);
+
+        Build();
+    }
+
+    /// <summary>
+    /// Отозвать токен после подтверждения — одно на корзину в строке и на кнопку в окне токена.
+    /// Истина — отозван.
+    /// </summary>
+    private async Task<bool> RevokeAsync(Window owner, IntegrationsRegistry registry, AccessToken token)
+    {
+        if (!AllowIntegrations(owner)) return false;
 
         var yes = await new ConfirmDialog(
-                $"Отозвать {entry.Title.ToLowerInvariant()}?\n\n"
+                $"Отозвать токен «{token.Name}»?\n\n"
                 + "Чужая программа, которая им пользуется, сразу получит отказ. Выданные по нему "
                 + "разрешения на чтение тоже пропадут. Пользователь-робот останется в базе: его "
                 + "имя стоит в истории изменений.",
                 confirmText: "Отозвать")
-            .ShowDialog<bool>(win);
+            .ShowDialog<bool>(owner);
 
-        if (!yes) return;
+        if (!yes) return false;
 
-        registry.RemoveToken(id);
-        Build();
+        registry.RemoveToken(token.Id);
+        return true;
     }
 
-    private async Task ReplaceDatabasePasswordAsync(SecretEntry entry)
+    // ── Мастер-пароль ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Подсчет строки мастер-пароля для политики. Ничего не сохраняет: пароль задается в политике,
+    /// а программа только считает строку, которую туда впишут (<see cref="MasterHashDialog"/>).
+    /// </summary>
+    public async Task MasterHashAsync()
     {
         if (VisualRoot is not Window win) return;
 
-        var (_, dbId) = SecretsInventory.Parse(entry.Key);
-
-        if (AdminDatabase(dbId) is not { } db)
-        {
-            await ConfirmDialog.Info(
-                    "Пароль базы данных меняет только ее администратор.").ShowDialog(win);
-            return;
-        }
-
-        var password = await PasswordDialog.ForSet(db.Name, db.Permissions.HasPassword)
-                                           .ShowDialog<string?>(win);
-
-        if (password is null) return;
-
-        db.Permissions.SetPassword(password);
-        Build();
-    }
-
-    private async Task RemoveDatabasePasswordAsync(SecretEntry entry)
-    {
-        if (VisualRoot is not Window win) return;
-
-        var (_, dbId) = SecretsInventory.Parse(entry.Key);
-
-        if (AdminDatabase(dbId) is not { } db)
-        {
-            await ConfirmDialog.Info(
-                    "Пароль базы данных убирает только ее администратор.").ShowDialog(win);
-            return;
-        }
-
-        var yes = await new ConfirmDialog(
-                $"Убрать пароль базы «{db.Name}»?\n\n"
-                + "Новые пользователи больше не смогут открыть себе доступ сами — их будет "
-                + "допускать администратор.",
-                confirmText: "Убрать")
-            .ShowDialog<bool>(win);
-
-        if (!yes) return;
-
-        db.Permissions.RemovePassword();
-        Build();
+        await new MasterHashDialog().ShowDialog(win);
     }
 
     // ── Права ─────────────────────────────────────────────────────────────────
@@ -541,18 +646,19 @@ public sealed class SecretsView : UserControl
     /// на экранах интеграций: настройки обмена общие на машину, и спроси одну базу — человек,
     /// которому соседняя запретила, обошел бы запрет, открыв ту, где разрешено.
     /// </summary>
-    private bool AllowIntegrations(Window win)
+    /// <param name="anchor">От чьего окна показать отказ: из окна токена — поверх него, а не за
+    /// ним.</param>
+    private bool AllowIntegrations(Visual anchor)
     {
-        var bases = Databases;
+        // Спрашиваются ДОПУЩЕННЫЕ базы, а не все открытые: у базы, куда человека еще не пустили,
+        // права не спрашивают — там их нет ни на что, и такая база, стоящая в очереди на допуск,
+        // запирала бы обмен целиком. Тот же набор, что у экранов интеграций (MainWindow.GrantedDbs).
+        var bases = Databases.Where(d => d.Permissions.AccessGranted).ToList();
 
         if (bases.Count > 0 && bases.All(d => d.Permissions.Can(PermAction.IntegrationsSetup)))
             return true;
 
-        PermissionNotice.Show(this, PermAction.IntegrationsSetup);
+        PermissionNotice.Show(anchor, PermAction.IntegrationsSetup);
         return false;
     }
-
-    /// <summary>База по ключу, если текущий пользователь в ней администратор.</summary>
-    private DatabaseManager? AdminDatabase(int dbId) =>
-        Databases.FirstOrDefault(d => d.DbId == dbId && d.Permissions.IsAdmin);
 }

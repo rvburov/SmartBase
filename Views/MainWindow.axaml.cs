@@ -276,13 +276,8 @@ public partial class MainWindow : Window
         // Сценарий отработал сам — обновить открытый журнал: смотреть на устаревший список,
         // пока обмен идет у тебя на глазах, незачем.
         _scenarios.Ran += (_, _) => SettingsModule.OnScenarioRan();
-        // Переименование в окне настроек базы: реестр уже обновлен — меняем имя
-        // смонтированной БД на месте и перечитываем сайдбары, без ремаунта.
-        SettingsModule.DatabaseRenamed += (_, e) =>
-        {
-            if (_workspace.Get(e.Id) is { } renamed) renamed.Name = e.Name;
-            SyncMountedToUi();
-        };
+        // Переименование в окне настроек базы (см. OnDatabaseRenamed).
+        SettingsModule.DatabaseRenamed += OnDatabaseRenamed;
         _mountQueue.MaintenanceFinished += (dbId, error) => Dispatcher.UIThread.Post(() =>
         {
             var name = _workspace.Registry.GetAll().FirstOrDefault(d => d.Id == dbId)?.Name ?? "";
@@ -398,6 +393,9 @@ public partial class MainWindow : Window
         // Выделяет пункт сайдбар (и он же зовет ShowCategory): переключи раздел молча, и сайдбар
         // показывал бы один раздел, а экран — другой.
         ProfileModule.CategoryRequested += (_, key) => ProfileSidebar.Select(key);
+        // Менеджер паролей переименовал базу тем же окном настроек базы, что и «Настройки», —
+        // и обрабатывается это тем же кодом.
+        ProfileModule.DatabaseRenamed += OnDatabaseRenamed;
         // Панели администратора и истории работают со смонтированными БД рабочего пространства.
         ProfileModule.Initialize(workspace);
 
@@ -1336,6 +1334,17 @@ public partial class MainWindow : Window
                 "при закрытии окна программа завершится как обычно, и напоминания приходить не будут.")
                 .ShowDialog(this);
         if (!on && !IsVisible) ShowFromTray();
+    }
+
+    // База переименована окном настроек базы — из «Настроек» или из менеджера паролей
+    // (шестеренка у пароля сервера PostgreSQL). Реестр уже обновлен: меняем имя смонтированной
+    // БД на месте и перечитываем сайдбары, без ремаунта. SyncMountedToUi заодно перечитывает
+    // список баз в «Настройках» из реестра, так что новое имя видно и там. Один обработчик на
+    // оба источника: копия разошлась бы с оригиналом при первой правке.
+    private void OnDatabaseRenamed(object? sender, (int Id, string Name) e)
+    {
+        if (_workspace.Get(e.Id) is { } renamed) renamed.Name = e.Name;
+        SyncMountedToUi();
     }
 
     // Пересобрать боковые панели и обновить набор БД календаря после монтирования/

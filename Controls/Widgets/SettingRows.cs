@@ -448,6 +448,121 @@ public static class SettingRows
         return new Border { Classes = { "settingRow" }, Child = grid };
     }
 
+    // ── Строка списка (как список баз в «Управлении базой данных») ─────────────
+
+    /// <summary>
+    /// Сторона иконки-кнопки строки списка — как шестеренка и корзина у базы в «Управлении базой
+    /// данных» (<c>SettingsView.axaml</c>).
+    /// </summary>
+    public const double IconButtonSize = 28;
+
+    /// <summary>Геометрия из общего набора иконок (<c>Assets/Styles/Icons.axaml</c>); нет такой —
+    /// пустая иконка, а не падение экрана.</summary>
+    public static Geometry? IconData(string key) =>
+        Application.Current!.TryFindResource(key, out var found) && found is Geometry geometry
+            ? geometry
+            : null;
+
+    /// <summary>
+    /// Иконка набора: рисунок 24×24 в рамке размера <paramref name="size"/> и штрихом
+    /// <paramref name="stroke"/> — те же пары токенов, что в разметке остальных разделов.
+    /// </summary>
+    public static Viewbox Icon(string key, IBrush brush,
+                               string size = "IconSizeMedium", string stroke = "IconStrokeMedium")
+    {
+        var path = IconPath(key, stroke);
+        path.Stroke = brush;
+
+        return IconBox(path, size);
+    }
+
+    /// <summary>
+    /// Иконка-кнопка строки списка: 28×28, иконка <c>IconSizeSmall</c>, подсказка обязательна —
+    /// кнопка без подписи иначе ничего о себе не говорит. <paramref name="red"/> — разрушительное
+    /// действие (корзина): под курсором кнопка краснеет, а не синеет.
+    /// </summary>
+    public static Button IconButton(string icon, string tip, Action click, bool red = false)
+    {
+        var path = IconPath(icon, "IconStrokeSmall");
+
+        var button = new Button
+        {
+            Classes           = { "icon" },
+            Width             = IconButtonSize,
+            Height            = IconButtonSize,
+            VerticalAlignment = VerticalAlignment.Center,
+            Content           = IconBox(path, "IconSizeSmall"),
+        };
+
+        if (red) button.Classes.Add("red");
+
+        // Цвет штриха — цвет самой кнопки: стиль Button.icon перекрашивает ее под курсором, и
+        // иконка обязана перекраситься вместе с ней (в разметке — $parent[Button].Foreground).
+        path.Bind(Avalonia.Controls.Shapes.Shape.StrokeProperty,
+                  button.GetObservable(Avalonia.Controls.Primitives.TemplatedControl.ForegroundProperty));
+
+        ToolTip.SetTip(button, tip);
+        button.Click += (_, _) => click();
+
+        return button;
+    }
+
+    /// <summary>
+    /// Строка списка: слева иконка, посередине строки текста одна под другой, справа кнопки,
+    /// прижатые к ПРАВОМУ краю. Кнопок кладется ровно столько, сколько передано: пустых мест под
+    /// отсутствующие нет, иначе кнопки соседних строк стояли бы не у края, а где придется.
+    /// Отступы — как у строки базы в «Управлении базой данных».
+    /// </summary>
+    public static Border ListRow(Control lead, IReadOnlyList<Control> lines,
+                                 IReadOnlyList<Control> actions)
+    {
+        lead.VerticalAlignment = VerticalAlignment.Center;
+        lead.Margin            = new Thickness(0, 0, 12, 0);
+
+        var text = new StackPanel
+        {
+            Spacing           = 3,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin            = new Thickness(0, 0, actions.Count > 0 ? 16 : 0, 0),
+        };
+
+        foreach (var line in lines) text.Children.Add(line);
+
+        var side = new StackPanel
+        {
+            Orientation         = Orientation.Horizontal,
+            Spacing             = 8,
+            VerticalAlignment   = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Right,
+        };
+
+        foreach (var action in actions) side.Children.Add(action);
+
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
+        Put(grid, 0, lead);
+        Put(grid, 1, text);
+        Put(grid, 2, side);
+
+        return new Border { Classes = { "settingRow" }, Child = grid };
+    }
+
+    private static Avalonia.Controls.Shapes.Path IconPath(string key, string stroke) => new()
+    {
+        Data            = IconData(key),
+        StrokeThickness = Metric(stroke, 1.6),
+        StrokeLineCap   = PenLineCap.Round,
+        StrokeJoin      = PenLineJoin.Round,
+    };
+
+    // Рисунки набора иконок нарисованы в квадрате 24×24 (lucide) — это система координат
+    // геометрии, а не размер на экране: размер задает рамка.
+    private static Viewbox IconBox(Control path, string size) => new()
+    {
+        Width  = Metric(size, 16),
+        Height = Metric(size, 16),
+        Child  = new Canvas { Width = 24, Height = 24, Children = { path } },
+    };
+
     // ── Числа ─────────────────────────────────────────────────────────────────
 
     public static string Size(long bytes) => Sizes.Text(bytes);

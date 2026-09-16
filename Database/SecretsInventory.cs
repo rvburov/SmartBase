@@ -1,14 +1,6 @@
-using System.Globalization;
-
 namespace SmartBase.Database;
 
-/// <summary>
-/// Установлен ли пароль в этом месте.
-///
-/// Третье состояние — не придирка: пароль базы лежит внутри ее файла, и у закрытой базы прочитать
-/// его негде. Сказать про нее «пароля нет» значило бы соврать ровно в том вопросе, ради которого
-/// опись и заведена.
-/// </summary>
+/// <summary>Установлен ли пароль в этом месте.</summary>
 public enum SecretState
 {
     /// <summary>Пароль установлен.</summary>
@@ -16,9 +8,6 @@ public enum SecretState
 
     /// <summary>Место есть, пароля в нем нет.</summary>
     NotSet,
-
-    /// <summary>Проверить нечем: база закрыта.</summary>
-    Unknown,
 }
 
 /// <summary>Род секрета — от него зависит и то, что о нем можно сказать, и то, что с ним можно
@@ -37,39 +26,127 @@ public enum SecretKind
     /// <summary>Пароль подключения к серверу PostgreSQL.</summary>
     PgPassword,
 
-    /// <summary>Мастер-пароль организации: он живет в файле политики, а не в программе.</summary>
+    /// <summary>Мастер-пароль организации: он живет в политике, а не в программе.</summary>
     PolicyMaster,
 }
 
 /// <summary>
-/// Строка описи секретов (docs/ROADMAP-API.md, шаг 16).
+/// Цвет строки состояния — категория, а не кисть: опись живет рядом с данными и о палитре не
+/// знает, а экран переводит категорию в токен цвета.
+/// </summary>
+public enum SecretTone
+{
+    /// <summary>Серым: пароля нет либо он есть, но сейчас никого не пускает (выключен вход по
+    /// паролю, выключен токен). Не беда и не достижение — красить это тревожным цветом значило бы
+    /// звать чинить исправное.</summary>
+    Muted,
+
+    /// <summary>Зеленым: установлен и в деле.</summary>
+    Good,
+
+    /// <summary>Красным: давно не нужен — открытая дверь, о которой никто не думает.</summary>
+    Alarm,
+}
+
+/// <summary>
+/// Строка менеджера паролей (docs/ROADMAP-API.md, шаг 16).
 /// </summary>
 /// <param name="Kind">Род секрета.</param>
-/// <param name="Key">Ключ для действий: <c>«conn:5»</c>, <c>«token:3»</c>, <c>«db:2»</c>.
-/// Собирается здесь, а не в экране: по нему экран находит, что именно менять.</param>
-/// <param name="Title">Как назвать человеку: «Соединение „Учетная система“».</param>
-/// <param name="What">Для чего он: одна фраза.</param>
-/// <param name="Where">Где применяется: имя базы, число запросов.</param>
-/// <param name="Created">Когда заведен; <c>null</c> — неизвестно.</param>
-/// <param name="Used">Когда им пользовались в последний раз; <c>null</c> — ни разу или
-/// программа этого не записывает.</param>
-/// <param name="UseKnown">Записывает ли программа пользование этим секретом. Разница между
-/// «не пользовались» и «мы не считаем» принципиальна: первое — повод отозвать, второе — нет,
-/// и валить их в одно «—» значило бы подталкивать к отзыву работающего секрета.</param>
-/// <param name="Revealable">Можно ли показать значение.</param>
-/// <param name="Guard">Почему показать нельзя — словами, а не пустотой.</param>
+/// <param name="Id">Ключ того, к чему секрет относится: соединения, токена или базы (у пароля базы
+/// и пароля ее сервера он общий — различает их род). У мастер-пароля — 0.</param>
+/// <param name="Title">Название: «Пароль базы SQLite «Заказы»».</param>
+/// <param name="Status">Состояние словами — вторая строка.</param>
+/// <param name="Tone">Цвет второй строки.</param>
+/// <param name="Where">Путь, адрес или сервер — третья строка.</param>
+/// <param name="What">Для чего секрет — первая половина подсказки к строке.</param>
+/// <param name="Guard">Где хранится и почему его нельзя (или можно) показать — вторая половина
+/// подсказки. Отсутствие кнопки «Показать» без объяснения читается как недоделка.</param>
 /// <param name="State">Установлен ли пароль в этом месте.</param>
+/// <param name="Since">Момент, от которого считается простой: последнее пользование, а у ни разу
+/// не использованного токена — его выдача.</param>
+/// <param name="Watched">Может ли секрет «умереть»: программа отмечает пользование им, и он
+/// сейчас открывает дверь. Пароль базы, пароль сервера, мастер-пароль и выключенный токен —
+/// нет.</param>
+/// <param name="Revealable">Можно ли показать значение.</param>
 public sealed record SecretEntry(SecretKind      Kind,
-                                 string          Key,
+                                 int             Id,
                                  string          Title,
-                                 string          What,
+                                 string          Status,
+                                 SecretTone      Tone,
                                  string          Where,
-                                 DateTimeOffset? Created,
-                                 DateTimeOffset? Used,
-                                 bool            UseKnown,
-                                 bool            Revealable,
+                                 string          What,
                                  string          Guard,
-                                 SecretState     State = SecretState.Set);
+                                 SecretState     State,
+                                 DateTimeOffset? Since,
+                                 bool            Watched,
+                                 bool            Revealable);
+
+/// <summary>Открытая база глазами описи — уже прочитанные сведения, без походов в базу.</summary>
+/// <param name="Id">Ключ базы в реестре.</param>
+/// <param name="Name">Имя базы.</param>
+/// <param name="IsAdmin">Текущий пользователь — ее администратор.</param>
+/// <param name="IsPostgres">База живет на сервере PostgreSQL.</param>
+/// <param name="Path">Путь файла SQLite-базы.</param>
+/// <param name="PgHost">Сервер PostgreSQL.</param>
+/// <param name="PgPort">Порт сервера.</param>
+/// <param name="PgDatabase">Имя базы на сервере.</param>
+/// <param name="HasServerPassword">Сохранен ли пароль подключения к серверу.</param>
+/// <param name="HasPassword">Задан ли пароль базы.</param>
+/// <param name="PasswordAccessEnabled">Администратор не выключал вход по паролю.</param>
+/// <param name="LastPasswordUnlock">Последний вход по паролю; <c>null</c> — не отмечен.</param>
+public sealed record InventoryDatabase(int             Id,
+                                       string          Name,
+                                       bool            IsAdmin,
+                                       bool            IsPostgres,
+                                       string          Path,
+                                       string          PgHost,
+                                       int             PgPort,
+                                       string          PgDatabase,
+                                       bool            HasServerPassword,
+                                       bool            HasPassword,
+                                       bool            PasswordAccessEnabled,
+                                       DateTimeOffset? LastPasswordUnlock);
+
+/// <summary>Соединение интеграции: есть ли секрет и когда им последний раз подписали запрос.</summary>
+/// <param name="LastRun">Последний запуск любого запроса этого соединения — он же последнее
+/// пользование секретом: секрет подписывает каждый из них, и отдельной отметки ему не надо.</param>
+public sealed record InventoryConnection(int             Id,
+                                         string          Name,
+                                         string          Address,
+                                         bool            HasSecret,
+                                         DateTimeOffset? LastRun);
+
+/// <summary>Токен входящего канала.</summary>
+/// <param name="DbId">База, в которую токену разрешено писать.</param>
+public sealed record InventoryToken(int             Id,
+                                    string          Name,
+                                    int             DbId,
+                                    bool            Enabled,
+                                    DateTimeOffset? Created,
+                                    DateTimeOffset? Used);
+
+/// <summary>Мастер-пароль организации.</summary>
+/// <param name="Defined">Задан ли он хотя бы одним источником политики.</param>
+/// <param name="Sources">Источники, где он задан: «реестр HKLM», «папка установки».</param>
+/// <param name="SignatureKeyPresent">Вшит ли в сборку ключ проверки подписи: без него подписанные
+/// источники (папка раздачи) не принимаются вовсе.</param>
+public sealed record InventoryMaster(bool                  Defined,
+                                     IReadOnlyList<string> Sources,
+                                     bool                  SignatureKeyPresent);
+
+/// <summary>Все, из чего складывается опись.</summary>
+/// <param name="Databases">ОТКРЫТЫЕ базы: у закрытой, недоступной или сжимаемой читать нечего,
+/// и в описи ее нет вовсе.</param>
+public sealed record InventoryFacts(IReadOnlyList<InventoryDatabase>   Databases,
+                                    IReadOnlyList<InventoryConnection> Connections,
+                                    IReadOnlyList<InventoryToken>      Tokens,
+                                    InventoryMaster                    Master);
+
+/// <summary>Итог описи.</summary>
+/// <param name="Admin">Текущий пользователь — администратор хотя бы одной открытой базы. Ложь —
+/// экран показывает одну строку-заглушку (<see cref="SecretsInventory.NoAccessTitle"/>).</param>
+/// <param name="Entries">Строки по порядку показа.</param>
+public sealed record InventoryListing(bool Admin, IReadOnlyList<SecretEntry> Entries);
 
 /// <summary>
 /// Опись секретов машины — «что где заведено», а не просмотрщик паролей
@@ -80,27 +157,29 @@ public sealed record SecretEntry(SecretKind      Kind,
 /// время и разные люди, а спрашивают потом одним вопросом — «что у нас тут заведено и что из
 /// этого давно мертво». Опись отвечает на него одним списком.
 ///
-/// <b>В списке все МЕСТА, а не только заполненные.</b> Вопрос «где я поставил пароль, а где нет»
-/// — ровно тот, ради которого опись и заводят, и отвечать на него молчанием нельзя: пропущенная
-/// строка читается как «такого места нет», а не как «пароля тут нет». Поэтому место без пароля
-/// стоит в списке наравне с остальными и отмечено словами
-/// (<see cref="SecretState.NotSet"/>), а место, которое сейчас не проверить, — третьим
-/// состоянием (<see cref="SecretState.Unknown"/>): пароль базы лежит внутри ее файла, и у
-/// закрытой базы читать его негде.
+/// <b>Кто что видит.</b> Пароли видит и меняет администратор, и граница проведена по базе:
+/// пароль базы, пароль ее сервера и токены роботов этой базы — только ее администратору;
+/// соединения и мастер-пароль общие на машину — администратору хотя бы одной открытой базы (тем
+/// же признаком открывается панель администратора). Закрытых баз в описи нет: пароль базы лежит
+/// внутри ее файла, у закрытой читать его негде, а строка «неизвестно» ничего не дает тому, кто
+/// пришел что-то поменять. Человек без админства видит одну строку с объяснением — пустой экран
+/// читался бы как поломка.
 ///
-/// <b>Главная польза — мертвые секреты.</b> Секрет, которым год не пользовались, это не
-/// бездействующая настройка, а открытая дверь, о которой никто не думает. Поэтому в описи есть
-/// столбец «когда пользовались» и отметка <see cref="Stale"/>.
+/// <b>В списке все МЕСТА, а не только заполненные.</b> Вопрос «где я поставил пароль, а где нет»
+/// — ровно тот, ради которого опись и заводят: место без пароля стоит в списке наравне с
+/// остальными и отмечено словами (<see cref="SecretState.NotSet"/>).
+///
+/// <b>Главная польза — мертвые секреты.</b> Секрет, которым три месяца не пользовались, это не
+/// бездействующая настройка, а открытая дверь (<see cref="Stale"/>). Такие строки наверху.
 ///
 /// <b>Чего опись не делает.</b> Она не показывает значения. Показать можно ровно там, где секрет
-/// восстановим ПО ПОСТРОЕНИЮ — у соединения, потому что им подписывается каждый запрос, — и даже
-/// там только под мастер-паролем и со строкой в журнале безопасности. От мастер-пароля и токенов
-/// роботов хранится один отпечаток: это устройство хранения, а не ограничение экрана, и написано
-/// об этом прямо (<see cref="SecretEntry.Guard"/>) — иначе отсутствие кнопки читается как
-/// недоделка.
+/// восстановим ПО ПОСТРОЕНИЮ, — у соединения, потому что им подписывается каждый запрос, — и даже
+/// там только под мастер-паролем и со строкой в журнале безопасности. От мастер-пароля, токенов и
+/// паролей баз хранится один отпечаток: это устройство хранения, а не ограничение экрана, и
+/// написано об этом прямо (<see cref="SecretEntry.Guard"/>).
 ///
-/// Сборка описи — чистая функция от уже прочитанных данных: она не ходит ни в базу, ни в
-/// хранилище ОС. Так ее правила проверяются тестами, а не глазами на живом экране.
+/// Сборка описи — чистая функция от уже прочитанных данных (<see cref="Build"/>): она не ходит ни
+/// в базу, ни в хранилище ОС. Так правила проверяются тестами, а не глазами на живом экране.
 /// </summary>
 public static class SecretsInventory
 {
@@ -110,172 +189,281 @@ public static class SecretsInventory
     /// </summary>
     public const int StaleDays = 90;
 
+    /// <summary>Заголовок строки-заглушки для того, кто не администратор ни одной открытой базы.</summary>
+    public const string NoAccessTitle = "Нет прав администратора";
+
     /// <summary>
-    /// Секрет, которым давно не пользовались. Секрет, о пользовании которым программа не знает
-    /// (<see cref="SecretEntry.UseKnown"/> — ложь), мертвым НЕ считается: отозвать работающий
+    /// Пояснение заглушки. Граница названа целиком: человек, который администрирует соседнюю
+    /// базу у коллеги, должен понять, почему здесь пусто, а не искать настройку видимости.
+    /// </summary>
+    public const string NoAccessText =
+        "Пароли видит и меняет только администратор. Пароль базы данных, пароль ее сервера "
+        + "PostgreSQL и токены роботов этой базы — администратор самой базы; соединения с чужими "
+        + "программами и мастер-пароль организации — администратор хотя бы одной открытой базы. "
+        + "Вы не администратор ни одной из открытых баз данных.";
+
+    // ── Опись ─────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Собрать опись: кто что видит, как называется, в каком состоянии и где лежит, — по порядку
+    /// показа.
+    /// </summary>
+    public static InventoryListing Build(InventoryFacts facts, DateTimeOffset now)
+    {
+        var admins = facts.Databases.Where(d => d.IsAdmin).ToList();
+
+        if (admins.Count == 0) return new InventoryListing(false, []);
+
+        var entries = new List<SecretEntry>();
+
+        foreach (var database in admins)
+        {
+            entries.Add(DatabasePassword(database));
+
+            if (database.IsPostgres) entries.Add(ServerPassword(database));
+        }
+
+        foreach (var connection in facts.Connections)
+            entries.Add(Connection(connection, now));
+
+        // Токен — только базы, которую человек администрирует: права роботу выдает ее
+        // администратор, и чужой токен ему здесь нечем ни настроить, ни отозвать осмысленно.
+        foreach (var token in facts.Tokens)
+            if (admins.FirstOrDefault(d => d.Id == token.DbId) is { } owner)
+                entries.Add(RobotToken(token, owner.Name, now));
+
+        entries.Add(Master(facts.Master));
+
+        return new InventoryListing(true, Ordered(entries, now));
+    }
+
+    /// <summary>
+    /// Секрет, которым давно не пользовались. Секрет, который мертвым быть не может
+    /// (<see cref="SecretEntry.Watched"/> — ложь), не считается им никогда: отозвать работающий
     /// пароль по догадке хуже, чем не отозвать заброшенный.
     /// </summary>
     public static bool Stale(SecretEntry entry, DateTimeOffset now) =>
         entry.State == SecretState.Set
-        && entry.UseKnown
-        && (entry.Used is null || now - entry.Used.Value > TimeSpan.FromDays(StaleDays));
+        && entry.Watched
+        && (entry.Since is null || now - entry.Since.Value > TimeSpan.FromDays(StaleDays));
 
-    /// <summary>Ключ строки описи для действий экрана.</summary>
-    public static string KeyOf(SecretKind kind, int id) => kind switch
-    {
-        SecretKind.Connection       => $"conn:{id}",
-        SecretKind.RobotToken       => $"token:{id}",
-        SecretKind.DatabasePassword => $"db:{id}",
-        SecretKind.PgPassword       => $"pg:{id}",
-        _                           => "master",
-    };
+    /// <summary>Подсказка к строке: для чего секрет и где он хранится.</summary>
+    public static string Tip(SecretEntry entry) =>
+        entry.Guard.Length == 0 ? entry.What : entry.What + "\n\n" + entry.Guard;
 
-    /// <summary>Род и ключ обратно из строки <see cref="KeyOf"/>; ключ мастер-пароля — 0.</summary>
-    public static (SecretKind Kind, int Id) Parse(string key)
-    {
-        var parts = key.Split(':', 2);
-        var id    = parts.Length == 2 && int.TryParse(parts[1], NumberStyles.Integer,
-                                                     CultureInfo.InvariantCulture, out var value)
-            ? value
-            : 0;
+    /// <summary>
+    /// Вопрос перед снятием пароля базы — один на менеджер паролей и панель администратора.
+    /// Обещать «больше не смогут открыть доступ сами» можно, только пока вход по паролю
+    /// включен: при выключенном пароль и так никого не пускает, и такое предупреждение пугало бы
+    /// последствием, которого не будет.
+    /// </summary>
+    public static string RemovePasswordQuestion(string database, bool passwordAccessEnabled) =>
+        $"Убрать пароль базы «{database}»?\n\n"
+        + (passwordAccessEnabled
+            ? "Новые пользователи больше не смогут открыть себе доступ сами — их будет допускать "
+              + "администратор."
+            : "Вход по паролю у этой базы уже выключен, поэтому для пользователей ничего не "
+              + "изменится: их и сейчас допускает администратор. Включить вход по паролю снова "
+              + "можно будет, только задав новый пароль.");
 
-        return parts[0] switch
-        {
-            "conn"  => (SecretKind.Connection,       id),
-            "token" => (SecretKind.RobotToken,       id),
-            "db"    => (SecretKind.DatabasePassword, id),
-            "pg"    => (SecretKind.PgPassword,       id),
-            _       => (SecretKind.PolicyMaster,     0),
-        };
-    }
+    /// <summary>Сервер базы PostgreSQL одной строкой: «хост:порт/база».</summary>
+    public static string ServerOf(string host, int port, string database) =>
+        host.Length == 0 ? "сервер не указан" : $"{host}:{port}/{database}";
 
     // ── Строки описи ──────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Пароль базы. Им человек допускает себя сам, вместо того чтобы ждать администратора.
+    /// «Давно не нужным» не называется никогда: вход по паролю бывает раз в год (новичок пришел),
+    /// и снимать пароль по такой отметке значило бы ломать прием людей.
+    /// </summary>
+    private static SecretEntry DatabasePassword(InventoryDatabase database)
+    {
+        var (status, tone) = !database.HasPassword
+            ? ("не установлен", SecretTone.Muted)
+            : !database.PasswordAccessEnabled
+                // Серым, а не зеленым: пароль задан, но сейчас никого не пускает.
+                ? ("установлен · вход по паролю выключен", SecretTone.Muted)
+                : database.LastPasswordUnlock is { } at
+                    ? ($"установлен · последний вход по паролю {at.ToLocalTime():dd.MM.yyyy}",
+                       SecretTone.Good)
+                    : ("установлен", SecretTone.Good);
+
+        var guard = !database.HasPassword
+            ? "Пароля нет: доступ к базе выдает только администратор в панели администратора."
+            : "Хранится внутри самой базы только проверочный отпечаток — показать пароль нельзя, "
+              + "можно задать новый."
+              + (database.PasswordAccessEnabled
+                  ? ""
+                  : " Вход по паролю выключен в панели администратора: пароль сейчас никого не "
+                    + "пускает, но и не удален — включат вход, и он снова заработает.");
+
+        return new SecretEntry(
+            SecretKind.DatabasePassword,
+            database.Id,
+            database.IsPostgres
+                ? $"Пароль базы PostgreSQL «{database.Name}»"
+                : $"Пароль базы SQLite «{database.Name}»",
+            status, tone,
+            database.IsPostgres
+                ? ServerOf(database.PgHost, database.PgPort, database.PgDatabase)
+                : database.Path,
+            "Им человек без допуска открывает себе доступ к базе сам — новичок, человек со снятым "
+            + "допуском или удаленный из базы, — пока администратор не выключил вход по паролю.",
+            guard,
+            database.HasPassword ? SecretState.Set : SecretState.NotSet,
+            Since: null, Watched: false, Revealable: false);
+    }
+
+    /// <summary>
+    /// Пароль подключения к серверу PostgreSQL. Хранится обратимо — программа достает его при
+    /// каждом подключении, — и потому сказано, где именно и что из этого следует.
+    /// </summary>
+    private static SecretEntry ServerPassword(InventoryDatabase database) =>
+        new(SecretKind.PgPassword,
+            database.Id,
+            $"Пароль сервера PostgreSQL для базы «{database.Name}»",
+            database.HasServerPassword ? "установлен" : "не установлен",
+            database.HasServerPassword ? SecretTone.Good : SecretTone.Muted,
+            ServerOf(database.PgHost, database.PgPort, database.PgDatabase),
+            "Им программа подключается к серверу PostgreSQL, на котором лежит база.",
+            (database.HasServerPassword
+                ? "Хранится обратимо: программа достает его сама при каждом подключении. На "
+                  + "Windows он зашифрован DPAPI под учетной записью, на macOS лежит в Связке "
+                  + "ключей — с копией app.db на другую машину такой пароль не переезжает. На "
+                  + "Linux и при сбое хранилища операционной системы он лежит в app.db открытым "
+                  + "текстом. "
+                : "Пароль не задан: сервер пускает по доверию к этой машине либо подключение еще "
+                  + "не настроено. ")
+            + "Меняется шестеренкой в этой строке либо в «Настройки → Управление базой данных → "
+            + "шестеренка у базы → поле «Сменить пароль подключения»».",
+            database.HasServerPassword ? SecretState.Set : SecretState.NotSet,
+            Since: null, Watched: false, Revealable: false);
 
     /// <summary>
     /// Секрет соединения. Показать его можно: им подписывается каждый запрос, и программа
     /// расшифровывает его сама при каждой отправке — прятать от человека то, что она достает
     /// сама, было бы притворством.
     /// </summary>
-    /// <param name="requests">Сколько запросов ходит через это соединение.</param>
-    /// <param name="lastRun">Последний запуск любого из них — он же последнее пользование
-    /// секретом.</param>
-    /// <param name="hasSecret">Задан ли секрет. Соединение без секрета — не пропуск в описи, а
-    /// такой же ответ: бывает открытый обмен без авторизации, и человек должен видеть, что пусто
-    /// здесь НАРОЧНО, а не потому, что строку забыли показать.</param>
-    public static SecretEntry Connection(int id, string name, string address,
-                                         int requests, DateTimeOffset? lastRun,
-                                         DateTimeOffset? created, bool hasSecret = true) =>
-        new(SecretKind.Connection,
-            KeyOf(SecretKind.Connection, id),
-            $"Соединение «{name}»",
+    private static SecretEntry Connection(InventoryConnection connection, DateTimeOffset now)
+    {
+        var entry = new SecretEntry(
+            SecretKind.Connection,
+            connection.Id,
+            $"Соединение «{connection.Name}»",
+            "", SecretTone.Muted,
+            connection.Address.Length > 0 ? connection.Address : "адрес не указан",
             "Пароль или токен чужой программы: им подписывается каждый запрос к ней.",
-            requests switch
+            "",
+            connection.HasSecret ? SecretState.Set : SecretState.NotSet,
+            connection.LastRun,
+            Watched:    connection.HasSecret,
+            Revealable: connection.HasSecret);
+
+        if (!connection.HasSecret)
+            return entry with
             {
-                0 => $"{address} · запросов нет ни одного",
-                1 => $"{address} · 1 запрос",
-                _ => $"{address} · запросов: {requests}",
-            },
-            created, lastRun,
-            UseKnown:   hasSecret,
-            Revealable: hasSecret,
-            Guard:      hasSecret
-                ? ""
-                : "Секрет не задан: обмен идет без авторизации либо соединение еще не настроено.",
-            State:      hasSecret ? SecretState.Set : SecretState.NotSet);
+                Status = "не установлен",
+                Guard  = "Секрет не задан: обмен идет без авторизации либо соединение еще не "
+                       + "настроено.",
+            };
+
+        var stale = Stale(entry, now);
+
+        return entry with
+        {
+            Status = stale ? "давно не нужен" : "установлен",
+            Tone   = stale ? SecretTone.Alarm : SecretTone.Good,
+            Guard  = (stale
+                         ? $"Ни один запрос этого соединения не запускался дольше {StaleDays} "
+                           + "дней. Забытый секрет — открытая дверь: если он больше не нужен, "
+                           + "удалите его. "
+                         : "")
+                     + "Хранится обратимо — в хранилище операционной системы, на Linux в app.db "
+                     + "открытым текстом: программа достает его сама при каждой отправке. Поэтому "
+                     + "его можно показать — под мастер-паролем организации и со строкой в "
+                     + "журнале безопасности.",
+        };
+    }
 
     /// <summary>
-    /// Токен-робот. Не показывается никогда: от него хранится один отпечаток, и показать его
-    /// программа не может физически, а не «не хочет».
+    /// Токен-робот. Не показывается никогда: от него хранится один отпечаток. Выключенный токен
+    /// дверь не открывает, и «давно не нужным» не считается — его выключили нарочно.
     /// </summary>
-    public static SecretEntry RobotToken(int id, string name, string database,
-                                         DateTimeOffset? created, DateTimeOffset? used,
-                                         bool enabled) =>
-        new(SecretKind.RobotToken,
-            KeyOf(SecretKind.RobotToken, id),
-            $"Токен «{name}»",
-            "Им чужая программа стучится к нам — как пользователь-робот со своими правами.",
-            (database.Length > 0 ? $"база «{database}»" : "база не найдена")
-            + (enabled ? "" : " · выключен"),
-            created, used, UseKnown: true, Revealable: false,
-            Guard: "Хранится только отпечаток: токен показывается один раз, при выдаче. "
-                 + "Забыли — выпустите заново.");
+    private static SecretEntry RobotToken(InventoryToken token, string database, DateTimeOffset now)
+    {
+        var entry = new SecretEntry(
+            SecretKind.RobotToken,
+            token.Id,
+            $"Токен «{token.Name}»",
+            "", SecretTone.Muted,
+            $"база «{database}»",
+            "Им чужая программа стучится к нам и пишет в базу как пользователь-робот со своими "
+            + "правами.",
+            "",
+            SecretState.Set,
+            // Ни разу не использованный токен отсчитывает простой от выдачи: выданный вчера еще
+            // не мертв, а выданный полгода назад и ни разу не пришедший — да.
+            token.Used ?? token.Created,
+            Watched:    token.Enabled,
+            Revealable: false);
+
+        var stale = Stale(entry, now);
+
+        return entry with
+        {
+            Status = !token.Enabled ? "выключен" : stale ? "давно не нужен" : "установлен",
+            Tone   = !token.Enabled ? SecretTone.Muted : stale ? SecretTone.Alarm : SecretTone.Good,
+            Guard  = (stale
+                         ? $"С ним не обращались дольше {StaleDays} дней. Забытый токен — "
+                           + "открытая дверь: если отправитель больше не нужен, отзовите его. "
+                         : "")
+                     + (token.Enabled
+                         ? ""
+                         : "Выключен: отправитель с ним не проходит, но сам токен и его выдачи "
+                           + "чтения сохранены — включите, и он снова заработает. ")
+                     + "Хранится только проверочный отпечаток: токен показывается один раз, при "
+                     + "выдаче. Забыли — отзовите и выдайте новый.",
+        };
+    }
 
     /// <summary>
-    /// Пароль базы. Им человек допускает себя сам, вместо того чтобы ждать администратора.
-    /// Пользование им программа не записывает — и об этом сказано прямо.
+    /// Мастер-пароль организации. Его в программе нет вовсе — есть проверочный хэш в политике, и
+    /// заменить его можно только там же, где правят саму политику.
     /// </summary>
-    /// <param name="state">Установлен ли он. У закрытой базы — <see cref="SecretState.Unknown"/>:
-    /// пароль лежит внутри ее файла, и прочитать его негде.</param>
-    public static SecretEntry DatabasePassword(int dbId, string database,
-                                               SecretState state = SecretState.Set) =>
-        new(SecretKind.DatabasePassword,
-            KeyOf(SecretKind.DatabasePassword, dbId),
-            $"Пароль базы «{database}»",
-            "Им новый человек открывает себе доступ к базе, не дожидаясь администратора.",
-            state switch
-            {
-                SecretState.Unknown => $"база «{database}» — закрыта",
-                _                   => $"база «{database}»",
-            },
-            Created: null, Used: null, UseKnown: false, Revealable: false,
-            Guard: state switch
-            {
-                SecretState.Set     => "Хранится только отпечаток — тот же способ, каким хранят "
-                                     + "пароли везде.",
-                SecretState.NotSet  => "Пароля нет: доступ к базе выдает администратор.",
-                _                   => "Пароль лежит внутри файла базы, и у закрытой базы "
-                                     + "проверить его нечем. Откройте базу, чтобы увидеть ответ.",
-            },
-            State: state);
-
-    /// <summary>
-    /// Пароль подключения к серверу PostgreSQL. Лежит в хранилище ОС (Связка ключей, DPAPI), и
-    /// показывать его отсюда незачем: подключение работает — значит пароль верен.
-    /// </summary>
-    /// <param name="hasPassword">Задан ли пароль. Пустой — обычное дело: сервер может пускать
-    /// по доверию к машине, и назвать это «паролем» значило бы показать секрет, которого нет.</param>
-    public static SecretEntry PgPassword(int dbId, string database, string server,
-                                         bool hasPassword = true) =>
-        new(SecretKind.PgPassword,
-            KeyOf(SecretKind.PgPassword, dbId),
-            $"Пароль сервера для базы «{database}»",
-            "Им программа подключается к серверу PostgreSQL.",
-            server.Length > 0 ? server : "сервер не указан",
-            Created: null, Used: null, UseKnown: false, Revealable: false,
-            Guard: (hasPassword
-                ? "Лежит в хранилище операционной системы и на другую машину не переезжает. "
-                : "Пароль не задан: сервер пускает по доверию к этой машине либо подключение "
-                + "еще не настроено. ")
-                // Опись обязана сказать, КУДА идти. Своих кнопок «заменить» и «удалить» у этой
-                // строки нет намеренно: пароль сервера — часть строки подключения, и менять его
-                // отдельно от адреса, порта, базы и пользователя значило бы разрешить задать
-                // пароль к серверу, которого не назвали.
-                + "Меняется вместе со строкой подключения — «Настройки» → «Базы данных» → "
-                + "«Изменить» у этой базы.",
-            State: hasPassword ? SecretState.Set : SecretState.NotSet);
-
-    /// <summary>
-    /// Мастер-пароль организации. Его в программе нет вовсе — есть проверочный отпечаток в файле
-    /// политики, и заменить его можно только там же, где правят саму политику.
-    /// </summary>
-    public static SecretEntry PolicyMaster(bool defined, string source) =>
+    private static SecretEntry Master(InventoryMaster master) =>
         new(SecretKind.PolicyMaster,
-            "master",
+            0,
             "Мастер-пароль организации",
-            "Им подтверждают исходящие направления, выдачи на чтение и понижение меток.",
-            defined
-                ? (source.Length > 0 ? $"задан политикой: {source}" : "задан политикой")
-                : "не задан — подтверждать направления нечем",
-            Created: null, Used: null, UseKnown: false, Revealable: false,
-            Guard: "Задается вне программы, в подписанном файле политики. Программа хранит "
-                 + "только отпечаток и менять его не может — в этом смысл контура.",
-            State: defined ? SecretState.Set : SecretState.NotSet);
+            master.Defined ? "задан" : "не задан",
+            master.Defined ? SecretTone.Good : SecretTone.Muted,
+            master.Defined && master.Sources.Count > 0
+                ? string.Join(", ", master.Sources)
+                : "политика организации",
+            "Им подтверждают исходящие направления и выдачи на чтение, понижают метки "
+            + "конфиденциальности и открывают показ секрета соединения.",
+            "Задается вне программы, в политике организации: программа хранит только проверочный "
+            + "хэш и сменить пароль не может. "
+            // Места названы по коду загрузчика политики, а не по памяти: подписанный источник без
+            // вшитого ключа отклоняется, и назвать его здесь значило бы отправить администратора
+            // класть файл туда, где его не примут.
+            + (master.SignatureKeyPresent
+                ? "Политику принимают ветка реестра HKLM на Windows или папка /etc/smartbase на "
+                  + "macOS и Linux, файл policy.json в папке установки программы и папка раздачи "
+                  + "— там с подписью организации. "
+                : "Политику принимают только места без подписи: ветка реестра HKLM на Windows или "
+                  + "папка /etc/smartbase на macOS и Linux и файл policy.json в папке установки "
+                  + "программы. Папке раздачи нужна подпись, а ключ ее проверки в эту сборку не "
+                  + "вшит. ")
+            + "Строку для политики считает окно «Мастер-пароль для политики…».",
+            master.Defined ? SecretState.Set : SecretState.NotSet,
+            Since: null, Watched: false, Revealable: false);
 
     // ── Порядок ───────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Опись по порядку показа: сперва мертвые, потом установленные, потом непроверяемые, потом
-    /// места без пароля; внутри — по роду и имени.
+    /// Опись по порядку показа: сперва мертвые, потом установленные, внизу места без пароля;
+    /// внутри — по роду и имени.
     ///
     /// Мертвые наверх не ради красоты: именно за ними сюда и приходят, а список из тридцати
     /// строк, где две нужные лежат где-то в середине, отвечает на вопрос хуже, чем не отвечает
@@ -290,27 +478,13 @@ public static class SecretsInventory
                    .ThenBy(e => e.Title, StringComparer.CurrentCultureIgnoreCase)];
 
     /// <summary>
-    /// Место в списке по состоянию: установленные, потом непроверяемые, потом пустые.
-    ///
-    /// «Неизвестно» стоит выше «не установлен», потому что требует действия — открыть базу и
-    /// посмотреть, — а «не установлен» это уже законченный ответ. Порядок написан числами, а не
-    /// взят из порядка значений перечисления: дописать туда состояние однажды придется, и
-    /// сортировка не должна от этого молча переехать.
+    /// Место в списке по состоянию. Порядок написан числами, а не взят из порядка значений
+    /// перечисления: дописать туда состояние однажды придется, и сортировка не должна от этого
+    /// молча переехать.
     /// </summary>
     private static int Rank(SecretState state) => state switch
     {
-        SecretState.Set     => 0,
-        SecretState.Unknown => 1,
-        _                   => 2,
+        SecretState.Set => 0,
+        _               => 1,
     };
-
-    /// <summary>Состояние словами — одно на экран и на сводку вверху списка.</summary>
-    public static string StateText(SecretEntry entry, DateTimeOffset now) =>
-        Stale(entry, now)                  ? "давно не нужен"
-        : entry.State switch
-        {
-            SecretState.Set     => "установлен",
-            SecretState.NotSet  => "не установлен",
-            _                   => "неизвестно",
-        };
 }
