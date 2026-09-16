@@ -41,7 +41,17 @@ public sealed partial class DatabaseRow : ObservableObject
     /// <summary>Статус — ошибка (красный + «Подключить заново»), иначе серый статус очереди.</summary>
     [ObservableProperty] private bool    _statusIsError;
 
-    public bool ShowDefaultBadge => IsDefault;
+    /// <summary>
+    /// Метка справа: чем база хранится и, у базы по умолчанию, пометка об этом в скобках —
+    /// «SQLite», «PostgreSQL», «SQLite (По умолчанию)».
+    ///
+    /// Одной меткой, а не двумя: раньше движок писался только у PostgreSQL, и строка SQLite
+    /// стояла вовсе без пометки. Читалось это не как «SQLite», а как «тут чего-то не хватает» —
+    /// тем более рядом со строкой, у которой метка есть. Теперь движок назван у каждой строки.
+    /// </summary>
+    public string EngineBadge =>
+        (IsPostgres ? "PostgreSQL" : "SQLite") + (IsDefault ? " (По умолчанию)" : "");
+
     public bool ShowDeleteButton => !IsDefault;
     public bool ShowStatus       => StatusText is not null;
     public bool ShowReconnect    => StatusIsError;

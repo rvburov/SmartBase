@@ -74,12 +74,12 @@
             </Viewbox>
         </ToggleButton>
 
-        <!-- Модуль: Конструктор БД -->
+        <!-- Модуль: Конструктор базы данных -->
         <ToggleButton x:Name="ConstructorBtn" Classes="icon module"
                       Width="32" Height="32"
                       HorizontalAlignment="Center"
                       CornerRadius="{StaticResource RadiusMedium}"
-                      ToolTip.Tip="Конструктор БД">
+                      ToolTip.Tip="Конструктор базы данных">
             <Viewbox Width="{StaticResource IconSizeXLarge}" Height="{StaticResource IconSizeXLarge}">
                 <Canvas Width="24" Height="24">
                     <!-- tabler database-check -->

@@ -337,7 +337,9 @@ PostgreSQL», «Создать базу данных PostgreSQL» — вмест
   при монтировании. Пара сервер+порт+база уже в реестре — уведомление «уже подключена».
   Введенный пароль хранится защищенно ([SecretProtector](../../../Utils/SecretProtector.cs):
   macOS — Связка ключей, Windows — DPAPI; отключение базы удаляет секрет). В строке
-  списка у серверных БД бейдж «PostgreSQL», вторая строка — `postgres://host:port/db`
+  списка метка движка есть у КАЖДОЙ строки («SQLite», «PostgreSQL», у базы по умолчанию —
+  «SQLite (По умолчанию)»): помеченная строка рядом с непомеченной читается как недоделка.
+  Собирает метку `DatabaseRow.EngineBadge`. Вторая строка у серверных БД — `postgres://host:port/db`
   (без пароля). Ссылка «Нет сервера? Установка…»
   открывает помощник [PgServerHelpDialog](../../../Controls/Dialogs/PgServerHelpDialog.axaml.cs).
   Пошаговая настройка сервера — [../guides/postgresql-setup.md](../guides/postgresql-setup.md);

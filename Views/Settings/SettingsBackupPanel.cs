@@ -100,10 +100,11 @@ public partial class SettingsView
         // ── Шапка строки: имя + метки, как в «Управлении базой данных» ────────
         var header = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         header.Children.Add(new TextBlock { Classes = { "title" }, Text = entry.Name });
-        if (entry.IsPostgres)
-            header.Children.Add(BadgeText("PostgreSQL"));
-        if (entry.IsDefault)
-            header.Children.Add(BadgeText("По умолчанию"));
+        // Метка та же, что в «Управлении базой данных»: движок у каждой строки, у базы по
+        // умолчанию — пометка в скобках.
+        header.Children.Add(BadgeText(
+            (entry.IsPostgres ? "PostgreSQL" : "SQLite")
+            + (entry.IsDefault ? " (По умолчанию)" : "")));
 
         // ── Редактор расписания ───────────────────────────────────────────────
         var freq = new ComboBox
