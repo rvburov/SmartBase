@@ -12,6 +12,9 @@ if (args.Length == 0)
     Console.WriteLine("  csvlog  [--rows N] [--dir PATH]                — выгрузка журнала и диагностики в CSV");
     Console.WriteLine("  dbsize  --db PATH [--top N] [--fast]           — из чего состоит файл SQLite (только чтение)");
     Console.WriteLine("  bloat   [--count N] [--dir PATH]               — сценарий раздувания файла: заливка/удаление/правки/VACUUM");
+    Console.WriteLine("  delete  --db PATH [--batch N] [--col ИМЯ]      — удаление большой коллекции: время, темп, файл и -wal, память");
+    Console.WriteLine("  pgdelete [--rows N] [--db ИМЯ]                 — то же удаление на PostgreSQL (стенд sb-pg)");
+    Console.WriteLine("  wide    --db PATH [--columns N]                — цена широкой таблицы в ядре: снимок открытия, страницы, значения");
     return 1;
 }
 
@@ -26,11 +29,15 @@ return args[0] switch
     "csvlog"  => LogExportBench.Run(rest),
     "dbsize"  => DbSizeBench.Run(rest),
     "bloat"   => BloatBench.Run(rest),
+    "delete"  => DeleteBench.Run(rest),
+    "pgdelete" => PgDeleteBench.Run(rest),
+    "wide"    => WideBench.Run(rest),
     _         => Unknown(args[0]),
 };
 
 static int Unknown(string cmd)
 {
-    Console.WriteLine($"Неизвестная команда: {cmd}. Доступно: sidebar | import | export | pgload | pgperf | csvlog | dbsize | bloat.");
+    Console.WriteLine($"Неизвестная команда: {cmd}. Доступно: sidebar | import | export | pgload | pgperf | " +
+                      "csvlog | dbsize | bloat | delete | pgdelete | wide.");
     return 1;
 }
