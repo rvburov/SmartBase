@@ -108,7 +108,7 @@
 
         <Grid ColumnDefinitions="*,12,*" Margin="0,0,0,12">
             <StackPanel Grid.Column="0">
-                <TextBlock Text="Таймаут, с"
+                <TextBlock Text="Таймаут в секундах"
                            Margin="0,0,0,6"
                            FontWeight="{StaticResource FontWeightBold}"
                            Foreground="{StaticResource BrushSecondaryText}" />
@@ -118,7 +118,7 @@
                          CornerRadius="{StaticResource RadiusMedium}" />
             </StackPanel>
             <StackPanel Grid.Column="2">
-                <TextBlock Text="Повторов при обрыве"
+                <TextBlock Text="Повтор при обрыве связи"
                            Margin="0,0,0,6"
                            FontWeight="{StaticResource FontWeightBold}"
                            Foreground="{StaticResource BrushSecondaryText}" />

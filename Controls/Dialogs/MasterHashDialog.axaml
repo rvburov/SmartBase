@@ -14,11 +14,6 @@
 
     <StackPanel Spacing="0" Margin="{StaticResource DialogPadding}">
 
-        <TextBlock Margin="0,0,0,12"
-                   TextWrapping="Wrap"
-                   Foreground="{StaticResource BrushSecondaryText}"
-                   Text="Придумайте мастер-пароль организации и получите его проверочный хэш — строку, которую надо вписать в политику полем &quot;masterHash&quot;. Сам пароль никуда не сохраняется: программа его не хранит и хранить не должна. Записать пароль и передать ответственному за интеграции — дело того, кто его придумал." />
-
         <TextBlock Text="Мастер-пароль"
                    Margin="0,0,0,6"
                    FontWeight="{StaticResource FontWeightBold}"
@@ -81,6 +76,15 @@
                        Text="Каждый подсчет дает другую строку — соль случайная. Это не ошибка: подходят обе, проверяется ими один и тот же пароль." />
 
         </StackPanel>
+
+        <!-- Пояснение стоит ПОД полями и мелким шрифтом, как подсказка под заголовками в окне
+             соединения: сверху оно отодвигало поля на треть окна и читалось как предисловие,
+             которое надо осилить, прежде чем что-то ввести. -->
+        <TextBlock Margin="0,0,0,12"
+                   TextWrapping="Wrap"
+                   FontSize="{DynamicResource FontSizeSmall}"
+                   Foreground="{StaticResource BrushSecondaryText}"
+                   Text="Придумайте мастер-пароль организации и получите его проверочный хэш — строку, которую надо вписать в политику полем &quot;masterHash&quot;. Сам пароль никуда не сохраняется: программа его не хранит и хранить не должна. Записать пароль и передать ответственному за интеграции — дело того, кто его придумал." />
 
         <Grid ColumnDefinitions="Auto,8,Auto,*,Auto" Margin="0,4,0,0">
             <Button Grid.Column="0" x:Name="ComputeBtn" Classes="dialog" Content="Посчитать" />

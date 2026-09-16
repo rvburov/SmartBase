@@ -40,10 +40,14 @@ public partial class PasswordDialog : Window
     public static PasswordDialog ForSet(string dbName, bool hasPassword)
     {
         var dlg = new PasswordDialog(tryUnlock: null);
-        dlg.Title = hasPassword ? "Сменить пароль" : "Установить пароль";
-        dlg.InfoText.Text =
-            $"База данных: {dbName}. Пока включен доступ других пользователей по паролю, новый " +
-            "пользователь открывает им базу без подтверждения администратором.";
+
+        // Имя базы — в заголовке, а пояснения нет вовсе. В остальных режимах окно объясняет
+        // последствие шага (открыть запертую базу, понизить метку, показать секрет), и там текст
+        // на месте. Здесь объяснять нечего: пароль задают осознанно, а правило про тумблер
+        // доступа живет в панели администратора, рядом с самим тумблером.
+        dlg.InfoText.IsVisible = false;
+        dlg.Title = (hasPassword ? "Сменить пароль базы" : "Установить пароль базы")
+                    + $" «{dbName}»";
         dlg.PasswordLabel.Text = hasPassword ? "Новый пароль" : "Пароль";
         dlg.ConfirmBtn.Content = "Сохранить";
         return dlg;
