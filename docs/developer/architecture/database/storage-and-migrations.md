@@ -382,6 +382,15 @@ B-деревьев, объем каждой таблицы и индекса, р
   репозиториев (`WHERE CollectionId = @c`, keyset `(Position, Id) > (@p, @id)`)
   работает на обоих провайдерах как есть; bool-свойства маппятся в integer 0/1
   (как SQLite хранит их физически) — сравнения `= 1` в raw SQL остаются общими.
+  Отсюда правила для ПАРАМЕТРОВ сырых команд, которые SQLite не проверяет, а PG
+  проверяет строго: флаг биндится ЧИСЛОМ (`DbType.Int32`, значение 0/1) —
+  `DbType.Boolean` падает с 42804 «столбец имеет тип integer, а выражение — boolean»
+  (урок `BulkSetRowStyle`: на SQLite ошибка не всплывала, поймал только PG-стенд);
+  команде с `Prepare()` тип КАЖДОГО параметра задается явно ДО подготовки — Npgsql
+  обязан знать типы в Parse-сообщении, без них Prepare бросает «must have its
+  NpgsqlDbType … set»; подзапрос во FROM всегда с алиасом (SQLite прощает, PG — 42601);
+  PRAGMA — только за guard'ом `IsPostgres`. Регресс на все четыре правила —
+  `Tests/Integration/PgBulkWriteTests.cs`.
 - **Свой набор миграций**: `PgAppDbContext` + `Database/Migrations/Pg`
   (чистый `InitialCreatePg` — PG-базы всегда новые, ни legacy-моста, ни SchemaCompact).
   Каждое изменение сущностей = два запуска `migrations add`
@@ -394,6 +403,15 @@ B-деревьев, объем каждой таблицы и индекса, р
   поэтому пути с арифметикой `last_insert_rowid − N + 1` имеют PG-ветки — импорт
   и переносы получают id из `INSERT … RETURNING`, дубли строят явную карту id через
   `nextval()` во временной таблице (`CopyCollectionDataPg`, `DuplicateRecordsDataPg`).
+- **Массовые пути шлют команды пакетами DbBatch.** На файле поштучная
+  prepared-команда в транзакции — самый быстрый путь; на сервере каждый `Execute*` —
+  синхронный сетевой раунд-трип, и свод в 600 тыс. строк превращался в ~4,2 млн ходов
+  (десятки минут одной латентности). Заливка (`BulkAddRecords`, `WriteRowsBatched`)
+  и массовая раскраска (`RunBatched`) при `CanCreateBatch` (Npgsql умеет,
+  Microsoft.Data.Sqlite — нет, так и ветвимся) собирают до 2000 команд в один сетевой
+  ход; id записей читаются из `RETURNING` по одному результату на команду — строго
+  в порядке команд пакета. Повторяющийся SQL пакета авто-препарится сервером
+  (`MaxAutoPrepare` в `PgConnectionInfo`).
 - **Многопользовательский слой общий**: `DbHealthMonitor` пробует сервер `SELECT 1`
   (вместо файла), `ChangePoller` вместо `PRAGMA data_version` следит за курсором
   `MAX(id)` журнала `change_log`, фильтры `IsUnavailableError`/`IsBusyError` знают
@@ -419,9 +437,11 @@ B-деревьев, объем каждой таблицы и индекса, р
   `DatabaseRefEntity.ToPgInfo()`; старые открытые пароли разово защищаются при
   открытии реестра (`ProtectLegacyPasswords`).
 
-Тесты провайдера — `Tests/Integration` (`PgProviderTests`, `[SkippableFact]`: без стенда
-помечаются Skipped): монтирование/CRUD/гонки/дубли/переносы во всех направлениях/свип на
-docker-стенде `sb-pg` (порт 5455) — как поднять, см.
+Тесты провайдера — `Tests/Integration` (`[SkippableFact]`: без стенда помечаются
+Skipped): `PgProviderTests` — монтирование/CRUD/гонки/дубли/переносы во всех
+направлениях/свип, `PgBulkWriteTests` — сырые массовые пути (заливка + раскраска
+свода, prepared-правки значений при смене настроек поля, сортированный CSV журнала,
+капнутый счет пилюль задач) на docker-стенде `sb-pg` (порт 5455) — как поднять, см.
 [testing/automated-tests.md → PostgreSQL](../../testing/automated-tests.md#postgresql).
 Нагрузочный режим — команда `pgload` в `Tests/Benchmarks`
 (`dotnet run -c Release --project Tests/Benchmarks -- pgload [клиентов] [секунд]`): каждый
