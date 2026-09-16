@@ -26,9 +26,9 @@
                   VerticalAlignment="Center"
                   PlaceholderText="Добавить пароль"
                   PlaceholderForeground="{StaticResource BrushPrimaryText}">
-            <ComboBoxItem Content="Соединение с чужой программой…" />
-            <ComboBoxItem Content="Токен робота…" />
-            <ComboBoxItem Content="Мастер-пароль для политики…" />
+            <ComboBoxItem Content="Соединение" />
+            <ComboBoxItem Content="Токен" />
+            <ComboBoxItem Content="Мастер-пароль" />
         </ComboBox>
 
         <!-- Выбор базы журнала — только в разделе «История изменений». Обычный
