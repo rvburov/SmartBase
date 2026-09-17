@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Стенд геометрии правки. Не входит в Tests/Unit намеренно: там «ноль внешних
+       зависимостей», а здесь нужен Avalonia.Headless — без настоящей раскладки и живого
+       фокуса проверять нечего. Как запускать — в Tests/README.md. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>SmartBase.Tests.EditGeometry</RootNamespace>
+    <AssemblyName>SmartBase.Tests.EditGeometry</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Headless" Version="11.2.3" />
+    <!-- Настоящие шрифты и текстовый рендер: подставной шрифт headless-платформы дает целые
+         высоты строк и прячет дефект разных сеток округления (см. Program.cs). -->
+    <PackageReference Include="Avalonia.Skia" Version="11.2.3" />
+    <ProjectReference Include="..\..\SmartBase.csproj" />
+  </ItemGroup>
+
+</Project>
