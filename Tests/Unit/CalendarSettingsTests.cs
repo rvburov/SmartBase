@@ -72,6 +72,43 @@ public sealed class CalendarSettingsTests
         Assert.False(CalendarSettings.MultiDayGrid);
     }
 
+    // ── Только коллекции с датами в боковой панели ────────────────────────────
+
+    [Fact]
+    public void Sidebar_only_in_section_survives_save_and_default_removes_key()
+    {
+        var store = Attach();
+        Assert.False(CalendarSettings.SidebarOnlyInSection);
+
+        var changes = 0;
+        void On() => changes++;
+        CalendarSettings.Changed += On;
+        try
+        {
+            CalendarSettings.SetSidebarOnlyInSection(true);
+            CalendarSettings.SetSidebarOnlyInSection(true);   // то же значение — без события
+            Assert.Equal(1, changes);
+            Assert.True(store.Has("calendarSidebarOnlyInSection"));
+
+            CalendarSettings.Init();
+            Assert.True(CalendarSettings.SidebarOnlyInSection);
+
+            CalendarSettings.SetSidebarOnlyInSection(false);
+            Assert.Equal(2, changes);
+            Assert.False(store.Has("calendarSidebarOnlyInSection"));
+        }
+        finally { CalendarSettings.Changed -= On; }
+    }
+
+    [Fact]
+    public void Sidebar_only_in_section_garbage_falls_back_to_all_collections()
+    {
+        var store = Attach();
+        store.Set("calendarSidebarOnlyInSection", "мусор");
+        CalendarSettings.Init();
+        Assert.False(CalendarSettings.SidebarOnlyInSection);
+    }
+
     // ── Дней в неделе ─────────────────────────────────────────────────────────
 
     [Fact]

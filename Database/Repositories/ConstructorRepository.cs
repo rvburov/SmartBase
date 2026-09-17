@@ -7343,6 +7343,26 @@ public partial class ConstructorRepository(AppDbContext db)
     public bool HasAnyCalendarDateField() =>
         db.DbFields.Any(f => f.FieldType == "date" && f.IsCalStart);
 
+    /// <summary>
+    /// Коллекции, у которых включено хотя бы одно поле-дата, — те, что участвуют в календаре.
+    /// Ими боковая панель календаря ограничивает список, когда включена настройка
+    /// «Только коллекции с датами в календаре». Один запрос на базу.
+    /// </summary>
+    public HashSet<int> GetCalendarCollectionIds() =>
+        db.DbFields.AsNoTracking()
+          .Where(f => f.FieldType == "date" && f.IsCalStart)
+          .Select(f => f.CollectionId)
+          .Distinct()
+          .ToHashSet();
+
+    /// <summary>
+    /// Подключить коллекцию к календарю — зеркало <see cref="EnsureTaskCollection"/>: включить
+    /// первое поле-дату либо завести «Дата» с показом в календаре. Зовет боковая панель, когда
+    /// коллекцию создают в ней при настройке «Только коллекции с датами в календаре»: иначе
+    /// новая коллекция пропала бы из списка в момент создания. Возвращает id поля-источника.
+    /// </summary>
+    public int EnsureCalendarCollection(int collectionId) => EnsureCalendarDateField(collectionId);
+
     // Первое (по Position, Id — общее правило ролей) поле-дата коллекции, видимое в календаре.
     private int? CalendarDateFieldId(int collectionId) =>
         db.DbFields.Where(f => f.CollectionId == collectionId && f.FieldType == "date" && f.IsCalStart)

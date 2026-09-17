@@ -48,7 +48,7 @@ public partial class SidebarTree : UserControl
     // Снимок структуры базы (группы/коллекции) читается ОДИН раз за Refresh — в BuildDbChildren —
     // и дальше служит галочкам, набору активных коллекций и чистке ключей. Раньше каждая из этих
     // операций ходила в базу заново: при потере сетевой папки сайдбар на UI-потоке ждал таймаут
-    // каждой мертвой базы по несколько раз, а чтение без catch (AllCollectionKeys) роняло
+    // каждой мертвой базы по несколько раз, а чтение без catch (ключи для галочек) роняло
     // приложение. Readable=false — последнее чтение не удалось: снимок остается прежним, а
     // галочки такой базы не чистятся (см. PersistChecks).
     private sealed class MountedDb(int dbId, string name, ConstructorRepository repo, bool locked = false)
@@ -59,6 +59,9 @@ public partial class SidebarTree : UserControl
         public bool                  Locked      { get; } = locked;
         public List<DbGroup>         Groups      { get; set; } = [];
         public List<DbCollection>    Collections { get; set; } = [];
+        // Коллекции, подключенные к разделу (поле-дата календаря / исполнитель задач). null —
+        // список не ограничен: настройка раздела выключена или это конструктор.
+        public HashSet<int>?         InSection   { get; set; }
         public bool                  Readable    { get; set; }
         // Повтор чтения после BUSY уже назначен: один на серию, снимается удачным чтением.
         public bool                  BusyRetried { get; set; }
@@ -92,6 +95,25 @@ public partial class SidebarTree : UserControl
 
     // Режимы с чекбоксами видимости коллекций (календарь и задачи ведут себя одинаково).
     private bool ChecksMode => _mode is SidebarMode.Calendar or SidebarMode.Tasks;
+
+    // Настройка раздела «только подключенные коллекции»: календарь прячет коллекции без
+    // включенного поля-даты, задачи — без исполнителя. Такие коллекции в раздел ничего не дают,
+    // и их галочки ни на что не влияют. Конструктор показывает все всегда.
+    private bool OnlyInSection => _mode switch
+    {
+        SidebarMode.Calendar => CalendarSettings.SidebarOnlyInSection,
+        SidebarMode.Tasks    => TaskSettings.SidebarOnlyInSection,
+        _                    => false,
+    };
+
+    // Значение настройки, с которым построено дерево, — перестроить, когда его поменяли.
+    private bool _renderedOnlyInSection;
+
+    // Коллекция, для которой открыто контекстное меню. Снятый в меню последний тумблер поля
+    // отключает ее от раздела, а дерево перестраивается по коммиту, не дожидаясь закрытия
+    // меню, — строка исчезла бы прямо под ним. Пока меню открыто, фильтр ее не прячет;
+    // закрылось — дерево строится заново уже без нее.
+    private (int Db, int Id)? _menuPinned;
 
     // Активны все коллекции, кроме явно отключенных пользователем.
     // Ключ — (DbId, CollectionId): id коллекций не уникальны между БД.
@@ -194,6 +216,7 @@ public partial class SidebarTree : UserControl
         if (_dbs.Count == 0 && _pending.Count == 0) return;
 
         _renderedFontDelta = FontScale.Delta;   // дерево отрисовано с текущим размером
+        _renderedOnlyInSection = OnlyInSection;
 
         var expandedIds = GetExpandedGroupIds();
         CaptureDbRootStates();
@@ -229,6 +252,8 @@ public partial class SidebarTree : UserControl
     }
 
     // Активные коллекции по каждой смонтированной БД (для фильтра событий в календаре).
+    // Только показанные в дереве: спрятанная настройкой коллекция в раздел и так ничего не дает,
+    // а без нее цель по умолчанию и подсказка «отметьте коллекции» совпадают с тем, что видно.
     public Dictionary<int, HashSet<int>> GetActiveIds()
     {
         var result = new Dictionary<int, HashSet<int>>();
@@ -236,14 +261,23 @@ public partial class SidebarTree : UserControl
         {
             // Запертая база событий не дает (календарь получает только допущенные, но страхуемся).
             if (db.Locked) { result[db.DbId] = []; continue; }
-            var ids = db.Collections
-                .Where(c => c.Id.HasValue).Select(c => c.Id!.Value)
+            var ids = ShownCollections(db)
+                .Select(c => c.Id!.Value)
                 .Where(id => !_uncheckedIds.Contains((db.DbId, id)))
                 .ToHashSet();
             result[db.DbId] = ids;
         }
         return result;
     }
+
+    // Коллекции базы, показанные в дереве (из снимка, без базы). При выключенной настройке
+    // раздела — все.
+    private IEnumerable<DbCollection> ShownCollections(MountedDb db) =>
+        db.Collections.Where(c => c.Id.HasValue && Shows(db, c));
+
+    private bool Shows(MountedDb db, DbCollection c) =>
+        db.InSection is null ||
+        c.Id is int id && (db.InSection.Contains(id) || _menuPinned is { } p && p == (db.DbId, id));
 
     public void SelectCollection(int dbId, int collectionId)
     {
@@ -401,10 +435,14 @@ public partial class SidebarTree : UserControl
         // Прочитанное запоминается в MountedDb — единственное чтение структуры за Refresh.
         List<DbGroup>      groups;
         List<DbCollection> collections;
+        HashSet<int>?      inSection;
         try
         {
             groups      = db.Repo.GetAllGroups();
             collections = db.Repo.GetAllCollections();
+            inSection   = !OnlyInSection                   ? null
+                        : _mode == SidebarMode.Calendar ? db.Repo.GetCalendarCollectionIds()
+                        :                                 db.Repo.GetTaskCollectionIds();
         }
         catch (Exception ex) when (DbHealthMonitor.IsBusyError(ex) || DbHealthMonitor.IsUnavailableError(ex))
         {
@@ -426,28 +464,41 @@ public partial class SidebarTree : UserControl
         }
         db.Groups      = groups;
         db.Collections = collections;
+        db.InSection   = inSection;
         db.Readable    = true;
         db.BusyRetried = false;
 
         var root = new List<SidebarNode>();
 
         foreach (var g in groups.Where(g => g.ParentId is null).OrderBy(g => g.Position))
-            root.Add(BuildGroupNode(db, g, groups, collections));
-        foreach (var c in collections.Where(c => c.GroupId is null).OrderBy(c => c.Position))
+            if (BuildGroupNode(db, g, groups, collections) is { } node) root.Add(node);
+        foreach (var c in collections.Where(c => c.GroupId is null && Shows(db, c)).OrderBy(c => c.Position))
             root.Add(MakeCollectionNode(db, c));
 
         return SortNodes(root);
     }
 
-    private SidebarNode BuildGroupNode(MountedDb db, DbGroup group, List<DbGroup> allGroups, List<DbCollection> allCollections)
+    // null — группу прячет настройка «только подключенные коллекции»: все коллекции в ней (в том
+    // числе во вложенных группах) спрятаны, и раскрывать в ней нечего. Пустая группа остается:
+    // ее только что создали или держат под будущие коллекции, и спрятать ее значило бы
+    // потерять из виду.
+    private SidebarNode? BuildGroupNode(MountedDb db, DbGroup group, List<DbGroup> allGroups, List<DbCollection> allCollections)
     {
         var node = new SidebarNode { NodeType = "group", DbId = db.DbId, Id = group.Id, Name = group.Name };
 
         var children = new List<SidebarNode>();
+        var hidden   = false;   // в поддереве есть коллекции, спрятанные настройкой
         foreach (var child in allGroups.Where(g => g.ParentId == group.Id).OrderBy(g => g.Position))
-            children.Add(BuildGroupNode(db, child, allGroups, allCollections));
+        {
+            if (BuildGroupNode(db, child, allGroups, allCollections) is { } sub) children.Add(sub);
+            else hidden = true;
+        }
         foreach (var col in allCollections.Where(c => c.GroupId == group.Id).OrderBy(c => c.Position))
-            children.Add(MakeCollectionNode(db, col));
+        {
+            if (Shows(db, col)) children.Add(MakeCollectionNode(db, col));
+            else hidden = true;
+        }
+        if (hidden && children.Count == 0) return null;
 
         foreach (var c in SortNodes(children))
             node.Children.Add(c);
@@ -643,16 +694,16 @@ public partial class SidebarTree : UserControl
         AppSettings.SaveHiddenCollections(ChecksScope, _uncheckedIds);
     }
 
-    // Ключи (DbId, CollectionId) всех коллекций всех смонтированных БД — из снимка, без базы.
-    private IEnumerable<(int Db, int Id)> AllCollectionKeys() =>
-        _dbs.SelectMany(db => db.Collections
-            .Where(c => c.Id.HasValue)
-            .Select(c => (db.DbId, c.Id!.Value)));
+    // Ключи (DbId, CollectionId) показанных коллекций всех смонтированных БД — из снимка, без базы.
+    // Кнопка «Включить/Выключить все» действует на то, что видно: коллекции, спрятанные
+    // настройкой раздела, сохраняют свои галочки до ее выключения.
+    private IEnumerable<(int Db, int Id)> ShownCollectionKeys() =>
+        _dbs.SelectMany(db => ShownCollections(db).Select(c => (db.DbId, c.Id!.Value)));
 
     private bool AllChecked()
     {
         if (_dbs.Count == 0) return false;
-        return AllCollectionKeys().All(k => !_uncheckedIds.Contains(k));
+        return ShownCollectionKeys().All(k => !_uncheckedIds.Contains(k));
     }
 
     private void ToggleAllChecked()
@@ -660,7 +711,9 @@ public partial class SidebarTree : UserControl
         if (_dbs.Count == 0) return;
 
         if (AllChecked())
-            foreach (var k in AllCollectionKeys()) _uncheckedIds.Add(k);
+            foreach (var k in ShownCollectionKeys()) _uncheckedIds.Add(k);
+        else if (OnlyInSection)
+            foreach (var k in ShownCollectionKeys()) _uncheckedIds.Remove(k);
         else
             _uncheckedIds.Clear();
 
@@ -800,6 +853,10 @@ public partial class SidebarTree : UserControl
         Utils.ConstructorSettings.Changed += OnConstructorSettingsChanged;
         if (_dbs.Count > 0 && _renderedRowHeight != Utils.ConstructorSettings.RowHeight)
             OnConstructorSettingsChanged();
+
+        CalendarSettings.Changed += OnSectionSettingsChanged;
+        TaskSettings.Changed     += OnSectionSettingsChanged;
+        OnSectionSettingsChanged();
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
@@ -809,7 +866,19 @@ public partial class SidebarTree : UserControl
         _keyHookTopLevel = null;
         FontScale.Changed -= OnFontScaleChanged;
         Utils.ConstructorSettings.Changed -= OnConstructorSettingsChanged;
+        CalendarSettings.Changed -= OnSectionSettingsChanged;
+        TaskSettings.Changed     -= OnSectionSettingsChanged;
         base.OnDetachedFromVisualTree(e);
+    }
+
+    // Настройку «только подключенные коллекции» поменяли — дерево строится заново, и раздел
+    // получает новый набор отмеченных (спрятанные в него не входят). Остальные настройки
+    // календаря и задач дерева не касаются.
+    private void OnSectionSettingsChanged()
+    {
+        if (_dbs.Count == 0 || _renderedOnlyInSection == OnlyInSection) return;
+        Refresh();
+        ActiveIdsChanged?.Invoke(this, GetActiveIds());
     }
 
     // Высота строки последнего рендера — чтобы догнать смену плотности, случившуюся, пока
@@ -956,6 +1025,8 @@ public partial class SidebarTree : UserControl
         var db   = node.DbId;
         var id   = node.Id.Value;
 
+        if (ChecksMode && !node.IsGroup && !node.IsDatabase) PinWhileMenuOpen(menu, (db, id));
+
         // Мультивыделение (клик по узлу из выделенного набора > 1): «Расположение»/«Дублировать»/
         // «Удалить» применяются ко ВСЕМУ набору, а «Изменить» — лишь к одному узлу, поэтому при
         // множественном выборе его скрываем (иначе пункт некорректен — правил бы только этот узел).
@@ -1031,6 +1102,28 @@ public partial class SidebarTree : UserControl
         menu.Open(anchor);
         e.Handled = true;
     }
+
+    // Держать коллекцию в дереве, пока открыто ее меню (см. _menuPinned). После закрытия дерево
+    // строится заново, и если коллекция отключилась от раздела, раздел получает новый набор.
+    private void PinWhileMenuOpen(ContextMenu menu, (int Db, int Id) key)
+    {
+        _menuPinned = key;
+        menu.Closed += (_, _) =>
+        {
+            // Меню другой строки уже открыто и держит свою коллекцию.
+            if (_menuPinned is not { } p || p != key) return;
+            if (!OnlyInSection) { _menuPinned = null; return; }
+
+            var before = GetActiveIds();
+            _menuPinned = null;
+            Refresh();
+            var after = GetActiveIds();
+            if (!SameActiveIds(before, after)) ActiveIdsChanged?.Invoke(this, after);
+        };
+    }
+
+    private static bool SameActiveIds(Dictionary<int, HashSet<int>> a, Dictionary<int, HashSet<int>> b) =>
+        a.Count == b.Count && a.All(kv => b.TryGetValue(kv.Key, out var s) && s.SetEquals(kv.Value));
 
     private void OnEmptyContextRequested(object? sender, ContextRequestedEventArgs e)
     {
@@ -1532,13 +1625,34 @@ public partial class SidebarTree : UserControl
                     Name = res.Name, GroupId = res.ParentId, Position = pos,
                     Color = Utils.ConstructorSettings.NewCollectionColor,
                 });
-                if (col.Id.HasValue)
+                if (col.Id is int newId)
+                {
                     // Title задаем реальным текстом «Без названия» (как кнопка «+»),
                     // а не оставляем пустым с одним плейсхолдером в ячейке.
-                    repo.AddRecord(new DbRecord { CollectionId = col.Id.Value, Title = "Без названия" });
+                    repo.AddRecord(new DbRecord { CollectionId = newId, Title = "Без названия" });
+                    ConnectToSection(repo, newId);
+                }
                 ReloadAndNotify();
                 if (col.Id.HasValue && _mode == SidebarMode.Constructor) OpenCollection(res.DbId, col.Id.Value);
             }
+        }
+        catch (Exception ex) when (DbErrors.Handle(ex, repo.DbPath)) { }
+    }
+
+    // Новая коллекция при настройке «только подключенные коллекции» сразу подключается к
+    // разделу — иначе она пропала бы из дерева в момент создания. Путь тот же, что у создания
+    // события или задачи в коллекции без нужных свойств: в календаре — поле «Дата» с показом,
+    // в задачах — «Исполнитель» с остальными ролями задачи («Назначил», «Статус», срок,
+    // «Описание»). Спрашивать про одноименные столбцы незачем: у новой коллекции их нет. Нет
+    // права завести свойство — коллекция остается созданной (и спрятанной), а человек получает
+    // объяснение запрета.
+    private void ConnectToSection(ConstructorRepository repo, int collectionId)
+    {
+        if (!OnlyInSection) return;
+        try
+        {
+            if (_mode == SidebarMode.Calendar) repo.EnsureCalendarCollection(collectionId);
+            else                               repo.EnsureTaskCollection(collectionId);
         }
         catch (Exception ex) when (DbErrors.Handle(ex, repo.DbPath)) { }
     }

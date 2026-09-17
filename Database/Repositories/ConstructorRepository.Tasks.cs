@@ -114,6 +114,18 @@ public partial class ConstructorRepository
     /// <summary>Есть ли у коллекции включенное поле-исполнитель (участвует в задачах).</summary>
     public bool HasTaskExecField(int collectionId) => TaskExecFieldId(collectionId) is not null;
 
+    /// <summary>
+    /// Коллекции с включенным полем-исполнителем — те, что участвуют в задачах. Ими боковая
+    /// панель задач ограничивает список, когда включена настройка «Только коллекции с
+    /// исполнителем». Один запрос на базу.
+    /// </summary>
+    public HashSet<int> GetTaskCollectionIds() =>
+        db.DbFields.AsNoTracking()
+          .Where(f => f.FieldType == "user" && f.IsTaskExec)
+          .Select(f => f.CollectionId)
+          .Distinct()
+          .ToHashSet();
+
     // ── Стадии ────────────────────────────────────────────────────────────────
 
     /// <summary>

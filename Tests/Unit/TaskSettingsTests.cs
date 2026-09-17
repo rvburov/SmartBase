@@ -79,6 +79,30 @@ public sealed class TaskSettingsTests
     }
 
     [Fact]
+    public void Sidebar_only_in_section_survives_save_and_default_removes_the_key()
+    {
+        var store = Attach();
+        Assert.False(TaskSettings.SidebarOnlyInSection);
+
+        Assert.Equal(1, CountChanges(() =>
+        {
+            TaskSettings.SetSidebarOnlyInSection(true);
+            TaskSettings.SetSidebarOnlyInSection(true);   // то же значение — без события
+        }));
+        Assert.True(store.Has("tasksSidebarOnlyInSection"));
+
+        TaskSettings.Init();
+        Assert.True(TaskSettings.SidebarOnlyInSection);
+
+        TaskSettings.SetSidebarOnlyInSection(false);
+        Assert.False(store.Has("tasksSidebarOnlyInSection"));
+
+        store.Set("tasksSidebarOnlyInSection", "мусор");
+        TaskSettings.Init();
+        Assert.False(TaskSettings.SidebarOnlyInSection);
+    }
+
+    [Fact]
     public void Quick_add_defaults_survive_save_and_load()
     {
         var store = Attach();

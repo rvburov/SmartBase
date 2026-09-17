@@ -46,6 +46,7 @@ public partial class SettingsView
         TasksStartFilterCombo.ItemsSource   = TasksStartFilterLabels;
         TasksStartFilterCombo.SelectedIndex = Math.Max(0, Array.IndexOf(TaskSettings.StartFilterKeys, TaskSettings.StartFilterKey));
 
+        TasksSidebarOnlyToggle.IsChecked = TaskSettings.SidebarOnlyInSection;
         TasksShowDoneToggle.IsChecked = TaskSettings.ShowDone;
 
         TasksOverdueCombo.ItemsSource   = TasksOverdueLabels;
@@ -85,6 +86,12 @@ public partial class SettingsView
         var i = TasksStartFilterCombo.SelectedIndex;
         if (i >= 0 && i < TaskSettings.StartFilterKeys.Length)
             TaskSettings.SetStartFilter(TaskSettings.StartFilterKeys[i]);
+    }
+
+    private void OnTasksSidebarOnlyToggled(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (_tasksBuilding) return;
+        TaskSettings.SetSidebarOnlyInSection(TasksSidebarOnlyToggle.IsChecked == true);
     }
 
     private void OnTasksShowDoneToggled(object? sender, Avalonia.Interactivity.RoutedEventArgs e)

@@ -42,6 +42,10 @@ public static class CalendarSettings
     /// <summary>Длительность нового события из сетки, минуты.</summary>
     public static int NewEventDurationMinutes { get; private set; } = AppSettings.CalendarNewEventDurationDefault;
 
+    /// <summary>Боковая панель показывает только коллекции, у которых включено хотя бы одно
+    /// свойство-дата (false — все коллекции).</summary>
+    public static bool SidebarOnlyInSection { get; private set; } = AppSettings.CalendarSidebarOnlyInSectionDefault;
+
     /// <summary>Настройки изменились — календарю пора пересобраться.</summary>
     public static event Action? Changed;
 
@@ -57,6 +61,7 @@ public static class CalendarSettings
         MultiDayGrid = AppSettings.LoadCalendarMultiDayGrid();
         WeekScrollMode = ParseScroll(AppSettings.LoadCalendarWeekScroll());
         NewEventDurationMinutes = AppSettings.LoadCalendarNewEventDuration();
+        SidebarOnlyInSection = AppSettings.LoadCalendarSidebarOnlyInSection();
     }
 
     public static void SetDaysInWeek(int days)
@@ -117,6 +122,15 @@ public static class CalendarSettings
         if (minutes is not (30 or 60 or 90 or 120) || minutes == NewEventDurationMinutes) return;
         NewEventDurationMinutes = minutes;
         AppSettings.SaveCalendarNewEventDuration(minutes);
+        Stamp++;
+        Changed?.Invoke();
+    }
+
+    public static void SetSidebarOnlyInSection(bool on)
+    {
+        if (on == SidebarOnlyInSection) return;
+        SidebarOnlyInSection = on;
+        AppSettings.SaveCalendarSidebarOnlyInSection(on);
         Stamp++;
         Changed?.Invoke();
     }

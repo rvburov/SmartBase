@@ -696,6 +696,22 @@
                         <Grid ColumnDefinitions="*,Auto">
                             <StackPanel Grid.Column="0" Spacing="4"
                                         VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Только коллекции с датами в календаре" />
+                                <TextBlock Classes="desc"
+                                           Text="Боковая панель показывает только коллекции, у которых включено хотя бы одно свойство-дата. Выключено — видны все коллекции." />
+                            </StackPanel>
+                            <ToggleSwitch Grid.Column="1" x:Name="CalendarSidebarOnlyToggle"
+                                          OnContent="" OffContent=""
+                                          VerticalAlignment="Center"
+                                          IsCheckedChanged="OnCalendarSidebarOnlyToggled" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
                                 <TextBlock Classes="title" Text="Дней в неделе" />
                                 <TextBlock Classes="desc"
                                            Text="7 — обычная неделя. 5 — рабочая: «Расписание», «День» и «Неделя» листают только Пн–Пт, новые события не попадают на выходные, а перетягивание и растягивание перепрыгивает их во всех видах." />
@@ -834,6 +850,22 @@
                             </StackPanel>
                             <w:CheckListDropdown Grid.Column="1" x:Name="TasksVisibility"
                                                  Width="240" VerticalAlignment="Center" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Только коллекции с исполнителем" />
+                                <TextBlock Classes="desc"
+                                           Text="Боковая панель показывает только коллекции, у которых выбрано свойство-исполнитель. Выключено — видны все коллекции." />
+                            </StackPanel>
+                            <ToggleSwitch Grid.Column="1" x:Name="TasksSidebarOnlyToggle"
+                                          OnContent="" OffContent=""
+                                          VerticalAlignment="Center"
+                                          IsCheckedChanged="OnTasksSidebarOnlyToggled" />
                         </Grid>
                     </Border>
                     <Border Classes="separator h" />

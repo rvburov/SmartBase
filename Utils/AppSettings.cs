@@ -371,6 +371,19 @@ public static class AppSettings
         else _store?.Set(KeyCalendarMultiDayGrid, on.ToString());
     }
 
+    // Боковая панель календаря — только коллекции с включенным свойством-датой. Стандарт
+    // (false) — все коллекции, как было всегда.
+    public const bool CalendarSidebarOnlyInSectionDefault = false;
+
+    public static bool LoadCalendarSidebarOnlyInSection() =>
+        bool.TryParse(_store?.Get(KeyCalendarSidebarOnlyInSection), out var on) ? on : CalendarSidebarOnlyInSectionDefault;
+
+    public static void SaveCalendarSidebarOnlyInSection(bool on)
+    {
+        if (on == CalendarSidebarOnlyInSectionDefault) _store?.Remove(KeyCalendarSidebarOnlyInSection);
+        else _store?.Set(KeyCalendarSidebarOnlyInSection, on.ToString());
+    }
+
     // Длительность нового события при создании из сетки календаря. Стандарт — час.
     public const int CalendarNewEventDurationDefault = 60;
 
@@ -826,6 +839,7 @@ public static class AppSettings
     public const string TasksStartFilterDefault     = "All";
     public const bool   TasksQuickExecutorMeDefault = true;
     public const string TasksQuickDueDefault        = "none";
+    public const bool   TasksSidebarOnlyInSectionDefault = false;   // в боковой панели все коллекции
     public static readonly string TasksDefaultStageDefault =
         SmartBase.Database.Repositories.ConstructorRepository.TaskStatusPlanned;
 
@@ -880,6 +894,15 @@ public static class AppSettings
     {
         if (key == TasksQuickDueDefault) _store?.Remove(KeyTasksQuickDue);
         else                             _store?.Set(KeyTasksQuickDue, key);
+    }
+
+    public static bool LoadTasksSidebarOnlyInSection() =>
+        bool.TryParse(_store?.Get(KeyTasksSidebarOnlyInSection), out var on) ? on : TasksSidebarOnlyInSectionDefault;
+
+    public static void SaveTasksSidebarOnlyInSection(bool on)
+    {
+        if (on == TasksSidebarOnlyInSectionDefault) _store?.Remove(KeyTasksSidebarOnlyInSection);
+        else                                        _store?.Set(KeyTasksSidebarOnlyInSection, on.ToString());
     }
 
     public static string LoadTasksDefaultStage() => _store?.Get(KeyTasksDefaultStage) ?? TasksDefaultStageDefault;
@@ -1398,6 +1421,7 @@ public static class AppSettings
     private const string KeyCalendarWeekScroll        = "calendarWeekScroll";
     private const string KeyCalendarMultiDayGrid      = "calendarMultiDayGrid";
     private const string KeyCalendarNewEventDuration  = "calendarNewEventDuration";
+    private const string KeyCalendarSidebarOnlyInSection = "calendarSidebarOnlyInSection";
     private const string KeyDiagramScale     = "diagramScale";
     private const string KeyConstructorView  = "constructorView";
     private const string KeyConstructorNewFieldType       = "constructorNewFieldType";
@@ -1436,6 +1460,7 @@ public static class AppSettings
     private const string KeyTasksQuickExecutorMe = "tasksQuickExecutorMe";
     private const string KeyTasksQuickDue        = "tasksQuickDue";
     private const string KeyTasksDefaultStage    = "tasksDefaultStage";
+    private const string KeyTasksSidebarOnlyInSection = "tasksSidebarOnlyInSection";
     private const string KeyAutostartEnabled     = "autostartEnabled";
     private const string KeyBackgroundEnabled    = "backgroundEnabled";
     private const string KeyIntroSeedDone        = "introSeedDone";

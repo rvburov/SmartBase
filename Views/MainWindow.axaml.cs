@@ -483,6 +483,11 @@ public partial class MainWindow : Window
         TasksModule.CollectionsMayHaveChanged += (_, _) =>
         {
             TasksSidebar.Refresh();
+            // Задача могла подключить коллекцию, которую прятала настройка «Только коллекции с
+            // исполнителем»: теперь она в дереве, и раздел должен читать ее вместе с остальными.
+            // Набор тот же — вызов ничего не делает; иначе его перекроет тихое перечитывание,
+            // которое раздел запускает следом.
+            TasksModule.SetActiveIds(TasksSidebar.GetActiveIds());
             CalendarSidebar.Refresh();
             CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
             ConstructorSidebar.Refresh();

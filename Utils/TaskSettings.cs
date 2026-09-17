@@ -45,6 +45,10 @@ public static class TaskSettings
     /// <summary>Стадия новой задачи; у коллекции без такой стадии берется первая из ее списка.</summary>
     public static string DefaultStage { get; private set; } = AppSettings.TasksDefaultStageDefault;
 
+    /// <summary>Боковая панель показывает только коллекции с выбранным свойством-исполнителем
+    /// (false — все коллекции).</summary>
+    public static bool SidebarOnlyInSection { get; private set; } = AppSettings.TasksSidebarOnlyInSectionDefault;
+
     /// <summary>Настройки изменились — разделу пора перечитаться.</summary>
     public static event Action? Changed;
 
@@ -61,6 +65,7 @@ public static class TaskSettings
         QuickExecutorMe = AppSettings.LoadTasksQuickExecutorMe();
         QuickDue        = ParseQuickDue(AppSettings.LoadTasksQuickDue());
         DefaultStage    = ParseStage(AppSettings.LoadTasksDefaultStage());
+        SidebarOnlyInSection = AppSettings.LoadTasksSidebarOnlyInSection();
     }
 
     /// <summary>Ключ фильтра, который стоит поставить при входе: сама настройка либо, в режиме
@@ -134,6 +139,14 @@ public static class TaskSettings
         if (stage == DefaultStage) return;
         DefaultStage = stage;
         AppSettings.SaveTasksDefaultStage(stage);
+        Publish();
+    }
+
+    public static void SetSidebarOnlyInSection(bool on)
+    {
+        if (on == SidebarOnlyInSection) return;
+        SidebarOnlyInSection = on;
+        AppSettings.SaveTasksSidebarOnlyInSection(on);
         Publish();
     }
 

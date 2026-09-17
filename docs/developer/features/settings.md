@@ -44,8 +44,10 @@
   `calendarDayEndMin`, стандарт 0/1440 = «без ограничений», кросс-инвариант start + 60 ≤ end),
   режим прокрутки недели (`calendarWeekScroll`: `week` / `day` / `weekStopToday`),
   длинные события в сетке (`calendarMultiDayGrid`, стандарт false — событие длиннее суток
-  уходит в полосу «весь день») и
-  длительность нового события (`calendarNewEventDuration`: 30/60/90/120). Живой доступ —
+  уходит в полосу «весь день»),
+  длительность нового события (`calendarNewEventDuration`: 30/60/90/120) и сайдбар только с
+  коллекциями, у которых видно поле-дату (`calendarSidebarOnlyInSection`, стандарт false —
+  все коллекции; механика — [tasks.md](tasks.md#только-подключенные-коллекции)). Живой доступ —
   статический [CalendarSettings](../../../Utils/CalendarSettings.cs) (кэш + событие
   `Changed`, по образцу FontScale): календарь подписан и пересобирается без перезапуска.
   Поведение — [calendar/overview.md](calendar/overview.md#настройки-календаря)
@@ -56,7 +58,9 @@
   фильтр при открытии раздела (`tasksStartFilter`: `All` / `Today` / `AssignedToMe` / `NoDue` /
   `Overdue` / `Last`), стадия новой задачи (`tasksDefaultStage`, стандарт «Запланировано»),
   исполнитель (`tasksQuickExecutorMe`, стандарт true) и срок (`tasksQuickDue`: `none` / `today` /
-  `tomorrow`) в строке быстрого добавления. Живой доступ — статический
+  `tomorrow`) в строке быстрого добавления, сайдбар только с коллекциями, у которых есть
+  исполнитель (`tasksSidebarOnlyInSection`, стандарт false —
+  [tasks.md](tasks.md#только-подключенные-коллекции)). Живой доступ — статический
   [TaskSettings](../../../Utils/TaskSettings.cs) (кэш + событие `Changed`, по образцу
   `CalendarSettings`): раздел «Задачи» подписан и перечитывается без перезапуска. Список стадий
   для «Стадии новой задачи» отдает главное окно провайдером `taskStages` в `Initialize` — сам
