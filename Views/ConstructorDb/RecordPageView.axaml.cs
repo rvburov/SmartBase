@@ -196,6 +196,11 @@ public partial class RecordPageView : UserControl
         MarkdownEditor.TemplateApplied += (_, e) =>
         {
             _editorScroll = e.NameScope.Find<ScrollViewer>("PART_ScrollViewer");
+            // Высота строки — та же, что у абзаца «Просмотра» (MarkupTheme.LineHeight). Без этого
+            // переключение правка/просмотр меняло межстрочие, и текст на экране ехал тем сильнее,
+            // чем ниже строка. Ставим на презентер: у TextBox своего LineHeight нет.
+            if (e.NameScope.Find<Avalonia.Controls.Presenters.TextPresenter>("PART_TextPresenter") is { } presenter)
+                presenter.LineHeight = Controls.Markup.MarkupTheme.LineHeight;
             UpdateBottomScrollBar();
         };
 
@@ -328,7 +333,7 @@ public partial class RecordPageView : UserControl
 
         if (preview && plain)
         {
-            PlainPreview.LineHeight = (double)this.FindResource("FontSizeBase")! * 1.35;   // как абзац Markdown
+            PlainPreview.LineHeight = Controls.Markup.MarkupTheme.LineHeight;   // как абзац Markdown
             PlainPreview.Text       = MarkdownEditor.Text ?? "";
         }
         else if (preview)
@@ -1493,28 +1498,32 @@ public partial class RecordPageView : UserControl
         {
             case "number":
             {
-                // Показ по формату поля (валюта/проценты/разряды), пока поле не в фокусе; при
-                // фокусе показываем сырое число для правки, на уходе — снова отформатированное.
-                // row.Value всегда сырое; программная подмена Text помечается флагом, чтобы не
-                // записать отформатированную строку обратно в значение.
+                // Число правится В ТОМ ЖЕ ВИДЕ, В КАКОМ ПОКАЗАНО. Раньше фокус подменял формат
+                // на сырое значение, и «1 234,50 ₽» превращалось под курсором в «1234.5» —
+                // строка меняла длину, текст прыгал вбок на клике. Теперь на входе в правку не
+                // меняется ничего: в канон хранения строку переводит TryParseDisplay, а показ
+                // приводится к формату поля по уходу фокуса.
                 var fmt = NumberFormatValue.FromConfig(f.ConfigJson);
                 var tb  = FlatValueBox(NumberFormatValue.Format(row.Value, fmt));
                 var suppress = false;
-                // Тот же фильтр ввода, что и в ячейке таблицы: пускаем только цифры, один
-                // разделитель и ведущий минус — иначе живая запись по символу клала бы в БД
-                // промежуточный мусор («-», «12,»).
-                tb.AddHandler(InputElement.TextInputEvent, OnNumberTextInput, RoutingStrategies.Tunnel);
-                tb.GotFocus  += (_, _) => { suppress = true; tb.Text = row.Value; suppress = false; };
+                // Посимвольный фильтр (цифры, один разделитель, ведущий минус) — только у
+                // «обычного числа», где показ совпадает с хранением. В остальных форматах в
+                // строке законно стоят разряды, знак валюты и «%»; там ввод разбирается целиком.
+                if (fmt.Kind == NumberFormatKind.Plain)
+                    tb.AddHandler(InputElement.TextInputEvent, OnNumberTextInput, RoutingStrategies.Tunnel);
                 tb.LostFocus += (_, _) => { suppress = true; tb.Text = NumberFormatValue.Format(row.Value, fmt); suppress = false; };
                 tb.TextChanged += (_, _) =>
                 {
-                    if (suppress) return;   // программная подмена показа/сырого — не значение
-                    // Событие отложенное и приходит после снятия suppress: тот же текст — сырой
-                    // или показанный по формату — это установка, а не правка. Без сверки в базу
-                    // уходила бы отформатированная строка («1 234,50 ₽») вместо числа.
-                    var text = tb.Text ?? "";
-                    if (text == (row.Value ?? "") || text == NumberFormatValue.Format(row.Value, fmt)) return;
-                    row.Value = text;
+                    if (suppress) return;   // программная подмена показа — не значение
+                    // Событие отложенное и приходит уже после снятия suppress, поэтому сверяем не
+                    // флаг, а результат: отформатированный показ разбирается обратно в то же самое
+                    // значение — значит это установка, а не правка.
+                    var text    = tb.Text ?? "";
+                    var storage = text.Trim().Length == 0 ? ""
+                                : NumberFormatValue.TryParseDisplay(text, fmt, fmt.DecimalSeparator, out var s) ? s
+                                : text;   // не разобралось — храним как набрано (так же, как нечисловое)
+                    if (storage == (row.Value ?? "")) return;
+                    row.Value = storage;
                     PersistProperty(row);
                 };
                 input = tb;
@@ -1564,6 +1573,9 @@ public partial class RecordPageView : UserControl
                     separator: MultiSelectValue.SeparatorFromConfig(f.ConfigJson))
                 {
                     HorizontalAlignment = HorizontalAlignment.Stretch,
+                    // Отступ значения задает карточка — у всех остальных типов он нулевой.
+                    // Со своими 8px мультисписок стоял правее соседей по вертикали значений.
+                    ContentPadding      = new Thickness(0, 4),
                 };
                 box.Changed += (_, _) => { row.Value = box.Storage; PersistProperty(row); };
                 input = box;

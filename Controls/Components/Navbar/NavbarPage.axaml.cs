@@ -30,13 +30,7 @@ public partial class NavbarPage : UserControl
     {
         InitializeComponent();
 
-        TitleDisplay.PointerPressed += (_, _) =>
-        {
-            TitleDisplay.IsVisible = false;
-            TitleBox.IsVisible     = true;
-            TitleBox.Focus();
-            TitleBox.SelectAll();
-        };
+        TitleDisplay.PointerPressed += (_, e) => Behaviors.TitleEditing.Begin(TitleDisplay, TitleBox, e);
 
         TitleBox.LostFocus += (_, _) => ExitTitleEdit();
         TitleBox.KeyDown   += (_, e) =>

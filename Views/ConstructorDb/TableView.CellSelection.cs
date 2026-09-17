@@ -534,7 +534,7 @@ public partial class TableView
 
         // Сначала считаем целевую геометрию, НЕ трогая дерево.
         var target = new List<Rect>();
-        if (_cellRange is { } range && !HidesOverlayWhileEditing(range) && SelectionBounds(range) is { } bounds)
+        if (_cellRange is { } range && SelectionBounds(range) is { } bounds)
             target.Add(bounds);
         var clip   = RowsViewportInLayer();
         var tinted = _cellRange is { IsSingleCell: false };
@@ -583,18 +583,12 @@ public partial class TableView
         return Math.Max(1.0, Math.Round(2.0 * scale)) / scale;
     }
 
-    /// <summary>
-    /// Прячем свою рамку, только когда выделена РОВНО та ячейка, что сейчас в правке: у редактора
-    /// есть собственная рамка, и две вокруг одной ячейки читаются как ошибка отрисовки.
-    ///
-    /// А вот растянутое выделение при открытой правке прятать нельзя: человек тянет Shift'ом от
-    /// ячейки, в которой только что печатал, и обязан видеть, что выделяется.
-    /// </summary>
-    private bool HidesOverlayWhileEditing(CellRange range) =>
-        IsCellEditing
-        && range.IsSingleCell
-        && _editingCell is { } cell
-        && range.Contains(cell.Row, cell.Column);
+    // Рамка выделения НЕ гаснет на время правки. Раньше гасла: у редактора была своя рамка от
+    // темы Fluent, и две вокруг одной ячейки читались как ошибка отрисовки. Но та, чужая, была на
+    // линию сетки уже нашей — и синий квадрат на втором клике заметно съезжал влево. Рамку темы
+    // сняли (TableView.axaml, стили DataGridCell TextBox), осталась одна наша: она рисуется на
+    // слое поверх, не ловит указатель и в обоих состояниях стоит по одним и тем же границам
+    // ячейки. Стережет Tests/EditGeometry.
 
     // Сравнение с допуском в полпикселя: раскладка дает микроскопические расхождения координат,
     // и точное сравнение double держало бы layout-цикл живым.

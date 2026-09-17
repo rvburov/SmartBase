@@ -204,7 +204,10 @@ public partial class FileEditor : UserControl
         LinkHost.IsVisible = false;
         Input.IsVisible    = true;
         Input.Focus();
-        Input.SelectAll();
+        // Каретка в начало, без выделения: SelectAll уводил ее в конец, и поле прокручивалось
+        // к хвосту пути — текст на входе в правку прыгал влево. Начало пути еще и полезнее:
+        // видно, откуда файл.
+        Input.SelectionStart = Input.SelectionEnd = Input.CaretIndex = 0;
         LiveValidate();
     }
 

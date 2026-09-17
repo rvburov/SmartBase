@@ -91,6 +91,16 @@ public partial class TableView : UserControl
     private const int NumColWidth       = 36;
     private const int PlusColWidth      = 36;
 
+    // Боковой отступ содержимого ячейки — ОДИН на показ и на правку. Показ ставит его
+    // Margin'ом надписи, правка — Padding'ом редактора; разойдись эти два числа, и текст
+    // прыгал бы вбок при входе в правку (редактор без Padding берет общий стандарт полей
+    // формы 10px, а надпись стояла на 6px). Правый отступ у списков больше: там за ним
+    // шеврон.
+    private const double CellContentPad = 6;
+    private const double CellDropdownPadRight = 8;
+    private static readonly Thickness CellContentMargin  = new(CellContentPad, 0, CellContentPad, 0);
+    private static readonly Thickness CellDropdownPadding = new(CellContentPad, 0, CellDropdownPadRight, 0);
+
     // ── Состояние ─────────────────────────────────────────────────────────────
     private ConstructorRepository? _repository;
     private int  _collectionId;
@@ -236,7 +246,10 @@ public partial class TableView : UserControl
             }
             IsCellEditing = true;
             _editingCell  = cell;
-            RefreshCellSelectionOverlay();   // убрать свою рамку: у редактора есть собственная
+            // Рамка выделения на время правки НЕ гаснет — она одна на оба состояния и стоит по
+            // границам ячейки (см. RefreshCellSelectionOverlay). Пересчет нужен, потому что
+            // открытие редактора меняет содержимое ячейки и может сдвинуть строки.
+            RefreshCellSelectionOverlay();
         };
         // Правка кончилась — строка больше не обязана быть выделенной: возвращаем картинку
         // «выделена ячейка, а не запись» (при правке она выделена вынужденно, см.
@@ -246,7 +259,7 @@ public partial class TableView : UserControl
             IsCellEditing = false;
             _editingCell  = null;
             DropEditingBox();
-            RefreshCellSelectionOverlay();   // рамка возвращается на место
+            RefreshCellSelectionOverlay();
             ScheduleRecordSelectionDrop();
         };
         // Текстовый редактор ячейки известен с PreparingCellForEdit; его значение уходит в базу
@@ -255,9 +268,11 @@ public partial class TableView : UserControl
         RecordsGrid.PreparingCellForEdit += (_, e) =>
         {
             var column = RecordsGrid.Columns.IndexOf(e.Column);
+            var def    = column >= 0 && column < _colDefs.Count ? _colDefs[column] : null;
             _editingBox    = e.EditingElement as TextBox;
             _editingBoxRow = e.Row.DataContext as TableRowVm;
-            _editingBoxKey = column >= 0 && column < _colDefs.Count ? _colDefs[column].Key : null;
+            _editingBoxKey = def?.Key;
+            _editingBoxDef = def;
         };
         RecordsGrid.CellEditEnding += (_, e) =>
         {
@@ -304,14 +319,15 @@ public partial class TableView : UserControl
     // вместе со строками (ForgetCellEditing). Раньше TextBox был привязан к строке TwoWay, и
     // каждая буква шла в базу отдельной транзакцией: на сетевой папке — заметная задержка на
     // нажатие, а каждый коммит еще и будил перечитывание панели записи.
-    private TextBox?    _editingBox;
-    private TableRowVm? _editingBoxRow;
-    private string?     _editingBoxKey;
+    private TextBox?        _editingBox;
+    private TableRowVm?     _editingBoxRow;
+    private string?         _editingBoxKey;
+    private TableColumnDef? _editingBoxDef;
 
     private void FlushEditingBox()
     {
         if (_editingBox is not { } box || _editingBoxRow is not { } row || _editingBoxKey is not { } key) return;
-        try { row[key] = box.Text ?? ""; }   // строка пишет в базу сама и совпавшее пропускает
+        try { row[key] = CommitText(box.Text ?? "", _editingBoxDef); }   // строка пишет в базу сама и совпавшее пропускает
         catch (Exception ex)
         {
             // База уже отключена (редактор закрывается вместе с ней) — набранное не спасти, но и
@@ -325,6 +341,20 @@ public partial class TableView : UserControl
         _editingBox    = null;
         _editingBoxRow = null;
         _editingBoxKey = null;
+        _editingBoxDef = null;
+    }
+
+    /// <summary>Текст редактора → значение для хранения. Число правится в том же виде, в каком
+    /// показано («1 234,50 ₽»), поэтому перед записью его надо разобрать обратно в канон. Все
+    /// остальные типы (и число, которое разобрать не удалось) пишутся как набрано — так же, как
+    /// хранится нечисловое значение после смены типа поля.</summary>
+    private static string CommitText(string text, TableColumnDef? def)
+    {
+        if (def is not { FieldType: "number" } d) return text;
+        if (text.Trim().Length == 0) return "";
+        return NumberFormatValue.TryParseDisplay(text, d.NumberFormat, d.NumberFormat.DecimalSeparator, out var storage)
+            ? storage
+            : text;
     }
 
     private void OnEditingBoxLostFocus(object? sender, RoutedEventArgs e)
@@ -2056,6 +2086,24 @@ public partial class TableView : UserControl
         paintText(ColorTools.Text(style.Fg));
     }
 
+    /// <summary>Пользовательский цвет ячейки для РЕДАКТОРА. Шаблон правки подменяет шаблон показа
+    /// целиком — вместе со слоем цвета (CellStyleHost), — поэтому заливку и цвет текста редактор
+    /// ставит себе сам: иначе окрашенная ячейка на клике теряла бы цвет и текста, и фона.</summary>
+    private (IBrush? Fill, IBrush? Text) EditorCellStyle(TableRowVm row, string key)
+    {
+        if (row.IsAddRow) return (null, null);
+        var style = RowStyle.Resolve(row.CellStyle(key), RowStyleOf(row.RecordId), ColumnStyleOf(key));
+        return (ColorTools.Fill(style.Bg), ColorTools.Text(style.Fg));
+    }
+
+    /// <summary>Поставить редактору цвет ячейки (ничего не делает у неокрашенной).</summary>
+    private void ApplyEditorCellStyle(TemplatedControl editor, TableRowVm row, string key)
+    {
+        var (fill, text) = EditorCellStyle(row, key);
+        if (fill is not null) editor.Background = fill;
+        if (text is not null) editor.Foreground = text;
+    }
+
     private RowStyle RowStyleOf(int recordId) =>
         _rowStyles.TryGetValue(recordId, out var s) ? s : RowStyle.None;
 
@@ -2122,7 +2170,7 @@ public partial class TableView : UserControl
             // DataContext) и меняется при переиспользовании контейнера — переустанавливаем RecordId.
             if (def.FieldType == "relation" && def.Relation is not null && _repository is not null && def.Tag is int relFid)
             {
-                var rel = new RelationSelectBox(_repository, relFid, def.Relation, editing: false, contentLeftPadding: 6, cache: _relLinks);
+                var rel = new RelationSelectBox(_repository, relFid, def.Relation, editing: false, contentLeftPadding: CellContentPad, cache: _relLinks);
                 BindRelationRow(rel, row);
                 return rel;
             }
@@ -2135,7 +2183,7 @@ public partial class TableView : UserControl
                 var editor = new FileEditor
                 {
                     Flat               = true,
-                    ContentLeftPadding = 6,   // как Margin(6,…) у TextBlock-ячеек — общий левый отступ колонок
+                    ContentLeftPadding = CellContentPad,   // тот же отступ, что у надписей остальных колонок
                     VerticalAlignment  = VerticalAlignment.Center,
                     AutoFolder         = def.FileAutoFolder,   // непусто → read-only авто-режим
                 };
@@ -2184,7 +2232,7 @@ public partial class TableView : UserControl
                 };
                 return new TextBlock
                 {
-                    Margin              = new Thickness(6, 0, 6, 0),
+                    Margin              = CellContentMargin,
                     VerticalAlignment   = VerticalAlignment.Center,
                     HorizontalAlignment = HorizontalAlignment.Left,
                     TextTrimming        = TextTrimming.CharacterEllipsis,
@@ -2206,7 +2254,7 @@ public partial class TableView : UserControl
             var isNumber = def.FieldType == "number";
             var text = new TextBlock
             {
-                Margin              = new Thickness(6, 0, 6, 0),
+                Margin              = CellContentMargin,
                 VerticalAlignment   = VerticalAlignment.Center,
                 HorizontalAlignment = isNumber ? HorizontalAlignment.Stretch : HorizontalAlignment.Left,
                 TextAlignment       = isNumber ? TextAlignment.Right : TextAlignment.Left,
@@ -2315,10 +2363,14 @@ public partial class TableView : UserControl
             {
                 case "date":
                 {
+                    // Flat — как у «Файла»: в ячейке рамку рисует сама таблица, собственный бокс
+                    // редактора дал бы «бокс в боксе» и увел бы дату вправо от надписи показа.
                     var editor = new DateEditor
                     {
-                        VerticalAlignment = VerticalAlignment.Center,
-                        Storage           = row[def.Key],
+                        Flat               = true,
+                        ContentLeftPadding = CellContentPad,
+                        VerticalAlignment  = VerticalAlignment.Center,
+                        Storage            = row[def.Key],
                     };
                     editor.Changed += (_, _) => row[def.Key] = editor.Storage ?? "";
                     return editor;
@@ -2336,13 +2388,21 @@ public partial class TableView : UserControl
                     var options = def.FieldType == "user" && _repository is not null
                         ? _repository.GetUserOptions(row[def.Key])
                         : def.Options;
+                    // Растягиваем на всю строку и центрируем содержимое: копия темы ставит
+                    // ComboBox'у VerticalAlignment=Top, и при MinHeight=30 в строке 36px список
+                    // висел бы у верхнего края — текст вставал на 3px выше надписи показа.
                     var combo = new ComboBox
                     {
-                        BorderThickness     = new Thickness(0),
-                        HorizontalAlignment = HorizontalAlignment.Stretch,
-                        ItemsSource         = options,
-                        SelectedItem        = row[def.Key],
+                        BorderThickness          = new Thickness(0),
+                        Padding                  = CellDropdownPadding,
+                        HorizontalAlignment      = HorizontalAlignment.Stretch,
+                        VerticalAlignment        = VerticalAlignment.Stretch,
+                        VerticalContentAlignment = VerticalAlignment.Center,
+                        MinHeight                = 0,
+                        ItemsSource              = options,
+                        SelectedItem             = row[def.Key],
                     };
+                    ApplyEditorCellStyle(combo, row, def.Key);
                     combo.SelectionChanged += (_, _) =>
                         row[def.Key] = combo.SelectedItem?.ToString() ?? "";
                     return combo;
@@ -2350,7 +2410,10 @@ public partial class TableView : UserControl
 
                 case "multiselect":   // несколько опций: чипы + выпадающий чеклист, значение — JSON-массив
                 {
-                    var box = new Controls.Components.MultiSelectBox(def.Options, row[def.Key], flat: true, separator: def.Separator);
+                    var box = new Controls.Components.MultiSelectBox(def.Options, row[def.Key], flat: true, separator: def.Separator)
+                    {
+                        ContentPadding = new Thickness(CellContentPad, 0),
+                    };
                     box.Changed += (_, _) => row[def.Key] = box.Storage;
                     return box;
                 }
@@ -2360,7 +2423,7 @@ public partial class TableView : UserControl
                     // Правка ячейки: текст + иконка-связь справа, по клику по иконке — чеклист выбора
                     // (как чеклист «Мультисписка»). «→» у пункта → открыть цель. По выходе из правки
                     // read-ячейка (editing:false) переустановится и перечитает связи (AttachedToVisualTree).
-                    var rel = new RelationSelectBox(_repository, relFid, def.Relation, editing: true, contentLeftPadding: 6, cache: _relLinks);
+                    var rel = new RelationSelectBox(_repository, relFid, def.Relation, editing: true, contentLeftPadding: CellContentPad, cache: _relLinks);
                     rel.Navigate += (_, t) =>
                     {
                         if (t.DbId > 0) CrossDbRecordRequested?.Invoke(this, t);   // межбазовый переход
@@ -2378,15 +2441,25 @@ public partial class TableView : UserControl
                 // правки, а не на каждую букву (см. FlushEditingBox).
                 case "number":
                 {
+                    // Число правится В ТОМ ЖЕ ВИДЕ, В КАКОМ ПОКАЗАНО. Подставь редактор сырое
+                    // значение — «1 234,50 ₽» превратилось бы под курсором в «1234.5»: строка
+                    // другой длины, и текст прыгал бы вбок на входе в правку. Обратно в канон
+                    // хранения строку переводит CommitText (TryParseDisplay).
                     var tb = new TextBox
                     {
                         BorderThickness          = new Thickness(0),
+                        Padding                  = CellContentMargin,
                         VerticalContentAlignment = VerticalAlignment.Center,
                         TextAlignment            = TextAlignment.Right,
-                        Text                     = row[def.Key],
+                        Text                     = NumberFormatValue.Format(row[def.Key], def.NumberFormat),
                     };
-                    // Пропускаем только цифры, один разделитель и ведущий минус.
-                    tb.AddHandler(InputElement.TextInputEvent, OnNumberTextInput, RoutingStrategies.Tunnel);
+                    ApplyEditorCellStyle(tb, row, def.Key);
+                    // Посимвольный фильтр (цифры, один разделитель, ведущий минус) — только у
+                    // «обычного числа», где показ совпадает с хранением. В остальных форматах в
+                    // строке законно стоят разряды, знак валюты и «%»; там ввод проверяется целиком
+                    // при коммите, а неразобранное сохраняется как набрано.
+                    if (def.NumberFormat.Kind == NumberFormatKind.Plain)
+                        tb.AddHandler(InputElement.TextInputEvent, OnNumberTextInput, RoutingStrategies.Tunnel);
                     tb.LostFocus += OnEditingBoxLostFocus;
                     return tb;
                 }
@@ -2399,11 +2472,13 @@ public partial class TableView : UserControl
                     var tb = new TextBox
                     {
                         BorderThickness          = new Thickness(0),
+                        Padding                  = CellContentMargin,
                         VerticalContentAlignment = VerticalAlignment.Center,
                         Watermark                = isTitle ? TitleText.Placeholder
                                                  : def.FieldType == "url" ? "https://" : null,
                         Text                     = isTitle ? TitleText.Editable(row[def.Key]) : row[def.Key],
                     };
+                    ApplyEditorCellStyle(tb, row, def.Key);
                     tb.LostFocus += OnEditingBoxLostFocus;
                     return tb;
                 }

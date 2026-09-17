@@ -68,7 +68,38 @@ public static class FontScale
         // задумана постоянной («код на единицу мельче текста»), а не долей от кегля.
         r["FontSizeH3"]     = _baseH3     + Delta;
         r["FontSizeMono"]   = _baseMono   + Delta;
+
+        // Целая высота строки для пар «надпись показа + поле правки» (название в навбарах,
+        // текст ячейки таблицы). Естественная высота строки шрифта дробная, а TextBlock и
+        // TextBox округляют ее ПО РАЗНЫМ сеткам: TextBlock — вверх до целого (масштаб 1,1
+        // зашит в его MeasureOverride), поле — по сетке 1/RenderScaling (на Retina 0.5).
+        // Боксы получаются разной высоты, каждый центрируется в контейнере своим округлением,
+        // и текст при входе в правку опускался на физический пиксель. Целый LineHeight у ОБОИХ
+        // уравнивает боксы на любой сетке — совпадение перестает зависеть от шрифта, кегля,
+        // веса и масштаба экрана. Стережет Tests/EditGeometry (настоящий шрифт, масштаб 2).
+        r["LineHeightBase"]  = WholeLineHeight(_baseBase  + Delta, FontWeight.Normal);
+        r["LineHeightLarge"] = WholeLineHeight(_baseLarge + Delta, ReadWeight("FontWeightBold", FontWeight.SemiBold));
     }
+
+    /// <summary>Высота строки шрифта приложения, округленная вверх до целого. Пустой текст у
+    /// TextLayout дает ровно одну строку естественной высоты. Без FontManager (ранний старт,
+    /// голый юнит-стенд) — NaN: LineHeight «не задан», поведение как без токена.</summary>
+    private static double WholeLineHeight(double fontSize, FontWeight weight)
+    {
+        try
+        {
+            var family = Application.Current!.TryFindResource("FontFamilyBase", out var f) && f is FontFamily ff
+                ? ff
+                : FontFamily.Default;
+            var layout = new Avalonia.Media.TextFormatting.TextLayout(
+                "", new Typeface(family, weight: weight), fontSize, null);
+            return Math.Ceiling(layout.Height);
+        }
+        catch { return double.NaN; }
+    }
+
+    private static FontWeight ReadWeight(string key, FontWeight fallback) =>
+        Application.Current!.TryFindResource(key, out var v) && v is FontWeight w ? w : fallback;
 
     private static double Read(string key, double fallback) =>
         Application.Current!.TryFindResource(key, out var v) && v is double d ? d : fallback;

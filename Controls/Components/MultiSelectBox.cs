@@ -40,7 +40,16 @@ public sealed class MultiSelectBox : Panel
     private readonly TextBlock _valueText;
     private readonly TextBlock _placeholder;
     private readonly Popup _popup;
+    private readonly Border _box;
     private TextBox? _search;
+
+    /// <summary>Отступ содержимого внутри бокса. В ячейке таблицы левый отступ обязан совпадать
+    /// с отступом надписей остальных колонок, на карточке записи — с отступом прочих значений,
+    /// иначе текст стоит не на одной вертикали с соседями.</summary>
+    public Thickness ContentPadding
+    {
+        set => _box.Padding = value;
+    }
 
     /// <summary>Поднимается при изменении набора выбранных опций (после чтения <see cref="Storage"/>).</summary>
     public event EventHandler? Changed;
@@ -84,9 +93,12 @@ public sealed class MultiSelectBox : Panel
         content.Children.Add(left);
         content.Children.Add(caret);
 
+        // Плоский режим: ни фона, ни рамки — их дает то, во что контрол встроен (карточка
+        // свойства или ячейка таблицы). Непрозрачный BrushBg рисовал бы белую плашку поверх
+        // подложки выделенной карточки и поверх заливки окрашенной ячейки.
         var box = new Border
         {
-            Background      = Brush(flat ? "BrushBg" : "BrushSecondaryBg", Colors.White),
+            Background      = flat ? Brushes.Transparent : Brush("BrushSecondaryBg", Colors.White),
             BorderBrush     = Brush("BrushSeparator", Colors.LightGray),
             BorderThickness = new Thickness(flat ? 0 : 1),
             CornerRadius    = Radius("RadiusBase", 6),
@@ -95,6 +107,7 @@ public sealed class MultiSelectBox : Panel
             Cursor          = new Cursor(StandardCursorType.Hand),
             Child           = content,
         };
+        _box = box;
 
         _popup = new Popup
         {

@@ -28,13 +28,10 @@ public partial class NavbarNotes : UserControl
     {
         InitializeComponent();
 
-        TitleDisplay.PointerPressed += (_, _) =>
+        TitleDisplay.PointerPressed += (_, e) =>
         {
             if (!TitleBox.IsEnabled) return;
-            TitleDisplay.IsVisible = false;
-            TitleBox.IsVisible     = true;
-            TitleBox.Focus();
-            TitleBox.SelectAll();
+            Behaviors.TitleEditing.Begin(TitleDisplay, TitleBox, e);
         };
 
         TitleBox.LostFocus += (_, _) => { CommitTitle(); ExitTitleEdit(); };

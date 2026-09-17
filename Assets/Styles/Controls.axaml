@@ -712,6 +712,17 @@
         <Setter Property="BorderThickness"          Value="0" />
         <Setter Property="Padding"                  Value="0" />
         <Setter Property="VerticalContentAlignment" Value="Center" />
+        <!-- Высота — ровно по тексту, как у надписи показа, которую поле подменяет по клику.
+             Со стандартом формы (30) поле было выше надписи, и каждый центрировался в шапке
+             по-своему: два округления раскладки вместо одного. На экране с масштабом 2 они
+             расходились на половину точки — заголовок дергался при входе в правку. -->
+        <Setter Property="MinHeight"                Value="0" />
+        <!-- ЦЕЛАЯ высота строки — та же, что у надписи показа (у нее LineHeightLarge атрибутом).
+             Естественная высота строки шрифта дробная, и TextBlock с TextBox округляют ее по
+             разным сеткам (целый DIP против 1/RenderScaling) — боксы выходили разной высоты, и
+             заголовок опускался на пиксель при входе в правку. Целый LineHeight обоим уравнивает
+             боксы на любой сетке. Токен пишет FontScale.Write, пересчитывается с дельтой шрифта. -->
+        <Setter Property="LineHeight"               Value="{DynamicResource LineHeightLarge}" />
     </Style>
 
     <Style Selector="TextBox.titleEditor /template/ Border#PART_BorderElement">
@@ -727,12 +738,15 @@
         <Setter Property="BorderThickness" Value="0" />
     </Style>
 
-    <!-- Watermark копирует размер и жирность с самого TextBox -->
+    <!-- Watermark копирует размер и жирность с самого TextBox. LineHeight — тоже: шаблон Fluent
+         пробрасывает его только в презентер текста, а водяной знак остается на естественной
+         дробной высоте и стоял бы на треть точки выше набранного текста. -->
     <Style Selector="TextBox.titleEditor /template/ TextBlock#PART_Watermark">
         <Setter Property="FontSize"          Value="{DynamicResource FontSizeLarge}" />
         <Setter Property="FontWeight"        Value="{StaticResource FontWeightBold}" />
         <Setter Property="Foreground"        Value="{StaticResource BrushSecondaryText}" />
         <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="LineHeight"        Value="{DynamicResource LineHeightLarge}" />
     </Style>
 
     <!-- ===== Многострочное поле с прокруткой (описание записи/задачи, журнал) ===== -->
@@ -1205,11 +1219,19 @@
 
     <!-- ===== Единый бокс полей даты и времени (DateField / TimeField / DateEditor) ===== -->
 
-    <!-- Внешний бокс: фон, рамка, скругление как у даты -->
+    <!-- Внешний бокс: фон, рамка, скругление как у даты.
+
+         Padding компенсирует прирост рамки в фокусе: Border сдвигает содержимое ровно на
+         свою толщину, поэтому в покое добавляем отступ в одну линию (BorderLine), а в
+         фокусе, где рамка становится двойной (BorderLineFocus), отступ обнуляем. Сумма
+         «рамка + отступ» одинакова в обоих состояниях, и текст при клике не смещается.
+         Отступ обязан быть тем же динамическим токеном, что и рамка: при зуме толщина
+         линии пересчитывается (LineMetrics), константа «1» с ней разъедется. -->
     <Style Selector="Border.timeField">
         <Setter Property="Background"      Value="{StaticResource BrushSecondaryBg}" />
         <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
         <Setter Property="BorderThickness" Value="{DynamicResource BorderLine}" />
+        <Setter Property="Padding"         Value="{DynamicResource BorderLine}" />
         <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
     </Style>
 
@@ -1224,6 +1246,8 @@
         <Setter Property="Background"      Value="{StaticResource BrushBg}" />
         <Setter Property="BorderBrush"     Value="{StaticResource BrushAccent}" />
         <Setter Property="BorderThickness" Value="{DynamicResource BorderLineFocus}" />
+        <!-- Рамка выросла на одну линию — ровно на нее уменьшаем отступ (см. базовый стиль). -->
+        <Setter Property="Padding"         Value="0" />
     </Style>
 
     <!-- Поле ввода внутри бокса: прозрачное, без рамки -->
@@ -1234,6 +1258,11 @@
         <Setter Property="Padding"                  Value="10,0" />
         <Setter Property="VerticalContentAlignment" Value="Center" />
         <Setter Property="VerticalAlignment"        Value="Stretch" />
+        <!-- Высоту задает бокс (34), а не стандарт формы: сбрасываем нижнюю границу базового
+             TextBox обратно в 0, как у propValue. Внутри бокса остается 34 − 2×(рамка+отступ),
+             и при зуме меньше 100% линия толще одного пикселя — с MinHeight=30 поле начало бы
+             переполнять бокс. -->
+        <Setter Property="MinHeight"                Value="0" />
         <!-- Однострочный ввод даты/времени: без вертикальной прокрутки, иначе при крупном
              шрифте текст переполняет поле и вылезает кнопка-стрелка скроллбара. -->
         <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Disabled" />

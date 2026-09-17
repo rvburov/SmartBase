@@ -64,14 +64,63 @@
              выделения ячейки, а та прямоугольная (садится на линии сетки): одно и то же место
              таблицы не должно выглядеть то квадратным, то круглым. Скругления остаются у тех же
              полей вне таблицы — в панели записи и в окнах. -->
+        <!-- Фон редактора — прозрачный по умолчанию и цвет ячейки у окрашенной (его ставит
+             ApplyEditorCellStyle прямо редактору). Серая плашка поля формы перекрывала бы и
+             цвет ячейки, и подсветку выделенной колонки/строки — ячейка на клике «выцветала».
+
+             Тема Fluent в состояниях :pointerover и :focus подменяет фон внутренней рамки
+             СВОЕЙ кистью, перебивая TemplateBinding, — поэтому во всех трех состояниях
+             возвращаем ее на фон самого редактора. Иначе фокус (а он в правке всегда) красил
+             бы ячейку белым. -->
+        <!-- СВОЕЙ рамки у редактора ячейки нет ни в одном состоянии. Тема Fluent рисует
+             сфокусированному полю синюю рамку в 2px прямо в шаблоне, перебивая BorderThickness
+             самого поля, — и она на линию сетки УЖЕ ячейки. Получались две разные синие рамки
+             вокруг одного места: наша (по границам ячейки) на выделении и темы (на пиксель
+             левее правого края) в правке, из-за чего квадрат на втором клике «съезжал».
+             Теперь рамка ровно одна — наша, из слоя выделения, и в правке она не гаснет.
+
+             MinHeight — ноль: стандарт поля формы (30) выше «компактной» строки таблицы (28),
+             и редактор распирал бы строку. Высоту задает ячейка. -->
         <Style Selector="DataGridCell TextBox">
-            <Setter Property="CornerRadius" Value="0" />
+            <Setter Property="CornerRadius"    Value="0" />
+            <Setter Property="Background"      Value="Transparent" />
+            <Setter Property="MinHeight"       Value="0" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="LineHeight"      Value="{DynamicResource LineHeightBase}" />
+        </Style>
+        <!-- ЦЕЛАЯ высота строки — одна на показ и правку. Естественная высота строки шрифта
+             дробная, и TextBlock с TextBox округляют ее по разным сеткам (целый DIP против
+             1/RenderScaling): боксы выходили разной высоты, каждый центрировался в ячейке
+             своим округлением, и текст опускался на пиксель при входе в правку. Целый
+             LineHeight обоим (токен пишет FontScale.Write) уравнивает боксы на любой сетке.
+             Селектор задевает ВСЕ надписи ячеек, включая водяной знак редактора, — это и
+             нужно: одна высота строки на всю таблицу. Стережет Tests/EditGeometry. -->
+        <Style Selector="DataGridCell TextBlock">
+            <Setter Property="LineHeight" Value="{DynamicResource LineHeightBase}" />
         </Style>
         <Style Selector="DataGridCell TextBox /template/ Border#PART_BorderElement">
-            <Setter Property="CornerRadius" Value="0" />
+            <Setter Property="CornerRadius"    Value="0" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Background"      Value="{Binding $parent[TextBox].Background}" />
+        </Style>
+        <Style Selector="DataGridCell TextBox:pointerover /template/ Border#PART_BorderElement">
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Background"      Value="{Binding $parent[TextBox].Background}" />
+        </Style>
+        <Style Selector="DataGridCell TextBox:focus /template/ Border#PART_BorderElement">
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Background"      Value="{Binding $parent[TextBox].Background}" />
         </Style>
         <Style Selector="DataGridCell ComboBox">
             <Setter Property="CornerRadius" Value="0" />
+            <Setter Property="Background"   Value="Transparent" />
+        </Style>
+        <!-- То же для списка: копия темы подменяет фон рамки по наведению и нажатию. -->
+        <Style Selector="DataGridCell ComboBox:pointerover /template/ Border#Background">
+            <Setter Property="Background" Value="{Binding $parent[ComboBox].Background}" />
+        </Style>
+        <Style Selector="DataGridCell ComboBox:pressed /template/ Border#Background">
+            <Setter Property="Background" Value="{Binding $parent[ComboBox].Background}" />
         </Style>
         <Style Selector="DataGridCell Border.timeField">
             <Setter Property="CornerRadius" Value="0" />

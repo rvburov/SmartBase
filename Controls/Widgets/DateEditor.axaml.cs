@@ -159,11 +159,23 @@ public partial class DateEditor : UserControl
             Box.Classes.Remove("timeField");
             Box.Background      = Avalonia.Media.Brushes.Transparent;
             Box.BorderThickness = default;
+            Box.Padding         = default;
+            // Высота — от того, во что встроен редактор (строка карточки или ячейка таблицы),
+            // а не собственные 34: иначе карточка «Дата» на 2px выше остальных и сдвигает вниз
+            // все, что под ней. Та же строка есть в FileEditor.Flat.
+            Box.Height          = double.NaN;
             Input.Padding       = default;
             // Поле растянуто на всю карточку — выпадашку привязываем к ПРАВОМУ краю (к иконке
             // календаря), чтобы она появлялась рядом с кнопкой даты, а не у левого края.
             Pop.Placement = Avalonia.Controls.PlacementMode.BottomEdgeAlignedRight;
         }
+    }
+
+    /// <summary>Левый отступ значения. В ячейке таблицы = 6px, чтобы дата выравнивалась с
+    /// текстом остальных колонок; на карточке записи — 0 (отступ задает карточка).</summary>
+    public double ContentLeftPadding
+    {
+        set => Input.Padding = new Avalonia.Thickness(value, 0, 0, 0);
     }
 
     // ── Внутреннее ────────────────────────────────────────────────────────────
