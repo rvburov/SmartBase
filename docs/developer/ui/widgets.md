@@ -117,8 +117,19 @@ attached-свойствами, которые навешивают поведе�
 | [LineMetrics](../../../Controls/Behaviors/LineMetrics.cs) | `Window` (`IsManaged`, `FollowsAppZoom`), `Visual` (`Aliased`) | единая толщина линий ~1px при любом зуме и DPI — токены в `Resources` окна |
 | [WindowZoom](../../../Controls/Behaviors/WindowZoom.cs) | `Window` (`Enabled`) | зум приложения для отдельных окон: диалоги, окна расширений, сплэш |
 | [ScrollBarLink](../../../Controls/Behaviors/ScrollBarLink.cs) | `ScrollBar` (`Source`) | связывает вынесенную наружу полосу прокрутки со `ScrollViewer` — полоса начинается на уровне закрепленной шапки |
+| [TitleEditing](../../../Controls/Behaviors/TitleEditing.cs) | пара `TextBlock` показа + `TextBox` правки | вход в правку названия: каретка встает в точку клика, а не `SelectAll` |
 
 Подробности по каждому — в [theming.md](theming.md) (линии, зум, скроллбар).
+
+## Пара «показ + правка» — по стандарту
+
+Виджет, где одно значение ПОКАЗЫВАЕТ `TextBlock`, а ПРАВИТ `TextBox` (название в навбаре,
+ячейка таблицы, значение карточки), собирается строго по чек-листу из
+[theming.md → «Текст не двигается при смене состояния»](theming.md#текст-не-двигается-при-смене-состояния-стандарт):
+общий целый `LineHeight` из токена, один боковой отступ на оба состояния, `MinHeight=0`,
+каретка в точку клика, одна рамка на оба состояния, прозрачный фон редактора. Иначе текст
+дергается при клике — на Retina это заметно, на обычном экране нет. Проверяет стенд
+[Tests/EditGeometry](../../../Tests/EditGeometry/Program.cs).
 
 ## Ловушка: `TextBox.TextChanged` отложенный
 
