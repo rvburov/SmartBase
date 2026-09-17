@@ -14,15 +14,12 @@ public enum PasteSkipReason
     NotInOptions,
     /// <summary>Блок вышел за последнюю строку или последний столбец таблицы.</summary>
     OutsideTable,
-    /// <summary>Пустое значение пришлось на «Название»: запись без названия теряется в списках и
-    /// связях, поэтому стереть его вставкой нельзя — как и очисткой.</summary>
-    EmptyTitle,
 }
 
 /// <summary>Столбец глазами вставки: все, что нужно решить про одну ячейку, без ViewModels.
 /// <paramref name="DecimalSeparator"/> — канон хранения числа у ЭТОГО столбца: значение
 /// приводится к нему сразу, иначе в колонке смешались бы «42.5» и «42,5».
-/// <paramref name="IsTitle"/> — системный столбец «Название»: у него свое правило пустого значения.
+/// <paramref name="IsTitle"/> — системный столбец «Название»: пустое значение в нем — «Без названия».
 /// <paramref name="Options"/> — допустимые значения закрытого списка; для «Пользователя» это
 /// допущенные пользователи базы (без списка «Пользователь» принимается как текст).
 /// <paramref name="NumberFormat"/> — формат показа числа: по нему разбирается скопированное из
@@ -187,11 +184,9 @@ public static class TablePastePlanner
 
         var source = text ?? "";
 
-        // «Название» пустым не вставляется — по той же причине, по какой его не стирает очистка:
-        // запись без названия превращается в «Без названия» и теряется в списках и связях.
-        // Непустое название пишется как есть: пробелы в тексте — тоже данные.
-        if (column.IsTitle)
-            return string.IsNullOrWhiteSpace(source) ? null : source;
+        // Пустое «Название» ложится как «Без названия» — так же его сохраняют очистка и любое поле
+        // правки названия. Непустое пишется как есть: пробелы в тексте — тоже данные.
+        if (column.IsTitle) return TitleText.Stored(source);
 
         // Связь — названиями связанных записей, как их показывает ячейка. Найти записи по ним может
         // только база, поэтому здесь текст лишь очищается от краевых пробелов; пустой снимает связи.
@@ -253,7 +248,6 @@ public static class TablePastePlanner
         if (FieldTypeInfo.IsRelation(column.FieldType) || column.FieldType == "file")
             return PasteSkipReason.NotTextColumn;
         if (column.IsReadOnly) return PasteSkipReason.ComputedColumn;
-        if (column.IsTitle) return PasteSkipReason.EmptyTitle;
         if (column.FieldType is "select" or "status" or "multiselect" or "user") return PasteSkipReason.NotInOptions;
         return PasteSkipReason.WrongFormat;
     }

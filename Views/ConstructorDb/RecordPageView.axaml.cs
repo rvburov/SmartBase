@@ -96,6 +96,25 @@ public partial class RecordPageView : UserControl
     /// <summary>Есть ли куда двигать свойство: у крайнего пункт меню не показываем.</summary>
     public Func<int, bool, bool>? CanMovePropertyProvider { get; set; }
 
+    // Карточка системного «Название» — меню как у его колонки в таблице: без дубля и удаления,
+    // а «Изменить» переименовывает подпись колонки. «Создать новое свойство» и «Отображение»
+    // идут общими событиями (ключ колонки названия — TableRowVm.TitleKey).
+
+    /// <summary>«Изменить» у «Названия» — переименовать подпись колонки.</summary>
+    public event EventHandler? TitleRenameRequested;
+
+    /// <summary>«Сдвинуть вверх/вниз» у «Названия» (true — вверх).</summary>
+    public event EventHandler<bool>? TitleMoveRequested;
+
+    /// <summary>«Изменить цвет» у «Названия».</summary>
+    public event EventHandler<(StyleAspect Aspect, string? Hex)>? TitleColorRequested;
+
+    /// <summary>Текущий цвет колонки «Название».</summary>
+    public Func<RowStyle>? TitleStyleProvider { get; set; }
+
+    /// <summary>Есть ли куда двигать «Название» (true — вверх).</summary>
+    public Func<bool, bool>? CanMoveTitleProvider { get; set; }
+
     /// <summary>Клик по «Добавить описание» в крошке нижнего блока: завести полю коллекции
     /// роль «Описание». Тот же путь наверх, что и у «Добавить свойство» — контроллер создает
     /// поле, добавляет колонку в таблицу и шлет FieldsChanged, по которому панель перечитывается
@@ -139,7 +158,10 @@ public partial class RecordPageView : UserControl
     // Не-текстовые карточки нижний блок не трогают.
     private sealed class BottomTextTarget
     {
-        public int?            FieldId;          // id текстового поля-цели
+        public int?            FieldId;          // id текстового поля-цели (у «Названия» — null)
+        // Системное «Название»: одна строка (Enter не переносит), в «Просмотре» простой текст,
+        // сохранение и синхронизация с шапкой — ApplyTitleEdit.
+        public bool            IsTitle;
         public string          Name = "";
         public string          IconKey = "IconFieldText";   // иконка типа (для заголовка-крошки)
         public Func<string>    Read  = () => "";
@@ -154,6 +176,9 @@ public partial class RecordPageView : UserControl
     // Файл-редакторы по FieldId — чтобы обновить показ авто-file поля сразу при правке столбца-источника.
     private readonly Dictionary<int, Controls.Widgets.FileEditor> _fileEditors = new();
     private BottomTextTarget? _descTarget;      // цель по умолчанию — поле с ролью «Описание»
+    private BottomTextTarget? _titleTarget;     // карточка «Название» (есть у каждой записи)
+    private bool              _bottomIsTitle;   // снизу открыто «Название» — для восстановления
+    private Border?           _titleCard;
     private bool _focusBottomAfterReload;       // описание только что создано — поставить каретку в редактор
     private bool _suppressBottomSync;            // гасит обратную синхронизацию инлайн↔нижний при программной установке
 
@@ -181,18 +206,12 @@ public partial class RecordPageView : UserControl
         // Живая запись имени по символу — как ячейка таблицы: правка имени в навбаре панели
         // сразу видна в строке таблицы (RecordChanged → RefreshRecordRow). NavbarPage сам гасит
         // событие при программной установке имени (SetTitle), поэтому здесь — только правки пользователя.
-        HeaderBar.TitleChanged += (_, text) =>
-        {
-            if (_vm is null) return;
-            var entered = text.Trim();
-            _vm.Title = string.IsNullOrEmpty(entered) ? "Без названия" : entered;
-            ApplyFileSideEffects(_vm.SaveTitle());   // «Название» — источник авто-file: обновить файл-ячейки
-            NotifyRecordChanged();
-        };
+        HeaderBar.TitleChanged += (_, text) => ApplyTitleEdit(text, TitleSource.Header);
 
-        // Живая запись активного текстового свойства по символу. Цель (поле «Описание» либо
-        // другое текстовое поле) задает _bottomTarget. Guard _suppressAutoSave — для служебной
-        // установки текста. Параллельно синхронизируем инлайн-поле карточки той же цели.
+        // Живая запись активного текстового свойства по символу. Цель (поле «Описание», другое
+        // текстовое поле или «Название») задает _bottomTarget. Guard _suppressAutoSave — для
+        // служебной установки текста. Параллельно синхронизируем инлайн-поле карточки той же цели
+        // («Название» синхронизирует его само — сохраненным значением, см. ApplyTitleEdit).
         MarkdownEditor.TextChanged += (_, _) =>
         {
             if (_vm is null || _suppressAutoSave || _bottomTarget is null) return;
@@ -200,7 +219,7 @@ public partial class RecordPageView : UserControl
             if (text == _bottomTarget.Read()) return;   // отложенное TextChanged от установки текста — не правка
             _bottomTarget.Write(text);   // сохраняет значение и уведомляет таблицу
 
-            if (_bottomTarget.Inline is { } inline) ApplyInlineText(inline, text);
+            if (!_bottomTarget.IsTitle && _bottomTarget.Inline is { } inline) ApplyInlineText(inline, text);
         };
 
         HeaderBar.CollectionPanelToggled += (_, open) => CollectionPanelToggled?.Invoke(this, open);
@@ -225,7 +244,7 @@ public partial class RecordPageView : UserControl
         _vm = new RecordPageViewModel(repository, recordId, collectionId);
         DataContext = _vm;
 
-        HeaderBar.SetTitle(_vm.Title == "Без названия" ? "" : _vm.Title);
+        HeaderBar.SetTitle(_vm.EditableTitle);
 
         // Начальный вид описания — из «Настройки → Конструктор базы данных»; переключатель
         // внизу панели работает как и раньше, настройка задает только состояние при открытии.
@@ -239,6 +258,7 @@ public partial class RecordPageView : UserControl
         // снизу пусто, а в крошке снова видна ссылка + «Добавить описание» (выбор другого
         // текстового свойства ее прячет, но живет он только до следующего открытия записи).
         _bottomFieldId = null;
+        _bottomIsTitle = false;
         RestoreBottom();
     }
 
@@ -263,7 +283,7 @@ public partial class RecordPageView : UserControl
 
         // Заголовок — только если он не в режиме редактирования (SetTitle сам не дергает сохранение).
         if (!HeaderBar.IsTitleEditing)
-            HeaderBar.SetTitle(_vm.Title == "Без названия" ? "" : _vm.Title);
+            HeaderBar.SetTitle(_vm.EditableTitle);
 
         BuildProperties();
         ApplyPropsHeight();
@@ -289,7 +309,10 @@ public partial class RecordPageView : UserControl
         _selectedCard = null;
         _bottomTarget = null;
         _bottomFieldId = null;
+        _bottomIsTitle = false;
         _descTarget = null;
+        _titleTarget = null;
+        _titleCard = null;
         _fieldTargets.Clear();
         _fileEditors.Clear();
     }
@@ -297,14 +320,33 @@ public partial class RecordPageView : UserControl
     private void UpdatePreviewVisibility()
     {
         var preview = FooterBar.IsPreview;
+        var plain   = _bottomTarget?.IsTitle == true;
         MarkdownPreviewBox.IsVisible = preview;
         MarkdownEditor.IsVisible     = !preview;
+        MarkdownPreview.IsVisible    = !plain;
+        PlainPreview.IsVisible       = plain;
 
-        if (preview)
+        if (preview && plain)
+        {
+            PlainPreview.LineHeight = (double)this.FindResource("FontSizeBase")! * 1.35;   // как абзац Markdown
+            PlainPreview.Text       = MarkdownEditor.Text ?? "";
+        }
+        else if (preview)
             MarkdownPreview.Markdown = MarkdownEditor.Text ?? "";
 
         UpdateBottomScrollBar();
     }
+
+    // Режим редактора под цель: «Название» — одна строка (Enter не переносит) и свой
+    // плейсхолдер, текстовое свойство — Markdown с переносами.
+    private void ApplyBottomMode(BottomTextTarget target)
+    {
+        _bottomIsTitle               = target.IsTitle;
+        MarkdownEditor.AcceptsReturn = !target.IsTitle;
+        MarkdownEditor.Watermark     = target.IsTitle ? PlaceholderTitle : "Пишите в Markdown...";
+    }
+
+    private const string PlaceholderTitle = TitleText.Placeholder;
 
     /// <summary>
     /// Заморозить (и отпустить) ширину нижнего блока — на время перетаскивания ручки ширины
@@ -325,6 +367,7 @@ public partial class RecordPageView : UserControl
     {
         Freeze(MarkdownEditor);
         Freeze(MarkdownPreview);
+        Freeze(PlainPreview);
 
         void Freeze(Control control) =>
             control.Width = freeze && control.Bounds.Width > 0 ? control.Bounds.Width : double.NaN;
@@ -456,18 +499,22 @@ public partial class RecordPageView : UserControl
         _cardsByField.Clear();
         _selectedFieldIds.Clear();
         _descTarget   = null;
+        _titleTarget  = null;
+        _titleCard    = null;
         _bottomTarget = null;
         _selectedCard = null;
         _userOptions  = null;   // состав читаем заново на каждую сборку панели, но ОДИН раз
         if (_vm is null) return;
 
         // Порядок строго как в таблице: VM уже отсортировала элементы по эффективной позиции
-        // колонки. «Описание» — обычное поле и идет в этом же списке, отдельной карточки у него нет.
+        // колонки. «Описание» — обычное поле и идет в этом же списке, отдельной карточки у него
+        // нет; «Название» — системная колонка, у него своя карточка на ее месте.
         foreach (var item in _vm.OrderedItems)
         {
             switch (item)
             {
                 case FieldItem fi: PropertiesHost.Children.Add(BuildPropertyCard(fi.Row)); break;
+                case TitleItem:    PropertiesHost.Children.Add(BuildTitleCard());          break;
             }
         }
 
@@ -572,14 +619,19 @@ public partial class RecordPageView : UserControl
         // Туннелем (до детей) — выделяем карточку и (для текстовых) открываем нижний блок;
         // поле ввода при этом все равно получает клик и фокус (событие не помечаем обработанным).
         //
-        // Зоны карточки: ЗНАЧЕНИЕ справа — правка (и открытие текстового свойства снизу), она
-        // же сбрасывает набор до одного, как клик по ячейке снимает выделение колонок; РУЧКА ⋮
-        // не отвечает вовсе (она тянет ширину); ВСЕ ОСТАЛЬНОЕ — название, иконка типа и пустое
-        // место карточки — жест ВЫДЕЛЕНИЯ, с Shift он набирает несколько свойств.
+        // Зоны карточки: ЗНАЧЕНИЕ справа — правка, она же сбрасывает набор до одного, как клик по
+        // ячейке снимает выделение колонок; РУЧКА ⋮ не отвечает вовсе (она тянет ширину); ВСЕ
+        // ОСТАЛЬНОЕ — название, иконка типа и пустое место карточки — жест ВЫДЕЛЕНИЯ, с Shift он
+        // набирает несколько свойств.
         //
         // Именно «все остальное», а не «попал в подпись»: подпись занимает лишь часть колонки
         // названий, и клик правее текста приходил в саму карточку — набор сбрасывался, хотя
         // человек целился в то же свойство. Так выделение не зависит от длины названия.
+        //
+        // Текстовое свойство открывается снизу обычным кликом В ЛЮБУЮ зону, кроме ручки: целятся
+        // в карточку, а не в ее значение. Клик мимо значения каретку в текст не ставит — фокус на
+        // карточке, и клавиши работают по выделению. Shift нижний блок не трогает: он собирает
+        // набор для общих действий, а снизу остается свойство, открытое последним обычным кликом.
         card.AddHandler(InputElement.PointerPressedEvent, (_, e) =>
         {
             // Правый клик выделение НЕ трогает: он открывает меню, а меню работает по набору
@@ -589,9 +641,15 @@ public partial class RecordPageView : UserControl
             if (IsInside(e.Source, gripArea)) return;
 
             if (input is not null && IsInside(e.Source, input))
+            {
                 SelectCard(card, target);
-            else if (row.Field.Id is int fid)
-                SelectProperty(fid, e.KeyModifiers.HasFlag(KeyModifiers.Shift));
+                return;
+            }
+            if (row.Field.Id is not int fid) return;
+
+            var shift = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
+            SelectProperty(fid, shift);
+            if (!shift && target is not null) OpenBottom(target);
         }, RoutingStrategies.Tunnel);
 
         if (row.Field.Id is int id)
@@ -611,6 +669,110 @@ public partial class RecordPageView : UserControl
         }
         return card;
     }
+
+    // Карточка системного «Название» — как у текстового свойства: в карточке первая строка, полный
+    // текст правится в нижнем блоке (длинное название в шапке править неудобно). Правка в любом из
+    // трех мест — шапке, карточке, нижнем блоке — сохраняется по символу и сразу видна в двух
+    // других и в строке таблицы (ApplyTitleEdit). Отличия от текстового свойства: одна строка
+    // (Enter в нижнем блоке не переносит), в «Просмотре» простой текст, меню — как у колонки
+    // «Название» в таблице, выделение одиночное (набор свойств для дубля и удаления ее не берет).
+    private Border BuildTitleCard()
+    {
+        var label = _vm?.TitleLabel ?? PlaceholderTitle;
+        var tb    = FlatValueBox(watermark: PlaceholderTitle);
+        ApplyInlineText(tb, _vm?.EditableTitle ?? "");
+
+        var card = BuildCardShell("proprow", BuildStrokeIcon("IconFieldText", selectable: true), label,
+                                  selectableName: true, tb, out var gripArea);
+
+        var target = new BottomTextTarget
+        {
+            IsTitle = true,
+            Name    = label,
+            Read    = () => _vm?.EditableTitle ?? "",
+            Write   = t => ApplyTitleEdit(t, TitleSource.Bottom),
+            Inline  = tb,
+            Card    = card,
+        };
+        _titleTarget = target;
+        _titleCard   = card;
+
+        tb.TextChanged += (_, _) =>
+        {
+            // Многострочное название в карточке усечено до первой строки и не правится (см.
+            // ApplyInlineText); установка текста кодом приходит сюда отложенно — сверка с
+            // сохраненным значением отличает ее от правки.
+            if (_suppressBottomSync || tb.IsReadOnly) return;
+            var text = tb.Text ?? "";
+            if (text == target.Read()) return;
+            ApplyTitleEdit(text, TitleSource.Inline);
+        };
+
+        // Зоны — как у карточки свойства: ручка ⋮ молчит, клик в любое другое место открывает
+        // название снизу; мимо значения — без каретки в тексте, фокус на карточке. Shift здесь
+        // работает как обычный клик: «Название» в набор не входит (его не удалить и не дублировать).
+        card.AddHandler(InputElement.PointerPressedEvent, (_, e) =>
+        {
+            if (!e.GetCurrentPoint(card).Properties.IsLeftButtonPressed) return;
+            if (IsInside(e.Source, gripArea)) return;
+
+            if (IsInside(e.Source, tb))
+            {
+                SelectCard(card, target);
+                return;
+            }
+            SelectTitle();
+            OpenBottom(target);
+        }, RoutingStrategies.Tunnel);
+
+        card.AddHandler(InputElement.PointerPressedEvent, (_, e) =>
+        {
+            if (e.GetCurrentPoint(card).Properties.IsRightButtonPressed)
+                card.ContextMenu = BuildTitleMenu();
+        }, RoutingStrategies.Tunnel);
+
+        return card;
+    }
+
+    private enum TitleSource { Header, Inline, Bottom }
+
+    // Сохранить набранное название и показать сохраненное в остальных местах. Источник правки не
+    // трогаем: человек в нем печатает, и крайний пробел законно живет там, пока слово не допечатано
+    // (сохраняется название без него — правило шапки, RecordPageViewModel.SaveTitleInput).
+    private void ApplyTitleEdit(string text, TitleSource source)
+    {
+        if (_vm is null) return;
+        ApplyFileSideEffects(_vm.SaveTitleInput(text));   // «Название» — источник авто-file: обновить файл-ячейки
+        NotifyRecordChanged();
+
+        var shown = _vm.EditableTitle;
+        if (source != TitleSource.Header) HeaderBar.SetTitle(shown);
+        if (source != TitleSource.Inline && _titleTarget?.Inline is { } inline) ApplyInlineText(inline, shown);
+        if (source != TitleSource.Bottom && _bottomTarget is { IsTitle: true } && !MarkdownEditor.IsFocused)
+            SetBottomText(shown);
+    }
+
+    // Служебная установка текста нижнего блока (без записи обратно в цель).
+    private void SetBottomText(string text)
+    {
+        if ((MarkdownEditor.Text ?? "") == text) return;
+        _suppressAutoSave = true;
+        MarkdownEditor.Text = text;
+        _suppressAutoSave = false;
+        UpdatePreviewVisibility();
+    }
+
+    // Клик по подписи «Названия»: выделить его карточку. Фокус — на карточку, как у свойства:
+    // иначе горячие клавиши меню (переименовать, создать свойство, сдвиг) ушли бы в поле ввода.
+    private void SelectTitle()
+    {
+        if (_titleCard is null) return;
+        HighlightCard(_titleCard);
+        _titleCard.Focusable = true;
+        _titleCard.Focus();
+    }
+
+    private bool TitleSelected => _titleCard is not null && ReferenceEquals(_selectedCard, _titleCard);
 
     /// <summary>Клик пришелся в этот элемент или внутрь него.</summary>
     private static bool IsInside(object? source, Control area) =>
@@ -665,6 +827,8 @@ public partial class RecordPageView : UserControl
     // читались бы как поломка.
     private void ApplyPropertySelection()
     {
+        // Одиночная подсветка карточки без поля («Название») уступает набору свойств.
+        _selectedCard?.Classes.Remove("selected");
         _selectedCard = null;
         foreach (var (id, card) in _cardsByField)
             card.Classes.Set("selected", _selectedFieldIds.Contains(id));
@@ -683,6 +847,12 @@ public partial class RecordPageView : UserControl
     private void OnPanelKeyDown(object? sender, KeyEventArgs e)
     {
         if (e.Source is TextBox || (e.Source is Visual v && v.FindAncestorOfType<TextBox>() is not null)) return;
+
+        if (TitleSelected)
+        {
+            OnTitleKeyDown(e);
+            return;
+        }
 
         // Создание свойства цели не требует — остальные пункты меню работают по выделению.
         if (_selectedFieldIds.Count == 0) return;
@@ -726,6 +896,35 @@ public partial class RecordPageView : UserControl
             && (CanMovePropertyProvider?.Invoke(fieldId, up) ?? false))
         {
             PropertyMoveRequested?.Invoke(this, (fieldId, up));
+            e.Handled = true;
+        }
+    }
+
+    // Клавиши выделенного «Названия» — те же пункты, что в его меню. Удаления и дубля у него нет,
+    // поэтому их клавиши молчат.
+    private void OnTitleKeyDown(KeyEventArgs e)
+    {
+        if (ShortcutSettings.Matches("record.createProperty", e))
+        {
+            PermissionNotice.Run(this, Can(PermAction.CreateField), PermAction.CreateField,
+                () => PropertyCreateAfterRequested?.Invoke(this, TableRowVm.TitleKey));
+            e.Handled = true;
+            return;
+        }
+
+        if (ShortcutSettings.Matches("record.editProperty", e))
+        {
+            PermissionNotice.Run(this, Can(PermAction.EditField), PermAction.EditField,
+                () => TitleRenameRequested?.Invoke(this, EventArgs.Empty));
+            e.Handled = true;
+            return;
+        }
+
+        var up = ShortcutSettings.Matches("record.movePropertyUp", e);
+        if ((up || ShortcutSettings.Matches("record.movePropertyDown", e))
+            && (CanMoveTitleProvider?.Invoke(up) ?? false))
+        {
+            TitleMoveRequested?.Invoke(this, up);
             e.Handled = true;
         }
     }
@@ -817,7 +1016,13 @@ public partial class RecordPageView : UserControl
         miDisplay.Click += (_, _) => PropertyDisplayRequested?.Invoke(this, EventArgs.Empty);
         menu.Items.Add(miDisplay);
 
-        AddColorItems(menu, fieldId);
+        AddColorItems(menu,
+            () => PropertyStyleProvider?.Invoke(fieldId) ?? RowStyle.None,
+            () =>
+            {
+                var ids = TargetFieldIds(fieldId);
+                return (aspect, hex) => PropertyColorRequested?.Invoke(this, (ids, aspect, hex));
+            });
 
         // «Файл» с авто-привязкой: пересканировать папку и пересобрать значения — файлы на
         // диске могли поменяться. Пункт есть только у таких полей, как и в таблице.
@@ -829,7 +1034,9 @@ public partial class RecordPageView : UserControl
             menu.Items.Add(miRefresh);
         }
 
-        AddMoveItems(menu, fieldId);
+        AddMoveItems(menu,
+            up => CanMovePropertyProvider?.Invoke(fieldId, up) ?? false,
+            up => PropertyMoveRequested?.Invoke(this, (fieldId, up)));
 
         menu.Items.Add(new Separator());
 
@@ -845,10 +1052,53 @@ public partial class RecordPageView : UserControl
         return menu;
     }
 
+    // Меню карточки «Название» — как у его колонки в таблице (BuildSystemHeaderContextMenu):
+    // Изменить (подпись колонки) · Создать новое свойство · Отображение · Изменить цвет · сдвиг.
+    // Дублировать и удалить системное название нельзя — этих пунктов нет вовсе.
+    private ContextMenu BuildTitleMenu()
+    {
+        var menu = new ContextMenu();
+
+        menu.Items.Add(new MenuItem
+        {
+            Header    = Controls.Components.MenuIcons.PropertyMenuHeader(_vm?.TitleLabel ?? PlaceholderTitle, "text"),
+            IsEnabled = false,
+            Focusable = false,
+        });
+        menu.Items.Add(new Separator());
+
+        var miEdit = new MenuItem { Header = Controls.Components.MenuIcons.EditHeader() }
+            .WithGesture("record.editProperty", this);
+        Guarded(miEdit, PermAction.EditField, () => TitleRenameRequested?.Invoke(this, EventArgs.Empty));
+        menu.Items.Add(miEdit);
+
+        var miCreate = new MenuItem { Header = Controls.Components.MenuIcons.CreatePropertyHeader() }
+            .WithGesture("record.createProperty", this);
+        Guarded(miCreate, PermAction.CreateField,
+                () => PropertyCreateAfterRequested?.Invoke(this, TableRowVm.TitleKey));
+        menu.Items.Add(miCreate);
+
+        var miDisplay = new MenuItem { Header = Controls.Components.MenuIcons.DisplayHeader() };
+        miDisplay.Click += (_, _) => PropertyDisplayRequested?.Invoke(this, EventArgs.Empty);
+        menu.Items.Add(miDisplay);
+
+        AddColorItems(menu,
+            () => TitleStyleProvider?.Invoke() ?? RowStyle.None,
+            () => (aspect, hex) => TitleColorRequested?.Invoke(this, (aspect, hex)));
+
+        AddMoveItems(menu,
+            up => CanMoveTitleProvider?.Invoke(up) ?? false,
+            up => TitleMoveRequested?.Invoke(this, up));
+
+        return menu;
+    }
+
     // Цвет свойства — тот же аспект column_meta, что видимость и подпись, поэтому право как
-    // у правки свойства. Состав пересчитывается в Opening: и отметка текущего цвета, и НАБОР
-    // свойств — выделение к моменту клика могло смениться.
-    private void AddColorItems(ContextMenu menu, int fieldId)
+    // у правки свойства. Состав пересчитывается в Opening: и отметка текущего цвета (current),
+    // и применение (makeApply) — у свойств оно берет НАБОР, а выделение к моменту клика могло
+    // смениться.
+    private void AddColorItems(ContextMenu menu, Func<RowStyle> current,
+                               Func<Action<StyleAspect, string?>> makeApply)
     {
         var host = new MenuItem { Header = Controls.Components.MenuIcons.ColorHeader() };
         Controls.Components.MenuIcons.FixSubmenuGap(host);
@@ -857,12 +1107,12 @@ public partial class RecordPageView : UserControl
         menu.Opening += (_, _) =>
         {
             host.Items.Clear();
-            var ids = TargetFieldIds(fieldId);
-            var cur = PropertyStyleProvider?.Invoke(fieldId) ?? RowStyle.None;
+            var apply = makeApply();
+            var cur   = current();
             host.Items.Add(Controls.Components.ColorMenu.Build("Фон колонки", cur.Bg,
-                hex => PropertyColorRequested?.Invoke(this, (ids, StyleAspect.Background, hex))));
+                hex => apply(StyleAspect.Background, hex)));
             host.Items.Add(Controls.Components.ColorMenu.Build("Цвет текста колонки", cur.Fg,
-                hex => PropertyColorRequested?.Invoke(this, (ids, StyleAspect.Text, hex))));
+                hex => apply(StyleAspect.Text, hex)));
         };
 
         menu.Items.Add(host);
@@ -871,20 +1121,20 @@ public partial class RecordPageView : UserControl
     // «Сдвинуть вверх/вниз» с разделителем перед ними; неприменимое направление (крайнее
     // свойство) скрываем. Порядок свойств в панели = порядок колонок, поэтому сдвиг виден и
     // в таблице. Доступность пересчитываем в Opening: порядок мог смениться.
-    private void AddMoveItems(ContextMenu menu, int fieldId)
+    private void AddMoveItems(ContextMenu menu, Func<bool, bool> canMove, Action<bool> move)
     {
         var separator = new Separator();
         var miUp   = new MenuItem { Header = Controls.Components.MenuIcons.MoveUpHeader() }
             .WithGesture("record.movePropertyUp", this);
         var miDown = new MenuItem { Header = Controls.Components.MenuIcons.MoveDownHeader() }
             .WithGesture("record.movePropertyDown", this);
-        miUp.Click   += (_, _) => PropertyMoveRequested?.Invoke(this, (fieldId, true));
-        miDown.Click += (_, _) => PropertyMoveRequested?.Invoke(this, (fieldId, false));
+        miUp.Click   += (_, _) => move(true);
+        miDown.Click += (_, _) => move(false);
 
         menu.Opening += (_, _) =>
         {
-            var up   = CanMovePropertyProvider?.Invoke(fieldId, true)  ?? false;
-            var down = CanMovePropertyProvider?.Invoke(fieldId, false) ?? false;
+            var up   = canMove(true);
+            var down = canMove(false);
             separator.IsVisible = up || down;
             miUp.IsVisible      = up;
             miDown.IsVisible    = down;
@@ -927,6 +1177,7 @@ public partial class RecordPageView : UserControl
     {
         _bottomTarget  = target;
         _bottomFieldId = target.FieldId;
+        ApplyBottomMode(target);
         UpdateBottomHeader(target);
 
         _suppressAutoSave = true;
@@ -984,18 +1235,23 @@ public partial class RecordPageView : UserControl
         return link;
     }
 
-    // Вернуть нижний блок на ранее открытую цель (по id) после перестроения списка; если ее
-    // больше нет — на поле «Описание». Текст не перечитываем, пока пользователь печатает в редакторе.
+    // Вернуть нижний блок на ранее открытую цель («Название» или поле по id) после перестроения
+    // списка; если ее больше нет — на поле «Описание». Текст не перечитываем, пока пользователь
+    // печатает в редакторе.
     private void RestoreBottom()
     {
-        var target = _bottomFieldId is int id && _fieldTargets.TryGetValue(id, out var t)
-            ? t : _descTarget;
+        var target = _bottomIsTitle ? _titleTarget
+                   : _bottomFieldId is int id && _fieldTargets.TryGetValue(id, out var t) ? t
+                   : _descTarget;
         if (target is null)
         {
             // Ни описания, ни другого текстового свойства — снизу пусто (редактор чистим, чтобы
             // не показывать текст прошлой записи), в крошке остается «Добавить описание».
             _bottomTarget  = null;
             _bottomFieldId = null;
+            _bottomIsTitle = false;
+            MarkdownEditor.AcceptsReturn = true;
+            MarkdownEditor.Watermark     = "Пишите в Markdown...";
             UpdateBottomHeader(null);
             _suppressAutoSave = true;
             MarkdownEditor.Text = "";
@@ -1006,6 +1262,7 @@ public partial class RecordPageView : UserControl
 
         _bottomTarget  = target;
         _bottomFieldId = target.FieldId;
+        ApplyBottomMode(target);
         UpdateBottomHeader(target);
 
         if (!MarkdownEditor.IsFocused)

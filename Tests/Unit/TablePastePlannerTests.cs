@@ -124,18 +124,19 @@ public sealed class TablePastePlannerTests
         Assert.Equal("", Assert.Single(plan.Cells).StorageValue);
     }
 
-    /// <summary>«Название» пустым не вставляется — как и очистка его не стирает: запись без
-    /// названия теряется в списках и связях. Остальные значения того же блока ложатся.</summary>
+    /// <summary>Пустое «Название» ложится как «Без названия» — так же его сохраняют очистка и поля
+    /// правки названия. Остальные значения того же блока ложатся как обычно.</summary>
     [Theory]
     [InlineData("")]
     [InlineData("   ")]
-    public void Empty_value_does_not_erase_the_title(string text)
+    public void Empty_title_is_pasted_as_placeholder(string text)
     {
         var plan = TablePastePlanner.Plan(Values([text, "хвост"]), 0, 0, [Title, Text], rowCount: 1);
 
-        var cell = Assert.Single(plan.Cells);
-        Assert.Equal("10", cell.ColumnKey);
-        Assert.Equal(1, plan.Skipped[PasteSkipReason.EmptyTitle]);
+        Assert.Equal(2, plan.Cells.Count);
+        Assert.Equal(TitleText.Placeholder, plan.Cells.Single(c => c.ColumnKey == TitleKey).StorageValue);
+        Assert.Equal("хвост",               plan.Cells.Single(c => c.ColumnKey == "10").StorageValue);
+        Assert.Equal(0, plan.SkippedCount);
     }
 
     /// <summary>Пробелы по краям текста — часть значения: срезать их молча значит портить данные.</summary>

@@ -155,20 +155,10 @@ public partial class TableView
 
         if (await SelectedCellsAsync() is not { } cells) return;
 
-        // «Название» очистка не трогает: запись без названия превращается в «Без названия» и
-        // теряется в списках, боковой панели и связях. Стереть его можно только осознанно —
-        // правкой самой записи. Вставка пустого названия пропускается по той же причине.
-        var titles  = cells.Count(t => t.Column.Key == TableRowVm.TitleKey);
         var targets = cells
-            .Where(t => t.Column.Key != TableRowVm.TitleKey
-                        && TablePastePlanner.IsWritable(PasteColumnOf(t.Column, users: null)))
+            .Where(t => TablePastePlanner.IsWritable(PasteColumnOf(t.Column, users: null)))
             .ToList();
-
-        if (targets.Count == 0)
-        {
-            if (titles > 0) AppNotifications.Info("Названия записей очисткой не стираются.");
-            return;
-        }
+        if (targets.Count == 0) return;
 
         // Больше, чем запоминает отмена, — спрашиваем всегда: вернуть такую очистку Ctrl+Z нельзя, и
         // настройка «не спрашивать» на это не рассчитана.
@@ -183,9 +173,10 @@ public partial class TableView
             if (await dlg.ShowDialog<bool>(win) != true) return;
         }
 
-        await WriteCellsAsync(targets.Select(t => (t.Row, t.Column, Value: "")).ToList(), operation);
-
-        if (titles > 0) AppNotifications.Info("Названия записей очисткой не стираются.");
+        // Стертое «Название» становится «Без названия» — как в любом другом месте правки названия.
+        await WriteCellsAsync(targets.Select(t => (t.Row, t.Column,
+                                                   Value: t.Column.Key == TableRowVm.TitleKey ? TitleText.Placeholder : ""))
+                                     .ToList(), operation);
     }
 
     // ── Вставка ───────────────────────────────────────────────────────────────
@@ -435,7 +426,6 @@ public partial class TableView
         PasteSkipReason.ComputedColumn => "в столбцах, которые не правятся",
         PasteSkipReason.NotTextColumn  => "в файлах и связях с другой базой",
         PasteSkipReason.OutsideTable   => "за краем таблицы",
-        PasteSkipReason.EmptyTitle     => "пустые названия",
         _                              => "по другой причине",
     };
 

@@ -191,7 +191,7 @@ public partial class TaskDialog : Window
 
     private void FillFromTask(TaskRecord t)
     {
-        TitleBox.Text = t.Title;
+        TitleBox.Text = TitleText.Editable(t.Title);   // «Без названия» — подсказка поля, не текст
         DescBox.Text  = t.Description;
 
         if (t.DueStart is DateTime start)
@@ -269,12 +269,8 @@ public partial class TaskDialog : Window
     {
         HideError();
 
-        var title = TitleBox.Text?.Trim() ?? "";
-        if (string.IsNullOrWhiteSpace(title))
-        {
-            ShowError("Введите название задачи");
-            return;
-        }
+        // Пустое название сохраняется как «Без названия» — как в любом другом поле правки названия.
+        var title = TitleText.Stored(TitleBox.Text?.Trim());
 
         var noDate = NoDateCheck.IsChecked == true;
 

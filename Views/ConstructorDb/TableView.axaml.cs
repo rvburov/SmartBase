@@ -1457,6 +1457,21 @@ public partial class TableView : UserControl
     public void ApplyPropertyStyle(IReadOnlyList<int> fieldIds, StyleAspect aspect, string? hex) =>
         ApplyColumnStyle([.. fieldIds.Select(id => id.ToString())], aspect, hex);
 
+    // Те же операции для системной колонки «Название» — у нее нет id поля, только ключ.
+
+    /// <summary>Сдвинуть колонку «Название» (из панели записи: вверх = влево).</summary>
+    public void MoveTitle(bool up) => MoveColumn(TableRowVm.TitleKey, left: up);
+
+    /// <summary>Есть ли куда двигать колонку «Название».</summary>
+    public bool CanMoveTitle(bool up) => CanMoveColumn(TableRowVm.TitleKey, left: up);
+
+    /// <summary>Текущий цвет колонки «Название».</summary>
+    public RowStyle TitleStyle() => ColumnStyleOf(TableRowVm.TitleKey);
+
+    /// <summary>Применить цвет к колонке «Название».</summary>
+    public void ApplyTitleStyle(StyleAspect aspect, string? hex) =>
+        ApplyColumnStyle([TableRowVm.TitleKey], aspect, hex);
+
     /// <summary>«Обновить привязку» файла из панели — пересканировать папку и перечитать строки.</summary>
     public void RefreshAutoFileProperty(int fieldId) => RefreshAutoFileFromMenu(fieldId);
 
@@ -2199,8 +2214,25 @@ public partial class TableView : UserControl
                 [!TextBlock.TextProperty] = binding,
             };
             if (!isNumber) FitLinesToCell(text);
+            if (def.Key == TableRowVm.TitleKey) MarkTitlePlaceholder(text);
             return text;
         });
+
+    /// <summary>
+    /// «Без названия» в ячейке — серым (стиль <c>TextBlock.titlePlaceholder</c>). Класс следует за
+    /// показанным текстом: он меняется и после правки, и когда виртуализация отдает ячейку другой
+    /// строке.
+    /// </summary>
+    private static void MarkTitlePlaceholder(TextBlock text)
+    {
+        void Mark() => text.Classes.Set("titlePlaceholder", text.Text == TitleText.Placeholder);
+
+        text.PropertyChanged += (_, e) =>
+        {
+            if (e.Property == TextBlock.TextProperty) Mark();
+        };
+        Mark();
+    }
 
     /// <summary>
     /// Многострочное значение (перевод строки через Alt+Enter или из буфера) показывается ровно
@@ -2361,12 +2393,16 @@ public partial class TableView : UserControl
 
                 default:
                 {
+                    // «Без названия» в редакторе — серая подсказка, а не текст: печатать можно сразу,
+                    // стертое сохранится обратно как «Без названия» (TableRowVm).
+                    var isTitle = def.Key == TableRowVm.TitleKey;
                     var tb = new TextBox
                     {
                         BorderThickness          = new Thickness(0),
                         VerticalContentAlignment = VerticalAlignment.Center,
-                        Watermark                = def.FieldType == "url" ? "https://" : null,
-                        Text                     = row[def.Key],
+                        Watermark                = isTitle ? TitleText.Placeholder
+                                                 : def.FieldType == "url" ? "https://" : null,
+                        Text                     = isTitle ? TitleText.Editable(row[def.Key]) : row[def.Key],
                     };
                     tb.LostFocus += OnEditingBoxLostFocus;
                     return tb;
@@ -4620,7 +4656,7 @@ internal sealed class EmptyTitleConverter : IValueConverter
     public static readonly EmptyTitleConverter Instance = new();
 
     public object? Convert(object? v, Type t, object? p, CultureInfo c) =>
-        string.IsNullOrWhiteSpace(v as string) ? "Без названия" : v;
+        string.IsNullOrWhiteSpace(v as string) ? TitleText.Placeholder : v;
 
     public object? ConvertBack(object? v, Type t, object? p, CultureInfo c) =>
         v?.ToString() ?? "";

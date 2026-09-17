@@ -40,6 +40,43 @@ public sealed class TitleTextTests
     public void Nothing_to_show_gives_empty(string? input, string expected) =>
         Assert.Equal(expected, TitleText.FirstLine(input));
 
+    // ── «Без названия» в полях ввода ──────────────────────────────────────────
+
+    /// <summary>
+    /// Запись без названия: в поле ввода пусто (подсказку рисует поле), в базу уходит
+    /// «Без названия». Пустое название старых записей — то же самое.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("Без названия")]
+    public void Missing_title_is_an_empty_field(string? title)
+    {
+        Assert.True(TitleText.IsPlaceholder(title));
+        Assert.Equal("", TitleText.Editable(title));
+    }
+
+    [Theory]
+    [InlineData("Договор")]
+    [InlineData("Без названия 2")]    // нумерация импорта — обычный текст
+    [InlineData("без названия")]      // регистр другой — набрано человеком, это данные
+    [InlineData(" Без названия")]
+    public void Real_title_is_edited_as_is(string title)
+    {
+        Assert.False(TitleText.IsPlaceholder(title));
+        Assert.Equal(title, TitleText.Editable(title));
+    }
+
+    [Theory]
+    [InlineData(null,         "Без названия")]
+    [InlineData("",           "Без названия")]
+    [InlineData(" \n ",       "Без названия")]
+    [InlineData("Договор",    "Договор")]
+    [InlineData("  отступ  ", "  отступ  ")]   // обрезать ли края — решает место правки
+    public void Stored_title_is_never_empty(string? typed, string stored) =>
+        Assert.Equal(stored, TitleText.Stored(typed));
+
     // ── DisplayTitle моделей ──────────────────────────────────────────────────
 
     /// <summary>

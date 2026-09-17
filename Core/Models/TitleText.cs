@@ -22,6 +22,29 @@ namespace SmartBase.Core.Models;
 public static class TitleText
 {
     /// <summary>
+    /// Название записи, у которой его нет. В базе пустое название хранится этим текстом, а поля
+    /// ввода показывают его серой подсказкой: печатать можно сразу, стирать нечего.
+    /// </summary>
+    public const string Placeholder = "Без названия";
+
+    /// <summary>
+    /// Названия нет: пусто, одни пробелы или «Без названия». Пустое встречается у записей, которые
+    /// сохранили до правила «пустое хранится как «Без названия»», и у записей из обмена с другими
+    /// программами — выглядят они так же.
+    /// </summary>
+    public static bool IsPlaceholder(string? title) =>
+        string.IsNullOrWhiteSpace(title) || title == Placeholder;
+
+    /// <summary>Название для поля ввода: у записи без названия поле пустое, подсказку рисует само поле.</summary>
+    public static string Editable(string? title) => IsPlaceholder(title) ? "" : title!;
+
+    /// <summary>
+    /// Название, набранное в поле ввода, — в вид хранения: пустое и одни пробелы становятся
+    /// «Без названия», остальное не меняется (пробелы по краям обрезает вызывающий, если нужно).
+    /// </summary>
+    public static string Stored(string? text) => string.IsNullOrWhiteSpace(text) ? Placeholder : text;
+
+    /// <summary>
     /// Первая непустая строка текста (без крайних пробелов). Пустой текст и текст из одних
     /// переводов строк дают "" — вызывающий подставляет свое «Без названия».
     /// </summary>

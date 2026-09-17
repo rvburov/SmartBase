@@ -2,7 +2,7 @@ namespace SmartBase.Core.Models;
 
 public class CalendarRecord
 {
-    public const string UntitledPlaceholder = "Без названия";
+    public const string UntitledPlaceholder = TitleText.Placeholder;
 
     public int      DbId           { get; set; }   // владелец-БД (мульти-маунт); 0 = по умолчанию
     public int?     Id             { get; set; }

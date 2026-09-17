@@ -679,6 +679,17 @@ public partial class ConstructorControllerView : UserControl
 
         panel.PropertyStyleProvider   = fid       => TableViewCtrl.PropertyStyle(fid);
         panel.CanMovePropertyProvider = (fid, up) => TableViewCtrl.CanMoveProperty(fid, up);
+
+        // Карточка «Название» — как заголовок его колонки в таблице.
+        panel.TitleRenameRequested += (_, _) => _ = RenameSystemField(ViewModels.ConstructorDb.TableRowVm.TitleKey);
+        panel.TitleMoveRequested   += (_, up) =>
+        {
+            TableViewCtrl.MoveTitle(up);
+            NotifyFieldsChanged();   // панель перечитает свойства в новом порядке
+        };
+        panel.TitleColorRequested  += (_, c) => TableViewCtrl.ApplyTitleStyle(c.Aspect, c.Hex);
+        panel.TitleStyleProvider   = ()  => TableViewCtrl.TitleStyle();
+        panel.CanMoveTitleProvider = up => TableViewCtrl.CanMoveTitle(up);
     }
 
     /// <summary>
@@ -851,6 +862,7 @@ public partial class ConstructorControllerView : UserControl
         try { _repository.SetSystemFieldName(_currentCollectionId.Value, key, dlg.ResultName, defaultName); }
         catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { return; }
         TableViewCtrl.RebuildColumn(key);   // перестроить только этот заголовок, не всю таблицу
+        NotifyFieldsChanged();              // подпись карточки «Название» в панели записи
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
     }
 

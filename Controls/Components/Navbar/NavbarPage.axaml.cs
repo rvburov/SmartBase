@@ -93,7 +93,7 @@ public partial class NavbarPage : UserControl
         // в т.ч. из конструктора, когда контрол еще не в дереве и this.FindResource дает UnsetValue.
         if (string.IsNullOrEmpty(title))
         {
-            TitleDisplay.Text       = "Без названия";
+            TitleDisplay.Text       = TitleText.Placeholder;
             TitleDisplay.Foreground = (IBrush)Application.Current!.FindResource("BrushSecondaryText")!;
         }
         else

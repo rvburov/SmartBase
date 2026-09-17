@@ -195,6 +195,11 @@ public class TableRowVm : INotifyPropertyChanged
             // (DbErrors), буфер строки не меняем — ячейка показывает прежнее значение.
             if (key == TitleKey)
             {
+                // Стертое название хранится как «Без названия» — правило всех мест правки (TitleText).
+                // Запись без названия, у которой в базе пусто, так и остается: вход в правку и выход
+                // из нее без набора — не изменение, в журнал оно попадать не должно.
+                if (TitleText.IsPlaceholder(newVal) && TitleText.IsPlaceholder(_title)) return;
+                newVal = TitleText.Stored(newVal);
                 if (_title == newVal) return;
                 IReadOnlyList<(int FieldId, string Value)> autoTitle;
                 try { autoTitle = _repository?.SetRecordTitle(RecordId, newVal) ?? []; }

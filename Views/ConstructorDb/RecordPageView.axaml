@@ -84,7 +84,7 @@
         <!-- Шапка записи (вынесена в компонент NavbarPage). -->
         <comp:NavbarPage Grid.Row="0" x:Name="HeaderBar" />
 
-        <!-- Свойства (все кроме системного «Название» и markdown).
+        <!-- Свойства, включая системное «Название» (оно же в шапке).
              В ScrollViewer: когда ручкой ниже задана пиксельная высота строки и
              свойств больше, чем влезает, — список прокручивается.
              Фон блока серый: белые карточки свойств читаются на нем как отдельные
@@ -190,9 +190,20 @@
                           IsVisible="False"
                           VerticalScrollBarVisibility="Hidden"
                           HorizontalScrollBarVisibility="Disabled">
-                <w:AppMarkdown x:Name="MarkdownPreview"
-                               Markdown=""
-                               Margin="16,0,16,16" />
+                <Panel>
+                    <w:AppMarkdown x:Name="MarkdownPreview"
+                                   Markdown=""
+                                   Margin="16,0,16,16" />
+                    <!-- «Название» в просмотре — простым текстом: разметку оно не несет, и
+                         «1. Позвонить» не должно становиться списком. Высота строки — как у
+                         абзаца Markdown (ставит UpdatePreviewVisibility). -->
+                    <SelectableTextBlock x:Name="PlainPreview"
+                                         IsVisible="False"
+                                         TextWrapping="Wrap"
+                                         FontSize="{DynamicResource FontSizeBase}"
+                                         Foreground="{StaticResource BrushPrimaryText}"
+                                         Margin="16,0,16,16" />
+                </Panel>
             </ScrollViewer>
 
             <!-- Общая полоса блока: одна на редактор и превью (виден всегда ровно один),

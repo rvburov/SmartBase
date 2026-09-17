@@ -484,7 +484,7 @@ public partial class RecordDialog : Window
 
     private void FillFromRecord(CalendarRecord r)
     {
-        TitleBox.Text         = r.Title;
+        TitleBox.Text         = TitleText.Editable(r.Title);   // «Без названия» — подсказка поля, не текст
         DescBox.Text          = r.Description;
         AllDayCheck.IsChecked = r.AllDay;
         StartDateField.Date   = r.StartDt.Date;
@@ -529,13 +529,8 @@ public partial class RecordDialog : Window
     {
         HideError();
 
-        var title = TitleBox.Text?.Trim() ?? "";
-
-        if (string.IsNullOrWhiteSpace(title))
-        {
-            ShowError("Введите название записи");
-            return;
-        }
+        // Пустое название сохраняется как «Без названия» — как в любом другом поле правки названия.
+        var title = TitleText.Stored(TitleBox.Text?.Trim());
 
         var startDate = StartDateField.Date ?? DateTime.Today;
         var endDate   = EndDateField.Date   ?? DateTime.Today;

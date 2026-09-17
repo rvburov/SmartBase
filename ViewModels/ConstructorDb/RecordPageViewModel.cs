@@ -22,11 +22,15 @@ public partial class RecordPageViewModel : ObservableObject
     public ObservableCollection<PropertyRowVm> Properties { get; } = [];
 
     /// <summary>
-    /// Свойства в ТОМ ЖЕ порядке, что колонки в таблице (column_order, иначе дефолт).
-    /// «Название» сюда не входит — оно в шапке записи; «Добавить свойство» добавляет уже
-    /// представление и всегда стоит последним.
+    /// Свойства в ТОМ ЖЕ порядке, что колонки в таблице (column_order, иначе дефолт), вместе с
+    /// карточкой системного «Названия» (<see cref="TitleItem"/>): оно и в шапке записи, и среди
+    /// свойств — там длинное название правится в нижнем блоке. «Добавить свойство» добавляет
+    /// уже представление и всегда стоит последним.
     /// </summary>
     public List<PanelItem> OrderedItems { get; } = [];
+
+    /// <summary>Подпись колонки «Название» этой коллекции (ее можно переименовать в таблице).</summary>
+    public string TitleLabel { get; }
 
     /// <summary>
     /// Id поля с ролью «Описание» (null — коллекция без описания). Нижний блок панели по
@@ -64,12 +68,17 @@ public partial class RecordPageViewModel : ObservableObject
         // Поле-описание ищем по роли: имя у него пользовательское, как у любого другого.
         DescriptionFieldId = fields.FirstOrDefault(f => f.IsDescription)?.Id;
 
+        TitleLabel = repository.GetSystemFieldNames(collectionId)
+                               .GetValueOrDefault(TableRowVm.TitleKey, "Название");
+
         // Порядок как в таблице: эффективная позиция колонки = из column_order, иначе дефолт
-        // (Title=1000 — пропускаем, поле=3000+Position). Та же логика, что и в TableView.
+        // (Title=1000, поле=3000+Position). Та же логика, что и в TableView.
         var order = repository.GetColumnOrder(collectionId);
         int Pos(string key, int fallback) => order.TryGetValue(key, out var p) ? p : fallback;
 
-        var ordered = new List<(int pos, PanelItem item)>();
+        // «Название» первым в списке до сортировки: при равных позициях (стабильный OrderBy)
+        // оно идет раньше полей — как и колонка в таблице.
+        var ordered = new List<(int pos, PanelItem item)> { (Pos(TableRowVm.TitleKey, 1000), new TitleItem()) };
         foreach (var row in Properties)
             ordered.Add((Pos(row.Field.Id!.Value.ToString(), 3000 + row.Field.Position), new FieldItem(row)));
 
@@ -87,11 +96,25 @@ public partial class RecordPageViewModel : ObservableObject
         catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { return []; }
     }
 
+    /// <summary>Название, как его показывают поля ввода: «Без названия» у них — плейсхолдер,
+    /// а не текст.</summary>
+    public string EditableTitle => TitleText.Editable(Title);
+
+    /// <summary>
+    /// Сохранить название, набранное в поле ввода (шапка, карточка «Название», нижний блок) —
+    /// одно правило для всех трех: крайние пробелы снимаются, пустое хранится как «Без названия».
+    /// </summary>
+    public IReadOnlyList<(int FieldId, string Value)> SaveTitleInput(string text)
+    {
+        Title = TitleText.Stored(text.Trim());
+        return SaveTitle();
+    }
 }
 
-/// <summary>Элемент списка панели записи: пользовательское свойство.</summary>
+/// <summary>Элемент списка панели записи: пользовательское свойство или системное «Название».</summary>
 public abstract record PanelItem;
 public sealed record FieldItem(PropertyRowVm Row) : PanelItem;
+public sealed record TitleItem : PanelItem;
 
 /// <summary>
 /// Одна строка свойств в RecordPageView — пара «название поля → редактор значения».
