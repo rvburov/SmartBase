@@ -67,7 +67,7 @@ public partial class ProfileView
         BuildHistoryDetailCards(row);
         ApplyHistoryCardsHeight();
         HistoryDetailPanel.Width        = _historyDetailWidth;
-        HistoryDetailDivider.IsVisible  = true;
+        DetailDivider.IsVisible  = true;
         HistoryDetailPanel.IsVisible    = true;
         HistoryDetailResizeGrip.IsVisible = true;
     }
@@ -75,7 +75,7 @@ public partial class ProfileView
     private void CloseHistoryDetail()
     {
         HistoryDetailPanel.IsVisible      = false;
-        HistoryDetailDivider.IsVisible    = false;
+        DetailDivider.IsVisible    = false;
         HistoryDetailResizeGrip.IsVisible = false;
         HistoryDetailCardsHost.Children.Clear();
         _historyDetailCards.Clear();

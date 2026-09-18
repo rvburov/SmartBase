@@ -435,6 +435,9 @@ namespace SmartBase.Database.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("AccessDecided")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("CreatedAt")
                         .IsRequired()
                         .HasColumnType("TEXT");

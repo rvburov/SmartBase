@@ -30,6 +30,13 @@
         <Setter Property="Foreground"   Value="{StaticResource BrushSecondaryText}" />
         <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
+    <!-- Состояние строки: «установлен», «3 пользователя · 1 ждет допуска». Стоит ПОД названием и
+         над пояснением — это не пояснение, а данные самой строки, и цвет у него свой (зеленый,
+         красный, серый), поэтому кисть ставится из кода, а не стилем. -->
+    <Style Selector="Border.settingRow TextBlock.state">
+        <Setter Property="FontSize"     Value="{DynamicResource FontSizeSmall}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
     <!-- Поле настройки расширения. Строки раздела «Расширения» собираются в code-behind
          по IExtension.Settings, поэтому вид задаем стилем, а не атрибутами разметки —
          как у поля пути обновления в «О программе». -->

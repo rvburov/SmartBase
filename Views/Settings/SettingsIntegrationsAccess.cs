@@ -470,7 +470,7 @@ public partial class SettingsView
                     explanation: $"выдано чтение коллекции «{choice.Collection}» токену "
                                + $"«{token?.Name ?? choice.TokenId.ToString()}» на {choice.Days} дней",
                     dbId: token?.DbId ?? 0, at: DateTimeOffset.Now,
-                    confirmed: CurrentUser.DisplayName));
+                    confirmed: CurrentUser.DisplayName, collection: choice.Collection));
 
                 return written
                     ? null
@@ -502,7 +502,7 @@ public partial class SettingsView
             address: IngressApi.RecordsPath + "?collection=" + grant.Collection,
             fields: grant.Fields, rows: 0, bytes: 0, bodyHash: "",
             explanation: $"отозвана выдача чтения коллекции «{grant.Collection}»",
-            dbId: 0, at: DateTimeOffset.Now));
+            dbId: 0, at: DateTimeOffset.Now, collection: grant.Collection));
 
         BuildIntegrationsInbox();
     }

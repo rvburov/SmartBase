@@ -67,7 +67,8 @@ public static class CopyTrace
             bodyHash:    SecurityJournal.Sha256(text ?? ""),
             explanation: $"{mark}скопировано в буфер обмена: «{collection}», ячеек: {cells:N0}",
             dbId:        dbId,
-            at:          now));
+            at:          now,
+            collection:  collection));
     }
 
     // Имена столбцов через запятую, без повторов и не больше MaxFields — как у выгрузки.

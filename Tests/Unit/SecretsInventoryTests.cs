@@ -550,10 +550,11 @@ public sealed class SecretsInventoryTests
         var closed = SecretsInventory.RemovePasswordQuestion("Склад", passwordAccessEnabled: false);
 
         Assert.StartsWith("Убрать пароль базы «Склад»?", open);
-        Assert.Contains("больше не смогут", open);
+        Assert.Contains("перестанет работать", open);
 
         Assert.StartsWith("Убрать пароль базы «Склад»?", closed);
-        Assert.DoesNotContain("больше не смогут", closed);
-        Assert.Contains("уже выключен", closed);
+        Assert.DoesNotContain("перестанет работать", closed);
+        // Способ входа у базы и так «Подтверждение администратора» — терять нечего.
+        Assert.Contains("ничего не изменится", closed);
     }
 }

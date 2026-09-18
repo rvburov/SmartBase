@@ -543,6 +543,10 @@ namespace SmartBase.Database.Migrations.Pg
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
+                    b.Property<int>("AccessDecided")
+                        .HasColumnType("integer")
+                        .HasColumnName("accessdecided");
+
                     b.Property<string>("CreatedAt")
                         .IsRequired()
                         .HasColumnType("text")

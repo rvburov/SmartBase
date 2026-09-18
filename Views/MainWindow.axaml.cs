@@ -71,6 +71,9 @@ public partial class MainWindow : Window
     // Состав сайдбара расширений на текущий момент — чтобы не перерисовывать список,
     // когда галочки видимости не трогали (см. SyncExtensionsSidebar).
     private IReadOnlyList<string> _extensionKeys = [];
+
+    // Ключи разделов профиля, показанных сайдбару: по ним видно, менялся ли состав (SyncProfileSidebar).
+    private IReadOnlyList<string> _profileKeys = [];
     // _recordPanelLogicalOpen — правая панель записи (col 5), объявлено ниже.
 
     public MainWindow(Workspace workspace)
@@ -389,7 +392,7 @@ public partial class MainWindow : Window
 
         // Сайдбар профиля: пункты из ProfileRegistry; выбор раздела открывает его в основной области.
         ProfileSidebar.Title = "Профиль";
-        ProfileSidebar.SetItems(ProfileRegistry.All.Select(c => new SidebarListItem(c.Key, c.Label, c.Icon)));
+        SyncProfileSidebar();
         ProfileSidebar.CategorySelected += (_, key) => ProfileModule.ShowCategory(key);
         // Модуль сам просит открыть свой раздел — переход «В журнал» из контура безопасности.
         // Выделяет пункт сайдбар (и он же зовет ShowCategory): переключи раздел молча, и сайдбар
@@ -966,6 +969,7 @@ public partial class MainWindow : Window
                     Notify($"Доступ к базе данных «{changedDb.Name}» отозван администратором.");
             }
             ProfileModule.OnRemoteUserChanges(dbId);
+            SyncProfileSidebar();   // роль могли поменять с другой машины — раздел журнала следует за ней
         }
 
         // Пользователь печатает в ячейке — не затираем ввод, повторяем через пару секунд
@@ -1371,6 +1375,7 @@ public partial class MainWindow : Window
         TasksModule.SetActiveIds(TasksSidebar.GetActiveIds());
         SettingsModule.RefreshDatabases();   // обновить статус «подключена/не подключена»
         ProfileModule.OnDatabasesChanged();  // история — только базы с допуском, панель администратора — свои базы
+        SyncProfileSidebar();                // админство пропало вместе с базой — «Журнал безопасности» уходит из меню
     }
 
     // ── Живой состав пользователей базы ───────────────────────────────────────
@@ -1551,6 +1556,28 @@ public partial class MainWindow : Window
     // Пересобираем ТОЛЬКО при смене состава: SetItems перерисовывает строки и сбрасывает выбор
     // на первый пункт, а заход в раздел — частое действие. Выбранное расширение переживает
     // перестройку, если осталось видимым.
+    // Разделы профиля: «Журнал безопасности» виден только администратору хотя бы одной открытой
+    // базы (ProfileRegistry.Visible). Права меняются на ходу — базу открыли или закрыли, админство
+    // выдали или отозвали с соседней машины, — поэтому список пересобирается тем же приемом, что
+    // и список расширений: набор не изменился — сайдбар не трогаем, иначе выбор раздела прыгал бы
+    // под руками при каждом обновлении.
+    private void SyncProfileSidebar()
+    {
+        var admin   = _workspace.Mounted.Any(m => m.Permissions.IsAdmin);
+        var visible = ProfileRegistry.Visible(admin);
+        var keys    = visible.Select(c => c.Key).ToList();
+        if (keys.SequenceEqual(_profileKeys, StringComparer.Ordinal)) return;
+
+        var previous = ProfileSidebar.SelectedKey;
+        _profileKeys = keys;
+        ProfileSidebar.SetItems(visible.Select(c => new SidebarListItem(c.Key, c.Label, c.Icon)));
+
+        // Раздел, в котором человек стоял, мог пропасть вместе с админством: тогда открывается
+        // первый (SetItems уже выбрал его), а иначе возвращаемся туда, где были.
+        if (keys.Contains(previous, StringComparer.Ordinal)) ProfileSidebar.Select(previous);
+        else if (ProfileModule.IsVisible) ProfileModule.ShowCategory(ProfileSidebar.SelectedKey);
+    }
+
     private void SyncExtensionsSidebar()
     {
         var visible = ViewCatalog.Visible(ViewCatalog.ScopeExtensions);

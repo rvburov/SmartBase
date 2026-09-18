@@ -2,8 +2,10 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Media;
+using SmartBase.Controls.Components;
 using SmartBase.Controls.Dialogs;
 using SmartBase.Database;
+using SmartBase.Database.Entities;
 using SmartBase.Database.Repositories;
 using SmartBase.Settings;
 using SmartBase.Utils;
@@ -69,9 +71,19 @@ public partial class ProfileView : UserControl
             TopLevel.GetTopLevel(this)?.FocusManager?.ClearFocus();
         };
 
-        // Выбор базы журнала живет в навбаре (правый край «Истории изменений»).
-        HeaderBar.HistoryDbChanged      += (_, _) => OnHistoryDbChanged();
-        HeaderBar.ExportHistoryRequested += (_, _) => _ = ExportHistoryToCsv();
+        // Выбор базы живет в навбаре: у «Истории изменений» свой список, у панели
+        // администратора свой — разделы никогда не видны вместе.
+        HeaderBar.HistoryDbChanged += (_, _) => OnHistoryDbChanged();
+        HeaderBar.AdminDbChanged   += (_, _) => LoadAdminDb();
+
+        // Выгрузка в CSV — одна кнопка навбара на два раздела: что выгружать, решает открытый.
+        HeaderBar.ExportRequested += (_, _) =>
+        {
+            if (_categoryKey == "history")          _ = ExportHistoryToCsv();
+            else if (_categoryKey == "securitylog") _ = ExportSecurityLogToCsv();
+        };
+
+        HeaderBar.ChainCheckRequested += (_, _) => VerifySecurityChain();
 
         // Меню «Добавить пароль» живет в навбаре (правый край «Менеджера паролей»), а окна и права
         // — у самой описи: навбар только передает выбранный пункт.
@@ -90,30 +102,32 @@ public partial class ProfileView : UserControl
         if (GeneralPanel.IsVisible && key != "general") CommitProfile();
 
         _categoryKey = key;
-        GeneralPanel.IsVisible  = key == "general";
-        AdminPanel.IsVisible    = key == "admin";
-        SecurityPanel.IsVisible = key == "security";
-        SecretsPanel.IsVisible  = key == "secrets";
-        HistoryPanel.IsVisible  = key == "history";
+        GeneralPanel.IsVisible     = key == "general";
+        AdminPanel.IsVisible       = key == "admin";
+        SecurityPanel.IsVisible    = key == "security";
+        SecretsPanel.IsVisible     = key == "secrets";
+        HistoryPanel.IsVisible     = key == "history";
+        SecurityLogPanel.IsVisible = key == "securitylog";
         // Список пользователей открыт «поверх» раздела и сам не спрячется: выбор раздела
         // в сайдбаре (в том числе повторный выбор «Панели администратора») возвращает
-        // обычный вид с навбаром. То же с контуром безопасности и его журналом.
+        // обычный вид с навбаром.
         CloseUsersPanel();
-        CloseSecurityPanels();
-        // Детали строки журнала живут в отдельной колонке окна и разделом не скрываются —
-        // закрываем их вместе с уходом из «Истории изменений».
+        // Детали строки живут в отдельной колонке окна и разделом не скрываются — закрываем
+        // их вместе с уходом из раздела, которому они принадлежат.
         CloseHistoryDetail();
+        CloseLogDetail();
         HeaderBar.Title = (ProfileRegistry.FindByKey(key) ?? ProfileRegistry.All[0]).Label;
-        // Действия истории (выбор базы, очистка журнала) — только для истории.
-        HeaderBar.ShowHistoryActions = key == "history";
+        // Действия навбара расставляются по открытому разделу одним местом.
+        HeaderBar.ShowSection(key);
         // «Добавить пароль» — только в «Менеджере паролей»; в нем самом видимость уточнит
         // сборка списка (ShowSecrets → SyncSecretsActions).
         SyncSecretsActions();
 
-        if (key == "admin")    RebuildAdminPanel();
-        if (key == "security") ShowSecurityContour();
-        if (key == "secrets")  ShowSecrets();
-        if (key == "history")  RebuildHistoryPanel();
+        if (key == "admin")       RebuildAdminPanel();
+        if (key == "security")    ShowSecurityContour();
+        if (key == "secrets")     ShowSecrets();
+        if (key == "history")     RebuildHistoryPanel();
+        if (key == "securitylog") RebuildSecurityLog();
     }
 
     // ── Поля профиля (ФИО, подразделение, должность) ──────────────────────────
@@ -156,6 +170,12 @@ public partial class ProfileView : UserControl
 
     // ── Панель администратора ─────────────────────────────────────────────────
 
+    /// <summary>Пункт списка баз: имя и иконка рода хранения — сервер у базы на сервере,
+    /// цилиндр у базы-файла. Один источник на навбар и на шапку таблицы пользователей.</summary>
+    private static NavbarDb DbChoice(DatabaseManager db) =>
+        new(string.IsNullOrWhiteSpace(db.Name) ? "База данных" : db.Name,
+            UsersIcon(db.Provider == "postgres" ? "IconServer" : "IconDatabase"));
+
     // Пересобрать панель: список баз, где текущий пользователь — администратор.
     private void RebuildAdminPanel()
     {
@@ -165,19 +185,17 @@ public partial class ProfileView : UserControl
         AdminNoAccessRow.IsVisible = !hasAny;
         AdminContent.IsVisible     = hasAny;
         // Администрировать больше нечего (последнюю базу размонтировали или админство
-        // отозвали) — открытые панели не должны остаться висеть.
-        if (!hasAny) { CloseUsersPanel(); CloseSecurityPanels(); return; }
+        // отозвали) — открытая панель пользователей не должна остаться висеть.
+        if (!hasAny) { HeaderBar.SetAdminDbs([], -1); CloseUsersPanel(); return; }
 
-        // Сохранить выбранную базу, если она еще в списке.
+        // Список баз — в навбаре, как у «Истории изменений»: выбор области стоит в одном месте
+        // на все разделы, а не строкой среди настроек, которыми он же и управляет.
         var keepDbId = _adminDb?.DbId;
-        AdminDbCombo.ItemsSource = _adminDbs
-            .Select(d => string.IsNullOrWhiteSpace(d.Name) ? "База данных" : d.Name)
-            .ToList();
+        var names = _adminDbs.Select(DbChoice).ToList();
         var idx = keepDbId is int id ? _adminDbs.FindIndex(d => d.DbId == id) : -1;
-        AdminDbCombo.SelectedIndex = idx >= 0 ? idx : 0;   // SelectionChanged → LoadAdminDb
+        HeaderBar.SetAdminDbs(names, idx >= 0 ? idx : 0);
+        LoadAdminDb();
     }
-
-    private void OnAdminDbChanged(object? sender, SelectionChangedEventArgs e) => LoadAdminDb();
 
     /// <summary>Чужие события пользователей этой базы (присоединение, допуск, права, роль —
     /// принес поллер через MainWindow): перечитать открытую панель пользователей, сохранив
@@ -189,11 +207,15 @@ public partial class ProfileView : UserControl
         // Сосед мог выдать или отозвать админство — опись показывает только свое.
         RefreshSecrets();
 
+        // Строка «Пользователи» показывает, сколько людей ждут допуска: сосед присоединился к базе
+        // — число обязано измениться сразу, а не при следующем заходе в раздел.
+        if (AdminPanel.IsVisible && _adminDb?.DbId == dbId) RefreshUsersRow();
+
         // Панель пользователей открыта ВМЕСТО панели администратора, и та в это время скрыта, —
-        // смотреть надо на саму панель. В области «все базы» ее касается любая из админских баз.
+        // смотреть надо на саму панель. Таблица показывает одну базу: правки соседних ее не
+        // касаются.
         if (!UsersPanelOpen || _adminDb is null) return;
-        if (_adminDb.DbId == dbId || (AcrossDatabases && _adminDbs.Any(d => d.DbId == dbId)))
-            RefreshUsersPanel();
+        if (_adminDb.DbId == dbId) RefreshUsersPanel();
     }
 
     /// <summary>
@@ -218,50 +240,103 @@ public partial class ProfileView : UserControl
     // к конкретной базе — при смене базы закрывается (открывается заново кнопкой).
     private void LoadAdminDb()
     {
-        var i = AdminDbCombo.SelectedIndex;
+        var i = HeaderBar.AdminDbIndex;
         _adminDb = i >= 0 && i < _adminDbs.Count ? _adminDbs[i] : null;
         CloseUsersPanel();
         if (_adminDb is null) return;
 
         RefreshPasswordRow();
         RefreshRetentionRow();
+        RefreshUsersRow();
     }
 
-    // Программное выставление тумблера доступа по паролю не должно писать политику в базу.
-    private bool _suppressPasswordAccess;
+    // Программное выставление способа входа не должно писать политику в базу.
+    private bool _suppressAccessMode;
 
     private void RefreshPasswordRow()
     {
         if (_adminDb is null) return;
         var perms = _adminDb.Permissions;
         var has   = perms.HasPassword;
-        PasswordStateText.Text     = has ? "Пароль установлен." : "Пароль не установлен.";
-        PasswordSetBtn.Content     = has ? "Сменить пароль" : "Установить пароль";
+
+        PasswordStateText.Text       = has ? "установлен" : "не установлен";
+        PasswordStateText.Foreground = Brush(has ? "BrushGreen" : "BrushSecondaryText",
+                                             has ? "#34C759" : "#8E8E93");
+
+        // Пояснение говорит о том, что с паролем происходит СЕЙЧАС: заданный пароль при входе по
+        // подтверждению хранится, но никого не пускает, и молчать об этом нельзя — иначе строка
+        // «установлен» обещает больше, чем есть.
+        PasswordHintText.Text = !has
+            ? "Требуется для входа по паролю."
+            : perms.PasswordAccess
+                ? "Новый пользователь вводит его и получает допуск сам. В базе хранится хэш."
+                : "Не применяется: выбран вход по подтверждению администратора.";
+
+        PasswordSetBtn.Content      = has ? "Сменить пароль" : "Установить пароль";
         PasswordRemoveBtn.IsVisible = has;
 
-        // Тумблер показывает, открывает ли замок пароль сейчас: без пароля открывать нечем, даже
-        // если вход паролем не выключали.
-        _suppressPasswordAccess = true;
-        PasswordAccessToggle.IsChecked = perms.PasswordAccess;
-        _suppressPasswordAccess = false;
+        // Список показывает, чем замок открывается СЕЙЧАС: без пароля открывать нечем, даже если
+        // вход по паролю не переключали.
+        _suppressAccessMode = true;
+        AccessModeCombo.SelectedIndex = perms.PasswordAccess ? 1 : 0;
+        _suppressAccessMode = false;
     }
 
-    // «Доступ других пользователей по паролю». Выключение пароль не удаляет — включили обратно, и
-    // прежний пароль снова работает. Включение без пароля — сначала придумать пароль: доступ по
-    // паролю без пароля никого бы не пустил. Отказались от окна — тумблер возвращается.
-    private async void OnPasswordAccessToggled(object? sender, RoutedEventArgs e)
+    // Сколько людей в базе и сколько ждут допуска — в самой строке: за этим в панель и заходят.
+    private void RefreshUsersRow()
     {
-        if (_suppressPasswordAccess || _adminDb is not { } db || TopLevel.GetTopLevel(this) is not Window owner)
+        if (_adminDb is null) return;
+
+        List<DbUserEntity> users;
+        try { users = _adminDb.Permissions.GetUsers(); }
+        catch (Exception error)
+        {
+            // Файл базы сейчас недоступен (сетевую папку отключили): строка не врет числом, а
+            // молчит — таблица пользователей скажет о том же подробнее.
+            Serilog.Log.Warning(error, "Пользователи базы {Db:l} не сосчитались", _adminDb.Name);
+            UsersCountText.Text = "";
+            return;
+        }
+
+        // Ждут только те, по кому решения еще не было: отозванный допуск — это решение,
+        // и звать администратора разбираться с ним повторно незачем.
+        var pending = users.Count(u => !u.IsAdmin && !u.IsApproved && !u.AccessDecided);
+
+        UsersCountText.Text = Plural(users.Count, "пользователь", "пользователя", "пользователей")
+                            + (pending > 0
+                                ? $" · {pending} {(pending == 1 ? "ждет" : "ждут")} допуска"
+                                : "");
+        UsersCountText.Foreground = Brush(pending > 0 ? "BrushRed" : "BrushSecondaryText",
+                                          pending > 0 ? "#FF3B30" : "#8E8E93");
+    }
+
+    private static string Plural(int n, string one, string few, string many)
+    {
+        var a = n % 10;
+        var b = n % 100;
+        var word = a == 1 && b != 11 ? one
+                 : a >= 2 && a <= 4 && (b < 12 || b > 14) ? few
+                 : many;
+        return $"{n} {word}";
+    }
+
+    // «Способ входа нового пользователя». Переключение на подтверждение администратора пароль не
+    // удаляет — вернули вход по паролю, и прежний пароль снова работает. Вход по паролю без
+    // пароля никого бы не пустил, поэтому сначала окно установки пароля; отказались от окна —
+    // список возвращается к прежнему значению.
+    private async void OnAccessModeChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressAccessMode || _adminDb is not { } db || TopLevel.GetTopLevel(this) is not Window owner)
             return;
 
-        var on = PasswordAccessToggle.IsChecked == true;
+        var byPassword = AccessModeCombo.SelectedIndex == 1;
 
-        if (on && !db.Permissions.HasPassword)
+        if (byPassword && !db.Permissions.HasPassword)
         {
             var name     = string.IsNullOrWhiteSpace(db.Name) ? "База данных" : db.Name;
             var password = await PasswordDialog.ForSet(name, hasPassword: false).ShowDialog<string?>(owner);
 
-            // Пока окно было открыто, в панели могли выбрать другую базу — пароль чужой базе не ставим.
+            // Пока окно было открыто, в навбаре могли выбрать другую базу — пароль чужой базе не ставим.
             if (string.IsNullOrEmpty(password) || !ReferenceEquals(db, _adminDb))
             {
                 RefreshPasswordRow();
@@ -270,7 +345,7 @@ public partial class ProfileView : UserControl
             if (!RunAdminAction(() => db.Permissions.SetPassword(password))) return;
         }
 
-        if (RunAdminAction(() => db.Permissions.SetPasswordAccess(on))) RefreshPasswordRow();
+        if (RunAdminAction(() => db.Permissions.SetPasswordAccess(byPassword))) RefreshPasswordRow();
     }
 
     // ── Очистка журнала ────────────────────────────────────────────────────────
@@ -278,30 +353,40 @@ public partial class ProfileView : UserControl
     // Программное выставление тумблера/периода не должно писать конфиг в БД.
     private bool _suppressRetention;
 
-    // Отразить сохраненную в базе политику автоочистки (RetentionEnabled/Months).
+    // Отразить сохраненную в базе политику автоочистки (RetentionEnabled/Months). Выключенная
+    // автоочистка — это «Бессрочно», отдельного переключателя у нее нет: срок и его отсутствие —
+    // значения одного и того же выбора.
     private void RefreshRetentionRow()
     {
         if (_adminDb is null) return;
         _suppressRetention = true;
-        RetentionToggle.IsChecked = _adminDb.Permissions.RetentionEnabled;
-        var months = _adminDb.Permissions.RetentionMonths.ToString();
+
+        var months = _adminDb.Permissions.RetentionEnabled
+            ? _adminDb.Permissions.RetentionMonths.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            : "0";
+
         var idx = -1;
         for (var i = 0; i < RetentionPeriodCombo.Items.Count; i++)
             if ((RetentionPeriodCombo.Items[i] as ComboBoxItem)?.Tag as string == months) { idx = i; break; }
-        RetentionPeriodCombo.SelectedIndex = idx >= 0 ? idx : 2;   // 12 месяцев по умолчанию
+        RetentionPeriodCombo.SelectedIndex = idx >= 0 ? idx : 0;   // «Бессрочно» по умолчанию
         _suppressRetention = false;
     }
 
-    private void OnRetentionToggled(object? sender, RoutedEventArgs e) => SaveRetention();
     private void OnRetentionPeriodChanged(object? sender, SelectionChangedEventArgs e) => SaveRetention();
 
     private void SaveRetention()
     {
         if (_suppressRetention || _adminDb is null) return;
-        var enabled = RetentionToggle.IsChecked == true;
-        var months  = int.TryParse((RetentionPeriodCombo.SelectedItem as ComboBoxItem)?.Tag as string, out var m)
-            ? m : PermissionService.DefaultRetentionMonths;
-        _adminDb.Permissions.SetChangeLogRetention(enabled, months);
+
+        var months = int.TryParse((RetentionPeriodCombo.SelectedItem as ComboBoxItem)?.Tag as string,
+                                  out var m) ? m : 0;
+
+        // «Бессрочно» не забывает прежний срок: в базу уходит выключенная автоочистка с последним
+        // назначенным числом месяцев, и вернувшийся к сроку администратор видит свое значение, а
+        // не подставленное программой.
+        _adminDb.Permissions.SetChangeLogRetention(
+            months > 0,
+            months > 0 ? months : _adminDb.Permissions.RetentionMonths);
     }
 
     private async void OnPurgeChangeLog(object? sender, RoutedEventArgs e)
@@ -317,7 +402,7 @@ public partial class ProfileView : UserControl
 
         DateTime? cutoff;
         string    periodText;
-        if (tag == "all") { cutoff = null; periodText = "весь журнал"; }
+        if (tag == "all") { cutoff = null; periodText = "всю историю изменений"; }
         else
         {
             var months = int.Parse(tag);
@@ -325,9 +410,11 @@ public partial class ProfileView : UserControl
             periodText = $"записи старше {months} мес.";
         }
 
+        var dbName = string.IsNullOrWhiteSpace(_adminDb.Name) ? "База данных" : _adminDb.Name;
+
         var confirmed = await new ConfirmDialog(
-                $"Очистить {periodText} в истории изменений выбранной базы данных? " +
-                "Это действие нельзя отменить.", confirmText: "Очистить")
+                $"Очистить {periodText} базы «{dbName}»?\n\nОтменить это нельзя.",
+                confirmText: "Очистить")
             .ShowDialog<bool>(owner);
         if (!confirmed) return;
 
@@ -335,7 +422,7 @@ public partial class ProfileView : UserControl
         try { deleted = _adminDb.Constructor.PurgeChangeLog(cutoff); }
         catch (Exception ex) when (DbErrors.Handle(ex, _adminDb.Constructor.DbPath)) { return; }
 
-        await ConfirmDialog.Info($"Удалено записей журнала: {deleted:N0}.").ShowDialog(owner);
+        await ConfirmDialog.Info($"Удалено записей истории изменений: {deleted:N0}.").ShowDialog(owner);
 
         // Открыта история этой базы — перечитать, чтобы удаленное исчезло из таблицы.
         if (HistoryPanel.IsVisible && ReferenceEquals(_historyDb, _adminDb))

@@ -282,41 +282,36 @@
 
                     <StackPanel x:Name="AdminContent">
 
-                    <!-- Выбор базы данных -->
+                    <!-- Способ входа нового пользователя: политика в db_meta самой базы (SQLite и
+                         PostgreSQL одинаково), рядом с паролем. «Подтверждение администратора» —
+                         замок открывает только он; пароль при этом не удаляется. Выбрать вход по
+                         паролю, когда пароля нет, — сперва окно установки пароля.
+
+                         Список, а не тумблер: у настройки два равноправных ПОРЯДКА входа, и оба
+                         названы словами. Тумблер называл словами только один из них, а второй
+                         человек достраивал сам. -->
                     <Border Classes="settingRow">
                         <Grid ColumnDefinitions="*,Auto">
                             <StackPanel Grid.Column="0" Spacing="4"
                                         VerticalAlignment="Center" Margin="0,0,32,0">
-                                <TextBlock Classes="title" Text="База данных" />
+                                <TextBlock Classes="title" Text="Способ входа нового пользователя" />
                                 <TextBlock Classes="desc"
-                                           Text="Панель управляет доступом к выбранной базе. В списке — базы, где вы администратор." />
+                                           Text="Чем пользователь получает допуск при первом открытии базы. Хранится в базе, действует на всех машинах." />
                             </StackPanel>
-                            <ComboBox Grid.Column="1" x:Name="AdminDbCombo"
-                                      Width="240" Height="{StaticResource ControlHeightStandard}"
+                            <!-- Ширина не задана, а ограничена сверху: список занимает ровно
+                                 столько, сколько просит его самое длинное значение
+                                 («Подтверждение администратора»), и не растет дальше 250 при
+                                 крупном шрифте. Фиксированная ширина держала бы пустое поле
+                                 справа от текста. -->
+                            <ComboBox Grid.Column="1" x:Name="AccessModeCombo"
+                                      MaxWidth="250" Height="{StaticResource ControlHeightStandard}"
                                       VerticalAlignment="Center"
                                       Background="{StaticResource BrushSecondaryBg}"
                                       CornerRadius="{StaticResource RadiusBase}"
-                                      SelectionChanged="OnAdminDbChanged" />
-                        </Grid>
-                    </Border>
-                    <Border Classes="separator h" />
-
-                    <!-- Доступ других пользователей по паролю: политика в db_meta самой
-                         базы (SQLite и PostgreSQL одинаково), рядом с паролем. Выключено —
-                         замок открывает только разрешение администратора; пароль при этом
-                         не удаляется. Включить без пароля — сперва окно установки пароля. -->
-                    <Border Classes="settingRow">
-                        <Grid ColumnDefinitions="*,Auto">
-                            <StackPanel Grid.Column="0" Spacing="4"
-                                        VerticalAlignment="Center" Margin="0,0,32,0">
-                                <TextBlock Classes="title" Text="Доступ других пользователей по паролю" />
-                                <TextBlock Classes="desc"
-                                           Text="Включено — новый пользователь открывает базу сам, введя пароль базы данных. Выключено — входит только после разрешения администратора. Настройка хранится в базе и действует на всех машинах." />
-                            </StackPanel>
-                            <ToggleSwitch Grid.Column="1" x:Name="PasswordAccessToggle"
-                                          OnContent="" OffContent=""
-                                          VerticalAlignment="Center"
-                                          IsCheckedChanged="OnPasswordAccessToggled" />
+                                      SelectionChanged="OnAccessModeChanged">
+                                <ComboBoxItem Tag="admin"    Content="Подтверждение администратора" />
+                                <ComboBoxItem Tag="password" Content="Вход по паролю" />
+                            </ComboBox>
                         </Grid>
                     </Border>
                     <Border Classes="separator h" />
@@ -327,9 +322,8 @@
                             <StackPanel Grid.Column="0" Spacing="4"
                                         VerticalAlignment="Center" Margin="0,0,32,0">
                                 <TextBlock Classes="title" Text="Пароль базы данных" />
-                                <TextBlock Classes="desc"
-                                           Text="Им другие пользователи открывают базу сами, пока включен доступ по паролю. Выключенный доступ пароль не удаляет." />
-                                <TextBlock x:Name="PasswordStateText" Classes="desc" Text="" />
+                                <TextBlock x:Name="PasswordStateText" Classes="state" Text="" />
+                                <TextBlock x:Name="PasswordHintText" Classes="desc" Text="" />
                             </StackPanel>
                             <StackPanel Grid.Column="1" Orientation="Horizontal"
                                         Spacing="8" VerticalAlignment="Center">
@@ -348,57 +342,77 @@
                     </Border>
                     <Border Classes="separator h" />
 
-                    <!-- Автоочистка журнала (политика хранится в самой базе, применяется
-                         при открытии на любой машине). -->
+                    <!-- Пользователи базы: сами пользователи, их роли и права живут в таблице
+                         во всю ширину (UsersPanel ниже) — «пользователь × действия» на
+                         странице настроек не помещается. Строка стоит сразу за паролем: обе
+                         про то, кого пускают в базу, а ниже идет история изменений. -->
                     <Border Classes="settingRow">
                         <Grid ColumnDefinitions="*,Auto">
                             <StackPanel Grid.Column="0" Spacing="4"
                                         VerticalAlignment="Center" Margin="0,0,32,0">
-                                <TextBlock Classes="title" Text="Автоочистка журнала" />
+                                <TextBlock Classes="title" Text="Пользователи" />
+                                <TextBlock x:Name="UsersCountText" Classes="state" Text="" />
                                 <TextBlock Classes="desc"
-                                           Text="Старые записи истории изменений автоматически удаляются при открытии базы. Настройка хранится в базе — действует на всех машинах." />
+                                           Text="Роли, допуск и права в базе и в коллекциях." />
                             </StackPanel>
-                            <StackPanel Grid.Column="1" Orientation="Horizontal"
-                                        Spacing="10" VerticalAlignment="Center">
-                                <!-- SelectedIndex по умолчанию — 12 месяцев (индекс 2);
-                                     при загрузке базы RefreshRetentionRow синхронизирует
-                                     со значением из db_meta. Список никогда не пуст. -->
-                                <ComboBox x:Name="RetentionPeriodCombo"
-                                          Width="180" Height="{StaticResource ControlHeightStandard}"
-                                          SelectedIndex="2"
-                                          VerticalAlignment="Center"
-                                          Background="{StaticResource BrushSecondaryBg}"
-                                          CornerRadius="{StaticResource RadiusBase}"
-                                          SelectionChanged="OnRetentionPeriodChanged">
-                                    <ComboBoxItem Tag="3"  Content="Хранить 3 месяца" />
-                                    <ComboBoxItem Tag="6"  Content="Хранить 6 месяцев" />
-                                    <ComboBoxItem Tag="12" Content="Хранить 12 месяцев" />
-                                    <ComboBoxItem Tag="24" Content="Хранить 24 месяца" />
-                                </ComboBox>
-                                <ToggleSwitch x:Name="RetentionToggle"
-                                              OnContent="" OffContent=""
-                                              VerticalAlignment="Center"
-                                              IsCheckedChanged="OnRetentionToggled" />
-                            </StackPanel>
+                            <Button Grid.Column="1" x:Name="UsersOpenBtn" Classes="dialog"
+                                    Width="NaN" MinWidth="110" Padding="14,0"
+                                    VerticalAlignment="Center"
+                                    Content="Открыть"
+                                    Click="OnOpenUsersPanel" />
                         </Grid>
                     </Border>
                     <Border Classes="separator h" />
 
-                    <!-- Разовая очистка журнала за выбранный период. -->
+                    <!-- Срок хранения истории изменений (политика хранится в самой базе,
+                         применяется при открытии на любой машине).
+
+                         Один список вместо списка и тумблера: «Бессрочно» — такое же значение
+                         срока, как «12 месяцев», и держать для него отдельный переключатель
+                         значило бы спрашивать одно и то же дважды. -->
                     <Border Classes="settingRow">
                         <Grid ColumnDefinitions="*,Auto">
                             <StackPanel Grid.Column="0" Spacing="4"
                                         VerticalAlignment="Center" Margin="0,0,32,0">
-                                <TextBlock Classes="title" Text="Очистить журнал" />
+                                <TextBlock Classes="title" Text="Срок хранения истории изменений" />
                                 <TextBlock Classes="desc"
-                                           Text="Разово удалить историю изменений выбранной базы за выбранный период. Отменить нельзя." />
+                                           Text="Записи старше срока удаляются при открытии базы на любой машине." />
+                            </StackPanel>
+                            <!-- SelectedIndex по умолчанию — «Бессрочно» (индекс 0); при загрузке
+                                 базы RefreshRetentionRow синхронизирует со значением из db_meta.
+                                 Список никогда не пуст. -->
+                            <ComboBox Grid.Column="1" x:Name="RetentionPeriodCombo"
+                                      Width="180" Height="{StaticResource ControlHeightStandard}"
+                                      SelectedIndex="0"
+                                      VerticalAlignment="Center"
+                                      Background="{StaticResource BrushSecondaryBg}"
+                                      CornerRadius="{StaticResource RadiusBase}"
+                                      SelectionChanged="OnRetentionPeriodChanged">
+                                <ComboBoxItem Tag="0"  Content="Бессрочно" />
+                                <ComboBoxItem Tag="3"  Content="3 месяца" />
+                                <ComboBoxItem Tag="6"  Content="6 месяцев" />
+                                <ComboBoxItem Tag="12" Content="12 месяцев" />
+                                <ComboBoxItem Tag="24" Content="24 месяца" />
+                            </ComboBox>
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <!-- Разовая очистка истории за выбранный период. -->
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Очистить историю изменений" />
+                                <TextBlock Classes="desc"
+                                           Text="Разовое удаление записей за выбранный период. Необратимо." />
                             </StackPanel>
                             <StackPanel Grid.Column="1" Orientation="Horizontal"
                                         Spacing="10" VerticalAlignment="Center">
                                 <!-- SelectedIndex по умолчанию — «Старше 12 месяцев» (индекс 3);
                                      список никогда не пуст. -->
                                 <ComboBox x:Name="PurgePeriodCombo"
-                                          Width="200" Height="{StaticResource ControlHeightStandard}"
+                                          Width="190" Height="{StaticResource ControlHeightStandard}"
                                           SelectedIndex="3"
                                           VerticalAlignment="Center"
                                           Background="{StaticResource BrushSecondaryBg}"
@@ -418,44 +432,9 @@
                     </Border>
                     <Border Classes="separator h" />
 
-                    <!-- Пользователи базы: сами пользователи, их роли и права живут в правой
-                         панели во всю высоту (UsersPanel ниже) — таблица «пользователь ×
-                         действия» на странице не помещается. -->
-                    <Border Classes="settingRow">
-                        <Grid ColumnDefinitions="*,Auto">
-                            <StackPanel Grid.Column="0" Spacing="4"
-                                        VerticalAlignment="Center" Margin="0,0,32,0">
-                                <TextBlock Classes="title" Text="Пользователи" />
-                                <TextBlock Classes="desc"
-                                           Text="Все, кто открывал эту базу данных. Новые пользователи ждут допуска. В таблице — роли, допуск и права каждого пользователя." />
-                            </StackPanel>
-                            <Button Grid.Column="1" x:Name="UsersOpenBtn" Classes="dialog"
-                                    Width="NaN" MinWidth="110" Padding="14,0"
-                                    VerticalAlignment="Center"
-                                    Content="Открыть"
-                                    Click="OnOpenUsersPanel" />
-                        </Grid>
-                    </Border>
-                    <Border Classes="separator h" />
-
-                    <!-- Журнал безопасности: отдельный файл для проверки — только добавление
-                         и цепочка хэшей. Общий на все базы данных. -->
-                    <Border Classes="settingRow">
-                        <Grid ColumnDefinitions="*,Auto">
-                            <StackPanel Grid.Column="0" Spacing="4"
-                                        VerticalAlignment="Center" Margin="0,0,32,0">
-                                <TextBlock Classes="title" Text="Журнал безопасности" />
-                                <TextBlock Classes="desc"
-                                           Text="Что уходило наружу и что было заблокировано: только добавление, цепочка хэшей, ни тел запросов, ни значений полей. Журнал общий на все базы данных, чистить его нельзя." />
-                            </StackPanel>
-                            <Button Grid.Column="1" x:Name="SecurityLogOpenBtn" Classes="dialog"
-                                    Width="NaN" MinWidth="110" Padding="14,0"
-                                    VerticalAlignment="Center"
-                                    Content="Открыть"
-                                    Click="OnOpenSecurityLogPanel" />
-                        </Grid>
-                    </Border>
-                    <Border Classes="separator h" />
+                    <!-- Журнала безопасности здесь нет: он общий на все базы данных и живет своим
+                         разделом профиля (ProfileRegistry, ключ securitylog). Настройка одной базы
+                         и журнал всей программы в одном списке строк читались как одно и то же. -->
 
                     </StackPanel>
 
@@ -516,14 +495,14 @@
                  Открывается кнопкой «Открыть» ВМЕСТО панели администратора и занимает
                  ее место целиком; крестик возвращает панель администратора (клик по
                  разделу в сайдбаре — тоже). Своя шапка высотой 56 встает на место
-                 навбара модуля (тот скрывается): заголовок слева, область действия прав
-                 и крестик справа. Нижнюю границу шапки рисует общая линия окна на y=56
+                 навбара модуля (тот скрывается): заголовок слева, база, область действия
+                 прав и крестик справа. Нижнюю границу шапки рисует общая линия окна на y=56
                  (MainWindow) — своей линии нет, иначе удвоение. -->
             <Grid x:Name="UsersPanel" IsVisible="False"
                   RowDefinitions="Auto,*"
                   Background="{StaticResource BrushBg}">
 
-                <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto"
+                <Grid Grid.Row="0" ColumnDefinitions="*,Auto"
                       Height="56" Margin="16,0">
                     <TextBlock Grid.Column="0" Text="Пользователи"
                                VerticalAlignment="Center"
@@ -531,31 +510,57 @@
                                FontWeight="{StaticResource FontWeightBold}"
                                TextTrimming="CharacterEllipsis"
                                Margin="0,0,12,0" />
-                    <!-- Область действия прав: «Вся база данных» + коллекции. Настройки
-                         коллекции приоритетнее настроек базы (PermissionService.GetMask). -->
-                    <ComboBox Grid.Column="1" x:Name="ScopeCombo"
-                              Width="240" Height="{StaticResource ControlHeightStandard}"
-                              VerticalAlignment="Center"
-                              Margin="0,0,8,0"
-                              Background="{StaticResource BrushSecondaryBg}"
-                              CornerRadius="{StaticResource RadiusBase}"
-                              SelectionChanged="OnScopeChanged" />
-                    <Button Grid.Column="2" x:Name="UsersPanelCloseBtn"
-                            Classes="navbtn" Width="30" Height="30"
-                            VerticalAlignment="Center"
-                            CornerRadius="{StaticResource RadiusMedium}"
-                            ToolTip.Tip="Закрыть"
-                            Click="OnCloseUsersPanel">
-                        <Viewbox Width="{StaticResource IconSizeMedium}"
-                                 Height="{StaticResource IconSizeMedium}">
-                            <Canvas Width="24" Height="24">
-                                <Path Data="{StaticResource IconClose}"
-                                      Stroke="{Binding $parent[Button].Foreground}"
-                                      StrokeThickness="{StaticResource IconStrokeMedium}"
-                                      StrokeLineCap="Round" StrokeJoin="Round" />
-                            </Canvas>
-                        </Viewbox>
-                    </Button>
+
+                    <!-- Справа — те же два списка, что решают, к чему относится таблица:
+                         база (тот же список и те же иконки, что в навбаре панели
+                         администратора) и область прав внутри нее. Подписи стоят снаружи
+                         списков — сами списки показывают только значение. -->
+                    <StackPanel Grid.Column="1" Orientation="Horizontal"
+                                Spacing="8" VerticalAlignment="Center">
+                        <TextBlock Text="Базы данных"
+                                   VerticalAlignment="Center"
+                                   FontSize="{DynamicResource FontSizeSmall}"
+                                   Foreground="{StaticResource BrushSecondaryText}" />
+                        <ComboBox x:Name="UsersDbCombo"
+                                  Width="220" Height="{StaticResource ControlHeightStandard}"
+                                  VerticalAlignment="Center"
+                                  Background="{StaticResource BrushSecondaryBg}"
+                                  CornerRadius="{StaticResource RadiusBase}"
+                                  ItemTemplate="{StaticResource NavbarDbTemplate}"
+                                  SelectionChanged="OnUsersDbChanged" />
+
+                        <TextBlock Text="Права"
+                                   VerticalAlignment="Center"
+                                   FontSize="{DynamicResource FontSizeSmall}"
+                                   Foreground="{StaticResource BrushSecondaryText}" />
+                        <!-- Область действия прав: «Вся база данных», линия, коллекции этой
+                             базы. Настройки коллекции приоритетнее настроек базы
+                             (PermissionService.GetMask) — об этом и говорит линия. Пункты
+                             строит ProfileAdminUsers.cs. -->
+                        <ComboBox x:Name="ScopeCombo"
+                                  Width="200" Height="{StaticResource ControlHeightStandard}"
+                                  VerticalAlignment="Center"
+                                  Background="{StaticResource BrushSecondaryBg}"
+                                  CornerRadius="{StaticResource RadiusBase}"
+                                  SelectionChanged="OnScopeChanged" />
+
+                        <Button x:Name="UsersPanelCloseBtn"
+                                Classes="navbtn" Width="30" Height="30"
+                                VerticalAlignment="Center"
+                                CornerRadius="{StaticResource RadiusMedium}"
+                                ToolTip.Tip="Закрыть"
+                                Click="OnCloseUsersPanel">
+                            <Viewbox Width="{StaticResource IconSizeMedium}"
+                                     Height="{StaticResource IconSizeMedium}">
+                                <Canvas Width="24" Height="24">
+                                    <Path Data="{StaticResource IconClose}"
+                                          Stroke="{Binding $parent[Button].Foreground}"
+                                          StrokeThickness="{StaticResource IconStrokeMedium}"
+                                          StrokeLineCap="Round" StrokeJoin="Round" />
+                                </Canvas>
+                            </Viewbox>
+                        </Button>
+                    </StackPanel>
                 </Grid>
 
                 <!-- Матрица «пользователь × действия»: колонки строятся в коде
@@ -563,9 +568,8 @@
                      в шапке, шеврон фильтра/сортировки, те же линии и высота строки.
                      Первая колонка закреплена — имя видно при горизонтальной прокрутке
                      (полосу под ней освобождает стиль на PART_FrozenColumnScrollBarSpacer
-                     выше). Под шапкой сразу таблица, в том числе в области «Все базы
-                     данных»: итог массовой правки появляется окном и только при сбое
-                     (ProfileAdminAcross.cs). -->
+                     выше). Под шапкой сразу таблица: никаких пояснительных полос над ней
+                     нет — что настраивается, сказано списками в шапке. -->
                 <Panel Grid.Row="1">
                     <DataGrid x:Name="UsersGrid"
                               AutoGenerateColumns="False"
@@ -589,51 +593,76 @@
             </Grid>
 
             <!-- ── Журнал безопасности ─────────────────────────────────────
-                 Открывается кнопкой «Открыть» ВМЕСТО панели администратора — тем же
-                 приемом, что список пользователей: своя шапка 56 на месте навбара модуля,
-                 крестик возвращает панель. Содержимое собирает отдельный контрол
-                 (Controls/Components/Security): панель администратора ему зритель, а не
-                 хозяин. Сам контур безопасности живет своим разделом (SecurityPanel выше) —
-                 его читают все, а журнал ведет администратор. -->
+                 Свой раздел профиля, видимый только администратору (ProfileRegistry.Visible).
+                 Вид — таблица как в «Истории изменений»: те же линии и шапка, отбор воронками,
+                 подробности строки в панели «Детали» справа. Проверка цепочки и выгрузка — в
+                 навбаре; итог проверки, число строк и путь к файлу — строкой состояния внизу.
+                 Строится в ProfileSecurityLog.cs. -->
             <Grid x:Name="SecurityLogPanel" IsVisible="False"
-                  RowDefinitions="Auto,*"
+                  RowDefinitions="*,Auto"
                   Background="{StaticResource BrushBg}">
 
-                <Grid Grid.Row="0" ColumnDefinitions="*,Auto"
-                      Height="56" Margin="16,0">
-                    <TextBlock Grid.Column="0" Text="Журнал безопасности"
-                               VerticalAlignment="Center"
-                               FontSize="{DynamicResource FontSizeLarge}"
-                               FontWeight="{StaticResource FontWeightBold}"
-                               TextTrimming="CharacterEllipsis"
-                               Margin="0,0,12,0" />
-                    <Button Grid.Column="1" x:Name="SecurityLogPanelCloseBtn"
-                            Classes="navbtn" Width="30" Height="30"
-                            VerticalAlignment="Center"
-                            CornerRadius="{StaticResource RadiusMedium}"
-                            ToolTip.Tip="Закрыть"
-                            Click="OnCloseSecurityLogPanel">
-                        <Viewbox Width="{StaticResource IconSizeMedium}"
-                                 Height="{StaticResource IconSizeMedium}">
-                            <Canvas Width="24" Height="24">
-                                <Path Data="{StaticResource IconClose}"
-                                      Stroke="{Binding $parent[Button].Foreground}"
-                                      StrokeThickness="{StaticResource IconStrokeMedium}"
-                                      StrokeLineCap="Round" StrokeJoin="Round" />
-                            </Canvas>
-                        </Viewbox>
-                    </Button>
-                </Grid>
+                <Panel Grid.Row="0">
+                    <DataGrid x:Name="LogGrid"
+                              AutoGenerateColumns="False"
+                              RowHeight="{StaticResource RowHeightStandard}"
+                              CanUserResizeColumns="False"
+                              CanUserReorderColumns="False"
+                              CanUserSortColumns="False"
+                              GridLinesVisibility="All"
+                              HorizontalGridLinesBrush="{StaticResource BrushSeparator}"
+                              VerticalGridLinesBrush="{StaticResource BrushSeparator}"
+                              HeadersVisibility="Column"
+                              SelectionMode="Single"
+                              IsReadOnly="True"
+                              Background="Transparent"
+                              UseLayoutRounding="{DynamicResource LineUseLayoutRounding}"
+                              RowBackground="{StaticResource BrushBg}"
+                              HorizontalScrollBarVisibility="Auto"
+                              VerticalScrollBarVisibility="Auto" />
+                    <TextBlock x:Name="LogEmptyText"
+                               Text="Событий безопасности еще не было."
+                               IsVisible="False"
+                               FontSize="{DynamicResource FontSizeSmall}"
+                               Foreground="{StaticResource BrushSecondaryText}"
+                               HorizontalAlignment="Center"
+                               Margin="0,48,0,0" />
+                </Panel>
 
-                <Panel Grid.Row="1" x:Name="SecurityLogHost" />
+                <!-- Строка состояния: слева итог проверки цепочки, справа число строк и файл.
+                     Габариты — как у нижней панели конструктора (FooterConstructor): высота 56,
+                     линия сверху, поля 16. Нижние панели программы одного роста, иначе при
+                     переходе между разделами край таблицы прыгал бы.
+
+                     Кнопки «Очистить» у журнала нет и не будет — журнал, который чистит тот, за
+                     кем он ведется, не журнал; убирается он только по сроку из политики. -->
+                <Border Grid.Row="1" Height="56" Background="{StaticResource BrushBg}">
+                    <DockPanel>
+                        <Border DockPanel.Dock="Top" Classes="separator h" />
+                        <Grid ColumnDefinitions="*,Auto" Margin="16,0">
+                            <TextBlock Grid.Column="0" x:Name="LogChainText"
+                                       FontSize="{DynamicResource FontSizeSmall}"
+                                       Foreground="{StaticResource BrushSecondaryText}"
+                                       TextTrimming="CharacterEllipsis"
+                                       VerticalAlignment="Center"
+                                       Margin="0,0,16,0" />
+                            <TextBlock Grid.Column="1" x:Name="LogFileText"
+                                       FontSize="{DynamicResource FontSizeSmall}"
+                                       Foreground="{StaticResource BrushSecondaryText}"
+                                       TextTrimming="CharacterEllipsis"
+                                       VerticalAlignment="Center" />
+                        </Grid>
+                    </DockPanel>
+                </Border>
             </Grid>
 
         </Grid>
 
     </DockPanel>
 
-    <!-- Вертикальный разделитель между разделом и деталями (во всю высоту). -->
-    <Border Grid.Column="1" x:Name="HistoryDetailDivider"
+    <!-- Вертикальный разделитель между разделом и деталями (во всю высоту). Общий: панель
+         деталей открывают и «История изменений», и «Журнал безопасности», но никогда вместе. -->
+    <Border Grid.Column="1" x:Name="DetailDivider"
             Classes="separator v" IsVisible="False" />
 
     <!-- ── Детали строки журнала (во всю высоту) ───────────────────────────
@@ -754,6 +783,61 @@
                          AcceptsReturn="True"
                          TextWrapping="Wrap" />
             </Grid>
+        </Grid>
+    </Border>
+
+    <!-- ── Детали строки журнала безопасности (во всю высоту) ──────────────
+         Тот же прием, что «Детали» истории изменений: своя шапка вровень с навбаром модуля,
+         карточки полей на сером фоне, кнопка копирования строки внизу. Карточки строятся в
+         ProfileSecurityLog.cs: их поля — те же, что колонки таблицы, плюс то, чему в колонках
+         места нет (сценарий, поля, объем, отпечаток, пояснение). -->
+    <Border Grid.Column="2" x:Name="LogDetailPanel"
+            IsVisible="False" Width="420"
+            Background="{StaticResource BrushBg}">
+        <Grid RowDefinitions="Auto,*,Auto">
+
+            <Grid Grid.Row="0" ColumnDefinitions="*,Auto"
+                  Height="56" Margin="16,0">
+                <TextBlock Grid.Column="0" Text="Детали"
+                           VerticalAlignment="Center"
+                           FontSize="{DynamicResource FontSizeLarge}"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           TextTrimming="CharacterEllipsis"
+                           Margin="0,0,12,0" />
+                <Button Grid.Column="1" x:Name="LogDetailCloseBtn"
+                        Classes="navbtn" Width="30" Height="30"
+                        VerticalAlignment="Center"
+                        CornerRadius="{StaticResource RadiusMedium}"
+                        ToolTip.Tip="Закрыть">
+                    <Viewbox Width="{StaticResource IconSizeMedium}"
+                             Height="{StaticResource IconSizeMedium}">
+                        <Canvas Width="24" Height="24">
+                            <Path Data="{StaticResource IconClose}"
+                                  Stroke="{Binding $parent[Button].Foreground}"
+                                  StrokeThickness="{StaticResource IconStrokeMedium}"
+                                  StrokeLineCap="Round" StrokeJoin="Round" />
+                        </Canvas>
+                    </Viewbox>
+                </Button>
+            </Grid>
+
+            <ScrollViewer Grid.Row="1"
+                          Background="{StaticResource BrushSecondaryBg}"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+                <StackPanel x:Name="LogDetailCardsHost"
+                            Margin="16" Spacing="6" />
+            </ScrollViewer>
+
+            <Border Grid.Row="2"
+                    BorderBrush="{StaticResource BrushSeparator}"
+                    BorderThickness="{DynamicResource BorderLineTop}"
+                    Padding="16,12">
+                <Button x:Name="LogDetailCopyBtn" Classes="dialog"
+                        Width="NaN" MinWidth="110" Padding="14,0"
+                        HorizontalAlignment="Left"
+                        Content="Скопировать строку" />
+            </Border>
         </Grid>
     </Border>
 

@@ -92,7 +92,10 @@ public partial class ConstructorRepository
         var before = Confidentiality.FromConfig(field.ConfigJson);
         if (before == label) return "";
 
-        if (Downgrade(before, label, password, "свойство", field.Name) is { Length: > 0 } trouble)
+        if (Downgrade(before, label, password, "свойство", field.Name,
+                      db.DbCollections.AsNoTracking()
+                        .FirstOrDefault(c => c.Id == field.CollectionId)?.Name ?? "")
+                is { Length: > 0 } trouble)
             return trouble;
 
         field.ConfigJson = Confidentiality.WriteToConfig(field.ConfigJson, label);
@@ -130,8 +133,11 @@ public partial class ConstructorRepository
     /// Повышение метки пароля НЕ требует и следа не оставляет: строже — значит безопаснее, а
     /// спрашивать пароль за осторожность значит отучить от нее.
     /// </summary>
+    /// <param name="collection">Коллекция, к которой относится метка; пусто — метка самой базы.
+    /// Идет отдельным полем строки журнала: по нему проверяющий отбирает события коллекции, а
+    /// вычитывать имя из пояснения ему не должно быть нужно.</param>
     private string Downgrade(ConfidentialityLabel before, ConfidentialityLabel after,
-                             string? password, string what, string name)
+                             string? password, string what, string name, string collection = "")
     {
         if (after >= before) return "";
 
@@ -156,7 +162,8 @@ public partial class ConstructorRepository
             explanation: $"{Confidentiality.Title(before)} → {Confidentiality.Title(after)}",
             dbId:        0,
             at:          DateTimeOffset.Now,
-            confirmed:   SmartBase.Utils.CurrentUser.DisplayName);
+            confirmed:   SmartBase.Utils.CurrentUser.DisplayName,
+            collection:  collection);
 
         // Тот же порядок, что и у отправки: сначала след, потом действие. Строка, которую пишут
         // по итогу, не ляжет ровно в том случае, ради которого журнал и заведен.

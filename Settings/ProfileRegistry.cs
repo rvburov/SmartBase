@@ -15,17 +15,35 @@ public sealed record ProfileCategory(string Key, string Label, string Icon);
 /// только администратор. Панель администратора неадминистратору не показывает ничего, и контур
 /// внутри нее оказался бы закрыт от тех, кому он нужнее всего. Менять с него все равно нечего:
 /// экран только читает.
+///
+/// <b>Почему «Журнал безопасности» — тоже свой раздел.</b> Он был строкой панели администратора и
+/// открывался поверх нее, но относится не к выбранной базе, а ко всей программе: журнал один на
+/// все базы, и база в нем — колонка строки. Настройка, живущая среди настроек одной базы и
+/// действующая на все, читается как ошибка — и читалась ею.
 /// </summary>
 public static class ProfileRegistry
 {
     public static IReadOnlyList<ProfileCategory> All { get; } =
     [
-        new("general",  "Общие данные",           "IconUser"),
-        new("admin",    "Панель администратора",  "IconShieldUser"),
-        new("security", "Безопасность",           "IconLock"),
-        new("secrets",  "Менеджер паролей",       "IconKey"),
-        new("history",  "История изменений",      "IconHistory"),
+        new("general",     "Общие данные",          "IconUser"),
+        new("admin",       "Панель администратора", "IconShieldUser"),
+        new("securitylog", "Журнал безопасности",   "IconShieldCheck"),
+        new("security",    "Безопасность",          "IconLock"),
+        new("secrets",     "Менеджер паролей",      "IconKey"),
+        new("history",     "История изменений",     "IconHistory"),
     ];
+
+    /// <summary>
+    /// Разделы, которые показываем этому человеку. Журнал безопасности видит только администратор
+    /// хотя бы одной открытой базы: журнал ведется ради проверки, и читают его те же, кто
+    /// управляет доступом. Пункт, ведущий туда, куда человека не пустят, хуже отсутствующего —
+    /// поэтому он именно СКРЫТ, а не показан с отказом.
+    ///
+    /// Права меняются на ходу (админство выдали с соседней машины, базу открыли или закрыли),
+    /// поэтому сайдбар пересобирается по этому же списку — см. <c>MainWindow.SyncProfileSidebar</c>.
+    /// </summary>
+    public static IReadOnlyList<ProfileCategory> Visible(bool forAdmin) =>
+        forAdmin ? All : [.. All.Where(c => c.Key != "securitylog")];
 
     /// <summary>Раздел по ключу или null, если такого нет.</summary>
     public static ProfileCategory? FindByKey(string key) =>

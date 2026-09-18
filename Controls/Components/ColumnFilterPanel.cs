@@ -30,6 +30,15 @@ public sealed class ColumnFilterSpec
     /// <summary>Действующая сортировка этой колонки: true — по возрастанию, null — сортировка не по ней.</summary>
     public bool? Sort { get; init; }
 
+    /// <summary>
+    /// Можно ли сортировать по этой колонке. Ложь — пунктов сортировки в окне нет вовсе.
+    ///
+    /// Нужно там, где порядок строк задан не колонкой: журнал безопасности читается цепочкой и
+    /// переставляться может только по времени. Показать «От А до Я» и ничего не переставить —
+    /// хуже, чем не показывать: человек решит, что экран сломан.
+    /// </summary>
+    public bool Sortable { get; init; } = true;
+
     /// <summary>Действующий фильтр колонки (сырые значения); null — фильтра нет.</summary>
     public IReadOnlySet<string>? Filter { get; init; }
 
@@ -151,6 +160,7 @@ public static class ColumnFilterPanel
         void RenderSort()
         {
             sortSection.Children.Clear();
+            if (!spec.Sortable) return;
             sortSection.Children.Add(FlatItem(host, spec.AscLabel,
                 () => { pendingSort = true;  RenderSort(); ReloadCounts(); rebuildListRef(); },
                 Icon("IconSortAz"), active: pendingSort == true));
@@ -163,7 +173,7 @@ public static class ColumnFilterPanel
         }
         RenderSort();
 
-        panel.Children.Add(Separator(host));
+        if (spec.Sortable) panel.Children.Add(Separator(host));
 
         // ── Поиск по значениям ──
         var search = new TextBox

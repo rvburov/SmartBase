@@ -100,7 +100,8 @@ public static class ExportTrace
             bodyHash:    hash,
             explanation: Explanation(tables, scenario),
             dbId:        SingleDb(tables),
-            at:          now));
+            at:          now,
+            collection:  Collections(tables)));
     }
 
     // ── Что пишем в строку ────────────────────────────────────────────────────
@@ -152,6 +153,17 @@ public static class ExportTrace
             ? string.Join(", ", names)
             : string.Join(", ", names.Take(MaxFields)) + $" и еще {names.Count - MaxFields}";
     }
+
+    /// <summary>
+    /// Коллекции строки журнала — через запятую, как и столбцы: книга с несколькими листами ушла
+    /// одним файлом, и назвать в колонке только первую значило бы скрыть остальные. Ключ базы так
+    /// не делается (<see cref="SingleDb"/>) и не должен: по базе отбирают, а «первая из двух» в
+    /// отборе соврала бы.
+    /// </summary>
+    private static string Collections(IReadOnlyList<ExportedCollection> tables) =>
+        string.Join(", ", tables.Select(t => t.Collection)
+                                .Where(name => name.Length > 0)
+                                .Distinct(StringComparer.CurrentCultureIgnoreCase));
 
     /// <summary>
     /// Пояснение: что за коллекции и сколько строк каждая, а перед ними — метка, если она

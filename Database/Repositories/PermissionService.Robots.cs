@@ -83,6 +83,9 @@ public sealed partial class PermissionService
                 DisplayName = name,
                 IsAdmin     = false,   // роботу администратором быть незачем и опасно
                 IsApproved  = IsAdmin,
+                // Робота заводит администратор — решение по его допуску принято тем же
+                // действием; чужой токен ждет допуска, как и человек.
+                AccessDecided = IsAdmin,
                 CreatedAt   = stamp,
                 LastSeenAt  = stamp,
             };

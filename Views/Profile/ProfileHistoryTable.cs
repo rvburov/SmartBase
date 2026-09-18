@@ -74,9 +74,7 @@ public partial class ProfileView
 
         // Список баз — в навбаре; выбор сохраняется, если база еще смонтирована и доступна.
         var keepDbId = _historyDb?.DbId;
-        var names = _historyDbs
-            .Select(d => string.IsNullOrWhiteSpace(d.Name) ? "База данных" : d.Name)
-            .ToList();
+        var names = _historyDbs.Select(DbChoice).ToList();
         var idx = keepDbId is int id ? _historyDbs.FindIndex(d => d.DbId == id) : -1;
         HeaderBar.SetHistoryDbs(names, idx >= 0 ? idx : (names.Count > 0 ? 0 : -1));
 

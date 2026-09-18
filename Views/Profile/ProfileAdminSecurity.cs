@@ -14,8 +14,9 @@ namespace SmartBase.Views.Profile;
 /// это отрезало контур от тех, кому он нужнее всего: панель неадминистратору не показывает
 /// ничего, а вопрос «почему у меня не уходит отправка» задает как раз он. Поэтому
 /// <b>контур — свой раздел профиля</b>, видимый всем: он только читает, менять с него нечего.
-/// <b>Журнал остался в панели администратора</b>: там он и ведется, и читается — вместе с
-/// правами и пользователями.
+/// <b>Журнал — тоже свой раздел</b>, но видимый администратору (ProfileRegistry.Visible): он
+/// общий на все базы, и строкой панели, управляющей одной базой, читался неверно. Собирается
+/// журнал в ProfileSecurityLog.cs.
 ///
 /// По той же границе разделены и действия контура. «Перечитать политику» доступно всем: оно
 /// ничего не разрешает, а перечитывать файл приходится сразу после того, как администратор его
@@ -33,10 +34,9 @@ namespace SmartBase.Views.Profile;
 public partial class ProfileView
 {
     // Контролы создаются при первом показе и живут дальше: у каждого свое состояние
-    // (развернутый список меток, страницы журнала, итог проверки цепочки), и пересоздание
-    // молча сбрасывало бы его на каждый уход из раздела.
+    // (развернутый список меток, опись секретов), и пересоздание молча сбрасывало бы его на
+    // каждый уход из раздела.
     private SecurityContourView? _contour;
-    private SecurityJournalView? _securityJournal;
     private SecretsView?         _secrets;
 
     /// <summary>
@@ -64,11 +64,14 @@ public partial class ProfileView
             _contour = new SecurityContourView();
 
             // «В журнал» у счетчика блокировок: контур сосчитал их, а показывает журнал —
-            // переход делает модуль, у которого оба экрана под рукой.
+            // переход делает модуль, у которого оба экрана под рукой. Отбор ставится ДО перехода:
+            // сайдбар в ответ на CategoryRequested сам зовет ShowCategory, и журнал собирается
+            // уже с ним. Иначе человек, пришедший за блокировками, получил бы все события подряд
+            // и повторял руками то, что соседний экран уже знает.
             _contour.BlockedRequested += (_, _) =>
             {
-                CategoryRequested?.Invoke(this, "admin");
-                OpenSecurityLog(blocked: true);
+                _logBlockedPending = true;
+                CategoryRequested?.Invoke(this, "securitylog");
             };
 
             SecurityPanel.Children.Add(_contour);
@@ -119,43 +122,4 @@ public partial class ProfileView
         if (_categoryKey == "secrets" && IsVisible) _secrets?.Show(_workspace);
     }
 
-    // ── Журнал ────────────────────────────────────────────────────────────────
-
-    private void OnOpenSecurityLogPanel(object? sender, RoutedEventArgs e) => OpenSecurityLog();
-
-    private void OpenSecurityLog(bool blocked = false)
-    {
-        if (_securityJournal is null)
-        {
-            _securityJournal = new SecurityJournalView();
-            SecurityLogHost.Children.Add(_securityJournal);
-        }
-
-        if (blocked) _securityJournal.ShowBlocked(_workspace);
-        else         _securityJournal.Show(_workspace);
-
-        AdminPanel.IsVisible       = false;
-        HeaderBar.IsVisible        = false;
-        SecurityLogPanel.IsVisible = true;
-    }
-
-    private void OnCloseSecurityLogPanel(object? sender, RoutedEventArgs e) => CloseSecurityPanels();
-
-    // ── Закрытие ──────────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Закрыть журнал и вернуть панель администратора. Вызывается крестиком и сменой раздела в
-    /// сайдбаре — так же, как закрывается список пользователей.
-    /// </summary>
-    private void CloseSecurityPanels()
-    {
-        if (!SecurityLogPanel.IsVisible) return;
-
-        SecurityLogPanel.IsVisible = false;
-        HeaderBar.IsVisible        = true;
-
-        // Возвращаемся в панель администратора, только если раздел еще открыт: при уходе
-        // в другой раздел видимость панелей уже расставил ShowCategory.
-        AdminPanel.IsVisible = _categoryKey == "admin";
-    }
 }

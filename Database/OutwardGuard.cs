@@ -126,7 +126,8 @@ public static class OutwardGuard
             explanation: Explanation(trouble, preview, registry.Direction(request.Id)),
             dbId:        dbId,
             at:          now,
-            confirmed:   confirmed));
+            confirmed:   confirmed,
+            collection:  payload?.Collection ?? ""));
 
         if (trouble is { Length: > 0 }) return new OutwardVerdict(trouble, confirmed);
 

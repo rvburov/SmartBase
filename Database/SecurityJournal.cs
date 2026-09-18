@@ -105,9 +105,14 @@ public enum SecurityEvent
 /// другое», не храня самого тела.</param>
 /// <param name="Explanation">Словами: причина отказа или пояснение к разрешению.</param>
 /// <param name="DbId">Ключ базы, которую задело событие; 0 — ни одной.</param>
+/// <param name="Collection">Коллекция, которой касалось событие. Пусто — событие не про
+/// коллекцию (показ секрета, порт приема, подтверждение направления, уборка журнала). Имя, а не
+/// ключ: коллекцию переименуют или удалят, а строка журнала обязана читаться и через год.</param>
 /// <param name="Confirmed">Кто подтвердил направление. Пусто — подтверждения не было.</param>
 /// <param name="Prev">Хэш предыдущей строки; у первой пусто.</param>
 /// <param name="Hash">Хэш этой строки вместе с <paramref name="Prev"/>.</param>
+/// <param name="Ver">Версия канонического вида строки (<see cref="Canonical"/>); 0 — строки,
+/// записанные до появления <paramref name="Collection"/>.</param>
 public sealed record SecurityEntry(
     long          Id,
     string        At,
@@ -122,10 +127,18 @@ public sealed record SecurityEntry(
     string        BodyHash,
     string        Explanation,
     int           DbId,
+    string        Collection,
     string        Confirmed,
     string        Prev = "",
-    string        Hash = "")
+    string        Hash = "",
+    int           Ver  = 0)
 {
+    /// <summary>
+    /// Версия канонического вида, которой пишутся НОВЫЕ строки. Растет, когда в строку добавляют
+    /// поле: старые строки остаются в своей версии и продолжают сходиться со своими хэшами.
+    /// </summary>
+    public const int CurrentVer = 1;
+
     /// <summary>
     /// Новая строка «сейчас». Момент передается явно — тест не должен зависеть от часов, а
     /// журнал безопасности проверяется тестами построчно.
@@ -133,10 +146,11 @@ public sealed record SecurityEntry(
     public static SecurityEntry New(SecurityEvent kind, bool allowed, string who, string scenario,
                                     string address, string fields, int rows, long bytes,
                                     string bodyHash, string explanation, int dbId,
-                                    DateTimeOffset at, string confirmed = "") =>
+                                    DateTimeOffset at, string confirmed = "",
+                                    string collection = "") =>
         new(0, at.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture),
             kind, allowed, who, scenario, address, fields, rows, bytes, bodyHash, explanation,
-            dbId, confirmed);
+            dbId, collection, confirmed, Ver: CurrentVer);
 
     /// <summary>Момент записи; <c>null</c> — строка испорчена правкой файла руками.</summary>
     public DateTimeOffset? Moment =>
@@ -159,14 +173,31 @@ public sealed record SecurityEntry(
     /// <inheritdoc cref="Separator"/>
     private const char Chain = (char)0x1E;
 
-    /// <summary>Содержимое строки одной канонической строкой — то, что идет в хэш.</summary>
-    public string Canonical() => string.Join(Separator,
-        At, ((int)Event).ToString(CultureInfo.InvariantCulture), Allowed ? "1" : "0",
-        Who, Scenario, Address, Fields,
-        Rows.ToString(CultureInfo.InvariantCulture),
-        Bytes.ToString(CultureInfo.InvariantCulture),
-        BodyHash, Explanation,
-        DbId.ToString(CultureInfo.InvariantCulture), Confirmed);
+    /// <summary>
+    /// Содержимое строки одной канонической строкой — то, что идет в хэш.
+    ///
+    /// <b>Почему у строки есть версия.</b> Новое поле меняет канонический вид, а вместе с ним —
+    /// хэши: добавь «Коллекцию» всем строкам подряд, и первая же проверка после обновления
+    /// объявила бы испорченным честный журнал за все прошлые годы. Поэтому поле входит в
+    /// канонический вид только у строк своей версии (<see cref="CurrentVer"/>), а прежние
+    /// считаются ровно так же, как считались.
+    ///
+    /// У новых строк поле входит ВСЕГДА, даже пустое. Включай его «только когда заполнено» — и
+    /// удаление имени коллекции из строки прошло бы проверку незамеченным, то есть ровно то, от
+    /// чего цепочка и бережет.
+    /// </summary>
+    public string Canonical()
+    {
+        var head = string.Join(Separator,
+            At, ((int)Event).ToString(CultureInfo.InvariantCulture), Allowed ? "1" : "0",
+            Who, Scenario, Address, Fields,
+            Rows.ToString(CultureInfo.InvariantCulture),
+            Bytes.ToString(CultureInfo.InvariantCulture),
+            BodyHash, Explanation,
+            DbId.ToString(CultureInfo.InvariantCulture), Confirmed);
+
+        return Ver == 0 ? head : head + Separator + Collection;
+    }
 
     /// <summary>Хэш строки в цепочке: предыдущий хэш плюс содержимое этой.</summary>
     public string ChainHash(string previous) =>
@@ -276,6 +307,8 @@ public sealed class SecurityJournal
                 Explanation TEXT    NOT NULL,
                 DbId        INTEGER NOT NULL,
                 Confirmed   TEXT    NOT NULL,
+                Collection  TEXT    NOT NULL DEFAULT '',
+                Ver         INTEGER NOT NULL DEFAULT 0,
                 Prev        TEXT    NOT NULL,
                 Hash        TEXT    NOT NULL
             );
@@ -296,6 +329,30 @@ public sealed class SecurityJournal
             """;
 
         command.ExecuteNonQuery();
+
+        AddMissing(connection, "Collection", "TEXT NOT NULL DEFAULT ''");
+        AddMissing(connection, "Ver",        "INTEGER NOT NULL DEFAULT 0");
+    }
+
+    /// <summary>
+    /// Дописать столбец в уже заведенный файл журнала. Значение по умолчанию достается прежним
+    /// строкам, и это ровно то, что нужно: <c>Ver = 0</c> означает «канонический вид без
+    /// коллекции», и проверка цепочки считает такие строки по-старому.
+    ///
+    /// Журнал не пересоздается и не переписывается: переписанный журнал — уже не журнал, даже
+    /// если переписала его программа.
+    /// </summary>
+    private static void AddMissing(SqliteConnection connection, string column, string type)
+    {
+        using var known = connection.CreateCommand();
+        known.CommandText = "SELECT COUNT(*) FROM pragma_table_info('events') WHERE name = $name;";
+        known.Parameters.AddWithValue("$name", column);
+
+        if (Convert.ToInt64(known.ExecuteScalar(), CultureInfo.InvariantCulture) > 0) return;
+
+        using var add = connection.CreateCommand();
+        add.CommandText = $"ALTER TABLE events ADD COLUMN {column} {type};";
+        add.ExecuteNonQuery();
     }
 
     private SqliteConnection Open()
@@ -338,10 +395,10 @@ public sealed class SecurityJournal
                 command.CommandText = """
                     INSERT INTO events (At, Event, Allowed, Who, Scenario, Address, Fields,
                                         Rows, Bytes, BodyHash, Explanation, DbId, Confirmed,
-                                        Prev, Hash)
+                                        Collection, Ver, Prev, Hash)
                     VALUES ($at, $event, $allowed, $who, $scenario, $address, $fields,
                             $rows, $bytes, $bodyHash, $explanation, $db, $confirmed,
-                            $prev, $hash);
+                            $collection, $ver, $prev, $hash);
                     SELECT last_insert_rowid();
                     """;
 
@@ -358,6 +415,8 @@ public sealed class SecurityJournal
                 command.Parameters.AddWithValue("$explanation", entry.Explanation ?? "");
                 command.Parameters.AddWithValue("$db",          entry.DbId);
                 command.Parameters.AddWithValue("$confirmed",   entry.Confirmed ?? "");
+                command.Parameters.AddWithValue("$collection",  entry.Collection ?? "");
+                command.Parameters.AddWithValue("$ver",         entry.Ver);
                 command.Parameters.AddWithValue("$prev",        previous);
                 command.Parameters.AddWithValue("$hash",        hash);
 
@@ -534,8 +593,13 @@ public sealed class SecurityJournal
     /// «прочитать последние пятьсот и отобрать из них» означало бы, что проверяющий, ищущий одно
     /// заблокированное событие полугодовой давности, его просто не найдет.
     /// </summary>
-    public IReadOnlyList<SecurityEntry> Page(SecurityFilter filter, int take = 200) =>
-        Fetch(filter, before: 0, take);
+    /// <param name="after">Ключ последней показанной строки; 0 — читаем с начала выборки. По нему
+    /// берется следующая страница при прокрутке: журнал копится годами, и «прочитать все и
+    /// показать» на нем не работает.</param>
+    /// <param name="newestFirst">Порядок: свежие сверху (обычный вид) или старые сверху.</param>
+    public IReadOnlyList<SecurityEntry> Page(SecurityFilter filter, int take = 200,
+                                             long after = 0, bool newestFirst = true) =>
+        Fetch(filter, after, take, newestFirst);
 
     /// <summary>
     /// Все строки под условия, свежие сверху, ЛЕНИВОЙ последовательностью: страницы читаются по
@@ -573,7 +637,7 @@ public sealed class SecurityJournal
                 using var connection = Open();
                 using var command    = connection.CreateCommand();
 
-                command.CommandText = "SELECT COUNT(*) FROM events" + Where(filter, before: 0, command);
+                command.CommandText = "SELECT COUNT(*) FROM events" + Where(filter, edge: 0, command);
 
                 return Convert.ToInt64(command.ExecuteScalar(), CultureInfo.InvariantCulture);
             }
@@ -584,8 +648,12 @@ public sealed class SecurityJournal
         }
     }
 
-    /// <summary>Одна страница: строки старше <paramref name="before"/> (0 — с самого конца).</summary>
-    private IReadOnlyList<SecurityEntry> Fetch(SecurityFilter filter, long before, int take)
+    /// <summary>
+    /// Одна страница: строки за <paramref name="edge"/> (0 — с начала выборки). При обычном
+    /// порядке это строки СТАРШЕ края, при обратном — новее его.
+    /// </summary>
+    private IReadOnlyList<SecurityEntry> Fetch(SecurityFilter filter, long edge, int take,
+                                               bool newestFirst = true)
     {
         try
         {
@@ -594,8 +662,9 @@ public sealed class SecurityJournal
                 using var connection = Open();
                 using var command    = connection.CreateCommand();
 
-                command.CommandText = Select + Where(filter, before, command)
-                                    + " ORDER BY Id DESC LIMIT $take;";
+                command.CommandText = Select + Where(filter, edge, command, newestFirst: newestFirst)
+                                    + (newestFirst ? " ORDER BY Id DESC" : " ORDER BY Id")
+                                    + " LIMIT $take;";
 
                 command.Parameters.AddWithValue("$take", Math.Max(1, take));
 
@@ -611,15 +680,15 @@ public sealed class SecurityJournal
     }
 
     /// <summary>Условия отбора одной строкой — и те же параметры в команду.</summary>
-    private static string Where(SecurityFilter filter, long before, SqliteCommand command,
-                                string except = "")
+    private static string Where(SecurityFilter filter, long edge, SqliteCommand command,
+                                string except = "", bool newestFirst = true)
     {
         var parts = new List<string>();
 
-        if (before > 0)
+        if (edge > 0)
         {
-            parts.Add("Id < $before");
-            command.Parameters.AddWithValue("$before", before);
+            parts.Add(newestFirst ? "Id < $edge" : "Id > $edge");
+            command.Parameters.AddWithValue("$edge", edge);
         }
 
         if (filter.Event is { } kind)
@@ -648,7 +717,7 @@ public sealed class SecurityJournal
             }
 
             // Числовые колонки сравниваются как текст: значения приходят с экрана строками.
-            parts.Add($"CAST({column} AS TEXT) IN ({string.Join(", ", names)})");
+            parts.Add($"CAST({FilterSql[column]} AS TEXT) IN ({string.Join(", ", names)})");
         }
 
         // Момент сравнивается строкой, и это работает ровно потому, что все строки записаны
@@ -671,8 +740,8 @@ public sealed class SecurityJournal
     /// </summary>
     public static readonly IReadOnlyList<string> CsvHeaders =
     [
-        "Время", "Событие", "Решение", "Кто", "Сценарий", "Адрес", "Поля",
-        "Записей", "Байт", "Отпечаток тела", "Подтвердил", "База", "Пояснение",
+        "Дата и время", "Действие", "Результат", "Пользователь", "Сценарий", "Назначение", "Поля",
+        "Записей", "Байт", "Отпечаток тела", "Подтвердил", "База данных", "Коллекция", "Пояснение",
     ];
 
     /// <summary>
@@ -712,6 +781,7 @@ public sealed class SecurityJournal
         entry.BodyHash,
         entry.Confirmed,
         entry.DbId > 0 ? entry.DbId.ToString(CultureInfo.InvariantCulture) : "",
+        entry.Collection,
         entry.Explanation,
     ];
 
@@ -742,10 +812,30 @@ public sealed class SecurityJournal
     public static readonly IReadOnlyDictionary<string, string> Filterable =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["Event"]    = "Событие",
-            ["Allowed"]  = "Итог",
-            ["Who"]      = "Кто",
-            ["Scenario"] = "Сценарий",
+            ["Day"]        = "Дата и время",
+            ["Event"]      = "Действие",
+            ["Allowed"]    = "Результат",
+            ["Who"]        = "Пользователь",
+            ["DbId"]       = "База данных",
+            ["Collection"] = "Коллекция",
+            ["Scenario"]   = "Сценарий",
+        };
+
+    /// <summary>
+    /// Чем колонка отбора считается в SQL. Почти у всех это сам столбец, а у дня — выражение:
+    /// время лежит в UTC, а отбирают по местному дню, и отдать это на откуп экрану значило бы
+    /// перебирать в памяти журнал за годы ради одного дня.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, string> FilterSql =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["Day"]        = "date(At, 'localtime')",
+            ["Event"]      = "Event",
+            ["Allowed"]    = "Allowed",
+            ["Who"]        = "Who",
+            ["DbId"]       = "DbId",
+            ["Collection"] = "Collection",
+            ["Scenario"]   = "Scenario",
         };
 
     /// <summary>
@@ -766,8 +856,8 @@ public sealed class SecurityJournal
                 using var command    = connection.CreateCommand();
 
                 command.CommandText =
-                    $"SELECT {column} AS V, COUNT(*) AS C FROM events"
-                  + Where(filter, before: 0, command, except: column)
+                    $"SELECT {FilterSql[column]} AS V, COUNT(*) AS C FROM events"
+                  + Where(filter, edge: 0, command, except: column)
                   + " GROUP BY V ORDER BY C DESC, V LIMIT $take;";
 
                 command.Parameters.AddWithValue("$take", Math.Max(1, take));
@@ -792,7 +882,7 @@ public sealed class SecurityJournal
 
     private const string Select =
         "SELECT Id, At, Event, Allowed, Who, Scenario, Address, Fields, Rows, Bytes, BodyHash, " +
-        "Explanation, DbId, Confirmed, Prev, Hash FROM events";
+        "Explanation, DbId, Collection, Confirmed, Prev, Hash, Ver FROM events";
 
     private static List<SecurityEntry> Read(SqliteCommand command)
     {
@@ -816,7 +906,9 @@ public sealed class SecurityJournal
                 reader.GetInt32(12),
                 reader.GetString(13),
                 reader.GetString(14),
-                reader.GetString(15)));
+                reader.GetString(15),
+                reader.GetString(16),
+                reader.GetInt32(17)));
 
         return rows;
     }

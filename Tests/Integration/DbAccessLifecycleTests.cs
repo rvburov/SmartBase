@@ -224,6 +224,73 @@ public sealed class DbAccessLifecycleTests
         SampleData.AddCollection(db.Constructor);
     }
 
+    /// <summary>
+    /// Три состояния допуска, а не два. «Ждет» — решения не было; «отозван» — решение было
+    /// отказом; «выдан» — согласием. В базе их различает db_users.AccessDecided, и без него
+    /// панель администратора называла бы отозванного ожидающим: он всплывал бы в счетчике
+    /// «ждут допуска» и звал администратора решать заново то, что тот уже решил.
+    ///
+    /// Признак ставит КАЖДЫЙ путь, которым допуск появляется или исчезает: выдача, отзыв,
+    /// повышение до администратора и вход по паролю. Пропущенный путь — это строка, которая
+    /// после действия администратора все еще «ждет».
+    /// </summary>
+    [Fact]
+    public void Access_decision_is_remembered_apart_from_the_access_itself()
+    {
+        using var db = new TempDatabase();
+        var id = JoinUser(db.Path, "ivanov@pc3", "Иванов Иван");
+
+        DbUserEntity Fresh()
+        {
+            using var check = new AppDbContext(db.Path);
+            return check.DbUsers.Single(u => u.Id == id);
+        }
+
+        // Присоединился и ждет: допуска нет и решения тоже.
+        Assert.False(Fresh().IsApproved);
+        Assert.False(Fresh().AccessDecided);
+
+        // Отзыв — это решение, даже когда допуска и так не было: строка перестает быть
+        // «ожидающей» и больше не просится в счетчик панели.
+        db.Permissions.SetApproved(id, false);
+        Assert.False(Fresh().IsApproved);
+        Assert.True(Fresh().AccessDecided);
+
+        db.Permissions.SetApproved(id, true);
+        Assert.True(Fresh().IsApproved);
+        Assert.True(Fresh().AccessDecided);
+
+        // Повышение до администратора дает допуск — значит, и решение принято.
+        var second = JoinUser(db.Path, "petrov@pc4", "Петров Петр");
+        db.Permissions.SetAdmin(second, true);
+        using (var check = new AppDbContext(db.Path))
+        {
+            var promoted = check.DbUsers.Single(u => u.Id == second);
+            Assert.True(promoted.IsApproved);
+            Assert.True(promoted.AccessDecided);
+        }
+
+        // Вход по паролю: администратор разрешил его заранее, выбрав способ входа, —
+        // это тоже решение, и повторно спрашивать его не о чем.
+        db.Permissions.SetPassword("секрет-базы");
+        Demote(db, admin: false, approved: false);
+        using (var mine = new AppDbContext(db.Path))
+        {
+            var me = mine.DbUsers.Single(u => u.UserKey == CurrentUser.Key);
+            me.AccessDecided = false;   // как у только что присоединившегося
+            mine.SaveChanges();
+        }
+        db.Permissions.Reload(notify: false);
+
+        Assert.True(db.Permissions.TryUnlock("секрет-базы"));
+        using (var check = new AppDbContext(db.Path))
+        {
+            var me = check.DbUsers.Single(u => u.UserKey == CurrentUser.Key);
+            Assert.True(me.IsApproved);
+            Assert.True(me.AccessDecided);
+        }
+    }
+
     // ── 3. Управление доступом — только администратору ────────────────────────
 
     /// <summary>

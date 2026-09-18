@@ -5,60 +5,91 @@
              Background="{StaticResource BrushBg}">
 
     <!-- Заголовок слева, действия раздела справа — как в остальных навбарах
-         (NavbarSettings: «Добавить базу данных» тем же стилем). -->
-    <Grid ColumnDefinitions="*,Auto,Auto,Auto" Margin="16,0">
+         (NavbarSettings: «Добавить базу данных» тем же стилем). Действия лежат одной
+         горизонтальной лентой: их набор меняется от раздела к разделу, и раздавать каждому
+         свою колонку значило бы пересобирать сетку при каждом новом действии. -->
+    <Grid ColumnDefinitions="*,Auto" Margin="16,0">
 
         <TextBlock Grid.Column="0" x:Name="TitleText"
                    Text="Общие данные"
                    VerticalAlignment="Center"
                    FontSize="{DynamicResource FontSizeLarge}"
-                   FontWeight="{StaticResource FontWeightBold}"
- />
+                   FontWeight="{StaticResource FontWeightBold}" />
 
-        <!-- «Добавить пароль» — только в разделе «Менеджер паролей» и только администратору
-             хотя бы одной открытой базы. Тот же прием, что «Добавить базу данных» в
-             NavbarSettings: стандартный ComboBox работает как меню действий — выбранный пункт
-             открывает свое окно, а выбор тут же сбрасывается (см. код-behind). Паролей баз
-             и серверов в меню нет: у каждой открытой базы их строка в списке уже есть. -->
-        <ComboBox Grid.Column="1" x:Name="AddSecretCombo"
-                  IsVisible="False"
-                  Width="170" Height="{StaticResource ControlHeightStandard}"
-                  VerticalAlignment="Center"
-                  PlaceholderText="Добавить пароль"
-                  PlaceholderForeground="{StaticResource BrushPrimaryText}">
-            <ComboBoxItem Content="Соединение" />
-            <ComboBoxItem Content="Токен" />
-            <ComboBoxItem Content="Мастер-пароль" />
-        </ComboBox>
+        <StackPanel Grid.Column="1" Orientation="Horizontal"
+                    Spacing="8" VerticalAlignment="Center">
 
-        <!-- Выбор базы журнала — только в разделе «История изменений». Обычный
-             стейтфул-ComboBox: выбранная база остается видимой (в отличие от
-             меню-действий NavbarSettings). Наполняет ProfileView. -->
-        <ComboBox Grid.Column="2" x:Name="HistoryDbCombo"
-                  IsVisible="False"
-                  Width="240" Height="{StaticResource ControlHeightStandard}"
-                  VerticalAlignment="Center" />
+            <!-- «Добавить пароль» — только в разделе «Менеджер паролей» и только администратору
+                 хотя бы одной открытой базы. Тот же прием, что «Добавить базу данных» в
+                 NavbarSettings: стандартный ComboBox работает как меню действий — выбранный пункт
+                 открывает свое окно, а выбор тут же сбрасывается (см. код-behind). Паролей баз
+                 и серверов в меню нет: у каждой открытой базы их строка в списке уже есть. -->
+            <ComboBox x:Name="AddSecretCombo"
+                      IsVisible="False"
+                      Width="170" Height="{StaticResource ControlHeightStandard}"
+                      VerticalAlignment="Center"
+                      PlaceholderText="Добавить пароль"
+                      PlaceholderForeground="{StaticResource BrushPrimaryText}" />
 
-        <!-- Выгрузка журнала в CSV — крайняя кнопка навбара, тем же видом, что
-             «Импорт/Экспорт» в сайдбаре конструктора (navbtn 30×30, lucide download). -->
-        <Button Grid.Column="3" x:Name="ExportHistoryBtn"
-                Classes="navbtn" Width="30" Height="30"
-                IsVisible="False"
-                VerticalAlignment="Center"
-                Margin="8,0,0,0"
-                CornerRadius="{StaticResource RadiusMedium}"
-                ToolTip.Tip="Выгрузить в CSV"
-                Click="OnExportHistoryClick">
-            <Viewbox Width="{StaticResource IconSizeMedium}"
-                     Height="{StaticResource IconSizeMedium}">
-                <Canvas Width="24" Height="24">
-                    <Path Data="{StaticResource IconDownload}"
-                          Stroke="{Binding $parent[Button].Foreground}"
-                          StrokeThickness="{StaticResource IconStrokeMedium}"
-                          StrokeLineCap="Round" StrokeJoin="Round" />
-                </Canvas>
-            </Viewbox>
-        </Button>
+            <!-- Подпись списка баз стоит СНАРУЖИ списка: сам список показывает только имя базы.
+                 Одна подпись на оба списка — «Истории изменений» и панели администратора: они
+                 никогда не видны вместе. -->
+            <TextBlock x:Name="DbLabel"
+                       Text="Базы данных"
+                       IsVisible="False"
+                       VerticalAlignment="Center"
+                       FontSize="{DynamicResource FontSizeSmall}"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+
+            <!-- Выбор базы журнала — только в разделе «История изменений». Обычный
+                 стейтфул-ComboBox: выбранная база остается видимой (в отличие от
+                 меню-действий NavbarSettings). Наполняет ProfileView. -->
+            <ComboBox x:Name="HistoryDbCombo"
+                      IsVisible="False"
+                      Width="220" Height="{StaticResource ControlHeightStandard}"
+                      VerticalAlignment="Center"
+                      ItemTemplate="{StaticResource NavbarDbTemplate}" />
+
+            <!-- Выбор базы панели администратора: та же роль и то же место, что у списка баз
+                 «Истории изменений», — все строки раздела относятся к выбранной здесь базе. -->
+            <ComboBox x:Name="AdminDbCombo"
+                      IsVisible="False"
+                      Width="220" Height="{StaticResource ControlHeightStandard}"
+                      VerticalAlignment="Center"
+                      ItemTemplate="{StaticResource NavbarDbTemplate}" />
+
+            <!-- Проверка цепочки хэшей — только в «Журнале безопасности». Итог показывается
+                 строкой состояния под таблицей. -->
+            <Button x:Name="ChainBtn" Classes="dialog"
+                    IsVisible="False"
+                    Width="NaN" MinWidth="110" Padding="14,0"
+                    VerticalAlignment="Center"
+                    Content="Проверить цепочку"
+                    Click="OnChainClick" />
+
+            <!-- Выгрузка в CSV — крайняя кнопка навбара, тем же видом, что
+                 «Импорт/Экспорт» в сайдбаре конструктора (navbtn 30×30, lucide download).
+                 Одна на «Историю изменений» и «Журнал безопасности»: что именно выгружать,
+                 решает открытый раздел. -->
+            <Button x:Name="ExportBtn"
+                    Classes="navbtn" Width="30" Height="30"
+                    IsVisible="False"
+                    VerticalAlignment="Center"
+                    CornerRadius="{StaticResource RadiusMedium}"
+                    ToolTip.Tip="Выгрузить в CSV"
+                    Click="OnExportClick">
+                <Viewbox Width="{StaticResource IconSizeMedium}"
+                         Height="{StaticResource IconSizeMedium}">
+                    <Canvas Width="24" Height="24">
+                        <Path Data="{StaticResource IconDownload}"
+                              Stroke="{Binding $parent[Button].Foreground}"
+                              StrokeThickness="{StaticResource IconStrokeMedium}"
+                              StrokeLineCap="Round" StrokeJoin="Round" />
+                    </Canvas>
+                </Viewbox>
+            </Button>
+
+        </StackPanel>
 
     </Grid>
 

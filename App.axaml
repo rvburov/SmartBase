@@ -1,5 +1,6 @@
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:comp="clr-namespace:SmartBase.Controls.Components"
              x:Class="SmartBase.App"
              RequestedThemeVariant="Light">
 
@@ -15,6 +16,29 @@
                      выпадашка не шире поля, высота ≈8 пунктов вместо 504px. -->
                 <ResourceInclude Source="avares://SmartBase/Assets/Styles/ComboBoxTheme.axaml" />
             </ResourceDictionary.MergedDictionaries>
+
+            <!-- База в списке: иконка рода хранения (цилиндр — файл, сервер — база на сервере)
+                 и имя. Тем же шаблоном ComboBox рисует и выбранный пункт, поэтому иконка видна
+                 и в закрытом списке. Шаблон общий на навбар профиля (выбор базы в «Панели
+                 администратора» и «Истории изменений») и шапку таблицы пользователей — списки
+                 показывают одно и то же и обязаны выглядеть одинаково. Данные — NavbarDb. -->
+            <DataTemplate x:Key="NavbarDbTemplate" DataType="comp:NavbarDb">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Viewbox Width="{StaticResource IconSizeSmall}"
+                             Height="{StaticResource IconSizeSmall}"
+                             VerticalAlignment="Center">
+                        <Canvas Width="24" Height="24">
+                            <Path Data="{Binding Icon}"
+                                  Stroke="{StaticResource BrushSecondaryText}"
+                                  StrokeThickness="{StaticResource IconStrokeSmall}"
+                                  StrokeLineCap="Round" StrokeJoin="Round" />
+                        </Canvas>
+                    </Viewbox>
+                    <TextBlock Text="{Binding Name}"
+                               VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis" />
+                </StackPanel>
+            </DataTemplate>
 
         </ResourceDictionary>
     </Application.Resources>

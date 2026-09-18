@@ -365,7 +365,8 @@ public static class IngressHandler
             address: $"{call.Path}?collection={collection}",
             fields: fields, rows: rows, bytes: bytes,
             bodyHash: SecurityJournal.Sha256(body),
-            explanation: what, dbId: token.DbId, at: now, confirmed: grant.Confirmed));
+            explanation: what, dbId: token.DbId, at: now, confirmed: grant.Confirmed,
+            collection: collection));
 
         if (!written)
             return Refuse(503,
@@ -402,7 +403,7 @@ public static class IngressHandler
                 : IngressApi.RecordsPath,
             fields: "", rows: 0, bytes: 0, bodyHash: "",
             explanation: explanation, dbId: token.DbId, at: now,
-            confirmed: grant?.Confirmed ?? ""));
+            confirmed: grant?.Confirmed ?? "", collection: collection));
 
         return Refuse(status, explanation, token, source, now);
     }

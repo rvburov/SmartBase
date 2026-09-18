@@ -619,4 +619,110 @@ public sealed class SecurityJournalTests : IDisposable
         Assert.Empty(journal.Page(new SecurityFilter(Event: SecurityEvent.Trim)));
         Assert.Single(journal.Recent());
     }
+
+    // ── Коллекция и версия строки ─────────────────────────────────────────────
+
+    /// <summary>Коллекция — такое же поле строки, как остальные: записали и прочитали.</summary>
+    [Fact]
+    public void The_collection_of_the_event_is_written_and_read_back()
+    {
+        var journal = Journal();
+
+        journal.Write(SecurityEntry.New(SecurityEvent.Copy, allowed: true, "Иванов И. И.", "",
+                                        "буфер обмена", "Название", 3, 128, "", "", dbId: 3,
+                                        at: Now, collection: "Заказы"));
+
+        var row = journal.Recent().Single();
+
+        Assert.Equal("Заказы", row.Collection);
+        Assert.Equal(SecurityEntry.CurrentVer, row.Ver);
+        Assert.Equal(0, journal.Verify());
+    }
+
+    /// <summary>
+    /// Строки, записанные ДО появления коллекции, продолжают сходиться со своими хэшами: их
+    /// канонический вид остался прежним (версия 0). Иначе первая же проверка после обновления
+    /// объявила бы честный журнал за все прошлые годы испорченным.
+    /// </summary>
+    [Fact]
+    public void Rows_written_before_the_collection_appeared_still_verify()
+    {
+        var journal = Journal();
+
+        // Строка «старого образца»: версия 0 и пустая коллекция — ровно то, что лежит в файлах,
+        // заведенных прошлыми выпусками программы.
+        journal.Write(Send("Древний", allowed: true) with { Ver = 0 });
+        journal.Write(Send("Свежий",  allowed: true));
+
+        var rows = journal.Recent();
+
+        Assert.Equal(0, rows[^1].Ver);
+        Assert.Equal(SecurityEntry.CurrentVer, rows[0].Ver);
+        Assert.Equal(0, journal.Verify());
+    }
+
+    /// <summary>
+    /// Имя коллекции вырезали из строки руками — проверка называет ее. У новых строк коллекция
+    /// входит в хэш ВСЕГДА, даже пустая: включай ее «только когда заполнена», и стереть из строки
+    /// «Заказы» можно было бы незаметно.
+    /// </summary>
+    [Fact]
+    public void An_erased_collection_is_named_by_the_check()
+    {
+        var journal = Journal();
+
+        journal.Write(SecurityEntry.New(SecurityEvent.Copy, allowed: true, "Иванов И. И.", "",
+                                        "буфер обмена", "Название", 3, 128, "", "", dbId: 3,
+                                        at: Now, collection: "Заказы"));
+
+        Edit("UPDATE events SET Collection = '' WHERE Id = 1;");
+
+        Assert.Equal(1, journal.Verify());
+    }
+
+    /// <summary>Отбор по коллекции уходит в SQL — как и остальные колонки.</summary>
+    [Fact]
+    public void Rows_are_narrowed_by_collection()
+    {
+        var journal = Journal();
+
+        journal.Write(SecurityEntry.New(SecurityEvent.Copy, true, "Иванов И. И.", "", "буфер обмена",
+                                        "", 1, 10, "", "", dbId: 3, at: Now, collection: "Заказы"));
+        journal.Write(SecurityEntry.New(SecurityEvent.Copy, true, "Иванов И. И.", "", "буфер обмена",
+                                        "", 1, 10, "", "", dbId: 3, at: Now, collection: "Договоры"));
+
+        var only = journal.Page(new SecurityFilter(Columns: new Dictionary<string, IReadOnlyCollection<string>>
+        {
+            ["Collection"] = new[] { "Заказы" },
+        }));
+
+        Assert.Equal("Заказы", Assert.Single(only).Collection);
+
+        // Значения колонки — со счетчиками, для окна отбора.
+        var values = journal.Values("Collection", new SecurityFilter());
+        Assert.Equal(2, values.Count);
+        Assert.All(values, v => Assert.Equal(1, v.Count));
+    }
+
+    /// <summary>
+    /// Отбор по дню считается в SQL по МЕСТНОМУ дню: время в файле лежит в UTC, а проверяющий
+    /// ищет «что было четырнадцатого».
+    /// </summary>
+    [Fact]
+    public void Rows_are_narrowed_by_local_day()
+    {
+        var journal = Journal();
+
+        journal.Write(Send("Свежий",  allowed: true, at: Now));
+        journal.Write(Send("Давешний", allowed: true, at: Now.AddDays(-2)));
+
+        var day = Now.ToLocalTime().ToString("yyyy-MM-dd");
+
+        var only = journal.Page(new SecurityFilter(Columns: new Dictionary<string, IReadOnlyCollection<string>>
+        {
+            ["Day"] = new[] { day },
+        }));
+
+        Assert.Equal("Свежий", Assert.Single(only).Scenario);
+    }
 }

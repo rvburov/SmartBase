@@ -92,7 +92,8 @@ public static class RequestLauncher
                 bodyHash:    "",
                 explanation: Result(outcome),
                 dbId:        dbId,
-                at:          now));
+                at:          now,
+                collection:  payload?.Collection ?? ""));
 
         // Направлением воспользовались — отсчет простоя начинается заново. По тому же признаку,
         // что и расход квоты: данные ДОШЛИ до сети.

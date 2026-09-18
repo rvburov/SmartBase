@@ -108,6 +108,9 @@ public sealed partial class PermissionService(AppDbContext db)
                 DisplayName = CurrentUser.DisplayName,
                 IsAdmin     = !hasAdmin,
                 IsApproved  = !hasAdmin,
+                // Первый открывший базу решение по себе принял тем, что ее завел; остальные
+                // ждут решения администратора — до него строка «ждет допуска», а не «отозван».
+                AccessDecided = !hasAdmin,
                 CreatedAt   = now,
                 LastSeenAt  = now,
             };
@@ -149,8 +152,9 @@ public sealed partial class PermissionService(AppDbContext db)
             if (!hasAdmin && !me.IsAdmin)
             {
                 // База осталась без админа (например, строку удалили вручную) — клеймим.
-                me.IsAdmin    = true;
-                me.IsApproved = true;
+                me.IsAdmin       = true;
+                me.IsApproved    = true;
+                me.AccessDecided = true;
             }
             // Отметка активности: администратор видит в панели, кто и когда открывал базу
             // последний раз. Пишется КАЖДОЕ монтирование (поэтому SaveChanges безусловный),
@@ -246,7 +250,10 @@ public sealed partial class PermissionService(AppDbContext db)
         if (user is null || user.IsAdmin) return;   // допуск админа не трогаем
         // Строку снес сосед, пока панель была открыта, — Reload отцепил ее от контекста.
         if (_db.Entry(user).State == Microsoft.EntityFrameworkCore.EntityState.Detached) return;
-        user.IsApproved = approved;
+        user.IsApproved    = approved;
+        // Решение принято: отозванный допуск не должен читаться как «еще не решали» —
+        // в панели это разные слова («Отозван» и «Ждет допуска»).
+        user.AccessDecided = true;
         // Событие в журнал: у затронутого пользователя замок снимется/появится сам,
         // без перезапуска (его поллер увидит строку и перечитает права).
         LogUser(approved ? "user.approve" : "user.revoke", user.DisplayName);
@@ -277,7 +284,11 @@ public sealed partial class PermissionService(AppDbContext db)
         if (!isAdmin && !FreshUsers.Any(u => u.IsAdmin && u.Id != userId)) return;
 
         user.IsAdmin = isAdmin;
-        if (isAdmin) user.IsApproved = true;
+        if (isAdmin)
+        {
+            user.IsApproved    = true;
+            user.AccessDecided = true;
+        }
         // Событие в журнал: у затронутого пользователя панель администратора появится
         // (или исчезнет) сама, без перезапуска — его поллер увидит строку.
         LogUser("user.role", user.DisplayName,
@@ -515,7 +526,10 @@ public sealed partial class PermissionService(AppDbContext db)
         if (me is not null && !me.IsApproved &&
             _db.Entry(me).State != Microsoft.EntityFrameworkCore.EntityState.Detached)
         {
-            me.IsApproved = true;
+            me.IsApproved    = true;
+            // Вход по паролю — тоже решение по допуску: администратор разрешил его заранее,
+            // выбрав «Вход по паролю» способом входа.
+            me.AccessDecided = true;
             // Событие в журнал: в открытой панели администратора строка пользователя
             // сменит «Ожидает допуска» на допущенного без перезахода.
             LogUser("user.unlock", CurrentUser.DisplayName);
