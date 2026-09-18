@@ -171,7 +171,20 @@ public partial class ProfileView
     }
 
     private SecurityFilter SecurityLogFilter() =>
-        new(Columns: _logFilters.ToDictionary(kv => kv.Key, kv => (IReadOnlyCollection<string>)kv.Value));
+        new(Columns:   _logFilters.ToDictionary(kv => kv.Key, kv => (IReadOnlyCollection<string>)kv.Value),
+            Databases: SecurityLogScope());
+
+    /// <summary>
+    /// Базы, строки которых человеку позволено читать: те, где он администратор. Журнал один на
+    /// всю программу, и без этой границы администратор маленькой базы читал бы, что уходило из
+    /// чужих — тех, где он никто.
+    ///
+    /// Строки без базы (порт приема, показ секрета, подтверждение направления, уборка журнала)
+    /// границей не закрываются: они про машину целиком, и прятать их от того, кто отвечает хоть
+    /// за одну базу на ней, значило бы прятать ответ на вопрос «что эта программа делала».
+    /// </summary>
+    private IReadOnlyCollection<int> SecurityLogScope() =>
+        (_workspace?.Mounted ?? []).Where(m => m.Permissions.IsAdmin).Select(m => m.DbId).ToList();
 
     private void EnsureSecurityLogScrollHook()
     {
@@ -217,7 +230,9 @@ public partial class ProfileView
             _logChain is > 0 ? "BrushRed" : _logChain == 0 ? "BrushGreen" : "BrushSecondaryText",
             _logChain is > 0 ? "#FF3B30"  : _logChain == 0 ? "#34C759"    : "#8E8E93");
 
-        LogFileText.Text = $"Строк: {total:N0} · {journal.Path}";
+        // «В файле», а не просто «Строк»: в таблице видны строки своих баз, а число и цепочка —
+        // про весь файл. Без этого слова человек считал бы, что таблица чего-то не показала.
+        LogFileText.Text = $"Строк в файле: {total:N0} · {journal.Path}";
     }
 
     /// <summary>
@@ -488,9 +503,11 @@ public partial class ProfileView
 
         // Снимок отбора остальных колонок: значения считаются по строкам, прошедшим их (каскад), —
         // иначе снятое значение исчезало бы из списка и вернуть его было бы нечем.
-        var others = new SecurityFilter(Columns: _logFilters
-            .Where(kv => kv.Key != key)
-            .ToDictionary(kv => kv.Key, kv => (IReadOnlyCollection<string>)kv.Value));
+        var others = new SecurityFilter(
+            Columns: _logFilters
+                .Where(kv => kv.Key != key)
+                .ToDictionary(kv => kv.Key, kv => (IReadOnlyCollection<string>)kv.Value),
+            Databases: SecurityLogScope());   // в списке значений — только свои базы
 
         var byTime = key == "Day";
 

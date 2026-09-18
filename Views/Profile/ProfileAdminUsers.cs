@@ -746,19 +746,20 @@ public partial class ProfileView
         });
 
     // Роль: «Пользователь» / «Администратор». Свою роль не меняет никто — у своей
-    // строки список выключен (правит только другой администратор).
+    // строки список выключен (правит только другой администратор). У робота в списке одно
+    // значение — «Робот», и оно заблокировано: токен администратором не бывает.
     private IDataTemplate BuildUserRoleCell() =>
         new FuncDataTemplate<AdminUserRow>((_, _) =>
         {
             var combo = new ComboBox
             {
-                ItemsSource         = new[] { PermissionService.RoleUser, PermissionService.RoleAdmin },
                 Margin              = new Thickness(6, 0),
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 VerticalAlignment   = VerticalAlignment.Center,
                 Height              = 26,
                 MinHeight           = 26,
             };
+            combo.Bind(ItemsControl.ItemsSourceProperty, new Binding(nameof(AdminUserRow.RoleOptions)));
             combo.Bind(SelectingItemsControl.SelectedItemProperty,
                        new Binding(nameof(AdminUserRow.Role)) { Mode = BindingMode.TwoWay });
             combo.Bind(InputElement.IsEnabledProperty, new Binding(nameof(AdminUserRow.RoleEnabled)));
@@ -855,6 +856,7 @@ public sealed class AdminUserRow : INotifyPropertyChanged
         _isAdmin    = user.IsAdmin;
         _isApproved = user.IsApproved;
         _decided    = user.AccessDecided;
+        IsRobot     = SmartBase.Integrations.AccessToken.IsRobotKey(user.UserKey);
         _scopeIsDatabase = scopeIsDatabase;
     }
 
@@ -909,16 +911,33 @@ public sealed class AdminUserRow : INotifyPropertyChanged
         }
     }
 
+    /// <summary>Подпись роли робота: строка токена, а не человека.</summary>
+    public const string RoleRobot = "Робот";
+
+    /// <summary>Строка заведена токеном доступа, а не человеком.</summary>
+    public bool IsRobot { get; }
+
     public string Role
     {
-        get => _isAdmin ? PermissionService.RoleAdmin : PermissionService.RoleUser;
+        get => IsRobot  ? RoleRobot
+             : _isAdmin ? PermissionService.RoleAdmin
+                        : PermissionService.RoleUser;
         set
         {
+            if (IsRobot) return;   // роль робота не меняют — и служба прав этого не примет
             var isAdmin = value == PermissionService.RoleAdmin;
             if (isAdmin == _isAdmin) return;
             RoleChanged?.Invoke(this, isAdmin);
         }
     }
+
+    /// <summary>
+    /// Что предлагает список роли. У робота одно значение — его же: показать ему «Пользователь»
+    /// и «Администратор» значило бы предложить то, что служба прав все равно отвергнет.
+    /// </summary>
+    public IReadOnlyList<string> RoleOptions => IsRobot
+        ? [RoleRobot]
+        : [PermissionService.RoleUser, PermissionService.RoleAdmin];
 
     public bool IsApproved => _isAdmin || _isApproved;
 
@@ -939,8 +958,9 @@ public sealed class AdminUserRow : INotifyPropertyChanged
 
     // ── Доступность ячеек ─────────────────────────────────────────────────────
 
-    /// <summary>Роль и удаление правит только ДРУГОЙ администратор.</summary>
-    public bool RoleEnabled   => !IsSelf;
+    /// <summary>Роль и удаление правит только ДРУГОЙ администратор; роль робота не правится
+    /// вовсе — токен администратором не бывает, а «Пользователь» у него и так.</summary>
+    public bool RoleEnabled   => !IsSelf && !IsRobot;
     public bool RemoveEnabled => !IsSelf;
 
     /// <summary>Допуск администратора не снимается (у него доступ по роли).</summary>

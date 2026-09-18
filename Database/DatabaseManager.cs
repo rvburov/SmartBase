@@ -134,7 +134,7 @@ public sealed partial class DatabaseManager : IDisposable
         // Пользователи/права этой базы: регистрируем текущего пользователя (первый
         // открывший базу без админов становится администратором) и строим кеш прав.
         // Репозиторий получает сервис прав — его мутаторы проверяют права первой строкой.
-        Permissions = new PermissionService(Context);
+        Permissions = new PermissionService(Context) { DbId = DbId };
         Permissions.EnsureCurrentUserRegistered();
 
         Categories  = new CategoryRepository(Context);

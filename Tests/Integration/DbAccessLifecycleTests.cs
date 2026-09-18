@@ -291,6 +291,57 @@ public sealed class DbAccessLifecycleTests
         }
     }
 
+    /// <summary>
+    /// Робот администратором не становится. Токен — это пароль в чужом файле настроек: сделав
+    /// его администратором, базу отдают тому, кто этот файл прочитает. Запрет живет в службе
+    /// прав, а не только в панели: панель — не единственный вход в этот метод.
+    /// </summary>
+    [Fact]
+    public void A_robot_cannot_be_made_an_administrator()
+    {
+        using var db = new TempDatabase();
+
+        var robotKey = SmartBase.Integrations.AccessToken.KeyOf(7, "pc-obmen");
+        var robotId  = JoinUser(db.Path, robotKey, "Обмен с 1С", approved: true);
+        var humanId  = JoinUser(db.Path, "petrov@pc9", "Петров П. П.", approved: true);
+
+        db.Permissions.SetAdmin(robotId, true);
+        db.Permissions.SetAdmin(humanId, true);
+
+        using var check = new AppDbContext(db.Path);
+        Assert.False(check.DbUsers.Single(u => u.Id == robotId).IsAdmin);   // робот — нет
+        Assert.True(check.DbUsers.Single(u => u.Id == humanId).IsAdmin);    // человек — да
+
+        // Понижение роботу и не нужно, и не ломается: он и так не администратор.
+        db.Permissions.SetAdmin(robotId, false);
+    }
+
+    /// <summary>
+    /// Подбор пароля базы: три промаха подряд закрывают ввод на несколько секунд, и ждать
+    /// приходится даже с верным паролем. Счет живет в памяти программы и своим на каждую базу —
+    /// промахи по соседней базе чужой ввод не задерживают.
+    /// </summary>
+    [Fact]
+    public void Three_wrong_passwords_make_the_next_try_wait()
+    {
+        using var db    = new TempDatabase();
+        using var other = new TempDatabase(dbId: 2, name: "вторая");
+
+        db.Permissions.SetPassword("секрет-базы");
+        other.Permissions.SetPassword("другой-секрет");
+
+        Assert.Equal("Неверный пароль", db.Permissions.Unlock("раз"));
+        Assert.Equal("Неверный пароль", db.Permissions.Unlock("два"));
+        Assert.Equal("Неверный пароль", db.Permissions.Unlock("три"));
+
+        var answer = db.Permissions.Unlock("секрет-базы");
+        Assert.StartsWith("Слишком много попыток", answer);
+        Assert.Contains("с.", answer);   // сказано, сколько ждать
+
+        // Соседняя база чужими промахами не заперта.
+        Assert.Equal("", other.Permissions.Unlock("другой-секрет"));
+    }
+
     // ── 3. Управление доступом — только администратору ────────────────────────
 
     /// <summary>

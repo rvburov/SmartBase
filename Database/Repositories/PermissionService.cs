@@ -30,6 +30,13 @@ public sealed partial class PermissionService(AppDbContext db)
 {
     private readonly AppDbContext _db = db;
 
+    /// <summary>
+    /// Ключ базы в реестре — им подписываются строки журнала безопасности о решениях по доступу
+    /// (<see cref="AccessTrace"/>). Ставит <c>DatabaseManager</c> при монтировании; 0 — база вне
+    /// реестра (фоновые контексты, тесты), и тогда строка пишется без базы.
+    /// </summary>
+    public int DbId { get; init; }
+
     // События пользователей идут в общий журнал change_log (targetType "user"):
     // это транспорт живого обновления между машинами — поллер соседа видит строку
     // и перечитывает права/панель администратора (MainWindow.OnRemoteChanges).
@@ -258,6 +265,10 @@ public sealed partial class PermissionService(AppDbContext db)
         // без перезапуска (его поллер увидит строку и перечитает права).
         LogUser(approved ? "user.approve" : "user.revoke", user.DisplayName);
         _db.SaveChanges();
+        // В журнал безопасности — после сохранения: события, которого не случилось, там быть
+        // не должно (так же пишутся остальные решения ниже).
+        AccessTrace.Decision(DbId, user.DisplayName,
+                             approved ? "допуск выдан" : "допуск отозван", DateTimeOffset.Now);
         Log.Information("Допуск {Action:l}: {User:l} ({Db:l})", approved ? "выдан" : "отозван", user.DisplayName, _db.DisplayPath);
         Reload();
     }
@@ -278,6 +289,10 @@ public sealed partial class PermissionService(AppDbContext db)
         // Строку снес сосед, пока панель была открыта, — Reload отцепил ее от контекста.
         if (_db.Entry(user).State == Microsoft.EntityFrameworkCore.EntityState.Detached) return;
         if (user.IsAdmin == isAdmin) return;
+        // Робот администратором не бывает. Токен — это пароль в чужом файле настроек: сделав его
+        // администратором, базу отдают тому, кто этот файл прочитает. Запрет стоит здесь, а не
+        // только в панели: панель — не единственный вход в этот метод.
+        if (isAdmin && Integrations.AccessToken.IsRobotKey(user.UserKey)) return;
         // Страховка на гонку: пока панель была открыта, соседи могли снять админство
         // с остальных. Базу без единого администратора не оставляем — настроить доступ
         // тогда не смог бы никто.
@@ -295,6 +310,8 @@ public sealed partial class PermissionService(AppDbContext db)
                 Utils.ChangeDetail.Rename(isAdmin ? RoleUser : RoleAdmin,
                                           isAdmin ? RoleAdmin : RoleUser));
         _db.SaveChanges();
+        AccessTrace.Decision(DbId, user.DisplayName,
+                             $"роль: {(isAdmin ? RoleAdmin : RoleUser)}", DateTimeOffset.Now);
         Log.Information("Роль изменена: {User:l} → {Role:l} ({Db:l})", user.DisplayName, isAdmin ? RoleAdmin : RoleUser, _db.DisplayPath);
         Reload();
     }
@@ -322,6 +339,7 @@ public sealed partial class PermissionService(AppDbContext db)
         LogUser("user.remove", removedName);
         _db.DbUsers.Remove(user);
         _db.SaveChanges();
+        AccessTrace.Decision(DbId, removedName, "пользователь убран из базы", DateTimeOffset.Now);
         Log.Information("Пользователь удален из базы: {User:l} ({Db:l})", removedName, _db.DisplayPath);
         Reload();
     }
@@ -416,6 +434,7 @@ public sealed partial class PermissionService(AppDbContext db)
     public void SetPassword(string password)
     {
         DemandAdmin();
+        var had  = HasPassword;   // «установлен» и «сменен» — разные события для проверяющего
         var salt = RandomNumberGenerator.GetBytes(16);
         var hash = Pbkdf2(password, salt, PasswordIterations);
         SetMeta(MetaPasswordHash, Convert.ToBase64String(hash));
@@ -424,6 +443,8 @@ public sealed partial class PermissionService(AppDbContext db)
         // Дата последнего входа относится к прежнему паролю: новым еще никто не входил.
         _db.DbMeta.RemoveRange(_db.DbMeta.Where(m => m.Key == MetaPasswordUnlockedAt));
         _db.SaveChanges();
+        AccessTrace.Decision(DbId, PasswordSubject,
+                             had ? "пароль базы сменен" : "пароль базы установлен", DateTimeOffset.Now);
         Reload();
     }
 
@@ -435,8 +456,12 @@ public sealed partial class PermissionService(AppDbContext db)
             m.Key == MetaPasswordHash || m.Key == MetaPasswordSalt || m.Key == MetaPasswordIterations
             || m.Key == MetaPasswordUnlockedAt));
         _db.SaveChanges();
+        AccessTrace.Decision(DbId, PasswordSubject, "пароль базы убран", DateTimeOffset.Now);
         Reload();
     }
+
+    /// <summary>Кого касается решение, когда оно про саму базу, а не про человека.</summary>
+    private const string PasswordSubject = "пароль базы данных";
 
     // Доступ других пользователей по паролю — политика базы в db_meta рядом с самим паролем, и
     // потому одинаковая для SQLite и PostgreSQL и для всех машин. Нет строки — включено: так
@@ -460,6 +485,10 @@ public sealed partial class PermissionService(AppDbContext db)
         DemandAdmin();
         SetMeta(MetaPasswordAccess, enabled ? "1" : "0");
         _db.SaveChanges();
+        AccessTrace.Decision(DbId, PasswordSubject,
+                             enabled ? "способ входа: вход по паролю"
+                                     : "способ входа: подтверждение администратора",
+                             DateTimeOffset.Now);
         Log.Information("Доступ других пользователей по паролю {State:l}: {Db:l}",
                         enabled ? "включен" : "выключен", _db.DisplayPath);
         Reload();
@@ -503,6 +532,11 @@ public sealed partial class PermissionService(AppDbContext db)
         if (GetMeta(MetaPasswordAccess) == "0")
             return "Вход по паролю выключен администратором базы данных";
 
+        // Подбор пароля: после трех промахов подряд ввод ждет, после пяти — ждет дольше.
+        // Ожидание считается отказом в приеме, а не промахом, поэтому счет от него не растет.
+        if (WaitLeft(_db.DisplayPath) is { } left)
+            return $"Слишком много попыток. Повторите через {left} с.";
+
         var hash = GetMeta(MetaPasswordHash);
         var salt = GetMeta(MetaPasswordSalt);
         if (hash is null || salt is null) return "У базы данных нет пароля";
@@ -513,10 +547,19 @@ public sealed partial class PermissionService(AppDbContext db)
         var actual   = Pbkdf2(password, Convert.FromBase64String(salt), iterations);
         if (!CryptographicOperations.FixedTimeEquals(expected, actual))
         {
-            // Неверный пароль — событие безопасности: кто и в какую базу пытался войти.
+            // Неверный пароль — событие безопасности: кто и в какую базу пытался войти. Строка
+            // ложится в журнал безопасности, а не только в «Диагностику»: подбор пароля базы
+            // должен быть виден администратору и проверяющему, а не лежать в файле логов.
+            var misses = NoteMiss(_db.DisplayPath);
+            AccessTrace.Signin(DbId, ok: false,
+                               $"неверный пароль, промах подряд: {misses}", DateTimeOffset.Now);
             Log.Warning("Неверный пароль базы {Db:l} (пользователь {User:l})", _db.DisplayPath, CurrentUser.DisplayName);
             return "Неверный пароль";
         }
+
+        // Пароль подошел — счет промахов обнуляется: ждать следующего ввода незачем.
+        ForgetMisses(_db.DisplayPath);
+        AccessTrace.Signin(DbId, ok: true, "пароль верный, доступ к базе открыт", DateTimeOffset.Now);
 
         // Убрали из базы, пока она была открыта, — верный пароль сначала возвращает человека в
         // список пользователей, иначе допуск выдавать было бы некому.
@@ -543,6 +586,57 @@ public sealed partial class PermissionService(AppDbContext db)
         }
         Reload();
         return "";
+    }
+
+    // ── Пауза после промахов ──────────────────────────────────────────────────
+    //
+    // Счет живет в памяти программы и своим для каждой базы: файл базы ездит по сетевой папке,
+    // и писать туда «эта машина ошиблась трижды» значило бы рассказывать о промахах всем
+    // остальным. Перезапуск программы счет обнуляет — и это честно: пауза защищает от подбора
+    // руками у чужого стола, а не от того, у кого файл базы уже на руках (такому паузы не
+    // помеха вовсе — от него бережет длина пароля и PBKDF2).
+    //
+    // Порог намеренно выше числа обычных опечаток: три промаха подряд человек делает и по
+    // раскладке, и по Caps Lock.
+    private const int  SlowAfter  = 3;
+    private const int  SlowerAfter = 5;
+    private const int  SlowSeconds   = 3;
+    private const int  SlowerSeconds = 10;
+
+    private static readonly Dictionary<string, (int Misses, DateTimeOffset NextTry)> Misses =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Сколько секунд еще ждать; <c>null</c> — можно пробовать.</summary>
+    private static int? WaitLeft(string key)
+    {
+        lock (Misses)
+        {
+            if (!Misses.TryGetValue(key, out var state)) return null;
+
+            var left = (state.NextTry - DateTimeOffset.UtcNow).TotalSeconds;
+            return left > 0 ? (int)Math.Ceiling(left) : null;
+        }
+    }
+
+    /// <summary>Записать промах и вернуть, сколько их подряд.</summary>
+    private static int NoteMiss(string key)
+    {
+        lock (Misses)
+        {
+            var count = (Misses.TryGetValue(key, out var state) ? state.Misses : 0) + 1;
+
+            var pause = count >= SlowerAfter ? SlowerSeconds
+                      : count >= SlowAfter   ? SlowSeconds
+                      : 0;
+
+            Misses[key] = (count, DateTimeOffset.UtcNow.AddSeconds(pause));
+            return count;
+        }
+    }
+
+    private static void ForgetMisses(string key)
+    {
+        lock (Misses) Misses.Remove(key);
     }
 
     private static byte[] Pbkdf2(string password, byte[] salt, int iterations) =>

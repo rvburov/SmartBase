@@ -153,6 +153,39 @@ public sealed class AdminUserRowTests
     }
 
     /// <summary>
+    /// Робот — не человек: роль у него своя, менять ее нечем, и «Администратор» ему не
+    /// предлагается. Токен лежит в файле настроек чужой машины, и администратор из него
+    /// означал бы отданную базу. Служба прав отказывает тоже — панель не единственный вход.
+    /// </summary>
+    [Fact]
+    public void A_robot_row_has_its_own_locked_role()
+    {
+        var robot = new AdminUserRow(
+            User(SmartBase.Integrations.AccessToken.KeyOf(7, "pc-obmen")), (int)PermAction.CreateRecord, true);
+
+        Assert.True(robot.IsRobot);
+        Assert.Equal(AdminUserRow.RoleRobot, robot.Role);
+        Assert.Equal([AdminUserRow.RoleRobot], robot.RoleOptions);
+        Assert.False(robot.RoleEnabled);
+
+        // Человека это не касается: у него прежние два значения и живой список.
+        var human = Other();
+        Assert.False(human.IsRobot);
+        Assert.Equal([PermissionService.RoleUser, PermissionService.RoleAdmin], human.RoleOptions);
+        Assert.True(human.RoleEnabled);
+
+        // Даже если запись роли позовут мимо списка, строка ее не пропустит.
+        bool? asked = null;
+        var watched = new AdminUserRow(
+            User(SmartBase.Integrations.AccessToken.KeyOf(8, "pc-obmen")), 0, true)
+        {
+            RoleChanged = (_, admin) => asked = admin,
+        };
+        watched.Role = PermissionService.RoleAdmin;
+        Assert.Null(asked);
+    }
+
+    /// <summary>
     /// «Ждет допуска» руками не выставляют: решение нельзя отдать назад. Список знает только
     /// два значения, и пустое значение из него не выбирается.
     /// </summary>

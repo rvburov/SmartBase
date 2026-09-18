@@ -85,6 +85,27 @@ public enum SecurityEvent
     /// строки, и вставка в середину сдвинула бы номера — и хэши — всех прежних строк.
     /// </summary>
     Copy,
+
+    /// <summary>
+    /// Решение администратора о доступе к базе: допуск выдан или отозван, сменилась роль,
+    /// человека убрали из базы, поставили, сменили или убрали пароль базы, сменили способ входа.
+    ///
+    /// Эти правки лежат и в «Истории изменений» — оттуда их берут соседние машины, чтобы снять
+    /// или вернуть замок без перезапуска. Но история чистится по сроку хранения и не защищена
+    /// цепочкой хэшей, а вопрос «кто выдал права» задают как раз тогда, когда ответ кому-то
+    /// невыгоден. Поэтому решения дублируются сюда — в журнал, который нельзя ни почистить, ни
+    /// править незаметно. Галки отдельных прав сюда не идут: их десятки за один сеанс настройки,
+    /// и повысить себя ими нельзя — своя строка в таблице не редактируется.
+    /// </summary>
+    Access,
+
+    /// <summary>
+    /// Попытка войти в базу по паролю — верная или нет. Неудачные попытки раньше уходили только
+    /// предупреждением в «Диагностику»: подбор пароля базы не был виден ни администратору, ни
+    /// проверяющему. Здесь он виден, а <see cref="SecurityEntry.Allowed"/> отличает вход от
+    /// промаха.
+    /// </summary>
+    Signin,
 }
 
 /// <summary>
@@ -214,11 +235,20 @@ public sealed record SecurityEntry(
 /// (docs/ROADMAP-API.md, шаг 14). Имена проверяются по белому списку
 /// (<see cref="SecurityJournal.Filterable"/>): они уходят в SQL, а подставлять туда пришедшее с
 /// экрана нельзя даже в своей программе.</param>
+/// <param name="Databases">
+/// Базы, которые читающему разрешено видеть, — не отбор, а граница: администратор одной базы не
+/// должен читать, что уходило из чужих. <c>null</c> — границы нет (выгрузка политики, тесты,
+/// служебные вызовы). Строки без базы (<c>DbId = 0</c>) видны всегда: показ секрета, порт приема,
+/// подтверждение направления и уборка журнала относятся к машине целиком, а не к чьей-то базе.
+/// Живет в фильтре, а не на экране: иначе граница действовала бы в списке строк и забывалась
+/// в выгрузке и в значениях воронок — то есть не была бы границей.
+/// </param>
 public sealed record SecurityFilter(
     SecurityEvent?  Event       = null,
     bool            BlockedOnly = false,
     DateTimeOffset? Since       = null,
-    IReadOnlyDictionary<string, IReadOnlyCollection<string>>? Columns = null)
+    IReadOnlyDictionary<string, IReadOnlyCollection<string>>? Columns = null,
+    IReadOnlyCollection<int>? Databases = null)
 {
     /// <summary>Отбор по колонкам; пусто — по колонкам не сужали.</summary>
     public IReadOnlyDictionary<string, IReadOnlyCollection<string>> Picked =>
@@ -720,6 +750,23 @@ public sealed class SecurityJournal
             parts.Add($"CAST({FilterSql[column]} AS TEXT) IN ({string.Join(", ", names)})");
         }
 
+        // Граница видимости: свои базы плюс строки без базы. Стоит здесь, а не в вызывающем
+        // коде, потому что через это же место проходят страницы, счетчик, выгрузка и значения
+        // воронок — граница, забытая в одном из них, не граница.
+        if (filter.Databases is { } scope)
+        {
+            var keys = new List<string>(scope.Count);
+
+            foreach (var dbId in scope.Distinct())
+            {
+                var name = "$db" + at++.ToString(CultureInfo.InvariantCulture);
+                keys.Add(name);
+                command.Parameters.AddWithValue(name, dbId);
+            }
+
+            parts.Add(keys.Count > 0 ? $"(DbId = 0 OR DbId IN ({string.Join(", ", keys)}))" : "DbId = 0");
+        }
+
         // Момент сравнивается строкой, и это работает ровно потому, что все строки записаны
         // одним форматом: ISO-8601 в UTC сортируется как текст.
         if (filter.Since is { } since)
@@ -761,6 +808,8 @@ public sealed class SecurityJournal
         SecurityEvent.Trim      => "уборка журнала по сроку политики",
         SecurityEvent.Result    => "итог отправки",
         SecurityEvent.Copy      => "копирование в буфер обмена",
+        SecurityEvent.Access    => "решение о доступе к базе",
+        SecurityEvent.Signin    => "вход по паролю базы",
         _                       => "ручная выгрузка данных",
     };
 

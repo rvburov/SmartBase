@@ -116,6 +116,18 @@ public sealed record AccessToken(
     public static string KeyOf(int id, string machine) =>
         $"robot.{id.ToString(CultureInfo.InvariantCulture)}@{machine}".ToLowerInvariant();
 
+    /// <summary>Приставка ключа робота — по ней строка <c>db_users</c> отличается от человека.</summary>
+    private const string RobotPrefix = "robot.";
+
+    /// <summary>
+    /// Это строка робота, а не человека. Спрашивают служба прав (роль администратора роботу не
+    /// назначается) и таблица пользователей (у робота своя подпись роли). Признак — вид ключа,
+    /// а не отдельная колонка: ключ и так уникален, а колонка потребовала бы миграции ради
+    /// того, что уже записано в самом ключе.
+    /// </summary>
+    public static bool IsRobotKey(string? key) =>
+        key is not null && key.StartsWith(RobotPrefix, StringComparison.OrdinalIgnoreCase);
+
     /// <summary>
     /// Что не так с именем; пусто — годится. Имя увидит администратор базы в списке
     /// пользователей, и «» среди людей читается как сбой, а не как робот.

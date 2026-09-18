@@ -1,5 +1,6 @@
 using Microsoft.Data.Sqlite;
 using SmartBase.Database;
+using SmartBase.Database.Entities;
 
 namespace SmartBase.Tests.Integration;
 
@@ -118,7 +119,7 @@ public sealed class SecurityJournalTests : IDisposable
         Assert.Equal("",             rows[0].Prev);
         Assert.Equal(rows[0].Hash,   rows[1].Prev);
         Assert.Equal(rows[1].Hash,   rows[2].Prev);
-        Assert.Equal(0, journal.Verify());
+        Assert.Equal(0L, journal.Verify());
     }
 
     /// <summary>
@@ -529,7 +530,7 @@ public sealed class SecurityJournalTests : IDisposable
         journal.Write(Send("Старый-2", allowed: false, at: Now.AddDays(-380)));
         journal.Write(Send("Свежий",   allowed: true,  at: Now.AddDays(-10)));
 
-        Assert.Equal(0, journal.Verify());
+        Assert.Equal(0L, journal.Verify());
 
         Assert.Equal(2, journal.Trim(keepDays: 365, now: Now));
 
@@ -538,7 +539,7 @@ public sealed class SecurityJournalTests : IDisposable
         Assert.DoesNotContain("Старый-1", left);
         Assert.DoesNotContain("Старый-2", left);
         Assert.Contains("Свежий", left);
-        Assert.Equal(0, journal.Verify());
+        Assert.Equal(0L, journal.Verify());
     }
 
     /// <summary>
@@ -636,7 +637,7 @@ public sealed class SecurityJournalTests : IDisposable
 
         Assert.Equal("Заказы", row.Collection);
         Assert.Equal(SecurityEntry.CurrentVer, row.Ver);
-        Assert.Equal(0, journal.Verify());
+        Assert.Equal(0L, journal.Verify());
     }
 
     /// <summary>
@@ -658,7 +659,7 @@ public sealed class SecurityJournalTests : IDisposable
 
         Assert.Equal(0, rows[^1].Ver);
         Assert.Equal(SecurityEntry.CurrentVer, rows[0].Ver);
-        Assert.Equal(0, journal.Verify());
+        Assert.Equal(0L, journal.Verify());
     }
 
     /// <summary>
@@ -724,5 +725,156 @@ public sealed class SecurityJournalTests : IDisposable
         }));
 
         Assert.Equal("Свежий", Assert.Single(only).Scenario);
+    }
+
+    /// <summary>
+    /// Граница видимости: администратор читает строки своих баз и строки без базы, а чужие не
+    /// видит вовсе. Это не отбор, который человек снимет галочкой, а условие запроса — поэтому
+    /// проверяется и на странице, и на счетчике, и на значениях воронки: граница, забытая в
+    /// одном из этих мест, не граница.
+    /// </summary>
+    [Fact]
+    public void Rows_of_other_databases_stay_invisible()
+    {
+        var journal = Journal();
+
+        SecurityEntry Of(int dbId, string scenario) =>
+            SecurityEntry.New(SecurityEvent.Send, allowed: true, "Иванов И. И.", scenario,
+                              "https://api.local/orders", "Название", 1, 16,
+                              SecurityJournal.Sha256("тело"), "", dbId: dbId, at: Now);
+
+        journal.Write(Of(1, "Своя"));
+        journal.Write(Of(2, "Чужая"));
+        journal.Write(Of(0, "Без базы"));
+
+        var mine = new SecurityFilter(Databases: new[] { 1 });
+
+        Assert.Equal(new[] { "Без базы", "Своя" },
+                     journal.Page(mine).Select(r => r.Scenario).OrderBy(s => s, StringComparer.Ordinal).ToArray());
+        Assert.Equal(2, journal.Count(mine));
+
+        // В окне отбора «База данных» чужой базы тоже нет: иначе по ней можно было бы отобрать.
+        Assert.Equal(new[] { "0", "1" },
+                     journal.Values("DbId", mine).Select(v => v.Value).OrderBy(v => v, StringComparer.Ordinal).ToArray());
+
+        // Администратор без единой своей базы видит только строки без базы — про машину.
+        Assert.Equal("Без базы",
+                     Assert.Single(journal.Page(new SecurityFilter(Databases: []))).Scenario);
+
+        // Без границы (выгрузка политики, служебные вызовы) видно все.
+        Assert.Equal(3, journal.Count(new SecurityFilter()));
+    }
+
+    /// <summary>
+    /// Решения о доступе и попытки входа лежат в том же журнале и называются словами: проверяющий
+    /// не должен знать, что «11» — это решение администратора, а «12» — ввод пароля.
+    /// </summary>
+    [Fact]
+    public void Access_decisions_and_signins_are_named_in_words()
+    {
+        var journal = Journal();
+
+        SecurityJournal.Attach(journal);
+        AccessTrace.Decision(3, "Петров П. П.", "допуск отозван", Now);
+        AccessTrace.Signin(3, ok: false, "неверный пароль, промах подряд: 2", Now);
+
+        var rows = journal.Recent().ToList();
+
+        var signin = Assert.Single(rows, r => r.Event == SecurityEvent.Signin);
+        Assert.False(signin.Allowed);
+        Assert.Equal("пароль базы данных", signin.Address);
+        Assert.Equal("вход по паролю базы", SecurityJournal.Name(signin.Event));
+
+        var access = Assert.Single(rows, r => r.Event == SecurityEvent.Access);
+        Assert.True(access.Allowed);
+        Assert.Equal("Петров П. П.",  access.Address);
+        Assert.Equal("допуск отозван", access.Explanation);
+        Assert.Equal("решение о доступе к базе", SecurityJournal.Name(access.Event));
+
+        // Новые роды событий не ломают цепочку: полей в строке не прибавилось.
+        Assert.Equal(0L, journal.Verify());
+    }
+
+    /// <summary>
+    /// Решения администратора доезжают до журнала безопасности сами, из службы прав, — а не по
+    /// доброй воле экрана. Проверяется весь набор: допуск, роль, удаление человека, пароль базы и
+    /// способ входа. Забытый вызов в одном из них — это ровно та строка, которой потом не
+    /// хватит: история изменений чистится по сроку, а журнал нет.
+    /// </summary>
+    [Fact]
+    public void Every_access_decision_lands_in_the_journal()
+    {
+        var journal = Journal();
+        SecurityJournal.Attach(journal);
+
+        using var db = new TempDatabase();
+
+        int Join(string key, string name)
+        {
+            using var neighbour = new AppDbContext(db.Path);
+            var user = new DbUserEntity
+            {
+                UserKey     = key,
+                DisplayName = name,
+                CreatedAt   = DateTime.UtcNow.ToString("o"),
+            };
+            neighbour.DbUsers.Add(user);
+            neighbour.SaveChanges();
+            return user.Id;
+        }
+
+        var petrov = Join("petrov@pc2", "Петров П. П.");
+        var sidor  = Join("sidorov@pc3", "Сидоров С. С.");
+
+        db.Permissions.SetApproved(petrov, true);
+        db.Permissions.SetApproved(petrov, false);
+        db.Permissions.SetAdmin(sidor, true);
+        db.Permissions.RemoveUser(petrov);
+        db.Permissions.SetPassword("секрет-базы");
+        db.Permissions.SetPasswordAccess(false);
+
+        var said = journal.Page(new SecurityFilter(Event: SecurityEvent.Access))
+                          .Select(r => $"{r.Address}: {r.Explanation}")
+                          .ToList();
+
+        Assert.Contains("Петров П. П.: допуск выдан",            said);
+        Assert.Contains("Петров П. П.: допуск отозван",          said);
+        Assert.Contains("Сидоров С. С.: роль: Администратор",    said);
+        Assert.Contains("Петров П. П.: пользователь убран из базы", said);
+        Assert.Contains("пароль базы данных: пароль базы установлен", said);
+        Assert.Contains("пароль базы данных: способ входа: подтверждение администратора", said);
+
+        // Галки прав в журнал не идут: их десятки за сеанс, и повысить себя ими нельзя.
+        db.Permissions.SetMask(sidor, null, 0);
+        Assert.Equal(said.Count, journal.Count(new SecurityFilter(Event: SecurityEvent.Access)));
+    }
+
+    /// <summary>
+    /// Неудачный ввод пароля базы виден в журнале, а не только в «Диагностике», и после трех
+    /// промахов подряд следующая попытка ждет — даже с верным паролем. Подбор пароля у чужого
+    /// стола перестает быть бесплатным и незаметным.
+    /// </summary>
+    [Fact]
+    public void Wrong_passwords_are_journalled_and_then_made_to_wait()
+    {
+        var journal = Journal();
+        SecurityJournal.Attach(journal);
+
+        using var db = new TempDatabase();
+        db.Permissions.SetPassword("секрет-базы");
+
+        Assert.Equal("Неверный пароль", db.Permissions.Unlock("не тот"));
+        Assert.Equal("Неверный пароль", db.Permissions.Unlock("и не этот"));
+        Assert.Equal("Неверный пароль", db.Permissions.Unlock("и не третий"));
+
+        // Третий промах подряд закрывает ввод на несколько секунд — верный пароль тоже ждет.
+        Assert.StartsWith("Слишком много попыток", db.Permissions.Unlock("секрет-базы"));
+
+        var misses = journal.Page(new SecurityFilter(Event: SecurityEvent.Signin)).ToList();
+
+        Assert.Equal(3, misses.Count);                       // ожидание попыткой не считается
+        Assert.All(misses, m => Assert.False(m.Allowed));
+        Assert.Contains("промах подряд: 3", misses[0].Explanation);
+        Assert.Equal("пароль базы данных", misses[0].Address);
     }
 }
