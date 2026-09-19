@@ -118,8 +118,8 @@
                       ToolTip.Tip="Библиотека документов">
             <Viewbox Width="{StaticResource IconSizeXLarge}" Height="{StaticResource IconSizeXLarge}">
                 <Canvas Width="24" Height="24">
-                    <!-- lucide book -->
-                    <Path Data="{StaticResource IconBook}"
+                    <!-- lucide book-open-text -->
+                    <Path Data="{StaticResource IconBookOpenText}"
                           Stroke="{Binding $parent[ToggleButton].Foreground}"
                           StrokeThickness="{StaticResource IconStrokeXLargeBold}"
                           StrokeLineCap="Round"

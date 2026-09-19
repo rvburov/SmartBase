@@ -182,6 +182,9 @@
     <StreamGeometry x:Key="IconCode">M18 16 L22 12 L18 8 M6 8 L2 12 L6 16 M14.5 4 L9.5 20</StreamGeometry>
     <!-- Просмотр заметки целиком (lucide book-open) -->
     <StreamGeometry x:Key="IconBookOpen">M12 5 V21 M20.001 19 A2 2 0 0 0 22 17 V5 A2 2 0 0 0 20.001 3 L16 3.002 A5 5 0 0 0 12 5 A5 5 0 0 0 8 3 H4 A2 2 0 0 0 2 5 V17 A2 2 0 0 0 3.999 19 H8 A5 5 0 0 1 12 21 A5 5 0 0 1 16 19 Z</StreamGeometry>
+    <!-- Библиотека документов в панели разделов (lucide book-open-text): тот же
+         разворот, что у IconBookOpen, плюс строки текста на страницах. -->
+    <StreamGeometry x:Key="IconBookOpenText">M12 5 V21 M20.001 19 A2 2 0 0 0 22 17 V5 A2 2 0 0 0 20.001 3 L16 3.002 A5 5 0 0 0 12 5 A5 5 0 0 0 8 3 H4 A2 2 0 0 0 2 5 V17 A2 2 0 0 0 3.999 19 H8 A5 5 0 0 1 12 21 A5 5 0 0 1 16 19 Z M6 9 H8 M6 13 H8 M16 9 H18 M16 13 H18</StreamGeometry>
     <!-- ─── Форматирование текста заметки (меню редактора) ───
          Геометрии lucide как есть. Пары «размер ↔ толщина» те же, что у остальных
          пунктов меню: IconSizeMedium + IconStrokeMedium. -->
