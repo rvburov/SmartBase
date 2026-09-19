@@ -47,10 +47,14 @@ public static class DocThumbnail
     /// <summary>
     /// Отметка формы картинки в имени файла кеша. Ключ кеша — путь, время правки и размер; форма
     /// в него не входит, поэтому при смене подрезки старые картинки молча подошли бы с неверными
-    /// пропорциями. Меняете <see cref="BoxWidth"/>/<see cref="BoxHeight"/> или <see cref="Width"/> —
-    /// меняйте и это: старые файлы просто перестанут запрашиваться и уйдут с уборкой по возрасту.
+    /// пропорциями. Меняете <see cref="BoxWidth"/>/<see cref="BoxHeight"/>, <see cref="Width"/>
+    /// или сам способ отрисовки — меняйте и это: старые файлы просто перестанут запрашиваться и
+    /// уйдут с уборкой по возрасту.
+    ///
+    /// <c>t4</c> — после починки перекошенных сканов: в кеше у людей лежат картинки, разъехавшиеся
+    /// по диагонали, и отличить их от здоровых по имени нечем.
     /// </summary>
-    private const string ShapeTag = "t3";
+    private const string ShapeTag = "t4";
 
     /// <summary>Сколько дней держим неиспользуемую картинку, прежде чем уборка ее сотрет.</summary>
     public const int KeepDays = 60;
@@ -120,10 +124,17 @@ public static class DocThumbnail
                 var pageH = first.GetPageHeight();
                 if (pageW <= 0 || pageH <= 0) return null;
 
+                // PageDimensions — это РАМКА, в которую страница вписывается целиком, и Docnet
+                // требует, чтобы первое число не превышало второго: на альбомной странице
+                // (чертеж, разворот) высота по пропорции меньше ширины, и рамка 336×237 роняла
+                // отрисовку ArgumentException. Ошибку глотал catch ниже, поэтому альбомные
+                // документы просто никогда не получали миниатюру — молча, без следа в журнале.
+                // Квадратная рамка вписывает такую страницу по ширине, ровно как нам и нужно.
                 var height = Math.Max(1, (int)Math.Round(Width * (double)pageH / pageW));
-                using var reader = DocLib.Instance.GetDocReader(docPath, new PageDimensions(Width, height));
+                using var reader = DocLib.Instance.GetDocReader(docPath,
+                                       new PageDimensions(Width, Math.Max(Width, height)));
                 using var page   = reader.GetPageReader(0);
-                png = Encode(page, Width, height);
+                png = Encode(page);
             }
 
             if (png.Length == 0) return null;
@@ -138,14 +149,28 @@ public static class DocThumbnail
         catch { return null; }
     }
 
-    private static byte[] Encode(Docnet.Core.Readers.IPageReader page, int width, int height)
+    private static byte[] Encode(Docnet.Core.Readers.IPageReader page)
     {
+        // Размеры берутся У СТРАНИЦЫ, а не те, что просили. PDFium вписывает страницу в заданную
+        // рамку с сохранением пропорций и округляет: там, где просили 336 пикселей ширины, он
+        // отдает 335. Холст на 336 при таких данных разъезжает ровно на пиксель в КАЖДОЙ строке —
+        // картинка уходит по диагонали, снизу остается черный клин. На сплошном скане это видно
+        // сразу, на обычном текстовом листе почти нет, потому дефект и дожил до ленты.
+        //
+        // Тот же порядок у расширения «Водяной знак» (WatermarkStamp.StampPage) — там холст
+        // изначально строится по GetPageWidth/GetPageHeight.
+        var width  = page.GetPageWidth();
+        var height = page.GetPageHeight();
+        if (width <= 0 || height <= 0) return [];
+
         // PDFium отдает страницу как BGRA, и незакрашенные места в ней ПРОЗРАЧНЫ, а не белы:
         // без подмены фона обычный текстовый лист уехал бы в картинку черным прямоугольником.
         using var bitmap = new SKBitmap(new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Premul));
         var raw = page.GetImage(new NaiveTransparencyRemover(255, 255, 255));
         if (raw.Length == 0) return [];
-        System.Runtime.InteropServices.Marshal.Copy(raw, 0, bitmap.GetPixels(), raw.Length);
+        // Не больше, чем влезает в холст: лишний байт здесь — это запись в чужую память.
+        System.Runtime.InteropServices.Marshal.Copy(raw, 0, bitmap.GetPixels(),
+                                                    Math.Min(raw.Length, bitmap.ByteCount));
 
         using var full = SKImage.FromBitmap(bitmap);
 
