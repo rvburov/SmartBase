@@ -35,11 +35,12 @@ public sealed class CollectionPickerFlyout
 
     public void ShowAt(Control anchor)
     {
-        var flyout = new Flyout { Placement = PlacementMode.BottomEdgeAlignedRight };
-        flyout.FlyoutPresenterClasses.Add("filterFlyout");
+        var flyout = PopupPlate.Filter();
         // Флайаут рендерится в попап-окне вне зума приложения — контент оборачивается
         // в зум-трансформ (плашка-презентер остается вне зума), как у фильтра таблицы.
         flyout.Content = WindowZoom.WrapPopupContent(BuildPanel(anchor, () => flyout.Hide()));
+        // Окно закроет панель, если потеряет фокус (см. TransientPopups).
+        TransientPopups.Track(flyout);
         flyout.ShowAt(anchor);
     }
 

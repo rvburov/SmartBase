@@ -20,28 +20,26 @@
         <!-- Выпадашка типов документа. Это НЕ ComboBox: содержимое рисует общий
              ColumnFilterPanel — тот же чеклист с поиском, количествами справа и «Готово»,
              что у колонки таблицы. Здесь только кнопка-якорь, к которой он крепится. -->
+        <!-- Вид и состояния — из класса navdrop (Controls.axaml), здесь только размер:
+             ширина фиксированная, иначе подпись «Тип документа: 12» двигала бы правый
+             край органа управления в навбаре. -->
         <Button Grid.Column="2" x:Name="TypeBtn"
+                Classes="navdrop"
                 VerticalAlignment="Center"
-                Height="30" MinWidth="170"
-                Padding="10,0"
-                HorizontalContentAlignment="Stretch"
-                Background="{StaticResource BrushSecondaryBg}"
-                CornerRadius="{StaticResource RadiusBase}">
+                Height="{StaticResource ControlHeightStandard}"
+                Width="170">
             <Grid ColumnDefinitions="*,Auto">
                 <TextBlock Grid.Column="0" x:Name="TypeLabel"
                            Text="Тип документа"
                            VerticalAlignment="Center"
                            TextTrimming="CharacterEllipsis" />
-                <Viewbox Grid.Column="1"
-                         Width="{StaticResource IconSizeSmall}" Height="{StaticResource IconSizeSmall}"
-                         VerticalAlignment="Center" Margin="8,0,0,0">
-                    <Canvas Width="24" Height="24">
-                        <Path Data="{StaticResource IconChevronDown}"
-                              Stroke="{StaticResource BrushSecondaryText}"
-                              StrokeThickness="{StaticResource IconStrokeSmall}"
-                              StrokeLineCap="Round" StrokeJoin="Round" />
-                    </Canvas>
-                </Viewbox>
+                <!-- Стрелка — тот же залитый шеврон 12×8, что рисует ComboBox своим
+                     DropDownGlyph, и тем же цветом. -->
+                <PathIcon Grid.Column="1"
+                          Width="12" Height="8"
+                          VerticalAlignment="Center" Margin="8,0,0,0"
+                          Foreground="{StaticResource BrushSecondaryText}"
+                          Data="{StaticResource IconChevronDownFilled}" />
             </Grid>
         </Button>
     </Grid>

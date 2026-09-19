@@ -103,15 +103,18 @@ public sealed record ColumnFilterResult(string Key, bool? Sort, HashSet<string>?
 public static class ColumnFilterPanel
 {
     /// <summary>Открыть окно у шеврона колонки. <paramref name="host"/> — вид таблицы: от него
-    /// берутся токены оформления.</summary>
-    public static void Show(Control host, Control anchor, ColumnFilterSpec spec)
+    /// берутся токены оформления. Возвращает флайаут: зовущему это нужно, чтобы подсветить
+    /// свой якорь на время показа (<c>Closed</c>) — сам он о закрытии иначе не узнает.</summary>
+    public static Flyout Show(Control host, Control anchor, ColumnFilterSpec spec)
     {
-        var flyout = new Flyout { Placement = PlacementMode.BottomEdgeAlignedRight };
-        flyout.FlyoutPresenterClasses.Add("filterFlyout");
+        var flyout = PopupPlate.Filter();
         // Флайаут рендерится в отдельном попап-окне вне зума приложения — контент
         // оборачивается в зум-трансформ (плашка-презентер остается вне зума).
         flyout.Content = WindowZoom.WrapPopupContent(Build(host, spec, flyout.Hide));
+        // Окно закроет панель, если потеряет фокус (см. TransientPopups).
+        TransientPopups.Track(flyout);
         flyout.ShowAt(anchor);
+        return flyout;
     }
 
     private static Control Build(Control host, ColumnFilterSpec spec, Action close)

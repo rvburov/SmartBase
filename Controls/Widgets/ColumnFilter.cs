@@ -98,12 +98,13 @@ public static class ColumnFilter
                              ISet<string>                          chosen,
                              Action                                apply)
     {
-        var flyout = new Flyout { Placement = PlacementMode.BottomEdgeAlignedRight };
-        flyout.FlyoutPresenterClasses.Add("filterFlyout");
+        var flyout = PopupPlate.Filter();
 
         flyout.Content = WindowZoom.WrapPopupContent(
             Panel(title, values(), chosen, () => { flyout.Hide(); apply(); }, flyout.Hide));
 
+        // Окно закроет панель, если потеряет фокус (см. TransientPopups).
+        TransientPopups.Track(flyout);
         flyout.ShowAt(anchor);
     }
 

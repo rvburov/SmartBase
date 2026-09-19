@@ -3738,9 +3738,6 @@ public partial class TableView : UserControl
 
     // ── Фильтр и сортировка колонок (чеклист значений) ──────────────────────────────
 
-    // Текущий открытый flyout фильтра/сортировки — чтобы закрыть его при потере фокуса.
-    private Flyout? _activeFilterFlyout;
-
     private void ShowFilterFlyout(Control anchor, TableColumnDef def)
     {
         if (_repository is null) return;
@@ -3750,18 +3747,15 @@ public partial class TableView : UserControl
         using var slow = Diag.Measure("окно фильтра колонки", Diag.UiOpen,
                                       $"{DbErrors.Display(_repository.DbPath)}, коллекция {_collectionId}, колонка {def.Header}");
 
-        var flyout = new Flyout { Placement = PlacementMode.BottomEdgeAlignedRight };
-        flyout.FlyoutPresenterClasses.Add("filterFlyout");
+        var flyout = Controls.Behaviors.PopupPlate.Filter();
         // Флайаут рендерится в отдельном попап-окне вне зума приложения — контент
         // оборачивается в зум-трансформ (плашка-презентер остается вне зума).
         flyout.Content = WindowZoom.WrapPopupContent(BuildFilterPanel(def, () => flyout.Hide()));
-        flyout.Closed += (_, _) => { if (ReferenceEquals(_activeFilterFlyout, flyout)) _activeFilterFlyout = null; };
-        _activeFilterFlyout = flyout;
+        // Окно закроет панель, если потеряет фокус: иначе на macOS она зависает поверх
+        // других программ (см. TransientPopups).
+        TransientPopups.Track(flyout);
         flyout.ShowAt(anchor);
     }
-
-    // Закрывает открытый flyout фильтра/сортировки (вызывается при деактивации окна).
-    public void CloseTransientPopups() => _activeFilterFlyout?.Hide();
 
     private Control BuildFilterPanel(TableColumnDef def, Action close)
     {

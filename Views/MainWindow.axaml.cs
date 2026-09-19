@@ -1,12 +1,15 @@
 ﻿using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Controls.Primitives;
 using Avalonia.Input;
+using Avalonia.LogicalTree;
 using Avalonia.Platform;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Serilog;
+using SmartBase.Controls.Behaviors;
 using SmartBase.Controls.Components;
 using SmartBase.Controls.Dialogs;
 using SmartBase.Database;
@@ -783,9 +786,16 @@ public partial class MainWindow : Window
             if (ctrl.ContextMenu is { IsOpen: true } cm)
                 cm.Close();
 
-        // Flyout фильтра/сортировки в таблице — он живет отдельным popup.
-        foreach (var table in controls.OfType<ConstructorDb.TableView>())
-            table.CloseTransientPopups();
+        // Выпадашки на голом Popup (списки даты и времени, «Мультисписок», «Связь», панель
+        // фоновых работ) живут в логическом дереве, а не в визуальном: визуально их содержимое
+        // уехало в отдельный popup-рут.
+        foreach (var pop in this.GetLogicalDescendants().OfType<Popup>().ToList())
+            if (pop.IsOpen) pop.IsOpen = false;
+
+        // Панели-флайауты (фильтр колонки таблицы и журналов, пикер коллекций, «Тип документа»
+        // библиотеки, меню списков) не ищутся ни в одном из деревьев — они сами отмечаются
+        // в реестре при показе.
+        TransientPopups.CloseAll();
     }
 
     // Поставить в фоновую очередь все БД реестра, кроме уже смонтированных (стартовая

@@ -264,6 +264,10 @@ public partial class SettingsView
             menu.Items.Add(item);
         }
 
+        // Меню назначено кнопке, поэтому момент показа известен только из Opened — окно
+        // закроет его при потере фокуса (см. TransientPopups).
+        menu.Opened += (_, _) => Controls.Behaviors.TransientPopups.Track(menu);
+
         button.Flyout = menu;
         return button;
     }

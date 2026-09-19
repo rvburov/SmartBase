@@ -984,6 +984,8 @@ public partial class RecordPageView : UserControl
             menu.Items.Add(item);
         }
 
+        // Окно закроет меню, если потеряет фокус (см. TransientPopups).
+        Controls.Behaviors.TransientPopups.Track(menu);
         menu.ShowAt(anchor);
     }
 

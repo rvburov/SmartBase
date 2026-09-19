@@ -377,6 +377,41 @@
         <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
     </Style>
 
+    <!-- Кнопка-выпадашка навбара («Тип документа» в библиотеке документов). Выглядит и ведет
+         себя как ComboBox — те же высота, рамка, внутренние отступы и то же правило состояний:
+         синеет ТОЛЬКО рамка, фон и текст не меняются. Отличие одно: содержимое ей рисует общий
+         ColumnFilterPanel, поэтому это Button, а не ComboBox.
+
+         Все сеттеры обязаны жить ЗДЕСЬ, а не в разметке: в Avalonia приоритет локального
+         значения выше приоритета стиля, и фон, прописанный на самой кнопке, не дал бы
+         состояниям сработать (то же правило, что у Border.searchBlock ниже).
+
+         Класс «open» вешается на время открытой панели вручную: псевдокласс :flyout-open
+         здесь недоступен — флайаут не присвоен Button.Flyout, а показывается ShowAt. -->
+    <Style Selector="Button.navdrop">
+        <Setter Property="Background"                 Value="{StaticResource BrushSecondaryBg}" />
+        <Setter Property="Foreground"                 Value="{StaticResource BrushPrimaryText}" />
+        <Setter Property="BorderBrush"                Value="{StaticResource BrushSeparator}" />
+        <Setter Property="BorderThickness"            Value="{DynamicResource BorderLine}" />
+        <Setter Property="CornerRadius"               Value="{StaticResource RadiusBase}" />
+        <!-- Слева 10 до текста, справа 10 до стрелки — как у DropDownGlyph комбобокса. -->
+        <Setter Property="Padding"                    Value="10,0" />
+        <Setter Property="MinHeight"                  Value="{StaticResource ControlHeightStandard}" />
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        <Setter Property="VerticalContentAlignment"   Value="Center" />
+        <Setter Property="Cursor"                     Value="Hand" />
+    </Style>
+    <Style Selector="Button.navdrop:pointerover /template/ ContentPresenter,
+                     Button.navdrop.open /template/ ContentPresenter">
+        <Setter Property="Background"  Value="{StaticResource BrushSecondaryBg}" />
+        <Setter Property="BorderBrush" Value="{StaticResource BrushAccent}" />
+    </Style>
+    <!-- Нажатие не темнит фон: у выпадашки видимое состояние одно — «открыта». -->
+    <Style Selector="Button.navdrop:pressed /template/ ContentPresenter">
+        <Setter Property="Background"  Value="{StaticResource BrushSecondaryBg}" />
+        <Setter Property="BorderBrush" Value="{StaticResource BrushAccent}" />
+    </Style>
+
     <Style Selector="Button.accent">
         <Setter Property="Background" Value="{StaticResource BrushAccent}" />
         <Setter Property="Foreground" Value="White" />
@@ -418,6 +453,13 @@
         <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
         <Setter Property="BorderThickness" Value="{DynamicResource BorderLinePopup}" />
         <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
+        <!-- Зазор между кнопкой и раскрытой плашкой. Здесь он БОЛЬШЕ, чем пиксель выпадашки
+             комбобокса и списка времени, и это не дрейф: та плашка ровно по ширине своего поля,
+             а эта шире якоря. Тень попап-окна (на macOS ее не отключить — SetWindowManagerAddShadowHint
+             там пустой) ложится вокруг плашки со всех сторон, и на пиксельном зазоре она смазывает
+             угол кнопки: шов читается как «зазора нет, и плашка торчит вправо». Замер — стенд
+             Tests/PopupGeometry: Margin меняет ТОЛЬКО высоту попап-окна, края остаются на месте. -->
+        <Setter Property="Margin"          Value="0,3,0,0" />
     </Style>
 
     <!-- Всплывашка-уведомление (Toast): сама плашка БЕЗ своего оформления — внутри живет обычный

@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Стенд геометрии выпадающих панелей. Не входит в Tests/Unit намеренно: там «ноль
+       внешних зависимостей», а здесь нужны Avalonia.Headless и настоящая раскладка — без
+       живого попап-хоста мерить нечего. Как запускать — в Tests/README.md. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>SmartBase.Tests.PopupGeometry</RootNamespace>
+    <AssemblyName>SmartBase.Tests.PopupGeometry</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Headless" Version="11.2.3" />
+    <!-- Настоящий шрифт: ширина панели зависит от измеренного текста, подставной шрифт
+         headless-платформы дал бы не те числа. -->
+    <PackageReference Include="Avalonia.Skia" Version="11.2.3" />
+    <ProjectReference Include="..\..\SmartBase.csproj" />
+  </ItemGroup>
+
+</Project>

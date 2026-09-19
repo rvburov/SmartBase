@@ -39,6 +39,9 @@ public partial class NavbarLibrary : UserControl
 
     private IReadOnlySet<string>? _types;
 
+    /// <summary>Открытая панель типов — по ней узнаем, чье закрытие гасит подсветку кнопки.</summary>
+    private Flyout? _typesFlyout;
+
     public NavbarLibrary()
     {
         InitializeComponent();
@@ -68,7 +71,7 @@ public partial class NavbarLibrary : UserControl
     {
         if (LoadTypes is null) return;
 
-        ColumnFilterPanel.Show(this, TypeBtn, new ColumnFilterSpec
+        var flyout = ColumnFilterPanel.Show(this, TypeBtn, new ColumnFilterSpec
         {
             Key        = "docType",
             AscLabel   = "",
@@ -88,6 +91,22 @@ public partial class NavbarLibrary : UserControl
                 TypesChanged?.Invoke(this, _types);
             },
         });
+
+        // Пока панель открыта, кнопка держит синюю рамку — ровно как раскрытый ComboBox.
+        // Штатный :flyout-open тут не работает: флайаут не присвоен Button.Flyout, а
+        // показывается ShowAt, поэтому состояние отмечаем классом сами.
+        //
+        // Сверка с _typesFlyout нужна из-за клика по самой кнопке при открытой панели: она
+        // сперва закрывается по клику мимо, и без сверки «свое» закрытие сняло бы подсветку
+        // уже со следующей открытой панели.
+        _typesFlyout = flyout;
+        if (!TypeBtn.Classes.Contains("open")) TypeBtn.Classes.Add("open");
+        flyout.Closed += (_, _) =>
+        {
+            if (!ReferenceEquals(_typesFlyout, flyout)) return;
+            _typesFlyout = null;
+            TypeBtn.Classes.Remove("open");
+        };
     }
 
     // Подпись кнопки говорит состояние фильтра: снят — название, сужен — сколько типов выбрано.
