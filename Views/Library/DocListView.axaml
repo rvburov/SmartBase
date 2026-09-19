@@ -23,13 +23,14 @@
              локальное значение в Avalonia стилем не перебивается, и подсветка рамки при вводе
              (:focus-within) молча не сработала бы — грабли записаны в docs/developer/ui/theming.md.
 
-             ClipToBounds — из-за серого подвала и нити прогресса: без него они вылезли бы за
-             скругление углов. -->
+             Содержимое режется скругленным клипом по ВНУТРЕННЕМУ краю рамки (RadiusMediumInner),
+             а не ClipToBounds у блока: клип самого Border идет по внешнему радиусу, и прямые углы
+             серого подвала наползали на рамку изнутри — подсветка при вводе пропадала в углах. -->
         <Border Grid.Row="2" x:Name="SearchBlock"
                 Classes="searchBlock"
-                ClipToBounds="True"
                 Margin="0,0,16,12">
-            <Grid RowDefinitions="Auto,Auto,Auto">
+            <Grid RowDefinitions="Auto,Auto,Auto"
+                  b:RoundedClip.Radius="{StaticResource RadiusMediumInner}">
 
                 <!-- Ряд команды: якорь, запрос, очистка, «Найти». Отступы — те же 12,8, что у
                      строки быстрого добавления задач, но заданы маргином внутренней сетки:
@@ -48,7 +49,10 @@
                         </Canvas>
                     </Viewbox>
 
+                    <!-- Рамку держит блок, у поля своей нет ни в одном состоянии (класс
+                         borderless) — иначе при вводе синих рамок было бы две, одна в другой. -->
                     <TextBox Grid.Column="2" x:Name="SearchBox"
+                             Classes="borderless"
                              Watermark="Найти в документах"
                              BorderThickness="0"
                              Background="Transparent"

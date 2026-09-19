@@ -10,6 +10,11 @@
         <CornerRadius x:Key="RadiusMedium">8</CornerRadius>
         <CornerRadius x:Key="RadiusLarge">12</CornerRadius>
         <CornerRadius x:Key="RadiusPill">15</CornerRadius>
+        <!-- Внутренний край рамки блока с RadiusMedium: радиус минус ее линия. Нужен там, где
+             содержимое клипается ВНУТРИ рамки (RoundedClip). Клип самого Border идет по ВНЕШНЕМУ
+             радиусу, и прямоугольное содержимое наползает на рамку изнутри — подсветка при вводе
+             пропадает в углах. -->
+        <CornerRadius x:Key="RadiusMediumInner">7</CornerRadius>
 
         <!-- ── Единая высота элементов формы ───────────────────────────────────
              Один стандарт высоты для полей ввода (TextBox), выпадающих списков
@@ -680,6 +685,26 @@
     </Style>
     <Style Selector="TextBox.onCard:focus /template/ Border#PART_BorderElement">
         <Setter Property="Background" Value="{StaticResource BrushBg}" />
+    </Style>
+
+    <!-- Поле внутри блока, который сам рисует рамку (строка поиска библиотеки — Border.searchBlock).
+         Своей рамки у поля нет НИ В ОДНОМ состоянии: подсветку при вводе держит блок, а вторая
+         синяя рамка внутри первой читается как поле в поле.
+
+         BorderThickness="0" на самом поле для этого мало: тема Fluent задает толщину
+         PART_BorderElement прямо в состояниях :pointerover и :focus, а стиль части шаблона
+         локальное значение контрола не спрашивает. Тот же прием у TextBox.titleEditor ниже. -->
+    <Style Selector="TextBox.borderless /template/ Border#PART_BorderElement">
+        <Setter Property="Background"      Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+    <Style Selector="TextBox.borderless:pointerover /template/ Border#PART_BorderElement">
+        <Setter Property="Background"      Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+    <Style Selector="TextBox.borderless:focus /template/ Border#PART_BorderElement">
+        <Setter Property="Background"      Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
     </Style>
 
     <!-- ===== Поле секрета: точки вместо букв и глаз ===== -->
