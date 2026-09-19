@@ -21,6 +21,13 @@ public partial class SettingsView
     private static readonly string[] LibraryIndexMaxLabels =
         ["16 МБ", "32 МБ", "64 МБ", "128 МБ", "256 МБ", "Без ограничения"];
 
+    // Размер карточки. Подписи называют не пиксели, а то, что человек увидит: число строк
+    // найденного текста — единственное, что от размера зависит содержательно.
+    private static readonly Views.Library.DocCardSize[] LibraryCardSizeOptions =
+        [Views.Library.DocCardSize.Small, Views.Library.DocCardSize.Medium, Views.Library.DocCardSize.Large];
+    private static readonly string[] LibraryCardSizeLabels =
+        ["Маленькая — одна строка", "Средняя — три строки", "Большая — шесть строк"];
+
     // Гасит обработчики, пока контролы наполняются кодом (как _tasksBuilding у «Задач»).
     private bool _libraryBuilding;
 
@@ -32,6 +39,10 @@ public partial class SettingsView
 
         LibrarySidebarOnlyToggle.IsChecked = LibrarySettings.SidebarOnlyInSection;
         LibraryThumbsToggle.IsChecked      = LibrarySettings.Thumbnails;
+
+        LibraryCardSizeCombo.ItemsSource   = LibraryCardSizeLabels;
+        LibraryCardSizeCombo.SelectedIndex =
+            Math.Max(0, Array.IndexOf(LibraryCardSizeOptions, LibrarySettings.CardSize));
 
         LibraryIndexMaxCombo.ItemsSource   = LibraryIndexMaxLabels;
         var idx = Array.IndexOf(LibraryIndexMaxOptions, LibrarySettings.IndexMaxMb);
@@ -97,6 +108,14 @@ public partial class SettingsView
     {
         if (_libraryBuilding) return;
         LibrarySettings.SetThumbnails(LibraryThumbsToggle.IsChecked == true);
+    }
+
+    private void OnLibraryCardSizeChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (_libraryBuilding) return;
+        var i = LibraryCardSizeCombo.SelectedIndex;
+        if (i < 0 || i >= LibraryCardSizeOptions.Length) return;
+        LibrarySettings.SetCardSize(LibraryCardSizeOptions[i]);
     }
 
     private void OnLibraryIndexMaxChanged(object? sender, SelectionChangedEventArgs e)

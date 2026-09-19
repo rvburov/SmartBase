@@ -102,12 +102,8 @@ public partial class DocListView : UserControl
     public IReadOnlyList<DocCardVm> Cards =>
         _items is List<object> list ? [.. list.OfType<DocCardVm>()] : [];
 
-    /// <summary>
-    /// Высота ленты формата на плитке: 32 из 72, то есть чуть меньше половины. Число сырое
-    /// намеренно — это не размер текста и не отступ, а пропорция картинки, и она согласована с
-    /// <see cref="DocThumbnail.BoxHeight"/>: 40 + 32 = 72.
-    /// </summary>
-    private const double TapeHeight = 32;
+    // Геометрия плитки и число строк сниппета живут в DocTiles — там они связаны арифметикой
+    // с высотой карточки, и там же их проверяет тест.
 
     /// <summary>Текст запроса — контроллер читает его при обновлениях ленты.</summary>
     public string SearchText => SearchBox.Text ?? "";
@@ -230,7 +226,6 @@ public partial class DocListView : UserControl
 
         var bold      = (FontWeight)this.FindResource("FontWeightBold")!;
         var secondary = (IBrush)this.FindResource("BrushSecondaryText")!;
-        var separator = (IBrush)this.FindResource("BrushSeparator")!;
         var accent    = (IBrush)this.FindResource("BrushAccent")!;
         var radius    = (CornerRadius)this.FindResource("RadiusMedium")!;
         var small     = (double)this.FindResource("FontSizeSmall")!;
@@ -243,65 +238,99 @@ public partial class DocListView : UserControl
 
         // Колонка 0 — плитка формата: окошко страницы сверху, лента формата снизу.
         //
-        // Лента — светлая заливка, обводка и надпись цветом формата, как баннеры в диалогах.
-        // Сплошной насыщенной заливки в приложении нет нигде, и плитка ее не заводит: цветом
-        // здесь набраны рамка и текст.
+        // Лента — светлая заливка и надпись цветом формата, как баннеры в диалогах. Сплошной
+        // насыщенной заливки в приложении нет нигде, и плитка ее не заводит. Обводка документа
+        // цветом формата тоже не набирается: она общая серая, одна на весь документ.
         //
-        // Миниатюра и пустое окошко лежат в одной ячейке и переключаются привязкой: пересобирать
-        // карточку под приехавшую картинку нечем — контейнер строки к тому моменту уже создан.
-        var thumb = (Image)Bound(new Image
+        // Миниатюры выключены настройкой — окошка страницы нет ВОВСЕ: плитка целиком залита
+        // цветом формата, и надпись стоит по центру ее высоты. Пустой лист над лентой не значил
+        // бы ничего — картинки не будет, и ждать ее нечего. Настройка читается здесь потому, что
+        // ее смена перечитывает ленту (LibraryControllerView.OnLibrarySettingsChanged), и карточки
+        // собираются заново.
+        var withThumbs = LibrarySettings.Thumbnails;
+        var shape      = DocTiles.Of(LibrarySettings.CardSize);
+
+        var sheet = new StackPanel();
+
+        if (withThumbs)
         {
-            Width  = DocThumbnail.BoxWidth,
-            Height = DocThumbnail.BoxHeight,
-            Stretch = Stretch.UniformToFill,
-        },
-        (Image.SourceProperty,     nameof(DocCardVm.Thumbnail)),
-        (Visual.IsVisibleProperty, nameof(DocCardVm.HasThumbnail)));
+            // Миниатюра и пустое окошко лежат в одной ячейке и переключаются привязкой:
+            // пересобирать карточку под приехавшую картинку нечем — контейнер строки к тому
+            // моменту уже создан.
+            var thumb = (Image)Bound(new Image
+            {
+                Width  = shape.BoxWidth,
+                Height = shape.BoxHeight,
+                Stretch = Stretch.UniformToFill,
+            },
+            (Image.SourceProperty,     nameof(DocCardVm.Thumbnail)),
+            (Visual.IsVisibleProperty, nameof(DocCardVm.HasThumbnail)));
 
-        var pageFill = (Border)Bound(new Border(),
-            (Visual.IsVisibleProperty, nameof(DocCardVm.HasBadge)));
-        pageFill.Background = (IBrush)this.FindResource("BrushSecondaryBg")!;
+            var pageFill = (Border)Bound(new Border(),
+                (Visual.IsVisibleProperty, nameof(DocCardVm.HasBadge)));
+            pageFill.Background = (IBrush)this.FindResource("BrushSecondaryBg")!;
 
-        var pageBox = new Panel();
-        pageBox.Children.Add(pageFill);
-        pageBox.Children.Add(thumb);
+            var pageBox = new Panel();
+            pageBox.Children.Add(pageFill);
+            pageBox.Children.Add(thumb);
 
-        // Своей рамки у окошка снизу нет, у ленты — сверху: линия между ними одна, а не две.
-        var page = new Border
-        {
-            Width  = DocThumbnail.BoxWidth,
-            Height = DocThumbnail.BoxHeight,
-            BorderBrush     = separator,
-            BorderThickness = new Thickness(1, 1, 1, 0),
-            CornerRadius    = new CornerRadius(4, 4, 0, 0),
-            ClipToBounds    = true,
-            Child           = pageBox,
-        };
+            // Своей рамки у окошка нет: документ обводит одна общая рамка снаружи (preview ниже).
+            sheet.Children.Add(new Border
+            {
+                Width  = shape.BoxWidth,
+                Height = shape.BoxHeight,
+                Child  = pageBox,
+            });
+        }
+
+        // Надпись формата растет вместе с лентой — токеном типографики, а не числом: иначе
+        // настройка «Размер шрифта» обходила бы плитку стороной. TryFindResource с запасным
+        // значением, потому что карточка собирается и до попадания в дерево.
+        var labelSize = this.TryFindResource(shape.LabelFontKey, out var lf) && lf is double d
+            ? d
+            : shape.LabelFontFallback;
 
         var tapeText = (TextBlock)Bound(new TextBlock
         {
             FontWeight          = FontWeight.SemiBold,
-            FontSize            = small,
+            FontSize            = labelSize,
+            // Длинное слово («EXCEL», редкое расширение) на маленькой плитке иначе обрезалось бы
+            // посреди буквы жестким клипом — без единого признака, что текст не влез.
+            TextTrimming        = TextTrimming.CharacterEllipsis,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment   = VerticalAlignment.Center,
         },
         (TextBlock.TextProperty,       nameof(DocCardVm.FormatLabel)),
         (TextBlock.ForegroundProperty, nameof(DocCardVm.FormatStroke)));
 
+        // Лента формата: заливка и надпись цветом формата. Линии между окошком и лентой НЕТ —
+        // ни своей рамки сверху у ленты, ни снизу у окошка: заливка начинается прямо от листа,
+        // и документ читается одним листом с цветным низом, а не двумя склеенными частями.
         var tape = (Border)Bound(new Border
         {
-            Width  = DocThumbnail.BoxWidth,
-            Height = TapeHeight,
-            BorderThickness = new Thickness(1),
-            CornerRadius    = new CornerRadius(0, 0, 4, 4),
-            Child           = tapeText,
+            Width  = shape.BoxWidth,
+            // Без миниатюр лента занимает всю плитку — высота та же, что у карточки с окошком,
+            // чтобы лента не поехала при смене настройки.
+            Height = withThumbs ? shape.TapeHeight : shape.TileHeight,
+            Child  = tapeText,
         },
-        (Border.BackgroundProperty,  nameof(DocCardVm.FormatFill)),
-        (Border.BorderBrushProperty, nameof(DocCardVm.FormatStroke)));
+        (Border.BackgroundProperty, nameof(DocCardVm.FormatFill)));
 
-        var preview = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-        preview.Children.Add(page);
-        preview.Children.Add(tape);
+        sheet.Children.Add(tape);
+        // Скругленный клип, а НЕ ClipToBounds у рамки: тот режет по прямоугольнику, и белый лист
+        // с заливкой ленты закрывали углы своими прямыми. На белом фоне ленты это было незаметно,
+        // а на выделенной карточке скругление исчезало. Радиус на линию меньше внешнего.
+        Controls.Behaviors.RoundedClip.SetRadius(sheet, new CornerRadius(3));
+
+        // Рамка вокруг ВСЕГО документа — окошка и ленты разом, цветом формата.
+        var preview = (Border)Bound(new Border
+        {
+            VerticalAlignment = VerticalAlignment.Center,
+            BorderThickness = new Thickness(1),
+            CornerRadius    = new CornerRadius(4),
+            Child           = sheet,
+        },
+        (Border.BorderBrushProperty, nameof(DocCardVm.FormatStroke)));
 
         // Колонка 2 — название, подпись «коллекция · база · имя файла», сниппет и действие.
         var title = (TextBlock)Bound(new TextBlock
@@ -326,7 +355,7 @@ public partial class DocListView : UserControl
         var snippet = new TextBlock
         {
             TextWrapping = TextWrapping.Wrap,
-            MaxLines     = 2,
+            MaxLines     = shape.SnippetLines,
             TextTrimming = TextTrimming.CharacterEllipsis,
             FontSize     = small,
             Margin       = new Thickness(0, 2, 0, 0),
@@ -352,17 +381,33 @@ public partial class DocListView : UserControl
             Foreground        = accent,
             VerticalAlignment = VerticalAlignment.Center,
         });
-        readRow.Bind(Visual.IsVisibleProperty, new Binding(nameof(DocCardVm.CanOpen)) { Source = vm });
+        // Место под строку действия занято ВСЕГДА — и у заглушки страницы, и у пропавшего файла.
+        // Спрятать ее совсем значило бы сделать такие карточки ниже соседних, а лента держится
+        // ровно на том, что высота у всех одна: иначе она дергается на каждой подъехавшей
+        // странице. Поэтому гасим прозрачностью, а клики снимаем отдельно.
+        readRow.Bind(Visual.OpacityProperty, new Binding(nameof(DocCardVm.ReadOpacity)) { Source = vm });
+        readRow.Bind(InputElement.IsHitTestVisibleProperty,
+                     new Binding(nameof(DocCardVm.CanOpen)) { Source = vm });
         readRow.Tapped += (_, e) =>
         {
             e.Handled = true;
             if (!vm.IsPlaceholder) DocActivated?.Invoke(this, vm.Doc);
         };
 
-        var left = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
-        left.Children.Add(title);
-        left.Children.Add(subtitle);
-        left.Children.Add(snippet);
+        // Текст разведен по высоте плитки: что документ ЕСТЬ (название, где лежит, найденная
+        // строка) — вверху, что с ним МОЖНО СДЕЛАТЬ — внизу. Собранные в кучу по центру, они
+        // читались одним абзацем, и действие терялось среди подписей. Пустая строка «*»
+        // посередине забирает весь запас высоты, поэтому у карточек любой высоты действие стоит
+        // на одном уровне с нижним краем плитки.
+        var textTop = new StackPanel { Spacing = 2 };
+        textTop.Children.Add(title);
+        textTop.Children.Add(subtitle);
+        textTop.Children.Add(snippet);
+
+        var left = new Grid { RowDefinitions = new RowDefinitions("Auto,*,Auto") };
+        Grid.SetRow(textTop, 0);
+        Grid.SetRow(readRow, 2);
+        left.Children.Add(textTop);
         left.Children.Add(readRow);
 
         // Колонка 4 — чипы состояния и метрики файла. Колонка была занята одним чипом типа и
@@ -421,6 +466,11 @@ public partial class DocListView : UserControl
             CornerRadius = radius,
             Padding      = new Thickness(14, 10),
             Margin       = new Thickness(0, 0, 0, 8),
+            // Высота карточки — из таблицы размеров, а не по содержимому: все строки ленты
+            // обязаны быть одной высоты, иначе прокрутка дергается, а ползунок «дышит»
+            // (протяженность VirtualizingStackPanel оценивает по материализованным строкам).
+            // MinHeight, а не Height: при увеличенном шрифте текст обязан помещаться.
+            MinHeight    = shape.CardHeight,
             Child        = grid,
         };
         card.Bind(Border.BorderThicknessProperty, card.GetResourceObservable("BorderLine"));
@@ -601,6 +651,10 @@ public partial class DocCardVm : ObservableObject
     public bool   HasSnippet    { get; private set; }
     public bool   CanOpen       { get; private set; }
 
+    /// <summary>Видимость строки «Прочитать документ» — прозрачностью, чтобы место под нее
+    /// осталось занято и высота карточки не зависела от того, есть файл на диске или нет.</summary>
+    public double ReadOpacity   => CanOpen ? 1 : 0;
+
     private List<(string Text, bool Hit)> _snippet = [];
 
     public DocCardVm(DocRecord doc) => Apply(doc);
@@ -653,7 +707,7 @@ public partial class DocCardVm : ObservableObject
         nameof(IsMissing), nameof(MissingText), nameof(MissingBg), nameof(MissingFg),
         nameof(IsUnread), nameof(UnreadText), nameof(UnreadBg), nameof(UnreadFg),
         nameof(MetaText), nameof(HasMeta),
-        nameof(StripeBrush), nameof(HasSnippet), nameof(CanOpen),
+        nameof(StripeBrush), nameof(HasSnippet), nameof(CanOpen), nameof(ReadOpacity),
     ];
 
     private void Apply(DocRecord doc)

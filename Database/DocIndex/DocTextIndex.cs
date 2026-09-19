@@ -69,8 +69,12 @@ public sealed class DocTextIndex
     public const char HitOpen  = '\u0002';
     public const char HitClose = '\u0003';
 
-    /// <summary>Сколько слов показывает сниппет вокруг совпадения.</summary>
-    private const int SnippetWords = 14;
+    /// <summary>
+    /// Сколько слов показывает сниппет вокруг совпадения по умолчанию. Зовущий может попросить
+    /// больше: в ленте библиотеки число строк сниппета зависит от размера карточки, и на шесть
+    /// строк четырнадцати слов не хватает — строки остались бы пустыми.
+    /// </summary>
+    public const int SnippetWordsDefault = 14;
 
     private readonly string _path;
     private readonly object _lock = new();
@@ -385,8 +389,12 @@ public sealed class DocTextIndex
     /// отсортированные по релевантности FTS5 (<c>ORDER BY rank</c>), не больше
     /// <paramref name="limit"/>.
     /// </summary>
-    public List<DocHit> Search(string query, int limit = 500)
+    public List<DocHit> Search(string query, int limit = 500, int words = SnippetWordsDefault)
     {
+        // Границы — от того же мусора, что и у лимита: ноль слов дал бы пустые цитаты, а
+        // сотни — строку, которую никто не читает.
+        words = Math.Clamp(words, 4, 64);
+
         var result = new List<DocHit>();
         var match  = BuildMatch(query);
         if (match.Length == 0) return result;
@@ -396,7 +404,7 @@ public sealed class DocTextIndex
             using var connection = Open();
             using var cmd = connection.CreateCommand();
             cmd.CommandText = $"""
-                SELECT f.PathKey, snippet(doc_fts, 0, char({(int)HitOpen}), char({(int)HitClose}), '…', {SnippetWords})
+                SELECT f.PathKey, snippet(doc_fts, 0, char({(int)HitOpen}), char({(int)HitClose}), '…', {words})
                 FROM doc_fts
                 JOIN doc_files f ON f.Id = doc_fts.rowid
                 WHERE doc_fts MATCH @q
@@ -422,8 +430,9 @@ public sealed class DocTextIndex
     }
 
     /// <summary>Фоновый поиск: файл кеша читается с диска, UI-поток ждать не должен.</summary>
-    public Task<List<DocHit>> SearchAsync(string query, int limit = 500) =>
-        Task.Run(() => Search(query, limit));
+    public Task<List<DocHit>> SearchAsync(string query, int limit = 500,
+                                          int words = SnippetWordsDefault) =>
+        Task.Run(() => Search(query, limit, words));
 
     /// <summary>
     /// Собирает выражение MATCH из пользовательского запроса. Каждое слово берется в двойные

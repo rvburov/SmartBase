@@ -64,7 +64,8 @@ public static class DocFormats
         };
     }
 
-    /// <summary>Ключ кисти обводки и надписи в <c>Assets/Styles/Colors.axaml</c>.</summary>
+    /// <summary>Ключ кисти обводки документа и надписи на ленте в
+    /// <c>Assets/Styles/Colors.axaml</c>.</summary>
     public static string StrokeBrushKey(DocFormatFamily family) => family switch
     {
         DocFormatFamily.Pdf   => "BrushFormatPdf",

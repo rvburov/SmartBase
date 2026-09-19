@@ -917,10 +917,30 @@ public static class AppSettings
     // ── Раздел «Настройки → Библиотека документов» ───────────────────────────────
     //
     // Как и у задач: дельты в app.db, живой кеш и разбор мусора — LibrarySettings.
-    public const bool LibrarySidebarOnlyInSectionDefault = false;   // в боковой панели все коллекции
-    public const bool LibraryThumbnailsDefault           = true;    // миниатюра первой страницы PDF
+    public const bool   LibrarySidebarOnlyInSectionDefault = false;    // в боковой панели все коллекции
+    public const bool   LibraryThumbnailsDefault           = true;     // миниатюра первой страницы PDF
+    public const string LibraryCardSizeDefault             = "medium"; // размер карточки в ленте
+    public const string LibraryViewDefault                 = "list";   // единственный пока вид раздела
     public const int  LibraryIndexMaxMbDefault =
         SmartBase.Core.Documents.DocTextExtractor.DefaultMaxFileMb;
+
+    // Строку отдаем как есть: что из нее допустимо, решает LibrarySettings (DocTiles.Parse) —
+    // тот же порядок, что у задач.
+    public static string LoadLibraryCardSize() => _store?.Get(KeyLibraryCardSize) ?? LibraryCardSizeDefault;
+
+    public static void SaveLibraryCardSize(string key)
+    {
+        if (key == LibraryCardSizeDefault) _store?.Remove(KeyLibraryCardSize);
+        else                               _store?.Set(KeyLibraryCardSize, key);
+    }
+
+    public static string LoadLibraryView() => _store?.Get(KeyLibraryView) ?? LibraryViewDefault;
+
+    public static void SaveLibraryView(string key)
+    {
+        if (key == LibraryViewDefault) _store?.Remove(KeyLibraryView);
+        else                           _store?.Set(KeyLibraryView, key);
+    }
 
     public static bool LoadLibrarySidebarOnlyInSection() =>
         bool.TryParse(_store?.Get(KeyLibrarySidebarOnlyInSection), out var on)
@@ -1488,6 +1508,8 @@ public static class AppSettings
     private const string KeyLibrarySidebarOnlyInSection  = "librarySidebarOnlyInSection";
     private const string KeyLibrarySecondsPerDoc         = "librarySecondsPerDoc";
     private const string KeyLibraryThumbnails            = "libraryThumbnails";
+    private const string KeyLibraryCardSize              = "libraryCardSize";
+    private const string KeyLibraryView                  = "libraryView";
     private const string KeyLibraryIndexMaxMb            = "libraryIndexMaxMb";
     private const string KeyCalendarView     = "calendarView";
     private const string KeyCalendarDaysInWeek        = "calendarDaysInWeek";

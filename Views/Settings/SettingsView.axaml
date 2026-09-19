@@ -992,10 +992,41 @@
                     </Grid.ColumnDefinitions>
                     <StackPanel Margin="16,0,16,32">
 
-                    <!-- «Отображение по умолчанию» и «Отображаемые виды» у этого раздела НЕТ.
-                         Переключателя вида в навбаре тоже нет: вид один, а выпадашка на один
-                         пункт — это орган управления, который ничем не управляет. Появится
-                         второй вид — вернутся и переключатель, и обе настройки. -->
+                    <!-- Блок видов — такой же, как у календаря, задач и конструктора: раздел не
+                         должен отличаться от соседей набором настроек. Переключателя вида в
+                         навбаре у библиотеки при этом нет: вид один, и выпадашка на один пункт
+                         в рабочей полосе — орган управления, который ничем не управляет.
+                         Появится второй вид — вернется и переключатель. -->
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Отображение по умолчанию" />
+                                <TextBlock Classes="desc"
+                                           Text="Какой вид открывается при переходе в раздел «Библиотека документов»." />
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" x:Name="LibraryViewCombo"
+                                      Width="240" Height="{StaticResource ControlHeightStandard}"
+                                      VerticalAlignment="Center"
+                                      Background="{StaticResource BrushSecondaryBg}"
+                                      CornerRadius="{StaticResource RadiusBase}" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Отображаемые виды" />
+                                <TextBlock Classes="desc"
+                                           Text="Какие виды библиотеки показывать в переключателе навбара. Пока вид один — Список." />
+                            </StackPanel>
+                            <w:CheckListDropdown Grid.Column="1" x:Name="LibraryVisibility"
+                                                 Width="240" VerticalAlignment="Center" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
 
                     <Border Classes="settingRow">
                         <Grid ColumnDefinitions="*,Auto">
@@ -1017,14 +1048,32 @@
                         <Grid ColumnDefinitions="*,Auto">
                             <StackPanel Grid.Column="0" Spacing="4"
                                         VerticalAlignment="Center" Margin="0,0,32,0">
-                                <TextBlock Classes="title" Text="Миниатюры документов" />
+                                <TextBlock Classes="title" Text="Изображение документа" />
                                 <TextBlock Classes="desc"
-                                           Text="Показывать шапку первой страницы PDF на плитке карточки. Выключено — остается только лента формата. Картинки рисуются в фоне и хранятся отдельным кешем на диске." />
+                                           Text="Показывать шапку первой страницы PDF на плитке карточки. Выключено — плитка целиком в цвете формата, с названием посередине. Картинки рисуются в фоне и хранятся отдельным кешем на диске." />
                             </StackPanel>
                             <ToggleSwitch Grid.Column="1" x:Name="LibraryThumbsToggle"
                                           OnContent="" OffContent=""
                                           VerticalAlignment="Center"
                                           IsCheckedChanged="OnLibraryThumbsToggled" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Размер карточки" />
+                                <TextBlock Classes="desc"
+                                           Text="Высота строки в ленте и размер изображения документа. Заодно решает, сколько строк найденного текста видно при поиске: маленькая — одну, средняя — три, большая — шесть." />
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" x:Name="LibraryCardSizeCombo"
+                                      Width="240" Height="{StaticResource ControlHeightStandard}"
+                                      VerticalAlignment="Center"
+                                      Background="{StaticResource BrushSecondaryBg}"
+                                      CornerRadius="{StaticResource RadiusBase}"
+                                      SelectionChanged="OnLibraryCardSizeChanged" />
                         </Grid>
                     </Border>
                     <Border Classes="separator h" />

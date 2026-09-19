@@ -1,4 +1,5 @@
 using SmartBase.Core.Documents;
+using SmartBase.Views.Library;
 
 namespace SmartBase.Utils;
 
@@ -65,6 +66,14 @@ public static class LibrarySettings
     /// <summary>Показывать миниатюру первой страницы PDF (false — всегда бейдж формата).</summary>
     public static bool Thumbnails { get; private set; } = AppSettings.LibraryThumbnailsDefault;
 
+    /// <summary>
+    /// Размер карточки документа в ленте. Управляет заодно и тем, сколько строк найденного
+    /// текста видно: маленькая — одна, средняя — три, большая — шесть. Геометрия — в
+    /// <see cref="DocTiles"/>.
+    /// </summary>
+    public static DocCardSize CardSize { get; private set; } =
+        DocTiles.Parse(AppSettings.LibraryCardSizeDefault);
+
     /// <summary>Настройки изменились — разделу пора перечитаться.</summary>
     public static event Action? Changed;
 
@@ -77,6 +86,7 @@ public static class LibrarySettings
         SidebarOnlyInSection = AppSettings.LoadLibrarySidebarOnlyInSection();
         IndexMaxMb           = ParseMaxMb(AppSettings.LoadLibraryIndexMaxMb());
         Thumbnails           = AppSettings.LoadLibraryThumbnails();
+        CardSize             = DocTiles.Parse(AppSettings.LoadLibraryCardSize());
         SecondsPerDocument   = AppSettings.LoadLibrarySecondsPerDoc();
     }
 
@@ -120,6 +130,14 @@ public static class LibrarySettings
         if (on == Thumbnails) return;
         Thumbnails = on;
         AppSettings.SaveLibraryThumbnails(on);
+        Publish();
+    }
+
+    public static void SetCardSize(DocCardSize size)
+    {
+        if (size == CardSize) return;
+        CardSize = size;
+        AppSettings.SaveLibraryCardSize(DocTiles.KeyOf(size));
         Publish();
     }
 

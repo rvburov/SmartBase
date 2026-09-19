@@ -44,6 +44,10 @@ public partial class LibraryControllerView : UserControl
     private IReadOnlySet<string>? _types;
     private string _searchQuery = "";
 
+    /// <summary>Размер карточки на момент последнего чтения — по нему видно, что настройка
+    /// сменила именно РАЗМЕР, и прокрутку восстанавливать нельзя.</summary>
+    private DocCardSize _cardSize = LibrarySettings.CardSize;
+
     private int _gen;
     private DocVirtualList? _virtual;
 
@@ -135,7 +139,14 @@ public partial class LibraryControllerView : UserControl
     private void OnLibrarySettingsChanged()
     {
         if (DocIndexService.Current is { } s) s.MaxFileMb = LibrarySettings.IndexMaxMb;
-        if (_dbs.Count > 0) RefreshCurrent(quiet: true);
+        if (_dbs.Count == 0) return;
+
+        // Смена размера карточки меняет высоту КАЖДОЙ строки, а тихое обновление возвращает
+        // прокрутку в пикселях — прежнее смещение указывало бы уже на другой документ. Поэтому
+        // размер обновляет ленту громко, с начала, а остальные настройки — по-прежнему тихо.
+        var resized = _cardSize != LibrarySettings.CardSize;
+        _cardSize   = LibrarySettings.CardSize;
+        RefreshCurrent(quiet: !resized);
     }
 
     private void OnFontScaleChanged()
@@ -306,8 +317,11 @@ public partial class LibraryControllerView : UserControl
     private async Task LoadSearchAsync(int gen)
     {
         var query = _searchQuery.Trim();
+        // Длину цитаты берем от размера карточки: на шесть строк четырнадцати слов не хватает,
+        // а на одну — наоборот, подсветка уехала бы за многоточие.
+        var words = DocTiles.Of(LibrarySettings.CardSize).SnippetWords;
         var hits  = DocIndexService.Current is { } service
-            ? await service.Index.SearchAsync(query, SearchLimit)
+            ? await service.Index.SearchAsync(query, SearchLimit, words)
             : [];
         if (gen != _gen) return;
 

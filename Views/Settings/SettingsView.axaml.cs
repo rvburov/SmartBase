@@ -177,9 +177,13 @@ public partial class SettingsView : UserControl
                 AppSettings.LoadTasksView,
                 AppSettings.SaveTasksView),
 
-            // Библиотеки документов здесь нет намеренно: у раздела один вид и нет переключателя
-            // в навбаре, поэтому ни «вида по умолчанию», ни списка «какие виды показывать» у
-            // него не бывает.
+            // Библиотека — на общих основаниях, как задачи: вид пока один, но набор настроек у
+            // разделов одинаковый, и отсутствие блока читалось бы как недоделка, а не как
+            // решение. Переключателя вида в навбаре у нее при этом нет — там выпадашка на один
+            // пункт стояла бы в рабочей полосе и ничем не управляла.
+            new(ViewCatalog.ScopeLibrary, LibraryViewCombo, LibraryVisibility,
+                AppSettings.LoadLibraryView,
+                AppSettings.SaveLibraryView),
 
             new(ViewCatalog.ScopeConstructor, ConstructorViewCombo, ConstructorVisibility,
                 AppSettings.LoadConstructorView,
