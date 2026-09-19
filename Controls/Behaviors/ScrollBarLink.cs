@@ -98,6 +98,18 @@ public static class ScrollBarLink
         });
     }
 
+    /// <summary>
+    /// Та же раскладка для списка БЕЗ шапки — там, где «(Выделить все)» не имеет смысла
+    /// (подменю «Отображение свойств исполнителя»: исполнитель у коллекции один, выделять
+    /// все нечего). Карточка при этом выглядит как соседние: тот же воздух, та же вынесенная
+    /// полоса, прилегающая к краям.
+    ///
+    /// Пустая шапка нужна именно ради воздуха: ее верхнее поле и дает те же 6px сверху, что
+    /// у списка с «(Выделить все)». Зазор под шапкой обнулен — под пустышкой он был бы дырой.
+    /// </summary>
+    public static Control HeadlessList(ScrollViewer scroll, Thickness? padding = null) =>
+        HeaderedList(new Panel(), scroll, gap: 0, padding);
+
     private static Control Build(Control header, Control body, Thickness? padding, double gap,
                                  Action<ScrollBar, ScrollBar> link)
     {

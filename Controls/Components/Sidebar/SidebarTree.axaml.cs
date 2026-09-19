@@ -1610,7 +1610,9 @@ public partial class SidebarTree : UserControl
             ClipToBounds    = true,
             // Высота — по числу пунктов, но не выше общего стандарта (дальше прокрутка).
             MaxHeight       = (double)this.FindResource("PopupListHeight")!,
-            Child           = new ScrollViewer { Content = list },
+            // Без шапки «(Выделить все)» — исполнитель один. Все остальное как у соседей:
+            // воздух внутри полос и вынесенная полоса по краю карточки.
+            Child           = ScrollBarLink.HeadlessList(new ScrollViewer { Content = list }),
         };
         listBox.Bind(Border.BorderThicknessProperty, listBox.GetResourceObservable("BorderLine"));
         panel.Children.Add(listBox);
@@ -1673,13 +1675,32 @@ public partial class SidebarTree : UserControl
             return panel;
         }
 
-        var syncing = false;
-        var list    = new StackPanel { Spacing = 4 };
-        var rows    = new List<(DbField Field, CheckBox Box)>();
+        var syncing   = false;
+        // Файловых свойств у коллекции может быть сколько угодно, и каждое дает свои документы —
+        // роль не эксклюзивная, как поле-дата у календаря. Поэтому здесь, в отличие от подменю
+        // исполнителя, «(Выделить все)» законно.
+        var selectAll = new CheckBox
+        {
+            Content = "(Выделить все)", FontSize = fontBase,
+            Cursor = new Cursor(StandardCursorType.Hand),
+        };
+
+        var list = new StackPanel { Spacing = 4 };
+        var rows = new List<(DbField Field, CheckBox Box)>();
 
         bool Matches(DbField f) =>
             string.IsNullOrWhiteSpace(search.Text) ||
             f.Name.Contains(search.Text!.Trim(), StringComparison.OrdinalIgnoreCase);
+
+        // Считаем по строкам, которые вообще можно переключить: свойство с ролью «Тип документа»
+        // отключено, и без этой оговорки шапка никогда не встала бы в «все отмечены».
+        void SyncSelectAll()
+        {
+            syncing = true;
+            var vis = rows.Where(r => r.Box.IsEnabled && Matches(r.Field)).ToList();
+            selectAll.IsChecked = vis.Count > 0 && vis.All(r => r.Box.IsChecked == true);
+            syncing = false;
+        }
 
         foreach (var f in fileFields)
         {
@@ -1708,29 +1729,47 @@ public partial class SidebarTree : UserControl
                     syncing = true;
                     cb.IsChecked = !cb.IsChecked;
                     syncing = false;
+                    SyncSelectAll();
                     return;
                 }
                 ActiveIdsChanged?.Invoke(this, GetActiveIds());
                 if (fieldsCreated) RequestRefresh?.Invoke(this, EventArgs.Empty);
+                SyncSelectAll();
             };
             rows.Add((f, cb));
             list.Children.Add(cb);
         }
 
+        // «Выделить все» действует на видимое (после поиска) подмножество и не трогает
+        // отключенные строки — их галочка все равно откатилась бы.
+        selectAll.IsCheckedChanged += (_, _) =>
+        {
+            if (syncing) return;
+            var on = selectAll.IsChecked == true;
+            foreach (var (f, box) in rows.Where(r => r.Box.IsEnabled && Matches(r.Field)))
+                if ((box.IsChecked == true) != on) box.IsChecked = on;   // дергает обработчик чекбокса
+        };
+
         search.TextChanged += (_, _) =>
         {
             foreach (var (f, box) in rows) box.IsVisible = Matches(f);
+            SyncSelectAll();
         };
+
+        SyncSelectAll();
 
         var listBox = new Border
         {
             Background   = Brushes.White,
             BorderBrush  = (IBrush)this.FindResource("BrushSeparator")!,
             CornerRadius = radius,
+            // Padding НУЛЕВОЙ: полоса прокрутки прилегает ко всем краям карточки без белого
+            // зазора, воздух вокруг содержимого задает HeaderedList.
             Padding      = new Thickness(0),
             ClipToBounds = true,
             MaxHeight    = (double)this.FindResource("PopupListHeight")!,
-            Child        = new ScrollViewer { Content = list },
+            // «Выделить все» — закрепленная шапка; полоса стоит на ее уровне.
+            Child        = ScrollBarLink.HeaderedList(selectAll, new ScrollViewer { Content = list }),
         };
         listBox.Bind(Border.BorderThicknessProperty, listBox.GetResourceObservable("BorderLine"));
         panel.Children.Add(listBox);
