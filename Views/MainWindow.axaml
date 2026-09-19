@@ -8,6 +8,7 @@
         xmlns:profile="using:SmartBase.Views.Profile"
         xmlns:tasks="using:SmartBase.Views.Tasks"
         xmlns:notes="using:SmartBase.Views.Notes"
+        xmlns:lib="using:SmartBase.Views.Library"
         xmlns:b="using:SmartBase.Controls.Behaviors"
         x:Class="SmartBase.Views.MainWindow"
         Classes="main"
@@ -56,6 +57,7 @@
             <comp:SidebarTree x:Name="CalendarSidebar" />
             <comp:SidebarTree x:Name="TasksSidebar" IsVisible="False" />
             <comp:SidebarTree x:Name="ConstructorSidebar" IsVisible="False" />
+            <comp:SidebarTree x:Name="LibrarySidebar" IsVisible="False" />
             <comp:SidebarList x:Name="SettingsSidebar" IsVisible="False" />
             <comp:SidebarList x:Name="ExtensionsSidebar" IsVisible="False" />
             <comp:SidebarList x:Name="ProfileSidebar" IsVisible="False" />
@@ -74,6 +76,7 @@
             <ext:ExtensionsView x:Name="ExtensionsModule" IsVisible="False" />
             <profile:ProfileView x:Name="ProfileModule" IsVisible="False" />
             <notes:NotesControllerView x:Name="NotesModule" IsVisible="False" />
+            <lib:LibraryControllerView x:Name="LibraryModule" IsVisible="False" />
         </Grid>
 
         <!-- Вертикальный разделитель слева от панели записи -->

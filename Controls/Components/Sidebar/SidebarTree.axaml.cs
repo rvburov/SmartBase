@@ -20,7 +20,22 @@ using SmartBase.Controls.Behaviors;
 
 namespace SmartBase.Controls.Components;
 
-public enum SidebarMode { Calendar, Constructor, Tasks }
+public enum SidebarMode { Calendar, Constructor, Tasks, Library }
+
+public static class SidebarModes
+{
+    // Разделы-агрегаты (календарь, задачи, библиотека) собирают записи из ОТМЕЧЕННЫХ коллекций:
+    // у строки коллекции есть галочка, клик по строке ее переключает, галочки помнятся между
+    // запусками. Конструктор устроен иначе — там коллекцию открывают, галочек нет.
+    //
+    // Правило живет ОДНОЙ функцией, потому что от него зависят три разных места: видимость
+    // галочки, отступ под нее и поведение клика. Пока перечисление режимов было переписано в
+    // каждом из них, библиотека приехала с галочками в логике и без них на экране: ChecksMode
+    // про нее знал, строка дерева — нет. Новый раздел добавляется здесь, и он получает
+    // сайдбар целиком.
+    public static bool HasChecks(this SidebarMode mode) =>
+        mode is SidebarMode.Calendar or SidebarMode.Tasks or SidebarMode.Library;
+}
 
 public partial class SidebarTree : UserControl
 {
@@ -40,6 +55,12 @@ public partial class SidebarTree : UserControl
     // Клик по коллекции, просмотр которой запрещен правами (замок) — MainWindow
     // поясняет, что доступ закрыт администратором. Аргумент — имя коллекции.
     public event EventHandler<string>?    CollectionAccessDenied;
+
+    /// <summary>
+    /// Из меню коллекции попросили прочитать ее документы (библиотека документов). Само чтение
+    /// делает раздел: сайдбар не знает ни про кеш текста, ни про очередь.
+    /// </summary>
+    public event EventHandler<EntityRef>? ReadDocumentsRequested;
 
     // Смонтированные БД сайдбара. В режиме календаря — одна (дефолт). В конструкторе —
     // все из рабочего пространства, и каждая показывается корневым узлом (_showRoots).
@@ -93,16 +114,18 @@ public partial class SidebarTree : UserControl
     private SortState _sortState = SortState.None;
     private bool _expandedAll;
 
-    // Режимы с чекбоксами видимости коллекций (календарь и задачи ведут себя одинаково).
-    private bool ChecksMode => _mode is SidebarMode.Calendar or SidebarMode.Tasks;
+    // Режимы с чекбоксами видимости коллекций (календарь, задачи и библиотека ведут себя одинаково).
+    private bool ChecksMode => _mode.HasChecks();
 
     // Настройка раздела «только подключенные коллекции»: календарь прячет коллекции без
-    // включенного поля-даты, задачи — без исполнителя. Такие коллекции в раздел ничего не дают,
-    // и их галочки ни на что не влияют. Конструктор показывает все всегда.
+    // включенного поля-даты, задачи — без исполнителя, библиотека — без файлового свойства.
+    // Такие коллекции в раздел ничего не дают, и их галочки ни на что не влияют. Конструктор
+    // показывает все всегда.
     private bool OnlyInSection => _mode switch
     {
         SidebarMode.Calendar => CalendarSettings.SidebarOnlyInSection,
         SidebarMode.Tasks    => TaskSettings.SidebarOnlyInSection,
+        SidebarMode.Library  => LibrarySettings.SidebarOnlyInSection,
         _                    => false,
     };
 
@@ -440,8 +463,9 @@ public partial class SidebarTree : UserControl
         {
             groups      = db.Repo.GetAllGroups();
             collections = db.Repo.GetAllCollections();
-            inSection   = !OnlyInSection                   ? null
+            inSection   = !OnlyInSection                    ? null
                         : _mode == SidebarMode.Calendar ? db.Repo.GetCalendarCollectionIds()
+                        : _mode == SidebarMode.Library  ? db.Repo.GetDocCollectionIds()
                         :                                 db.Repo.GetTaskCollectionIds();
         }
         catch (Exception ex) when (DbHealthMonitor.IsBusyError(ex) || DbHealthMonitor.IsUnavailableError(ex))
@@ -656,10 +680,15 @@ public partial class SidebarTree : UserControl
 
     // ── Галочки между запусками (app.db) ─────────────────────────────────────
     //
-    // У календаря и задач наборы РАЗНЫЕ: в задачах человек держит отмеченными одни
-    // коллекции, в календаре — другие, и общий набор превратил бы каждое переключение
-    // раздела в переделку галочек.
-    private string ChecksScope => _mode == SidebarMode.Tasks ? "tasks" : "calendar";
+    // У каждого раздела набор СВОЙ: в задачах человек держит отмеченными одни коллекции, в
+    // календаре и библиотеке — другие, и общий набор превратил бы каждое переключение раздела
+    // в переделку галочек.
+    private string ChecksScope => _mode switch
+    {
+        SidebarMode.Tasks   => "tasks",
+        SidebarMode.Library => "library",
+        _                   => "calendar",
+    };
 
     /// <summary>
     /// Поднять снятые галочки из настроек. Один раз за жизнь панели: сайдбар
@@ -788,10 +817,10 @@ public partial class SidebarTree : UserControl
             return;
         }
 
-        // Календарь и задачи — списки-агрегаты по ОТМЕЧЕННЫМ коллекциям: клик по строке
-        // переключает ее галочку. Раньше задачи вместо этого «открывали» коллекцию —
+        // Календарь, задачи и библиотека — списки-агрегаты по ОТМЕЧЕННЫМ коллекциям: клик по
+        // строке переключает ее галочку. Раньше задачи вместо этого «открывали» коллекцию —
         // список сужался до одной, и галочки остальных ни на что не влияли.
-        if (_mode is SidebarMode.Calendar or SidebarMode.Tasks)
+        if (ChecksMode)
         {
             // Галочка решает, что показывать, а подсветка — с чем работают клавиши: в
             // конструкторе цель действий задает открытая коллекция, а здесь открытой нет, и без
@@ -1075,11 +1104,25 @@ public partial class SidebarTree : UserControl
                 var color = BuildColorMenu(db, id, node.Color);
                 color.IsEnabled = Can(PermAction.EditCollection, id);
                 menu.Items.Add(color);
-                var fields = _mode == SidebarMode.Calendar
-                    ? BuildDateFieldsMenu(db, id)
-                    : BuildUserFieldsMenu(db, id);
+                var fields = _mode switch
+                {
+                    SidebarMode.Calendar => BuildDateFieldsMenu(db, id),
+                    SidebarMode.Library  => BuildFileFieldsMenu(db, id),
+                    _                    => BuildUserFieldsMenu(db, id),
+                };
                 fields.IsEnabled = Can(PermAction.EditField, id);
                 menu.Items.Add(fields);
+
+                // Чтение документов ОДНОЙ коллекции. Кнопка в подвале раздела читает все
+                // отмеченные разом, а здесь — охват поуже: работать обычно приходится с одной
+                // папкой, и незачем разбирать двадцать тысяч файлов ради нее.
+                if (_mode == SidebarMode.Library && !multi)
+                {
+                    var read = new MenuItem { Header = MenuIcons.ReadDocumentsHeader() };
+                    read.Click += (_, _) => ReadDocumentsRequested?.Invoke(this, new EntityRef(db, id));
+                    menu.Items.Add(read);
+                }
+
                 menu.Items.Add(new Separator());
             }
             if (!multi) menu.Items.Add(MenuItemEdit(Guard(PermAction.EditCollection, id,
@@ -1575,6 +1618,126 @@ public partial class SidebarTree : UserControl
         return panel;
     }
 
+    // Зеркало BuildDateFieldsMenu для библиотеки документов: какие file-поля коллекции дают
+    // документы (вкл/выкл IsDocFile). Первое включение авто-создает «Тип документа» — тогда
+    // обновляем и другие сайдбары/таблицу (RequestRefresh).
+    private MenuItem BuildFileFieldsMenu(int dbId, int collectionId)
+    {
+        var fileItem = new MenuItem { Header = MenuIcons.FileFieldsHeader() };
+        FixSubmenuGap(fileItem);
+
+        var host = new MenuItem { StaysOpenOnClick = true, Classes = { "dateFieldsHost" } };
+        var repo = RepoFor(dbId);
+        if (repo is not null)
+        {
+            var fileFields = repo.GetFields(collectionId).Where(f => f.FieldType == "file").ToList();
+            host.Header = BuildFileFieldsPanel(repo, fileFields);
+        }
+        fileItem.Items.Add(host);
+        return fileItem;
+    }
+
+    // Список файловых свойств коллекции с галочками. В отличие от исполнителя задач, роль здесь
+    // НЕ эксклюзивна: два файловых столбца — это два разных документа записи («Оригинал» и
+    // «Скан»), и показать нужно оба. Поэтому SyncEnabled из задачной ветки здесь не применяется —
+    // галочек можно поставить сколько угодно, ровно как у полей-дат календаря.
+    private Control BuildFileFieldsPanel(ConstructorRepository repo, List<DbField> fileFields)
+    {
+        var secondary = (IBrush)this.FindResource("BrushSecondaryText")!;
+        var fontBase  = (double)this.FindResource("FontSizeBase")!;
+        var radius    = (CornerRadius)this.FindResource("RadiusBase")!;
+
+        var panel = new StackPanel
+        {
+            Width = (double)this.FindResource("PopupContentWidth")!,
+            Margin = new Thickness(10, 8), Spacing = 6,
+            Cursor = new Cursor(StandardCursorType.Arrow),
+        };
+
+        var search = new TextBox
+        {
+            Watermark = "Поиск свойств...",
+            Height = 30, CornerRadius = radius,
+            Background = Brushes.White,
+            VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
+        };
+        panel.Children.Add(search);
+
+        if (fileFields.Count == 0)
+        {
+            panel.Children.Add(new TextBlock
+            {
+                Text = "Нет свойств типа «Файл»", Foreground = secondary, FontSize = fontBase,
+                Margin = new Thickness(2, 2, 0, 0),
+            });
+            return panel;
+        }
+
+        var syncing = false;
+        var list    = new StackPanel { Spacing = 4 };
+        var rows    = new List<(DbField Field, CheckBox Box)>();
+
+        bool Matches(DbField f) =>
+            string.IsNullOrWhiteSpace(search.Text) ||
+            f.Name.Contains(search.Text!.Trim(), StringComparison.OrdinalIgnoreCase);
+
+        foreach (var f in fileFields)
+        {
+            var fid = f.Id!.Value;
+            var cb = new CheckBox
+            {
+                Content = f.Name, FontSize = fontBase, IsChecked = f.IsDocFile,
+                Cursor = new Cursor(StandardCursorType.Hand),
+            };
+            // Свойство с ролью «Тип документа» источником документов быть не может — тот же
+            // запрет, что в SetFileFieldInLibrary. Гасим сразу, чтобы галочка не откатывалась.
+            if (f.IsDocType)
+            {
+                cb.IsEnabled = false;
+                ToolTip.SetTip(cb, "Это свойство — тип документа библиотеки");
+            }
+            cb.IsCheckedChanged += (_, _) =>
+            {
+                if (syncing) return;
+                bool fieldsCreated;
+                try { fieldsCreated = repo.SetFileFieldInLibrary(fid, cb.IsChecked == true); }
+                catch (InvalidOperationException)
+                {
+                    // Нет права завести «Тип документа» либо свойство несет чужую роль —
+                    // откатываем галку.
+                    syncing = true;
+                    cb.IsChecked = !cb.IsChecked;
+                    syncing = false;
+                    return;
+                }
+                ActiveIdsChanged?.Invoke(this, GetActiveIds());
+                if (fieldsCreated) RequestRefresh?.Invoke(this, EventArgs.Empty);
+            };
+            rows.Add((f, cb));
+            list.Children.Add(cb);
+        }
+
+        search.TextChanged += (_, _) =>
+        {
+            foreach (var (f, box) in rows) box.IsVisible = Matches(f);
+        };
+
+        var listBox = new Border
+        {
+            Background   = Brushes.White,
+            BorderBrush  = (IBrush)this.FindResource("BrushSeparator")!,
+            CornerRadius = radius,
+            Padding      = new Thickness(0),
+            ClipToBounds = true,
+            MaxHeight    = (double)this.FindResource("PopupListHeight")!,
+            Child        = new ScrollViewer { Content = list },
+        };
+        listBox.Bind(Border.BorderThicknessProperty, listBox.GetResourceObservable("BorderLine"));
+        panel.Children.Add(listBox);
+
+        return panel;
+    }
+
     // ── CRUD ────────────────────────────────────────────────────────────────────
 
     private Window? OwnerWindow => VisualRoot as Window;
@@ -1643,7 +1806,8 @@ public partial class SidebarTree : UserControl
     // разделу — иначе она пропала бы из дерева в момент создания. Путь тот же, что у создания
     // события или задачи в коллекции без нужных свойств: в календаре — поле «Дата» с показом,
     // в задачах — «Исполнитель» с остальными ролями задачи («Назначил», «Статус», срок,
-    // «Описание»). Спрашивать про одноименные столбцы незачем: у новой коллекции их нет. Нет
+    // «Описание»), в библиотеке — «Файл» и «Тип документа».
+    // Спрашивать про одноименные столбцы незачем: у новой коллекции их нет. Нет
     // права завести свойство — коллекция остается созданной (и спрятанной), а человек получает
     // объяснение запрета.
     private void ConnectToSection(ConstructorRepository repo, int collectionId)
@@ -1651,8 +1815,9 @@ public partial class SidebarTree : UserControl
         if (!OnlyInSection) return;
         try
         {
-            if (_mode == SidebarMode.Calendar) repo.EnsureCalendarCollection(collectionId);
-            else                               repo.EnsureTaskCollection(collectionId);
+            if      (_mode == SidebarMode.Calendar) repo.EnsureCalendarCollection(collectionId);
+            else if (_mode == SidebarMode.Library)  repo.EnsureDocCollection(collectionId);
+            else                                    repo.EnsureTaskCollection(collectionId);
         }
         catch (Exception ex) when (DbErrors.Handle(ex, repo.DbPath)) { }
     }
@@ -2789,9 +2954,12 @@ public partial class SidebarRow : ObservableObject
     public Thickness IndentMargin => new(Depth * IndentStep, 0, 0, 0);
     public double    ChevronSlot  => Expandable ? IndentStep : 0;
 
-    // Чекбокс есть только в режимах календаря/задач и только у коллекций.
-    public double CheckboxSlot => Mode is SidebarMode.Calendar or SidebarMode.Tasks && !Node.IsGroup && !Node.IsDatabase ? IndentStep : 0;
-    public bool   ShowCheckbox => Mode is SidebarMode.Calendar or SidebarMode.Tasks && !Node.IsGroup && !Node.IsDatabase;
+    // Чекбокс есть только в разделах-агрегатах (SidebarModes.HasChecks) и только у коллекций:
+    // ни у группы, ни у корня-БД его нет — они не «показываются», а раскрываются.
+    private bool Checkable => Mode.HasChecks() && !Node.IsGroup && !Node.IsDatabase;
+
+    public double CheckboxSlot => Checkable ? IndentStep : 0;
+    public bool   ShowCheckbox => Checkable;
 
     public bool      ShowChevron     => Expandable;
     public Geometry? ChevronGeometry => Node.IsExpanded ? Icon("IconChevronDown") : Icon("IconChevronRight");

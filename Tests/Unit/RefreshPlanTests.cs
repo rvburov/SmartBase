@@ -22,8 +22,10 @@ public sealed class RefreshPlanTests
         CalendarSidebarStamp:    Fresh,
         TasksSidebarStamp:       Fresh,
         ConstructorSidebarStamp: Fresh,
+        LibrarySidebarStamp:     Fresh,
         CalendarStamp:           Fresh,
         TasksStamp:              Fresh,
+        LibraryStamp:            Fresh,
         ConstructorShowsDb:      true,
         ConstructorStamp:        Fresh,
         CellEditing:             false,
@@ -64,11 +66,13 @@ public sealed class RefreshPlanTests
         {
             CalendarSidebarStamp = Old,
             TasksSidebarStamp    = Old,
+            LibrarySidebarStamp  = Old,
             ConstructorStamp     = Old,
         });
 
         Assert.True(steps.Has(Steps.CalendarSidebar));
         Assert.True(steps.Has(Steps.TasksSidebar));
+        Assert.True(steps.Has(Steps.LibrarySidebar));
         Assert.False(steps.Has(Steps.ConstructorSidebar));   // свежий — свой раздел уже перестроил
         Assert.True(steps.Has(Steps.ConstructorFull));
         Assert.False(steps.Has(Steps.ConstructorRows));
@@ -82,6 +86,7 @@ public sealed class RefreshPlanTests
             CalendarSidebarStamp    = Old,
             TasksSidebarStamp       = Old,
             ConstructorSidebarStamp = Old,
+            LibrarySidebarStamp     = Old,
             ConstructorStamp        = Old,
         });
 
@@ -91,10 +96,11 @@ public sealed class RefreshPlanTests
     [Fact]
     public void Only_the_visible_aggregate_section_is_reread()
     {
-        var stale = AllFresh() with { CalendarStamp = Old, TasksStamp = Old };
+        var stale = AllFresh() with { CalendarStamp = Old, TasksStamp = Old, LibraryStamp = Old };
 
         Assert.Equal(Steps.Calendar, After(stale with { ActiveModule = "calendar" }));
         Assert.Equal(Steps.Tasks,    After(stale with { ActiveModule = "tasks" }));
+        Assert.Equal(Steps.Library,  After(stale with { ActiveModule = "library" }));
         Assert.Equal(Steps.None,     After(stale with { ActiveModule = "constructor" }));
         Assert.Equal(Steps.None,     After(stale with { ActiveModule = "notes" }));
     }

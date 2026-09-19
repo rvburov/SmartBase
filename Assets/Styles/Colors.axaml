@@ -37,11 +37,36 @@
     <!-- Оранжевый заведен под выносной блок «предупреждение» в markdown: у выносных
          блоков четыре вида, и три из них уже покрыты синим, зеленым и красным. -->
     <Color x:Key="ColorOrange">#FF9500</Color>
+    <!-- Подложка найденного слова в тексте (сниппет карточки библиотеки документов). Желтый,
+         а не акцентный синий: синим набраны ссылки и действия, и подсвеченное слово читалось
+         бы как то, на что можно нажать. Светлее подложек чипов — поверх нее идет обычный
+         текст, а не короткая надпись на своем фоне. -->
+    <Color x:Key="ColorHighlight">#FFF0B3</Color>
 
     <!-- Код внутри строки. Отдельный цвет, а не вторичный серый: серым набраны
          служебные знаки разметки, и код с ними слился бы. Приглушенный зеленый
          отделяет код от текста, не споря с синим у ссылок. -->
     <Color x:Key="ColorCode">#4E9A8C</Color>
+
+    <!-- Форматы документов (лента на плитке карточки в библиотеке документов).
+         Эти цвета НЕ смысловые: они не значат «хорошо» или «плохо», они опознают вид файла,
+         как обложка. Поэтому вынесены отдельной группой, а не взяты из красного/зеленого выше.
+
+         Красный формата ТЕМНЕЕ тревожного #FF3B30, синий ТЕМНЕЕ акцентного #007AFF: иначе
+         лента на каждом втором документе читалась бы как ошибка или как то, на что можно
+         нажать. Пара «насыщенный + светлый» — тот же прием, что у ColorRed/ColorRedLight:
+         цветом набраны обводка и надпись, заливка светлая. Сплошной насыщенной заливки в
+         приложении нет нигде, и лента формата ее не заводит. -->
+    <Color x:Key="ColorFormatPdf">#D0342C</Color>
+    <Color x:Key="ColorFormatPdfLight">#F9E8E6</Color>
+    <Color x:Key="ColorFormatWord">#2B579A</Color>
+    <Color x:Key="ColorFormatWordLight">#E8EDF5</Color>
+    <Color x:Key="ColorFormatExcel">#1E6F42</Color>
+    <Color x:Key="ColorFormatExcelLight">#E8F0EB</Color>
+    <Color x:Key="ColorFormatText">#6E7278</Color>
+    <Color x:Key="ColorFormatTextLight">#F0F0F1</Color>
+    <Color x:Key="ColorFormatOther">#8E8E93</Color>
+    <Color x:Key="ColorFormatOtherLight">#F3F3F4</Color>
 
     <!-- Прочее -->
     <Color x:Key="ColorHover">#E5E5EA</Color>
@@ -67,7 +92,19 @@
     <SolidColorBrush x:Key="BrushGreen"        Color="{StaticResource ColorGreen}" />
     <SolidColorBrush x:Key="BrushGreenLight"   Color="{StaticResource ColorGreenLight}" />
     <SolidColorBrush x:Key="BrushOrange"       Color="{StaticResource ColorOrange}" />
+    <SolidColorBrush x:Key="BrushHighlight"    Color="{StaticResource ColorHighlight}" />
     <SolidColorBrush x:Key="BrushCode"         Color="{StaticResource ColorCode}" />
+
+    <SolidColorBrush x:Key="BrushFormatPdf"        Color="{StaticResource ColorFormatPdf}" />
+    <SolidColorBrush x:Key="BrushFormatPdfLight"   Color="{StaticResource ColorFormatPdfLight}" />
+    <SolidColorBrush x:Key="BrushFormatWord"       Color="{StaticResource ColorFormatWord}" />
+    <SolidColorBrush x:Key="BrushFormatWordLight"  Color="{StaticResource ColorFormatWordLight}" />
+    <SolidColorBrush x:Key="BrushFormatExcel"      Color="{StaticResource ColorFormatExcel}" />
+    <SolidColorBrush x:Key="BrushFormatExcelLight" Color="{StaticResource ColorFormatExcelLight}" />
+    <SolidColorBrush x:Key="BrushFormatText"       Color="{StaticResource ColorFormatText}" />
+    <SolidColorBrush x:Key="BrushFormatTextLight"  Color="{StaticResource ColorFormatTextLight}" />
+    <SolidColorBrush x:Key="BrushFormatOther"      Color="{StaticResource ColorFormatOther}" />
+    <SolidColorBrush x:Key="BrushFormatOtherLight" Color="{StaticResource ColorFormatOtherLight}" />
     <SolidColorBrush x:Key="BrushHover"        Color="{StaticResource ColorHover}" />
     <SolidColorBrush x:Key="BrushTextSelection" Color="{StaticResource ColorTextSelection}" />
 

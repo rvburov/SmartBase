@@ -63,6 +63,55 @@ public sealed class SectionCollectionsTests
         Assert.Empty(repo.GetTaskCollectionIds());
     }
 
+    /// <summary>
+    /// Библиотека документов подключается тем же способом — тумблером на file-поле. Разница
+    /// одна и она принципиальная: файловых столбцов у коллекции может быть НЕСКОЛЬКО, поэтому
+    /// коллекция уходит из раздела только когда выключен последний.
+    /// </summary>
+    [Fact]
+    public void Library_collections_are_those_with_a_file_field_in_the_section()
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+
+        var docs     = SampleData.AddCollection(repo, "Документы").Id!.Value;
+        var original = SampleData.AddField(repo, docs, "Оригинал", "file", 1000);
+        var scan     = SampleData.AddField(repo, docs, "Скан",     "file", 2000);
+        repo.SetFileFieldInLibrary(original.Id!.Value, true);
+        repo.SetFileFieldInLibrary(scan.Id!.Value,     true);
+
+        // Файловое поле без тумблера раздел не подключает.
+        var plain = SampleData.AddCollection(repo, "Шаблоны").Id!.Value;
+        SampleData.AddField(repo, plain, "Исходник", "file");
+
+        Assert.Equal(new[] { docs }, Ids(repo.GetDocCollectionIds()));
+
+        // Выключен один из двух — коллекция все еще в разделе.
+        repo.SetFileFieldInLibrary(scan.Id!.Value, false);
+        Assert.Equal(new[] { docs }, Ids(repo.GetDocCollectionIds()));
+
+        repo.SetFileFieldInLibrary(original.Id!.Value, false);
+        Assert.Empty(repo.GetDocCollectionIds());
+    }
+
+    [Fact]
+    public void New_collection_is_connected_to_the_library_with_a_file_field()
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+        var col  = SampleData.AddCollection(repo, "Новая").Id!.Value;
+        Assert.DoesNotContain(col, repo.GetDocCollectionIds());
+
+        var fieldId = repo.EnsureDocCollection(col);
+        var field   = repo.GetFields(col).Single(f => f.Id == fieldId);
+
+        Assert.Equal("file", field.FieldType);
+        Assert.True(field.IsDocFile);
+        Assert.Contains(col, repo.GetDocCollectionIds());
+        // Вместе с ним заводится и «Тип документа» — без него фильтр раздела был бы пустым.
+        Assert.NotNull(repo.DocTypeFieldId(col));
+    }
+
     [Fact]
     public void New_collection_is_connected_to_calendar_with_a_visible_date_field()
     {

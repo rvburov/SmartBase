@@ -110,6 +110,24 @@
             </Viewbox>
         </ToggleButton>
 
+        <!-- Модуль: Библиотека документов -->
+        <ToggleButton x:Name="LibraryBtn" Classes="icon module"
+                      Width="32" Height="32"
+                      HorizontalAlignment="Center"
+                      CornerRadius="{StaticResource RadiusMedium}"
+                      ToolTip.Tip="Библиотека документов">
+            <Viewbox Width="{StaticResource IconSizeXLarge}" Height="{StaticResource IconSizeXLarge}">
+                <Canvas Width="24" Height="24">
+                    <!-- lucide book -->
+                    <Path Data="{StaticResource IconBook}"
+                          Stroke="{Binding $parent[ToggleButton].Foreground}"
+                          StrokeThickness="{StaticResource IconStrokeXLargeBold}"
+                          StrokeLineCap="Round"
+                          StrokeJoin="Round" />
+                </Canvas>
+            </Viewbox>
+        </ToggleButton>
+
         <!-- Модуль: Расширения. Порядок кнопок здесь повторяет ViewCatalog.Navigation —
              панель и настройки «Оформления» должны перечислять модули одинаково. -->
         <ToggleButton x:Name="ExtensionsBtn" Classes="icon module"
@@ -170,6 +188,55 @@
             </Canvas>
         </Viewbox>
     </ToggleButton>
+
+    <!-- Фоновые работы — НАД профилем (третий Bottom-элемент DockPanel ложится выше второго).
+         Виден, только пока что-то идет; работ нет — кнопки нет вовсе.
+
+         Цветом здесь показано НЕ состояние, а ход: кольцо акцентного синего заполняется по мере
+         готовности. Красный не годится — в приложении он значит «сломалось», и здоровая работа,
+         запущенная человеком, читалась бы как авария; заодно тогда нечем было бы показать
+         настоящий сбой. Поэтому красный оставлен ровно для сбоя: кольцо краснеет и появляется
+         красная точка. Зеленый тоже занят — он значит «готово», а идущая работа еще не готова. -->
+    <Button x:Name="WorkBtn" Classes="icon"
+            DockPanel.Dock="Bottom"
+            IsVisible="False"
+            Width="32" Height="32"
+            Margin="8,0,8,8"
+            HorizontalAlignment="Center"
+            CornerRadius="{StaticResource RadiusMedium}"
+            ToolTip.Tip="Фоновые работы">
+        <Panel Width="32" Height="32">
+            <!-- Дорожка и заполненная дуга: два круга, доля задается штриховкой. Отдельной
+                 фигуры-дуги не заводим — пересчитывать геометрию на каждый процент дороже. -->
+            <Ellipse x:Name="WorkTrack"
+                     Width="29" Height="29"
+                     Stroke="{StaticResource BrushSeparator}"
+                     StrokeThickness="2" />
+            <Ellipse x:Name="WorkArc"
+                     Width="29" Height="29"
+                     Stroke="{StaticResource BrushAccent}"
+                     StrokeThickness="2"
+                     StrokeLineCap="Round"
+                     RenderTransform="rotate(-90deg)" />
+            <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}"
+                     HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Canvas Width="24" Height="24">
+                    <Path Data="{StaticResource IconFileText}"
+                          Stroke="{StaticResource BrushSecondaryText}"
+                          StrokeThickness="{StaticResource IconStrokeMedium}"
+                          StrokeLineCap="Round" StrokeJoin="Round" />
+                </Canvas>
+            </Viewbox>
+            <!-- Точка сбоя: единственное красное место значка -->
+            <Ellipse x:Name="WorkFailedDot"
+                     IsVisible="False"
+                     Width="8" Height="8"
+                     HorizontalAlignment="Right" VerticalAlignment="Top"
+                     Fill="{StaticResource BrushRed}"
+                     Stroke="{StaticResource BrushSecondaryBg}"
+                     StrokeThickness="1.5" />
+        </Panel>
+    </Button>
 
     </DockPanel>
 

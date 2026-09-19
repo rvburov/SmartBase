@@ -27,6 +27,7 @@ public static class ViewCatalog
     public const string ScopeTasks       = "tasks";
     public const string ScopeConstructor = "constructor";
     public const string ScopeExtensions  = "extensions";
+    public const string ScopeLibrary     = "library";
 
     /// <summary>
     /// Модули панели навигации, которые разрешено скрывать. «Настройки» и «Профиль» сюда
@@ -41,6 +42,7 @@ public static class ViewCatalog
         new("tasks",       "Задачи"),
         new("constructor", "Конструктор базы данных"),
         new("notes",       "Заметки"),
+        new("library",     "Библиотека документов"),
         new("extensions",  "Расширения"),
     ];
 
@@ -58,6 +60,12 @@ public static class ViewCatalog
 
     /// <summary>Виды раздела «Задачи». Пока один; новые дописываются сюда.</summary>
     public static IReadOnlyList<ViewItem> Tasks { get; } =
+    [
+        new("list", "Список"),
+    ];
+
+    /// <summary>Виды раздела «Библиотека документов». Пока один; новые дописываются сюда.</summary>
+    public static IReadOnlyList<ViewItem> Library { get; } =
     [
         new("list", "Список"),
     ];
@@ -92,6 +100,7 @@ public static class ViewCatalog
         ScopeNavigation  => Navigation,
         ScopeCalendar    => Calendar,
         ScopeTasks       => Tasks,
+        ScopeLibrary     => Library,
         ScopeConstructor => Constructor,
         ScopeExtensions  => Extensions,
         _                => [],

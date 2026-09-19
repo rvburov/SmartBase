@@ -291,6 +291,14 @@ namespace SmartBase.Database.Migrations.Pg
                         .HasColumnType("integer")
                         .HasColumnName("isdescription");
 
+                    b.Property<int>("IsDocFile")
+                        .HasColumnType("integer")
+                        .HasColumnName("isdocfile");
+
+                    b.Property<int>("IsDocType")
+                        .HasColumnType("integer")
+                        .HasColumnName("isdoctype");
+
                     b.Property<int>("IsRequired")
                         .HasColumnType("integer")
                         .HasColumnName("isrequired");

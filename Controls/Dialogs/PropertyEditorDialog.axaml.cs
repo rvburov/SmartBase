@@ -124,6 +124,9 @@ public partial class PropertyEditorDialog : Window
         // календарь). Кому дата нужна в календаре — тот включает тумблер сам.
         CalDateToggle.IsChecked = false;
         TaskToggle.IsChecked    = false;
+        // То же правило и для библиотеки: file-поле бывает служебным («шаблон», «исходник»),
+        // и залить им раздел документов молча нельзя.
+        LibraryToggle.IsChecked = false;
         // Формат «Мультисписка» по умолчанию — запятая (первый пункт).
         SeparatorCombo.SelectedIndex = 0;
         // Формат «Числа» по умолчанию — «Обычное число» (показ = сырому вводу).
@@ -156,6 +159,7 @@ public partial class PropertyEditorDialog : Window
                 _selectedType = field.FieldType;
                 CalDateToggle.IsChecked = field.IsCalStart;
                 TaskToggle.IsChecked    = field.IsTaskExec;
+                LibraryToggle.IsChecked = field.IsDocFile;
                 // Существующие опции «Списка»/«Статуса» — в редактор пунктов.
                 if (FieldTypeInfo.IsOptionList(field.FieldType))
                     foreach (var o in ParseOptions(field.ConfigJson)) AddOptionRow(o);
@@ -206,6 +210,7 @@ public partial class PropertyEditorDialog : Window
         // привязки уже нет, и надпись пропадает, не дожидаясь «Сохранить».
         CalDateToggle.IsCheckedChanged += (_, _) => UpdateRoleNote();
         TaskToggle.IsCheckedChanged    += (_, _) => UpdateRoleNote();
+        LibraryToggle.IsCheckedChanged += (_, _) => UpdateRoleNote();
 
         CancelBtn.Click += (_, _) => Close(false);
         SaveBtn.Click   += (_, _) => TrySave();
@@ -325,11 +330,14 @@ public partial class PropertyEditorDialog : Window
         FileSection.IsVisible = _selectedType == "file";
         // Настройка связи — только для типа «Связь».
         RelationSection.IsVisible = _selectedType == "relation";
+        // Библиотека документов — только для типа «Файл».
+        LibrarySection.IsVisible = _selectedType == "file";
 
         if (_selectedType == "status" && _optionBoxes.Count == 0)
             foreach (var o in ConstructorRepository.TaskStatusOptions) AddOptionRow(o);
 
         UpdateTaskToggleAvailability();
+        UpdateLibraryToggleAvailability();
         // Смена типа рвет привязку даты (календарь строится только по полям типа «Дата») —
         // плашка обязана это отразить сразу.
         UpdateRoleNote();
@@ -363,6 +371,32 @@ public partial class PropertyEditorDialog : Window
               "Исполнитель может быть только один: снимите переключатель с него, чтобы назначить это свойство.";
     }
 
+    /// <summary>
+    /// Тумблер библиотеки, в отличие от задачного, почти всегда доступен: файловых столбцов у
+    /// коллекции может быть сколько угодно, и каждый дает разделу свои документы. Единственный
+    /// запрет — свойство уже несет роль «Тип документа»: две роли на одном поле писали бы в один
+    /// FieldId и затирали друг друга (тот же запрет, что в <c>SetFileFieldInLibrary</c>).
+    /// </summary>
+    private void UpdateLibraryToggleAvailability()
+    {
+        if (_selectedType != "file" || _systemMode || _editField is null)
+        {
+            LibraryToggleHint.IsVisible = false;
+            LibraryToggle.IsEnabled     = true;
+            return;
+        }
+
+        var busy = _editField.IsDocType;
+        LibraryToggle.IsEnabled = !busy;
+        if (busy) LibraryToggle.IsChecked = false;
+
+        LibraryToggleHint.IsVisible = busy;
+        LibraryToggleHint.Text = busy
+            ? "Это свойство — тип документа библиотеки, источником документов оно быть не может. " +
+              "Заведите для документа отдельное свойство типа «Файл»."
+            : "";
+    }
+
     // ── Привязка к разделу ──────────────────────────────────────────────────────
 
     /// <summary>
@@ -391,13 +425,17 @@ public partial class PropertyEditorDialog : Window
             IsTaskAssigner = _editField.IsTaskAssigner,
             IsTaskStatus   = _editField.IsTaskStatus,
             IsDescription  = _editField.IsDescription,
+            IsDocFile      = _editField.IsDocFile && LibraryToggle.IsChecked == true,
+            IsDocType      = _editField.IsDocType,
         };
 
         // Роли задач читает только коллекция с исполнителем, «Описание» в календаре — только
-        // коллекция с видимой датой: без них плашка молчит, как молчит и сам раздел.
+        // коллекция с видимой датой, «Тип документа» — только коллекция с файловым столбцом:
+        // без них плашка молчит, как молчит и сам раздел.
         var binding = FieldRoleText.Binding(effective,
                                             _repository.HasTaskExecField(_collectionId),
-                                            _repository.HasCalendarDateField(_collectionId));
+                                            _repository.HasCalendarDateField(_collectionId),
+                                            _repository.HasDocFileField(_collectionId));
 
         if (binding is null) { RoleNote.Hide(); return; }
 
@@ -421,10 +459,15 @@ public partial class PropertyEditorDialog : Window
         // о них молчит и плашка, так что окно про них спрашивать не должно.
         var hasTasks    = _repository.HasTaskExecField(_collectionId);
         var hasCalendar = _repository.HasCalendarDateField(_collectionId);
+        var hasLibrary  = _repository.HasDocFileField(_collectionId);
         var lost = _repository.RolesLostByTypeChange(fieldId, _selectedType)
                               .Where(r => r switch
                               {
                                   FieldRole.TaskAssigner or FieldRole.TaskStatus or FieldRole.TaskExec => hasTasks,
+                                  // Файловый столбец — несущая роль: о нем говорим всегда,
+                                  // «Тип документа» читает только коллекция с таким столбцом.
+                                  FieldRole.DocFile => true,
+                                  FieldRole.DocType => hasLibrary,
                                   _ => hasCalendar || hasTasks,
                               })
                               .ToList();
@@ -1119,6 +1162,31 @@ public partial class PropertyEditorDialog : Window
                 _repository.SetUserFieldTaskExec(savedFieldId, inTasks, adopt);
                 if (inTasks)
                     _repository.EnsureRoles(_collectionId, ConstructorRepository.TaskRoles,
+                                            adopt, savedFieldId);
+            }
+            catch (InvalidOperationException ex)
+            {
+                ShowError(ex.Message);
+                return;
+            }
+        }
+
+        // Для типа «Файл» — «Добавить в библиотеку документов»: коллекция доводится до полного
+        // набора ролей раздела («Тип документа»). В отличие от задач, второй такой столбец
+        // разрешен — исключения про «роль уже занята» здесь не бывает, но ошибку прав показать
+        // все равно надо.
+        if (_selectedType == "file")
+        {
+            var inLibrary = LibraryToggle.IsChecked == true;
+            var adopt     = !inLibrary || await ConfirmRoleAdoption(ConstructorRepository.DocRoles,
+                                                                    savedFieldId, "библиотеку документов");
+            try
+            {
+                _repository.SetFileFieldInLibrary(savedFieldId, inLibrary, adopt);
+                // Тумблер мог быть включен и раньше — тогда SetFileFieldInLibrary уходит в ранний
+                // возврат, а проверить столбцы все равно нужно (поля могли переименовать).
+                if (inLibrary)
+                    _repository.EnsureRoles(_collectionId, ConstructorRepository.DocRoles,
                                             adopt, savedFieldId);
             }
             catch (InvalidOperationException ex)

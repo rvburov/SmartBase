@@ -21,6 +21,15 @@ public enum FieldRole
     /// Появляется в планах подготовки коллекции (<c>PlanTaskSetup</c>), где исполнителя еще нет.
     /// </summary>
     TaskExec,
+    /// <summary>
+    /// «Файл» — file-поле, чьи документы показывает библиотека (<c>IsDocFile</c>). В
+    /// <see cref="ConstructorRepository.DocRoles"/> не входит: это само поле с тумблером.
+    /// Как и «Дата», роль НЕ эксклюзивна — файловых столбцов в коллекции может быть несколько,
+    /// и каждый дает разделу свои документы.
+    /// </summary>
+    DocFile,
+    /// <summary>«Тип документа» — поле-список библиотеки (<c>IsDocType</c>).</summary>
+    DocType,
 }
 
 /// <summary>Существующий столбец, который подойдет под роль, потому что так и называется.</summary>
@@ -66,10 +75,17 @@ public partial class ConstructorRepository
     /// <summary>Все роли — для обходов «что несет это поле» (плашка, смена типа, починка).</summary>
     public static readonly FieldRole[] AllRoles =
         [FieldRole.CalendarDate, FieldRole.TaskExec, FieldRole.TaskAssigner,
-         FieldRole.TaskStatus, FieldRole.Description];
+         FieldRole.TaskStatus, FieldRole.Description, FieldRole.DocFile, FieldRole.DocType];
 
     /// <summary>Роли, которые обеспечивает поле-дата, включенное в календарь (дата — само поле).</summary>
     public static readonly FieldRole[] CalendarRoles = [FieldRole.Description];
+
+    /// <summary>
+    /// Роли, которые обеспечивает включенный тумблер библиотеки документов (сам файл — это поле
+    /// с тумблером, как исполнитель у задач). «Описание» сюда не входит: карточка библиотеки
+    /// показывает не описание записи, а найденный внутри документа фрагмент.
+    /// </summary>
+    public static readonly FieldRole[] DocRoles = [FieldRole.DocType];
 
     /// <summary>Имя роли — оно же имя по умолчанию для авто-созданного поля.</summary>
     public static string RoleName(FieldRole role) => role switch
@@ -78,6 +94,8 @@ public partial class ConstructorRepository
         FieldRole.TaskStatus   => FieldStatus,
         FieldRole.CalendarDate => FieldDate,
         FieldRole.TaskExec     => FieldExecutor,
+        FieldRole.DocFile      => FieldFile,
+        FieldRole.DocType      => FieldDocType,
         _                      => FieldDescription,
     };
 
@@ -97,6 +115,10 @@ public partial class ConstructorRepository
         FieldRole.TaskExec     => fieldType == "user",
         FieldRole.TaskAssigner => fieldType == "user",
         FieldRole.TaskStatus   => fieldType is "status" or "select",
+        FieldRole.DocFile      => fieldType == "file",
+        // Та же поблажка, что у «Статуса»: «Список» и «Статус» — одно семейство виджетов,
+        // и одноименный столбец любого из них показывает библиотеке ровно то, что нужно.
+        FieldRole.DocType      => fieldType is "select" or "status",
         _                      => fieldType == "text",
     };
 
@@ -107,7 +129,22 @@ public partial class ConstructorRepository
         FieldRole.TaskExec     => "«Пользователь»",
         FieldRole.TaskAssigner => "«Пользователь»",
         FieldRole.TaskStatus   => "«Список» или «Статус»",
+        FieldRole.DocFile      => "«Файл»",
+        FieldRole.DocType      => "«Список» или «Статус»",
         _                      => "«Текст»",
+    };
+
+    /// <summary>
+    /// Значения, которыми засевается список роли; null — роль засевать нечем и не нужно.
+    ///
+    /// Не нужно — это про «Тип документа»: три стадии задачи одинаковы у всех и составляют сам
+    /// смысл раздела, а виды документов у каждого свои. Любой предложенный набор пришлось бы
+    /// сперва вычистить, а забытый пункт разошелся бы по фильтру раздела.
+    /// </summary>
+    private static IReadOnlyList<string>? RoleDefaultOptions(FieldRole role) => role switch
+    {
+        FieldRole.TaskStatus => TaskStatusOptions,
+        _                    => null,
     };
 
     private static bool RoleFlag(DbFieldEntity f, FieldRole role) => role switch
@@ -116,6 +153,8 @@ public partial class ConstructorRepository
         FieldRole.TaskStatus   => f.IsTaskStatus,
         FieldRole.CalendarDate => f.IsCalStart,
         FieldRole.TaskExec     => f.IsTaskExec,
+        FieldRole.DocFile      => f.IsDocFile,
+        FieldRole.DocType      => f.IsDocType,
         _                      => f.IsDescription,
     };
 
@@ -132,15 +171,17 @@ public partial class ConstructorRepository
             case FieldRole.TaskStatus:   f.IsTaskStatus   = on; break;
             case FieldRole.CalendarDate: f.IsCalStart     = on; break;
             case FieldRole.TaskExec:     f.IsTaskExec     = on; break;
+            case FieldRole.DocFile:      f.IsDocFile      = on; break;
+            case FieldRole.DocType:      f.IsDocType      = on; break;
             default:                     f.IsDescription  = on; break;
         }
     }
 
-    // Роли «Дата» и «Исполнитель» не эксклюзивны: несколько полей-дат дают свои события,
-    // несколько user-полей — свои задачи. Остальные роли — ровно одна на коллекцию, поэтому
-    // при переезде снимаются с прежнего носителя.
+    // Роли «Дата», «Исполнитель» и «Файл» не эксклюзивны: несколько полей-дат дают свои события,
+    // несколько user-полей — свои задачи, несколько file-полей — свои документы. Остальные роли —
+    // ровно одна на коллекцию, поэтому при переезде снимаются с прежнего носителя.
     private static bool IsExclusiveRole(FieldRole role) =>
-        role is not (FieldRole.CalendarDate or FieldRole.TaskExec);
+        role is not (FieldRole.CalendarDate or FieldRole.TaskExec or FieldRole.DocFile);
 
     // Поле уже занято ДРУГОЙ ролью — вторую не вешаем: оба значения писались бы в один
     // FieldId и затирали друг друга (тот же дефект, что чинит RepairTaskFieldRoles).
@@ -148,7 +189,9 @@ public partial class ConstructorRepository
         (role != FieldRole.TaskAssigner && f.IsTaskAssigner) ||
         (role != FieldRole.TaskStatus   && f.IsTaskStatus)   ||
         (role != FieldRole.Description  && f.IsDescription)  ||
-        (role != FieldRole.TaskExec     && f.IsTaskExec);
+        (role != FieldRole.TaskExec     && f.IsTaskExec)     ||
+        (role != FieldRole.DocFile      && f.IsDocFile)      ||
+        (role != FieldRole.DocType      && f.IsDocType);
 
     private List<DbFieldEntity> CollectionFields(int collectionId) =>
         RoleOrder(db.DbFields.Where(f => f.CollectionId == collectionId).ToList()).ToList();
@@ -331,10 +374,12 @@ public partial class ConstructorRepository
                     SetRole(other, role, false);
 
             SetRole(field, role, true);
-            // Одноименный список-«Статус» дополняем тремя статусами; поле другого типа
+            // Одноименный список роли дополняем ее значениями по умолчанию («Статус» задачи —
+            // тремя статусами, «Тип документа» — набором типов): подтянутый пустой список не
+            // дал бы выбрать ничего, и привязка выглядела бы сломанной. Поле другого типа
             // (имя решает, тип нет) остается со своим конфигом.
-            if (role == FieldRole.TaskStatus && field.FieldType is "select" or "status")
-                field.ConfigJson = MergeSelectOptions(field.ConfigJson, TaskStatusOptions);
+            if (RoleDefaultOptions(role) is { } defaults && field.FieldType is "select" or "status")
+                field.ConfigJson = MergeSelectOptions(field.ConfigJson, defaults);
 
             Log("update", "field", field.Name, CollectionNameOf(collectionId));
         }
@@ -381,14 +426,19 @@ public partial class ConstructorRepository
             FieldRole.TaskExec     => "user",
             FieldRole.TaskStatus   => "status",
             FieldRole.CalendarDate => "date",
+            FieldRole.DocFile      => "file",
+            FieldRole.DocType      => "select",
             _                      => "text",
         },
+        // «Тип документа» заводится ПУСТЫМ списком — пункты заводит человек (см. RoleDefaultOptions).
         ConfigJson     = role == FieldRole.TaskStatus ? TaskStatusConfigJson : "{}",
         IsTaskAssigner = role == FieldRole.TaskAssigner,
         IsTaskStatus   = role == FieldRole.TaskStatus,
         IsTaskExec     = role == FieldRole.TaskExec,
         IsCalStart     = role == FieldRole.CalendarDate,
         IsDescription  = role == FieldRole.Description,
+        IsDocFile      = role == FieldRole.DocFile,
+        IsDocType      = role == FieldRole.DocType,
         // Поле-дата раздела остается системным (как было у авто-«Даты»), остальные роли —
         // обычные поля: их можно переименовать, сменить тип и удалить.
         IsSystem       = role == FieldRole.CalendarDate,

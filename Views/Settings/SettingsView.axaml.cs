@@ -177,6 +177,10 @@ public partial class SettingsView : UserControl
                 AppSettings.LoadTasksView,
                 AppSettings.SaveTasksView),
 
+            // Библиотеки документов здесь нет намеренно: у раздела один вид и нет переключателя
+            // в навбаре, поэтому ни «вида по умолчанию», ни списка «какие виды показывать» у
+            // него не бывает.
+
             new(ViewCatalog.ScopeConstructor, ConstructorViewCombo, ConstructorVisibility,
                 AppSettings.LoadConstructorView,
                 AppSettings.SaveConstructorView),
@@ -1130,6 +1134,7 @@ public partial class SettingsView : UserControl
         BackupPanel.IsVisible     = key == "backup";
         CalendarPanel.IsVisible   = key == "calendar";
         TasksPanel.IsVisible      = key == "tasks";
+        LibraryPanel.IsVisible    = key == "library";
         ConstructorPanel.IsVisible = key == "constructor";
         ExtensionsPanel.IsVisible = key == "extensions";
         IntegrationsPanel.IsVisible = key == "integrations";
@@ -1160,6 +1165,7 @@ public partial class SettingsView : UserControl
         if (key == "backup")     RebuildBackupPanel();
         if (key == "calendar")   RebuildCalendarPanel();
         if (key == "tasks")      RebuildTasksPanel();
+        if (key == "library")    RebuildLibraryPanel();
         if (key == "constructor") RebuildConstructorPanel();
         if (key == "shortcuts")  RebuildShortcutsPanel();
     }

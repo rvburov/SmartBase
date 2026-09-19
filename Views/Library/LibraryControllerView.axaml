@@ -1,0 +1,29 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:comp="using:SmartBase.Controls.Components"
+             xmlns:lib="using:SmartBase.Views.Library"
+             x:Class="SmartBase.Views.Library.LibraryControllerView">
+
+    <Grid RowDefinitions="Auto,*">
+
+        <!-- Навбар: заголовок, выпадашка типов документа, поиск, вид. Линию под навбаром не
+             рисуем — ее рисует MainWindow (как в календаре и задачах). -->
+        <comp:NavbarLibrary Grid.Row="0" x:Name="NavbarControl" />
+
+        <Grid Grid.Row="1">
+            <lib:DocListView x:Name="DocList" />
+
+            <!-- Оверлей: лента читается в фоне, оверлей появляется при загрузке дольше 400 мс
+                 и только когда на экране еще ничего нет. -->
+            <Border x:Name="LoadingOverlay" IsVisible="False" Background="{StaticResource BrushBg}">
+                <TextBlock Text="Загрузка…"
+                           Foreground="{StaticResource BrushSecondaryText}"
+                           Margin="24,16"
+                           HorizontalAlignment="Left"
+                           VerticalAlignment="Top" />
+            </Border>
+        </Grid>
+
+    </Grid>
+
+</UserControl>

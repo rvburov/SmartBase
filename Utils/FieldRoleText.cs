@@ -13,6 +13,7 @@ public static class FieldRoleText
 {
     public const string SectionCalendar = "Календарь";
     public const string SectionTasks    = "Задачи";
+    public const string SectionLibrary  = "Библиотека документов";
 
     /// <summary>Чем столбец служит разделу: «статус задачи», «описание записи», …</summary>
     public static string Title(FieldRole role) => role switch
@@ -21,6 +22,8 @@ public static class FieldRoleText
         FieldRole.TaskAssigner => "назначивший задачу",
         FieldRole.TaskStatus   => "статус задачи",
         FieldRole.CalendarDate => "дата события",
+        FieldRole.DocFile      => "документ библиотеки",
+        FieldRole.DocType      => "тип документа",
         _                      => "описание записи",
     };
 
@@ -38,7 +41,7 @@ public static class FieldRoleText
     /// молчит сам раздел.
     /// </summary>
     public static (IReadOnlyList<string> Sections, IReadOnlyList<string> Roles) Of(
-        DbField f, bool hasTasks, bool hasCalendar = true)
+        DbField f, bool hasTasks, bool hasCalendar = true, bool hasLibrary = true)
     {
         var roles    = new List<string>();
         var sections = new List<string>();
@@ -70,6 +73,10 @@ public static class FieldRoleText
         if (Carries(FieldRole.TaskStatus,   f.IsTaskStatus)   && hasTasks) Add(Title(FieldRole.TaskStatus),   SectionTasks);
         if (Carries(FieldRole.Description,  f.IsDescription)  && shared.Length > 0)
             Add(Title(FieldRole.Description), shared);
+        // Файловый столбец — несущая роль библиотеки (как исполнитель у задач), поэтому о нем
+        // говорим всегда. «Тип документа» читает только коллекция с таким столбцом.
+        if (Carries(FieldRole.DocFile, f.IsDocFile))                 Add(Title(FieldRole.DocFile), SectionLibrary);
+        if (Carries(FieldRole.DocType, f.IsDocType) && hasLibrary)   Add(Title(FieldRole.DocType), SectionLibrary);
 
         return (sections, roles);
     }
@@ -78,9 +85,9 @@ public static class FieldRoleText
     /// «к разделу «Задачи» — статус задачи» либо null, если ролей у поля нет. Готовая середина
     /// фразы: вызывающий сам решает, «это свойство привязано …» или ««Статус» привязан …».
     /// </summary>
-    public static string? Binding(DbField f, bool hasTasks, bool hasCalendar = true)
+    public static string? Binding(DbField f, bool hasTasks, bool hasCalendar = true, bool hasLibrary = true)
     {
-        var (sections, roles) = Of(f, hasTasks, hasCalendar);
+        var (sections, roles) = Of(f, hasTasks, hasCalendar, hasLibrary);
         if (roles.Count == 0) return null;
 
         var where = sections.Count > 1
@@ -90,9 +97,10 @@ public static class FieldRoleText
     }
 
     /// <summary>Что потеряется вместе со столбцом. null — роли нет, терять нечего.</summary>
-    public static string? DeletionImpact(DbField f, bool hasTasks = true, bool hasCalendar = true)
+    public static string? DeletionImpact(DbField f, bool hasTasks = true, bool hasCalendar = true,
+                                         bool hasLibrary = true)
     {
-        var losses = RoleLosses(EffectiveRoles(f, hasTasks, hasCalendar), deleting: true);
+        var losses = RoleLosses(EffectiveRoles(f, hasTasks, hasCalendar, hasLibrary), deleting: true);
         return losses.Count == 0 ? null : JoinRu(losses);
     }
 
@@ -105,7 +113,8 @@ public static class FieldRoleText
         JoinRu(RoleLosses(lost, deleting: false));
 
     // Роли, которые поле реально несет: флаг + подходящий тип + раздел, который их читает.
-    private static List<FieldRole> EffectiveRoles(DbField f, bool hasTasks, bool hasCalendar)
+    private static List<FieldRole> EffectiveRoles(DbField f, bool hasTasks, bool hasCalendar,
+                                                  bool hasLibrary = true)
     {
         var roles = new List<FieldRole>();
         bool Carries(FieldRole role, bool flag) =>
@@ -116,6 +125,8 @@ public static class FieldRoleText
         if (Carries(FieldRole.TaskAssigner, f.IsTaskAssigner) && hasTasks)                roles.Add(FieldRole.TaskAssigner);
         if (Carries(FieldRole.TaskStatus,   f.IsTaskStatus)   && hasTasks)                roles.Add(FieldRole.TaskStatus);
         if (Carries(FieldRole.Description,  f.IsDescription)  && (hasCalendar || hasTasks)) roles.Add(FieldRole.Description);
+        if (Carries(FieldRole.DocFile,      f.IsDocFile))                                 roles.Add(FieldRole.DocFile);
+        if (Carries(FieldRole.DocType,      f.IsDocType)      && hasLibrary)              roles.Add(FieldRole.DocType);
         return roles;
     }
 
@@ -131,6 +142,13 @@ public static class FieldRoleText
         if (roles.Contains(FieldRole.Description))
             losses.Add(deleting ? "тексты описаний удалятся вместе со столбцом"
                                 : "описания перестанут показываться в календаре и задачах");
+        // Файловый столбец — несущая роль библиотеки: без него документов этой записи в разделе
+        // не будет. Но ролей таких у коллекции бывает несколько, поэтому говорим про столбец,
+        // а не про всю коллекцию (в отличие от исполнителя задач).
+        if (roles.Contains(FieldRole.DocFile))
+            losses.Add(deleting ? "документы этого столбца пропадут из библиотеки, а ссылки на файлы удалятся"
+                                : "документы этого столбца пропадут из библиотеки");
+        if (roles.Contains(FieldRole.DocType)) losses.Add("библиотека документов потеряет типы документов");
         return losses;
     }
 

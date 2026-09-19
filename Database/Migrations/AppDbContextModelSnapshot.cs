@@ -232,6 +232,12 @@ namespace SmartBase.Database.Migrations
                     b.Property<bool>("IsDescription")
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("IsDocFile")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsDocType")
+                        .HasColumnType("INTEGER");
+
                     b.Property<bool>("IsRequired")
                         .HasColumnType("INTEGER");
 

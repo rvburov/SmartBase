@@ -1,0 +1,255 @@
+using System.IO;
+using System.Text;
+using System.Threading;
+using DocumentFormat.OpenXml.Packaging;
+using UglyToad.PdfPig;
+using UglyToad.PdfPig.DocumentLayoutAnalysis.TextExtractor;
+
+namespace SmartBase.Core.Documents;
+
+/// <summary>Чем закончился разбор документа. Число пишется в кеш — порядок менять нельзя.</summary>
+public enum DocTextStatus
+{
+    /// <summary>Текст извлечен.</summary>
+    Ok = 0,
+    /// <summary>Формат поддержан, но текста в файле нет — обычно скан без текстового слоя.</summary>
+    NoText = 1,
+    /// <summary>Расширение не из списка поддержанных.</summary>
+    Unsupported = 2,
+    /// <summary>Файл не читается: битый, занят, нет прав, пропал с диска.</summary>
+    Failed = 3,
+    /// <summary>Файл тяжелее порога — намеренно не разбирался.</summary>
+    TooBig = 4,
+}
+
+/// <summary>
+/// Результат разбора: статус, текст (пустой для всего, кроме <see cref="DocTextStatus.Ok"/>) и
+/// число страниц.
+///
+/// Страницы считаются ЗАОДНО: документ в этот момент уже открыт, и число страниц лежит рядом с
+/// текстом — отдельного прохода оно не стоит. Поэтому у прочитанных документов оно есть, а у
+/// непрочитанных не бывает, и карточка обещает ровно то, что знает. У форматов без страничной
+/// разбивки (DOCX, XLSX, текст) остается 0.
+/// </summary>
+public readonly record struct DocText(DocTextStatus Status, string Text, int Pages = 0)
+{
+    public static DocText Of(DocTextStatus status) => new(status, "");
+}
+
+/// <summary>
+/// Извлечение текста документа для поиска по содержимому. Чистая логика без UI и без базы:
+/// на входе путь, на выходе строка. Кеширование, очередь и прогресс — дело
+/// <c>Database/DocIndex/DocIndexService.cs</c>.
+///
+/// Поддержанные форматы закрыты списком намеренно: разбор чужого файла — это выполнение чужого
+/// кода в парсере, и расширять список стоит осознанно, а не «заодно». OCR нет: PDF-скан без
+/// текстового слоя честно получает <see cref="DocTextStatus.NoText"/> и больше не тревожится.
+///
+/// Все ограничители — здесь, и все они про одно: один документ не должен съесть столько памяти
+/// и времени, что встанет очередь. Чертеж на 2000 страниц и выгрузка на сто мегабайт —
+/// нормальные файлы в инженерной папке, и наткнуться на них программа обязана без последствий.
+/// </summary>
+public static class DocTextExtractor
+{
+    /// <summary>Сколько страниц PDF разбираем. Дальше текст для поиска все равно не нужен.</summary>
+    public const int MaxPdfPages = 300;
+
+    /// <summary>Потолок извлеченного текста в символах (~4 МБ) — дальше обрезаем.</summary>
+    public const int MaxChars = 4_000_000;
+
+    /// <summary>Порог размера файла по умолчанию, МБ: тяжелее — не разбираем вовсе.</summary>
+    public const int DefaultMaxFileMb = 64;
+
+    /// <summary>Расширения (без точки, в нижнем регистре), текст которых умеем читать.</summary>
+    public static readonly string[] SupportedExtensions =
+        ["pdf", "docx", "xlsx", "xlsm", "txt", "md", "csv", "log"];
+
+    /// <summary>Понятная человеку строка поддержанных форматов — для подсказок интерфейса.</summary>
+    public static string SupportedText => "PDF, DOCX, XLSX, TXT, MD, CSV";
+
+    /// <summary>Расширение файла без точки в нижнем регистре; «» — расширения нет.</summary>
+    public static string ExtensionOf(string path)
+    {
+        var name = path ?? "";
+        var cut  = name.LastIndexOfAny(['/', '\\']);
+        if (cut >= 0) name = name[(cut + 1)..];
+        var dot = name.LastIndexOf('.');
+        return dot > 0 && dot < name.Length - 1 ? name[(dot + 1)..].ToLowerInvariant() : "";
+    }
+
+    /// <summary>Умеем ли вообще читать текст такого файла (по расширению, файл не трогаем).</summary>
+    public static bool IsSupported(string path) =>
+        Array.IndexOf(SupportedExtensions, ExtensionOf(path)) >= 0;
+
+    /// <summary>
+    /// Разобрать документ. Исключений не бросает НИКОГДА: очередь индексации обходит тысячи
+    /// чужих файлов, и любой из них может оказаться битым — это рядовой исход, а не сбой.
+    /// </summary>
+    /// <param name="maxFileMb">Порог размера; 0 и меньше — порога нет.</param>
+    public static DocText Extract(string path, int maxFileMb = DefaultMaxFileMb,
+                                  CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return DocText.Of(DocTextStatus.Failed);
+
+        var ext = ExtensionOf(path);
+        if (Array.IndexOf(SupportedExtensions, ext) < 0) return DocText.Of(DocTextStatus.Unsupported);
+
+        try
+        {
+            var info = new FileInfo(path);
+            if (!info.Exists) return DocText.Of(DocTextStatus.Failed);
+            if (maxFileMb > 0 && info.Length > (long)maxFileMb * 1024 * 1024)
+                return DocText.Of(DocTextStatus.TooBig);
+
+            var pages = 0;
+            var text = ext switch
+            {
+                "pdf"          => FromPdf(path, ct, out pages),
+                "docx"         => FromDocx(path),
+                "xlsx" or "xlsm" => FromXlsx(path, ct),
+                _              => FromPlainText(path),
+            };
+
+            text = Normalize(text);
+            // Число страниц сохраняем и у скана без текстового слоя: страницы у него есть, а
+            // текста нет, и «12 страниц» в карточке — правда, которая помогает узнать документ.
+            return text.Length == 0
+                ? new DocText(DocTextStatus.NoText, "", pages)
+                : new DocText(DocTextStatus.Ok, text, pages);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch { return DocText.Of(DocTextStatus.Failed); }
+    }
+
+    // ── Разборщики ────────────────────────────────────────────────────────────
+
+    /// <param name="pageCount">
+    /// Сколько страниц в документе ВСЕГО — не сколько разобрано. Разбор упирается в
+    /// <see cref="MaxPdfPages"/>, а карточка показывает настоящий объем документа: «300 страниц»
+    /// у тысячестраничного тома было бы неправдой.
+    /// </param>
+    private static string FromPdf(string path, CancellationToken ct, out int pageCount)
+    {
+        var sb = new StringBuilder();
+        using var doc = PdfDocument.Open(path);
+        pageCount = doc.NumberOfPages;
+        var pages = Math.Min(doc.NumberOfPages, MaxPdfPages);
+        for (var i = 1; i <= pages; i++)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (sb.Length >= MaxChars) break;
+            // ContentOrderTextExtractor — тот же разборщик, что в расширении «Анализ PDF»:
+            // он собирает текст в порядке содержимого, а не в порядке объектов страницы,
+            // иначе куски строк чертежа приезжали бы вперемешку.
+            try { sb.Append(ContentOrderTextExtractor.GetText(doc.GetPage(i))).Append('\n'); }
+            catch (OperationCanceledException) { throw; }
+            catch { /* битая страница не должна отменять весь документ */ }
+        }
+        return sb.ToString();
+    }
+
+    private static string FromDocx(string path)
+    {
+        using var doc = WordprocessingDocument.Open(path, false);
+        var body = doc.MainDocumentPart?.Document?.Body;
+        return body?.InnerText ?? "";
+    }
+
+    private static string FromXlsx(string path, CancellationToken ct)
+    {
+        var sb = new StringBuilder();
+        using var doc = SpreadsheetDocument.Open(path, false);
+        var book = doc.WorkbookPart;
+        if (book is null) return "";
+
+        // Общая таблица строк — в книге весь повторяющийся текст лежит именно там, и без нее
+        // в ячейках видны одни индексы.
+        var shared = book.SharedStringTablePart?.SharedStringTable;
+        if (shared is not null)
+        {
+            foreach (var item in shared.Elements<DocumentFormat.OpenXml.Spreadsheet.SharedStringItem>())
+            {
+                ct.ThrowIfCancellationRequested();
+                if (sb.Length >= MaxChars) break;
+                sb.Append(item.InnerText).Append('\n');
+            }
+        }
+
+        // Плюс то, что лежит в листах напрямую (числа и inline-строки).
+        foreach (var sheet in book.WorksheetParts)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (sb.Length >= MaxChars) break;
+            var data = sheet.Worksheet?.Elements<DocumentFormat.OpenXml.Spreadsheet.SheetData>().FirstOrDefault();
+            if (data is null) continue;
+            foreach (var cell in data.Descendants<DocumentFormat.OpenXml.Spreadsheet.Cell>())
+            {
+                if (sb.Length >= MaxChars) break;
+                // Ссылки в общую таблицу уже добавлены выше — второй раз не пишем.
+                if (cell.DataType?.Value == DocumentFormat.OpenXml.Spreadsheet.CellValues.SharedString) continue;
+                var value = cell.CellValue?.InnerText ?? cell.InnerText;
+                if (value.Length > 0) sb.Append(value).Append(' ');
+            }
+            sb.Append('\n');
+        }
+        return sb.ToString();
+    }
+
+    private static string FromPlainText(string path)
+    {
+        // BOM распознается сам; без BOM пробуем UTF-8 строго, и только если строка не
+        // раскодировалась — откатываемся на windows-1251. Русский txt из старых систем без
+        // этого отката выглядел бы как набор вопросительных знаков и в поиск бы не попал.
+        var bytes = File.ReadAllBytes(path);
+        if (HasBom(bytes)) return new StreamReader(new MemoryStream(bytes), Encoding.UTF8, true).ReadToEnd();
+
+        try
+        {
+            return new UTF8Encoding(false, throwOnInvalidBytes: true).GetString(bytes);
+        }
+        catch (DecoderFallbackException)
+        {
+            return Cp1251().GetString(bytes);
+        }
+    }
+
+    private static bool HasBom(byte[] b) =>
+        (b.Length >= 3 && b[0] == 0xEF && b[1] == 0xBB && b[2] == 0xBF) ||
+        (b.Length >= 2 && ((b[0] == 0xFF && b[1] == 0xFE) || (b[0] == 0xFE && b[1] == 0xFF)));
+
+    // .NET Core не знает кодовых страниц без явной регистрации провайдера; делаем это лениво и
+    // один раз, а если страница все равно недоступна — читаем как Latin-1, чтобы не упасть.
+    private static Encoding Cp1251()
+    {
+        try
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+            return Encoding.GetEncoding(1251);
+        }
+        catch { return Encoding.Latin1; }
+    }
+
+    /// <summary>
+    /// Схлопывает пробелы и переводы строк: в индексе важны слова, а не верстка, а лишние
+    /// пробелы PDF-извлечения раздували бы кеш вдвое. Заодно режет по <see cref="MaxChars"/>.
+    /// </summary>
+    public static string Normalize(string? raw)
+    {
+        if (string.IsNullOrEmpty(raw)) return "";
+
+        var sb    = new StringBuilder(Math.Min(raw.Length, MaxChars));
+        var space = true;   // true в начале — ведущие пробелы не пишем
+        foreach (var ch in raw)
+        {
+            if (sb.Length >= MaxChars) break;
+            if (char.IsWhiteSpace(ch) || char.IsControl(ch))
+            {
+                if (!space) { sb.Append(' '); space = true; }
+                continue;
+            }
+            sb.Append(ch);
+            space = false;
+        }
+        return sb.ToString().TrimEnd();
+    }
+}

@@ -1,0 +1,86 @@
+namespace SmartBase.Core.Documents;
+
+/// <summary>Семейство формата документа — им подписана и покрашена лента на плитке карточки.</summary>
+public enum DocFormatFamily
+{
+    Pdf,
+    Word,
+    Excel,
+    Text,
+    Other,
+}
+
+/// <summary>
+/// Опознание формата документа по расширению: подпись на ленте плитки и ключи кистей.
+///
+/// Зачем отдельный класс, а не свойство <see cref="Models.DocRecord.Format"/>: <c>Format</c>
+/// отдает сырое расширение («DOCX»), а карточке нужно СЕМЕЙСТВО — «WORD» одинаково для doc и
+/// docx, «ТЕКСТ» для txt, md и csv. Семейство же выбирает цвет, поэтому правило сведено в одно
+/// место: иначе подпись и цвет разъехались бы при первом добавлении расширения.
+///
+/// Разбиение намеренно совпадает с <see cref="DocTextExtractor.SupportedExtensions"/> там, где
+/// это возможно: человек видит на плитке «ТЕКСТ» ровно у тех файлов, внутри которых поиск
+/// умеет читать. Исключение одно — старый бинарный <c>.doc</c>: лента у него «WORD», потому что
+/// это правда про формат, а про невозможность прочитать текст говорит чип «текст не прочитан».
+/// </summary>
+public static class DocFormats
+{
+    /// <summary>Подпись на ленте, когда расширения у файла нет вовсе.</summary>
+    public const string NoExtensionLabel = "ФАЙЛ";
+
+    private static readonly string[] WordExtensions  = ["doc", "docx", "dot", "dotx", "docm"];
+    private static readonly string[] ExcelExtensions = ["xls", "xlsx", "xlsm", "xlsb", "xlt", "xltx"];
+    private static readonly string[] TextExtensions  = ["txt", "md", "csv", "log", "ini", "json", "xml", "yml", "yaml"];
+
+    /// <summary>Семейство по расширению без точки (регистр не важен).</summary>
+    public static DocFormatFamily FamilyOf(string extension)
+    {
+        var ext = extension.Trim().TrimStart('.').ToLowerInvariant();
+        if (ext.Length == 0)                                    return DocFormatFamily.Other;
+        if (ext == "pdf")                                       return DocFormatFamily.Pdf;
+        if (Array.IndexOf(WordExtensions, ext)  >= 0)           return DocFormatFamily.Word;
+        if (Array.IndexOf(ExcelExtensions, ext) >= 0)           return DocFormatFamily.Excel;
+        if (Array.IndexOf(TextExtensions, ext)  >= 0)           return DocFormatFamily.Text;
+        return DocFormatFamily.Other;
+    }
+
+    /// <summary>
+    /// Подпись на ленте. У известных семейств — имя семейства, у прочих — само расширение
+    /// заглавными: «DWG» полезнее безликого «ФАЙЛ», а держать список всех расширений мира
+    /// незачем.
+    /// </summary>
+    public static string LabelOf(string extension)
+    {
+        var ext = extension.Trim().TrimStart('.');
+        if (ext.Length == 0) return NoExtensionLabel;
+
+        return FamilyOf(ext) switch
+        {
+            DocFormatFamily.Pdf   => "PDF",
+            DocFormatFamily.Word  => "WORD",
+            DocFormatFamily.Excel => "EXCEL",
+            DocFormatFamily.Text  => "ТЕКСТ",
+            _                     => ext.ToUpperInvariant(),
+        };
+    }
+
+    /// <summary>Ключ кисти обводки и надписи в <c>Assets/Styles/Colors.axaml</c>.</summary>
+    public static string StrokeBrushKey(DocFormatFamily family) => family switch
+    {
+        DocFormatFamily.Pdf   => "BrushFormatPdf",
+        DocFormatFamily.Word  => "BrushFormatWord",
+        DocFormatFamily.Excel => "BrushFormatExcel",
+        DocFormatFamily.Text  => "BrushFormatText",
+        _                     => "BrushFormatOther",
+    };
+
+    /// <summary>Ключ кисти светлой заливки ленты.</summary>
+    public static string FillBrushKey(DocFormatFamily family) => family switch
+    {
+        DocFormatFamily.Pdf   => "BrushFormatPdfLight",
+        DocFormatFamily.Word  => "BrushFormatWordLight",
+        DocFormatFamily.Excel => "BrushFormatExcelLight",
+        DocFormatFamily.Text  => "BrushFormatTextLight",
+        _                     => "BrushFormatOtherLight",
+    };
+}

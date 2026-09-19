@@ -304,6 +304,7 @@ public partial class MainWindow : Window
         // Календарь агрегирует события только из ДОПУЩЕННЫХ БД (без допуска — данные не видны).
         CalendarModule.Initialize(GrantedDbs(), _categories);
         TasksModule.Initialize(GrantedDbs());
+        LibraryModule.Initialize(GrantedDbs());
         ConstructorModule.Initialize(_constructor);
         // Допущенные БД — для окна «Расположение» записи (перенос в другую коллекцию/БД).
         ConstructorModule.SetDatabases(GrantedDbs());
@@ -334,6 +335,7 @@ public partial class MainWindow : Window
         // (недопущенные показываются замком, клик по замку — запрос доступа).
         CalendarSidebar.InitializeWorkspace(GrantedDbs(), Controls.Components.SidebarMode.Calendar);
         TasksSidebar.InitializeWorkspace(GrantedDbs(), Controls.Components.SidebarMode.Tasks);
+        LibrarySidebar.InitializeWorkspace(GrantedDbs(), Controls.Components.SidebarMode.Library);
         ConstructorSidebar.InitializeWorkspace(workspace.Mounted, Controls.Components.SidebarMode.Constructor);
         ConstructorSidebar.DatabaseUnlockRequested += async (_, dbId) => await RequestDatabaseUnlock(dbId);
         // Клик по коллекции с замком (просмотр запрещен правами) — пояснение вместо
@@ -496,6 +498,23 @@ public partial class MainWindow : Window
             ConstructorSidebar.Refresh();
             ConstructorModule.Refresh();
         };
+
+        // Сайдбар библиотеки: галочки решают, какие коллекции показывать. Тумблеры файловых
+        // свойств тоже приходят через ActiveIdsChanged — в отличие от задач, где роль
+        // эксклюзивна и о ней сообщает отдельное CalendarsChanged.
+        LibrarySidebar.ActiveIdsChanged += (_, ids) => LibraryModule.SetActiveIds(ids);
+        // Первое включение тумблера авто-создает «Тип документа», а кнопка «+» при настройке
+        // «только подключенные» — еще и файловый столбец: обновить конструктор и его сайдбар.
+        LibrarySidebar.RequestRefresh += (_, _) =>
+        {
+            ConstructorSidebar.Refresh();
+            ConstructorModule.Refresh();
+        };
+
+        // «Прочитать документы» в меню коллекции: сайдбар только просит, читает раздел — очередь
+        // и кеш текста его, а не сайдбара.
+        LibrarySidebar.ReadDocumentsRequested += (_, r) =>
+            LibraryModule.ReadCollection(r.DbId, r.Id);
 
         // Дерево конструктора: выбор коллекции открывает ее в ConstructorModule из ее БД.
         // Если центральный блок был скрыт (свернут из записи) — снова показываем его.
@@ -737,6 +756,7 @@ public partial class MainWindow : Window
         "settings"    => "Настройки",
         "profile"     => "Профиль",
         "notes"       => "Заметки",
+        "library"     => "Библиотека документов",
         "extensions"  => "Расширения",
         _             => module,
     };
@@ -1084,8 +1104,10 @@ public partial class MainWindow : Window
             CalendarSidebarStamp:    CalendarSidebar.DataStamp,
             TasksSidebarStamp:       TasksSidebar.DataStamp,
             ConstructorSidebarStamp: ConstructorSidebar.DataStamp,
+            LibrarySidebarStamp:     LibrarySidebar.DataStamp,
             CalendarStamp:           CalendarModule.DataStamp,
             TasksStamp:              TasksModule.DataStamp,
+            LibraryStamp:            LibraryModule.DataStamp,
             ConstructorShowsDb:      _currentConstructorDbId == dbId && ConstructorModule.IsVisible,
             ConstructorStamp:        ConstructorModule.DataStamp,
             CellEditing:             ConstructorModule.IsCellEditing,
@@ -1097,9 +1119,11 @@ public partial class MainWindow : Window
         if (steps.Has(RefreshPlan.Steps.CalendarSidebar))    CalendarSidebar.Refresh();
         if (steps.Has(RefreshPlan.Steps.TasksSidebar))       TasksSidebar.Refresh();
         if (steps.Has(RefreshPlan.Steps.ConstructorSidebar)) ConstructorSidebar.Refresh();
+        if (steps.Has(RefreshPlan.Steps.LibrarySidebar))     LibrarySidebar.Refresh();
 
         if (steps.Has(RefreshPlan.Steps.Calendar)) CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
         if (steps.Has(RefreshPlan.Steps.Tasks))    TasksModule.SetActiveIds(TasksSidebar.GetActiveIds(), force: true);
+        if (steps.Has(RefreshPlan.Steps.Library))  LibraryModule.SetActiveIds(LibrarySidebar.GetActiveIds(), force: true);
 
         if (steps.Has(RefreshPlan.Steps.ConstructorFull))      ConstructorModule.Refresh();
         else if (steps.Has(RefreshPlan.Steps.ConstructorRows)) ConstructorModule.RefreshRowsRemote();
@@ -1240,16 +1264,18 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Дерево коллекций текущего раздела. Их три — конструктор, календарь и задачи, — и все три
-    /// показывают одни и те же коллекции с одним и тем же меню, поэтому клавиши «Создать
-    /// коллекцию»/«Создать группу»/«Дублировать» работают в каждом. В разделах со своим сайдбаром
-    /// (настройки, профиль, заметки) коллекций нет — там null.
+    /// Дерево коллекций текущего раздела. Их четыре — конструктор, календарь, задачи и
+    /// библиотека документов, — и все они показывают одни и те же коллекции с одним и тем же
+    /// меню, поэтому клавиши «Создать коллекцию»/«Создать группу»/«Дублировать» работают в
+    /// каждом. В разделах со своим сайдбаром (настройки, профиль, заметки) коллекций нет —
+    /// там null.
     /// </summary>
     private SidebarTree? ActiveSidebarTree() => _activeModule switch
     {
         "constructor" => ConstructorSidebar,
         "calendar"    => CalendarSidebar,
         "tasks"       => TasksSidebar,
+        "library"     => LibrarySidebar,
         _             => null,
     };
 
@@ -1368,11 +1394,14 @@ public partial class MainWindow : Window
         ConstructorSidebar.InitializeWorkspace(_workspace.Mounted, Controls.Components.SidebarMode.Constructor, pending);
         CalendarSidebar.InitializeWorkspace(GrantedDbs(), Controls.Components.SidebarMode.Calendar, pending);
         TasksSidebar.InitializeWorkspace(GrantedDbs(), Controls.Components.SidebarMode.Tasks, pending);
+        LibrarySidebar.InitializeWorkspace(GrantedDbs(), Controls.Components.SidebarMode.Library, pending);
         CalendarModule.SetDatabases(GrantedDbs());
         TasksModule.SetDatabases(GrantedDbs());
+        LibraryModule.SetDatabases(GrantedDbs());
         ConstructorModule.SetDatabases(GrantedDbs());
         CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
         TasksModule.SetActiveIds(TasksSidebar.GetActiveIds());
+        LibraryModule.SetActiveIds(LibrarySidebar.GetActiveIds());
         SettingsModule.RefreshDatabases();   // обновить статус «подключена/не подключена»
         ProfileModule.OnDatabasesChanged();  // история — только базы с допуском, панель администратора — свои базы
         SyncProfileSidebar();                // админство пропало вместе с базой — «Журнал безопасности» уходит из меню
@@ -1475,6 +1504,7 @@ public partial class MainWindow : Window
         ExtensionsModule.IsVisible = module == "extensions";
         ProfileModule.IsVisible    = module == "profile";
         NotesModule.IsVisible      = module == "notes";
+        LibraryModule.IsVisible    = module == "library";
         // Видимость ConstructorModule зависит еще и от _collectionOpen — ее ставит ApplyColumns.
 
         if (module == "calendar")
@@ -1494,6 +1524,17 @@ public partial class MainWindow : Window
             // календаре, запись расширения, чужая правка) — перечитать, даже если галочки те же.
             TasksModule.SetActiveIds(TasksSidebar.GetActiveIds(),
                                      force: RefreshPlan.IsStale(TasksModule.DataStamp, LastChangeStamp()));
+        }
+        else if (module == "library")
+        {
+            CalendarSidebar.IsVisible    = false;
+            ConstructorSidebar.IsVisible = false;
+            LibrarySidebar.IsVisible     = _sidebarOpen;
+            LibrarySidebar.Refresh();
+            // С прошлого чтения раздела в базах что-то коммитили — перечитать, даже если
+            // галочки те же (то же правило, что у задач).
+            LibraryModule.SetActiveIds(LibrarySidebar.GetActiveIds(),
+                                       force: RefreshPlan.IsStale(LibraryModule.DataStamp, LastChangeStamp()));
         }
         else if (module == "constructor")
         {
@@ -1541,6 +1582,7 @@ public partial class MainWindow : Window
 
         // Сайдбары мета-разделов и задач видны только в своем режиме.
         if (module != "tasks")      TasksSidebar.IsVisible      = false;
+        if (module != "library")    LibrarySidebar.IsVisible    = false;
         if (module != "settings")   SettingsSidebar.IsVisible   = false;
         if (module != "extensions") ExtensionsSidebar.IsVisible = false;
         if (module != "profile")    ProfileSidebar.IsVisible    = false;
@@ -1625,6 +1667,8 @@ public partial class MainWindow : Window
             ProfileSidebar.IsVisible = isOpen;
         else if (_activeModule == "notes")
             NotesSidebar.IsVisible = isOpen;
+        else if (_activeModule == "library")
+            LibrarySidebar.IsVisible = isOpen;
         else // extensions
             ExtensionsSidebar.IsVisible = isOpen;
 

@@ -183,12 +183,35 @@ public partial class App : Application
             CalendarSettings.Init();
             // Настройки раздела «Задачи» — по той же причине (стартовый фильтр, правила показа).
             TaskSettings.Init();
+            // Настройки библиотеки документов — до открытия ее кеша: порог размера файла для
+            // индексации служба читает уже готовым.
+            LibrarySettings.Init();
             // Настройки конструктора: до создания окна, потому что по ним строится таблица
             // (высота строк, ширина столбцов) и заводится поллер чужих правок.
             ConstructorSettings.Init();
             // Пользовательские привязки клавиш: до создания окна — обработчики спрашивают
             // ShortcutSettings.Matches с первого нажатия.
             ShortcutSettings.Init();
+
+            // Кеш текста документов для поиска по содержимому в библиотеке. Его сбой раздел не
+            // останавливает: лента и фильтр типов читаются из самой базы, а без кеша пропадает
+            // только поиск ВНУТРИ документов — об этом раздел говорит прямо в пустой выдаче.
+            // Уборка миниатюр — здесь же, раз в запуск: файлы стареют сами, следить за ними
+            // при каждой прокрутке было бы дороже, чем один обход папки при старте.
+            try
+            {
+                var docIndex = new Database.DocIndex.DocTextIndex(AppSettings.DocIndexPath);
+                Database.DocIndex.DocIndexService.Attach(
+                    new Database.DocIndex.DocIndexService(docIndex)
+                    {
+                        MaxFileMb = LibrarySettings.IndexMaxMb,
+                    });
+                Core.Documents.DocThumbnail.Tidy(AppSettings.DocThumbsDir);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Кеш документов не открылся: {Path:l}", AppSettings.DocIndexPath);
+            }
 
             // Уровень масштабирования: прочитать сохраненный масштаб до создания окна
             // (MainWindow применит его к корню при инициализации).

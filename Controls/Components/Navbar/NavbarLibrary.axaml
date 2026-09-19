@@ -1,0 +1,49 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="SmartBase.Controls.Components.NavbarLibrary"
+             Height="56"
+             Background="{StaticResource BrushBg}">
+
+    <!-- Навбар раздела: слева заголовок, справа фильтр типов. Строки поиска здесь нет — она
+         стоит блоком над лентой (DocListView.axaml). Переключателя вида тоже нет: вид один. -->
+    <Grid ColumnDefinitions="Auto,*,Auto"
+          Margin="16,0"
+          VerticalAlignment="Center">
+
+        <!-- Заголовок раздела -->
+        <TextBlock Grid.Column="0" x:Name="TitleLabel"
+                   Text="Библиотека документов"
+                   VerticalAlignment="Center"
+                   FontSize="{DynamicResource FontSizeLarge}"
+                   FontWeight="{StaticResource FontWeightBold}" />
+
+        <!-- Выпадашка типов документа. Это НЕ ComboBox: содержимое рисует общий
+             ColumnFilterPanel — тот же чеклист с поиском, количествами справа и «Готово»,
+             что у колонки таблицы. Здесь только кнопка-якорь, к которой он крепится. -->
+        <Button Grid.Column="2" x:Name="TypeBtn"
+                VerticalAlignment="Center"
+                Height="30" MinWidth="170"
+                Padding="10,0"
+                HorizontalContentAlignment="Stretch"
+                Background="{StaticResource BrushSecondaryBg}"
+                CornerRadius="{StaticResource RadiusBase}">
+            <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Grid.Column="0" x:Name="TypeLabel"
+                           Text="Тип документа"
+                           VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis" />
+                <Viewbox Grid.Column="1"
+                         Width="{StaticResource IconSizeSmall}" Height="{StaticResource IconSizeSmall}"
+                         VerticalAlignment="Center" Margin="8,0,0,0">
+                    <Canvas Width="24" Height="24">
+                        <Path Data="{StaticResource IconChevronDown}"
+                              Stroke="{StaticResource BrushSecondaryText}"
+                              StrokeThickness="{StaticResource IconStrokeSmall}"
+                              StrokeLineCap="Round" StrokeJoin="Round" />
+                    </Canvas>
+                </Viewbox>
+            </Grid>
+        </Button>
+    </Grid>
+
+</UserControl>

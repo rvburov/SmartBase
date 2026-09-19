@@ -34,6 +34,8 @@ public class DbField
     public bool   IsTaskAssigner { get; set; } = false; // поле «Назначил»
     public bool   IsTaskStatus   { get; set; } = false; // поле «Статус»
     public bool   IsDescription  { get; set; } = false; // поле «Описание» (markdown-блок панели записи)
+    public bool   IsDocFile      { get; set; } = false; // file-поле — источник библиотеки документов
+    public bool   IsDocType      { get; set; } = false; // поле-список «Тип документа»
 }
 
 public class DbRecord

@@ -956,12 +956,12 @@ public partial class ConstructorControllerView : UserControl
     // коллекция целиком выпадает из задач, без «Описания» пропадают все тексты. Называем
     // потерю в том же окне подтверждения (пустая строка — ролей среди удаляемых нет).
     private static string RoleLossWarning(IReadOnlyList<DbField> fields, IReadOnlyList<int> deletable,
-                                          bool hasTasks, bool hasCalendar)
+                                          bool hasTasks, bool hasCalendar, bool hasLibrary)
     {
         var lines = deletable
             .Select(id => fields.FirstOrDefault(f => f.Id == id))
             .OfType<DbField>()
-            .Select(f => (Field: f, Impact: FieldRoleText.DeletionImpact(f, hasTasks, hasCalendar)))
+            .Select(f => (Field: f, Impact: FieldRoleText.DeletionImpact(f, hasTasks, hasCalendar, hasLibrary)))
             .Where(x => x.Impact is not null)
             .Select(x => $"«{x.Field.Name}» — {x.Impact}")
             .ToList();
@@ -985,7 +985,8 @@ public partial class ConstructorControllerView : UserControl
 
         var roleWarn = RoleLossWarning(fields, deletable,
                                        _repository.HasTaskExecField(_currentCollectionId.Value),
-                                       _repository.HasCalendarDateField(_currentCollectionId.Value));
+                                       _repository.HasCalendarDateField(_currentCollectionId.Value),
+                                       _repository.HasDocFileField(_currentCollectionId.Value));
         // Как и у записей: рутину снимает настройка, а предупреждение о потере роли раздела
         // («коллекция выпадет из задач/календаря») остается — оно о последствии, а не о рутине.
         if (ConstructorSettings.ConfirmDelete || roleWarn.Length > 0)

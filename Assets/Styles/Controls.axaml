@@ -382,6 +382,26 @@
         <Setter Property="Foreground" Value="White" />
     </Style>
 
+    <!-- Блок поиска над лентой библиотеки документов (DocListView.axaml).
+         Вид тот же, что у строки быстрого добавления задач, но все четыре сеттера обязаны жить
+         ЗДЕСЬ, а не в разметке: в Avalonia приоритет локального значения выше приоритета стиля,
+         и рамка, прописанная на самом Border, не перебивается триггером — подсветка при вводе
+         молча не сработала бы (правило см. docs/developer/ui/theming.md).
+
+         Толщина при фокусе НЕ меняется: BorderLineFocus сдвинул бы содержимое блока на пиксель,
+         а это ровно тот прыжок текста, который запрещен стандартом «текст не двигается при
+         смене состояния». Меняется только цвет. -->
+    <Style Selector="Border.searchBlock">
+        <Setter Property="Background"      Value="{StaticResource BrushBg}" />
+        <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
+        <Setter Property="BorderThickness" Value="{DynamicResource BorderLine}" />
+        <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
+    </Style>
+
+    <Style Selector="Border.searchBlock:focus-within">
+        <Setter Property="BorderBrush" Value="{StaticResource BrushAccent}" />
+    </Style>
+
     <Style Selector="Button.danger">
         <Setter Property="Background" Value="{StaticResource BrushRed}" />
         <Setter Property="Foreground" Value="White" />

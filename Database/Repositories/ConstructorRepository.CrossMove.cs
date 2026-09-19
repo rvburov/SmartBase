@@ -193,6 +193,7 @@ public partial class ConstructorRepository
                     IsSystem = f.IsSystem, IsRequired = f.IsRequired,
                     IsTaskExec = f.IsTaskExec, IsTaskAssigner = f.IsTaskAssigner,
                     IsTaskStatus = f.IsTaskStatus, IsDescription = f.IsDescription,
+                    IsDocFile = f.IsDocFile, IsDocType = f.IsDocType,
                 };
                 tgtCtx.DbFields.Add(nf);
                 tgtCtx.SaveChanges();

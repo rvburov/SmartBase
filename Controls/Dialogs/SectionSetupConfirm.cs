@@ -40,6 +40,16 @@ public static class SectionSetupConfirm
             ? Ask(owner, repo, cid, repo.PlanTaskSetup(cid, adoptExec), FieldRoleText.SectionTasks, moving)
             : Task.FromResult(true);
 
+    /// <summary>
+    /// Подготовка к библиотеке документов: файловый столбец плюс «Тип документа».
+    /// <paramref name="adoptFile"/> — можно ли отдать роль документа существующему file-полю.
+    /// </summary>
+    public static Task<bool> ForLibrary(Window owner, ConstructorRepository repo, int? collectionId,
+                                        bool moving = false, bool adoptFile = true) =>
+        collectionId is int cid
+            ? Ask(owner, repo, cid, repo.PlanDocSetup(cid, adoptFile), FieldRoleText.SectionLibrary, moving)
+            : Task.FromResult(true);
+
     private static async Task<bool> Ask(Window owner, ConstructorRepository repo, int collectionId,
                                         RoleAdoptionPlan plan, string section, bool moving)
     {

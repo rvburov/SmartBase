@@ -59,6 +59,11 @@ public class DbFieldEntity
     // записи рисует его нижним markdown-блоком, а календарь/задачи пишут в него описание.
     // Заводится только календарным и задачным путем — см. EnsureDescriptionField.
     public bool   IsDescription  { get; set; } = false;
+    // Роли раздела «Библиотека документов». IsDocFile — file-поле, чьи документы едут в
+    // раздел; ролей таких в коллекции может быть НЕСКОЛЬКО (как несколько полей-дат дают
+    // свои события календарю). IsDocType — поле-список «Тип документа», ровно одно.
+    public bool   IsDocFile      { get; set; } = false;
+    public bool   IsDocType      { get; set; } = false;
 
     [ForeignKey(nameof(CollectionId))]
     public DbCollectionEntity              Collection  { get; set; } = null!;

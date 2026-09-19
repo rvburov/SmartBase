@@ -174,6 +174,30 @@
                        Foreground="{StaticResource BrushSecondaryText}" />
         </StackPanel>
 
+        <!-- Добавить в библиотеку документов: виден только для типа «Файл». Если включено —
+             записи с непустой ссылкой на файл показываются в разделе «Библиотека документов».
+             При первом включении в коллекции авто-создается недостающий «Тип документа».
+             В отличие от исполнителя задач, таких столбцов у коллекции может быть НЕСКОЛЬКО:
+             два файловых свойства — это два разных документа записи, и показать нужно оба. -->
+        <StackPanel x:Name="LibrarySection" IsVisible="False" Spacing="6" Margin="0,0,0,12">
+            <StackPanel Orientation="Horizontal" Spacing="10">
+                <ToggleSwitch x:Name="LibraryToggle"
+                              OnContent="" OffContent=""
+                              VerticalAlignment="Center" />
+                <TextBlock Text="Добавить в библиотеку документов"
+                           VerticalAlignment="Center"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+            </StackPanel>
+            <!-- Гаснет только в одном случае: свойство уже несет роль «Тип документа» — тогда
+                 подпись объясняет, почему (выключенный переключатель без объяснения выглядит
+                 поломкой). Текст ставит code-behind — UpdateLibraryToggleAvailability. -->
+            <TextBlock x:Name="LibraryToggleHint" IsVisible="False"
+                       TextWrapping="Wrap"
+                       FontSize="{DynamicResource FontSizeSmall}"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+        </StackPanel>
+
         <!-- Пункты списка: видны для типов «Список» и «Статус». Пользователь сам формирует
              набор опций (добавить/переименовать/удалить). Хранится в ConfigJson поля как
              {"options":[...]}. Для нового «Статуса» засеиваются три статуса по умолчанию.

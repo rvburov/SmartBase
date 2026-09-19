@@ -1,0 +1,162 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:w="clr-namespace:SmartBase.Controls.Widgets"
+             xmlns:b="clr-namespace:SmartBase.Controls.Behaviors"
+             x:Class="SmartBase.Views.Library.DocListView"
+             Background="{StaticResource BrushBg}">
+
+    <!-- Раскладка повторяет список задач: правого отступа у Grid нет (он вернулся Margin'ами
+         содержимого), чтобы полоса прокрутки прилегала к краю панели. Верхний отступ — пустой
+         строкой 0, а не Margin сетки: иначе полоса начиналась бы ниже верхнего края панели. -->
+    <Grid RowDefinitions="8,Auto,Auto,*" ColumnDefinitions="*,Auto" Margin="16,0,0,0">
+
+        <!-- Ошибка (нет прав, база занята) — тот же баннер, что в диалогах -->
+        <w:NoticeBanner Grid.Row="1" x:Name="NoticeBanner" Margin="0,0,16,8" />
+
+        <!-- ── Блок поиска ────────────────────────────────────────────────────────────────
+             Стоит ЗДЕСЬ, а не в навбаре, на месте строки быстрого добавления задач и в ее
+             оформлении: у задач сверху ленты пишут задачу, здесь — запрос. Место выбрано по
+             охвату действия: поиск переписывает саму ленту, поэтому и живет над ней, а в
+             навбаре остается то, что относится к разделу целиком.
+
+             Рамка, фон, скругление и толщина заданы СТИЛЕМ Border.searchBlock, а не здесь:
+             локальное значение в Avalonia стилем не перебивается, и подсветка рамки при вводе
+             (:focus-within) молча не сработала бы — грабли записаны в docs/developer/ui/theming.md.
+
+             ClipToBounds — из-за серого подвала и нити прогресса: без него они вылезли бы за
+             скругление углов. -->
+        <Border Grid.Row="2" x:Name="SearchBlock"
+                Classes="searchBlock"
+                ClipToBounds="True"
+                Margin="0,0,16,12">
+            <Grid RowDefinitions="Auto,Auto,Auto">
+
+                <!-- Ряд команды: якорь, запрос, очистка, «Найти». Отступы — те же 12,8, что у
+                     строки быстрого добавления задач, но заданы маргином внутренней сетки:
+                     подвал и нить обязаны идти во всю ширину блока. -->
+                <Grid Grid.Row="0" ColumnDefinitions="Auto,10,*,6,Auto,10,Auto" Margin="12,8">
+
+                    <Viewbox Grid.Column="0" x:Name="SearchIconBox"
+                             Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}"
+                             VerticalAlignment="Center">
+                        <Canvas Width="24" Height="24">
+                            <Path x:Name="SearchIcon"
+                                  Data="{StaticResource IconSearch}"
+                                  Stroke="{StaticResource BrushSecondaryText}"
+                                  StrokeThickness="{StaticResource IconStrokeMedium}"
+                                  StrokeLineCap="Round" StrokeJoin="Round" />
+                        </Canvas>
+                    </Viewbox>
+
+                    <TextBox Grid.Column="2" x:Name="SearchBox"
+                             Watermark="Найти в документах"
+                             BorderThickness="0"
+                             Background="Transparent"
+                             Padding="0"
+                             MinHeight="34"
+                             VerticalContentAlignment="Center"
+                             ScrollViewer.VerticalScrollBarVisibility="Disabled" />
+
+                    <!-- Колонка под крестик занята ВСЕГДА (кнопка лишь прячется), иначе кнопка
+                         «Найти» прыгала бы влево-вправо на первой и последней букве запроса. -->
+                    <Button Grid.Column="4" x:Name="ClearBtn" Classes="icon"
+                            Width="24" Height="24"
+                            IsVisible="False"
+                            VerticalAlignment="Center"
+                            CornerRadius="{StaticResource RadiusSmall}"
+                            ToolTip.Tip="Очистить">
+                        <Viewbox Width="{StaticResource IconSizeSmall}" Height="{StaticResource IconSizeSmall}">
+                            <Canvas Width="24" Height="24">
+                                <Path Data="{StaticResource IconClose}"
+                                      Stroke="{Binding $parent[Button].Foreground}"
+                                      StrokeThickness="{StaticResource IconStrokeSmall}"
+                                      StrokeLineCap="Round" StrokeJoin="Round" />
+                            </Canvas>
+                        </Viewbox>
+                    </Button>
+
+                    <Button Grid.Column="6" x:Name="FindBtn" Classes="accent"
+                            Content="Найти"
+                            Height="{StaticResource ControlHeightStandard}"
+                            Padding="16,0"
+                            VerticalAlignment="Center"
+                            VerticalContentAlignment="Center"
+                            CornerRadius="{StaticResource RadiusPill}" />
+                </Grid>
+
+                <!-- Подвал состояния. Одна строка ПОСТОЯННОЙ высоты в любом состоянии: блок не
+                     растет и не сжимается, поэтому лента под ним не прыгает. Разделительной
+                     линии сверху нет намеренно — граница белого и серого читается сама, а линия
+                     поверх смены фона дала бы двойную границу. -->
+                <Border Grid.Row="1" x:Name="StatusBar"
+                        Background="{StaticResource BrushSecondaryBg}"
+                        Padding="12,5,12,6">
+                    <Grid ColumnDefinitions="*,12,Auto">
+                        <TextBlock Grid.Column="0" x:Name="StatusLabel"
+                                   VerticalAlignment="Center"
+                                   FontSize="{DynamicResource FontSizeSmall}"
+                                   Foreground="{StaticResource BrushSecondaryText}"
+                                   TextWrapping="NoWrap"
+                                   TextTrimming="CharacterEllipsis" />
+
+                        <!-- Действие — кликабельная строка, а не кнопка: кнопка высотой 28 в
+                             подвал не влезает, а этот прием в разделе уже есть («Прочитать
+                             документ» в карточке). -->
+                        <TextBlock Grid.Column="2" x:Name="StatusAction"
+                                   IsVisible="False"
+                                   VerticalAlignment="Center"
+                                   FontSize="{DynamicResource FontSizeSmall}"
+                                   FontWeight="{StaticResource FontWeightBold}"
+                                   Foreground="{StaticResource BrushAccent}"
+                                   Cursor="Hand" />
+                    </Grid>
+                </Border>
+
+                <!-- Нить хода чтения по нижней кромке блока. Доля выставляется весами колонок из
+                     кода — ни измерений ширины, ни ProgressBar. Скругление блока подрезает концы
+                     нити, и она читается как часть блока, а не как полоса под ним. -->
+                <Grid Grid.Row="2" x:Name="ReadThread"
+                      Height="3" IsVisible="False"
+                      ColumnDefinitions="0*,1*">
+                    <Border Grid.Column="0" Background="{StaticResource BrushAccent}" />
+                    <Border Grid.Column="1" Background="{StaticResource BrushSeparator}" />
+                </Grid>
+
+            </Grid>
+        </Border>
+
+        <!-- Лента карточек. Своей полосы нет (Hidden) — ее роль играет ScrollBar ниже.
+
+             ItemsControl — ПРЯМОЙ ребенок ScrollViewer'а, без промежуточной панели: иначе
+             VirtualizingStackPanel получает неограниченную высоту и материализует ВСЕ строки,
+             то есть виртуализация есть на бумаге и отсутствует на деле (грабли раздела задач). -->
+        <ScrollViewer Grid.Row="3" x:Name="CardsScroll"
+                      HorizontalScrollBarVisibility="Disabled"
+                      VerticalScrollBarVisibility="Hidden">
+            <ItemsControl x:Name="CardsHost" Margin="0,0,16,0">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <VirtualizingStackPanel />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+            </ItemsControl>
+        </ScrollViewer>
+
+        <TextBlock Grid.Row="3" x:Name="EmptyLabel"
+                   Text="Нет документов"
+                   IsVisible="False"
+                   TextWrapping="Wrap"
+                   TextAlignment="Center"
+                   Foreground="{StaticResource BrushSecondaryText}"
+                   HorizontalAlignment="Center"
+                   VerticalAlignment="Top"
+                   Margin="0,32,16,16" />
+
+        <!-- Полоса прокрутки ленты — отдельной колонкой на всю высоту панели. -->
+        <ScrollBar Grid.Column="1" Grid.Row="0" Grid.RowSpan="4"
+                   Orientation="Vertical"
+                   b:ScrollBarLink.Source="{Binding #CardsScroll}" />
+
+    </Grid>
+
+</UserControl>

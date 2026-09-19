@@ -31,6 +31,7 @@ public static class GuideRegistry
         new("calendar",       "calendar.md"),
         new("tasks",          "tasks.md"),
         new("notes",          "notes.md"),
+        new("library",        "library.md"),
         new("import-export",  "import-export.md"),
         new("extensions",     "extensions.md"),
         new("settings",       "settings.md"),

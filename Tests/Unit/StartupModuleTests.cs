@@ -21,9 +21,13 @@ public sealed class StartupModuleTests
             _d.Keys.Where(k => k.StartsWith(prefix, StringComparison.Ordinal)).ToList();
     }
 
-    // Модули панели навигации, которые можно открыть при запуске. «settings» и «profile»
-    // сюда не входят: это служебные разделы, стартовым ни один из них не выбирается.
-    public static TheoryData<string> NavigationModules => ["calendar", "tasks", "constructor", "extensions", "notes"];
+    // Модули панели навигации, которые можно открыть при запуске. Берутся из самого каталога,
+    // а не переписываются списком: раньше здесь лежала копия, и добавленный модуль надо было
+    // вспомнить и дописать в ДВУХ местах — иначе тест оставался зеленым, а выбор в настройках
+    // молча откатывался к стандарту. «Настройки» и «Профиль» в каталог не входят вовсе: это
+    // служебные разделы, стартовым ни один из них не выбирается.
+    public static TheoryData<string> NavigationModules =>
+        [.. SmartBase.Settings.ViewCatalog.Navigation.Select(v => v.Key)];
 
     [Theory]
     [MemberData(nameof(NavigationModules))]

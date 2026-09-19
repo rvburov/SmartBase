@@ -31,6 +31,8 @@ public static class RefreshPlan
         ConstructorFull    = 1 << 6,   // открытая таблица: полная пересборка (структура)
         RecordPanel        = 1 << 7,   // открытая панель записи: ReloadFromDb
         Retry              = 1 << 8,   // идет ввод — зайти снова позже с тем же коммитом
+        LibrarySidebar     = 1 << 9,
+        Library            = 1 << 10,  // видимая библиотека: SetActiveIds(force) — тихо
     }
 
     /// <summary>Снимок частей экрана на момент применения коммита ОДНОЙ базы.</summary>
@@ -48,8 +50,10 @@ public static class RefreshPlan
         long   CalendarSidebarStamp,
         long   TasksSidebarStamp,
         long   ConstructorSidebarStamp,
+        long   LibrarySidebarStamp,
         long   CalendarStamp,
         long   TasksStamp,
+        long   LibraryStamp,
         bool   ConstructorShowsDb,
         long   ConstructorStamp,
         bool   CellEditing,
@@ -68,12 +72,14 @@ public static class RefreshPlan
             if (IsStale(s.CalendarSidebarStamp,    stamp)) steps |= Steps.CalendarSidebar;
             if (IsStale(s.TasksSidebarStamp,       stamp)) steps |= Steps.TasksSidebar;
             if (IsStale(s.ConstructorSidebarStamp, stamp)) steps |= Steps.ConstructorSidebar;
+            if (IsStale(s.LibrarySidebarStamp,     stamp)) steps |= Steps.LibrarySidebar;
         }
 
         // Видимый агрегатный раздел: календарь и задачи собирают данные всех допущенных баз.
         // Скрытый не трогаем — он перечитает при показе (ShowModule).
         if (s.ActiveModule == "calendar" && IsStale(s.CalendarStamp, stamp)) steps |= Steps.Calendar;
         if (s.ActiveModule == "tasks"    && IsStale(s.TasksStamp,    stamp)) steps |= Steps.Tasks;
+        if (s.ActiveModule == "library"  && IsStale(s.LibraryStamp,  stamp)) steps |= Steps.Library;
 
         // Открытая таблица этой базы: структура → полная пересборка, записи → строки на месте.
         // Открыт редактор ячейки — ввод не затираем, зайдем позже.

@@ -57,6 +57,15 @@ public static class AppSettings
     // файл базы ездит по сетевой папке, и числа обмена раздули бы его на всех машинах разом
     // (docs/ROADMAP-API.md, 10.10).
     public static string RunJournalPath { get; } = Path.Combine(AppDataDir, "integrations.db");
+    // Кеш текста документов для поиска по содержимому в библиотеке. Тоже единый на приложение и
+    // намеренно НЕ внутри файла базы: текст документов измеряется гигабайтами и раздул бы базу,
+    // ее бэкапы и дубли коллекций — при том что пересобирается из самих документов.
+    public static string DocIndexPath { get; } =
+        Path.Combine(AppDataDir, Database.DocIndex.DocTextIndex.FileName);
+    // Папка миниатюр первых страниц PDF. Картинки на диске, а не в памяти: лента прокручивается
+    // через тысячи документов.
+    public static string DocThumbsDir { get; } =
+        Path.Combine(AppDataDir, Core.Documents.DocThumbnail.FolderName);
 
     // Журнал безопасности — рядом, но отдельным файлом: рабочий журнал чистит пользователь, а
     // этот только дополняется и читается проверяющим (docs/ROADMAP-API.md, 10.10).
@@ -233,7 +242,7 @@ public static class AppSettings
     public static string LoadStartupModule()
     {
         var v = _store?.Get(KeyStartupModule);
-        return v is "calendar" or "tasks" or "constructor" or "extensions" or "notes"
+        return v is "calendar" or "tasks" or "constructor" or "extensions" or "notes" or "library"
             ? v : StartupModuleDefault;
     }
 
@@ -905,6 +914,68 @@ public static class AppSettings
         else                                        _store?.Set(KeyTasksSidebarOnlyInSection, on.ToString());
     }
 
+    // ── Раздел «Настройки → Библиотека документов» ───────────────────────────────
+    //
+    // Как и у задач: дельты в app.db, живой кеш и разбор мусора — LibrarySettings.
+    public const bool LibrarySidebarOnlyInSectionDefault = false;   // в боковой панели все коллекции
+    public const bool LibraryThumbnailsDefault           = true;    // миниатюра первой страницы PDF
+    public const int  LibraryIndexMaxMbDefault =
+        SmartBase.Core.Documents.DocTextExtractor.DefaultMaxFileMb;
+
+    public static bool LoadLibrarySidebarOnlyInSection() =>
+        bool.TryParse(_store?.Get(KeyLibrarySidebarOnlyInSection), out var on)
+            ? on : LibrarySidebarOnlyInSectionDefault;
+
+    public static void SaveLibrarySidebarOnlyInSection(bool on)
+    {
+        if (on == LibrarySidebarOnlyInSectionDefault) _store?.Remove(KeyLibrarySidebarOnlyInSection);
+        else                                          _store?.Set(KeyLibrarySidebarOnlyInSection, on.ToString());
+    }
+
+    // Настройки «индексировать автоматически» больше нет: чтение документов начинает человек
+    // кнопкой, и второй дороги к нему не должно быть. Ключ libraryAutoIndex в старых базах
+    // просто остается лежать — он никем не читается.
+
+    /// <summary>
+    /// Измеренная скорость разбора, секунд на документ; <c>null</c> — еще не мерили. Стандарта
+    /// у этого значения нет: оно не настройка, а память о замере, поэтому пустое хранилище —
+    /// честное «не знаю», а не дефолт.
+    /// </summary>
+    public static double? LoadLibrarySecondsPerDoc() =>
+        double.TryParse(_store?.Get(KeyLibrarySecondsPerDoc),
+                        System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out var v) && v > 0
+            ? v : null;
+
+    public static void SaveLibrarySecondsPerDoc(double seconds)
+    {
+        if (seconds <= 0) { _store?.Remove(KeyLibrarySecondsPerDoc); return; }
+        _store?.Set(KeyLibrarySecondsPerDoc,
+                    seconds.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    public static bool LoadLibraryThumbnails() =>
+        bool.TryParse(_store?.Get(KeyLibraryThumbnails), out var on) ? on : LibraryThumbnailsDefault;
+
+    public static void SaveLibraryThumbnails(bool on)
+    {
+        if (on == LibraryThumbnailsDefault) _store?.Remove(KeyLibraryThumbnails);
+        else                                _store?.Set(KeyLibraryThumbnails, on.ToString());
+    }
+
+    public static int LoadLibraryIndexMaxMb() =>
+        int.TryParse(_store?.Get(KeyLibraryIndexMaxMb), out var mb) ? mb : LibraryIndexMaxMbDefault;
+
+    public static void SaveLibraryIndexMaxMb(int mb)
+    {
+        if (mb == LibraryIndexMaxMbDefault) _store?.Remove(KeyLibraryIndexMaxMb);
+        else                                _store?.Set(KeyLibraryIndexMaxMb, mb.ToString());
+    }
+
+    // Вида раздела «Библиотека документов» в настройках НЕТ: вид у раздела один, переключателя
+    // в навбаре нет, и хранить «какой из одного вида открывать» не о чем. Появится второй вид —
+    // сюда вернутся Load/SaveLibraryView по образцу задач.
+
     public static string LoadTasksDefaultStage() => _store?.Get(KeyTasksDefaultStage) ?? TasksDefaultStageDefault;
 
     public static void SaveTasksDefaultStage(string stage)
@@ -1414,6 +1485,10 @@ public static class AppSettings
     private const string KeyIngressMode      = "integrations.ingress.mode";
     private const string KeyIngressPort      = "integrations.ingress.port";
     private const string KeyTasksView        = "tasksView";
+    private const string KeyLibrarySidebarOnlyInSection  = "librarySidebarOnlyInSection";
+    private const string KeyLibrarySecondsPerDoc         = "librarySecondsPerDoc";
+    private const string KeyLibraryThumbnails            = "libraryThumbnails";
+    private const string KeyLibraryIndexMaxMb            = "libraryIndexMaxMb";
     private const string KeyCalendarView     = "calendarView";
     private const string KeyCalendarDaysInWeek        = "calendarDaysInWeek";
     private const string KeyCalendarDayStart          = "calendarDayStartMin";

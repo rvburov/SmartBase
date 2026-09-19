@@ -1358,6 +1358,7 @@ public partial class ConstructorRepository(AppDbContext db)
                 IsSystem = f.IsSystem, IsRequired = f.IsRequired,
                 IsTaskExec = f.IsTaskExec, IsTaskAssigner = f.IsTaskAssigner, IsTaskStatus = f.IsTaskStatus,
                 IsDescription = f.IsDescription,
+                IsDocFile = f.IsDocFile, IsDocType = f.IsDocType,
             });
         }
         db.SaveChanges();
@@ -1983,6 +1984,7 @@ public partial class ConstructorRepository(AppDbContext db)
                 IsSystem = f.IsSystem, IsRequired = f.IsRequired,
                 IsTaskExec = f.IsTaskExec, IsTaskAssigner = f.IsTaskAssigner, IsTaskStatus = f.IsTaskStatus,
                 IsDescription = f.IsDescription,
+                IsDocFile = f.IsDocFile, IsDocType = f.IsDocType,
             };
             db.DbFields.Add(nf);
             db.SaveChanges();
@@ -2418,8 +2420,8 @@ public partial class ConstructorRepository(AppDbContext db)
 
         // 2) Поля (Position копируем дословно — по нему строим карту old→new).
         Exec(conn, tx, $@"
-            INSERT INTO main.db_fields (CollectionId, Name, FieldType, ConfigJson, Position, IsCalStart, IsCalEnd, IsSystem, IsRequired, IsTaskExec, IsTaskAssigner, IsTaskStatus, IsDescription)
-            SELECT {newColId}, Name, FieldType, ConfigJson, Position, IsCalStart, IsCalEnd, IsSystem, IsRequired, IsTaskExec, IsTaskAssigner, IsTaskStatus, IsDescription
+            INSERT INTO main.db_fields (CollectionId, Name, FieldType, ConfigJson, Position, IsCalStart, IsCalEnd, IsSystem, IsRequired, IsTaskExec, IsTaskAssigner, IsTaskStatus, IsDescription, IsDocFile, IsDocType)
+            SELECT {newColId}, Name, FieldType, ConfigJson, Position, IsCalStart, IsCalEnd, IsSystem, IsRequired, IsTaskExec, IsTaskAssigner, IsTaskStatus, IsDescription, IsDocFile, IsDocType
             FROM src.db_fields WHERE CollectionId = {srcCollectionId} ORDER BY Id");
 
         Exec(conn, tx, "DROP TABLE IF EXISTS temp._move_fmap");
@@ -2627,6 +2629,7 @@ public partial class ConstructorRepository(AppDbContext db)
               IsSystem = f.IsSystem, IsRequired = f.IsRequired,
               IsTaskExec = f.IsTaskExec, IsTaskAssigner = f.IsTaskAssigner, IsTaskStatus = f.IsTaskStatus,
               IsDescription = f.IsDescription,
+              IsDocFile = f.IsDocFile, IsDocType = f.IsDocType,
           })
           .ToList();
 
@@ -2654,6 +2657,7 @@ public partial class ConstructorRepository(AppDbContext db)
             IsRequired   = field.IsRequired,
             IsTaskExec   = field.IsTaskExec,   IsTaskAssigner = field.IsTaskAssigner,
             IsTaskStatus = field.IsTaskStatus, IsDescription  = field.IsDescription,
+            IsDocFile    = field.IsDocFile,    IsDocType      = field.IsDocType,
         };
         db.DbFields.Add(entity);
         Log("create", "field", field.Name, CollectionNameOf(field.CollectionId));
@@ -2702,6 +2706,8 @@ public partial class ConstructorRepository(AppDbContext db)
         entity.IsTaskAssigner = field.IsTaskAssigner;
         entity.IsTaskStatus   = field.IsTaskStatus;
         entity.IsDescription  = field.IsDescription;
+        entity.IsDocFile      = field.IsDocFile;
+        entity.IsDocType      = field.IsDocType;
         // Смена типа рвет привязку к разделу так же, как удаление столбца: раздел физически не
         // сможет читать данные (статус без списка статусов, срок без даты). Флаг, оставшийся на
         // несовместимом типе, — роль-призрак: данные в раздел не идут, а плашка «привязано к
@@ -3117,6 +3123,7 @@ public partial class ConstructorRepository(AppDbContext db)
             IsRequired   = false,
             IsTaskExec   = false, IsTaskAssigner = false, IsTaskStatus = false,
             IsDescription = false,
+            IsDocFile    = false, IsDocType = false,
         };
         db.DbFields.Add(copy);
         db.SaveChanges();

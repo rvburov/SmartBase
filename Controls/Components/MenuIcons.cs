@@ -43,6 +43,7 @@ public static class MenuIcons
     private static Geometry ClipboardCopy  => Icon("IconClipboardCopy");
     private static Geometry ClipboardPaste => Icon("IconClipboardPaste");
     private static Geometry Eraser         => Icon("IconEraser");
+    private static Geometry BookOpen       => Icon("IconBookOpen");
 
     private static SolidColorBrush Red => new(Color.Parse("#FF3B30"));
 
@@ -208,6 +209,13 @@ public static class MenuIcons
 
     // Заголовок пункта «Отображение свойств исполнителя» (раздел задач): та же иконка.
     public static Control UserFieldsHeader() => Header(CheckCheck, "Отображение свойств исполнителя");
+
+    // Заголовок пункта «Отображение свойств файла» (библиотека документов): та же иконка.
+    public static Control FileFieldsHeader() => Header(CheckCheck, "Отображение свойств файла");
+
+    // Заголовок пункта «Прочитать документы» (библиотека документов): раскрытая книга — та же
+    // иконка, что у действия «Прочитать документ» в карточке ленты.
+    public static Control ReadDocumentsHeader() => Header(BookOpen, "Прочитать документы");
 
     // Заголовок пункта «Создать запись»: иконка plus + стандартный текст.
     public static Control CreateRecordHeader() => Header(Plus, "Создать запись");
