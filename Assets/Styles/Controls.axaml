@@ -450,6 +450,104 @@
         <Setter Property="Cursor"     Value="Arrow" />
     </Style>
 
+    <!-- ===== Корешки листов книги Excel ===== -->
+    <!-- Не переключатель режимов, а корешки книги, и потому устроены иначе: полоса прижата к
+         краям блока без единого поля, листы отбиты друг от друга короткими линиями, а открытый
+         лист — белый прямоугольник во всю высоту полосы. Так видно, какой лист открыт, даже
+         когда подписей больше, чем влезает в ширину.
+
+         Сеттеры живут здесь по тому же правилу, что у Border.modeseg: локальное значение в
+         разметке перебивает стиль, и состояние :checked до кнопки бы не дошло. -->
+    <Style Selector="Border.sheettabs">
+        <Setter Property="Background"      Value="{StaticResource BrushSecondaryBg}" />
+        <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
+        <Setter Property="BorderThickness" Value="{DynamicResource BorderLineBottom}" />
+    </Style>
+    <!-- Отметка открытого листа — скругленная плашка с отступом от краев полосы, а не
+         прямоугольник во всю ее высоту: полоса остается сплошной, а выделено в ней имя листа.
+         Поля берет на себя КНОПКА (Margin), а не подача содержимого: скругление и заливка живут
+         в подаче, и отступ пришлось бы вычитать из них же. -->
+    <Style Selector="ToggleButton.sheettab">
+        <Setter Property="Background"                 Value="Transparent" />
+        <Setter Property="Foreground"                 Value="{StaticResource BrushSecondaryText}" />
+        <Setter Property="BorderThickness"            Value="0" />
+        <Setter Property="CornerRadius"               Value="{StaticResource RadiusSmall}" />
+        <Setter Property="Margin"                     Value="3" />
+        <Setter Property="Padding"                    Value="10,0" />
+        <Setter Property="MinHeight"                  Value="22" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment"   Value="Center" />
+        <Setter Property="Cursor"                     Value="Hand" />
+    </Style>
+    <Style Selector="ToggleButton.sheettab /template/ ContentPresenter">
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="ToggleButton.sheettab:pointerover">
+        <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
+    </Style>
+    <Style Selector="ToggleButton.sheettab:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
+    </Style>
+    <Style Selector="ToggleButton.sheettab:pressed /template/ ContentPresenter">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
+    </Style>
+    <Style Selector="ToggleButton.sheettab:checked /template/ ContentPresenter">
+        <Setter Property="Background" Value="{StaticResource BrushBg}" />
+        <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
+    </Style>
+    <Style Selector="ToggleButton.sheettab:checked">
+        <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
+        <Setter Property="FontWeight" Value="{StaticResource FontWeightBold}" />
+    </Style>
+    <Style Selector="ToggleButton.sheettab:checked:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="{StaticResource BrushBg}" />
+        <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
+    </Style>
+    <Style Selector="ToggleButton.sheettab:checked:pressed /template/ ContentPresenter">
+        <Setter Property="Background" Value="{StaticResource BrushBg}" />
+        <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
+    </Style>
+    <!-- Линия между листами короче полосы: во всю высоту она резала бы полосу на клетки, а
+         разделить нужно подписи. -->
+    <Style Selector="Border.sheetsplit">
+        <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
+        <Setter Property="BorderThickness" Value="{DynamicResource BorderLineLeft}" />
+        <Setter Property="Margin"          Value="0,7" />
+    </Style>
+    <!-- Стрелки листов. На краю книги гаснут, но не исчезают: иначе полоса дергалась бы в
+         ширине от листа к листу (то же правило, что у погашенного режима выше). -->
+    <Style Selector="Button.sheetnav">
+        <Setter Property="Background"                 Value="Transparent" />
+        <Setter Property="Foreground"                 Value="{StaticResource BrushSecondaryText}" />
+        <Setter Property="BorderThickness"            Value="0" />
+        <Setter Property="CornerRadius"               Value="0" />
+        <Setter Property="Padding"                    Value="0" />
+        <Setter Property="Width"                      Value="26" />
+        <Setter Property="MinHeight"                  Value="28" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment"   Value="Center" />
+        <Setter Property="Cursor"                     Value="Hand" />
+    </Style>
+    <Style Selector="Button.sheetnav /template/ ContentPresenter">
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="Button.sheetnav:pointerover">
+        <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
+    </Style>
+    <Style Selector="Button.sheetnav:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="Button.sheetnav:pressed /template/ ContentPresenter">
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="Button.sheetnav:disabled">
+        <Setter Property="Foreground" Value="{StaticResource BrushSecondaryText}" />
+        <Setter Property="Opacity"    Value="0.35" />
+        <Setter Property="Cursor"     Value="Arrow" />
+    </Style>
+
     <!-- Кнопка-выпадашка навбара («Тип документа» в библиотеке документов). Выглядит и ведет
          себя как ComboBox — те же высота, рамка, внутренние отступы и то же правило состояний:
          синеет ТОЛЬКО рамка, фон и текст не меняются. Отличие одно: содержимое ей рисует общий

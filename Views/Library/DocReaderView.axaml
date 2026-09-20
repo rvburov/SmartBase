@@ -213,11 +213,51 @@
                   IsVisible="False"
                   RowDefinitions="Auto,Auto,*,Auto"
                   ColumnDefinitions="*,Auto">
+                <!-- Корешки листов. Полоса идет во всю ширину блока и без полей: она — край
+                     книги, а не плашка на нем.
+
+                     Листов в книге бывает два десятка, и в ширину панели они не помещаются,
+                     поэтому подписи уезжают под стрелки. Стрелки листают книгу, а не двигают
+                     полосу: человеку нужен следующий лист, а не следующая подпись; открытый
+                     лист полоса подвозит к глазам сама. -->
                 <Border Grid.Row="0" Grid.ColumnSpan="2" x:Name="SheetTabsBox"
-                        Classes="modeseg"
-                        HorizontalAlignment="Left"
-                        Margin="16,12,16,10">
-                    <StackPanel x:Name="SheetTabs" Orientation="Horizontal" Spacing="2" />
+                        Classes="sheettabs">
+                    <Grid ColumnDefinitions="Auto,Auto,*">
+                        <StackPanel Grid.Column="0" Orientation="Horizontal">
+                            <Button x:Name="SheetPrevBtn" Classes="sheetnav"
+                                    ToolTip.Tip="Предыдущий лист">
+                                <Viewbox Width="{StaticResource IconSizeSmall}"
+                                         Height="{StaticResource IconSizeSmall}">
+                                    <Canvas Width="24" Height="24">
+                                        <Path Data="{StaticResource IconChevronLeft}"
+                                              Stroke="{Binding $parent[Button].Foreground}"
+                                              StrokeThickness="{StaticResource IconStrokeSmallBold}"
+                                              StrokeLineCap="Round" StrokeJoin="Round" />
+                                    </Canvas>
+                                </Viewbox>
+                            </Button>
+                            <Button x:Name="SheetNextBtn" Classes="sheetnav"
+                                    ToolTip.Tip="Следующий лист">
+                                <Viewbox Width="{StaticResource IconSizeSmall}"
+                                         Height="{StaticResource IconSizeSmall}">
+                                    <Canvas Width="24" Height="24">
+                                        <Path Data="{StaticResource IconChevronRight}"
+                                              Stroke="{Binding $parent[Button].Foreground}"
+                                              StrokeThickness="{StaticResource IconStrokeSmallBold}"
+                                              StrokeLineCap="Round" StrokeJoin="Round" />
+                                    </Canvas>
+                                </Viewbox>
+                            </Button>
+                        </StackPanel>
+
+                        <Border Grid.Column="1" Classes="sheetsplit" />
+
+                        <ScrollViewer Grid.Column="2" x:Name="SheetTabsScroll"
+                                      HorizontalScrollBarVisibility="Hidden"
+                                      VerticalScrollBarVisibility="Disabled">
+                            <StackPanel x:Name="SheetTabs" Orientation="Horizontal" />
+                        </ScrollViewer>
+                    </Grid>
                 </Border>
 
                 <!-- Отступов у таблицы нет вовсе, и это не небрежность: лист занимает блок

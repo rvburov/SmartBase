@@ -154,6 +154,67 @@ public sealed class DocSheetSourceTests : IDisposable
         return path;
     }
 
+    /// <summary>
+    /// Книга про ОФОРМЛЕНИЕ: заливка, шрифт с цветом и размером, рамки, своя палитра книги и
+    /// встроенный формат числа.
+    /// </summary>
+    private string WritePaintBook()
+    {
+        var path = Path.Combine(_dir, "paint.xlsx");
+        using var doc = SpreadsheetDocument.Create(path, SpreadsheetDocumentType.Workbook);
+
+        var book      = doc.AddWorkbookPart();
+        book.Workbook = new Workbook();
+
+        // Своя палитра книги: под номером 10 в ней серый, а в стандартной — ярко-красный.
+        var own = new IndexedColors();
+        foreach (var rgb in new[] { "FF000000", "FFFFFFFF", "FFFF0000", "FF00FF00", "FF0000FF",
+                                    "FFFFFF00", "FFFF00FF", "FF00FFFF", "FF000000", "FFFFFFFF",
+                                    "FFAAAAAA" })
+            own.Append(new RgbColor { Rgb = rgb });
+
+        var stylesPart = book.AddNewPart<WorkbookStylesPart>();
+        stylesPart.Stylesheet = new Stylesheet(
+            new Fonts(
+                new Font(new FontSize { Val = 11 }),
+                new Font(new Bold(), new FontSize { Val = 14 }, new Color { Rgb = "FF0000FF" })),
+            new Fills(
+                new Fill(new PatternFill { PatternType = PatternValues.None }),
+                new Fill(new PatternFill { PatternType = PatternValues.Gray125 }),
+                new Fill(new PatternFill(new ForegroundColor { Rgb = "FFEEEEEE" })
+                    { PatternType = PatternValues.Solid })),
+            new Borders(
+                new Border(new LeftBorder(), new RightBorder(), new TopBorder(), new BottomBorder()),
+                new Border(
+                    new LeftBorder(new Color { Indexed = 10 }) { Style = BorderStyleValues.Thin },
+                    new RightBorder(),
+                    new TopBorder(),
+                    new BottomBorder(new Color { Rgb = "FF333333" }) { Style = BorderStyleValues.Medium })),
+            new CellStyleFormats(new CellFormat()),
+            new CellFormats(
+                new CellFormat(),
+                new CellFormat { FontId = 1, FillId = 2, BorderId = 1 },
+                new CellFormat { NumberFormatId = 4, ApplyNumberFormat = true }),
+            new DocumentFormat.OpenXml.Spreadsheet.Colors(own));
+        stylesPart.Stylesheet.Save();
+
+        var part = book.AddNewPart<WorksheetPart>();
+        part.Worksheet = new Worksheet(new SheetData(
+            new Row(
+                new Cell { CellReference = "A1", StyleIndex = 1,
+                           DataType = CellValues.String, CellValue = new CellValue("Шапка") },
+                new Cell { CellReference = "B1", StyleIndex = 2, CellValue = new CellValue("30772.48") },
+                new Cell { CellReference = "C1",
+                           DataType = CellValues.String, CellValue = new CellValue("Простая") })
+                { RowIndex = 1 }));
+        part.Worksheet.Save();
+
+        book.Workbook.AppendChild(new Sheets(
+            new Sheet { Id = book.GetIdOfPart(part), SheetId = 1, Name = "Лист" }));
+        book.Workbook.Save();
+        return path;
+    }
+
     // ── Листы и ячейки ────────────────────────────────────────────────────────
 
     [Fact]
@@ -209,6 +270,137 @@ public sealed class DocSheetSourceTests : IDisposable
 
         // В первой строке ровно одна показываемая ячейка — головная.
         Assert.Single(sheet.Rows[0].Cells);
+    }
+
+    /// <summary>
+    /// Про объединение знает и СТРОКА, а не только головная ячейка. Знать обязана именно она:
+    /// линии сетки ведет строка, и только она может не нарисовать линию там, где клетки слиты в
+    /// одну. Без этого объединение видно насквозь — текст идет через две клетки, а между ними
+    /// стоит линия, которой в книге нет.
+    /// </summary>
+    [Fact]
+    public void A_merge_is_known_to_the_row_it_crosses()
+    {
+        var sheet = DocSheetSource.Open(WriteBook())[0];
+        var merge = Assert.Single(sheet.Rows[0].Merges);
+
+        Assert.Equal(0, merge.From);
+        Assert.Equal(2, merge.To);
+        Assert.True(merge.Head);
+        Assert.False(merge.Open);
+        Assert.Empty(sheet.Rows[1].Merges);
+    }
+
+    /// <summary>
+    /// Линия нужна по КРАЯМ объединения и не нужна внутри. Ошибись на единицу — и либо линия
+    /// перечеркнет слитые клетки, либо пропадет там, где соседняя колонка начинается.
+    /// </summary>
+    [Fact]
+    public void A_merge_swallows_only_the_boundaries_inside_it()
+    {
+        var merge = new DocMerge(1, 3);
+
+        Assert.False(merge.Swallows(1));   // левый край — линия на месте
+        Assert.True(merge.Swallows(2));
+        Assert.True(merge.Swallows(3));
+        Assert.False(merge.Swallows(4));   // правый край — линия на месте
+    }
+
+    /// <summary>
+    /// Объединение ВНИЗ проходит через каждую свою строку, а не только через первую: у накрытых
+    /// строк своей ячейки нет, но и нижней линии между ними быть не должно.
+    /// </summary>
+    [Fact]
+    public void A_merge_down_crosses_every_row_it_covers()
+    {
+        var path = Path.Combine(_dir, "down.xlsx");
+        using (var doc = SpreadsheetDocument.Create(path, SpreadsheetDocumentType.Workbook))
+        {
+            var book      = doc.AddWorkbookPart();
+            book.Workbook = new Workbook();
+
+            var stylesPart = book.AddNewPart<WorkbookStylesPart>();
+            stylesPart.Stylesheet = new Stylesheet(
+                new Fonts(new Font()),
+                new Fills(new Fill(new PatternFill { PatternType = PatternValues.None }),
+                          new Fill(new PatternFill { PatternType = PatternValues.Gray125 }),
+                          new Fill(new PatternFill(new ForegroundColor { Rgb = "FFCCDDEE" })
+                              { PatternType = PatternValues.Solid })),
+                new Borders(new Border()),
+                new CellStyleFormats(new CellFormat()),
+                new CellFormats(new CellFormat(), new CellFormat { FillId = 2 }));
+            stylesPart.Stylesheet.Save();
+
+            var part = book.AddNewPart<WorksheetPart>();
+            part.Worksheet = new Worksheet(
+                new SheetData(
+                    new Row(new Cell { CellReference = "A1", StyleIndex = 1,
+                                       DataType = CellValues.String, CellValue = new CellValue("Шапка") })
+                        { RowIndex = 1 },
+                    new Row(new Cell { CellReference = "B2", DataType = CellValues.String,
+                                       CellValue = new CellValue("Строка 2") })
+                        { RowIndex = 2 },
+                    new Row(new Cell { CellReference = "B3", DataType = CellValues.String,
+                                       CellValue = new CellValue("Строка 3") })
+                        { RowIndex = 3 }),
+                new MergeCells(new MergeCell { Reference = "A1:A3" }));
+            part.Worksheet.Save();
+
+            book.Workbook.AppendChild(new Sheets(
+                new Sheet { Id = book.GetIdOfPart(part), SheetId = 1, Name = "Лист" }));
+            book.Workbook.Save();
+        }
+
+        var sheet = DocSheetSource.Open(path)[0];
+        Assert.Equal(3, sheet.Rows.Count);
+
+        var crossings = sheet.Rows.Select(r => Assert.Single(r.Merges)).ToList();
+        Assert.Equal([true, false, false], crossings.Select(m => m.Head));
+        Assert.Equal([true, true, false],  crossings.Select(m => m.Open));
+        Assert.All(crossings, m => Assert.Equal((0, 0), (m.From, m.To)));
+
+        // Оформление головной ячейки достается и накрытым строкам — иначе заливка объединения
+        // обрывалась бы на первой строке.
+        Assert.All(crossings, m => Assert.Equal(0xFFCCDDEEu, sheet.Paints[m.Paint].Fill));
+    }
+
+    /// <summary>
+    /// Объединение вниз ТЯНЕТ лист за собой. Строки под ним своих ячеек не имеют — Excel хранит
+    /// их пустыми, — и оборвись лист на последней заполненной строке, слитый кусок оборвался бы
+    /// вместе с ним: вместо клетки на пять строк вышла бы клетка на одну.
+    /// </summary>
+    [Fact]
+    public void A_merge_down_stretches_the_sheet_past_the_last_filled_row()
+    {
+        var path = Path.Combine(_dir, "stretch.xlsx");
+        using (var doc = SpreadsheetDocument.Create(path, SpreadsheetDocumentType.Workbook))
+        {
+            var book      = doc.AddWorkbookPart();
+            book.Workbook = new Workbook();
+
+            var part = book.AddNewPart<WorksheetPart>();
+            part.Worksheet = new Worksheet(
+                new SheetData(
+                    new Row(new Cell { CellReference = "A1", DataType = CellValues.String,
+                                       CellValue = new CellValue("Мультисписок") })
+                        { RowIndex = 1 }),
+                new MergeCells(new MergeCell { Reference = "A1:B5" }));
+            part.Worksheet.Save();
+
+            book.Workbook.AppendChild(new Sheets(
+                new Sheet { Id = book.GetIdOfPart(part), SheetId = 1, Name = "Лист" }));
+            book.Workbook.Save();
+        }
+
+        var sheet = DocSheetSource.Open(path)[0];
+
+        Assert.Equal(5, sheet.Rows.Count);
+        Assert.All(sheet.Rows, r => Assert.Single(r.Merges));
+        Assert.Equal([true, true, true, true, false], sheet.Rows.Select(r => r.Merges[0].Open));
+
+        // Текст остался у одной головной ячейки — накрытые своих не завели.
+        Assert.Single(sheet.Rows[0].Cells);
+        Assert.All(sheet.Rows.Skip(1), r => Assert.Empty(r.Cells));
     }
 
     // ── Числа и даты ──────────────────────────────────────────────────────────
@@ -374,6 +566,78 @@ public sealed class DocSheetSourceTests : IDisposable
         }
 
         Assert.Equal("Первая\nВторая", DocSheetSource.Open(path)[0].Rows[0].Cells[0].Text);
+    }
+
+    // ── Оформление ────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Cell_fill_comes_from_the_book()
+    {
+        var sheet = DocSheetSource.Open(WritePaintBook())[0];
+        var paint = sheet.PaintOf(sheet.Rows[0].Cells[0]);
+
+        Assert.Equal(0xFFEEEEEEu, paint.Fill);
+    }
+
+    [Fact]
+    public void Font_of_the_cell_comes_from_the_book()
+    {
+        var sheet = DocSheetSource.Open(WritePaintBook())[0];
+        var paint = sheet.PaintOf(sheet.Rows[0].Cells[0]);
+
+        Assert.True(paint.Bold);
+        Assert.False(paint.Italic);
+        Assert.Equal(14, paint.Size, 1);
+        Assert.Equal(0xFF0000FFu, paint.Ink);
+        Assert.Equal(11, sheet.FontSize, 1);
+    }
+
+    /// <summary>
+    /// Цвет рамки берется из палитры КНИГИ, а не из стандартной. Книга вправе переопределить
+    /// палитру своей, и это не редкость: у книги из Numbers номер 10 — серый, а в стандартной
+    /// палитре под ним ярко-красный. Прочитай мы только стандартную — аккуратная серая таблица
+    /// вышла бы в красную полоску, причем молча.
+    /// </summary>
+    [Fact]
+    public void Border_color_comes_from_the_palette_of_this_book()
+    {
+        var sheet = DocSheetSource.Open(WritePaintBook())[0];
+        var paint = sheet.PaintOf(sheet.Rows[0].Cells[0]);
+
+        Assert.True(paint.Framed);
+        Assert.Equal(0xFFAAAAAAu, paint.Left.Color);
+        Assert.Equal(1, paint.Left.Weight);
+        Assert.Equal(0xFF333333u, paint.Bottom.Color);
+        Assert.Equal(2, paint.Bottom.Weight);
+        Assert.False(paint.Right.Visible);
+        Assert.False(paint.Top.Visible);
+    }
+
+    [Fact]
+    public void Cell_without_a_style_has_no_paint_of_its_own()
+    {
+        var sheet = DocSheetSource.Open(WritePaintBook())[0];
+        var paint = sheet.PaintOf(sheet.Rows[0].Cells.First(c => c.Text == "Простая"));
+
+        Assert.Equal(0u, paint.Fill);
+        Assert.Equal(0u, paint.Ink);
+        Assert.False(paint.Bold);
+        Assert.False(paint.Framed);
+    }
+
+    /// <summary>
+    /// Встроенный формат числа — тот, записи которого в файле нет, только номер. Без него
+    /// денежная колонка показалась бы голым числом без разрядов.
+    /// </summary>
+    [Fact]
+    public void Builtin_number_format_is_applied()
+    {
+        var sheet = DocSheetSource.Open(WritePaintBook())[0];
+        var text  = sheet.Rows[0].Cells.First(c => c.Column == 1).Text;
+
+        var group = CultureInfo.CurrentCulture.NumberFormat.NumberGroupSeparator;
+        var point = CultureInfo.CurrentCulture.NumberFormat.NumberDecimalSeparator;
+        Assert.Equal($"30{group}772{point}48", text);
     }
 
     // ── Отказы ────────────────────────────────────────────────────────────────

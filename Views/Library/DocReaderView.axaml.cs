@@ -70,6 +70,12 @@ public partial class DocReaderView : UserControl
     private int _sheetIndex;
 
     /// <summary>
+    /// Корешки листов по порядку книги. Хранятся отдельно от детей полосы: между корешками
+    /// стоят разделительные линии, и «третий ребенок» давно не означает «третий лист».
+    /// </summary>
+    private readonly List<ToggleButton> _sheetTabs = [];
+
+    /// <summary>
     /// Строки показанного листа — по ним рисует список таблицы. Собрание наблюдаемое: пустые
     /// строки-заполнители дописываются в него ПОСЛЕ показа, когда становится известен размер
     /// блока, и переприсваивать источник ради этого нельзя — прокрутка вернулась бы в начало.
@@ -100,6 +106,18 @@ public partial class DocReaderView : UserControl
 
     /// <summary>Высота строки-заполнителя в пикселях — ими лист добивается до нижнего края.</summary>
     private double _fillHeight = 24;
+
+    /// <summary>Оформления открытого листа — ячейка ссылается сюда своим номером.</summary>
+    private IReadOnlyList<DocPaint> _paints = [];
+
+    /// <summary>Размер основного шрифта книги в пунктах: от него считаются размеры в ячейках.</summary>
+    private double _bookFont = DocSheetSource.DefaultFontSize;
+
+    /// <summary>
+    /// Начертания шрифта для ячеек. Кеш на лист: создавать шрифт на каждую ячейку — самая
+    /// дорогая ошибка, какую можно сделать в отрисовке таблицы, а начертаний в книге единицы.
+    /// </summary>
+    private readonly Dictionary<(bool Bold, bool Italic), Typeface> _faces = [];
 
     /// <summary>
     /// На сколько таблица уехала вбок. Полосы с буквами и номерами стоят на месте, как в самом
@@ -201,6 +219,9 @@ public partial class DocReaderView : UserControl
         PrevBtn.Click  += (_, _) => Step(-1);
         NextBtn.Click  += (_, _) => Step(+1);
 
+        SheetPrevBtn.Click += (_, _) => StepSheet(-1);
+        SheetNextBtn.Click += (_, _) => StepSheet(+1);
+
         FindBox.TextChanged += (_, _) => { _findDebounce.Stop(); _findDebounce.Start(); };
         FindBox.KeyDown     += (_, e) =>
         {
@@ -290,6 +311,8 @@ public partial class DocReaderView : UserControl
         PagesList.ItemsSource = null;
         SheetRows.ItemsSource = null;
         SheetTabs.Children.Clear();
+        _sheetTabs.Clear();
+        UpdateSheetNav();
         DocModeBtn.IsEnabled = false;
         ToolTip.SetTip(DocModeBtn, null);
         UpdateCounter();
@@ -367,8 +390,14 @@ public partial class DocReaderView : UserControl
         LinesList.IsVisible  = !empty && _mode == ReadMode.Text;
         PagesList.IsVisible  = !empty && _mode == ReadMode.Document && !ShowsSheet;
         SheetHost.IsVisible  = !empty && _mode == ReadMode.Document && ShowsSheet;
-        SheetBar.IsVisible   = SheetBar.IsVisible  && SheetHost.IsVisible;
-        SheetHBar.IsVisible  = SheetHBar.IsVisible && SheetHost.IsVisible;
+
+        // Полоса прокрутки принадлежит своему списку и вместе с ним и прячется. Иначе у листа
+        // окажется две полосы: своя и оставшаяся от текста — они в разных колонках окна.
+        // Обратно полосу вернет сама связка, как только список встанет на место.
+        LinesBar.IsVisible   = LinesBar.IsVisible   && LinesList.IsVisible;
+        PagesBar.IsVisible   = PagesBar.IsVisible   && PagesList.IsVisible;
+        SheetBar.IsVisible   = SheetBar.IsVisible   && SheetHost.IsVisible;
+        SheetHBar.IsVisible  = SheetHBar.IsVisible  && SheetHost.IsVisible;
     }
 
     // ── Режим «как в документе» ───────────────────────────────────────────────
@@ -443,52 +472,92 @@ public partial class DocReaderView : UserControl
     }
 
     /// <summary>
-    /// Вкладки листов. Одна вкладка — не орган управления, а подпись, поэтому у книги с
-    /// единственным листом полоса вкладок не показывается вовсе.
+    /// Корешки листов. Полоса стоит всегда, даже у книги с единственным листом: имя листа —
+    /// часть документа, и пропадать оттого, что лист один, оно не должно.
     /// </summary>
     private void BuildSheetTabs()
     {
         SheetTabs.Children.Clear();
-        SheetTabsBox.IsVisible = _sheets.Count > 1;
-        if (_sheets.Count <= 1) return;
+        _sheetTabs.Clear();
 
         for (var i = 0; i < _sheets.Count; i++)
         {
+            if (i > 0)
+            {
+                var split = new Border();
+                split.Classes.Add("sheetsplit");
+                SheetTabs.Children.Add(split);
+            }
+
             var index = i;
             var tab   = new ToggleButton { Content = _sheets[i].Name, IsChecked = i == 0 };
-            tab.Classes.Add("modeseg");
+            tab.Classes.Add("sheettab");
             tab.IsCheckedChanged += (_, _) =>
             {
                 if (tab.IsChecked != true) { if (_sheetIndex == index) tab.IsChecked = true; return; }
                 ShowSheet(index);
             };
             SheetTabs.Children.Add(tab);
+            _sheetTabs.Add(tab);
         }
+
+        UpdateSheetNav();
     }
+
+    /// <summary>Стрелка на краю книги гаснет: листать дальше некуда.</summary>
+    private void UpdateSheetNav()
+    {
+        SheetPrevBtn.IsEnabled = _sheetIndex > 0;
+        SheetNextBtn.IsEnabled = _sheetIndex < _sheets.Count - 1;
+    }
+
+    private void StepSheet(int step)
+    {
+        var next = _sheetIndex + step;
+        if (next >= 0 && next < _sheets.Count) ShowSheet(next);
+    }
+
+    /// <summary>
+    /// Лист уже показывается. Корешок, которому назначили отметку, отвечает тем же вызовом
+    /// <see cref="ShowSheet"/>, и на переходе к совпадению лист собирался бы ДВАЖДЫ за один раз:
+    /// вся раскладка, все строки и вторая выдача источника списку — впустую.
+    /// </summary>
+    private bool _showingSheet;
 
     private void ShowSheet(int index)
     {
-        if (index < 0 || index >= _sheets.Count) return;
+        if (index < 0 || index >= _sheets.Count || _showingSheet) return;
 
-        _sheetIndex = index;
-        for (var i = 0; i < SheetTabs.Children.Count; i++)
-            if (SheetTabs.Children[i] is ToggleButton tab) tab.IsChecked = i == index;
+        _showingSheet = true;
+        try
+        {
+            _sheetIndex = index;
+            for (var i = 0; i < _sheetTabs.Count; i++) _sheetTabs[i].IsChecked = i == index;
+            UpdateSheetNav();
 
-        var sheet   = _sheets[index];
-        var heights = LayoutSheet(sheet);
+            // Открытый лист полоса подвозит к глазам сама: листать книгу стрелкой и не видеть, на
+            // каком ты листе, — то же самое, что листать вслепую.
+            if (index < _sheetTabs.Count) _sheetTabs[index].BringIntoView();
 
-        _sheetRows.Clear();
-        for (var i = 0; i < sheet.Rows.Count; i++) _sheetRows.Add(new SheetRowVm(sheet.Rows[i], heights[i]));
-        SheetRows.ItemsSource = _sheetRows;
+            var sheet   = _sheets[index];
+            var heights = LayoutSheet(sheet);
+            var spans   = SpansOf(sheet, heights);
 
-        SheetHead.Child?.InvalidateMeasure();
-        SheetHead.Child?.InvalidateVisual();
+            _sheetRows.Clear();
+            for (var i = 0; i < sheet.Rows.Count; i++)
+                _sheetRows.Add(new SheetRowVm(sheet.Rows[i], heights[i], spans[i]));
+            SheetRows.ItemsSource = _sheetRows;
 
-        // Размер блока в эту минуту еще не известен — заполнитель досчитается, когда список
-        // встанет на место и сообщит свои размеры.
-        Dispatcher.UIThread.Post(FillSheet, DispatcherPriority.Background);
+            SheetHead.Child?.InvalidateMeasure();
+            SheetHead.Child?.InvalidateVisual();
 
-        ApplySheetHits();
+            // Размер блока в эту минуту еще не известен — заполнитель досчитается, когда список
+            // встанет на место и сообщит свои размеры.
+            Dispatcher.UIThread.Post(FillSheet, DispatcherPriority.Background);
+
+            ApplySheetHits();
+        }
+        finally { _showingSheet = false; }
     }
 
     /// <summary>
@@ -560,7 +629,12 @@ public partial class DocReaderView : UserControl
     private double[] LayoutSheet(DocSheet sheet)
     {
         var font = Size("FontSizeMedium", 14);
-        var face = new Typeface(TextElement.GetFontFamily(this));
+
+        _faces.Clear();
+        _paints   = sheet.Paints;
+        _bookFont = sheet.FontSize;
+
+        var face = Face(false, false);
 
         // Ширина колонки в книге задана В ЗНАКАХ, и знак тут — цифра «0» шрифта. Меряем ее у
         // НАШЕГО шрифта, а не берем на глаз: обещание «в колонку влезает 16 знаков» должно
@@ -597,9 +671,64 @@ public partial class DocReaderView : UserControl
         {
             var row = sheet.Rows[i];
             heights[i] = Math.Max(Math.Max(line + 4, Math.Round(sheet.HeightOf(row) * perPt)),
-                                  WrapHeight(row, face, font));
+                                  WrapHeight(row, font));
         }
         return heights;
+    }
+
+    /// <summary>
+    /// Разложить объединения по строкам В ПИКСЕЛЯХ: где начинается объединение относительно
+    /// каждой своей строки и какой оно высоты целиком.
+    ///
+    /// Без этого текст объединения вниз пришлось бы рисовать в первой строке, а в книге он стоит
+    /// посередине всего слитого куска. Зная полосу, текст рисует КАЖДАЯ строка объединения — свою
+    /// часть, подрезанную по своим краям. Так он и не вылезает за строку списка (виртуализация
+    /// этого не простила бы), и стоит там, где стоит в книге.
+    /// </summary>
+    private static List<SheetSpan>[] SpansOf(DocSheet sheet, double[] heights)
+    {
+        var spans = new List<SheetSpan>[sheet.Rows.Count];
+        for (var i = 0; i < spans.Length; i++) spans[i] = [];
+
+        for (var i = 0; i < sheet.Rows.Count; i++)
+        foreach (var merge in sheet.Rows[i].Merges)
+        {
+            if (!merge.Head) continue;
+
+            // Докуда объединение доходит: идем вниз, пока строки говорят «продолжается».
+            var last  = i;
+            var total = heights[i];
+            while (last < sheet.Rows.Count - 1 && Crossing(sheet.Rows[last], merge)?.Open == true)
+            {
+                last++;
+                total += heights[last];
+            }
+
+            var head   = Head(sheet.Rows[i], merge);
+            var before = 0.0;
+            for (var j = i; j <= last; j++)
+            {
+                spans[j].Add(new SheetSpan(merge, head, before, total));
+                before += heights[j];
+            }
+        }
+        return spans;
+    }
+
+    /// <summary>То же объединение, каким его видит строка, — по краям колонок.</summary>
+    private static DocMerge? Crossing(DocSheetRow row, DocMerge merge)
+    {
+        foreach (var m in row.Merges)
+            if (m.From == merge.From && m.To == merge.To) return m;
+        return null;
+    }
+
+    /// <summary>Головная ячейка объединения; ее может и не быть — слитый кусок бывает пустым.</summary>
+    private static DocCell? Head(DocSheetRow row, DocMerge merge)
+    {
+        foreach (var cell in row.Cells)
+            if (cell.Column == merge.From) return cell;
+        return null;
     }
 
     /// <summary>
@@ -607,7 +736,7 @@ public partial class DocReaderView : UserControl
     /// колонки и шрифт Excel, а у нас свои и то и другое — без этой проверки перенесенный текст
     /// вылез бы за строку и обрезался ровно посередине букв.
     /// </summary>
-    private double WrapHeight(DocSheetRow row, Typeface face, double font)
+    private double WrapHeight(DocSheetRow row, double font)
     {
         var need = 0.0;
         foreach (var cell in row.Cells)
@@ -615,18 +744,60 @@ public partial class DocReaderView : UserControl
             // Считаем только там, где текст заведомо многострочный: мерить каждую ячейку листа
             // на тысячу строк — это тысячи раскладок текста на ровном месте.
             if (!cell.Wrap && !cell.Text.Contains('\n')) continue;
+
+            // Объединение вниз под свой текст строку НЕ растит: у него на текст несколько строк,
+            // и растянуть первую значило бы растянуть весь кусок. Excel их тоже не подгоняет.
+            if (cell.RowSpan > 1) continue;
             if (cell.Column < 0 || cell.Column + 1 >= _columns.Length) continue;
 
+            var paint = PaintOf(cell);
             var left  = _columns[cell.Column];
             var right = _columns[Math.Min(cell.Column + cell.ColumnSpan, _columns.Length - 1)];
 
             var label = new FormattedText(cell.Text, CultureInfo.CurrentCulture,
-                                          FlowDirection.LeftToRight, face, font, Brushes.Black);
+                                          FlowDirection.LeftToRight,
+                                          Face(paint.Bold, paint.Italic), FontOf(paint, font),
+                                          Brushes.Black);
             if (cell.Wrap) label.MaxTextWidth = Math.Max(1, right - left - 8);
             need = Math.Max(need, label.Height + 4);
         }
         return need;
     }
+
+    /// <summary>
+    /// Начертание шрифта для ячейки. Берется из кеша на лист: создавать шрифт на каждую ячейку —
+    /// самая дорогая ошибка, какую можно сделать в отрисовке таблицы, а начертаний в книге
+    /// единицы.
+    ///
+    /// Семейство шрифта из книги НЕ берется намеренно: его может не оказаться в системе, и
+    /// подмена случилась бы молча — а вместе с ней разъехались бы и ширины колонок, они меряются
+    /// нашим шрифтом.
+    /// </summary>
+    private Typeface Face(bool bold, bool italic)
+    {
+        if (_faces.TryGetValue((bold, italic), out var ready)) return ready;
+
+        var face = new Typeface(TextElement.GetFontFamily(this),
+                                italic ? FontStyle.Italic : FontStyle.Normal,
+                                bold   ? FontWeight.Bold  : FontWeight.Normal);
+        _faces[(bold, italic)] = face;
+        return face;
+    }
+
+    /// <summary>Оформление ячейки; у ячейки без своего — пустое, а не чужое.</summary>
+    private DocPaint PaintOf(DocCell cell) => PaintAt(cell.Paint);
+
+    /// <summary>Оформление по его номеру в листе.</summary>
+    private DocPaint PaintAt(int index) =>
+        index >= 0 && index < _paints.Count ? _paints[index] : default;
+
+    /// <summary>
+    /// Размер текста ячейки в пикселях. В книге он записан в ПУНКТАХ относительно ее основного
+    /// шрифта, а у нас свой — поэтому пересчитывается долей, а не подставляется числом: иначе
+    /// при увеличенном тексте приложения книга осталась бы мелкой.
+    /// </summary>
+    private double FontOf(DocPaint paint, double basis) =>
+        paint.Size > 0 && _bookFont > 0 ? Math.Max(6, basis * paint.Size / _bookFont) : basis;
 
     /// <summary>
     /// Таблицу увезли вбок — полосы с буквами и номерами остаются на месте, как в Excel, и их
@@ -914,11 +1085,11 @@ public partial class DocReaderView : UserControl
             // всей книге, и стрелка, упирающаяся в край листа, обманывала бы счетчик.
             if (_current < 0 || _current >= _sheetHits.Count) { RefreshSheetRows(previous); return; }
 
-            var (sheet, row, _) = _sheetHits[_current];
+            var (sheet, _, _) = _sheetHits[_current];
             if (sheet != _sheetIndex) ShowSheet(sheet);
             else RefreshSheetRows(previous);
 
-            if (scroll && row >= 0 && row < _sheetRows.Count) SheetRows.ScrollIntoView(row);
+            if (scroll) ShowSheetHit();
             return;
         }
 
@@ -938,6 +1109,72 @@ public partial class DocReaderView : UserControl
         if (!scroll || _current < 0 || _current >= _hits.Count) return;
         var target = _hits[_current].Line;
         if (target >= 0 && target < _lines.Count) LinesList.ScrollIntoView(target);
+    }
+
+    /// <summary>
+    /// Подвезти текущее совпадение к глазам — и вниз-вверх, и вбок. Подсветить ячейку, до
+    /// которой человеку еще крутить руками, — все равно что ее не найти: в таблице на полсотни
+    /// колонок найденное почти всегда лежит за краем окна.
+    /// </summary>
+    private void ShowSheetHit()
+    {
+        if (_current < 0 || _current >= _sheetHits.Count) return;
+
+        // Двигаемся СЛЕДОМ за раскладкой, а не прямо сейчас. Строки листа в эту минуту только
+        // что назначены списку, и он их еще не разложил: прокрутка к неразложенной строке
+        // заводит контрол в обход обычного порядка, и тот остается на экране навсегда — строки
+        // прошлого листа проступали сквозь нынешний. Заодно к этому времени известны и ширины
+        // колонок нового листа, и размах его прокрутки.
+        Dispatcher.UIThread.Post(ShowSheetHitNow, DispatcherPriority.Background);
+    }
+
+    private void ShowSheetHitNow()
+    {
+        if (_current < 0 || _current >= _sheetHits.Count) return;
+        var (sheet, row, _) = _sheetHits[_current];
+        if (sheet != _sheetIndex || row < 0 || row >= _sheetRows.Count) return;
+
+        SheetRows.ScrollIntoView(row);
+        ShowSheetHitSide();
+    }
+
+    /// <summary>Отступ, на который найденная ячейка не доезжает до края окна.</summary>
+    private const double HitEdge = 8;
+
+    private void ShowSheetHitSide()
+    {
+        if (_sheetScroll is not { } scroll) return;
+        if (_current < 0 || _current >= _sheetHits.Count) return;
+
+        var (sheet, row, cell) = _sheetHits[_current];
+        if (sheet != _sheetIndex || row < 0 || row >= _sheetRows.Count) return;
+
+        var cells = _sheetRows[row].Row.Cells;
+        if (cell < 0 || cell >= cells.Count) return;
+
+        var from = cells[cell].Column;
+        var to   = from + Math.Max(1, cells[cell].ColumnSpan);
+        if (from < 0 || from >= _columns.Length - 1) return;
+        to = Math.Min(to, _columns.Length - 1);
+
+        // Левый край окна занят полосой номеров строк: она прибита к месту, и ячейка под ней
+        // не видна, сколько бы формально ни попадала в окно.
+        var window = scroll.Viewport.Width;
+        var usable = window - _gutter;
+        if (usable <= 0) return;
+
+        var x = scroll.Offset.X;
+        if (_columns[from] >= x && _gutter + _columns[to] - x <= window) return;
+
+        // Ячейка шире окна или ушла влево — ставим ее к левому краю; ушла вправо — подтягиваем
+        // ровно настолько, чтобы влезла. Двигать больше нужного нельзя: человек потеряет место,
+        // на котором стоял.
+        var next = _columns[to] - _columns[from] > usable || _columns[from] < x
+                 ? _columns[from] - HitEdge
+                 : _gutter + _columns[to] - window + HitEdge;
+
+        var span = Math.Max(0, scroll.Extent.Width - window);
+        scroll.Offset = scroll.Offset.WithX(Math.Clamp(next, 0, span));
     }
 
     private void Touch(int lineIndex)
@@ -1067,10 +1304,21 @@ public partial class DocReaderView : UserControl
         public void Refresh() => Changed?.Invoke();
     }
 
+    /// <summary>
+    /// Объединение на экране: его место по колонкам, головная ячейка, отступ от верха слитого
+    /// куска до ЭТОЙ строки и полная его высота. Двух последних чисел нет ни в книге, ни в
+    /// строке — они считаются по высотам строк и нужны, чтобы текст встал посередине всего
+    /// куска, а не его первой строки.
+    /// </summary>
+    private readonly record struct SheetSpan(DocMerge Merge, DocCell? Head, double Before, double Total);
+
     /// <summary>Строка листа: сами ячейки, ее высота на экране и совпадения в ней.</summary>
-    private sealed class SheetRowVm(DocSheetRow row, double height)
+    private sealed class SheetRowVm(DocSheetRow row, double height, IReadOnlyList<SheetSpan>? spans = null)
     {
         public DocSheetRow Row { get; } = row;
+
+        /// <summary>Объединения, проходящие через строку, — уже посчитанные в пикселях.</summary>
+        public IReadOnlyList<SheetSpan> Spans { get; } = spans ?? [];
 
         /// <summary>Высота строки в пикселях — своя у каждой, как и в книге.</summary>
         public double Height { get; } = height;
@@ -1127,50 +1375,89 @@ public partial class DocReaderView : UserControl
             var face    = new Typeface(TextElement.GetFontFamily(this));
 
             // Сетка: вертикальная линия на каждой границе колонки и нижняя под строкой. Рисуется
-            // ДО текста — иначе линия перечеркнула бы буквы, вылезшие к самому краю ячейки.
+            // ПЕРВОЙ, под всем остальным: залитая ячейка линий сетки не показывает — ровно как
+            // в самом Excel, где заливка их закрывает.
+            //
+            // Объединенные клетки — это ОДНА клетка, и линии внутри нее не место: именно она и
+            // выдает объединение, которого «как бы нет». Ячейка про это знать не может — она про
+            // свой текст, а линию ведет строка.
+            var merges = row.Row.Merges;
             for (var i = 1; i < columns.Length; i++)
+            {
+                if (Swallowed(merges, i)) continue;
                 context.DrawLine(pen, new Point(gutter + columns[i], 0), new Point(gutter + columns[i], height));
-            context.DrawLine(pen, new Point(0, height - 0.5), new Point(gutter + columns[^1], height - 0.5));
+            }
 
+            Underline(context, pen, merges, columns, gutter, height);
+
+            // Заливка объединения — поверх всей его ширины и на КАЖДОЙ его строке: своей ячейки
+            // у накрытых строк нет, а цвет обязан идти до конца слитого куска.
+            foreach (var span in row.Spans)
+            {
+                var paint = _owner.PaintAt(span.Merge.Paint);
+                if (paint.Fill == 0) continue;
+                if (Box(span.Merge, columns, gutter, height) is not { } whole) continue;
+
+                context.FillRectangle(new SolidColorBrush(Color.FromUInt32(paint.Fill)), whole);
+            }
+
+            // Заливки идут ОТДЕЛЬНЫМ проходом: заливка соседней ячейки не должна накрыть уже
+            // нарисованную рамку — а рисуются ячейки слева направо, и накрыла бы.
             for (var index = 0; index < row.Row.Cells.Count; index++)
             {
-                var cell = row.Row.Cells[index];
-                if (cell.Column < 0 || cell.Column + 1 >= columns.Length) continue;
+                if (Area(row.Row.Cells[index], columns, gutter, height) is not { } area) continue;
 
-                var left  = gutter + columns[cell.Column];
-                var last  = Math.Min(cell.Column + cell.ColumnSpan, columns.Length - 1);
-                var right = gutter + columns[last];
-                if (right - left <= 0) continue;                  // колонка скрыта в книге
-
-                var area = new Rect(left, 0, right - left, height);
+                var paint = _owner.PaintOf(row.Row.Cells[index]);
+                if (paint.Fill != 0) context.FillRectangle(new SolidColorBrush(Color.FromUInt32(paint.Fill)), area);
 
                 var at  = index;
                 var hit = row.Hits.FindIndex(h => h.Cell == at);
-                if (hit >= 0)
-                {
-                    // Заливка ячейки, а не слова: в таблице находят ЗНАЧЕНИЕ, и подсвечивать
-                    // половину числа было бы странно.
-                    var now  = row.Hits[hit].Id == _owner.CurrentHit;
-                    var fill = new SolidColorBrush(((ISolidColorBrush)(now ? accent : plain)).Color,
-                                                   now ? 0.35 : 0.55);
-                    context.FillRectangle(fill, area.Deflate(new Thickness(1)));
-                }
+                if (hit < 0) continue;
 
-                var inner = area.Deflate(new Thickness(4, 2));
-                var label = new FormattedText(cell.Text, CultureInfo.CurrentCulture,
-                                              FlowDirection.LeftToRight, face, font, text);
+                // Заливка ячейки, а не слова: в таблице находят ЗНАЧЕНИЕ, и подсвечивать
+                // половину числа было бы странно.
+                var now   = row.Hits[hit].Id == _owner.CurrentHit;
+                var found = new SolidColorBrush(((ISolidColorBrush)(now ? accent : plain)).Color,
+                                                now ? 0.35 : 0.55);
+                context.FillRectangle(found, area.Deflate(new Thickness(1)));
+            }
 
-                // Перенос по словам — свойство ячейки в книге, а не наша выдумка: у ячейки с
-                // переносом Excel и строку делает выше, и текст в ней ведет по ширине колонки.
-                // Многоточия при этом не ставим: в ячейке с переносом ничего не пропадает, слово
-                // длиннее колонки просто переносится — как и в самой книге.
-                label.Trimming = TextTrimming.None;
-                if (cell.Wrap) label.MaxTextWidth = Math.Max(1, inner.Width);
+            // Слитый кусок рисует себя сам: рамку вокруг всего куска и текст — на своем месте в
+            // нем. Каждая строка объединения рисует СВОЮ полосу этого текста, подрезанную по
+            // своим краям: строка списка не умеет залезать на соседнюю, а подрезанные полосы,
+            // сложенные вместе, дают ровно тот текст, что стоит в книге.
+            foreach (var span in row.Spans)
+            {
+                if (Box(span.Merge, columns, gutter, height) is not { } whole) continue;
 
-                // Текст режется по своей ячейке: длинная подпись не должна залезать на соседнюю
-                // колонку, как она не залезает и в самой книге.
+                var paint = _owner.PaintAt(span.Merge.Paint);
+                if (paint.Framed)
+                    Frame(context, paint with
+                    {
+                        Top    = span.Merge.Head ? paint.Top    : default,
+                        Bottom = span.Merge.Open ? default      : paint.Bottom,
+                    }, whole, text);
+
+                if (span.Head is not { } head) continue;
+
+                // Место текста считается по ВСЕМУ куску, а не по этой строке: отсюда сдвиг
+                // вверх на то, что осталось выше.
+                using (context.PushClip(whole))
+                    Write(context, head, paint, font,
+                          new Rect(whole.X, -span.Before, whole.Width, span.Total));
+            }
+
+            foreach (var cell in row.Row.Cells)
+            {
+                // Слитую ячейку уже нарисовал ее кусок — со своей рамкой и своим местом текста.
+                if (cell.ColumnSpan > 1 || cell.RowSpan > 1) continue;
+                if (Area(cell, columns, gutter, height) is not { } area) continue;
+
+                var paint = _owner.PaintOf(cell);
+                if (paint.Framed) Frame(context, paint, area, text);
+
                 using (context.PushClip(area))
-                    context.DrawText(label, new Point(Across(cell, label, inner), Down(cell, label, inner)));
+                    Write(context, cell, paint, font, area);
             }
 
             // Полоса с номером строки стоит на месте, как в Excel: таблицу увозят вбок, а номера
@@ -1185,6 +1472,128 @@ public partial class DocReaderView : UserControl
                                            face, font * 0.85, muted);
             context.DrawText(number, new Point(box.Right - 6 - number.Width,
                                                Math.Max(0, (height - number.Height) / 2)));
+        }
+
+        /// <summary>
+        /// Написать значение ячейки в отведенном ему месте. Место это — не всегда строка: у
+        /// слитого куска оно на несколько строк вниз, и тогда сюда приходит весь кусок, а
+        /// подрезает написанное вызывающий.
+        /// </summary>
+        private void Write(DrawingContext context, DocCell cell, DocPaint paint, double font, Rect area)
+        {
+            var text = _owner.Brush("BrushPrimaryText", "#1C1C1E");
+            var ink  = cell.Red        ? _owner.Brush("BrushRed", "#FF3B30")
+                     : paint.Ink != 0  ? new SolidColorBrush(Color.FromUInt32(paint.Ink))
+                                       : text;
+
+            var inner = area.Deflate(new Thickness(4, 2));
+            var label = new FormattedText(cell.Text, CultureInfo.CurrentCulture,
+                                          FlowDirection.LeftToRight,
+                                          _owner.Face(paint.Bold, paint.Italic),
+                                          _owner.FontOf(paint, font), ink);
+
+            if (paint.Strike) label.SetTextDecorations(TextDecorations.Strikethrough);
+
+            // Перенос по словам — свойство ячейки в книге, а не наша выдумка: у ячейки с
+            // переносом Excel и строку делает выше, и текст в ней ведет по ширине колонки.
+            // Многоточия при этом не ставим: в ячейке с переносом ничего не пропадает, слово
+            // длиннее колонки просто переносится — как и в самой книге.
+            label.Trimming = TextTrimming.None;
+            if (cell.Wrap) label.MaxTextWidth = Math.Max(1, inner.Width);
+
+            context.DrawText(label, new Point(Across(cell, label, inner), Down(cell, label, inner)));
+        }
+
+        /// <summary>Граница колонок проходит внутри объединения — линии здесь не место.</summary>
+        private static bool Swallowed(IReadOnlyList<DocMerge> merges, int boundary)
+        {
+            for (var i = 0; i < merges.Count; i++)
+                if (merges[i].Swallows(boundary)) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// Нижняя линия строки. Рвется там, где объединение продолжается ниже: линия поперек
+        /// слитых клеток — то же самое объединение, которого «как бы нет», только по вертикали.
+        /// </summary>
+        private static void Underline(DrawingContext context, Pen pen, IReadOnlyList<DocMerge> merges,
+                                      double[] columns, double gutter, double height)
+        {
+            var y   = height - 0.5;
+            var end = gutter + columns[^1];
+
+            var open = merges.Where(m => m.Open).OrderBy(m => m.From).ToList();
+            if (open.Count == 0)
+            {
+                context.DrawLine(pen, new Point(0, y), new Point(end, y));
+                return;
+            }
+
+            var from = 0.0;
+            foreach (var merge in open)
+            {
+                var left  = gutter + columns[Math.Clamp(merge.From,     0, columns.Length - 1)];
+                var right = gutter + columns[Math.Clamp(merge.To + 1,   0, columns.Length - 1)];
+
+                if (left > from) context.DrawLine(pen, new Point(from, y), new Point(left, y));
+                from = Math.Max(from, right);
+            }
+            if (from < end) context.DrawLine(pen, new Point(from, y), new Point(end, y));
+        }
+
+        /// <summary>Место объединения в строке; null — оно целиком за краем листа.</summary>
+        private static Rect? Box(DocMerge merge, double[] columns, double gutter, double height)
+        {
+            if (merge.From < 0 || merge.From + 1 >= columns.Length) return null;
+
+            var left  = gutter + columns[merge.From];
+            var right = gutter + columns[Math.Min(merge.To + 1, columns.Length - 1)];
+
+            return right - left > 0 ? new Rect(left, 0, right - left, height) : null;
+        }
+
+        /// <summary>
+        /// Место ячейки в строке; null — колонка скрыта в книге или ушла за край листа.
+        /// </summary>
+        private static Rect? Area(DocCell cell, double[] columns, double gutter, double height)
+        {
+            if (cell.Column < 0 || cell.Column + 1 >= columns.Length) return null;
+
+            var left  = gutter + columns[cell.Column];
+            var right = gutter + columns[Math.Min(cell.Column + cell.ColumnSpan, columns.Length - 1)];
+
+            return right - left > 0 ? new Rect(left, 0, right - left, height) : null;
+        }
+
+        /// <summary>
+        /// Рамка ячейки — та, что задана в книге, а не линия сетки. Рисуется ПОВЕРХ сетки и
+        /// заливки: в Excel она и есть главная линия, сетка под ней только подложка.
+        /// </summary>
+        private static void Frame(DrawingContext context, DocPaint paint, Rect area, IBrush ink)
+        {
+            Side(paint.Left,   new Point(area.X, area.Y),      new Point(area.X, area.Bottom));
+            Side(paint.Right,  new Point(area.Right, area.Y),  new Point(area.Right, area.Bottom));
+            Side(paint.Top,    new Point(area.X, area.Y),      new Point(area.Right, area.Y));
+            Side(paint.Bottom, new Point(area.X, area.Bottom), new Point(area.Right, area.Bottom));
+
+            void Side(DocEdge edge, Point from, Point to)
+            {
+                if (!edge.Visible) return;
+
+                // Цвета у рамки может не быть — в книге это «автоматический», то есть цвет
+                // текста. Свой черный сюда ставить нельзя: в темной теме он пропал бы.
+                var brush = edge.Color != 0 ? new SolidColorBrush(Color.FromUInt32(edge.Color)) : ink;
+                var pen   = new Pen(brush, edge.Weight,
+                                    edge.Dashed ? new DashStyle([2, 2], 0) : null);
+
+                // Линия ведется по своей половине толщины внутрь ячейки — иначе толстая рамка
+                // наполовину оказалась бы в соседней.
+                var shift = edge.Weight / 2.0;
+                var dx    = from.X == to.X ? (from.X <= area.X ? shift : -shift) : 0;
+                var dy    = from.Y == to.Y ? (from.Y <= area.Y ? shift : -shift) : 0;
+
+                context.DrawLine(pen, from + new Point(dx, dy), to + new Point(dx, dy));
+            }
         }
 
         /// <summary>

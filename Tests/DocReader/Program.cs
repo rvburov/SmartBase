@@ -267,6 +267,26 @@ void Sheets(DocReaderView reader)
     Check(heights.Count > 3 && heights[^1] >= heights[1],
           $"последняя строка ужата: {heights.LastOrDefault()} против обычной {heights.ElementAtOrDefault(1)}");
 
+    // Ключи ресурсов, которыми панель красит таблицу. Промах в ключе тут ТИХИЙ: у кисти есть
+    // запасной цвет, и таблица просто станет не той, не сообщив об этом ни строчкой.
+    foreach (var key in new[] { "BrushRed", "BrushScrollbarTrack", "BrushSecondaryBg",
+                                "BrushSeparator", "BrushPrimaryText", "BrushSecondaryText" })
+        Check(app.TryGetResource(key, null, out _), $"кисть «{key}» не найдена");
+
+    // Оформление доехало от книги до листа: заливка и жирная шапка — то, по чему таблицу
+    // узнают с первого взгляда.
+    var painted = SmartBase.Core.Documents.DocSheetSource.Open(book)[0];
+    var crown   = painted.PaintOf(painted.Rows[1].Cells[0]);
+    Console.WriteLine($"Шапка листа: заливка {crown.Fill:X8}, жирная {crown.Bold}");
+    Check(crown.Fill != 0 && crown.Bold, "оформление шапки не доехало до листа");
+
+    // Объединение знает СТРОКА, а не только ячейка: линии сетки ведет строка, и без этого
+    // между слитыми клетками остается линия, которой в книге нет.
+    var span = painted.Rows[0].Merges;
+    Console.WriteLine("Объединений в первой строке: " + span.Count);
+    Check(span.Count == 1 && span[0].From == 0 && span[0].To == 1,
+          "объединение шапки не доехало до строки");
+
     // Обе полосы прокрутки и квадрат на их пересечении: без квадрата в углу белое пятно.
     var vbar   = Find<ScrollBar>(reader, "SheetBar");
     var hbar   = Find<ScrollBar>(reader, "SheetHBar");
@@ -278,10 +298,42 @@ void Sheets(DocReaderView reader)
     Check(corner is { Bounds.Width: > 0, Bounds.Height: > 0 },
           "на пересечении полос прокрутки нет квадрата");
 
-    // Вкладки листов: их две, и вторая переключает лист.
-    var tabs = Find<StackPanel>(reader, "SheetTabs");
-    Console.WriteLine("Вкладок листов: " + tabs?.Children.Count);
-    Check(tabs?.Children.Count == 2, "вкладки листов не собрались");
+    // Корешки листов: их два, между ними линия, и второй переключает лист.
+    var strip  = Find<StackPanel>(reader, "SheetTabs");
+    var tabs   = strip?.Children.OfType<ToggleButton>().ToList() ?? [];
+    var splits = strip?.Children.OfType<Border>().ToList() ?? [];
+    Console.WriteLine($"Корешков листов: {tabs.Count}, линий между ними: {splits.Count}");
+    Check(tabs.Count == 2,   "корешки листов не собрались");
+    Check(splits.Count == 1, "между корешками листов нет разделительной линии");
+
+    // Линия короче полосы: она делит подписи, а не режет полосу на клетки.
+    var strong = splits.Count == 1 && strip is not null
+                 && splits[0].Bounds.Height > 0
+                 && splits[0].Bounds.Height < strip.Bounds.Height;
+    Check(strong, "линия между корешками идет во всю высоту полосы");
+
+    // Полоса корешков прижата к краям блока: полей вокруг нее нет.
+    var tabsBox = Find<Border>(reader, "SheetTabsBox");
+    Console.WriteLine($"Полоса корешков: {tabsBox?.Bounds}, поля {tabsBox?.Margin}");
+    Check(tabsBox is { IsVisible: true, Margin.Left: 0, Margin.Top: 0, Margin.Right: 0, Margin.Bottom: 0 },
+          "у полосы корешков остались поля");
+
+    // Стрелки листают книгу и гаснут на ее краях.
+    var prevSheet = Find<Button>(reader, "SheetPrevBtn");
+    var nextSheet = Find<Button>(reader, "SheetNextBtn");
+    Console.WriteLine($"Стрелки листов: назад {prevSheet?.IsEnabled}, вперед {nextSheet?.IsEnabled}");
+    Check(prevSheet is { IsEnabled: false } && nextSheet is { IsEnabled: true },
+          "стрелки листов не знают, что открыт первый лист");
+
+    nextSheet?.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+    Pump();
+    Check(tabs[1].IsChecked == true, "стрелка не открыла следующий лист");
+    Check(prevSheet is { IsEnabled: true } && nextSheet is { IsEnabled: false },
+          "стрелки листов не знают, что открыт последний лист");
+
+    // Возвращаемся на первый лист: дальше стенд считает совпадения от начала книги.
+    prevSheet?.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+    Pump();
 
     // Счет идет по ВСЕЙ книге: «труба» есть и на первом листе, и на втором.
     var counter = Find<TextBlock>(reader, "CounterLabel")?.Text ?? "";
@@ -291,9 +343,36 @@ void Sheets(DocReaderView reader)
     // Переход ко второму совпадению уводит на ДРУГОЙ лист — иначе счет по книге обманывал бы.
     Find<Button>(reader, "NextBtn")?.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
     Pump();
-    var second = tabs?.Children.ElementAtOrDefault(1) as ToggleButton;
+    var second = tabs.ElementAtOrDefault(1);
     Check(second?.IsChecked == true, "переход к совпадению не открыл второй лист");
     Console.WriteLine("Лист после «дальше»: " + (second?.Content as string));
+
+    // Совпадение на втором листе стоит далеко вправо: панель обязана довезти таблицу до него.
+    // Подсвеченная ячейка за краем окна — то же самое, что ненайденная.
+    var sheetScroll = Find<ListBox>(reader, "SheetRows")?.GetVisualDescendants().OfType<ScrollViewer>().FirstOrDefault();
+    for (var i = 0; i < 20; i++) { Pump(); Thread.Sleep(10); }
+    Console.WriteLine($"Сдвиг таблицы к совпадению: {sheetScroll?.Offset.X:F0} " +
+                      $"из {sheetScroll?.Extent.Width:F0}, окно {sheetScroll?.Viewport.Width:F0}");
+    Check(sheetScroll is { Extent.Width: > 0 } && sheetScroll.Extent.Width > sheetScroll.Viewport.Width,
+          "лист стенда уместился в окно — сдвиг вбок проверять не на чем");
+    Check(sheetScroll is { Offset.X: > 0 }, "панель не увезла таблицу к найденной ячейке");
+
+    // Возвращаемся на первый лист — он КОРОЧЕ второго, и именно на таком переходе видно
+    // остатки: строк на экране больше, чем в листе.
+    Find<Button>(reader, "NextBtn")?.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+    for (var i = 0; i < 20; i++) { Pump(); Thread.Sleep(10); }
+
+    // Строк на экране ровно столько, сколько в открытом листе, и каждая на своем месте. Смена
+    // листа умеет оставлять на экране контролы ПРОШЛОГО листа: они продолжают рисовать старые
+    // данные поверх новых, и книга выглядит перемешанной.
+    var list = Find<ListBox>(reader, "SheetRows");
+    var live = list?.GetVisualDescendants().OfType<ListBoxItem>()
+                    .Where(i => i.IsEffectivelyVisible).ToList() ?? [];
+    var deck = live.GroupBy(i => Math.Round(i.Bounds.Top, 1)).Where(g => g.Count() > 1).ToList();
+    Console.WriteLine($"Строк на экране: {live.Count} при {list?.ItemCount} в листе «{tabs[0].Content}»");
+    Check(deck.Count == 0, $"строки наложились друг на друга в {deck.Count} местах — листы перемешались");
+    Check(live.Count <= (list?.ItemCount ?? 0),
+          "на экране строк больше, чем в открытом листе — остались строки прошлого");
 }
 
 void WriteBook(string path)
@@ -302,13 +381,28 @@ void WriteBook(string path)
     var book      = doc.AddWorkbookPart();
     book.Workbook = new X.Workbook();
 
+    // Оформление: жирная шапка на заливке — по нему в стенде видно, что цвета и начертания
+    // доезжают от книги до листа.
+    var styles = book.AddNewPart<WorkbookStylesPart>();
+    styles.Stylesheet = new X.Stylesheet(
+        new X.Fonts(new X.Font(new X.FontSize { Val = 11 }),
+                    new X.Font(new X.Bold(), new X.FontSize { Val = 11 })),
+        new X.Fills(new X.Fill(new X.PatternFill { PatternType = X.PatternValues.None }),
+                    new X.Fill(new X.PatternFill { PatternType = X.PatternValues.Gray125 }),
+                    new X.Fill(new X.PatternFill(new X.ForegroundColor { Rgb = "FFEFEFF4" })
+                        { PatternType = X.PatternValues.Solid })),
+        new X.Borders(new X.Border()),
+        new X.CellStyleFormats(new X.CellFormat()),
+        new X.CellFormats(new X.CellFormat(), new X.CellFormat { FontId = 1, FillId = 2 }));
+    styles.Stylesheet.Save();
+
     var first = book.AddNewPart<WorksheetPart>();
     first.Worksheet = new X.Worksheet(
         new X.SheetData(
             new X.Row(new X.Cell { CellReference = "A1", DataType = X.CellValues.String, CellValue = new X.CellValue("Смета работ") }) { RowIndex = 1 },
             new X.Row(
-                new X.Cell { CellReference = "A2", DataType = X.CellValues.String, CellValue = new X.CellValue("Наименование") },
-                new X.Cell { CellReference = "B2", DataType = X.CellValues.String, CellValue = new X.CellValue("Количество") }) { RowIndex = 2 },
+                new X.Cell { CellReference = "A2", StyleIndex = 1, DataType = X.CellValues.String, CellValue = new X.CellValue("Наименование") },
+                new X.Cell { CellReference = "B2", StyleIndex = 1, DataType = X.CellValues.String, CellValue = new X.CellValue("Количество") }) { RowIndex = 2 },
             // Третья строка выше обычной — так ее задали в книге.
             new X.Row(
                 new X.Cell { CellReference = "A3", DataType = X.CellValues.String, CellValue = new X.CellValue("Труба стальная") },
@@ -317,9 +411,25 @@ void WriteBook(string path)
         new X.MergeCells(new X.MergeCell { Reference = "A1:B1" }));
     first.Worksheet.Save();
 
+    // Второе совпадение лежит далеко вправо и на ДРУГОМ листе: по нему видно, что переход к
+    // совпадению и открывает нужный лист, и увозит таблицу вбок, а не только вниз.
+    var wide = new X.Row { RowIndex = 1 };
+    for (var i = 0; i < 13; i++)
+        wide.AppendChild(new X.Cell
+        {
+            CellReference = $"{(char)('A' + i)}1",
+            DataType      = X.CellValues.String,
+            CellValue     = new X.CellValue($"Колонка {i + 1}"),
+        });
+    wide.AppendChild(new X.Cell
+    {
+        CellReference = "N1",
+        DataType      = X.CellValues.String,
+        CellValue     = new X.CellValue("Труба запасная"),
+    });
+
     var second = book.AddNewPart<WorksheetPart>();
-    second.Worksheet = new X.Worksheet(new X.SheetData(
-        new X.Row(new X.Cell { CellReference = "A1", DataType = X.CellValues.String, CellValue = new X.CellValue("Труба запасная") }) { RowIndex = 1 }));
+    second.Worksheet = new X.Worksheet(new X.SheetData(wide));
     second.Worksheet.Save();
 
     book.Workbook.AppendChild(new X.Sheets(
