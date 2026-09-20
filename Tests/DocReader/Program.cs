@@ -24,8 +24,12 @@ using Avalonia.Markup.Xaml.Styling;
 using Avalonia.Media;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
+using Avalonia.Controls.Primitives;
 using SmartBase.Core.Models;
 using SmartBase.Views.Library;
+using UglyToad.PdfPig.Core;
+using UglyToad.PdfPig.Fonts.Standard14Fonts;
+using UglyToad.PdfPig.Writer;
 
 AppBuilder.Configure<Application>()
           .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = true })
@@ -128,6 +132,11 @@ void Run()
     Console.WriteLine("Счетчик после «дальше»: " + counter);
     Check(counter == "2 из 2", $"после перехода счетчик показывает «{counter}» вместо «2 из 2»");
 
+    // У текстового файла настоящего вида нет и быть не может — кнопка режима погашена, но
+    // видна: пропади она, полоса меняла бы ширину от документа к документу.
+    var pagesBtn = Find<ToggleButton>(reader, "PagesModeBtn");
+    Check(pagesBtn is { IsEnabled: false }, "у текстового файла режим «как в документе» доступен");
+
     // Скан без текстового слоя: панель обязана объяснить это словами, а не пустотой.
     var empty = Path.Combine(dir, "скан.txt");
     File.WriteAllText(empty, "   \n\n  ");
@@ -139,6 +148,61 @@ void Run()
     Console.WriteLine("Состояние на скане: " + state);
     Check(state.Contains("скан", StringComparison.OrdinalIgnoreCase),
           "про скан без текстового слоя ничего не сказано");
+
+    Pages(reader, window);
+}
+
+// ── Режим «как в документе» ─────────────────────────────────────────────────────
+
+void Pages(DocReaderView reader, Window window)
+{
+    Console.WriteLine();
+    Console.WriteLine("Режим «как в документе»:");
+
+    var pdf = Path.Combine(dir, "договор.pdf");
+    using (var builder = new PdfDocumentBuilder())
+    {
+        var font = builder.AddStandard14Font(Standard14Font.Helvetica);
+        for (var p = 1; p <= 3; p++)
+        {
+            var page = builder.AddPage(595, 842);
+            page.AddText("Dogovor podryada", 14, new PdfPoint(40, 780), font);
+            page.AddText($"Stranica {p}",     12, new PdfPoint(40, 750), font);
+        }
+        File.WriteAllBytes(pdf, builder.Build());
+    }
+
+    reader.Show(new DocRecord { Title = "Договор", Path = pdf }, "dogovor");
+
+    var pagesBtn = Find<ToggleButton>(reader, "PagesModeBtn");
+    if (!Wait(() => pagesBtn is { IsEnabled: true }, "режим «как в документе» так и не включился"))
+        return;
+
+    Console.WriteLine("Кнопка режима доступна у PDF: да");
+
+    // Переключаемся: список страниц виден, список строк спрятан.
+    pagesBtn!.IsChecked = true;
+    Pump();
+    var pagesList = Find<ListBox>(reader, "PagesList");
+    var linesList = Find<ListBox>(reader, "LinesList");
+    Check(pagesList is { IsVisible: true }, "список страниц не показан");
+    Check(linesList is { IsVisible: false }, "список строк остался на экране");
+    Check(pagesList?.ItemCount == 3, $"страниц в списке {pagesList?.ItemCount}, а в документе 3");
+
+    // Совпадения ищутся по словам страниц: «Dogovor» стоит на каждой из трех.
+    if (!Wait(() => (Find<TextBlock>(reader, "CounterLabel")?.Text ?? "").Contains("из 3", StringComparison.Ordinal),
+              "совпадения на страницах не сосчитаны"))
+        return;
+
+    var counter = Find<TextBlock>(reader, "CounterLabel")?.Text ?? "";
+    Console.WriteLine("Счетчик по страницам: " + counter);
+    Check(counter.StartsWith("1 из 3", StringComparison.Ordinal),
+          $"счетчик показывает «{counter}» вместо «1 из 3»");
+
+    // Возврат в текст ничего не ломает, и счетчик снова считает по строкам.
+    Find<ToggleButton>(reader, "TextModeBtn")!.IsChecked = true;
+    Pump();
+    Check(Find<ListBox>(reader, "LinesList") is { IsVisible: true }, "по возврату не показан текст");
 }
 
 // ── Инструменты стенда ──────────────────────────────────────────────────────────
@@ -166,11 +230,12 @@ bool Wait(Func<bool> until, string complaint, int attempts = 200)
 
 static void Pump() => Dispatcher.UIThread.RunJobs();
 
+// Строки ищем ВНУТРИ списка строк, а не по всей панели: подписи кнопок режима — тоже
+// TextBlock, и по всей панели они попали бы в «строки документа».
 static List<string> Lines(Control reader) =>
-    [.. reader.GetVisualDescendants().OfType<TextBlock>()
-              .Where(t => t.Name is null)                 // строки документа — безымянные
-              .Select(Text)
-              .Where(s => s.Length > 0)];
+    Find<ListBox>(reader, "LinesList") is { } list
+        ? [.. list.GetVisualDescendants().OfType<TextBlock>().Select(Text).Where(s => s.Length > 0)]
+        : [];
 
 static string Text(TextBlock block) =>
     block.Inlines is { Count: > 0 } inlines
@@ -180,7 +245,7 @@ static string Text(TextBlock block) =>
 // Подсвеченные куски: те Run, которым назначен фон. Именно так панель и рисует совпадение;
 // цвет фона возвращается вместе с текстом — по нему видно текущее совпадение.
 static List<(string Text, string Fill)> Highlighted(Control reader) =>
-    [.. reader.GetVisualDescendants().OfType<TextBlock>()
+    [.. (Find<ListBox>(reader, "LinesList") as Control ?? reader).GetVisualDescendants().OfType<TextBlock>()
               .SelectMany(t => t.Inlines?.OfType<Run>() ?? [])
               .Where(r => r.Background is not null)
               .Select(r => (r.Text ?? "", r.Background!.ToString() ?? ""))];

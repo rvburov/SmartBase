@@ -22,7 +22,9 @@ namespace SmartBase.Core.Documents;
 /// просто перестает запрашиваться, а уборка по возрасту сотрет ее позже.
 ///
 /// <b>PDFium не потокобезопасен.</b> <c>DocLib.Instance</c> — синглтон на процесс, поэтому
-/// рендер здесь сериализован замком. Параллелить его нельзя ни при каком числе рабочих потоков.
+/// рендер идет через общий <see cref="PdfGate"/>. Замок именно ОБЩИЙ, а не свой: страницы
+/// рисуют еще двое — панель чтения и расширение «Водяной знак», — и два независимых замка
+/// пропускали бы друг друга.
 /// </summary>
 public static class DocThumbnail
 {
@@ -61,8 +63,6 @@ public static class DocThumbnail
 
     /// <summary>Имя подпапки кеша в папке данных приложения.</summary>
     public const string FolderName = "thumbs";
-
-    private static readonly object RenderLock = new();
 
     /// <summary>Умеем ли нарисовать миниатюру такого файла (по расширению, файл не трогаем).</summary>
     public static bool IsSupported(string path) =>
@@ -111,18 +111,17 @@ public static class DocThumbnail
             Directory.CreateDirectory(cacheDir);
             ct.ThrowIfCancellationRequested();
 
-            byte[] png;
-            lock (RenderLock)
+            var png = PdfGate.Run(() =>
             {
                 // Размер задается по ширине; высота считается по пропорции страницы — PageDimensions
                 // с одним измерением этого не умеет, поэтому сначала читаем размер страницы.
                 using var probe = DocLib.Instance.GetDocReader(docPath, new PageDimensions(Width, Width));
-                if (probe.GetPageCount() == 0) return null;
+                if (probe.GetPageCount() == 0) return [];
 
                 using var first  = probe.GetPageReader(0);
                 var pageW = first.GetPageWidth();
                 var pageH = first.GetPageHeight();
-                if (pageW <= 0 || pageH <= 0) return null;
+                if (pageW <= 0 || pageH <= 0) return [];
 
                 // PageDimensions — это РАМКА, в которую страница вписывается целиком, и Docnet
                 // требует, чтобы первое число не превышало второго: на альбомной странице
@@ -134,8 +133,8 @@ public static class DocThumbnail
                 using var reader = DocLib.Instance.GetDocReader(docPath,
                                        new PageDimensions(Width, Math.Max(Width, height)));
                 using var page   = reader.GetPageReader(0);
-                png = Encode(page);
-            }
+                return Encode(page);
+            });
 
             if (png.Length == 0) return null;
             // Через временный файл: прерванная запись не должна оставить в кеше обрезанный PNG,

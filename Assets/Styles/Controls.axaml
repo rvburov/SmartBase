@@ -382,6 +382,60 @@
         <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
     </Style>
 
+    <!-- ===== Переключатель режима: две-три кнопки одной полосой ===== -->
+    <!-- Панель чтения документа: «Текст» / «Как в документе». Выбран ровно один режим, и
+         полоса говорит это формой: выбранная кнопка белая с синей подписью, остальные
+         прозрачные и серые. Рамку и скругление рисует ОБЕРТКА (Border.modeseg), кнопки внутри
+         своих рамок не имеют — иначе на стыке получилась бы двойная линия.
+
+         Сеттеры живут здесь, а не в разметке: приоритет локального значения в Avalonia выше
+         приоритета стиля, и состояние :checked не сработало бы (то же правило, что у
+         Border.searchBlock и Button.navdrop). -->
+    <Style Selector="Border.modeseg">
+        <Setter Property="Background"      Value="{StaticResource BrushSecondaryBg}" />
+        <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
+        <Setter Property="BorderThickness" Value="{DynamicResource BorderLine}" />
+        <Setter Property="CornerRadius"    Value="{StaticResource RadiusBase}" />
+        <Setter Property="Padding"         Value="2" />
+    </Style>
+    <Style Selector="ToggleButton.modeseg">
+        <Setter Property="Background"                 Value="Transparent" />
+        <Setter Property="Foreground"                 Value="{StaticResource BrushSecondaryText}" />
+        <Setter Property="BorderThickness"            Value="0" />
+        <Setter Property="CornerRadius"               Value="{StaticResource RadiusSmall}" />
+        <Setter Property="Padding"                    Value="10,0" />
+        <Setter Property="MinHeight"                  Value="24" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment"   Value="Center" />
+        <Setter Property="Cursor"                     Value="Hand" />
+    </Style>
+    <Style Selector="ToggleButton.modeseg /template/ ContentPresenter">
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="ToggleButton.modeseg:pointerover">
+        <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
+    </Style>
+    <Style Selector="ToggleButton.modeseg:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="ToggleButton.modeseg:checked /template/ ContentPresenter">
+        <Setter Property="Background" Value="{StaticResource BrushBg}" />
+    </Style>
+    <Style Selector="ToggleButton.modeseg:checked">
+        <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
+        <Setter Property="FontWeight" Value="{StaticResource FontWeightBold}" />
+    </Style>
+    <Style Selector="ToggleButton.modeseg:checked:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="{StaticResource BrushBg}" />
+    </Style>
+    <!-- Недоступный режим (у формата нет настоящего вида) виден, но погашен: пропасть он не
+         может — иначе полоса меняла бы ширину от документа к документу. -->
+    <Style Selector="ToggleButton.modeseg:disabled">
+        <Setter Property="Foreground" Value="{StaticResource BrushSecondaryText}" />
+        <Setter Property="Opacity"    Value="0.45" />
+        <Setter Property="Cursor"     Value="Arrow" />
+    </Style>
+
     <!-- Кнопка-выпадашка навбара («Тип документа» в библиотеке документов). Выглядит и ведет
          себя как ComboBox — те же высота, рамка, внутренние отступы и то же правило состояний:
          синеет ТОЛЬКО рамка, фон и текст не меняются. Отличие одно: содержимое ей рисует общий

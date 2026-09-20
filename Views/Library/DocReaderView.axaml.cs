@@ -40,11 +40,39 @@ public partial class DocReaderView : UserControl
     /// <summary>Документ, открытый сейчас; null — панель пуста.</summary>
     public DocRecord? Document { get; private set; }
 
+    /// <summary>Режим показа: текстом или настоящими страницами документа.</summary>
+    private enum ReadMode { Text, Pages }
+
+    private ReadMode _mode = ReadMode.Text;
+
     /// <summary>Строки документа с подсветкой — список рисует по ним.</summary>
     private readonly List<ReaderLine> _lines = [];
 
     /// <summary>Совпадения по всему документу: номер строки и место в ней.</summary>
     private readonly List<(int Line, int Start, int Length)> _hits = [];
+
+    /// <summary>Страницы документа — только у PDF; у остальных форматов режим недоступен.</summary>
+    private readonly List<PageVm> _pages = [];
+
+    /// <summary>Совпадения в режиме страниц: номер страницы и номер слова на ней.</summary>
+    private readonly List<(int Page, int Index)> _pageHits = [];
+
+    /// <summary>Открытый документ для отрисовки страниц; null — формат без настоящего вида.</summary>
+    private DocPageSource? _source;
+
+    /// <summary>
+    /// Ширина страницы в пикселях, под которую нарисованы картинки. Панель тянут за ручку, и
+    /// страница, нарисованная под прежнюю ширину, растянулась бы и расплылась.
+    /// </summary>
+    private int _pageWidth;
+
+    /// <summary>
+    /// Страницы, чьи картинки сейчас в памяти, в порядке обращения. Страница A4 при ширине
+    /// панели — это мегабайты, и держать их все у документа на три сотни страниц нельзя.
+    /// </summary>
+    private readonly List<int> _rendered = [];
+
+    private const int RenderedCap = 10;
 
     private int _current = -1;
 
@@ -58,6 +86,9 @@ public partial class DocReaderView : UserControl
     /// </summary>
     private readonly DispatcherTimer _findDebounce = new() { Interval = TimeSpan.FromMilliseconds(200) };
 
+    /// <summary>Дребезг смены ширины панели: страницы перерисовываются под новую ширину.</summary>
+    private readonly DispatcherTimer _widthDebounce = new() { Interval = TimeSpan.FromMilliseconds(300) };
+
     public DocReaderView()
     {
         InitializeComponent();
@@ -67,6 +98,27 @@ public partial class DocReaderView : UserControl
         {
             if (e.NameScope.Find<ScrollViewer>("PART_ScrollViewer") is { } sv) ScrollBarLink.SetSource(LinesBar, sv);
         };
+
+        PagesList.ItemTemplate = new FuncDataTemplate<PageVm>((_, _) => new PageItemView(this), supportsRecycling: false);
+        PagesList.TemplateApplied += (_, e) =>
+        {
+            if (e.NameScope.Find<ScrollViewer>("PART_ScrollViewer") is { } sv) ScrollBarLink.SetSource(PagesBar, sv);
+        };
+
+        // Переключатель режима ведет себя как пара радиокнопок: выбран ровно один, и нажатие на
+        // уже выбранный ничего не меняет — иначе панель осталась бы без режима вовсе.
+        TextModeBtn.IsCheckedChanged  += (_, _) => { if (TextModeBtn.IsChecked  == true) SetMode(ReadMode.Text);  else if (_mode == ReadMode.Text)  TextModeBtn.IsChecked  = true; };
+        PagesModeBtn.IsCheckedChanged += (_, _) => { if (PagesModeBtn.IsChecked == true) SetMode(ReadMode.Pages); else if (_mode == ReadMode.Pages) PagesModeBtn.IsChecked = true; };
+
+        // Сменилась ширина панели — страницы перерисовываются под новую. С дребезгом: ручку
+        // тянут плавно, и рисовать страницу на каждый пиксель движения незачем.
+        PagesList.PropertyChanged += (_, e) =>
+        {
+            if (e.Property != BoundsProperty || _mode != ReadMode.Pages) return;
+            _widthDebounce.Stop();
+            _widthDebounce.Start();
+        };
+        _widthDebounce.Tick += (_, _) => { _widthDebounce.Stop(); ReflowPages(); };
 
         CloseBtn.Click += (_, _) => CloseRequested?.Invoke(this, EventArgs.Empty);
         PrevBtn.Click  += (_, _) => Step(-1);
@@ -98,10 +150,15 @@ public partial class DocReaderView : UserControl
         SubtitleLabel.Text = Subtitle(doc);
         FindBox.Text       = query ?? "";
         _findDebounce.Stop();
+        _widthDebounce.Stop();
 
         Reset();
+        // Каждый документ открывается ТЕКСТОМ, даже если прошлый читали страницами: человек
+        // нажал «Прочитать» после поиска, и ему нужно найденное слово, а не обложка.
+        SetMode(ReadMode.Text, force: true);
         ShowState("Читаю документ…");
         _ = LoadAsync(doc, ++_gen);
+        _ = OpenPagesAsync(doc, _gen);
     }
 
     /// <summary>
@@ -134,8 +191,21 @@ public partial class DocReaderView : UserControl
     {
         _lines.Clear();
         _hits.Clear();
-        _current = -1;
+        _pages.Clear();
+        _pageHits.Clear();
+        _rendered.Clear();
+        _current  = -1;
+        _pageWidth = 0;
+
+        // Документ PDFium отпускаем сразу: он держит открытый файл, а файл могут захотеть
+        // переименовать или удалить прямо сейчас.
+        _source?.Dispose();
+        _source = null;
+
         LinesList.ItemsSource = null;
+        PagesList.ItemsSource = null;
+        PagesModeBtn.IsEnabled = false;
+        ToolTip.SetTip(PagesModeBtn, null);
         UpdateCounter();
     }
 
@@ -207,7 +277,194 @@ public partial class DocReaderView : UserControl
     {
         StateLabel.Text      = text;
         StateLabel.IsVisible = text.Length > 0;
-        LinesList.IsVisible  = text.Length == 0;
+        LinesList.IsVisible  = text.Length == 0 && _mode == ReadMode.Text;
+        PagesList.IsVisible  = text.Length == 0 && _mode == ReadMode.Pages;
+    }
+
+    // ── Режим «как в документе» ───────────────────────────────────────────────
+
+    /// <summary>
+    /// Открыть документ для показа страницами. Только PDF: страницу надо чем-то нарисовать и
+    /// где-то взять места слов — для DOCX и XLSX ни того, ни другого у нас нет.
+    /// </summary>
+    private async Task OpenPagesAsync(DocRecord doc, int gen)
+    {
+        if (DocTextExtractor.ExtensionOf(doc.Path) != "pdf")
+        {
+            ToolTip.SetTip(PagesModeBtn, "Страницами пока показывается только PDF");
+            return;
+        }
+
+        var source = await Task.Run(() => DocPageSource.Open(doc.Path));
+        if (gen != _gen || source is null)
+        {
+            source?.Dispose();
+            if (gen == _gen) ToolTip.SetTip(PagesModeBtn, "Страницы этого документа не открылись");
+            return;
+        }
+
+        _source = source;
+        _pages.Clear();
+        for (var i = 0; i < source.PageCount; i++) _pages.Add(new PageVm(i, source.Size(i)));
+
+        PagesList.ItemsSource  = _pages;
+        PagesModeBtn.IsEnabled = true;
+        ToolTip.SetTip(PagesModeBtn, null);
+
+        // Совпадения на страницах считаются сразу, а не при переключении режима: счетчик
+        // обязан говорить правду в ту же секунду, когда человек нажмет «Как в документе».
+        _ = ScanPagesAsync(gen);
+    }
+
+    private void SetMode(ReadMode mode, bool force = false)
+    {
+        if (!force && mode == _mode) return;
+        if (mode == ReadMode.Pages && _source is null) { TextModeBtn.IsChecked = true; return; }
+
+        _mode = mode;
+        TextModeBtn.IsChecked  = mode == ReadMode.Text;
+        PagesModeBtn.IsChecked = mode == ReadMode.Pages;
+
+        // Состояние («скан», «файла нет») относится к ТЕКСТУ. У скана страницы есть и
+        // показывать их можно — на них просто нечего подсвечивать.
+        ShowState(mode == ReadMode.Pages ? "" : StateLabel.Text ?? "");
+
+        _current = HitCount > 0 ? 0 : -1;
+        if (mode == ReadMode.Pages) ReflowPages();
+        ApplyCurrent(scroll: true);
+    }
+
+    /// <summary>
+    /// Пересчитать ширину страницы под текущую ширину панели и перерисовать то, что видно.
+    /// Картинки прежней ширины выбрасываются: растянутая страница расплывается, а
+    /// сжатая — впустую держит память.
+    /// </summary>
+    private void ReflowPages()
+    {
+        if (_source is null || _pages.Count == 0) return;
+
+        var width = (int)Math.Round(Math.Max(0, PagesList.Bounds.Width - 32) *
+                                    (VisualRoot?.RenderScaling ?? 1));
+        if (width < 120) return;
+
+        // Мелкое изменение ширины перерисовкой не отрабатываем: разница в пару процентов не
+        // видна, а перерисовка сотни страниц заметна.
+        if (_pageWidth > 0 && Math.Abs(width - _pageWidth) < _pageWidth * 0.1) return;
+
+        _pageWidth = width;
+        foreach (var page in _rendered.ToList()) _pages[page].SetBitmap(null);
+        _rendered.Clear();
+        foreach (var page in _pages) page.Refresh();
+    }
+
+    /// <summary>
+    /// Попросить картинку страницы. Зовется самой страницей из отрисовки, когда та появляется
+    /// на экране: рисовать весь документ вперед незачем, а у трехсот страниц и невозможно.
+    ///
+    /// Работа ОТКЛАДЫВАЕТСЯ в очередь, и это не украшение: зовут нас изнутри прохода отрисовки,
+    /// а любое обращение к раскладке оттуда (а подготовка ширины ее трогает) роняет Avalonia
+    /// с «Visual was invalidated during the render pass».
+    /// </summary>
+    private void RequestPage(PageVm page)
+    {
+        if (_source is null || page.Bitmap is not null || page.Loading) return;
+
+        // Признак ставим сразу: отрисовка успеет позвать нас еще раз, пока задание ждет очереди.
+        page.Loading = true;
+        Dispatcher.UIThread.Post(() => _ = RenderPageAsync(page), DispatcherPriority.Background);
+    }
+
+    private async Task RenderPageAsync(PageVm page)
+    {
+        if (_source is not { } source) { page.Loading = false; return; }
+        if (_pageWidth <= 0) { ReflowPages(); if (_pageWidth <= 0) { page.Loading = false; return; } }
+
+        var gen   = _gen;
+        var width = _pageWidth;
+
+        try
+        {
+            var png = await Task.Run(() => source.Render(page.Index, width));
+            if (gen != _gen || png is null) return;
+
+            using var stream = new MemoryStream(png);
+            page.SetBitmap(new Avalonia.Media.Imaging.Bitmap(stream));
+            Remember(page.Index);
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Библиотека: страница {Page} не нарисовалась", page.Index + 1);
+        }
+        finally
+        {
+            page.Loading = false;
+        }
+    }
+
+    /// <summary>Держим в памяти только последние страницы — остальные рисуются заново.</summary>
+    private void Remember(int page)
+    {
+        _rendered.Remove(page);
+        _rendered.Add(page);
+        while (_rendered.Count > RenderedCap)
+        {
+            var oldest = _rendered[0];
+            _rendered.RemoveAt(0);
+            if (oldest >= 0 && oldest < _pages.Count) _pages[oldest].SetBitmap(null);
+        }
+    }
+
+    /// <summary>
+    /// Обойти страницы и найти на них слова запроса. Идет в фоне и страница за страницей:
+    /// разбор трехсот страниц — это секунды, и держать ради них панель нельзя. Счетчик растет
+    /// по ходу дела, поэтому видно, что работа идет.
+    /// </summary>
+    private async Task ScanPagesAsync(int gen)
+    {
+        if (_source is not { } source) return;
+
+        var tokens = DocHighlight.Tokens(FindBox.Text);
+        _pageHits.Clear();
+        if (tokens.Count == 0) { UpdateCounter(); return; }
+
+        for (var i = 0; i < _pages.Count; i++)
+        {
+            if (gen != _gen) return;
+
+            var index = i;
+            var found = await Task.Run(() =>
+            {
+                var hits = new List<int>();
+                var words = source.Words(index);
+                for (var w = 0; w < words.Count; w++)
+                    if (DocHighlight.Find(words[w].Text, tokens).Count > 0) hits.Add(w);
+                return (Words: words, Hits: hits);
+            });
+
+            if (gen != _gen) return;
+
+            var page = _pages[index];
+            page.SetWords(found.Words);
+            page.Hits.Clear();
+            foreach (var w in found.Hits)
+            {
+                page.Hits.Add((w, _pageHits.Count));
+                _pageHits.Add((index, w));
+            }
+
+            if (found.Hits.Count > 0)
+            {
+                page.Refresh();
+                if (_mode == ReadMode.Pages)
+                {
+                    // Первое найденное совпадение сразу становится текущим — как в режиме текста.
+                    if (_current < 0) { _current = 0; ApplyCurrent(scroll: true); }
+                    else UpdateCounter();
+                }
+            }
+        }
+
+        if (gen == _gen) UpdateCounter();
     }
 
     /// <summary>
@@ -255,14 +512,22 @@ public partial class DocReaderView : UserControl
 
         _current = _hits.Count > 0 ? 0 : -1;
         ApplyCurrent(scroll: true);
+
+        // Страницы ищут свое: у них совпадения считаются по словам с их местами, и списка
+        // строк для этого недостаточно.
+        if (_source is not null) _ = ScanPagesAsync(_gen);
     }
+
+    /// <summary>Сколько совпадений в ТЕКУЩЕМ режиме — по ним ходят стрелки и счетчик.</summary>
+    private int HitCount => _mode == ReadMode.Pages ? _pageHits.Count : _hits.Count;
 
     private void Step(int delta)
     {
-        if (_hits.Count == 0) return;
+        var count = HitCount;
+        if (count == 0) return;
 
         var previous = _current;
-        _current = ((_current + delta) % _hits.Count + _hits.Count) % _hits.Count;
+        _current = ((_current + delta) % count + count) % count;
         ApplyCurrent(scroll: true, previous);
     }
 
@@ -270,12 +535,22 @@ public partial class DocReaderView : UserControl
     {
         UpdateCounter();
 
-        // Перерисовываем ДВЕ строки, а не весь список: у документа в миллион знаков перерисовка
-        // всего по каждому шагу «дальше» была бы видна глазом.
-        if (previous >= 0 && previous < _hits.Count) Touch(_hits[previous].Line);
-        if (_current  >= 0) Touch(_hits[_current].Line);
+        // Перерисовываем ДВЕ строки (или две страницы), а не весь список: у документа в миллион
+        // знаков перерисовка всего по каждому шагу «дальше» была бы видна глазом.
+        if (_mode == ReadMode.Pages)
+        {
+            if (previous >= 0 && previous < _pageHits.Count) TouchPage(_pageHits[previous].Page);
+            if (_current  >= 0 && _current  < _pageHits.Count) TouchPage(_pageHits[_current].Page);
 
-        if (!scroll || _current < 0) return;
+            if (!scroll || _current < 0 || _current >= _pageHits.Count) return;
+            PagesList.ScrollIntoView(_pageHits[_current].Page);
+            return;
+        }
+
+        if (previous >= 0 && previous < _hits.Count) Touch(_hits[previous].Line);
+        if (_current  >= 0 && _current  < _hits.Count) Touch(_hits[_current].Line);
+
+        if (!scroll || _current < 0 || _current >= _hits.Count) return;
         var target = _hits[_current].Line;
         if (target >= 0 && target < _lines.Count) LinesList.ScrollIntoView(target);
     }
@@ -285,15 +560,23 @@ public partial class DocReaderView : UserControl
         if (lineIndex >= 0 && lineIndex < _lines.Count) _lines[lineIndex].Refresh();
     }
 
+    private void TouchPage(int pageIndex)
+    {
+        if (pageIndex >= 0 && pageIndex < _pages.Count) _pages[pageIndex].Refresh();
+    }
+
     private void UpdateCounter()
     {
         var asked = DocHighlight.Tokens(FindBox.Text).Count > 0;
-        CounterLabel.Text = _hits.Count > 0
-            ? $"{_current + 1} из {_hits.Count}"
-            : asked && _lines.Count > 0 ? "нет" : "";
+        var count = HitCount;
+        var ready = _mode == ReadMode.Pages ? _pages.Count > 0 : _lines.Count > 0;
 
-        PrevBtn.IsEnabled = _hits.Count > 0;
-        NextBtn.IsEnabled = _hits.Count > 0;
+        CounterLabel.Text = count > 0
+            ? $"{_current + 1} из {count}"
+            : asked && ready ? "нет" : "";
+
+        PrevBtn.IsEnabled = count > 0;
+        NextBtn.IsEnabled = count > 0;
     }
 
     /// <summary>Сквозной номер текущего совпадения — строка спрашивает его при отрисовке.</summary>
@@ -378,6 +661,151 @@ public partial class DocReaderView : UserControl
 
         public event Action? Changed;
         public void Refresh() => Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// Страница документа: размер в пунктах, нарисованная картинка и совпадения на ней.
+    /// Живет столько же, сколько открытый документ; картинку у нее отбирают, когда страница
+    /// уезжает далеко от экрана.
+    /// </summary>
+    private sealed class PageVm(int index, DocPageSize size)
+    {
+        public int Index { get; } = index;
+        public DocPageSize Size { get; } = size;
+
+        public Avalonia.Media.Imaging.Bitmap? Bitmap { get; private set; }
+
+        /// <summary>Страница уже рисуется — второй раз просить не надо.</summary>
+        public bool Loading { get; set; }
+
+        /// <summary>Слова страницы с их местами; пусто, пока страницу не разбирали.</summary>
+        public IReadOnlyList<DocWord> Words { get; private set; } = [];
+
+        /// <summary>Совпадения: номер слова на странице и сквозной номер по документу.</summary>
+        public List<(int Word, int Id)> Hits { get; } = [];
+
+        public event Action? Changed;
+
+        public void SetBitmap(Avalonia.Media.Imaging.Bitmap? bitmap)
+        {
+            // Старую картинку отпускаем явно: это несколько мегабайт неуправляемой памяти, и
+            // ждать сборщика ради них незачем.
+            var old = Bitmap;
+            Bitmap  = bitmap;
+            if (!ReferenceEquals(old, bitmap)) old?.Dispose();
+            Refresh();
+        }
+
+        public void SetWords(IReadOnlyList<DocWord> words) => Words = words;
+
+        public void Refresh() => Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// Страница на экране. Рисует себя целиком сама — картинку и прямоугольники подсветки
+    /// поверх нее.
+    ///
+    /// Своя отрисовка, а не Image с Canvas и фигурами: места слов приходят в пунктах страницы,
+    /// и переводить их в координаты контрола все равно приходится вручную (ось Y у PDF идет
+    /// снизу вверх). С готовыми фигурами к этому добавилась бы раскладка сотни прямоугольников
+    /// на каждую перерисовку — а их надо пересчитывать при любой смене ширины панели.
+    /// </summary>
+    private sealed class PageItemView : Control
+    {
+        private readonly DocReaderView _owner;
+        private PageVm? _page;
+
+        public PageItemView(DocReaderView owner) => _owner = owner;
+
+        protected override Size MeasureOverride(Size availableSize)
+        {
+            // Высота известна ДО того, как страница нарисована: она считается по пропорции
+            // страницы. Иначе список менял бы высоту под каждой подъехавшей картинкой, а
+            // ползунок «дышал» бы на всю длину документа.
+            var width = double.IsInfinity(availableSize.Width) ? 600 : availableSize.Width;
+            var size  = _page?.Size ?? new DocPageSize(595, 842);
+            var ratio = size.Width > 0 ? size.Height / size.Width : 1.414;
+            return new Size(width, Math.Max(1, width * ratio));
+        }
+
+        public override void Render(DrawingContext context)
+        {
+            var area = new Rect(Bounds.Size);
+            if (_page is not { } page) return;
+
+            // Лист всегда белый, даже пока картинки нет: серая дыра в ленте страниц читалась бы
+            // как «тут ничего нет», а не «сейчас нарисуется».
+            context.FillRectangle(Brushes.White, area);
+
+            if (page.Bitmap is { } bitmap)
+                context.DrawImage(bitmap, new Rect(bitmap.Size), area);
+            else
+                _owner.RequestPage(page);
+
+            var border = _owner.Brush("BrushSeparator", "#D1D1D6");
+            context.DrawRectangle(null, new Pen(border, 1), area);
+
+            if (page.Hits.Count == 0 || page.Words.Count == 0) return;
+
+            var scale   = DocPageGeometry.ScaleFor(area.Width, page.Size.Width);
+            var plain   = _owner.Brush("BrushHighlight", "#FFF0B3");
+            var current = _owner.Brush("BrushAccent",    "#007AFF");
+
+            foreach (var (word, id) in page.Hits)
+            {
+                if (word < 0 || word >= page.Words.Count) continue;
+
+                var box  = DocPageGeometry.ToScreen(page.Words[word].Box, page.Size.Height, scale, padding: 0.5);
+                var rect = new Rect(box.X, box.Y, box.Width, box.Height);
+                var now  = id == _owner.CurrentHit;
+
+                // Подсветка ПРОЗРАЧНАЯ: под ней лежит сама страница, и закрасить слово наглухо
+                // значило бы спрятать то, что человек искал.
+                context.FillRectangle(new SolidColorBrush(((ISolidColorBrush)(now ? current : plain)).Color,
+                                                          now ? 0.45 : 0.40), rect, 2);
+            }
+        }
+
+        protected override void OnDataContextChanged(EventArgs e)
+        {
+            base.OnDataContextChanged(e);
+            Unhook();
+            _page = DataContext as PageVm;
+            Hook();
+            InvalidateMeasure();
+            InvalidateVisual();
+        }
+
+        protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+        {
+            base.OnAttachedToVisualTree(e);
+            Hook();
+            InvalidateVisual();
+        }
+
+        protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+        {
+            base.OnDetachedFromVisualTree(e);
+            Unhook();
+        }
+
+        private void Hook()
+        {
+            if (_page is null) return;
+            _page.Changed -= Repaint;
+            _page.Changed += Repaint;
+        }
+
+        private void Unhook()
+        {
+            if (_page is not null) _page.Changed -= Repaint;
+        }
+
+        private void Repaint()
+        {
+            InvalidateMeasure();
+            InvalidateVisual();
+        }
     }
 
     /// <summary>

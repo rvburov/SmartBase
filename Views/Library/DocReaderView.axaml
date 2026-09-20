@@ -42,7 +42,7 @@
         </Style>
     </UserControl.Styles>
 
-    <Grid RowDefinitions="Auto,Auto,Auto,Auto,*">
+    <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,*">
 
         <!-- ── Шапка: название документа и закрытие ─────────────────────────── -->
         <Grid Grid.Row="0" Height="56" Margin="16,0" ColumnDefinitions="*,Auto">
@@ -80,11 +80,25 @@
 
         <Border Grid.Row="1" Classes="separator h" />
 
+        <!-- ── Режим показа ─────────────────────────────────────────────────── -->
+        <!-- «Текст» есть у всякого документа, который мы умеем читать. «Как в документе» —
+             пока только у PDF: там страницу рисует PDFium, а места слов дает PdfPig, и
+             подсветку есть на что ставить. У прочих форматов кнопка видна, но погашена:
+             спрятать ее значило бы менять ширину полосы от документа к документу. -->
+        <Border Grid.Row="2" Classes="modeseg"
+                HorizontalAlignment="Left"
+                Margin="16,12,16,0">
+            <StackPanel Orientation="Horizontal" Spacing="2">
+                <ToggleButton x:Name="TextModeBtn"  Classes="modeseg" Content="Текст" IsChecked="True" />
+                <ToggleButton x:Name="PagesModeBtn" Classes="modeseg" Content="Как в документе" />
+            </StackPanel>
+        </Border>
+
         <!-- ── Строка поиска внутри документа ───────────────────────────────── -->
         <!-- Запрос приезжает из поиска раздела: человек нашел документ по слову и нажал
              «Прочитать» — искать это слово второй раз руками он не должен. Дальше строку
              можно править, и это уже поиск ПО ЭТОМУ документу. -->
-        <Border Grid.Row="2" Classes="searchBlock" Margin="16,12,16,12">
+        <Border Grid.Row="3" Classes="searchBlock" Margin="16,10,16,12">
             <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto" Margin="10,0" Height="{StaticResource ControlHeightStandard}">
                 <Viewbox Grid.Column="0" Width="14" Height="14" VerticalAlignment="Center">
                     <Canvas Width="24" Height="24">
@@ -149,13 +163,16 @@
             </Grid>
         </Border>
 
-        <Border Grid.Row="3" Classes="separator h" />
+        <Border Grid.Row="4" Classes="separator h" />
 
-        <!-- ── Тело: строки документа ──────────────────────────────────────── -->
+        <!-- ── Тело: строки документа либо его страницы ─────────────────────── -->
         <!-- Полоса прокрутки вынесена отдельной колонкой и прилегает к правому краю панели —
              стандарт прокрутки проекта (ui/scrolling.md): своя полоса списка жила бы внутри
-             его отступов и отошла бы от края. -->
-        <Grid Grid.Row="4" ColumnDefinitions="*,Auto">
+             его отступов и отошла бы от края.
+
+             Списка два, а не один с разными шаблонами: у них разная прокрутка, и переключение
+             режима не должно терять место, на котором человек читал. -->
+        <Grid Grid.Row="5" ColumnDefinitions="*,Auto">
             <ListBox Grid.Column="0" x:Name="LinesList"
                      Classes="reader"
                      Margin="16,12,16,12"
@@ -164,6 +181,22 @@
                      ScrollViewer.HorizontalScrollBarVisibility="Disabled" />
 
             <ScrollBar Grid.Column="1" x:Name="LinesBar"
+                       Orientation="Vertical"
+                       IsVisible="False" />
+
+            <!-- Страницы документа. Серая подложка — как лист бумаги на столе: белую страницу
+                 на белом фоне не видно вовсе. -->
+            <ListBox Grid.Column="0" x:Name="PagesList"
+                     Classes="reader pages"
+                     IsVisible="False"
+                     Background="{StaticResource BrushSecondaryBg}"
+                     Margin="0"
+                     Padding="16,12"
+                     SelectionMode="Single"
+                     ScrollViewer.VerticalScrollBarVisibility="Hidden"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled" />
+
+            <ScrollBar Grid.Column="1" x:Name="PagesBar"
                        Orientation="Vertical"
                        IsVisible="False" />
 

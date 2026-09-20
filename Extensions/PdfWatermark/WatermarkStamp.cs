@@ -4,6 +4,7 @@ using Docnet.Core.Models;
 using PdfSharp.Drawing;
 using PdfSharp.Pdf.IO;
 using SkiaSharp;
+using SmartBase.Core.Documents;
 
 namespace SmartBase.Extensions.PdfWatermark;
 
@@ -120,18 +121,22 @@ public static class WatermarkStamp
 
         try
         {
-            // DocLib.Instance — синглтон PDFium на процесс, и он НЕ потокобезопасен. Прогон
-            // однопоточный, поэтому хватает того, что мы не открываем два документа сразу.
-            using (var reader = DocLib.Instance.GetDocReader(source, new PageDimensions(scale)))
+            // DocLib.Instance — синглтон PDFium на процесс, и он НЕ потокобезопасен. Сам по себе
+            // прогон однопоточный, но в программе теперь рисуют страницы еще двое — миниатюры
+            // ленты библиотеки и ее панель чтения, — поэтому каждый вызов в PDFium идет через
+            // общую очередь PdfGate. Очередь берется на КОРОТКИЕ операции, а не на весь прогон:
+            // документ на сотню страниц иначе заморозил бы ленту на все время штамповки.
+            using (var reader = PdfGate.Run(() => DocLib.Instance.GetDocReader(source, new PageDimensions(scale))))
             {
-                var count = reader.GetPageCount();
+                var count = PdfGate.Run(reader.GetPageCount);
 
                 for (var i = 0; i < count; i++)
                 {
                     ct.ThrowIfCancellationRequested();
 
-                    using var page = reader.GetPageReader(i);
-                    var jpeg = StampPage(page, lines, style);
+                    var index = i;
+                    using var page = PdfGate.Run(() => reader.GetPageReader(index));
+                    var jpeg = PdfGate.Run(() => StampPage(page, lines, style));
 
                     pages.Add(jpeg);
 
