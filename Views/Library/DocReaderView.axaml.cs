@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.Globalization;
 using System.IO;
 using System.Threading;
@@ -68,8 +69,12 @@ public partial class DocReaderView : UserControl
     /// <summary>Показанный лист книги.</summary>
     private int _sheetIndex;
 
-    /// <summary>Строки показанного листа — по ним рисует список таблицы.</summary>
-    private readonly List<SheetRowVm> _sheetRows = [];
+    /// <summary>
+    /// Строки показанного листа — по ним рисует список таблицы. Собрание наблюдаемое: пустые
+    /// строки-заполнители дописываются в него ПОСЛЕ показа, когда становится известен размер
+    /// блока, и переприсваивать источник ради этого нельзя — прокрутка вернулась бы в начало.
+    /// </summary>
+    private readonly ObservableCollection<SheetRowVm> _sheetRows = [];
 
     /// <summary>
     /// Совпадения в книге: лист, строка в нем и ячейка. Счет идет по ВСЕЙ книге, а не по
@@ -81,8 +86,32 @@ public partial class DocReaderView : UserControl
     /// <summary>Левые края колонок показанного листа в пикселях; последнее число — вся ширина.</summary>
     private double[] _columns = [];
 
-    /// <summary>Высота строки таблицы — считается от размера текста, а не задана числом.</summary>
-    private double _rowHeight = 24;
+    /// <summary>
+    /// Ширина полосы с номерами строк. Считается по самому длинному номеру: у листа на сотню
+    /// строк полоса уже, чем у листа на десять тысяч, и лишнего места не отнимает.
+    /// </summary>
+    private double _gutter = 32;
+
+    /// <summary>Высота полосы с буквами колонок.</summary>
+    private double _headHeight = 24;
+
+    /// <summary>Ширина колонки-заполнителя в пикселях — ими лист добивается до правого края.</summary>
+    private double _fillWidth = 64;
+
+    /// <summary>Высота строки-заполнителя в пикселях — ими лист добивается до нижнего края.</summary>
+    private double _fillHeight = 24;
+
+    /// <summary>
+    /// На сколько таблица уехала вбок. Полосы с буквами и номерами стоят на месте, как в самом
+    /// Excel, и рисуются с поправкой на это число.
+    /// </summary>
+    private double _scrollX;
+
+    /// <summary>Прокрутка таблицы — из нее берется сдвиг вбок.</summary>
+    private ScrollViewer? _sheetScroll;
+
+    /// <summary>Строки таблицы, которые сейчас на экране: их перерисовывает прокрутка вбок.</summary>
+    private readonly HashSet<SheetRowView> _liveRows = [];
 
     /// <summary>В режиме «как в документе» показывается книга, а не страницы.</summary>
     private bool ShowsSheet => _sheets.Count > 0;
@@ -132,12 +161,17 @@ public partial class DocReaderView : UserControl
             if (e.NameScope.Find<ScrollViewer>("PART_ScrollViewer") is { } sv) ScrollBarLink.SetSource(PagesBar, sv);
         };
 
+        SheetHead.Child = new SheetHeadView(this);
+
         SheetRows.ItemTemplate = new FuncDataTemplate<SheetRowVm>((_, _) => new SheetRowView(this), supportsRecycling: false);
         SheetRows.TemplateApplied += (_, e) =>
         {
             if (e.NameScope.Find<ScrollViewer>("PART_ScrollViewer") is not { } sv) return;
             ScrollBarLink.SetSource(SheetBar, sv);
             ScrollBarLink.SetSource(SheetHBar, sv);
+
+            _sheetScroll = sv;
+            sv.ScrollChanged += (_, _) => SyncSheetScroll();
         };
 
         // Переключатель режима ведет себя как пара радиокнопок: выбран ровно один, и нажатие на
@@ -154,6 +188,14 @@ public partial class DocReaderView : UserControl
             _widthDebounce.Start();
         };
         _widthDebounce.Tick += (_, _) => { _widthDebounce.Stop(); ReflowPages(); };
+
+        // Блок сменил размер — лист добивается пустыми клетками до его новых краев. Правка идет
+        // отложенно: трогать собрание строк прямо во время раскладки нельзя.
+        SheetRows.PropertyChanged += (_, e) =>
+        {
+            if (e.Property != BoundsProperty || _mode != ReadMode.Document || !ShowsSheet) return;
+            Dispatcher.UIThread.Post(FillSheet, DispatcherPriority.Background);
+        };
 
         CloseBtn.Click += (_, _) => CloseRequested?.Invoke(this, EventArgs.Empty);
         PrevBtn.Click  += (_, _) => Step(-1);
@@ -235,6 +277,7 @@ public partial class DocReaderView : UserControl
         _sheetHits.Clear();
         _sheetIndex = 0;
         _columns    = [];
+        _scrollX    = 0;
         _current    = -1;
         _pageWidth  = 0;
 
@@ -431,34 +474,172 @@ public partial class DocReaderView : UserControl
         for (var i = 0; i < SheetTabs.Children.Count; i++)
             if (SheetTabs.Children[i] is ToggleButton tab) tab.IsChecked = i == index;
 
-        LayoutColumns(_sheets[index]);
+        var sheet   = _sheets[index];
+        var heights = LayoutSheet(sheet);
 
         _sheetRows.Clear();
-        foreach (var row in _sheets[index].Rows) _sheetRows.Add(new SheetRowVm(row));
-        SheetRows.ItemsSource = null;
+        for (var i = 0; i < sheet.Rows.Count; i++) _sheetRows.Add(new SheetRowVm(sheet.Rows[i], heights[i]));
         SheetRows.ItemsSource = _sheetRows;
+
+        SheetHead.Child?.InvalidateMeasure();
+        SheetHead.Child?.InvalidateVisual();
+
+        // Размер блока в эту минуту еще не известен — заполнитель досчитается, когда список
+        // встанет на место и сообщит свои размеры.
+        Dispatcher.UIThread.Post(FillSheet, DispatcherPriority.Background);
 
         ApplySheetHits();
     }
 
     /// <summary>
-    /// Левые края колонок в пикселях. Ширины приходят из книги в ЗНАКАХ (так их хранит Excel),
-    /// и переводятся по ширине знака текущего шрифта — иначе таблица разъехалась бы при смене
-    /// размера шрифта в настройках оформления.
+    /// Добить лист пустыми клетками до краев блока. Лист в Excel не кончается там, где кончились
+    /// данные: за последней заполненной ячейкой идут пустые, и именно по ним видно, что это
+    /// лист, а не картинка таблицы. Пустое место справа и снизу выглядело бы краем документа,
+    /// которого нет.
+    ///
+    /// Заполнитель считается от РАЗМЕРА БЛОКА, поэтому и пересчитывается при его смене. Строк и
+    /// колонок добавляется ровно столько, сколько видно: лишние означали бы прокрутку в пустоту.
     /// </summary>
-    private void LayoutColumns(DocSheet sheet)
+    private void FillSheet()
     {
-        var font   = Size("FontSizeMedium", 14);
-        var letter = font * 0.62;                     // ширина знака «0» — на ней стоит мера Excel
-        _rowHeight = Math.Round(font * 1.7 + 6);
+        if (!ShowsSheet || _columns.Length == 0) return;
+
+        var width  = SheetRows.Bounds.Width;
+        var height = SheetRows.Bounds.Height;
+        if (width <= 1 || height <= 1) return;
+
+        // Колонки справа. Считаются от полосы номеров: она тоже занимает место в блоке.
+        // Последняя НЕ подрезается по краю: клетка в три пикселя — это не колонка, а линия
+        // вдоль листа. Она уходит за край, и достать ее дает полоса прокрутки — ровно как в
+        // самом Excel, где у края всегда стоит начатая колонка.
+        if (_gutter + _columns[^1] < width - FillEdge)
+        {
+            var columns = new List<double>(_columns);
+            while (_gutter + columns[^1] < width - FillEdge && columns.Count < FillCap)
+                columns.Add(columns[^1] + _fillWidth);
+
+            _columns = [.. columns];
+            SheetHead.Child?.InvalidateVisual();
+            foreach (var row in _liveRows) { row.InvalidateMeasure(); row.InvalidateVisual(); }
+        }
+
+        // Строки снизу — той же высоты, что и обычная строка листа, и по той же причине.
+        // Номера у них идут дальше по листу: это те самые строки книги, просто пустые, и
+        // называться они обязаны своими номерами.
+        var total = 0.0;
+        foreach (var row in _sheetRows) total += row.Height;
+
+        var next = _sheetRows.Count > 0 ? _sheetRows[^1].Row.Index + 1 : 0;
+        while (total < height - FillEdge && _sheetRows.Count < FillCap)
+        {
+            _sheetRows.Add(new SheetRowVm(new DocSheetRow(next++, []), _fillHeight));
+            total += _fillHeight;
+        }
+    }
+
+    /// <summary>
+    /// Остаток, ради которого клетку уже не заводят: на него все равно не влезет ни строка, ни
+    /// колонка целиком.
+    /// </summary>
+    private const double FillEdge = 4;
+
+    /// <summary>
+    /// Потолок на заполнитель. Не расчет, а страховка: если размер блока придет бессмысленным,
+    /// цикл не должен набивать миллион пустых клеток.
+    /// </summary>
+    private const int FillCap = 4096;
+
+    /// <summary>
+    /// Расстановка листа в пикселях: края колонок, высоты строк, полосы с буквами и номерами.
+    ///
+    /// Книга хранит ширину в ЗНАКАХ, а высоту в ПУНКТАХ — обе меры привязаны к шрифту Excel, а
+    /// не к нашему. Поэтому обе пересчитываются от текущего размера текста: иначе таблица
+    /// разъехалась бы при смене размера шрифта в настройках оформления.
+    /// </summary>
+    /// <returns>Высоты строк листа в пикселях — по одной на строку.</returns>
+    private double[] LayoutSheet(DocSheet sheet)
+    {
+        var font = Size("FontSizeMedium", 14);
+        var face = new Typeface(TextElement.GetFontFamily(this));
+
+        // Ширина колонки в книге задана В ЗНАКАХ, и знак тут — цифра «0» шрифта. Меряем ее у
+        // НАШЕГО шрифта, а не берем на глаз: обещание «в колонку влезает 16 знаков» должно
+        // выполняться тем текстом, которым мы рисуем, иначе значения обрежутся.
+        var letter = Math.Max(1, new FormattedText("0", CultureInfo.InvariantCulture,
+                                                   FlowDirection.LeftToRight, face, font,
+                                                   Brushes.Black).Width);
 
         var count = Math.Max(1, sheet.Columns);
         _columns  = new double[count + 1];
         for (var i = 0; i < count; i++)
         {
-            var chars = i < sheet.Widths.Count ? sheet.Widths[i] : DocSheetSource.DefaultWidth;
-            _columns[i + 1] = _columns[i] + Math.Max(24, chars * letter + 8);
+            // Нулевая ширина — колонка скрыта в книге; места она не занимает и на экране.
+            var chars = sheet.WidthOf(i);
+            _columns[i + 1] = _columns[i] + (chars <= 0 ? 0 : Math.Max(24, chars * letter + 8));
         }
+
+        // Строка обычной высоты выходит в 1,36 кегля — во столько же раз строка Excel выше
+        // своего текста. От этой меры считаются и все прочие высоты, заданные в книге.
+        var line  = Math.Round(font * 1.36);
+        var perPt = line / DocSheetSource.DefaultHeight;
+        var last  = sheet.Rows.Count > 0 ? sheet.Rows[^1].Index + 1 : 1;
+
+        _gutter     = Math.Max(30, last.ToString(CultureInfo.InvariantCulture).Length * letter + 14);
+        _headHeight = line + 4;
+        // Заполнитель повторяет обычную клетку ЭТОГО листа: у листа со своей высотой строки
+        // пустые строки обязаны быть такими же, иначе сетка сломается ровно там, где кончились
+        // данные.
+        _fillWidth  = Math.Max(24, sheet.DefaultWidth * letter + 8);
+        _fillHeight = Math.Max(line + 4, Math.Round(sheet.DefaultHeight * perPt));
+
+        var heights = new double[sheet.Rows.Count];
+        for (var i = 0; i < sheet.Rows.Count; i++)
+        {
+            var row = sheet.Rows[i];
+            heights[i] = Math.Max(Math.Max(line + 4, Math.Round(sheet.HeightOf(row) * perPt)),
+                                  WrapHeight(row, face, font));
+        }
+        return heights;
+    }
+
+    /// <summary>
+    /// Сколько места просит строка с переносом текста. Высота из книги посчитана под ширину
+    /// колонки и шрифт Excel, а у нас свои и то и другое — без этой проверки перенесенный текст
+    /// вылез бы за строку и обрезался ровно посередине букв.
+    /// </summary>
+    private double WrapHeight(DocSheetRow row, Typeface face, double font)
+    {
+        var need = 0.0;
+        foreach (var cell in row.Cells)
+        {
+            // Считаем только там, где текст заведомо многострочный: мерить каждую ячейку листа
+            // на тысячу строк — это тысячи раскладок текста на ровном месте.
+            if (!cell.Wrap && !cell.Text.Contains('\n')) continue;
+            if (cell.Column < 0 || cell.Column + 1 >= _columns.Length) continue;
+
+            var left  = _columns[cell.Column];
+            var right = _columns[Math.Min(cell.Column + cell.ColumnSpan, _columns.Length - 1)];
+
+            var label = new FormattedText(cell.Text, CultureInfo.CurrentCulture,
+                                          FlowDirection.LeftToRight, face, font, Brushes.Black);
+            if (cell.Wrap) label.MaxTextWidth = Math.Max(1, right - left - 8);
+            need = Math.Max(need, label.Height + 4);
+        }
+        return need;
+    }
+
+    /// <summary>
+    /// Таблицу увезли вбок — полосы с буквами и номерами остаются на месте, как в Excel, и их
+    /// надо перерисовать на новом сдвиге.
+    /// </summary>
+    private void SyncSheetScroll()
+    {
+        var x = _sheetScroll?.Offset.X ?? 0;
+        if (Math.Abs(x - _scrollX) < 0.5) return;
+
+        _scrollX = x;
+        SheetHead.Child?.InvalidateVisual();
+        foreach (var row in _liveRows) row.InvalidateVisual();
     }
 
     /// <summary>Найти совпадения по ВСЕЙ книге — по ним ходят стрелки и счетчик.</summary>
@@ -886,10 +1067,16 @@ public partial class DocReaderView : UserControl
         public void Refresh() => Changed?.Invoke();
     }
 
-    /// <summary>Строка листа: сами ячейки и совпадения в них.</summary>
-    private sealed class SheetRowVm(DocSheetRow row)
+    /// <summary>Строка листа: сами ячейки, ее высота на экране и совпадения в ней.</summary>
+    private sealed class SheetRowVm(DocSheetRow row, double height)
     {
         public DocSheetRow Row { get; } = row;
+
+        /// <summary>Высота строки в пикселях — своя у каждой, как и в книге.</summary>
+        public double Height { get; } = height;
+
+        /// <summary>Номер строки, как его показывает Excel, — с единицы.</summary>
+        public int Number { get; } = row.Index + 1;
 
         /// <summary>Совпадения: номер ячейки в строке и сквозной номер по книге.</summary>
         public List<(int Cell, int Id)> Hits { get; } = [];
@@ -919,7 +1106,7 @@ public partial class DocReaderView : UserControl
         {
             var columns = _owner._columns;
             var width   = columns.Length > 0 ? columns[^1] : 0;
-            return new Size(Math.Max(width, 1), _owner._rowHeight);
+            return new Size(Math.Max(_owner._gutter + width, 1), _row?.Height ?? _owner._headHeight);
         }
 
         public override void Render(DrawingContext context)
@@ -927,11 +1114,14 @@ public partial class DocReaderView : UserControl
             if (_row is not { } row || _owner._columns.Length < 2) return;
 
             var columns = _owner._columns;
+            var gutter  = _owner._gutter;
             var height  = Bounds.Height;
-            var line    = _owner.Brush("BrushSeparator",   "#D1D1D6");
-            var text    = _owner.Brush("BrushPrimaryText", "#1C1C1E");
-            var plain   = _owner.Brush("BrushHighlight",   "#FFF0B3");
-            var accent  = _owner.Brush("BrushAccent",      "#007AFF");
+            var line    = _owner.Brush("BrushSeparator",     "#D1D1D6");
+            var text    = _owner.Brush("BrushPrimaryText",   "#1C1C1E");
+            var muted   = _owner.Brush("BrushSecondaryText", "#8E8E93");
+            var strip   = _owner.Brush("BrushSecondaryBg",   "#F2F2F7");
+            var plain   = _owner.Brush("BrushHighlight",     "#FFF0B3");
+            var accent  = _owner.Brush("BrushAccent",        "#007AFF");
             var pen     = new Pen(line, 1);
             var font    = _owner.Size("FontSizeMedium", 14);
             var face    = new Typeface(TextElement.GetFontFamily(this));
@@ -939,18 +1129,20 @@ public partial class DocReaderView : UserControl
             // Сетка: вертикальная линия на каждой границе колонки и нижняя под строкой. Рисуется
             // ДО текста — иначе линия перечеркнула бы буквы, вылезшие к самому краю ячейки.
             for (var i = 1; i < columns.Length; i++)
-                context.DrawLine(pen, new Point(columns[i], 0), new Point(columns[i], height));
-            context.DrawLine(pen, new Point(0, height - 0.5), new Point(columns[^1], height - 0.5));
+                context.DrawLine(pen, new Point(gutter + columns[i], 0), new Point(gutter + columns[i], height));
+            context.DrawLine(pen, new Point(0, height - 0.5), new Point(gutter + columns[^1], height - 0.5));
 
             for (var index = 0; index < row.Row.Cells.Count; index++)
             {
                 var cell = row.Row.Cells[index];
                 if (cell.Column < 0 || cell.Column + 1 >= columns.Length) continue;
 
-                var left  = columns[cell.Column];
+                var left  = gutter + columns[cell.Column];
                 var last  = Math.Min(cell.Column + cell.ColumnSpan, columns.Length - 1);
-                var right = columns[last];
-                var area  = new Rect(left, 0, Math.Max(0, right - left), height);
+                var right = gutter + columns[last];
+                if (right - left <= 0) continue;                  // колонка скрыта в книге
+
+                var area = new Rect(left, 0, right - left, height);
 
                 var at  = index;
                 var hit = row.Hits.FindIndex(h => h.Cell == at);
@@ -964,22 +1156,64 @@ public partial class DocReaderView : UserControl
                     context.FillRectangle(fill, area.Deflate(new Thickness(1)));
                 }
 
+                var inner = area.Deflate(new Thickness(4, 2));
                 var label = new FormattedText(cell.Text, CultureInfo.CurrentCulture,
                                               FlowDirection.LeftToRight, face, font, text);
 
+                // Перенос по словам — свойство ячейки в книге, а не наша выдумка: у ячейки с
+                // переносом Excel и строку делает выше, и текст в ней ведет по ширине колонки.
+                // Многоточия при этом не ставим: в ячейке с переносом ничего не пропадает, слово
+                // длиннее колонки просто переносится — как и в самой книге.
+                label.Trimming = TextTrimming.None;
+                if (cell.Wrap) label.MaxTextWidth = Math.Max(1, inner.Width);
+
                 // Текст режется по своей ячейке: длинная подпись не должна залезать на соседнюю
                 // колонку, как она не залезает и в самой книге.
-                using (context.PushClip(area.Deflate(new Thickness(4, 0))))
-                {
-                    // Числа прижаты вправо, текст — влево: так их и показывает Excel, и так
-                    // колонка чисел читается столбиком.
-                    var x = IsNumeric(cell.Text)
-                        ? Math.Max(left + 4, right - 4 - label.Width)
-                        : left + 4;
-                    context.DrawText(label, new Point(x, (height - label.Height) / 2));
-                }
+                using (context.PushClip(area))
+                    context.DrawText(label, new Point(Across(cell, label, inner), Down(cell, label, inner)));
             }
+
+            // Полоса с номером строки стоит на месте, как в Excel: таблицу увозят вбок, а номера
+            // остаются у левого края. Рисуется ПОСЛЕДНЕЙ — уехавшие ячейки прячутся под ней.
+            var box = new Rect(_owner._scrollX, 0, gutter, height);
+            context.FillRectangle(strip, box);
+            context.DrawLine(pen, new Point(box.Right - 0.5, 0), new Point(box.Right - 0.5, height));
+            context.DrawLine(pen, new Point(box.X, height - 0.5), new Point(box.Right, height - 0.5));
+
+            var number = new FormattedText(row.Number.ToString(CultureInfo.InvariantCulture),
+                                           CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
+                                           face, font * 0.85, muted);
+            context.DrawText(number, new Point(box.Right - 6 - number.Width,
+                                               Math.Max(0, (height - number.Height) / 2)));
         }
+
+        /// <summary>
+        /// Куда встает текст по горизонтали. Выключка из книги главнее: если человек прижал
+        /// подпись к правому краю, так она и стоит. Своего правила нет только у «обычных»
+        /// ячеек — их Excel расставляет по смыслу: число вправо, текст влево.
+        /// </summary>
+        private static double Across(DocCell cell, FormattedText label, Rect inner)
+        {
+            var align = cell.Align != DocAlign.Auto ? cell.Align
+                      : IsNumeric(cell.Text)        ? DocAlign.Right
+                                                    : DocAlign.Left;
+            var x = align switch
+            {
+                DocAlign.Right  => inner.Right - label.Width,
+                DocAlign.Center => inner.X + (inner.Width - label.Width) / 2,
+                _               => inner.X,
+            };
+            // Начало значения важнее его конца: текст, который шире ячейки, показываем с начала.
+            return Math.Max(inner.X, x);
+        }
+
+        /// <summary>Куда встает текст по вертикали. Excel по умолчанию прижимает его вниз.</summary>
+        private static double Down(DocCell cell, FormattedText label, Rect inner) => cell.VAlign switch
+        {
+            DocVAlign.Top    => inner.Y,
+            DocVAlign.Middle => Math.Max(inner.Y, inner.Y + (inner.Height - label.Height) / 2),
+            _                => Math.Max(inner.Y, inner.Bottom - label.Height),
+        };
 
         /// <summary>Значение выглядит числом или датой — такие в таблице прижимаются вправо.</summary>
         private static bool IsNumeric(string value)
@@ -1005,12 +1239,16 @@ public partial class DocReaderView : UserControl
         {
             base.OnAttachedToVisualTree(e);
             Hook();
+            // Строка помнится, пока она на экране: прокрутка вбок двигает полосу с номером, и
+            // перерисовать нужно ровно показанные строки, а не искать их обходом дерева.
+            _owner._liveRows.Add(this);
             InvalidateVisual();
         }
 
         protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
         {
             base.OnDetachedFromVisualTree(e);
+            _owner._liveRows.Remove(this);
             Unhook();
         }
 
@@ -1030,6 +1268,59 @@ public partial class DocReaderView : UserControl
         {
             InvalidateMeasure();
             InvalidateVisual();
+        }
+    }
+
+    /// <summary>
+    /// Полоса с буквами колонок над таблицей. Рисуется теми же мерами, что и строка листа, —
+    /// иначе буква уехала бы от своей колонки, и это было бы видно сразу.
+    ///
+    /// Полоса живет ВНЕ прокрутки таблицы и сдвигается сама: так она остается на виду, когда
+    /// таблицу увозят вбок, — ровно как закрепленная шапка листа в Excel.
+    /// </summary>
+    private sealed class SheetHeadView(DocReaderView owner) : Control
+    {
+        protected override Size MeasureOverride(Size availableSize) =>
+            new(double.IsInfinity(availableSize.Width) ? 0 : availableSize.Width, owner._headHeight);
+
+        public override void Render(DrawingContext context)
+        {
+            var columns = owner._columns;
+            if (columns.Length < 2) return;
+
+            var width  = Bounds.Width;
+            var height = Bounds.Height;
+            var gutter = owner._gutter;
+            var line   = owner.Brush("BrushSeparator",     "#D1D1D6");
+            var muted  = owner.Brush("BrushSecondaryText", "#8E8E93");
+            var strip  = owner.Brush("BrushSecondaryBg",   "#F2F2F7");
+            var pen    = new Pen(line, 1);
+            var font   = owner.Size("FontSizeMedium", 14) * 0.85;
+            var face   = new Typeface(TextElement.GetFontFamily(this));
+
+            // Полоса кончается там же, где таблица: пустая серая лента до края панели говорила бы
+            // о колонках, которых в листе нет.
+            var edge = Math.Min(width, gutter + columns[^1] - owner._scrollX);
+            context.FillRectangle(strip, new Rect(0, 0, edge, height));
+            context.DrawLine(pen, new Point(0, height - 0.5), new Point(edge, height - 0.5));
+
+            using (context.PushClip(new Rect(gutter, 0, Math.Max(0, width - gutter), height)))
+                for (var i = 0; i + 1 < columns.Length; i++)
+                {
+                    var left  = gutter + columns[i]     - owner._scrollX;
+                    var right = gutter + columns[i + 1] - owner._scrollX;
+                    if (right - left <= 0 || right <= gutter || left >= width) continue;
+
+                    context.DrawLine(pen, new Point(right - 0.5, 0), new Point(right - 0.5, height));
+
+                    var label = new FormattedText(DocSheetSource.NameOf(i), CultureInfo.InvariantCulture,
+                                                  FlowDirection.LeftToRight, face, font, muted);
+                    context.DrawText(label, new Point(left + (right - left - label.Width) / 2,
+                                                      (height - label.Height) / 2));
+                }
+
+            // Пустой угол над полосой номеров — как в книге.
+            context.DrawLine(pen, new Point(gutter - 0.5, 0), new Point(gutter - 0.5, height));
         }
     }
 

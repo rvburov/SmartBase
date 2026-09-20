@@ -24,6 +24,7 @@ using Avalonia.Markup.Xaml.Styling;
 using Avalonia.Media;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
+using Avalonia.Controls.Presenters;
 using Avalonia.Controls.Primitives;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
@@ -231,12 +232,51 @@ void Sheets(DocReaderView reader)
     modeBtn!.IsChecked = true;
     Pump();
 
+    // Подпись выбранного режима обязана быть ВИДНА. Проверка не на пустом месте: тема Fluent
+    // красит подпись выбранного ToggleButton белым прямо в подаче содержимого, и без нашей
+    // поправки кнопка выглядела пустой — белым по белому.
+    CheckCaption(modeBtn);
+
     var host = Find<Grid>(reader, "SheetHost");
     var rows = Find<ListBox>(reader, "SheetRows");
     Check(host is { IsVisible: true },  "таблица не показана");
     Check(Find<ListBox>(reader, "PagesList") is { IsVisible: false }, "вместо таблицы показаны страницы");
+    // Строк в списке БОЛЬШЕ, чем в листе: снизу дописаны пустые — лист занимает блок целиком,
+    // как в Excel, и пустого места под таблицей не остается.
     Console.WriteLine("Строк таблицы: " + rows?.ItemCount);
-    Check(rows?.ItemCount == 3, $"строк в таблице {rows?.ItemCount}, а в листе 3");
+    Check(rows?.ItemCount >= 3, $"строк в таблице {rows?.ItemCount}, а в листе 3");
+
+    // Полоса с буквами колонок — по ней человек понимает, что видит лист, а не просто сетку.
+    var head = Find<Decorator>(reader, "SheetHead");
+    Check(head?.Child is { Bounds.Height: > 0 }, "полоса с буквами колонок не показана");
+
+    // Высота строки берется из книги: у третьей строки она своя, и на экране она обязана быть
+    // выше обычной. Именно этого не было, когда ячейка с переносом резалась посередине букв.
+    var heights = rows?.GetVisualDescendants().OfType<ListBoxItem>()
+                       .Select(i => Math.Round(i.Bounds.Height)).ToList() ?? [];
+    Console.WriteLine("Высоты строк: " + string.Join(", ", heights));
+    Check(heights.Count >= 3 && heights[2] > heights[1] + 10,
+          "строка со своей высотой нарисована такой же, как обычная");
+
+    // Заполнитель добивает лист до нижнего края блока, и последняя строка при этом НЕ ужата:
+    // она такая же, как обычная, и просто уходит за край под полосу прокрутки.
+    var filled = heights.Sum();
+    Console.WriteLine($"Клетки занимают {filled} из {Math.Round(rows?.Bounds.Height ?? 0)} по высоте");
+    Check(rows is not null && filled >= rows.Bounds.Height - 8,
+          "под таблицей осталось пустое место");
+    Check(heights.Count > 3 && heights[^1] >= heights[1],
+          $"последняя строка ужата: {heights.LastOrDefault()} против обычной {heights.ElementAtOrDefault(1)}");
+
+    // Обе полосы прокрутки и квадрат на их пересечении: без квадрата в углу белое пятно.
+    var vbar   = Find<ScrollBar>(reader, "SheetBar");
+    var hbar   = Find<ScrollBar>(reader, "SheetHBar");
+    var corner = Find<Border>(reader, "SheetCorner");
+    Console.WriteLine($"Полосы листа: вертикальная {vbar?.IsVisible}, горизонтальная {hbar?.IsVisible}, "
+                      + $"угол {Math.Round(corner?.Bounds.Width ?? 0)}×{Math.Round(corner?.Bounds.Height ?? 0)}");
+    Check(vbar is { IsVisible: true } && hbar is { IsVisible: true },
+          "у заполненного листа показана не всякая полоса прокрутки");
+    Check(corner is { Bounds.Width: > 0, Bounds.Height: > 0 },
+          "на пересечении полос прокрутки нет квадрата");
 
     // Вкладки листов: их две, и вторая переключает лист.
     var tabs = Find<StackPanel>(reader, "SheetTabs");
@@ -269,9 +309,11 @@ void WriteBook(string path)
             new X.Row(
                 new X.Cell { CellReference = "A2", DataType = X.CellValues.String, CellValue = new X.CellValue("Наименование") },
                 new X.Cell { CellReference = "B2", DataType = X.CellValues.String, CellValue = new X.CellValue("Количество") }) { RowIndex = 2 },
+            // Третья строка выше обычной — так ее задали в книге.
             new X.Row(
                 new X.Cell { CellReference = "A3", DataType = X.CellValues.String, CellValue = new X.CellValue("Труба стальная") },
-                new X.Cell { CellReference = "B3", CellValue = new X.CellValue("12") }) { RowIndex = 3 }),
+                new X.Cell { CellReference = "B3", CellValue = new X.CellValue("12") })
+                { RowIndex = 3, Height = 60, CustomHeight = true }),
         new X.MergeCells(new X.MergeCell { Reference = "A1:B1" }));
     first.Worksheet.Save();
 
@@ -293,6 +335,20 @@ void Check(bool ok, string complaint)
     if (ok) return;
     failures++;
     Console.WriteLine("  РАСХОЖДЕНИЕ: " + complaint);
+}
+
+// Подпись кнопки видна, только если ее цвет отличается от цвета подложки. Сравниваются именно
+// подача содержимого и текст внутри нее: цвет, назначенный самой кнопке, до текста может и не
+// дойти — тема вправе назначить свой прямо в подаче.
+void CheckCaption(ToggleButton button)
+{
+    var presenter = button.GetVisualDescendants().OfType<ContentPresenter>().FirstOrDefault();
+    var label     = button.GetVisualDescendants().OfType<TextBlock>().FirstOrDefault();
+    var ink       = (label?.Foreground as ISolidColorBrush)?.Color;
+    var paper     = (presenter?.Background as ISolidColorBrush)?.Color;
+
+    Console.WriteLine($"Подпись выбранного режима: «{label?.Text}» цветом {ink} на {paper}");
+    Check(ink is not null && ink != paper, "подпись выбранного режима слилась с его подложкой");
 }
 
 // Ждем условия, прокручивая очередь диспетчера: чтение документа идет в фоне и возвращается

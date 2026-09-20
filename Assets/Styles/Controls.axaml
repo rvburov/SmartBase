@@ -417,9 +417,18 @@
     </Style>
     <Style Selector="ToggleButton.modeseg:pointerover /template/ ContentPresenter">
         <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
     </Style>
+    <Style Selector="ToggleButton.modeseg:pressed /template/ ContentPresenter">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
+    </Style>
+    <!-- Цвет подписи задается НА ПОДАЧЕ содержимого, а не на кнопке: у выбранного ToggleButton
+         тема Fluent красит подпись белым прямо в ContentPresenter, и Foreground самой кнопки до
+         текста не доходит — белым по белому подпись пропадает совсем. -->
     <Style Selector="ToggleButton.modeseg:checked /template/ ContentPresenter">
         <Setter Property="Background" Value="{StaticResource BrushBg}" />
+        <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
     </Style>
     <Style Selector="ToggleButton.modeseg:checked">
         <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
@@ -427,6 +436,11 @@
     </Style>
     <Style Selector="ToggleButton.modeseg:checked:pointerover /template/ ContentPresenter">
         <Setter Property="Background" Value="{StaticResource BrushBg}" />
+        <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
+    </Style>
+    <Style Selector="ToggleButton.modeseg:checked:pressed /template/ ContentPresenter">
+        <Setter Property="Background" Value="{StaticResource BrushBg}" />
+        <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
     </Style>
     <!-- Недоступный режим (у формата нет настоящего вида) виден, но погашен: пропасть он не
          может — иначе полоса меняла бы ширину от документа к документу. -->

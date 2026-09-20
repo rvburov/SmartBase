@@ -202,37 +202,56 @@
                        Orientation="Vertical"
                        IsVisible="False" />
 
-            <!-- Лист книги Excel: вкладки листов сверху, строки таблицы под ними.
-                 Строка рисует свои ячейки сама (см. code-behind): у таблицы на тысячу строк
-                 контролы на каждую ячейку означали бы десятки тысяч элементов дерева. -->
+            <!-- Лист книги Excel: вкладки листов сверху, полоса букв колонок под ними, строки
+                 таблицы ниже. Строка рисует свои ячейки сама (см. code-behind): у таблицы на
+                 тысячу строк контролы на каждую ячейку означали бы десятки тысяч элементов
+                 дерева.
+
+                 Буквы колонок и номера строк — не украшение: по ним человек понимает, ЧТО он
+                 видит. Без них таблица из середины листа выглядит как таблица с начала. -->
             <Grid Grid.Column="0" x:Name="SheetHost"
                   IsVisible="False"
-                  RowDefinitions="Auto,*,Auto">
-                <Border Grid.Row="0" x:Name="SheetTabsBox"
+                  RowDefinitions="Auto,Auto,*,Auto"
+                  ColumnDefinitions="*,Auto">
+                <Border Grid.Row="0" Grid.ColumnSpan="2" x:Name="SheetTabsBox"
                         Classes="modeseg"
                         HorizontalAlignment="Left"
-                        Margin="16,12,16,0">
+                        Margin="16,12,16,10">
                     <StackPanel x:Name="SheetTabs" Orientation="Horizontal" Spacing="2" />
                 </Border>
 
-                <ListBox Grid.Row="1" x:Name="SheetRows"
+                <!-- Отступов у таблицы нет вовсе, и это не небрежность: лист занимает блок
+                     целиком, как в самом Excel. Поля вокруг сетки читались бы как край листа,
+                     которого на деле нет, — лист продолжается дальше.
+
+                     Полоса букв колонок. Содержимое ей ставит code-behind: рисует она то же
+                     самое, что строка таблицы, и знать про это разметке незачем. -->
+                <Decorator Grid.Row="1" x:Name="SheetHead" />
+
+                <ListBox Grid.Row="2" x:Name="SheetRows"
                          Classes="reader"
-                         Margin="16,12,0,0"
                          SelectionMode="Single"
                          ScrollViewer.VerticalScrollBarVisibility="Hidden"
                          ScrollViewer.HorizontalScrollBarVisibility="Hidden" />
 
+                <!-- Обе полосы листа живут ВНУТРИ его сетки, а не снаружи, как у текста и
+                     страниц: только так между ними получается угол. Вертикальная начинается на
+                     уровне полосы букв — стандарт прокрутки проекта (ui/scrolling.md). -->
+                <ScrollBar Grid.Row="1" Grid.RowSpan="2" Grid.Column="1" x:Name="SheetBar"
+                           Orientation="Vertical"
+                           IsVisible="False" />
+
                 <!-- Горизонтальная полоса: таблица шире панели почти всегда, и без нее
                       правые колонки было бы не достать. -->
-                <ScrollBar Grid.Row="2" x:Name="SheetHBar"
+                <ScrollBar Grid.Row="3" Grid.Column="0" x:Name="SheetHBar"
                            Orientation="Horizontal"
-                           Margin="16,0,0,0"
                            IsVisible="False" />
-            </Grid>
 
-            <ScrollBar Grid.Column="1" x:Name="SheetBar"
-                       Orientation="Vertical"
-                       IsVisible="False" />
+                <!-- Квадрат на пересечении полос — иначе там белое пятно. Схлопывается сам
+                     вместе со спрятанной полосой: своя строка и своя колонка у него Auto. -->
+                <Border Grid.Row="3" Grid.Column="1" x:Name="SheetCorner"
+                        Background="{DynamicResource BrushScrollbarTrack}" />
+            </Grid>
 
             <!-- Состояние вместо текста: читаем, текста нет, формат не читается, файл пропал.
                  Лежит поверх списка в той же ячейке — списка в этот момент все равно нет. -->

@@ -99,6 +99,61 @@ public sealed class DocSheetSourceTests : IDisposable
         return path;
     }
 
+    /// <summary>
+    /// Книга про РАССТАНОВКУ: своя высота строки и высота листа по умолчанию, пустая строка
+    /// между данными, скрытая строка, скрытая колонка, перенос текста и выключка.
+    /// </summary>
+    private string WriteGeometryBook()
+    {
+        var path = Path.Combine(_dir, "geometry.xlsx");
+        using var doc = SpreadsheetDocument.Create(path, SpreadsheetDocumentType.Workbook);
+
+        var book      = doc.AddWorkbookPart();
+        book.Workbook = new Workbook();
+
+        var stylesPart = book.AddNewPart<WorkbookStylesPart>();
+        stylesPart.Stylesheet = new Stylesheet(
+            new Fonts(new Font()), new Fills(new Fill()), new Borders(new Border()),
+            new CellStyleFormats(new CellFormat()),
+            new CellFormats(
+                new CellFormat(),
+                new CellFormat(new Alignment
+                {
+                    WrapText   = true,
+                    Horizontal = HorizontalAlignmentValues.Center,
+                    Vertical   = VerticalAlignmentValues.Center,
+                })
+                { ApplyAlignment = true }));
+        stylesPart.Stylesheet.Save();
+
+        var part = book.AddNewPart<WorksheetPart>();
+        part.Worksheet = new Worksheet(
+            new SheetFormatProperties { DefaultRowHeight = 20, DefaultColumnWidth = 12 },
+            new Columns(
+                new Column { Min = 1, Max = 1, Width = 30, CustomWidth = true },
+                new Column { Min = 2, Max = 2, Width = 9, Hidden = true }),
+            new SheetData(
+                new Row(new Cell { CellReference = "A1", StyleIndex = 1,
+                                   DataType = CellValues.String, CellValue = new CellValue("Шапка") })
+                    { RowIndex = 1, Height = 40, CustomHeight = true },
+                // Строки 2 в книге нет вовсе — это пустая строка между данными.
+                new Row(new Cell { CellReference = "A3", DataType = CellValues.String,
+                                   CellValue = new CellValue("Значение") })
+                    { RowIndex = 3 },
+                new Row(new Cell { CellReference = "A4", DataType = CellValues.String,
+                                   CellValue = new CellValue("Скрытая") })
+                    { RowIndex = 4, Hidden = true },
+                new Row(new Cell { CellReference = "A5", DataType = CellValues.String,
+                                   CellValue = new CellValue("Хвост") })
+                    { RowIndex = 5 }));
+        part.Worksheet.Save();
+
+        book.Workbook.AppendChild(new Sheets(
+            new Sheet { Id = book.GetIdOfPart(part), SheetId = 1, Name = "Лист" }));
+        book.Workbook.Save();
+        return path;
+    }
+
     // ── Листы и ячейки ────────────────────────────────────────────────────────
 
     [Fact]
@@ -197,6 +252,130 @@ public sealed class DocSheetSourceTests : IDisposable
         Assert.Equal(3, DocSheetSource.Open(WriteBook())[0].Columns);
     }
 
+    // ── Расстановка: высоты, пропуски и скрытое ───────────────────────────────
+
+    /// <summary>
+    /// Высота строки берется из книги. Без нее ячейка с переносом на три строки не влезает в
+    /// строку одной высоты и режется ровно посередине букв — это и видно на экране.
+    /// </summary>
+    [Fact]
+    public void Row_keeps_its_height_from_the_file()
+    {
+        var sheet = DocSheetSource.Open(WriteGeometryBook())[0];
+
+        Assert.Equal(40, sheet.Rows[0].Height, 1);
+        Assert.Equal(40, sheet.HeightOf(sheet.Rows[0]), 1);
+    }
+
+    /// <summary>Строке без своей высоты достается высота листа, а не наша выдумка.</summary>
+    [Fact]
+    public void Row_without_its_own_height_takes_the_sheet_one()
+    {
+        var sheet = DocSheetSource.Open(WriteGeometryBook())[0];
+        var row   = sheet.Rows.First(r => r.Index == 2);
+
+        Assert.Equal(20, sheet.DefaultHeight, 1);
+        Assert.Equal(0,  row.Height, 1);
+        Assert.Equal(20, sheet.HeightOf(row), 1);
+    }
+
+    /// <summary>
+    /// Пустая строка между данными остается пустой строкой. Выброси ее — таблица сожмется, и
+    /// номера строк перестанут совпадать с книгой, то есть станут враньем.
+    /// </summary>
+    [Fact]
+    public void Empty_row_between_data_keeps_its_place()
+    {
+        var sheet = DocSheetSource.Open(WriteGeometryBook())[0];
+
+        Assert.Equal([0, 1, 2, 4], sheet.Rows.Select(r => r.Index));
+        Assert.Empty(sheet.Rows[1].Cells);
+    }
+
+    /// <summary>Скрытая в книге строка не показывается — как и в самом Excel.</summary>
+    [Fact]
+    public void Hidden_row_is_not_shown()
+    {
+        var sheet = DocSheetSource.Open(WriteGeometryBook())[0];
+
+        Assert.DoesNotContain(sheet.Rows, r => r.Index == 3);
+        Assert.DoesNotContain(sheet.Rows, r => r.Cells.Any(c => c.Text == "Скрытая"));
+    }
+
+    /// <summary>Скрытая колонка получает нулевую ширину — места на экране она не занимает.</summary>
+    [Fact]
+    public void Hidden_column_has_no_width()
+    {
+        var sheet = DocSheetSource.Open(WriteGeometryBook())[0];
+
+        Assert.Equal(30, sheet.WidthOf(0), 1);
+        Assert.Equal(0,  sheet.WidthOf(1), 1);
+    }
+
+    /// <summary>Колонке без своей ширины достается ширина листа.</summary>
+    [Fact]
+    public void Column_without_its_own_width_takes_the_sheet_one()
+    {
+        var sheet = DocSheetSource.Open(WriteGeometryBook())[0];
+
+        Assert.Equal(12, sheet.DefaultWidth, 1);
+        Assert.Equal(12, sheet.WidthOf(9),   1);
+    }
+
+    // ── Показ ячейки: перенос и выключка ──────────────────────────────────────
+
+    [Fact]
+    public void Wrap_and_alignment_come_from_the_cell_style()
+    {
+        var head = DocSheetSource.Open(WriteGeometryBook())[0].Rows[0].Cells[0];
+
+        Assert.True(head.Wrap);
+        Assert.Equal(DocAlign.Center,   head.Align);
+        Assert.Equal(DocVAlign.Middle, head.VAlign);
+    }
+
+    /// <summary>
+    /// У ячейки без своего оформления выключки нет: как ее показать, решается по значению —
+    /// число вправо, текст влево. Вниз Excel прижимает по умолчанию.
+    /// </summary>
+    [Fact]
+    public void Cell_without_a_style_has_no_alignment_of_its_own()
+    {
+        var cell = DocSheetSource.Open(WriteGeometryBook())[0].Rows.First(r => r.Index == 2).Cells[0];
+
+        Assert.False(cell.Wrap);
+        Assert.Equal(DocAlign.Auto,    cell.Align);
+        Assert.Equal(DocVAlign.Bottom, cell.VAlign);
+    }
+
+    /// <summary>
+    /// Перевод строки внутри ячейки доживает до сетки. Это не редкость: так набирают адреса и
+    /// перечисления прямо в клетке, и без переводов они слипаются в одну строку.
+    /// </summary>
+    [Fact]
+    public void Line_breaks_inside_a_cell_survive()
+    {
+        var path = Path.Combine(_dir, "breaks.xlsx");
+        using (var doc = SpreadsheetDocument.Create(path, SpreadsheetDocumentType.Workbook))
+        {
+            var book      = doc.AddWorkbookPart();
+            book.Workbook = new Workbook();
+
+            var part = book.AddNewPart<WorksheetPart>();
+            part.Worksheet = new Worksheet(new SheetData(
+                new Row(new Cell { CellReference = "A1", DataType = CellValues.String,
+                                   CellValue = new CellValue("Первая\nВторая") })
+                    { RowIndex = 1 }));
+            part.Worksheet.Save();
+
+            book.Workbook.AppendChild(new Sheets(
+                new Sheet { Id = book.GetIdOfPart(part), SheetId = 1, Name = "Лист" }));
+            book.Workbook.Save();
+        }
+
+        Assert.Equal("Первая\nВторая", DocSheetSource.Open(path)[0].Rows[0].Cells[0].Text);
+    }
+
     // ── Отказы ────────────────────────────────────────────────────────────────
 
     [Theory]
@@ -238,6 +417,31 @@ public sealed class DocSheetSourceTests : IDisposable
     public void Column_is_read_from_the_reference(string reference, int column)
     {
         Assert.Equal(column, DocSheetSource.ColumnOf(reference));
+    }
+
+    /// <summary>Имя колонки — то самое, что стоит над ней в Excel.</summary>
+    [Theory]
+    [InlineData(0,  "A")]
+    [InlineData(25, "Z")]
+    [InlineData(26, "AA")]
+    [InlineData(27, "AB")]
+    [InlineData(54, "BC")]
+    [InlineData(-1, "")]
+    public void Column_name_is_the_one_excel_shows(int column, string name)
+    {
+        Assert.Equal(name, DocSheetSource.NameOf(column));
+    }
+
+    /// <summary>Имя и номер колонки обязаны сходиться — иначе буква встанет не над своей.</summary>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(25)]
+    [InlineData(26)]
+    [InlineData(54)]
+    [InlineData(127)]
+    public void Column_name_and_number_agree(int column)
+    {
+        Assert.Equal(column, DocSheetSource.ColumnOf(DocSheetSource.NameOf(column) + "1"));
     }
 
     [Fact]
