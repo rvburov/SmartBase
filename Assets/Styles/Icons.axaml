@@ -167,6 +167,8 @@
     <StreamGeometry x:Key="IconChevronsRight">M7 18 L13 12 L7 6 M13 18 L19 12 L13 6</StreamGeometry>
     <!-- ⌄ chevron-down (выпадающие списки, аккордеоны) -->
     <StreamGeometry x:Key="IconChevronDown">M6 9 L12 15 L18 9</StreamGeometry>
+    <!-- ⌃ chevron-up (переход к предыдущему совпадению в панели чтения) -->
+    <StreamGeometry x:Key="IconChevronUp">M18 15 L12 9 L6 15</StreamGeometry>
     <!-- ⌄ chevron-down ЗАЛИВКОЙ для ComboBox (PathIcon, своя сетка ~12×8) -->
     <StreamGeometry x:Key="IconChevronDownFilled">M1 1 L6 6 L11 1 L12.4 2.4 L6 8.8 L-0.4 2.4 Z</StreamGeometry>
 
@@ -174,6 +176,9 @@
 
     <!-- Поиск (lucide search) — якорь строки поиска в библиотеке документов -->
     <StreamGeometry x:Key="IconSearch">M21 21 L16.65 16.65 M11 3 A8 8 0 1 0 11 19 A8 8 0 1 0 11 3 Z</StreamGeometry>
+    <!-- Открыть снаружи (lucide square-arrow-out-up-right) — «Открыть» в карточке документа:
+         файл уходит в чужую программу, и стрелка из рамки говорит именно это -->
+    <StreamGeometry x:Key="IconOpenExternal">M21 13 V19 A2 2 0 0 1 19 21 H5 A2 2 0 0 1 3 19 V5 A2 2 0 0 1 5 3 H11 M15 3 H21 V9 M10 14 L21 3</StreamGeometry>
     <!-- Фильтр (lucide filter) -->
     <StreamGeometry x:Key="IconFilter">M10 20a1 1 0 0 0 .553.895l2 1A1 1 0 0 0 14 21v-7a2 2 0 0 1 .517-1.341L21.74 4.67A1 1 0 0 0 21 3H3a1 1 0 0 0-.742 1.67l7.225 7.989A2 2 0 0 1 10 14z</StreamGeometry>
     <!-- Редактировать (pen) -->

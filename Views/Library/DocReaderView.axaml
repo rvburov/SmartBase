@@ -1,0 +1,184 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:b="using:SmartBase.Controls.Behaviors"
+             x:Class="SmartBase.Views.Library.DocReaderView"
+             Background="{StaticResource BrushBg}">
+
+    <!-- Панель чтения документа — правая панель раздела «Библиотека документов», та же
+         колонка главного окна, что у страницы записи в конструкторе (MainWindow.axaml).
+         Разделитель слева, ручка ширины и сохранение ширины — общие с ней, здесь только
+         содержимое панели.
+
+         Показывается ТЕКСТ документа, а не сам документ: это первый шаг. Настоящие страницы
+         PDF и настоящая таблица листа Excel — следующие, под них уже заложен переключатель
+         режима в шапке (пока он один и потому не показан).
+
+         Текст читается заново из файла, а НЕ берется из кеша поиска: кеш хранит текст, у
+         которого схлопнут всякий пробельный знак, включая переводы строк (так надо индексу),
+         и на экране это была бы одна бесконечная строка без абзацев. Разбор для чтения живет
+         в Core/Documents/DocReadText.cs. -->
+
+    <UserControl.Styles>
+        <!-- Строки документа: список без всякого вида списка. ListBox взят не ради выделения,
+             а ради ДВУХ вещей, которых нет у ItemsControl: виртуализации (документ бывает в
+             миллион знаков) и ScrollIntoView — им панель прыгает к следующему совпадению. -->
+        <Style Selector="ListBox.reader">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Padding"    Value="0" />
+        </Style>
+        <Style Selector="ListBox.reader ListBoxItem">
+            <Setter Property="Padding"   Value="0" />
+            <Setter Property="MinHeight" Value="0" />
+            <Setter Property="Cursor"    Value="IBeam" />
+        </Style>
+        <!-- Выделения у строк нет вовсе: текущее совпадение видно по самой подсветке слова,
+             а синяя строка поверх желтого слова читалась бы как «выбрано», хотя выбирать тут
+             нечего. -->
+        <Style Selector="ListBox.reader ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="ListBox.reader ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+    </UserControl.Styles>
+
+    <Grid RowDefinitions="Auto,Auto,Auto,Auto,*">
+
+        <!-- ── Шапка: название документа и закрытие ─────────────────────────── -->
+        <Grid Grid.Row="0" Height="56" Margin="16,0" ColumnDefinitions="*,Auto">
+            <StackPanel Grid.Column="0" VerticalAlignment="Center" Spacing="1" Margin="0,0,8,0">
+                <TextBlock x:Name="TitleLabel"
+                           Text="Документ"
+                           FontSize="{DynamicResource FontSizeLarge}"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           TextTrimming="CharacterEllipsis" />
+                <!-- Подпись говорит, ЧТО открыто: имя файла и где он лежит. Без нее у двух
+                     одноименных записей панель выглядит одинаково. -->
+                <TextBlock x:Name="SubtitleLabel"
+                           Text=""
+                           FontSize="{DynamicResource FontSizeSmall}"
+                           Foreground="{StaticResource BrushSecondaryText}"
+                           TextTrimming="CharacterEllipsis" />
+            </StackPanel>
+
+            <Button Grid.Column="1" x:Name="CloseBtn"
+                    Classes="icon"
+                    Width="30" Height="30"
+                    VerticalAlignment="Center"
+                    CornerRadius="{StaticResource RadiusMedium}"
+                    ToolTip.Tip="Закрыть панель чтения">
+                <Viewbox Width="{StaticResource IconSizeSmall}" Height="{StaticResource IconSizeSmall}">
+                    <Canvas Width="24" Height="24">
+                        <Path Data="{StaticResource IconClose}"
+                              Stroke="{Binding $parent[Button].Foreground}"
+                              StrokeThickness="{StaticResource IconStrokeSmall}"
+                              StrokeLineCap="Round" StrokeJoin="Round" />
+                    </Canvas>
+                </Viewbox>
+            </Button>
+        </Grid>
+
+        <Border Grid.Row="1" Classes="separator h" />
+
+        <!-- ── Строка поиска внутри документа ───────────────────────────────── -->
+        <!-- Запрос приезжает из поиска раздела: человек нашел документ по слову и нажал
+             «Прочитать» — искать это слово второй раз руками он не должен. Дальше строку
+             можно править, и это уже поиск ПО ЭТОМУ документу. -->
+        <Border Grid.Row="2" Classes="searchBlock" Margin="16,12,16,12">
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto" Margin="10,0" Height="{StaticResource ControlHeightStandard}">
+                <Viewbox Grid.Column="0" Width="14" Height="14" VerticalAlignment="Center">
+                    <Canvas Width="24" Height="24">
+                        <Path Data="{StaticResource IconSearch}"
+                              Stroke="{StaticResource BrushSecondaryText}"
+                              StrokeThickness="{StaticResource IconStrokeSmall}"
+                              StrokeLineCap="Round" StrokeJoin="Round" />
+                    </Canvas>
+                </Viewbox>
+
+                <!-- Рамку держит блок; у поля своей нет ни в одном состоянии (класс borderless),
+                     иначе при вводе синих рамок было бы две, одна в другой. -->
+                <TextBox Grid.Column="1" x:Name="FindBox"
+                         Classes="borderless"
+                         Watermark="Найти в документе"
+                         BorderThickness="0"
+                         Background="Transparent"
+                         VerticalContentAlignment="Center"
+                         Margin="8,0,8,0" />
+
+                <!-- «3 из 17»: ширина фиксированная, иначе смена числа двигала бы кнопки
+                     переходов влево-вправо на каждом совпадении. -->
+                <TextBlock Grid.Column="2" x:Name="CounterLabel"
+                           Text=""
+                           MinWidth="64"
+                           TextAlignment="Right"
+                           VerticalAlignment="Center"
+                           FontSize="{DynamicResource FontSizeSmall}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+
+                <Button Grid.Column="3" x:Name="PrevBtn"
+                        Classes="icon" Width="26" Height="26" Margin="6,0,0,0"
+                        VerticalAlignment="Center"
+                        CornerRadius="{StaticResource RadiusBase}"
+                        IsEnabled="False"
+                        ToolTip.Tip="Предыдущее совпадение">
+                    <Viewbox Width="14" Height="14">
+                        <Canvas Width="24" Height="24">
+                            <Path Data="{StaticResource IconChevronUp}"
+                                  Stroke="{Binding $parent[Button].Foreground}"
+                                  StrokeThickness="{StaticResource IconStrokeSmall}"
+                                  StrokeLineCap="Round" StrokeJoin="Round" />
+                        </Canvas>
+                    </Viewbox>
+                </Button>
+
+                <Button Grid.Column="4" x:Name="NextBtn"
+                        Classes="icon" Width="26" Height="26" Margin="2,0,0,0"
+                        VerticalAlignment="Center"
+                        CornerRadius="{StaticResource RadiusBase}"
+                        IsEnabled="False"
+                        ToolTip.Tip="Следующее совпадение">
+                    <Viewbox Width="14" Height="14">
+                        <Canvas Width="24" Height="24">
+                            <Path Data="{StaticResource IconChevronDown}"
+                                  Stroke="{Binding $parent[Button].Foreground}"
+                                  StrokeThickness="{StaticResource IconStrokeSmall}"
+                                  StrokeLineCap="Round" StrokeJoin="Round" />
+                        </Canvas>
+                    </Viewbox>
+                </Button>
+            </Grid>
+        </Border>
+
+        <Border Grid.Row="3" Classes="separator h" />
+
+        <!-- ── Тело: строки документа ──────────────────────────────────────── -->
+        <!-- Полоса прокрутки вынесена отдельной колонкой и прилегает к правому краю панели —
+             стандарт прокрутки проекта (ui/scrolling.md): своя полоса списка жила бы внутри
+             его отступов и отошла бы от края. -->
+        <Grid Grid.Row="4" ColumnDefinitions="*,Auto">
+            <ListBox Grid.Column="0" x:Name="LinesList"
+                     Classes="reader"
+                     Margin="16,12,16,12"
+                     SelectionMode="Single"
+                     ScrollViewer.VerticalScrollBarVisibility="Hidden"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled" />
+
+            <ScrollBar Grid.Column="1" x:Name="LinesBar"
+                       Orientation="Vertical"
+                       IsVisible="False" />
+
+            <!-- Состояние вместо текста: читаем, текста нет, формат не читается, файл пропал.
+                 Лежит поверх списка в той же ячейке — списка в этот момент все равно нет. -->
+            <TextBlock Grid.Column="0" x:Name="StateLabel"
+                       Text=""
+                       IsVisible="False"
+                       Margin="24"
+                       TextWrapping="Wrap"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center"
+                       TextAlignment="Center"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+        </Grid>
+    </Grid>
+
+</UserControl>

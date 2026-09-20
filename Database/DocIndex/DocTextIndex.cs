@@ -440,14 +440,14 @@ public sealed class DocTextIndex
     /// перестают быть синтаксисом и ищутся как текст. Последнему слову приписывается <c>*</c>:
     /// человек, набравший «автоматизир», ожидает найти «автоматизированных».
     /// Пустой или бессловесный запрос дает пустую строку — поиск не выполняется.
+    ///
+    /// Запрос режется на слова НЕ здесь, а в <see cref="DocHighlight.Tokens"/>: по этим же
+    /// словам панель чтения подсвечивает найденное в документе, и второй разбор запроса
+    /// означал бы «нашлось, но не подсвечено» при первом же расхождении.
     /// </summary>
     public static string BuildMatch(string? query)
     {
-        var tokens = (query ?? "")
-            .Split([' ', '\t', '\n', '\r', ',', ';'], StringSplitOptions.RemoveEmptyEntries)
-            .Select(t => t.Trim())
-            .Where(t => t.Length > 0)
-            .ToList();
+        var tokens = DocHighlight.Tokens(query);
         if (tokens.Count == 0) return "";
 
         var parts = new List<string>(tokens.Count);

@@ -32,6 +32,18 @@ namespace SmartBase.Views.Library;
 /// </summary>
 public partial class LibraryControllerView : UserControl
 {
+    /// <summary>
+    /// Документ просят прочитать в правой панели. Сама панель живет в главном окне — там же,
+    /// где страница записи конструктора: правая колонка одна на все разделы.
+    /// </summary>
+    public event EventHandler<DocRecord>? ReadRequested;
+
+    /// <summary>Нажали toggle панели чтения в навбаре: true — открыть, false — закрыть.</summary>
+    public event EventHandler<bool>? ReaderToggled;
+
+    /// <summary>Запрос поиска сменился — открытая панель чтения подсвечивает новое слово.</summary>
+    public event EventHandler<string>? SearchQueryChanged;
+
     /// <summary>Сколько документов на базу читаем в память; больше — страницами.</summary>
     private const int DocLoadCap = 10_000;
 
@@ -93,10 +105,15 @@ public partial class LibraryControllerView : UserControl
             Serilog.Log.Warning(ex, "Библиотека: типы документов не прочитаны");
 
         NavbarControl.TypesChanged += (_, types) => { _types = types; RefreshCurrent(); };
+        NavbarControl.ReaderToggled += (_, open) => ReaderToggled?.Invoke(this, open);
 
-        DocList.DocActivated    += (_, d) => OpenDocument(d);
-        DocList.SearchRequested += (_, q) => { _searchQuery = q; RefreshCurrent(); };
-        DocList.SearchCleared   += (_, _) => { _searchQuery = ""; RefreshCurrent(); };
+        DocList.DocActivated     += (_, d) => OpenDocument(d);
+        DocList.DocReadRequested += (_, d) => ReadRequested?.Invoke(this, d);
+        // Запрос поиска и панель чтения связаны: панель подсвечивает то, что искали в разделе.
+        // Поэтому новый запрос доезжает до открытой панели — иначе она осталась бы с прошлым
+        // словом, и «нашлось 12» в ленте не сходилось бы с подсветкой в документе.
+        DocList.SearchRequested += (_, q) => { _searchQuery = q; RefreshCurrent(); RaiseQuery(); };
+        DocList.SearchCleared   += (_, _) => { _searchQuery = ""; RefreshCurrent(); RaiseQuery(); };
 
         if (DocIndexService.Current is { } service)
         {
@@ -711,6 +728,14 @@ public partial class LibraryControllerView : UserControl
     /// (<c>Controls/Widgets/FileEditor.axaml.cs</c>). Запрет <c>BannedSymbols.txt</c> действует
     /// на путь ВХОДЯЩИХ данных («наружу одна дверь»); открытие по клику человека — не он.
     /// </summary>
+    /// <summary>Текущий запрос поиска — панель чтения открывается сразу на нем.</summary>
+    public string SearchQuery => _searchQuery;
+
+    /// <summary>Отразить состояние панели чтения на кнопке навбара.</summary>
+    public void SetReaderOpen(bool isOpen) => NavbarControl.SetReaderOpen(isOpen);
+
+    private void RaiseQuery() => SearchQueryChanged?.Invoke(this, _searchQuery);
+
     private void OpenDocument(DocRecord doc)
     {
         if (doc.Path.Length == 0) return;

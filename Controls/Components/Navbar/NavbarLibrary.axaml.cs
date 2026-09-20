@@ -32,6 +32,9 @@ public partial class NavbarLibrary : UserControl
     /// <summary>Набор выбранных типов документа изменился; null — фильтр снят (все типы).</summary>
     public event EventHandler<IReadOnlySet<string>?>? TypesChanged;
 
+    /// <summary>Нажали toggle правой панели чтения: true — открыть, false — закрыть.</summary>
+    public event EventHandler<bool>? ReaderToggled;
+
     /// <summary>Откуда брать значения и количества для выпадашки — ставит контроллер раздела.</summary>
     public Func<Task<List<(string Value, int Count)>>>? LoadTypes { get; set; }
 
@@ -47,6 +50,31 @@ public partial class NavbarLibrary : UserControl
     {
         InitializeComponent();
         TypeBtn.Click += (_, _) => ShowTypes();
+
+        ReaderBtn.IsCheckedChanged += (_, _) =>
+        {
+            UpdateReaderIcon();
+            ReaderToggled?.Invoke(this, ReaderBtn.IsChecked == true);
+        };
+    }
+
+    /// <summary>
+    /// Отразить состояние панели чтения на кнопке, НЕ поднимая событие второй раз: панель
+    /// открывается и кнопкой, и «Прочитать» в карточке, и кнопка обязана показывать правду
+    /// в обоих случаях.
+    /// </summary>
+    public void SetReaderOpen(bool isOpen)
+    {
+        if (ReaderBtn.IsChecked == isOpen) return;
+        ReaderBtn.IsChecked = isOpen;   // вызовет IsCheckedChanged → UpdateReaderIcon
+    }
+
+    private void UpdateReaderIcon()
+    {
+        var open = ReaderBtn.IsChecked == true;
+        ReaderOpenIcon.IsVisible  = !open;
+        ReaderCloseIcon.IsVisible = open;
+        ToolTip.SetTip(ReaderBtn, open ? "Закрыть панель чтения" : "Открыть панель чтения");
     }
 
     public void SetTitle(string text, IBrush? color = null)

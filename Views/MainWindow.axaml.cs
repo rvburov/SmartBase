@@ -20,6 +20,7 @@ using SmartBase.Logging;
 using SmartBase.Notifications;
 using SmartBase.Settings;
 using SmartBase.Utils;
+using SmartBase.Core.Models;
 using SmartBase.ViewModels;
 
 namespace SmartBase.Views;
@@ -606,10 +607,25 @@ public partial class MainWindow : Window
 
         RecordPanel.CollectionPanelToggled += (_, isOpen) => ApplyConstructorContentVisibility(isOpen);
 
+        // ── Панель чтения документа (библиотека) ──
+        // Открывается «Прочитать» в карточке и двойным кликом по ней; крестик в шапке панели и
+        // toggle навбара ее закрывают. Toggle в открытую сторону возвращает последний читанный
+        // документ — открывать пустую панель нечем и незачем.
+        LibraryModule.ReadRequested      += (_, doc) => OpenLibraryReader(doc);
+        LibraryModule.SearchQueryChanged += (_, q)   => LibraryReader.SetQuery(q);
+        LibraryModule.ReaderToggled      += (_, open) =>
+        {
+            if (!open) { CloseLibraryReader(); return; }
+            if (_lastRead is { } doc) OpenLibraryReader(doc);
+            else LibraryModule.SetReaderOpen(false);   // нечего открывать → откат кнопки
+        };
+        LibraryReader.CloseRequested     += (_, _)   => CloseLibraryReader();
+
         // Ширину панели записи восстанавливаем; сама панель при запуске закрыта
         // (_recordPanelLogicalOpen = false по умолчанию) — без выбранной записи
         // открытая панель показывала бы пустой белый блок.
         _recordPanelWidth = AppSettings.LoadRecordPanelWidth();
+        _readerWidth      = AppSettings.LoadLibraryReaderWidth();
 
         // Первоначальная загрузка фильтра
         CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
@@ -1691,23 +1707,31 @@ public partial class MainWindow : Window
     private const double SidebarMin = 180;
     private const double SidebarMax = 500;
 
-    // Единая точка раскладки трех колонок (сайдбар | контент | запись) и обеих ручек
+    // Единая точка раскладки трех колонок (сайдбар | контент | правая панель) и обеих ручек
     // ресайза. Вызывается при любом изменении состояния панелей. Колонки Grid сами
-    // учитывают ширину открытого сайдбара: контент/запись растягиваются на остаток.
+    // учитывают ширину открытого сайдбара: контент/правая панель растягиваются на остаток.
     //
     //   сайдбар (col2)   — пиксельная ширина при открытии, 0 при закрытии
     //   контент  (col3)  — Star (растягивается), либо 0 когда коллекция скрыта
-    //   разделитель(col4)— виден только когда коллекция и запись открыты одновременно
-    //   запись   (col5)  — пиксельная при открытой коллекции; Star когда коллекция скрыта; 0 когда закрыта
+    //   разделитель(col4)— виден только когда контент и правая панель открыты одновременно
+    //   панель   (col5)  — пиксельная при открытом контенте; Star когда коллекция скрыта; 0 когда закрыта
+    //
+    // Жильцов у правой колонки два: страница записи в конструкторе и панель чтения документа
+    // в библиотеке. Разделы показываются по одному, поэтому одновременно они не встречаются —
+    // но ширина у них РАЗНАЯ (читают шире, чем правят), и пределы колонки берутся у того, кто
+    // сейчас в ней живет.
     private void ApplyColumns()
     {
         var cols = RootGrid.ColumnDefinitions;
         var inConstructor = _activeModule == "constructor";
+        var inLibrary     = _activeModule == "library";
 
         // Центральный блок скрывается только в конструкторе; в календаре/настройках он всегда «открыт».
         var collection = !inConstructor || _collectionOpen;
-        // Панель записи существует только в конструкторе.
+        // Панель записи существует только в конструкторе, панель чтения — только в библиотеке.
         var record     = inConstructor && _recordPanelLogicalOpen;
+        var reader     = inLibrary && _readerOpen;
+        var right      = record || reader;
 
         // ── Сайдбар (col 2) ──
         if (_sidebarOpen)
@@ -1723,14 +1747,14 @@ public partial class MainWindow : Window
             cols[2].Width    = new GridLength(0);
         }
 
-        // ── Контент (col 3) | разделитель (col 4) | запись (col 5) ──
-        if (collection && record)            // обе панели открыты
+        // ── Контент (col 3) | разделитель (col 4) | правая панель (col 5) ──
+        if (collection && right)             // обе панели открыты
         {
             cols[3].Width    = new GridLength(1, GridUnitType.Star);
             cols[4].Width    = GridLength.Auto;
-            cols[5].MinWidth = AppSettings.RecordPanelWidthMin;
-            cols[5].MaxWidth = AppSettings.RecordPanelWidthMax;
-            cols[5].Width    = new GridLength(_recordPanelWidth, GridUnitType.Pixel);
+            cols[5].MinWidth = reader ? AppSettings.LibraryReaderWidthMin : AppSettings.RecordPanelWidthMin;
+            cols[5].MaxWidth = reader ? AppSettings.LibraryReaderWidthMax : AppSettings.RecordPanelWidthMax;
+            cols[5].Width    = new GridLength(reader ? _readerWidth : _recordPanelWidth, GridUnitType.Pixel);
         }
         else if (collection)                 // только коллекция → во всю ширину
         {
@@ -1752,13 +1776,14 @@ public partial class MainWindow : Window
         // ── Видимость блоков ──
         ConstructorModule.IsVisible    = inConstructor && collection;
         RecordPanel.IsVisible          = record;
-        RecordPanelSeparator.IsVisible = collection && record;
+        LibraryReader.IsVisible        = reader;
+        RecordPanelSeparator.IsVisible = collection && right;
 
         // ── Ручки ресайза ──
-        // Сайдбара — когда сайдбар открыт (висит на его правом крае поверх коллекции/записи).
+        // Сайдбара — когда сайдбар открыт (висит на его правом крае поверх контента/панели).
         ResizeGrip.IsVisible       = _sidebarOpen;
-        // Записи — только когда коллекция и запись открыты одновременно (граница между ними).
-        RecordResizeGrip.IsVisible = collection && record;
+        // Правой панели — только когда контент и панель открыты одновременно (граница между ними).
+        RecordResizeGrip.IsVisible = collection && right;
     }
 
     // ── Перетаскивание ручки-блока для изменения ширины сайдбара ─────────────────
@@ -1933,11 +1958,17 @@ public partial class MainWindow : Window
             ConstructorModule.Refresh();
     }
 
-    // ── Перетаскивание ручки панели записи ─────────────────────────────────────
+    // ── Перетаскивание ручки правой панели ─────────────────────────────────────
+    //
+    // Ручка одна на обеих жильцов колонки, а пределы и сохраняемая ширина у них разные —
+    // поэтому каждый обработчик сперва спрашивает, кто сейчас в колонке.
 
     private bool   _recordGripDragging;
     private double _recordGripStartX;
     private double _recordGripStartWidth;
+
+    /// <summary>В правой колонке сейчас панель чтения, а не страница записи.</summary>
+    private bool ReaderInRightColumn => _activeModule == "library" && _readerOpen;
 
     private void OnRecordGripPressed(object? sender, Avalonia.Input.PointerPressedEventArgs e)
     {
@@ -1947,7 +1978,7 @@ public partial class MainWindow : Window
         _recordGripStartWidth = col.Width.IsAbsolute ? col.Width.Value : col.ActualWidth;
         // Текст описания на время перетаскивания не переверстывается: иначе каждое движение
         // мыши стоит 20–50 мс раскладки, и ручка идет рывками (см. FreezeContentWidth).
-        RecordPanel.FreezeContentWidth(true);
+        if (!ReaderInRightColumn) RecordPanel.FreezeContentWidth(true);
         e.Pointer.Capture((Avalonia.Input.IInputElement?)sender);
         e.Handled = true;
     }
@@ -1956,24 +1987,62 @@ public partial class MainWindow : Window
     {
         if (!_recordGripDragging) return;
 
+        var reader = ReaderInRightColumn;
+
         // Тянем за левый край — движение мыши вправо уменьшает ширину панели.
         var dx       = e.GetPosition(RootGrid).X - _recordGripStartX;
         var newWidth = Math.Clamp(
             _recordGripStartWidth - dx,
-            AppSettings.RecordPanelWidthMin,
-            AppSettings.RecordPanelWidthMax);
+            reader ? AppSettings.LibraryReaderWidthMin : AppSettings.RecordPanelWidthMin,
+            reader ? AppSettings.LibraryReaderWidthMax : AppSettings.RecordPanelWidthMax);
 
         var col = RootGrid.ColumnDefinitions[5];
         col.Width = new Avalonia.Controls.GridLength(newWidth, Avalonia.Controls.GridUnitType.Pixel);
-        _recordPanelWidth = (int)newWidth;
+        if (reader) _readerWidth       = (int)newWidth;
+        else        _recordPanelWidth  = (int)newWidth;
     }
 
     private void OnRecordGripReleased(object? sender, Avalonia.Input.PointerReleasedEventArgs e)
     {
-        if (_recordGripDragging) AppSettings.SaveRecordPanelWidth(_recordPanelWidth);
+        if (_recordGripDragging)
+        {
+            if (ReaderInRightColumn) AppSettings.SaveLibraryReaderWidth(_readerWidth);
+            else                     AppSettings.SaveRecordPanelWidth(_recordPanelWidth);
+        }
         _recordGripDragging = false;
         RecordPanel.FreezeContentWidth(false);   // текст встает по новой ширине за один проход
         e.Pointer.Capture(null);
         e.Handled = true;
+    }
+
+    // ── Правая панель «Чтение документа» ───────────────────────────────────────
+
+    private int  _readerWidth = AppSettings.LibraryReaderWidthDefault;
+    private bool _readerOpen;
+
+    /// <summary>
+    /// Последний читанный документ — его возвращает toggle навбара. Между запусками не
+    /// сохраняется намеренно: панель чтения открывают ради конкретного документа и конкретного
+    /// слова в нем, а восстановленная наутро панель показывала бы вчерашний текст без повода.
+    /// </summary>
+    private DocRecord? _lastRead;
+
+    private void OpenLibraryReader(DocRecord doc)
+    {
+        if (doc.Path.Length == 0) return;
+
+        _lastRead   = doc;
+        _readerOpen = true;
+        LibraryReader.Show(doc, LibraryModule.SearchQuery);
+        LibraryModule.SetReaderOpen(true);
+        ApplyColumns();
+    }
+
+    private void CloseLibraryReader()
+    {
+        _readerOpen = false;
+        LibraryReader.Clear();
+        LibraryModule.SetReaderOpen(false);
+        ApplyColumns();
     }
 }

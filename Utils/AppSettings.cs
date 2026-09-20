@@ -924,6 +924,28 @@ public static class AppSettings
     public const int  LibraryIndexMaxMbDefault =
         SmartBase.Core.Documents.DocTextExtractor.DefaultMaxFileMb;
 
+    // Ширина правой панели чтения. Своя, а НЕ общая с панелью записи: там правят свойства, а
+    // здесь читают текст, и удобная ширина разная — общая настройка заставляла бы таскать ручку
+    // туда-сюда при каждом переходе между разделами. Предел шире записи по той же причине.
+    public const int LibraryReaderWidthMin     = 320;
+    public const int LibraryReaderWidthMax     = 900;
+    public const int LibraryReaderWidthDefault = 520;
+
+    public static int LoadLibraryReaderWidth()
+    {
+        if (int.TryParse(_store?.Get(KeyLibraryReaderWidth), NumberStyles.Integer, CultureInfo.InvariantCulture, out var w)
+            && w >= LibraryReaderWidthMin && w <= LibraryReaderWidthMax)
+            return w;
+        return LibraryReaderWidthDefault;
+    }
+
+    public static void SaveLibraryReaderWidth(int width)
+    {
+        var w = Math.Clamp(width, LibraryReaderWidthMin, LibraryReaderWidthMax);
+        if (w == LibraryReaderWidthDefault) _store?.Remove(KeyLibraryReaderWidth);
+        else _store?.Set(KeyLibraryReaderWidth, w.ToString(CultureInfo.InvariantCulture));
+    }
+
     // Строку отдаем как есть: что из нее допустимо, решает LibrarySettings (DocTiles.Parse) —
     // тот же порядок, что у задач.
     public static string LoadLibraryCardSize() => _store?.Get(KeyLibraryCardSize) ?? LibraryCardSizeDefault;
@@ -1509,6 +1531,7 @@ public static class AppSettings
     private const string KeyLibrarySecondsPerDoc         = "librarySecondsPerDoc";
     private const string KeyLibraryThumbnails            = "libraryThumbnails";
     private const string KeyLibraryCardSize              = "libraryCardSize";
+    private const string KeyLibraryReaderWidth           = "libraryReaderWidth";
     private const string KeyLibraryView                  = "libraryView";
     private const string KeyLibraryIndexMaxMb            = "libraryIndexMaxMb";
     private const string KeyCalendarView     = "calendarView";

@@ -79,17 +79,24 @@
             <lib:LibraryControllerView x:Name="LibraryModule" IsVisible="False" />
         </Grid>
 
-        <!-- Вертикальный разделитель слева от панели записи -->
+        <!-- Вертикальный разделитель слева от правой панели (записи или чтения документа) -->
         <Border Grid.Column="4"
                 x:Name="RecordPanelSeparator"
                 Classes="separator v"
                 IsVisible="False" />
 
-        <!-- Правая панель «Страница записи» (Obsidian-style) -->
+        <!-- Правая панель (Obsidian-style). Колонка ОДНА на все разделы, а жильцов у нее два:
+             страница записи в конструкторе и панель чтения документа в библиотеке. Разделы
+             показываются по одному, поэтому обе панели одновременно видны быть не могут —
+             какая из них живая, решает ApplyColumns. -->
         <Grid Grid.Column="5">
             <con:RecordPageView x:Name="RecordPanel" IsVisible="False" />
+            <lib:DocReaderView  x:Name="LibraryReader" IsVisible="False" />
 
-            <!-- Ручка перетаскивания у левого края панели — аналогично сайдбару -->
+            <!-- Ручка перетаскивания у левого края панели — аналогично сайдбару. Ручка ОДНА
+                 на обоих жильцов колонки, а пределы и сохраняемая ширина у них разные: запись
+                 правят, документ читают, и удобная ширина у этих занятий не совпадает. Кто
+                 сейчас в колонке — решают обработчики (MainWindow.ReaderInRightColumn). -->
             <Border x:Name="RecordResizeGrip"
                     Width="11" Height="34"
                     HorizontalAlignment="Left"

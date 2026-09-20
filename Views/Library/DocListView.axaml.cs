@@ -31,8 +31,14 @@ namespace SmartBase.Views.Library;
 /// </summary>
 public partial class DocListView : UserControl
 {
-    /// <summary>Документ открыли (двойной клик или «Прочитать документ»).</summary>
+    /// <summary>Документ отдают системе — «Открыть» в карточке или пункт меню.</summary>
     public event EventHandler<DocRecord>? DocActivated;
+
+    /// <summary>
+    /// Документ просят прочитать в правой панели — «Прочитать» в карточке или двойной клик.
+    /// Это ГЛАВНОЕ действие документа: чтение с подсветкой найденного, не выходя из программы.
+    /// </summary>
+    public event EventHandler<DocRecord>? DocReadRequested;
 
     /// <summary>Выделение изменилось — контроллер обновляет подвал и меню.</summary>
     public event EventHandler? SelectionChanged;
@@ -364,35 +370,30 @@ public partial class DocListView : UserControl
         vm.RenderSnippet(snippet);
         vm.SnippetChanged += () => vm.RenderSnippet(snippet);
 
-        // «Прочитать документ» — иконка книги плюс подпись. Это не Button, а кликабельная
-        // строка: кнопка в карточке перетягивала бы на себя все внимание, а действие здесь
-        // второстепенно рядом с самой карточкой (двойной клик по ней делает то же самое).
+        // Два действия у документа, и они разные по смыслу. «Прочитать» открывает правую
+        // панель: текст документа с подсветкой найденного, не выходя из программы. «Открыть»
+        // отдает файл системе — привычная программа, печать, правка.
+        //
+        // Это не Button, а кликабельные строки: две кнопки в карточке перетягивали бы на себя
+        // все внимание, а действия здесь второстепенны рядом с самой карточкой.
         var readRow = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Spacing     = 6,
+            Spacing     = 14,
             Margin      = new Thickness(0, 6, 0, 0),
-            Cursor      = new Cursor(StandardCursorType.Hand),
         };
-        readRow.Children.Add(IconGlyph("IconBookOpen", accent));
-        readRow.Children.Add(new TextBlock
-        {
-            Text              = "Прочитать документ",
-            Foreground        = accent,
-            VerticalAlignment = VerticalAlignment.Center,
-        });
-        // Место под строку действия занято ВСЕГДА — и у заглушки страницы, и у пропавшего файла.
+        readRow.Children.Add(ActionLink("IconBookOpen", "Прочитать", accent,
+            () => { if (!vm.IsPlaceholder) DocReadRequested?.Invoke(this, vm.Doc); }));
+        readRow.Children.Add(ActionLink("IconOpenExternal", "Открыть", secondary,
+            () => { if (!vm.IsPlaceholder) DocActivated?.Invoke(this, vm.Doc); }));
+
+        // Место под строку действий занято ВСЕГДА — и у заглушки страницы, и у пропавшего файла.
         // Спрятать ее совсем значило бы сделать такие карточки ниже соседних, а лента держится
         // ровно на том, что высота у всех одна: иначе она дергается на каждой подъехавшей
         // странице. Поэтому гасим прозрачностью, а клики снимаем отдельно.
         readRow.Bind(Visual.OpacityProperty, new Binding(nameof(DocCardVm.ReadOpacity)) { Source = vm });
         readRow.Bind(InputElement.IsHitTestVisibleProperty,
                      new Binding(nameof(DocCardVm.CanOpen)) { Source = vm });
-        readRow.Tapped += (_, e) =>
-        {
-            e.Handled = true;
-            if (!vm.IsPlaceholder) DocActivated?.Invoke(this, vm.Doc);
-        };
 
         // Текст разведен по высоте плитки: что документ ЕСТЬ (название, где лежит, найденная
         // строка) — вверху, что с ним МОЖНО СДЕЛАТЬ — внизу. Собранные в кучу по центру, они
@@ -482,12 +483,38 @@ public partial class DocListView : UserControl
         card.PointerEntered   += (_, _) => vm.IsHovered = true;
         card.PointerExited    += (_, _) => vm.IsHovered = false;
         card.Tapped           += (_, e) => OnCardTapped(vm, e);
+        // Двойной клик — то же, что «Прочитать»: главное действие документа теперь чтение в
+        // панели, а не запуск чужой программы. Открыть файл наружу — отдельная кнопка, и
+        // случайно попасть в нее двойным кликом нельзя.
         card.DoubleTapped     += (_, e) =>
         {
             e.Handled = true;
-            if (!vm.IsPlaceholder) DocActivated?.Invoke(this, vm.Doc);
+            if (!vm.IsPlaceholder) DocReadRequested?.Invoke(this, vm.Doc);
         };
         return card;
+    }
+
+    /// <summary>
+    /// Действие карточки: иконка плюс подпись, клик целиком по паре. Останавливает событие
+    /// своим <c>Handled</c> — иначе клик добрался бы до карточки и вдобавок сменил выделение.
+    /// </summary>
+    private static Control ActionLink(string icon, string text, IBrush brush, Action run)
+    {
+        var row = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing     = 6,
+            Cursor      = new Cursor(StandardCursorType.Hand),
+        };
+        row.Children.Add(IconGlyph(icon, brush));
+        row.Children.Add(new TextBlock
+        {
+            Text              = text,
+            Foreground        = brush,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        row.Tapped += (_, e) => { e.Handled = true; run(); };
+        return row;
     }
 
     private static Control IconGlyph(string key, IBrush brush)

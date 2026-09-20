@@ -28,6 +28,22 @@ public sealed class PopupListStandardTests
     private static string Read(params string[] parts) =>
         File.ReadAllText(Path.Combine(RepoRoot(), Path.Combine(parts)));
 
+    /// <summary>
+    /// Элемент разметки, внутри которого стоит <paramref name="marker"/>: от открывающего тега
+    /// до <paramref name="close"/>. Нужен, чтобы проверка относилась к ОДНОЙ кнопке, а не ко
+    /// всему файлу — иначе соседний орган управления роняет чужой тест.
+    /// </summary>
+    private static string Element(string source, string marker, string close)
+    {
+        var at = source.IndexOf(marker, StringComparison.Ordinal);
+        Assert.True(at >= 0, $"в разметке больше нет «{marker}»");
+
+        var start = source.LastIndexOf('<', at);
+        var end   = source.IndexOf(close, at, StringComparison.Ordinal);
+        Assert.True(start >= 0 && end > start, $"не удалось выделить элемент вокруг «{marker}»");
+        return source[start..(end + close.Length)];
+    }
+
     /// <summary>Тело метода целиком: от сигнатуры до следующего метода того же уровня.</summary>
     private static string MethodBody(string source, string signature)
     {
@@ -94,13 +110,17 @@ public sealed class PopupListStandardTests
     public void Navbar_dropdown_button_keeps_the_standard_class()
     {
         var navbar = Read("Controls", "Components", "Navbar", "NavbarLibrary.axaml");
+        // Смотрим ИМЕННО кнопку типов, а не весь навбар: рядом с ней стоит toggle панели
+        // чтения, и ему скругление задавать положено — он копия кнопки записи в конструкторе,
+        // у которой своего класса нет.
+        var button = Element(navbar, "Classes=\"navdrop\"", "</Button>");
 
-        Assert.Contains("Classes=\"navdrop\"", navbar);
+        Assert.Contains("Classes=\"navdrop\"", button);
         // Вид — только из стиля: на самой кнопке этих свойств быть не должно.
-        Assert.DoesNotContain("Background=\"{StaticResource BrushSecondaryBg}\"", navbar);
-        Assert.DoesNotContain("CornerRadius=", navbar);
+        Assert.DoesNotContain("Background=\"{StaticResource BrushSecondaryBg}\"", button);
+        Assert.DoesNotContain("CornerRadius=", button);
         // Высота — токеном, а не числом.
-        Assert.Contains("Height=\"{StaticResource ControlHeightStandard}\"", navbar);
+        Assert.Contains("Height=\"{StaticResource ControlHeightStandard}\"", button);
 
         var styles = Read("Assets", "Styles", "Controls.axaml");
         Assert.Contains("Selector=\"Button.navdrop\"", styles);

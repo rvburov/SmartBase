@@ -6,7 +6,7 @@
 
     <!-- Навбар раздела: слева заголовок, справа фильтр типов. Строки поиска здесь нет — она
          стоит блоком над лентой (DocListView.axaml). Переключателя вида тоже нет: вид один. -->
-    <Grid ColumnDefinitions="Auto,*,Auto"
+    <Grid ColumnDefinitions="Auto,*,Auto,Auto"
           Margin="16,0"
           VerticalAlignment="Center">
 
@@ -42,6 +42,34 @@
                           Data="{StaticResource IconChevronDownFilled}" />
             </Grid>
         </Button>
+
+        <!-- Toggle правой панели чтения — тот же орган, что открывает запись в конструкторе
+             (NavbarConstructor.RecordPanelBtn): стрелка «от линии» открывает, «к линии»
+             закрывает. Повторное открытие возвращает ТОТ ЖЕ документ, который читали
+             последним, — иначе кнопка открывала бы пустую панель. -->
+        <ToggleButton Grid.Column="3" x:Name="ReaderBtn" Classes="navbtn"
+                      Width="30" Height="30" Margin="8,0,0,0"
+                      VerticalAlignment="Center"
+                      CornerRadius="{StaticResource RadiusMedium}"
+                      ToolTip.Tip="Открыть панель чтения">
+            <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}">
+                <Canvas Width="24" Height="24">
+                    <!-- arrow-left-from-line: панель закрыта → клик откроет (←) -->
+                    <Path x:Name="ReaderOpenIcon"
+                          Data="{StaticResource IconArrowLeftFromLine}"
+                          Stroke="{Binding $parent[ToggleButton].Foreground}"
+                          StrokeThickness="{StaticResource IconStrokeMedium}"
+                          StrokeLineCap="Round" StrokeJoin="Round" />
+                    <!-- arrow-right-to-line: панель открыта → клик закроет (→) -->
+                    <Path x:Name="ReaderCloseIcon"
+                          IsVisible="False"
+                          Data="{StaticResource IconArrowRightToLine}"
+                          Stroke="{Binding $parent[ToggleButton].Foreground}"
+                          StrokeThickness="{StaticResource IconStrokeMedium}"
+                          StrokeLineCap="Round" StrokeJoin="Round" />
+                </Canvas>
+            </Viewbox>
+        </ToggleButton>
     </Grid>
 
 </UserControl>
