@@ -9,9 +9,10 @@
          Разделитель слева, ручка ширины и сохранение ширины — общие с ней, здесь только
          содержимое панели.
 
-         Показывается ТЕКСТ документа, а не сам документ: это первый шаг. Настоящие страницы
-         PDF и настоящая таблица листа Excel — следующие, под них уже заложен переключатель
-         режима в шапке (пока он один и потому не показан).
+         Режима два. «Текст» есть у всякого документа, который мы умеем читать. «Как в
+         документе» показывает настоящие страницы PDF либо настоящую таблицу листа Excel —
+         кнопка одна, потому что для человека это одно желание: увидеть документ, а не его
+         текст.
 
          Текст читается заново из файла, а НЕ берется из кеша поиска: кеш хранит текст, у
          которого схлопнут всякий пробельный знак, включая переводы строк (так надо индексу),
@@ -82,15 +83,16 @@
 
         <!-- ── Режим показа ─────────────────────────────────────────────────── -->
         <!-- «Текст» есть у всякого документа, который мы умеем читать. «Как в документе» —
-             пока только у PDF: там страницу рисует PDFium, а места слов дает PdfPig, и
-             подсветку есть на что ставить. У прочих форматов кнопка видна, но погашена:
-             спрятать ее значило бы менять ширину полосы от документа к документу. -->
+             у PDF (страницы) и у книг Excel (таблица листа). У Word и текстовых файлов кнопка
+             видна, но погашена: верстку Word нам нечем воспроизвести, а у текстового файла
+             «настоящего вида» и не бывает. Спрятать кнопку значило бы менять ширину полосы от
+             документа к документу. -->
         <Border Grid.Row="2" Classes="modeseg"
                 HorizontalAlignment="Left"
                 Margin="16,12,16,0">
             <StackPanel Orientation="Horizontal" Spacing="2">
                 <ToggleButton x:Name="TextModeBtn"  Classes="modeseg" Content="Текст" IsChecked="True" />
-                <ToggleButton x:Name="PagesModeBtn" Classes="modeseg" Content="Как в документе" />
+                <ToggleButton x:Name="DocModeBtn" Classes="modeseg" Content="Как в документе" />
             </StackPanel>
         </Border>
 
@@ -197,6 +199,38 @@
                      ScrollViewer.HorizontalScrollBarVisibility="Disabled" />
 
             <ScrollBar Grid.Column="1" x:Name="PagesBar"
+                       Orientation="Vertical"
+                       IsVisible="False" />
+
+            <!-- Лист книги Excel: вкладки листов сверху, строки таблицы под ними.
+                 Строка рисует свои ячейки сама (см. code-behind): у таблицы на тысячу строк
+                 контролы на каждую ячейку означали бы десятки тысяч элементов дерева. -->
+            <Grid Grid.Column="0" x:Name="SheetHost"
+                  IsVisible="False"
+                  RowDefinitions="Auto,*,Auto">
+                <Border Grid.Row="0" x:Name="SheetTabsBox"
+                        Classes="modeseg"
+                        HorizontalAlignment="Left"
+                        Margin="16,12,16,0">
+                    <StackPanel x:Name="SheetTabs" Orientation="Horizontal" Spacing="2" />
+                </Border>
+
+                <ListBox Grid.Row="1" x:Name="SheetRows"
+                         Classes="reader"
+                         Margin="16,12,0,0"
+                         SelectionMode="Single"
+                         ScrollViewer.VerticalScrollBarVisibility="Hidden"
+                         ScrollViewer.HorizontalScrollBarVisibility="Hidden" />
+
+                <!-- Горизонтальная полоса: таблица шире панели почти всегда, и без нее
+                      правые колонки было бы не достать. -->
+                <ScrollBar Grid.Row="2" x:Name="SheetHBar"
+                           Orientation="Horizontal"
+                           Margin="16,0,0,0"
+                           IsVisible="False" />
+            </Grid>
+
+            <ScrollBar Grid.Column="1" x:Name="SheetBar"
                        Orientation="Vertical"
                        IsVisible="False" />
 

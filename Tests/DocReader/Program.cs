@@ -25,6 +25,11 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Avalonia.Controls.Primitives;
+using DocumentFormat.OpenXml;
+using DocumentFormat.OpenXml.Packaging;
+// Пространство имен таблиц вводится ПСЕВДОНИМОМ: в нем есть свои Control и Run, и без
+// псевдонима они спорят с одноименными типами Avalonia.
+using X = DocumentFormat.OpenXml.Spreadsheet;
 using SmartBase.Core.Models;
 using SmartBase.Views.Library;
 using UglyToad.PdfPig.Core;
@@ -134,7 +139,7 @@ void Run()
 
     // У текстового файла настоящего вида нет и быть не может — кнопка режима погашена, но
     // видна: пропади она, полоса меняла бы ширину от документа к документу.
-    var pagesBtn = Find<ToggleButton>(reader, "PagesModeBtn");
+    var pagesBtn = Find<ToggleButton>(reader, "DocModeBtn");
     Check(pagesBtn is { IsEnabled: false }, "у текстового файла режим «как в документе» доступен");
 
     // Скан без текстового слоя: панель обязана объяснить это словами, а не пустотой.
@@ -174,7 +179,7 @@ void Pages(DocReaderView reader, Window window)
 
     reader.Show(new DocRecord { Title = "Договор", Path = pdf }, "dogovor");
 
-    var pagesBtn = Find<ToggleButton>(reader, "PagesModeBtn");
+    var pagesBtn = Find<ToggleButton>(reader, "DocModeBtn");
     if (!Wait(() => pagesBtn is { IsEnabled: true }, "режим «как в документе» так и не включился"))
         return;
 
@@ -203,6 +208,82 @@ void Pages(DocReaderView reader, Window window)
     Find<ToggleButton>(reader, "TextModeBtn")!.IsChecked = true;
     Pump();
     Check(Find<ListBox>(reader, "LinesList") is { IsVisible: true }, "по возврату не показан текст");
+
+    Sheets(reader);
+}
+
+// ── Лист книги таблицей ─────────────────────────────────────────────────────────
+
+void Sheets(DocReaderView reader)
+{
+    Console.WriteLine();
+    Console.WriteLine("Книга Excel таблицей:");
+
+    var book = Path.Combine(dir, "смета.xlsx");
+    WriteBook(book);
+
+    reader.Show(new DocRecord { Title = "Смета", Path = book }, "труба");
+
+    var modeBtn = Find<ToggleButton>(reader, "DocModeBtn");
+    if (!Wait(() => modeBtn is { IsEnabled: true }, "режим «как в документе» у книги не включился"))
+        return;
+
+    modeBtn!.IsChecked = true;
+    Pump();
+
+    var host = Find<Grid>(reader, "SheetHost");
+    var rows = Find<ListBox>(reader, "SheetRows");
+    Check(host is { IsVisible: true },  "таблица не показана");
+    Check(Find<ListBox>(reader, "PagesList") is { IsVisible: false }, "вместо таблицы показаны страницы");
+    Console.WriteLine("Строк таблицы: " + rows?.ItemCount);
+    Check(rows?.ItemCount == 3, $"строк в таблице {rows?.ItemCount}, а в листе 3");
+
+    // Вкладки листов: их две, и вторая переключает лист.
+    var tabs = Find<StackPanel>(reader, "SheetTabs");
+    Console.WriteLine("Вкладок листов: " + tabs?.Children.Count);
+    Check(tabs?.Children.Count == 2, "вкладки листов не собрались");
+
+    // Счет идет по ВСЕЙ книге: «труба» есть и на первом листе, и на втором.
+    var counter = Find<TextBlock>(reader, "CounterLabel")?.Text ?? "";
+    Console.WriteLine("Счетчик по книге: " + counter);
+    Check(counter == "1 из 2", $"счетчик показывает «{counter}» вместо «1 из 2»");
+
+    // Переход ко второму совпадению уводит на ДРУГОЙ лист — иначе счет по книге обманывал бы.
+    Find<Button>(reader, "NextBtn")?.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+    Pump();
+    var second = tabs?.Children.ElementAtOrDefault(1) as ToggleButton;
+    Check(second?.IsChecked == true, "переход к совпадению не открыл второй лист");
+    Console.WriteLine("Лист после «дальше»: " + (second?.Content as string));
+}
+
+void WriteBook(string path)
+{
+    using var doc = SpreadsheetDocument.Create(path, SpreadsheetDocumentType.Workbook);
+    var book      = doc.AddWorkbookPart();
+    book.Workbook = new X.Workbook();
+
+    var first = book.AddNewPart<WorksheetPart>();
+    first.Worksheet = new X.Worksheet(
+        new X.SheetData(
+            new X.Row(new X.Cell { CellReference = "A1", DataType = X.CellValues.String, CellValue = new X.CellValue("Смета работ") }) { RowIndex = 1 },
+            new X.Row(
+                new X.Cell { CellReference = "A2", DataType = X.CellValues.String, CellValue = new X.CellValue("Наименование") },
+                new X.Cell { CellReference = "B2", DataType = X.CellValues.String, CellValue = new X.CellValue("Количество") }) { RowIndex = 2 },
+            new X.Row(
+                new X.Cell { CellReference = "A3", DataType = X.CellValues.String, CellValue = new X.CellValue("Труба стальная") },
+                new X.Cell { CellReference = "B3", CellValue = new X.CellValue("12") }) { RowIndex = 3 }),
+        new X.MergeCells(new X.MergeCell { Reference = "A1:B1" }));
+    first.Worksheet.Save();
+
+    var second = book.AddNewPart<WorksheetPart>();
+    second.Worksheet = new X.Worksheet(new X.SheetData(
+        new X.Row(new X.Cell { CellReference = "A1", DataType = X.CellValues.String, CellValue = new X.CellValue("Труба запасная") }) { RowIndex = 1 }));
+    second.Worksheet.Save();
+
+    book.Workbook.AppendChild(new X.Sheets(
+        new X.Sheet { Id = book.GetIdOfPart(first),  SheetId = 1, Name = "Смета" },
+        new X.Sheet { Id = book.GetIdOfPart(second), SheetId = 2, Name = "Запас" }));
+    book.Workbook.Save();
 }
 
 // ── Инструменты стенда ──────────────────────────────────────────────────────────

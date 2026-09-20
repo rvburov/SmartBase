@@ -1,7 +1,9 @@
+using System.Globalization;
 using System.IO;
 using System.Threading;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Templates;
 using Avalonia.Input;
 using Avalonia.Layout;
@@ -41,7 +43,7 @@ public partial class DocReaderView : UserControl
     public DocRecord? Document { get; private set; }
 
     /// <summary>Режим показа: текстом или настоящими страницами документа.</summary>
-    private enum ReadMode { Text, Pages }
+    private enum ReadMode { Text, Document }
 
     private ReadMode _mode = ReadMode.Text;
 
@@ -59,6 +61,31 @@ public partial class DocReaderView : UserControl
 
     /// <summary>Открытый документ для отрисовки страниц; null — формат без настоящего вида.</summary>
     private DocPageSource? _source;
+
+    /// <summary>Листы книги Excel — второй облик режима «как в документе».</summary>
+    private IReadOnlyList<DocSheet> _sheets = [];
+
+    /// <summary>Показанный лист книги.</summary>
+    private int _sheetIndex;
+
+    /// <summary>Строки показанного листа — по ним рисует список таблицы.</summary>
+    private readonly List<SheetRowVm> _sheetRows = [];
+
+    /// <summary>
+    /// Совпадения в книге: лист, строка в нем и ячейка. Счет идет по ВСЕЙ книге, а не по
+    /// открытому листу: «3 из 17» должно означать документ целиком, иначе число меняется от
+    /// того, какую вкладку человек открыл.
+    /// </summary>
+    private readonly List<(int Sheet, int Row, int Cell)> _sheetHits = [];
+
+    /// <summary>Левые края колонок показанного листа в пикселях; последнее число — вся ширина.</summary>
+    private double[] _columns = [];
+
+    /// <summary>Высота строки таблицы — считается от размера текста, а не задана числом.</summary>
+    private double _rowHeight = 24;
+
+    /// <summary>В режиме «как в документе» показывается книга, а не страницы.</summary>
+    private bool ShowsSheet => _sheets.Count > 0;
 
     /// <summary>
     /// Ширина страницы в пикселях, под которую нарисованы картинки. Панель тянут за ручку, и
@@ -105,16 +132,24 @@ public partial class DocReaderView : UserControl
             if (e.NameScope.Find<ScrollViewer>("PART_ScrollViewer") is { } sv) ScrollBarLink.SetSource(PagesBar, sv);
         };
 
+        SheetRows.ItemTemplate = new FuncDataTemplate<SheetRowVm>((_, _) => new SheetRowView(this), supportsRecycling: false);
+        SheetRows.TemplateApplied += (_, e) =>
+        {
+            if (e.NameScope.Find<ScrollViewer>("PART_ScrollViewer") is not { } sv) return;
+            ScrollBarLink.SetSource(SheetBar, sv);
+            ScrollBarLink.SetSource(SheetHBar, sv);
+        };
+
         // Переключатель режима ведет себя как пара радиокнопок: выбран ровно один, и нажатие на
         // уже выбранный ничего не меняет — иначе панель осталась бы без режима вовсе.
         TextModeBtn.IsCheckedChanged  += (_, _) => { if (TextModeBtn.IsChecked  == true) SetMode(ReadMode.Text);  else if (_mode == ReadMode.Text)  TextModeBtn.IsChecked  = true; };
-        PagesModeBtn.IsCheckedChanged += (_, _) => { if (PagesModeBtn.IsChecked == true) SetMode(ReadMode.Pages); else if (_mode == ReadMode.Pages) PagesModeBtn.IsChecked = true; };
+        DocModeBtn.IsCheckedChanged += (_, _) => { if (DocModeBtn.IsChecked == true) SetMode(ReadMode.Document); else if (_mode == ReadMode.Document) DocModeBtn.IsChecked = true; };
 
         // Сменилась ширина панели — страницы перерисовываются под новую. С дребезгом: ручку
         // тянут плавно, и рисовать страницу на каждый пиксель движения незачем.
         PagesList.PropertyChanged += (_, e) =>
         {
-            if (e.Property != BoundsProperty || _mode != ReadMode.Pages) return;
+            if (e.Property != BoundsProperty || _mode != ReadMode.Document) return;
             _widthDebounce.Stop();
             _widthDebounce.Start();
         };
@@ -159,6 +194,7 @@ public partial class DocReaderView : UserControl
         ShowState("Читаю документ…");
         _ = LoadAsync(doc, ++_gen);
         _ = OpenPagesAsync(doc, _gen);
+        _ = OpenSheetsAsync(doc, _gen);
     }
 
     /// <summary>
@@ -194,8 +230,13 @@ public partial class DocReaderView : UserControl
         _pages.Clear();
         _pageHits.Clear();
         _rendered.Clear();
-        _current  = -1;
-        _pageWidth = 0;
+        _sheets     = [];
+        _sheetRows.Clear();
+        _sheetHits.Clear();
+        _sheetIndex = 0;
+        _columns    = [];
+        _current    = -1;
+        _pageWidth  = 0;
 
         // Документ PDFium отпускаем сразу: он держит открытый файл, а файл могут захотеть
         // переименовать или удалить прямо сейчас.
@@ -204,8 +245,10 @@ public partial class DocReaderView : UserControl
 
         LinesList.ItemsSource = null;
         PagesList.ItemsSource = null;
-        PagesModeBtn.IsEnabled = false;
-        ToolTip.SetTip(PagesModeBtn, null);
+        SheetRows.ItemsSource = null;
+        SheetTabs.Children.Clear();
+        DocModeBtn.IsEnabled = false;
+        ToolTip.SetTip(DocModeBtn, null);
         UpdateCounter();
     }
 
@@ -275,10 +318,14 @@ public partial class DocReaderView : UserControl
 
     private void ShowState(string text)
     {
+        var empty = text.Length > 0;
         StateLabel.Text      = text;
-        StateLabel.IsVisible = text.Length > 0;
-        LinesList.IsVisible  = text.Length == 0 && _mode == ReadMode.Text;
-        PagesList.IsVisible  = text.Length == 0 && _mode == ReadMode.Pages;
+        StateLabel.IsVisible = empty;
+        LinesList.IsVisible  = !empty && _mode == ReadMode.Text;
+        PagesList.IsVisible  = !empty && _mode == ReadMode.Document && !ShowsSheet;
+        SheetHost.IsVisible  = !empty && _mode == ReadMode.Document && ShowsSheet;
+        SheetBar.IsVisible   = SheetBar.IsVisible  && SheetHost.IsVisible;
+        SheetHBar.IsVisible  = SheetHBar.IsVisible && SheetHost.IsVisible;
     }
 
     // ── Режим «как в документе» ───────────────────────────────────────────────
@@ -291,7 +338,7 @@ public partial class DocReaderView : UserControl
     {
         if (DocTextExtractor.ExtensionOf(doc.Path) != "pdf")
         {
-            ToolTip.SetTip(PagesModeBtn, "Страницами пока показывается только PDF");
+            ToolTip.SetTip(DocModeBtn, "Страницами пока показывается только PDF");
             return;
         }
 
@@ -299,7 +346,7 @@ public partial class DocReaderView : UserControl
         if (gen != _gen || source is null)
         {
             source?.Dispose();
-            if (gen == _gen) ToolTip.SetTip(PagesModeBtn, "Страницы этого документа не открылись");
+            if (gen == _gen) ToolTip.SetTip(DocModeBtn, "Страницы этого документа не открылись");
             return;
         }
 
@@ -308,29 +355,166 @@ public partial class DocReaderView : UserControl
         for (var i = 0; i < source.PageCount; i++) _pages.Add(new PageVm(i, source.Size(i)));
 
         PagesList.ItemsSource  = _pages;
-        PagesModeBtn.IsEnabled = true;
-        ToolTip.SetTip(PagesModeBtn, null);
+        DocModeBtn.IsEnabled = true;
+        ToolTip.SetTip(DocModeBtn, null);
 
         // Совпадения на страницах считаются сразу, а не при переключении режима: счетчик
         // обязан говорить правду в ту же секунду, когда человек нажмет «Как в документе».
         _ = ScanPagesAsync(gen);
     }
 
+    // ── Режим «как в документе»: книга Excel ──────────────────────────────────
+
+    /// <summary>
+    /// Разобрать книгу для показа таблицей. Второй облик того же режима: у PDF это страницы, у
+    /// книги — листы с ячейками. Кнопка режима одна, потому что для человека это одно и то же
+    /// желание — увидеть документ, а не его текст.
+    /// </summary>
+    private async Task OpenSheetsAsync(DocRecord doc, int gen)
+    {
+        if (DocTextExtractor.ExtensionOf(doc.Path) is not ("xlsx" or "xlsm")) return;
+
+        IReadOnlyList<DocSheet> sheets;
+        try { sheets = await DocSheetSource.OpenAsync(doc.Path); }
+        catch (OperationCanceledException) { return; }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Библиотека: книга не разобралась: {Path:l}", doc.Path);
+            return;
+        }
+
+        if (gen != _gen) return;
+        if (sheets.Count == 0)
+        {
+            ToolTip.SetTip(DocModeBtn, "В книге нет листов с данными");
+            return;
+        }
+
+        _sheets = sheets;
+        BuildSheetTabs();
+        ShowSheet(0);
+
+        DocModeBtn.IsEnabled = true;
+        ToolTip.SetTip(DocModeBtn, null);
+        ScanSheets();
+    }
+
+    /// <summary>
+    /// Вкладки листов. Одна вкладка — не орган управления, а подпись, поэтому у книги с
+    /// единственным листом полоса вкладок не показывается вовсе.
+    /// </summary>
+    private void BuildSheetTabs()
+    {
+        SheetTabs.Children.Clear();
+        SheetTabsBox.IsVisible = _sheets.Count > 1;
+        if (_sheets.Count <= 1) return;
+
+        for (var i = 0; i < _sheets.Count; i++)
+        {
+            var index = i;
+            var tab   = new ToggleButton { Content = _sheets[i].Name, IsChecked = i == 0 };
+            tab.Classes.Add("modeseg");
+            tab.IsCheckedChanged += (_, _) =>
+            {
+                if (tab.IsChecked != true) { if (_sheetIndex == index) tab.IsChecked = true; return; }
+                ShowSheet(index);
+            };
+            SheetTabs.Children.Add(tab);
+        }
+    }
+
+    private void ShowSheet(int index)
+    {
+        if (index < 0 || index >= _sheets.Count) return;
+
+        _sheetIndex = index;
+        for (var i = 0; i < SheetTabs.Children.Count; i++)
+            if (SheetTabs.Children[i] is ToggleButton tab) tab.IsChecked = i == index;
+
+        LayoutColumns(_sheets[index]);
+
+        _sheetRows.Clear();
+        foreach (var row in _sheets[index].Rows) _sheetRows.Add(new SheetRowVm(row));
+        SheetRows.ItemsSource = null;
+        SheetRows.ItemsSource = _sheetRows;
+
+        ApplySheetHits();
+    }
+
+    /// <summary>
+    /// Левые края колонок в пикселях. Ширины приходят из книги в ЗНАКАХ (так их хранит Excel),
+    /// и переводятся по ширине знака текущего шрифта — иначе таблица разъехалась бы при смене
+    /// размера шрифта в настройках оформления.
+    /// </summary>
+    private void LayoutColumns(DocSheet sheet)
+    {
+        var font   = Size("FontSizeMedium", 14);
+        var letter = font * 0.62;                     // ширина знака «0» — на ней стоит мера Excel
+        _rowHeight = Math.Round(font * 1.7 + 6);
+
+        var count = Math.Max(1, sheet.Columns);
+        _columns  = new double[count + 1];
+        for (var i = 0; i < count; i++)
+        {
+            var chars = i < sheet.Widths.Count ? sheet.Widths[i] : DocSheetSource.DefaultWidth;
+            _columns[i + 1] = _columns[i] + Math.Max(24, chars * letter + 8);
+        }
+    }
+
+    /// <summary>Найти совпадения по ВСЕЙ книге — по ним ходят стрелки и счетчик.</summary>
+    private void ScanSheets()
+    {
+        _sheetHits.Clear();
+        var tokens = DocHighlight.Tokens(FindBox.Text);
+
+        if (tokens.Count > 0)
+            for (var s = 0; s < _sheets.Count; s++)
+            {
+                var rows = _sheets[s].Rows;
+                for (var r = 0; r < rows.Count; r++)
+                for (var c = 0; c < rows[r].Cells.Count; c++)
+                    if (DocHighlight.Find(rows[r].Cells[c].Text, tokens).Count > 0)
+                        _sheetHits.Add((s, r, c));
+            }
+
+        ApplySheetHits();
+        if (_mode == ReadMode.Document && ShowsSheet)
+        {
+            _current = _sheetHits.Count > 0 ? 0 : -1;
+            ApplyCurrent(scroll: true);
+        }
+        else UpdateCounter();
+    }
+
+    /// <summary>Разложить совпадения книги по строкам ОТКРЫТОГО листа.</summary>
+    private void ApplySheetHits()
+    {
+        foreach (var row in _sheetRows) row.Hits.Clear();
+
+        for (var i = 0; i < _sheetHits.Count; i++)
+        {
+            var (sheet, row, cell) = _sheetHits[i];
+            if (sheet != _sheetIndex || row < 0 || row >= _sheetRows.Count) continue;
+            _sheetRows[row].Hits.Add((cell, i));
+        }
+        foreach (var row in _sheetRows) row.Refresh();
+    }
+
     private void SetMode(ReadMode mode, bool force = false)
     {
         if (!force && mode == _mode) return;
-        if (mode == ReadMode.Pages && _source is null) { TextModeBtn.IsChecked = true; return; }
+        if (mode == ReadMode.Document && _source is null && !ShowsSheet) { TextModeBtn.IsChecked = true; return; }
 
         _mode = mode;
         TextModeBtn.IsChecked  = mode == ReadMode.Text;
-        PagesModeBtn.IsChecked = mode == ReadMode.Pages;
+        DocModeBtn.IsChecked = mode == ReadMode.Document;
 
         // Состояние («скан», «файла нет») относится к ТЕКСТУ. У скана страницы есть и
         // показывать их можно — на них просто нечего подсвечивать.
-        ShowState(mode == ReadMode.Pages ? "" : StateLabel.Text ?? "");
+        ShowState(mode == ReadMode.Document ? "" : StateLabel.Text ?? "");
 
         _current = HitCount > 0 ? 0 : -1;
-        if (mode == ReadMode.Pages) ReflowPages();
+        if (mode == ReadMode.Document && !ShowsSheet) ReflowPages();
         ApplyCurrent(scroll: true);
     }
 
@@ -455,7 +639,7 @@ public partial class DocReaderView : UserControl
             if (found.Hits.Count > 0)
             {
                 page.Refresh();
-                if (_mode == ReadMode.Pages)
+                if (_mode == ReadMode.Document)
                 {
                     // Первое найденное совпадение сразу становится текущим — как в режиме текста.
                     if (_current < 0) { _current = 0; ApplyCurrent(scroll: true); }
@@ -513,13 +697,19 @@ public partial class DocReaderView : UserControl
         _current = _hits.Count > 0 ? 0 : -1;
         ApplyCurrent(scroll: true);
 
-        // Страницы ищут свое: у них совпадения считаются по словам с их местами, и списка
-        // строк для этого недостаточно.
+        // Страницы и листы ищут свое: у страниц совпадения считаются по словам с их местами,
+        // у книги — по ячейкам, и списка строк для этого недостаточно.
         if (_source is not null) _ = ScanPagesAsync(_gen);
+        if (ShowsSheet) ScanSheets();
     }
 
     /// <summary>Сколько совпадений в ТЕКУЩЕМ режиме — по ним ходят стрелки и счетчик.</summary>
-    private int HitCount => _mode == ReadMode.Pages ? _pageHits.Count : _hits.Count;
+    private int HitCount => _mode switch
+    {
+        ReadMode.Document when ShowsSheet => _sheetHits.Count,
+        ReadMode.Document                 => _pageHits.Count,
+        _                                 => _hits.Count,
+    };
 
     private void Step(int delta)
     {
@@ -537,7 +727,21 @@ public partial class DocReaderView : UserControl
 
         // Перерисовываем ДВЕ строки (или две страницы), а не весь список: у документа в миллион
         // знаков перерисовка всего по каждому шагу «дальше» была бы видна глазом.
-        if (_mode == ReadMode.Pages)
+        if (_mode == ReadMode.Document && ShowsSheet)
+        {
+            // Совпадение может лежать на ДРУГОМ листе — тогда переходим и на него: счет идет по
+            // всей книге, и стрелка, упирающаяся в край листа, обманывала бы счетчик.
+            if (_current < 0 || _current >= _sheetHits.Count) { RefreshSheetRows(previous); return; }
+
+            var (sheet, row, _) = _sheetHits[_current];
+            if (sheet != _sheetIndex) ShowSheet(sheet);
+            else RefreshSheetRows(previous);
+
+            if (scroll && row >= 0 && row < _sheetRows.Count) SheetRows.ScrollIntoView(row);
+            return;
+        }
+
+        if (_mode == ReadMode.Document)
         {
             if (previous >= 0 && previous < _pageHits.Count) TouchPage(_pageHits[previous].Page);
             if (_current  >= 0 && _current  < _pageHits.Count) TouchPage(_pageHits[_current].Page);
@@ -565,11 +769,30 @@ public partial class DocReaderView : UserControl
         if (pageIndex >= 0 && pageIndex < _pages.Count) _pages[pageIndex].Refresh();
     }
 
+    /// <summary>Перерисовать строки таблицы, где было и стало текущее совпадение.</summary>
+    private void RefreshSheetRows(int previous)
+    {
+        if (previous >= 0 && previous < _sheetHits.Count && _sheetHits[previous].Sheet == _sheetIndex)
+            TouchSheetRow(_sheetHits[previous].Row);
+        if (_current >= 0 && _current < _sheetHits.Count && _sheetHits[_current].Sheet == _sheetIndex)
+            TouchSheetRow(_sheetHits[_current].Row);
+    }
+
+    private void TouchSheetRow(int row)
+    {
+        if (row >= 0 && row < _sheetRows.Count) _sheetRows[row].Refresh();
+    }
+
     private void UpdateCounter()
     {
         var asked = DocHighlight.Tokens(FindBox.Text).Count > 0;
         var count = HitCount;
-        var ready = _mode == ReadMode.Pages ? _pages.Count > 0 : _lines.Count > 0;
+        var ready = _mode switch
+        {
+            ReadMode.Document when ShowsSheet => _sheetRows.Count > 0,
+            ReadMode.Document                 => _pages.Count > 0,
+            _                                 => _lines.Count > 0,
+        };
 
         CounterLabel.Text = count > 0
             ? $"{_current + 1} из {count}"
@@ -661,6 +884,153 @@ public partial class DocReaderView : UserControl
 
         public event Action? Changed;
         public void Refresh() => Changed?.Invoke();
+    }
+
+    /// <summary>Строка листа: сами ячейки и совпадения в них.</summary>
+    private sealed class SheetRowVm(DocSheetRow row)
+    {
+        public DocSheetRow Row { get; } = row;
+
+        /// <summary>Совпадения: номер ячейки в строке и сквозной номер по книге.</summary>
+        public List<(int Cell, int Id)> Hits { get; } = [];
+
+        public event Action? Changed;
+        public void Refresh() => Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// Строка таблицы. Рисует свои ячейки сама — по той же причине, что и страница: у книги на
+    /// тысячу строк контролы на каждую ячейку означали бы десятки тысяч элементов дерева, а
+    /// нарисовать надо всего-то текст, линии сетки и заливку совпадений.
+    ///
+    /// Объединение по ГОРИЗОНТАЛИ отрабатывается честно: шапка «Смета работ» идет во всю ширину
+    /// таблицы, как в книге. Объединение по вертикали показывается только своей первой строкой:
+    /// строка списка не умеет залезать на соседнюю, а ради редкого случая ломать виртуализацию
+    /// (на ней держится прокрутка тысячи строк) не стоит.
+    /// </summary>
+    private sealed class SheetRowView : Control
+    {
+        private readonly DocReaderView _owner;
+        private SheetRowVm? _row;
+
+        public SheetRowView(DocReaderView owner) => _owner = owner;
+
+        protected override Size MeasureOverride(Size availableSize)
+        {
+            var columns = _owner._columns;
+            var width   = columns.Length > 0 ? columns[^1] : 0;
+            return new Size(Math.Max(width, 1), _owner._rowHeight);
+        }
+
+        public override void Render(DrawingContext context)
+        {
+            if (_row is not { } row || _owner._columns.Length < 2) return;
+
+            var columns = _owner._columns;
+            var height  = Bounds.Height;
+            var line    = _owner.Brush("BrushSeparator",   "#D1D1D6");
+            var text    = _owner.Brush("BrushPrimaryText", "#1C1C1E");
+            var plain   = _owner.Brush("BrushHighlight",   "#FFF0B3");
+            var accent  = _owner.Brush("BrushAccent",      "#007AFF");
+            var pen     = new Pen(line, 1);
+            var font    = _owner.Size("FontSizeMedium", 14);
+            var face    = new Typeface(TextElement.GetFontFamily(this));
+
+            // Сетка: вертикальная линия на каждой границе колонки и нижняя под строкой. Рисуется
+            // ДО текста — иначе линия перечеркнула бы буквы, вылезшие к самому краю ячейки.
+            for (var i = 1; i < columns.Length; i++)
+                context.DrawLine(pen, new Point(columns[i], 0), new Point(columns[i], height));
+            context.DrawLine(pen, new Point(0, height - 0.5), new Point(columns[^1], height - 0.5));
+
+            for (var index = 0; index < row.Row.Cells.Count; index++)
+            {
+                var cell = row.Row.Cells[index];
+                if (cell.Column < 0 || cell.Column + 1 >= columns.Length) continue;
+
+                var left  = columns[cell.Column];
+                var last  = Math.Min(cell.Column + cell.ColumnSpan, columns.Length - 1);
+                var right = columns[last];
+                var area  = new Rect(left, 0, Math.Max(0, right - left), height);
+
+                var at  = index;
+                var hit = row.Hits.FindIndex(h => h.Cell == at);
+                if (hit >= 0)
+                {
+                    // Заливка ячейки, а не слова: в таблице находят ЗНАЧЕНИЕ, и подсвечивать
+                    // половину числа было бы странно.
+                    var now  = row.Hits[hit].Id == _owner.CurrentHit;
+                    var fill = new SolidColorBrush(((ISolidColorBrush)(now ? accent : plain)).Color,
+                                                   now ? 0.35 : 0.55);
+                    context.FillRectangle(fill, area.Deflate(new Thickness(1)));
+                }
+
+                var label = new FormattedText(cell.Text, CultureInfo.CurrentCulture,
+                                              FlowDirection.LeftToRight, face, font, text);
+
+                // Текст режется по своей ячейке: длинная подпись не должна залезать на соседнюю
+                // колонку, как она не залезает и в самой книге.
+                using (context.PushClip(area.Deflate(new Thickness(4, 0))))
+                {
+                    // Числа прижаты вправо, текст — влево: так их и показывает Excel, и так
+                    // колонка чисел читается столбиком.
+                    var x = IsNumeric(cell.Text)
+                        ? Math.Max(left + 4, right - 4 - label.Width)
+                        : left + 4;
+                    context.DrawText(label, new Point(x, (height - label.Height) / 2));
+                }
+            }
+        }
+
+        /// <summary>Значение выглядит числом или датой — такие в таблице прижимаются вправо.</summary>
+        private static bool IsNumeric(string value)
+        {
+            if (value.Length == 0) return false;
+            foreach (var ch in value)
+                if (!char.IsDigit(ch) && ch is not ('.' or ',' or ' ' or '-' or '+' or ':' or '%' or ' '))
+                    return false;
+            return true;
+        }
+
+        protected override void OnDataContextChanged(EventArgs e)
+        {
+            base.OnDataContextChanged(e);
+            Unhook();
+            _row = DataContext as SheetRowVm;
+            Hook();
+            InvalidateMeasure();
+            InvalidateVisual();
+        }
+
+        protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+        {
+            base.OnAttachedToVisualTree(e);
+            Hook();
+            InvalidateVisual();
+        }
+
+        protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+        {
+            base.OnDetachedFromVisualTree(e);
+            Unhook();
+        }
+
+        private void Hook()
+        {
+            if (_row is null) return;
+            _row.Changed -= Repaint;
+            _row.Changed += Repaint;
+        }
+
+        private void Unhook()
+        {
+            if (_row is not null) _row.Changed -= Repaint;
+        }
+
+        private void Repaint()
+        {
+            InvalidateMeasure();
+            InvalidateVisual();
+        }
     }
 
     /// <summary>
