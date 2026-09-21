@@ -3,8 +3,8 @@ using SmartBase.Database.DocIndex;
 namespace SmartBase.Tests.Unit;
 
 /// <summary>
-/// Сборка выражения FTS5 и разбор сниппета (Database/DocIndex/DocTextIndex.cs) — чистые функции
-/// без базы.
+/// Сборка выражения FTS5, разбор сниппета и написания пути
+/// (Database/DocIndex/DocTextIndex.cs) — чистые функции без базы.
 ///
 /// Запрос приходит от человека, а синтаксис FTS5 полон спецсимволов (<c>* : ^ - NEAR OR</c>).
 /// Без экранирования «C++» и «-» роняли бы поиск синтаксической ошибкой, а «OR» молча менял бы
@@ -116,5 +116,39 @@ public sealed class DocSearchQueryTests
         var snippet = $"текст {DocTextIndex.HitOpen}конец{DocTextIndex.HitClose}";
 
         Assert.Equal([("текст ", false), ("конец", true)], DocTextIndex.SplitSnippet(snippet));
+    }
+
+    // ── Написания пути ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Ключ кеша нормализован, а в поле записи путь лежит как его записали: на Windows тот же
+    /// файл может стоять с прямыми слешами. В запрос обязаны уйти оба написания — иначе поиск
+    /// по содержимому молча терял бы находку.
+    /// </summary>
+    [Fact]
+    public void On_windows_a_path_is_searched_with_both_separators()
+    {
+        var spellings = DocTextIndex.Spellings(@"P:\Договоры\смета.xlsx");
+
+        if (OperatingSystem.IsWindows())
+            Assert.Equal([@"P:\Договоры\смета.xlsx", "P:/Договоры/смета.xlsx"], spellings);
+        else
+            // На Unix обратный слеш — обычный знак имени файла: подмена дала бы другой файл.
+            Assert.Equal([@"P:\Договоры\смета.xlsx"], spellings);
+    }
+
+    /// <summary>Путь без обратных слешей второго написания не порождает: варианта нет.</summary>
+    [Fact]
+    public void A_path_without_backslashes_stays_alone()
+    {
+        Assert.Equal(["/home/док/смета.xlsx"], DocTextIndex.Spellings("/home/док/смета.xlsx"));
+    }
+
+    /// <summary>Пустой ключ не дает написаний вовсе — в <c>IN</c> уходить нечему.</summary>
+    [Fact]
+    public void An_empty_key_gives_no_spellings()
+    {
+        Assert.Empty(DocTextIndex.Spellings(""));
+        Assert.Empty(DocTextIndex.Spellings(null!));
     }
 }

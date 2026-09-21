@@ -248,6 +248,10 @@ public partial class ConstructorRepository
     /// SQLite сравнивает без учета регистра только латиницу, поэтому кириллица перебирается
     /// регистровыми вариантами — тот же прием, что в поиске календаря. Набор путей уходит в
     /// <c>IN</c> по индексу <c>db_field_values(FieldId, Value)</c>: это точный заход, а не скан.
+    ///
+    /// Пути приходят КЛЮЧАМИ кеша (нормализованными), а в поле записи лежит написание самого
+    /// человека, поэтому каждый путь разворачивается в свои написания
+    /// (<c>DocTextIndex.Spellings</c>) — без этого поиск по содержимому молча терял бы находки.
     /// </summary>
     public List<DocRecord> SearchDocs(ISet<int>? activeIds, string query,
                                       IReadOnlyCollection<string> paths, int limit = 500)
@@ -267,7 +271,9 @@ public partial class ConstructorRepository
         for (var i = 0; i < variants.Count; i++)
             likes.Add($"(r.Title LIKE @q{i} ESCAPE '\\' OR v.Value LIKE @q{i} ESCAPE '\\')");
 
-        var pathList = paths.ToList();
+        var pathList = paths.SelectMany(DocIndex.DocTextIndex.Spellings)
+                            .Distinct(StringComparer.Ordinal)
+                            .ToList();
         var byPath   = pathList.Count > 0
             ? $"v.Value IN ({string.Join(",", pathList.Select((_, i) => "@p" + i))})"
             : "";

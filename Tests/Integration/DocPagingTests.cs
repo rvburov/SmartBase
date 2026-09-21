@@ -382,4 +382,31 @@ public sealed class DocPagingTests
         Assert.Single(repo.SearchDocs(null, "50%", []));
         Assert.Empty(repo.SearchDocs(null, "%%%", []));
     }
+
+    /// <summary>
+    /// Путь в поле записи и ключ кеша написаны по-разному — и все равно сходятся. Кеш хранит
+    /// путь нормализованным (<c>KeyOf</c>), а человек записал его с прямыми слешами: пока в
+    /// запрос уходило одно написание, найденный по тексту документ молча пропадал из выдачи.
+    /// </summary>
+    [Fact]
+    public void Search_matches_a_path_written_with_the_other_separator()
+    {
+        // Разделители расходятся только на Windows: на Unix обратный слеш — знак имени файла,
+        // и GetFullPath его не трогает, то есть расходиться нечему.
+        if (!OperatingSystem.IsWindows()) return;
+
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+
+        var shell = Library(repo);
+        const string written = "C:/Договоры/смета.xlsx";      // как записал человек
+        AddDoc(repo, shell, "Совсем другое название", written, position: 1000);
+
+        var key = SmartBase.Database.DocIndex.DocTextIndex.KeyOf(written);
+        Assert.NotEqual(written, key);                        // ключ кеша нормализован
+
+        var found = repo.SearchDocs(null, "слова-которого-нет-в-названии", [key]);
+
+        Assert.Equal([written], found.Select(d => d.Path).ToArray());
+    }
 }
