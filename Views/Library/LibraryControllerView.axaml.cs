@@ -630,7 +630,16 @@ public partial class LibraryControllerView : UserControl
             return;
         }
 
-        if (pending.Count == 0) { RefreshStatus(); return; }
+        if (pending.Count == 0)
+        {
+            RefreshStatus();
+            // Молчать нельзя: человек нажал кнопку и обязан узнать, что она сработала, — иначе
+            // «Обновить» выглядит неисправной. Это СОБЫТИЕ, а не состояние раздела, поэтому
+            // карточка, а не строка подвала: подвал говорит о том, что мешает искать сейчас.
+            Controls.Widgets.AppNotifications.Info(
+                "Изменений нет — все документы уже прочитаны.");
+            return;
+        }
 
         if (LibrarySettings.NeedsReadConfirmation(pending.Count) && !await ConfirmRead(pending.Count))
             return;

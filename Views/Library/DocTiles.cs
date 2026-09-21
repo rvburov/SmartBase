@@ -66,10 +66,18 @@ public static class DocTiles
     };
 
     /// <summary>Разбор ключа; мусор и неизвестное значение читаются как стандарт.</summary>
+    /// <summary>
+    /// Размер по ключу настройки. Незнакомое значение — это стандарт: в хранилище может лежать
+    /// что угодно (правка руками, откат версии), и падать из-за него нельзя.
+    ///
+    /// Запасной вариант обязан СОВПАДАТЬ с <c>AppSettings.LibraryCardSizeDefault</c>: разойдись
+    /// они — пустое хранилище и мусор в нем дали бы разный размер карточки, причем молча.
+    /// Сторож — <c>LibraryCardSizeTests</c>.
+    /// </summary>
     public static DocCardSize Parse(string? key) => key switch
     {
-        "small" => DocCardSize.Small,
-        "large" => DocCardSize.Large,
-        _       => DocCardSize.Medium,
+        "medium" => DocCardSize.Medium,
+        "large"  => DocCardSize.Large,
+        _        => DocCardSize.Small,
     };
 }

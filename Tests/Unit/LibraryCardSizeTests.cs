@@ -50,7 +50,19 @@ public sealed class LibraryCardSizeTests
     public void Nothing_saved_reads_as_the_default_size()
     {
         Attach();
-        Assert.Equal(DocCardSize.Medium, LibrarySettings.CardSize);
+        Assert.Equal(DocCardSize.Small, LibrarySettings.CardSize);
+    }
+
+    /// <summary>
+    /// Умолчание настройки и запасной вариант разбора обязаны совпадать. Разойдись они — пустое
+    /// хранилище и мусор в нем дали бы РАЗНЫЙ размер карточки, и заметить это можно было бы
+    /// только по чужому экрану.
+    /// </summary>
+    [Fact]
+    public void The_parse_fallback_matches_the_declared_default()
+    {
+        Assert.Equal(DocTiles.Parse(AppSettings.LibraryCardSizeDefault),
+                     DocTiles.Parse("такого ключа не бывает"));
     }
 
     [Fact]
@@ -69,10 +81,10 @@ public sealed class LibraryCardSizeTests
     {
         var store = Attach();
 
-        LibrarySettings.SetCardSize(DocCardSize.Small);
+        LibrarySettings.SetCardSize(DocCardSize.Medium);
         Assert.True(store.Has("libraryCardSize"));
 
-        LibrarySettings.SetCardSize(DocCardSize.Medium);   // стандарт
+        LibrarySettings.SetCardSize(DocCardSize.Small);    // стандарт
         Assert.False(store.Has("libraryCardSize"));
     }
 
@@ -83,7 +95,7 @@ public sealed class LibraryCardSizeTests
         store.Set("libraryCardSize", "гигантская");
         LibrarySettings.Init();
 
-        Assert.Equal(DocCardSize.Medium, LibrarySettings.CardSize);
+        Assert.Equal(DocCardSize.Small, LibrarySettings.CardSize);
     }
 
     [Fact]

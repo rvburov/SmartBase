@@ -919,7 +919,7 @@ public static class AppSettings
     // Как и у задач: дельты в app.db, живой кеш и разбор мусора — LibrarySettings.
     public const bool   LibrarySidebarOnlyInSectionDefault = false;    // в боковой панели все коллекции
     public const bool   LibraryThumbnailsDefault           = true;     // миниатюра первой страницы PDF
-    public const string LibraryCardSizeDefault             = "medium"; // размер карточки в ленте
+    public const string LibraryCardSizeDefault             = "small";  // размер карточки в ленте
     public const string LibraryViewDefault                 = "list";   // единственный пока вид раздела
     public const int  LibraryIndexMaxMbDefault =
         SmartBase.Core.Documents.DocTextExtractor.DefaultMaxFileMb;

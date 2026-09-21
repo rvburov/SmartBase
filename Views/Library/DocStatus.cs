@@ -63,6 +63,7 @@ public static class DocStatus
 
     public const string ActionRead     = "Прочитать документы";
     public const string ActionReadRest = "Прочитать остальные";
+    public const string ActionRefresh  = "Обновить";
     public const string ActionStop     = "Остановить";
 
     public static DocStatusLine Compose(DocStatusInput s)
@@ -102,9 +103,16 @@ public static class DocStatus
                 ActionReadRest, DocStatusAction.Read);
 
         // Все, что можно было прочитать, прочитано. Единственное место, где блок говорит о себе.
+        //
+        // Кнопка при этом ОСТАЕТСЯ, и называется она по тому, что сделает. Документ живет своей
+        // жизнью: его правят в родной программе, кладут поверх новую версию, подменяют скан
+        // распознанным. Кеш такого не замечает сам — он сверяет время правки и размер только
+        // когда его об этом просят. Пока кнопка пропадала вместе с последним непрочитанным
+        // документом, перечитать измененный файл было нечем вовсе: оставалось выключить и
+        // включить коллекцию.
         return new DocStatusLine(
             $"{Plural.Count(c.Total, "документ", "документа", "документов")} · {IdleAllRead}",
-            "", DocStatusAction.None);
+            ActionRefresh, DocStatusAction.Read);
     }
 
     // ── Чтение ───────────────────────────────────────────────────────────────

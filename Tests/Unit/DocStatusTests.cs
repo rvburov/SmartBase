@@ -54,25 +54,60 @@ public sealed class DocStatusTests
         Assert.Equal(DocStatus.ActionReadRest, line.ActionText);
     }
 
-    // Все прочитано — делать нечего, и предлагать нечего. Ссылка на пустом месте была бы
-    // кнопкой, которая ничего не меняет.
+    // Все прочитано — но кнопка остается «Обновить»: документ правят в родной программе, кладут
+    // поверх новую версию, подменяют скан распознанным, и кеш узнает об этом только когда его
+    // попросят. Пока кнопка пропадала вместе с последним непрочитанным документом, перечитать
+    // измененный файл было нечем — оставалось выключить и включить коллекцию.
     [Fact]
-    public void All_read_says_what_the_section_does_and_offers_nothing()
+    public void All_read_still_offers_a_refresh()
     {
         var line = DocStatus.Compose(In(Census(total: 50, read: 50)));
 
         Assert.Contains(DocStatus.IdleAllRead, line.Text);
-        Assert.Equal(DocStatusAction.None, line.Action);
-        Assert.Equal("", line.ActionText);
+        Assert.Equal(DocStatusAction.Read, line.Action);
+        Assert.Equal(DocStatus.ActionRefresh, line.ActionText);
     }
 
-    // Сканы и чужие форматы прочитать нельзя — предлагать чтение из-за них неправда.
+    /// <summary>
+    /// Имя кнопки говорит, что именно она сделает. Одно слово на все три случая было бы либо
+    /// ложью при первом заходе («Обновить» перед многочасовым разбором), либо шумом в покое
+    /// («Прочитать документы», когда читать нечего).
+    /// </summary>
+    [Fact]
+    public void The_button_is_named_by_what_it_will_do()
+    {
+        Assert.Equal(DocStatus.ActionRead,
+                     DocStatus.Compose(In(Census(total: 50, notRead: 50))).ActionText);
+        Assert.Equal(DocStatus.ActionReadRest,
+                     DocStatus.Compose(In(Census(total: 50, read: 20, notRead: 30))).ActionText);
+        Assert.Equal(DocStatus.ActionRefresh,
+                     DocStatus.Compose(In(Census(total: 50, read: 50))).ActionText);
+    }
+
+    /// <summary>
+    /// Пустой раздел кнопки не получает: обновлять там нечего, а строка подвала на пустом месте
+    /// съедала бы высоту над лентой каждый день.
+    /// </summary>
+    [Fact]
+    public void An_empty_section_offers_nothing()
+    {
+        var line = DocStatus.Compose(In(Census(total: 0)));
+
+        Assert.Equal("", line.Text);
+        Assert.Equal(DocStatusAction.None, line.Action);
+    }
+
+    // Сканы и чужие форматы прочитать нельзя — предлагать ЧТЕНИЕ из-за них неправда. Кнопка
+    // тут все равно стоит, но зовется «Обновить»: перечитывать нечего, а проверить, не менялись
+    // ли файлы, — есть зачем.
     [Fact]
     public void Scans_and_foreign_formats_are_not_a_reason_to_offer_reading()
     {
         var line = DocStatus.Compose(In(Census(total: 50, read: 20, noText: 25, unsupported: 5)));
 
-        Assert.Equal(DocStatusAction.None, line.Action);
+        Assert.Equal(DocStatus.ActionRefresh, line.ActionText);
+        Assert.NotEqual(DocStatus.ActionReadRest, line.ActionText);
+        Assert.NotEqual(DocStatus.ActionRead,     line.ActionText);
     }
 
     [Fact]
