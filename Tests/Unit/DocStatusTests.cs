@@ -23,13 +23,58 @@ public sealed class DocStatusTests
         int       byTitle = 0,
         bool      capped = false,
         bool      cacheOpen = true,
-        bool      typesNarrowed = false) =>
+        bool      typesNarrowed = false,
+        bool      loading = false) =>
         new(census, reading, readDone, readTotal, left, query, inText, byTitle, capped,
-            cacheOpen, typesNarrowed);
+            cacheOpen, typesNarrowed, loading);
 
     private static DocCensus Census(int total = 0, int read = 0, int notRead = 0,
                                     int noText = 0, int unsupported = 0, int failed = 0) =>
         new(total, read, notRead, noText, unsupported, failed);
+
+    // ── Сборка ленты ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Долгая сборка ленты говорит о себе СТРОКОЙ, а не оверлеем на весь блок. Оверлей закрывал
+    /// ленту целиком, и на большой библиотеке в порог не укладывалась ни одна загрузка: раздел
+    /// моргал пустым экраном на каждое касание галочки в сайдбаре.
+    /// </summary>
+    [Fact]
+    public void A_slow_load_says_so_in_one_line()
+    {
+        var line = DocStatus.Compose(In(Census(total: 50, read: 50), loading: true));
+
+        Assert.Equal(DocStatus.LoadingText, line.Text);
+        Assert.Equal(DocStatusAction.None, line.Action);
+    }
+
+    /// <summary>
+    /// Итоги ПРОШЛОГО запроса во время сборки не показываются: человек прочел бы их как ответ
+    /// на новый, а лента под ними уже меняется.
+    /// </summary>
+    [Fact]
+    public void While_loading_the_previous_search_result_is_not_shown()
+    {
+        var line = DocStatus.Compose(In(Census(total: 50, read: 50),
+                                        query: "договор", inText: 7, byTitle: 2, loading: true));
+
+        Assert.Equal(DocStatus.LoadingText, line.Text);
+        Assert.DoesNotContain("Найдено", line.Text);
+    }
+
+    /// <summary>
+    /// Идущее чтение важнее сборки: у него есть и остаток времени, и кнопка «Остановить», а у
+    /// сборки сказать нечего, кроме «подождите».
+    /// </summary>
+    [Fact]
+    public void Reading_outranks_loading()
+    {
+        var line = DocStatus.Compose(In(Census(total: 50, read: 10),
+                                        reading: true, readDone: 3, readTotal: 40, loading: true));
+
+        Assert.Contains("Читаю документы", line.Text);
+        Assert.Equal(DocStatusAction.Stop, line.Action);
+    }
 
     // ── Покой ────────────────────────────────────────────────────────────────
 

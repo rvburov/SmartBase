@@ -109,47 +109,47 @@ public sealed class DocLoadPlanTests
 
     // ── Оверлей «Загрузка…» ──────────────────────────────────────────────────
     //
-    // Регрессия: раньше показ оверлея не был закрыт проверкой поколения, а гашение было.
+    // Регрессия: раньше показ отметки не был закрыт проверкой поколения, а гашение было.
     // Раздел при открытии грузится несколько раз подряд, обогнанная загрузка просыпалась из
-    // ожидания порога уже после того, как сменщица все показала и оверлей погасила, — зажигала
+    // ожидания порога уже после того, как сменщица все показала и отметку погасила, — зажигала
     // его снова, а погасить отказывалась. На пустом разделе «Загрузка…» висела навсегда.
 
     [Fact]
     public void The_overlay_lights_up_when_a_current_load_is_slow()
     {
-        Assert.True(DocLoadPlan.ShouldShowOverlay(quiet: false, timedOut: true, gen: 3, currentGen: 3));
+        Assert.True(DocLoadPlan.ShouldShowLoading(quiet: false, timedOut: true, gen: 3, currentGen: 3));
     }
 
     [Fact]
     public void A_fast_load_never_lights_the_overlay()
     {
-        Assert.False(DocLoadPlan.ShouldShowOverlay(quiet: false, timedOut: false, gen: 3, currentGen: 3));
+        Assert.False(DocLoadPlan.ShouldShowLoading(quiet: false, timedOut: false, gen: 3, currentGen: 3));
     }
 
-    /// <summary>Тихое обновление не мигает оверлеем: на экране уже есть верная лента.</summary>
+    /// <summary>Тихое обновление не мигает отметкой: на экране уже есть верная лента.</summary>
     [Fact]
     public void A_quiet_refresh_never_lights_the_overlay()
     {
-        Assert.False(DocLoadPlan.ShouldShowOverlay(quiet: true, timedOut: true, gen: 3, currentGen: 3));
+        Assert.False(DocLoadPlan.ShouldShowLoading(quiet: true, timedOut: true, gen: 3, currentGen: 3));
     }
 
-    /// <summary>Главное: обогнанная загрузка оверлей НЕ зажигает, даже если она медленная.</summary>
+    /// <summary>Главное: обогнанная загрузка отметку НЕ зажигает, даже если она медленная.</summary>
     [Fact]
     public void An_outdated_load_never_lights_the_overlay()
     {
-        Assert.False(DocLoadPlan.ShouldShowOverlay(quiet: false, timedOut: true, gen: 2, currentGen: 5));
+        Assert.False(DocLoadPlan.ShouldShowLoading(quiet: false, timedOut: true, gen: 2, currentGen: 5));
     }
 
     [Fact]
     public void Only_a_current_load_hides_the_overlay()
     {
-        Assert.True(DocLoadPlan.ShouldHideOverlay(gen: 5, currentGen: 5));
-        Assert.False(DocLoadPlan.ShouldHideOverlay(gen: 2, currentGen: 5));
+        Assert.True(DocLoadPlan.ShouldHideLoading(gen: 5, currentGen: 5));
+        Assert.False(DocLoadPlan.ShouldHideLoading(gen: 2, currentGen: 5));
     }
 
     /// <summary>
     /// Инвариант, ради которого правило и вынесено: показ и гашение закрыты ОДНИМ условием.
-    /// Кто не вправе зажечь — не вправе и погасить, и наоборот: иначе оверлей либо остается
+    /// Кто не вправе зажечь — не вправе и погасить, и наоборот: иначе отметка либо остается
     /// висеть, либо гаснет под уже начавшейся следующей загрузкой.
     /// </summary>
     [Theory]
@@ -158,8 +158,8 @@ public sealed class DocLoadPlanTests
     [InlineData(7, 3)]
     public void Showing_and_hiding_are_guarded_by_the_same_condition(int gen, int currentGen)
     {
-        var mayShow = DocLoadPlan.ShouldShowOverlay(quiet: false, timedOut: true, gen, currentGen);
-        var mayHide = DocLoadPlan.ShouldHideOverlay(gen, currentGen);
+        var mayShow = DocLoadPlan.ShouldShowLoading(quiet: false, timedOut: true, gen, currentGen);
+        var mayHide = DocLoadPlan.ShouldHideLoading(gen, currentGen);
 
         Assert.Equal(mayShow, mayHide);
     }

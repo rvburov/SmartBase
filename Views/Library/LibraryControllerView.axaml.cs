@@ -84,6 +84,10 @@ public partial class LibraryControllerView : UserControl
     private int       _readTotal;
     private TimeSpan? _readLeft;
 
+    // Лента собирается дольше порога. Раньше на это был оверлей во весь блок; теперь — строка
+    // подвала, а лента остается на экране (см. DocLoadPlan).
+    private bool _loading;
+
     public LibraryControllerView()
     {
         InitializeComponent();
@@ -112,7 +116,13 @@ public partial class LibraryControllerView : UserControl
         // Запрос поиска и панель чтения связаны: панель подсвечивает то, что искали в разделе.
         // Поэтому новый запрос доезжает до открытой панели — иначе она осталась бы с прошлым
         // словом, и «нашлось 12» в ленте не сходилось бы с подсветкой в документе.
-        DocList.SearchRequested += (_, q) => { _searchQuery = q; RefreshCurrent(); RaiseQuery(); };
+        DocList.SearchRequested += (_, q) =>
+        {
+            _searchQuery = q;
+            RefreshCurrent();
+            RaiseQuery();
+            _ = ReadOnSearchAsync();
+        };
         DocList.SearchCleared   += (_, _) => { _searchQuery = ""; RefreshCurrent(); RaiseQuery(); };
 
         if (DocIndexService.Current is { } service)
@@ -193,7 +203,8 @@ public partial class LibraryControllerView : UserControl
             ByTitle:       _foundByTitle,
             Capped:        _foundCapped,
             CacheOpen:     service is not null,
-            TypesNarrowed: _types is not null));
+            TypesNarrowed: _types is not null,
+            Loading:       _loading));
 
         DocList.SetStatus(line.Text, line.ActionText, line.Action switch
         {
@@ -221,7 +232,7 @@ public partial class LibraryControllerView : UserControl
             // бы свое и показала документы поверх пустого экрана. Оверлей гасим сами — гасить
             // его больше некому, ту загрузку мы только что обогнали.
             _gen++;
-            LoadingOverlay.IsVisible = false;
+            _loading = false;
             ShowEmpty();
             return;
         }
@@ -242,8 +253,11 @@ public partial class LibraryControllerView : UserControl
         // Оверлей — только если не успели за 400 мс И эта загрузка все еще актуальна: правило
         // целиком в DocLoadPlan, там же его «почему» и тесты.
         var timedOut = await Task.WhenAny(work, Task.Delay(400)) != work;
-        if (DocLoadPlan.ShouldShowOverlay(quiet, timedOut, gen, _gen))
-            LoadingOverlay.IsVisible = true;
+        if (DocLoadPlan.ShouldShowLoading(quiet, timedOut, gen, _gen))
+        {
+            _loading = true;
+            RefreshStatus();
+        }
 
         try { await work; }
         catch (Exception ex)
@@ -255,7 +269,7 @@ public partial class LibraryControllerView : UserControl
         }
         finally
         {
-            if (DocLoadPlan.ShouldHideOverlay(gen, _gen)) LoadingOverlay.IsVisible = false;
+            if (DocLoadPlan.ShouldHideLoading(gen, _gen)) { _loading = false; RefreshStatus(); }
         }
 
         if (!DocLoadPlan.IsCurrent(gen, _gen)) return;
@@ -587,6 +601,31 @@ public partial class LibraryControllerView : UserControl
             if (Logging.Diag.Throttle("library-census-fail", TimeSpan.FromMinutes(1)))
                 Serilog.Log.Warning(ex, "Библиотека: состояние кеша документов не прочитано");
         }
+    }
+
+    /// <summary>
+    /// Поиск заодно дочитывает непрочитанное. «Найти» — это просьба найти ВНУТРИ документов, и
+    /// разделять ее на два нажатия («найди» и отдельно «а теперь прочитай») незачем: человек
+    /// уже сказал, чего хочет.
+    ///
+    /// Сама выдача при этом НЕ ждет чтения: она строится сразу по тому, что уже разобрано, а
+    /// чтение идет фоном и по окончании само перечитывает выдачу (<c>OnIndexFinished</c>).
+    /// Ждать разбора двадцати тысяч документов ради одного запроса человек не подписывался.
+    ///
+    /// Порог подтверждения по времени остается на общем пути: долгая работа спрашивает, даже
+    /// когда ее начал поиск, — «Найти» не должно оказаться кнопкой на полчаса машины.
+    ///
+    /// Сверяемся с последней переписью, а не идем на диск: полный обход стоит по обращению к
+    /// диску на каждый файл, и платить им за каждое нажатие «Найти» нельзя. Перепись еще не
+    /// готова или читать нечего — просто выходим; предложение прочитать в этом случае никуда
+    /// не девается, оно стоит кнопкой в подвале.
+    /// </summary>
+    private Task ReadOnSearchAsync()
+    {
+        if (DocIndexService.Current is not { Running: false }) return Task.CompletedTask;
+        if (_census.NotRead <= 0) return Task.CompletedTask;
+
+        return ReadDocumentsAsync();
     }
 
     /// <summary>

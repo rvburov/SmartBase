@@ -23,6 +23,7 @@ public readonly record struct DocStatusLine(string Text, string ActionText, DocS
 /// <summary>Из чего складывается строка подвала.</summary>
 /// <param name="Census">Перепись документов по состоянию текста (из кеша).</param>
 /// <param name="Reading">Идет ли чтение прямо сейчас.</param>
+/// <param name="Loading">Лента собирается прямо сейчас и делает это дольше порога.</param>
 /// <param name="ReadDone">Сколько документов прочитано в текущем прогоне.</param>
 /// <param name="ReadTotal">Сколько было в очереди на момент старта прогона.</param>
 /// <param name="Left">Сколько еще ждать по замеру; null — мерить пока не на чем.</param>
@@ -43,7 +44,8 @@ public readonly record struct DocStatusInput(
     int       ByTitle,
     bool      Capped,
     bool      CacheOpen,
-    bool      TypesNarrowed);
+    bool      TypesNarrowed,
+    bool      Loading = false);
 
 /// <summary>
 /// Строка подвала блока поиска — чистая логика без Avalonia, поэтому проверяется тестами.
@@ -61,6 +63,9 @@ public static class DocStatus
     /// <summary>Что написано в подвале, когда мешать нечему и запроса нет.</summary>
     public const string IdleAllRead = "поиск ищет внутри текста";
 
+    /// <summary>Лента собирается — про это и говорим, пока не собралась.</summary>
+    public const string LoadingText = "Собираю ленту…";
+
     public const string ActionRead     = "Прочитать документы";
     public const string ActionReadRest = "Прочитать остальные";
     public const string ActionRefresh  = "Обновить";
@@ -70,6 +75,12 @@ public static class DocStatus
     {
         // 1. Идет чтение — оно важнее всего остального: человек только что его запустил.
         if (s.Reading) return Reading(s);
+
+        // 2. Лента еще собирается. Ниже чтения намеренно: у чтения есть и остаток времени, и
+        //    кнопка «Остановить», а тут сказать нечего, кроме «подождите». Итоги поиска при
+        //    этом показывать НЕЛЬЗЯ — они от прошлого запроса, и человек прочел бы их как
+        //    ответ на новый.
+        if (s.Loading) return new DocStatusLine(LoadingText, "", DocStatusAction.None);
 
         // 2. Кеш не открылся — поиска внутри документов нет вовсе, и чтение не поможет.
         if (!s.CacheOpen)
