@@ -128,6 +128,16 @@ public partial class DocReaderView : UserControl
     /// <summary>Прокрутка таблицы — из нее берется сдвиг вбок.</summary>
     private ScrollViewer? _sheetScroll;
 
+    /// <summary>Прокрутка ленты страниц — по ней совпадение подвозится к глазам.</summary>
+    private ScrollViewer? _pagesScroll;
+
+    /// <summary>
+    /// Поколение обхода страниц, ОТДЕЛЬНОЕ от поколения документа: запрос в панели меняют, не
+    /// меняя документа, и прежний обход продолжал бы писать в общий список совпадений рядом с
+    /// новым. Счетчик от этого разъезжался, а стрелки шагали по дублям.
+    /// </summary>
+    private int _scanGen;
+
     /// <summary>Строки таблицы, которые сейчас на экране: их перерисовывает прокрутка вбок.</summary>
     private readonly HashSet<SheetRowView> _liveRows = [];
 
@@ -176,7 +186,9 @@ public partial class DocReaderView : UserControl
         PagesList.ItemTemplate = new FuncDataTemplate<PageVm>((_, _) => new PageItemView(this), supportsRecycling: false);
         PagesList.TemplateApplied += (_, e) =>
         {
-            if (e.NameScope.Find<ScrollViewer>("PART_ScrollViewer") is { } sv) ScrollBarLink.SetSource(PagesBar, sv);
+            if (e.NameScope.Find<ScrollViewer>("PART_ScrollViewer") is not { } sv) return;
+            ScrollBarLink.SetSource(PagesBar, sv);
+            _pagesScroll = sv;
         };
 
         SheetHead.Child = new SheetHeadView(this);
@@ -959,13 +971,24 @@ public partial class DocReaderView : UserControl
     {
         if (_source is not { } source) return;
 
+        // Обход начинается заново — прежний обязан замолчать на первой же своей проверке.
+        var scan = ++_scanGen;
+
         var tokens = DocHighlight.Tokens(FindBox.Text);
         _pageHits.Clear();
+
+        // Следы прежнего запроса снимаем со ВСЕХ страниц сразу, а не по мере обхода: иначе
+        // очищенный запрос оставлял бы подсветку на уже показанных страницах (обход при пустом
+        // запросе заканчивается прямо здесь), а при смене запроса страницы до места обхода
+        // держали бы номера совпадений, которых больше нет.
+        foreach (var stale in _pages)
+            if (stale.Hits.Count > 0) { stale.Hits.Clear(); stale.Refresh(); }
+
         if (tokens.Count == 0) { UpdateCounter(); return; }
 
         for (var i = 0; i < _pages.Count; i++)
         {
-            if (gen != _gen) return;
+            if (gen != _gen || scan != _scanGen) return;
 
             var index = i;
             var found = await Task.Run(() =>
@@ -977,7 +1000,7 @@ public partial class DocReaderView : UserControl
                 return (Words: words, Hits: hits);
             });
 
-            if (gen != _gen) return;
+            if (gen != _gen || scan != _scanGen) return;
 
             var page = _pages[index];
             page.SetWords(found.Words);
@@ -1000,7 +1023,7 @@ public partial class DocReaderView : UserControl
             }
         }
 
-        if (gen == _gen) UpdateCounter();
+        if (gen == _gen && scan == _scanGen) UpdateCounter();
     }
 
     /// <summary>
@@ -1099,7 +1122,7 @@ public partial class DocReaderView : UserControl
             if (_current  >= 0 && _current  < _pageHits.Count) TouchPage(_pageHits[_current].Page);
 
             if (!scroll || _current < 0 || _current >= _pageHits.Count) return;
-            PagesList.ScrollIntoView(_pageHits[_current].Page);
+            ShowPageHit();
             return;
         }
 
@@ -1176,6 +1199,67 @@ public partial class DocReaderView : UserControl
         var span = Math.Max(0, scroll.Extent.Width - window);
         scroll.Offset = scroll.Offset.WithX(Math.Clamp(next, 0, span));
     }
+
+    /// <summary>
+    /// Подвезти текущее совпадение к глазам ВНУТРИ страницы. Довезти список до страницы мало:
+    /// страница при ширине панели занимает несколько экранов, и слово из ее подвала оставалось
+    /// за краем окна — человек видел пустой верх листа и счетчик «3 из 17». Два совпадения на
+    /// одной странице при этом не двигали вид вовсе, и стрелка выглядела сломанной.
+    ///
+    /// Вбок не двигаем: страница вписана в ширину ленты, горизонтальной прокрутки у списка нет
+    /// вовсе — этим показ страниц и отличается от листа книги.
+    /// </summary>
+    private void ShowPageHit()
+    {
+        if (_current < 0 || _current >= _pageHits.Count) return;
+
+        PagesList.ScrollIntoView(_pageHits[_current].Page);
+
+        // Следом за раскладкой, а не прямо сейчас: контейнер страницы в эту минуту только что
+        // подъехал, его размеров еще нет, и считать по ним было бы нечего. Тот же порядок, что
+        // у листа книги (ShowSheetHit).
+        Dispatcher.UIThread.Post(ShowPageHitNow, DispatcherPriority.Background);
+    }
+
+    private void ShowPageHitNow()
+    {
+        if (_pagesScroll is not { } scroll) return;
+        if (_current < 0 || _current >= _pageHits.Count) return;
+
+        var (index, word) = _pageHits[_current];
+        if (index < 0 || index >= _pages.Count) return;
+        if (PagesList.ContainerFromIndex(index) is not Control container) return;
+        if (container.Bounds.Width <= 0) return;
+
+        var page = _pages[index];
+        if (word < 0 || word >= page.Words.Count) return;
+
+        var box = PageWordBox(page, container.Bounds.Width, word);
+        if (container.TranslatePoint(new Point(0, box.Y), scroll) is not { } point) return;
+
+        var window = scroll.Viewport.Height;
+        if (window <= 0) return;
+        if (point.Y >= 0 && point.Y + box.Height <= window) return;   // уже на виду
+
+        // Двигаемся ровно настолько, чтобы слово влезло, и не больше: лишний сдвиг стоит
+        // человеку места, на котором он стоял.
+        var shift = box.Height > window || point.Y < 0
+                  ? point.Y - HitEdge
+                  : point.Y + box.Height - window + HitEdge;
+
+        var span = Math.Max(0, scroll.Extent.Height - window);
+        scroll.Offset = scroll.Offset.WithY(Math.Clamp(scroll.Offset.Y + shift, 0, span));
+    }
+
+    /// <summary>
+    /// Место слова на показанной странице. Одна функция на отрисовку подсветки и на перевод
+    /// слова к глазам: разойдись они — желтый прямоугольник стоял бы в одном месте, а
+    /// прокрутка везла бы в другое, и понять такое человек может только как поломку панели.
+    /// </summary>
+    private static DocScreenBox PageWordBox(PageVm page, double areaWidth, int word) =>
+        DocPageGeometry.ToScreen(page.Words[word].Box, page.Size.Height,
+                                 DocPageGeometry.ScaleFor(areaWidth, page.Size.Width),
+                                 padding: 0.5);
 
     private void Touch(int lineIndex)
     {
@@ -1817,7 +1901,6 @@ public partial class DocReaderView : UserControl
 
             if (page.Hits.Count == 0 || page.Words.Count == 0) return;
 
-            var scale   = DocPageGeometry.ScaleFor(area.Width, page.Size.Width);
             var plain   = _owner.Brush("BrushHighlight", "#FFF0B3");
             var current = _owner.Brush("BrushAccent",    "#007AFF");
 
@@ -1825,7 +1908,7 @@ public partial class DocReaderView : UserControl
             {
                 if (word < 0 || word >= page.Words.Count) continue;
 
-                var box  = DocPageGeometry.ToScreen(page.Words[word].Box, page.Size.Height, scale, padding: 0.5);
+                var box  = PageWordBox(page, area.Width, word);
                 var rect = new Rect(box.X, box.Y, box.Width, box.Height);
                 var now  = id == _owner.CurrentHit;
 

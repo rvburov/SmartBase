@@ -147,7 +147,12 @@ void Run()
     var empty = Path.Combine(dir, "скан.txt");
     File.WriteAllText(empty, "   \n\n  ");
     reader.Show(new DocRecord { Title = "Скан", Path = empty }, "договор");
-    if (!Wait(() => (Find<TextBlock>(reader, "StateLabel")?.IsVisible ?? false), "панель не показала состояние"))
+    // Ждем не ВИДИМОСТИ метки, а самого объяснения: той же меткой панель говорит «Читаю
+    // документ…», пока читает, и проверка ловила эту заглушку — стенд краснел на ровном месте,
+    // сравнивая слово «скан» с текстом про чтение.
+    if (!Wait(() => Find<TextBlock>(reader, "StateLabel") is { IsVisible: true } label
+                    && !(label.Text ?? "").StartsWith("Читаю", StringComparison.Ordinal),
+              "панель так и не объяснила, что с документом"))
         return;
 
     var state = Find<TextBlock>(reader, "StateLabel")?.Text ?? "";
@@ -174,6 +179,10 @@ void Pages(DocReaderView reader, Window window)
             var page = builder.AddPage(595, 842);
             page.AddText("Dogovor podryada", 14, new PdfPoint(40, 780), font);
             page.AddText($"Stranica {p}",     12, new PdfPoint(40, 750), font);
+            // На первой странице ВТОРОЕ совпадение — у самого низа листа. Страница при ширине
+            // панели выше окна, и до этого слова надо прокрутить саму страницу: ровно тот
+            // случай, на котором стрелка «дальше» когда-то не двигала вид вовсе.
+            if (p == 1) page.AddText("Dogovor v podvale", 12, new PdfPoint(40, 20), font);
         }
         File.WriteAllBytes(pdf, builder.Build());
     }
@@ -195,15 +204,39 @@ void Pages(DocReaderView reader, Window window)
     Check(linesList is { IsVisible: false }, "список строк остался на экране");
     Check(pagesList?.ItemCount == 3, $"страниц в списке {pagesList?.ItemCount}, а в документе 3");
 
-    // Совпадения ищутся по словам страниц: «Dogovor» стоит на каждой из трех.
-    if (!Wait(() => (Find<TextBlock>(reader, "CounterLabel")?.Text ?? "").Contains("из 3", StringComparison.Ordinal),
+    // Совпадения ищутся по словам страниц: «Dogovor» стоит на каждой из трех, а на первой
+    // еще и в подвале — всего четыре.
+    if (!Wait(() => (Find<TextBlock>(reader, "CounterLabel")?.Text ?? "").Contains("из 4", StringComparison.Ordinal),
               "совпадения на страницах не сосчитаны"))
         return;
 
     var counter = Find<TextBlock>(reader, "CounterLabel")?.Text ?? "";
     Console.WriteLine("Счетчик по страницам: " + counter);
-    Check(counter.StartsWith("1 из 3", StringComparison.Ordinal),
-          $"счетчик показывает «{counter}» вместо «1 из 3»");
+    Check(counter.StartsWith("1 из 4", StringComparison.Ordinal),
+          $"счетчик показывает «{counter}» вместо «1 из 4»");
+
+    // Стрелка обязана подвезти слово к глазам ВНУТРИ страницы, а не просто довезти список до
+    // нее. Пока она везла к странице, два совпадения на одной странице не двигали вид вовсе, и
+    // на глаз это выглядело сломанной стрелкой: счетчик шел, а на экране ничего не менялось.
+    var pagesScroll = pagesList!.GetVisualDescendants().OfType<ScrollViewer>().FirstOrDefault();
+    if (pagesScroll is null) { Check(false, "у ленты страниц не нашлось прокрутки"); return; }
+
+    Console.WriteLine($"Лента страниц: окно {pagesScroll.Viewport.Height:0}, " +
+                      $"весь размах {pagesScroll.Extent.Height:0}");
+    Check(pagesScroll.Extent.Height > pagesScroll.Viewport.Height + 1,
+          "страница целиком влезла в окно — проверять прокрутку не на чем");
+
+    var before = pagesScroll.Offset.Y;
+    Find<Button>(reader, "NextBtn")?.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+    if (!Wait(() => pagesScroll.Offset.Y > before + 1,
+              "стрелка не подвезла совпадение, стоящее в подвале той же страницы"))
+        return;
+
+    Console.WriteLine($"Сдвиг к совпадению в подвале страницы: {before:0} → {pagesScroll.Offset.Y:0}");
+
+    counter = Find<TextBlock>(reader, "CounterLabel")?.Text ?? "";
+    Check(counter.StartsWith("2 из 4", StringComparison.Ordinal),
+          $"после перехода счетчик показывает «{counter}» вместо «2 из 4»");
 
     // Возврат в текст ничего не ломает, и счетчик снова считает по строкам.
     Find<ToggleButton>(reader, "TextModeBtn")!.IsChecked = true;
