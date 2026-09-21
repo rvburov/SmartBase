@@ -615,9 +615,15 @@ public partial class MainWindow : Window
         LibraryModule.SearchQueryChanged += (_, q)   => LibraryReader.SetQuery(q);
         LibraryModule.ReaderToggled      += (_, open) =>
         {
-            if (!open) { CloseLibraryReader(); return; }
-            if (_lastRead is { } doc) OpenLibraryReader(doc);
-            else LibraryModule.SetReaderOpen(false);   // нечего открывать → откат кнопки
+            // Сюда приходит и живое нажатие, и эхо от SetReaderOpen, которым мы сами догоняли
+            // кнопку после открытия панели с карточки. Различает их только состояние панели —
+            // почему именно оно, а не флаг подавления, написано в DocLoadPlan.
+            switch (Library.DocLoadPlan.ReaderToggle(open, _readerOpen, _lastRead is not null))
+            {
+                case Library.DocReaderAction.Open when _lastRead is { } doc: OpenLibraryReader(doc); break;
+                case Library.DocReaderAction.Close:                          CloseLibraryReader();  break;
+                case Library.DocReaderAction.Rollback:                       LibraryModule.SetReaderOpen(false); break;
+            }
         };
         LibraryReader.CloseRequested     += (_, _)   => CloseLibraryReader();
 

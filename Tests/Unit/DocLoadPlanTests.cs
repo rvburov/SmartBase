@@ -163,4 +163,78 @@ public sealed class DocLoadPlanTests
 
         Assert.Equal(mayShow, mayHide);
     }
+
+    // ── Переключатель панели чтения ──────────────────────────────────────────
+
+    /// <summary>
+    /// Просьба открыть уже открытую панель — это эхо своего же <c>SetReaderOpen</c>, которым
+    /// программа догоняет кнопку после открытия с карточки. Пока правила не было, каждое
+    /// первое открытие разбирало документ ДВАЖДЫ: два Reset, две загрузки, два открытия
+    /// PDFium — а в режиме «как в документе» два прохода писали в общий список совпадений, и
+    /// счетчик со стрелками разъезжался на дублях.
+    /// </summary>
+    [Fact]
+    public void Opening_an_already_open_reader_is_an_echo()
+    {
+        Assert.Equal(DocReaderAction.Ignore,
+                     DocLoadPlan.ReaderToggle(wantOpen: true, isOpen: true, hasLastRead: true));
+    }
+
+    /// <summary>Закрытие крестиком возвращается тем же эхом — закрывать второй раз нечего.</summary>
+    [Fact]
+    public void Closing_an_already_closed_reader_is_an_echo()
+    {
+        Assert.Equal(DocReaderAction.Ignore,
+                     DocLoadPlan.ReaderToggle(wantOpen: false, isOpen: false, hasLastRead: true));
+    }
+
+    /// <summary>Живое нажатие по закрытой панели возвращает последний читанный документ.</summary>
+    [Fact]
+    public void A_live_press_opens_the_last_read_document()
+    {
+        Assert.Equal(DocReaderAction.Open,
+                     DocLoadPlan.ReaderToggle(wantOpen: true, isOpen: false, hasLastRead: true));
+    }
+
+    /// <summary>Живое нажатие по открытой панели ее закрывает.</summary>
+    [Fact]
+    public void A_live_press_closes_an_open_reader()
+    {
+        Assert.Equal(DocReaderAction.Close,
+                     DocLoadPlan.ReaderToggle(wantOpen: false, isOpen: true, hasLastRead: true));
+    }
+
+    /// <summary>
+    /// Открывать пустую панель нечем, поэтому кнопка откатывается — и откат сам эха не
+    /// порождает: он ставит кнопку в то же положение, в каком стоит панель, и следующий заход
+    /// уже ничего не делает. Без этого кнопка с обработчиком гоняли бы друг друга по кругу.
+    /// </summary>
+    [Fact]
+    public void Without_a_last_read_document_the_button_rolls_back_and_settles()
+    {
+        Assert.Equal(DocReaderAction.Rollback,
+                     DocLoadPlan.ReaderToggle(wantOpen: true, isOpen: false, hasLastRead: false));
+
+        // Откат шлет wantOpen: false, а панель по-прежнему закрыта.
+        Assert.Equal(DocReaderAction.Ignore,
+                     DocLoadPlan.ReaderToggle(wantOpen: false, isOpen: false, hasLastRead: false));
+    }
+
+    /// <summary>
+    /// Полный круг «нажали — открыли — догнали кнопку»: второй заход обязан быть пустым.
+    /// Это и есть та проверка, которой не было, когда документ разбирался дважды.
+    /// </summary>
+    [Fact]
+    public void The_open_round_trip_does_the_work_once()
+    {
+        var isOpen = false;
+
+        var first = DocLoadPlan.ReaderToggle(wantOpen: true, isOpen, hasLastRead: true);
+        Assert.Equal(DocReaderAction.Open, first);
+        isOpen = true;                                   // панель открылась, документ разобран
+
+        // SetReaderOpen(true) поднимает то же событие — это и есть эхо.
+        Assert.Equal(DocReaderAction.Ignore,
+                     DocLoadPlan.ReaderToggle(wantOpen: true, isOpen, hasLastRead: true));
+    }
 }
