@@ -891,13 +891,19 @@ public partial class DocReaderView : UserControl
     {
         if (_source is null || _pages.Count == 0) return;
 
+        // Считаем в НАСТОЯЩИХ пикселях экрана, а их три множителя: раскладка, плотность
+        // монитора и зум интерфейса. Зум — LayoutTransform поверх корня окна, поэтому Bounds
+        // тут доzumные: при 150 % панель разложена в полтора раза уже, а показана в полтора
+        // раза крупнее. Считай мы без него — страница рисовалась бы в полтора раза мельче
+        // нужного и растягивалась при показе, то есть мутнела ровно там, где человек увеличил
+        // интерфейс, чтобы РАЗГЛЯДЕТЬ.
         var width = (int)Math.Round(Math.Max(0, PagesList.Bounds.Width - 32) *
-                                    (VisualRoot?.RenderScaling ?? 1));
+                                    (VisualRoot?.RenderScaling ?? 1) * Scaling.Current);
         if (width < 120) return;
 
         // Мелкое изменение ширины перерисовкой не отрабатываем: разница в пару процентов не
         // видна, а перерисовка сотни страниц заметна.
-        if (_pageWidth > 0 && Math.Abs(width - _pageWidth) < _pageWidth * 0.1) return;
+        if (_pageWidth > 0 && Math.Abs(width - _pageWidth) < _pageWidth * 0.04) return;
 
         _pageWidth = width;
         foreach (var page in _rendered.ToList()) _pages[page].SetBitmap(null);
@@ -1871,6 +1877,15 @@ public partial class DocReaderView : UserControl
 
         public PageItemView(DocReaderView owner) => _owner = owner;
 
+        /// <summary>
+        /// Зазор ПОД листом. Листы, стоящие впритык, читались одной длинной лентой: границу
+        /// между ними держала только серая линия в пиксель, и конец страницы был неотличим от
+        /// разрыва колонки внутри нее. Зазор живет в высоте самого листа, а не в полях
+        /// контейнера: высота строки списка обязана быть известна до отрисовки, иначе ползунок
+        /// «дышит» на всю длину документа.
+        /// </summary>
+        private const double PageGap = 12;
+
         protected override Size MeasureOverride(Size availableSize)
         {
             // Высота известна ДО того, как страница нарисована: она считается по пропорции
@@ -1879,13 +1894,15 @@ public partial class DocReaderView : UserControl
             var width = double.IsInfinity(availableSize.Width) ? 600 : availableSize.Width;
             var size  = _page?.Size ?? new DocPageSize(595, 842);
             var ratio = size.Width > 0 ? size.Height / size.Width : 1.414;
-            return new Size(width, Math.Max(1, width * ratio));
+            return new Size(width, Math.Max(1, width * ratio) + PageGap);
         }
 
         public override void Render(DrawingContext context)
         {
-            var area = new Rect(Bounds.Size);
             if (_page is not { } page) return;
+
+            // Сам лист занимает высоту без зазора — он ниже, под листом, и остается фоном.
+            var area = new Rect(0, 0, Bounds.Width, Math.Max(0, Bounds.Height - PageGap));
 
             // Лист всегда белый, даже пока картинки нет: серая дыра в ленте страниц читалась бы
             // как «тут ничего нет», а не «сейчас нарисуется».

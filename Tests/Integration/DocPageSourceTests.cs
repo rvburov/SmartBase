@@ -52,7 +52,98 @@ public sealed class DocPageSourceTests : IDisposable
         return path;
     }
 
+    /// <summary>
+    /// Документ из листов РАЗНОГО размера: книжный, вытянутый вдвое и альбомный. Аспекты у них
+    /// разные намеренно — на одинаковых (А4 и А3 отличаются только величиной) расхождение не
+    /// вылезло бы вовсе.
+    /// </summary>
+    private string WriteMixedPdf(string name)
+    {
+        var path = Path.Combine(_dir, name);
+        using var builder = new PdfDocumentBuilder();
+        var font = builder.AddStandard14Font(Standard14Font.Helvetica);
+
+        foreach (var (width, height) in new[] { (595.0, 842.0), (595.0, 1400.0), (1191.0, 842.0) })
+        {
+            var page = builder.AddPage(width, height);
+            page.AddText("Dogovor", 14, new PdfPoint(40, height - 60), font);
+        }
+        File.WriteAllBytes(path, builder.Build());
+        return path;
+    }
+
     // ── Открытие ──────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Листы разного размера выходят в ОДНУ запрошенную ширину — то самое «по ширине окна»,
+    /// что и в любом просмотрщике, — а высота у каждого своя, по его собственной пропорции.
+    ///
+    /// Пока высота рамки вписывания считалась по ЗАПРОШЕННОЙ странице, рамка оставалась от той,
+    /// что нарисовали первой, и лист с более вытянутой пропорцией PDFium вписывал уже по
+    /// ВЫСОТЕ: тот выходил вдвое уже соседей, мельче текстом и с пустым местом по бокам. Какой
+    /// именно лист задаст рамку, решал порядок прокрутки, поэтому один и тот же документ
+    /// выглядел по-разному в зависимости от того, с какого места его открыли.
+    /// </summary>
+    [Fact]
+    public void Pages_of_different_shapes_render_at_one_width()
+    {
+        using var source = DocPageSource.Open(WriteMixedPdf("разный.pdf"));
+        Assert.NotNull(source);
+        Assert.Equal(3, source!.PageCount);
+
+        // Первым рисуем книжный лист — именно он раньше и задавал рамку всем остальным.
+        var widths  = new int[3];
+        var heights = new int[3];
+        foreach (var i in new[] { 0, 1, 2 })
+        {
+            var png = source.Render(i, 400);
+            Assert.NotNull(png);
+
+            using var bitmap = SKBitmap.Decode(png);
+            widths[i]  = bitmap.Width;
+            heights[i] = bitmap.Height;
+        }
+
+        // Ширина одна на все листы. PDFium округляет вписывание, поэтому допуск в пиксель.
+        Assert.InRange(widths[0], 399, 400);
+        Assert.True(widths.Max() - widths.Min() <= 1,
+                    $"ширины разошлись: {string.Join(", ", widths)}; высоты: {string.Join(", ", heights)}");
+
+        // Высота — от пропорции САМОГО листа, а не от соседнего.
+        foreach (var i in new[] { 0, 1, 2 })
+        {
+            var size     = source.Size(i);
+            var expected = (int)Math.Round(widths[i] * size.Height / size.Width);
+            Assert.InRange(heights[i], expected - 2, expected + 2);
+        }
+
+        // Вытянутый лист обязан выйти заметно выше книжного, а альбомный — ниже.
+        Assert.True(heights[1] > heights[0], "вытянутый лист не выше книжного");
+        Assert.True(heights[2] < heights[0], "альбомный лист не ниже книжного");
+    }
+
+    /// <summary>
+    /// Картинка страницы закрашена целиком: снизу не остается незаполненной полосы. Так
+    /// выглядел лист, «обрезанный наполовину», — холст строился по размерам страницы, а байт
+    /// приходило меньше, и хвост оставался нетронутым.
+    /// </summary>
+    [Fact]
+    public void A_rendered_page_has_no_untouched_tail()
+    {
+        using var source = DocPageSource.Open(WritePdf("целый.pdf"));
+        Assert.NotNull(source);
+
+        var png = source!.Render(0, 400);
+        Assert.NotNull(png);
+
+        using var bitmap = SKBitmap.Decode(png);
+        Assert.True(bitmap.Height > 10, "страница вышла слишком низкой для проверки");
+
+        // Нижняя строка листа должна быть непрозрачной: незакрашенный холст — прозрачный.
+        for (var x = 0; x < bitmap.Width; x += Math.Max(1, bitmap.Width / 20))
+            Assert.True(bitmap.GetPixel(x, bitmap.Height - 1).Alpha > 0,
+                        $"низ страницы не закрашен в точке {x}");
+    }
 
     [Fact]
     public void Pdf_opens_with_its_pages_and_sizes()

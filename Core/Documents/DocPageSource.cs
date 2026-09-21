@@ -47,8 +47,25 @@ public sealed class DocPageSource : IDisposable
     private readonly Dictionary<int, IReadOnlyList<DocWord>> _words = [];
     private readonly DocPageSize[] _sizes;
 
+    /// <summary>
+    /// Самая вытянутая пропорция среди КНИЖНЫХ листов (высота к ширине, не меньше единицы).
+    /// По ней строится рамка книжного читателя: не хватит высоты — PDFium начнет вписывать
+    /// лист по ней, и тот выйдет уже запрошенной ширины.
+    /// </summary>
+    private readonly double _uprightAspect;
+
+    /// <summary>
+    /// Самая «высокая» пропорция среди АЛЬБОМНЫХ листов (меньше единицы; ноль — таких листов
+    /// в документе нет). У альбомного листа короткая сторона — высота, и в рамке она идет
+    /// первым числом.
+    /// </summary>
+    private readonly double _wideAspect;
+
     private PdfDocument? _pig;
-    private Docnet.Core.Readers.IDocReader? _reader;
+
+    // Читателей ДВА — под книжные листы и под альбомные. Почему не один, написано у ReaderFor.
+    private Docnet.Core.Readers.IDocReader? _upright;
+    private Docnet.Core.Readers.IDocReader? _wide;
     private int _readerWidth;
     private bool _closed;
 
@@ -59,6 +76,16 @@ public sealed class DocPageSource : IDisposable
         _path  = path;
         _pig   = pig;
         _sizes = sizes;
+
+        _uprightAspect = 1.0;
+        _wideAspect    = 0.0;
+        foreach (var s in sizes)
+        {
+            if (s.Width <= 0) continue;
+            var aspect = s.Height / s.Width;
+            if (aspect >= 1) _uprightAspect = Math.Max(_uprightAspect, aspect);
+            else             _wideAspect    = Math.Max(_wideAspect,    aspect);
+        }
     }
 
     /// <summary>
@@ -79,11 +106,53 @@ public sealed class DocPageSource : IDisposable
             for (var i = 0; i < count; i++)
             {
                 var page = pig.GetPage(i + 1);
-                sizes[i] = new DocPageSize(page.Width, page.Height);
+
+                // Размер берем ВИДИМЫЙ: с обрезкой листа и с поворотом /Rotate. `page.Width` и
+                // `page.Height` описывают неповернутый лист, а PDFium рисует страницу уже
+                // повернутой — на развороте, положенном боком, пропорции расходились, лист
+                // ложился в чужую рамку и выходил сплющенным с обрезанным низом.
+                var visible = page.CropBox.GetVisibleBounds(page.Rotation);
+                sizes[i] = new DocPageSize(visible.Width, visible.Height);
             }
             return new DocPageSource(path, pig, sizes);
         }
         catch { return null; }
+    }
+
+    /// <summary>
+    /// Читатель под форму листа. Рамка вписывания у Docnet — это не «ширина и высота», а
+    /// «короткая сторона и длинная»: одна и та же рамка (400, 942) для книжного листа означает
+    /// ширину 400, а для альбомного — ВЫСОТУ 400, и тот выходит шире запрошенного. Поэтому
+    /// читателей два, книжный и альбомный.
+    ///
+    /// В каждом рамка взята С ЗАПАСОМ по длинной стороне — по самому вытянутому листу своей
+    /// формы. Запас и делает узким местом ШИРИНУ: любой лист выходит ровно в запрошенную, то
+    /// есть «по ширине окна», как в любом просмотрщике. Пока рамка строилась по ЗАПРОШЕННОЙ
+    /// странице и переиспользовалась дальше, она оставалась от той страницы, которую нарисовали
+    /// первой: соседние листы вписывались в чужую пропорцию и выходили мельче, а какой лист
+    /// задаст рамку — решал порядок прокрутки.
+    ///
+    /// Читатель создается лениво: у документа из листов одной формы второй не заводится вовсе.
+    /// Зовется под <see cref="PdfGate"/> и под своим замком.
+    /// </summary>
+    private Docnet.Core.Readers.IDocReader? ReaderFor(bool upright, int width)
+    {
+        if (_readerWidth != width)
+        {
+            _upright?.Dispose(); _upright = null;
+            _wide?.Dispose();    _wide    = null;
+            _readerWidth = width;
+        }
+
+        if (upright)
+            return _upright ??= DocLib.Instance.GetDocReader(
+                _path, new PageDimensions(width, Math.Max(width, (int)Math.Ceiling(width * _uprightAspect))));
+
+        // У альбомного листа короткая сторона — высота, и она идет первым числом. Ноль вместо
+        // пропорции означал бы рамку в один пиксель, поэтому у него свой пол.
+        var shorter = Math.Max(1, (int)Math.Ceiling(width * (_wideAspect > 0 ? _wideAspect : 1)));
+        return _wide ??= DocLib.Instance.GetDocReader(
+            _path, new PageDimensions(Math.Min(shorter, width), width));
     }
 
     /// <summary>Размер страницы (0-индексная) в пунктах.</summary>
@@ -99,9 +168,9 @@ public sealed class DocPageSource : IDisposable
     {
         if (page < 0 || page >= _sizes.Length) return null;
 
-        var size   = _sizes[page];
-        var width  = Math.Clamp(pixelWidth, 120, 2400);
-        var height = Math.Max(1, (int)Math.Round(width * size.Height / Math.Max(1, size.Width)));
+        var size    = _sizes[page];
+        var width   = Math.Clamp(pixelWidth, 120, 2400);
+        var upright = size.Width <= 0 || size.Height >= size.Width;
 
         try
         {
@@ -112,19 +181,11 @@ public sealed class DocPageSource : IDisposable
 
                 return PdfGate.Run(() =>
                 {
-                    if (_reader is null || _readerWidth != width)
-                    {
-                        _reader?.Dispose();
-                        // Рамка вписывания не принимает первое число больше второго, а у
-                        // альбомной страницы высота по пропорции меньше ширины — тот же случай,
-                        // что у миниатюр (DocThumbnail.Render).
-                        _reader      = DocLib.Instance.GetDocReader(
-                                           _path, new PageDimensions(width, Math.Max(width, height)));
-                        _readerWidth = width;
-                    }
+                    var reader = ReaderFor(upright, width);
+                    if (reader is null) return null;
 
-                    using var reader = _reader.GetPageReader(page);
-                    return Encode(reader);
+                    using var pageReader = reader.GetPageReader(page);
+                    return Encode(pageReader);
                 });
             }
         }
@@ -183,6 +244,17 @@ public sealed class DocPageSource : IDisposable
         var raw = page.GetImage(new NaiveTransparencyRemover(255, 255, 255));
         if (raw.Length == 0) return null;
 
+        // Холст должен быть закрашен ЦЕЛИКОМ. Придет байт меньше, чем на него нужно, — хвост
+        // останется нетронутым, и лист выйдет обрезанным по высоте. Молча такое проходить не
+        // должно: на глаз это «страница обрезалась наполовину», а в журнале — ни строки.
+        if (raw.Length < bitmap.ByteCount)
+        {
+            bitmap.Erase(SKColors.White);
+            Serilog.Log.Warning(
+                "Библиотека: страница пришла неполной — {Got} байт из {Need} на холст {Width}×{Height}",
+                raw.Length, bitmap.ByteCount, width, height);
+        }
+
         System.Runtime.InteropServices.Marshal.Copy(raw, 0, bitmap.GetPixels(),
                                                     Math.Min(raw.Length, bitmap.ByteCount));
 
@@ -198,7 +270,11 @@ public sealed class DocPageSource : IDisposable
             if (_closed) return;
             _closed = true;
 
-            PdfGate.Run(() => { _reader?.Dispose(); _reader = null; });
+            PdfGate.Run(() =>
+            {
+                _upright?.Dispose(); _upright = null;
+                _wide?.Dispose();    _wide    = null;
+            });
             _pig?.Dispose();
             _pig = null;
             _words.Clear();
