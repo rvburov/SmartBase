@@ -57,16 +57,18 @@ public sealed class TimeCollectorRunTests : IDisposable
         wb.SaveAs(path);
     }
 
-    // Расчет: лист «Расшифровка», где колонки листа A…K = F1…F11 запроса макроса.
-    // В свод попадают только строки с заполненными иерархией (B) и трудоемкостью (G).
+    // Расчет: лист «Расшифровка», где колонки листа A…K = F1…F11 запроса макроса. Первая
+    // строка — шапка, как в настоящих расчетах (top_indent макросов расшифровки), данные —
+    // со второй. В свод попадают только строки с заполненными иерархией (B) и трудоемкостью (G).
     private void CreateCalc(string fileName, params (string Hierarchy, string Name, string Deno, object? Norm)[] rows)
     {
         using var wb = new XLWorkbook();
         var ws = wb.AddWorksheet("Расшифровка");
+        WriteCalcHeader(ws);
         for (var i = 0; i < rows.Length; i++)
         {
             var (hierarchy, name, deno, norm) = rows[i];
-            var row = i + 1;
+            var row = i + 2;
             ws.Cell(row, 2).Value = hierarchy;
             ws.Cell(row, 3).Value = name;
             ws.Cell(row, 4).Value = deno;
@@ -78,6 +80,18 @@ public sealed class TimeCollectorRunTests : IDisposable
             }
         }
         wb.SaveAs(Path.Combine(_calc, fileName));
+    }
+
+    private const string CalcHeaderName = "Наименование";
+
+    // Подписи заполнены во всех колонках A…K — и над иерархией, и над трудоемкостью, то есть
+    // условие отбора шапка проходит. Отсеять ее может только пропуск первой строки.
+    private static void WriteCalcHeader(IXLWorksheet ws)
+    {
+        string[] captions = ["Уровень", "Индекс", CalcHeaderName, "Обозначение КД", "Обозначение ТД",
+                             "Кол-во", "Норма", "Норма общая", "База", "Норма расчетная", "Норма фикс."];
+        for (var col = 0; col < captions.Length; col++)
+            ws.Cell(1, col + 1).Value = captions[col];
     }
 
     private CollectResult Run(bool recursive = false, bool fixText = true) =>
@@ -125,16 +139,16 @@ public sealed class TimeCollectorRunTests : IDisposable
         Assert.True(ws.Cell(99, 2).IsEmpty());
 
         // Служебная колонка скрыта, но номер строки источника в ней есть: по нему макрос
-        // шаблона открывает расчет (строка 1 листа «Расшифровка» → RNUM 0).
+        // шаблона открывает расчет (строка 2 листа «Расшифровка» → RNUM 1).
         Assert.True(ws.Column(1).IsHidden);
-        Assert.Equal(0, ws.Cell(4, 1).GetDouble());
-        Assert.Equal(2, ws.Cell(6, 1).GetDouble());
+        Assert.Equal(1, ws.Cell(4, 1).GetDouble());
+        Assert.Equal(3, ws.Cell(6, 1).GetDouble());
 
         // Ссылка: и метка для макроса, и формула перехода без макросов. Адрес БЕЗ апострофов:
         // для HYPERLINK это не ссылка, а текст, и апостроф уходит в имя файла — Excel перестает
         // узнавать «[путь]Лист» и достраивает путь относительно книги свода.
         Assert.Contains("HYPERLINK(\"[", ws.Cell(4, 8).FormulaA1);
-        Assert.Contains("]Расшифровка!A1", ws.Cell(4, 8).FormulaA1);
+        Assert.Contains("]Расшифровка!A2", ws.Cell(4, 8).FormulaA1);
         Assert.Contains(">>>", ws.Cell(4, 8).FormulaA1);
         Assert.Equal(">>>", ws.Cell(4, 8).CachedValue.ToString());
 
@@ -146,6 +160,27 @@ public sealed class TimeCollectorRunTests : IDisposable
         // Лист «Настройки» — не дело расширения: путь к папке живет в настройках приложения,
         // а содержимое шаблона остается нетронутым.
         Assert.Equal(@"\\старый\путь", wb.Worksheet("Настройки").Cell(1, 2).GetString());
+    }
+
+    // Шапка листа «Расшифровка» условие отбора проходит: подписи стоят и над иерархией, и над
+    // трудоемкостью. Макрос ее явно не пропускал — за него это делал драйвер ACE, отдавая текст
+    // подписи в числовой колонке G пустым. ExcelDataReader отдает ячейку как есть, и подписи
+    // колонок приезжали в свод строкой из каждого расчета.
+    [Fact]
+    public void Header_Row_Of_A_Calculation_Does_Not_Reach_The_Table()
+    {
+        CreateCalc("П_2025.03.14_Иванов.xlsm", ("Изделие", "Корпус", "АБВГ.111111.001", 1.0));
+        CreateCalc("П_2025.03.15_Петров.xlsm", ("Изделие", "Крышка", "АБВГ.222222.002", 2.0));
+
+        var table = TimeCollectorEngine.Collect(
+            _calc, recursive: false, progress: null, CancellationToken.None);
+
+        Assert.Equal(["Корпус", "Крышка"], table.Rows.Select(r => r.Name).Order());
+        Assert.DoesNotContain(table.Rows, r => r.Name == CalcHeaderName);
+        Assert.All(table.Rows, r => Assert.Empty(r.NormText));
+
+        // Номер строки источника не сдвинулся: данные на второй строке листа → RNUM 1.
+        Assert.All(table.Rows, r => Assert.Equal(1, r.RNum));
     }
 
     // ── Точность трудоемкости ─────────────────────────────────────────────────
@@ -605,10 +640,11 @@ public sealed class TimeCollectorRunTests : IDisposable
         using (var wb = new XLWorkbook())
         {
             var ws = wb.AddWorksheet("Расшифровка");
-            ws.Cell(1, 2).Value = "Изделие";
-            ws.Cell(1, 3).Value = "Б";
-            ws.Cell(1, 4).Value = "ББ";
-            ws.Cell(1, 7).Value = 2.0;
+            WriteCalcHeader(ws);
+            ws.Cell(2, 2).Value = "Изделие";
+            ws.Cell(2, 3).Value = "Б";
+            ws.Cell(2, 4).Value = "ББ";
+            ws.Cell(2, 7).Value = 2.0;
             wb.SaveAs(Path.Combine(nested.FullName, "Низ_2024.12.01_Петров.xlsm"));
         }
 

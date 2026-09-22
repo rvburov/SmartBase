@@ -220,7 +220,7 @@ public sealed class TimeCollectionWriterTests
     }
 
     /// <summary>Нечисловая трудоемкость идет в ячейку как есть — ровно как в Excel-своде
-    /// (в макросе такое значение не переживало CDec и попадало в свод строкой).</summary>
+    /// (макрос такую строку терял молча, мы ее показываем).</summary>
     [Fact]
     public void Non_numeric_norm_is_written_as_text()
     {
