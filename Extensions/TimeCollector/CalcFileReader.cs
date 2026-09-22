@@ -36,10 +36,14 @@ internal static class CalcFileReader
 
     /// <summary>Итог по файлу: собранные строки и, если есть, замечание для журнала.
     /// Замечание может стоять и у прочитанного файла — так помечается книга, открытая
-    /// другим пользователем, и осиротевший рядом с ней «~$»-файл.</summary>
-    internal sealed record FileReadResult(string FileName, IReadOnlyList<TimeRow> Rows, FileIssue? Issue);
+    /// другим пользователем, и осиротевший рядом с ней «~$»-файл.
+    /// <paramref name="TextOps"/> — строки операций, где время записано не числом: в колонки
+    /// они не идут, но журнал называет такие расчеты.</summary>
+    internal sealed record FileReadResult(string FileName, IReadOnlyList<TimeRow> Rows, FileIssue? Issue,
+                                          int TextOps = 0);
 
-    internal static FileReadResult Read(string path, CancellationToken ct)
+    /// <param name="withOps">Читать и операции изделий — для колонок по операциям в коллекции.</param>
+    internal static FileReadResult Read(string path, CancellationToken ct, bool withOps = false)
     {
         var fileName = Path.GetFileName(path);
 
@@ -66,13 +70,13 @@ internal static class CalcFileReader
             if (!MoveToSheet(reader))
                 return Problem(fileName, FileStatus.NoSheet, $"нет листа «{SourceSheet}»");
 
-            var rows = ReadRows(reader, path, parsed, ct);
+            var (rows, textOps) = ReadRows(reader, path, parsed, withOps, ct);
             if (rows.Count == 0)
                 return Problem(fileName, FileStatus.NoRows,
                                "нет строк с заполненными иерархическим номером и трудоемкостью");
 
             return new FileReadResult(fileName, rows,
-                owner is null ? null : new FileIssue(fileName, owner.Status, owner.Message));
+                owner is null ? null : new FileIssue(fileName, owner.Status, owner.Message), textOps);
         }
         catch (OperationCanceledException) { throw; }
         catch (FileNotFoundException)
@@ -118,11 +122,19 @@ internal static class CalcFileReader
     // по большинству первых восьми строк, и текст подписи в числовой колонке G приходил пустым.
     // ExcelDataReader отдает ячейку как есть, поэтому шапка пропускается по номеру строки —
     // иначе подписи колонок приезжали в свод строкой из каждого расчета.
-    private static List<TimeRow> ReadRows(IExcelDataReader reader, string path, CalcFileName name,
-                                          CancellationToken ct)
+    //
+    // Операции (withOps) — строки БЕЗ иерархического номера под изделием: они принадлежат
+    // ближайшему изделию выше, до следующей строки с номером (так их делил и GetProducts
+    // макроса). Изделие, не попавшее в свод, уносит свои операции с собой — приписать их
+    // соседу значило бы соврать.
+    private static (List<TimeRow> Rows, int TextOps) ReadRows(
+        IExcelDataReader reader, string path, CalcFileName name, bool withOps, CancellationToken ct)
     {
-        var rows  = new List<TimeRow>();
-        var rowNo = 0;
+        var rows    = new List<TimeRow>();
+        var rowNo   = 0;
+        var pending = withOps ? new List<OpEntry>() : null;
+        var owner   = -1;                          // строка свода, чьи операции сейчас идут
+        var textOps = 0;
 
         while (reader.Read())
         {
@@ -137,11 +149,20 @@ internal static class CalcFileReader
             // трудоемкости собирает строку и пытается ее разобрать числом. Строк-операций
             // (у них номера нет) в расчетах подавляющее большинство — в свод из десяти тысяч
             // строк файла проходит порядка двух сотен.
-            if (IsBlank(reader.GetValue(SrcHierarchy))) continue;
+            if (IsBlank(reader.GetValue(SrcHierarchy)))
+            {
+                if (owner >= 0 && !TakeOperation(reader, pending!)) textOps++;
+                continue;
+            }
+
+            // Строка с номером — новое изделие: операции прежнего собраны.
+            Attach(rows, owner, pending);
+            owner = -1;
 
             var (norm, normText) = ReadNorm(reader.GetValue(SrcNorm));
             if (norm is null && normText.Length == 0) continue;
 
+            if (withOps) owner = rows.Count;
             rows.Add(new TimeRow(
                 RNum:       rowNo - 1,                                   // см. TimeRow.RNum
                 Name:       Text(reader.GetValue(SrcName)),
@@ -154,7 +175,33 @@ internal static class CalcFileReader
                 SourcePath: path));
         }
 
-        return rows;
+        Attach(rows, owner, pending);
+        return (rows, textOps);
+    }
+
+    // Отдать накопленные операции их изделию. Список один на файл: изделий в расчете сотни,
+    // а заводить под каждое свой список незачем.
+    private static void Attach(List<TimeRow> rows, int owner, List<OpEntry>? pending)
+    {
+        if (pending is null || pending.Count == 0) return;
+        if (owner >= 0) rows[owner] = rows[owner] with { Ops = pending.ToArray() };
+        pending.Clear();
+    }
+
+    /// <summary>
+    /// Строка операции: название из C, время из G. Пустое название — строка-разделитель.
+    /// Время только в H (без G) в трудоемкость изделия не входит — ее считают по G, — поэтому
+    /// не берется и здесь. <c>false</c> — время записано не числом: такая строка не берется,
+    /// но журнал назовет расчет.
+    /// </summary>
+    private static bool TakeOperation(IExcelDataReader reader, List<OpEntry> pending)
+    {
+        var name = Text(reader.GetValue(SrcName)).Trim();
+        if (name.Length == 0) return true;
+
+        var (value, text) = ReadNorm(reader.GetValue(SrcNorm));
+        if (value is { } time) pending.Add(new OpEntry(name, time));
+        return value is not null || text.Length == 0;
     }
 
     // ── Значения ячеек ────────────────────────────────────────────────────────
@@ -244,7 +291,7 @@ internal static class CalcFileReader
     /// с одинаковым на вид значением объявлялись расходящимися и красились красным —
     /// в обоих приемниках, потому что раскраска считается один раз до записи.
     /// </summary>
-    private static double WithoutBinaryNoise(double value)
+    internal static double WithoutBinaryNoise(double value)
     {
         var rounded = double.Parse(value.ToString("G" + MeaningfulDigits, CultureInfo.InvariantCulture),
                                    NumberStyles.Float, CultureInfo.InvariantCulture);

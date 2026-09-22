@@ -39,6 +39,9 @@ public partial class TimeCollectorWindow : Window
     private static readonly FilePickerFileType TemplateType =
         new("Excel с макросами (*.xlsm)") { Patterns = ["*.xlsm"] };
 
+    private static readonly FilePickerFileType OperationsType =
+        new("Книга Excel (*.xlsx, *.xlsm, *.xls)") { Patterns = ["*.xlsx", "*.xlsm", "*.xls"] };
+
     /// <summary>Сколько имен показывать в одной секции журнала (счетчик в заголовке — полный).</summary>
     private const int MaxIssueLines = 200;
 
@@ -90,6 +93,7 @@ public partial class TimeCollectorWindow : Window
         Restore(FolderBox,   TimeCollectorExtension.FolderKey);
         Restore(TemplateBox, TimeCollectorExtension.TemplateKey);
         Restore(OutputBox,   TimeCollectorExtension.OutputKey);
+        Restore(OpsBox,      TimeCollectorExtension.OperationsKey);
 
         ApplyMode();
     }
@@ -108,6 +112,9 @@ public partial class TimeCollectorWindow : Window
     /// <summary>Выбран приемник «коллекция в программе».</summary>
     private bool ToCollection => ModeCombo.SelectedIndex == ModeCollection;
 
+    /// <summary>Коллекция получит колонки по операциям — галочка есть только у этого приемника.</summary>
+    private bool WithOperations => ToCollection && OpsCheck.IsChecked == true;
+
     // ── Приемник ──────────────────────────────────────────────────────────────
 
     private void OnModeChanged(object? sender, SelectionChangedEventArgs e)
@@ -117,7 +124,8 @@ public partial class TimeCollectorWindow : Window
     }
 
     // Блоки 2 и 3 принадлежат приемнику: у файла это шаблон и папка результата, у коллекции —
-    // база и название. Видна всегда одна пара, поэтому нумерация подписей совпадает.
+    // база и название. Видна всегда одна пара, поэтому нумерация подписей совпадает. Колонки
+    // по операциям есть только у коллекции, а блок 4 (файл списка) — только при них.
     private void ApplyMode()
     {
         var toCollection = ToCollection;
@@ -125,7 +133,15 @@ public partial class TimeCollectorWindow : Window
         OutputPanel.IsVisible   = !toCollection;
         DbPanel.IsVisible       = toCollection;
         NamePanel.IsVisible     = toCollection;
+        OpsCheck.IsVisible      = toCollection;
+        OpsPanel.IsVisible      = WithOperations;
         UpdateState();
+    }
+
+    private void OnOpsChanged(object? sender, RoutedEventArgs e)
+    {
+        if (!IsInitialized) return;   // событие прилетает и во время построения окна
+        ApplyMode();
     }
 
     // ── Выбор путей ───────────────────────────────────────────────────────────
@@ -155,6 +171,19 @@ public partial class TimeCollectorWindow : Window
         var path = files.FirstOrDefault()?.Path.LocalPath;
         if (path is null) return;
         Assign(TemplateBox, path, TimeCollectorExtension.TemplateKey);
+    }
+
+    private async void OnBrowseOps(object? sender, RoutedEventArgs e)
+    {
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title          = "Выберите файл списка операций",
+            AllowMultiple  = false,
+            FileTypeFilter = [OperationsType],
+        });
+        var path = files.FirstOrDefault()?.Path.LocalPath;
+        if (path is null) return;
+        Assign(OpsBox, path, TimeCollectorExtension.OperationsKey);
     }
 
     private async Task<string?> PickFolder(string title, string? current)
@@ -208,6 +237,11 @@ public partial class TimeCollectorWindow : Window
             }
             _repo = RelationDbResolver.RepoFor(_databases[DbCombo.SelectedIndex].DbId);
             if (_repo is null) { SetStatus("База данных недоступна", "BrushRed"); return; }
+            if (WithOperations && !File.Exists(OpsBox.Text!.Trim()))
+            {
+                SetStatus("Файл списка операций не найден", "BrushRed");
+                return;
+            }
         }
         else
         {
@@ -221,6 +255,8 @@ public partial class TimeCollectorWindow : Window
         LogLine(ToCollection
             ? $"🗂️ База: {_databases[DbCombo.SelectedIndex].Name}"
             : $"📄 Шаблон: {TemplateBox.Text!.Trim()}");
+        var opsPath = WithOperations ? OpsBox.Text!.Trim() : null;
+        if (opsPath is not null) LogLine($"📋 Список операций: {opsPath}");
         LogLine("🚀 Чтение… ход работы виден на индикаторе; замечания по файлам появятся здесь по окончании.");
         RenderLog();
 
@@ -233,7 +269,7 @@ public partial class TimeCollectorWindow : Window
 
         try
         {
-            if (ToCollection) await RunToCollection(folder, recursive, fixText);
+            if (ToCollection) await RunToCollection(folder, recursive, fixText, opsPath);
             else              await RunToExcel(folder, recursive, fixText);
         }
         catch (OperationCanceledException)
@@ -295,15 +331,24 @@ public partial class TimeCollectorWindow : Window
     /// Сборка свода и запись его коллекцией программы. Три шага разнесены так же, как в
     /// «Документах в коллекцию»: диск — в фоне, каркас коллекции — на общем репозитории
     /// (UI-поток, там же проверка прав), записи и раскраска — на отдельном подключении в фоне.
+    /// <paramref name="opsPath"/> — файл списка операций, если нужны колонки по операциям: он
+    /// читается ДО расчетов, чтобы отказ пришел сразу, а не после долгого обхода папки.
     /// </summary>
-    private async Task RunToCollection(string folder, bool recursive, bool fixText)
+    private async Task RunToCollection(string folder, bool recursive, bool fixText, string? opsPath)
     {
         var ct       = _cts!.Token;
         var progress = new Progress<CollectProgress>(OnProgress);
         var repo     = _repo!;
 
+        OperationCatalog? catalog = null;
+        if (opsPath is not null)
+        {
+            Progress.SetIndeterminate("Чтение списка операций…");
+            catalog = await Task.Run(() => OperationCatalog.Load(opsPath), ct);
+        }
+
         var table = await Task.Run(
-            () => TimeCollectorEngine.Collect(folder, recursive, progress, ct, CollectionReadTo, fixText), ct);
+            () => TimeCollectorEngine.Collect(folder, recursive, progress, ct, CollectionReadTo, fixText, catalog), ct);
 
         ct.ThrowIfCancellationRequested();
         SetStatus($"Создаю коллекцию ({table.Rows.Count} строк)…", "BrushAccent");
@@ -311,15 +356,17 @@ public partial class TimeCollectorWindow : Window
 
         var typed = NameBox.Text?.Trim() ?? "";
         var shell = TimeCollectionWriter.CreateShell(
-            repo, typed.Length > 0 ? typed : TimeCollectionWriter.DefaultCollectionName());
+            repo, typed.Length > 0 ? typed : TimeCollectionWriter.DefaultCollectionName(),
+            table.Operations?.Columns);
         _shell = shell;
 
-        var dbPath  = repo.DbPath;
-        var rows    = table.Rows;
-        var paints  = table.Paints;
-        var created = await Task.Run(
+        var dbPath     = repo.DbPath;
+        var rows       = table.Rows;
+        var paints     = table.Paints;
+        var operations = table.Operations;
+        var created    = await Task.Run(
             () => TimeCollectionWriter.FillRecords(dbPath, shell, rows, paints, progress, ct,
-                                                   CollectionReadTo, CollectionWriteTo), ct);
+                                                   CollectionReadTo, CollectionWriteTo, operations), ct);
 
         // Коллекция собрана целиком — откатывать больше нечего.
         _shell = null;
@@ -330,6 +377,7 @@ public partial class TimeCollectorWindow : Window
 
         AppendTextFixes(table.Text);
         AppendIssues(table.ProcessedFiles, table.TotalFiles, rows.Count, table.Issues);
+        if (operations is not null) AppendOperations(operations);
         LogLine("");
         LogLine($"🗂️ Коллекция «{shell.CollectionName}» — записей: {created}");
         RenderLog();
@@ -497,6 +545,51 @@ public partial class TimeCollectorWindow : Window
     }
 
     /// <summary>
+    /// Что вышло с колонками по операциям. Исправления и названия не из списка — поименно:
+    /// их немного, а по списку видно, какой расчет или какую строку «Операции.xlsx» поправить.
+    /// Расчеты с нечисловым временем операции тоже поименно: такие строки в колонки не попали,
+    /// и молча это пропадать не должно.
+    /// </summary>
+    private void AppendOperations(OperationLayout ops)
+    {
+        var known   = ops.Columns.Count - ops.Unknown.Count;
+        var differs = ops.Differs.Count(d => d);
+
+        LogLine("");
+        LogLine(ops.Columns.Count == 0
+            ? "🧩 Операций в расчетах не нашлось — добавлена только колонка «Операции»."
+            : $"🧩 Колонки по операциям: {ops.Columns.Count} (из списка — {known}, нет в списке — {ops.Unknown.Count}). " +
+              $"Строк с пометкой «{OperationColumns.DiffersText}»: {differs}, ячеек с расхождением: {ops.RedCells.Count}.");
+
+        LogList("   Исправлено по листу «Исправление»", ops.Fixed);
+
+        if (ops.Unknown.Count > 0)
+        {
+            LogLine("");
+            LogLine("ℹ️ Операций нет в списке — их колонки стоят в конце, по алфавиту. Проверьте " +
+                    "названия в расчетах или дополните список:");
+            LogList("   Операции", ops.Unknown);
+        }
+
+        if (ops.TextValues.Count > 0)
+        {
+            LogLine("");
+            LogLine("ℹ️ Время операции записано не числом — такие строки в колонки не попали:");
+            LogList("   Расчеты", ops.TextValues);
+        }
+    }
+
+    // Список имен под заголовком со счетчиком, не длиннее MaxIssueLines.
+    private void LogList(string title, IReadOnlyList<string> items)
+    {
+        if (items.Count == 0) return;
+
+        LogLine($"{title} ({items.Count}):");
+        foreach (var item in items.Take(MaxIssueLines)) LogLine($"     • {item}");
+        if (items.Count > MaxIssueLines) LogLine($"     … и еще {items.Count - MaxIssueLines}");
+    }
+
+    /// <summary>
     /// Чем готовый лист разошелся с задуманным. Обе заметки — про то, что меняет результат
     /// МОЛЧА: лист выглядит как надо, а ведет себя иначе, и заметить это можно только здесь.
     /// В обычном прогоне обеих нет, и журнал они не засоряют.
@@ -588,7 +681,7 @@ public partial class TimeCollectorWindow : Window
     private bool Ready() =>
         !string.IsNullOrWhiteSpace(FolderBox.Text) &&
         (ToCollection
-            ? _databases.Count > 0
+            ? _databases.Count > 0 && (!WithOperations || !string.IsNullOrWhiteSpace(OpsBox.Text))
             : !string.IsNullOrWhiteSpace(TemplateBox.Text) && !string.IsNullOrWhiteSpace(OutputBox.Text));
 
     private void UpdateState()
@@ -608,6 +701,7 @@ public partial class TimeCollectorWindow : Window
         if (ToCollection)
         {
             if (_databases.Count == 0) missing.Add("доступная база данных");
+            if (WithOperations && string.IsNullOrWhiteSpace(OpsBox.Text)) missing.Add("файл списка операций");
         }
         else
         {
@@ -631,6 +725,9 @@ public partial class TimeCollectorWindow : Window
         NameBox.IsEnabled        = !running;
         RecursiveCheck.IsEnabled = !running;
         FixTextCheck.IsEnabled   = !running;
+        OpsCheck.IsEnabled       = !running;
+        OpsBox.IsEnabled         = !running;
+        OpsBtn.IsEnabled         = !running;
         StopBtn.IsEnabled        = running;
         ExecuteBtn.IsEnabled     = !running && Ready();
     }

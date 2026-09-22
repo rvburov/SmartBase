@@ -30,7 +30,7 @@ public sealed class TimeCollectorExtensionTests
     {
         var keys = new TimeCollectorExtension().Settings.Select(s => s.Key).ToArray();
 
-        Assert.Equal(["folder", "template", "output"], keys);
+        Assert.Equal(["folder", "template", "output", "operations"], keys);
     }
 
     [Fact]

@@ -4,7 +4,7 @@
         x:Class="SmartBase.Extensions.TimeCollector.TimeCollectorWindow"
         Title="Сводная трудоемкость"
         Width="720" Height="760"
-        MinWidth="560" MinHeight="560"
+        MinWidth="560" MinHeight="650"
         WindowStartupLocation="CenterOwner"
         Background="{StaticResource BrushBg}">
 
@@ -84,6 +84,26 @@
                 <TextBox x:Name="NameBox"
                          VerticalContentAlignment="Center"
                          Watermark="Пусто — «Трудоемкость (дата и время)»" />
+            </StackPanel>
+
+            <!-- Колонки по операциям (выгрузка в программу) -->
+            <CheckBox x:Name="OpsCheck" IsChecked="False" IsVisible="False"
+                      Content="Добавить колонки по операциям"
+                      IsCheckedChanged="OnOpsChanged"
+                      ToolTip.Tip="После «Файл расчета» — колонка «Операции» и по колонке на каждую операцию, встретившуюся в расчетах.&#10;Время — из колонки G, на одну штуку изделия; только собственные операции изделия, без составных частей.&#10;Коллекция получается заметно тяжелее, а чтение — дольше." />
+
+            <!-- 4. Файл списка операций (при колонках по операциям) -->
+            <StackPanel x:Name="OpsPanel" Spacing="6" IsVisible="False">
+                <TextBlock Text="4. Файл списка операций (Операции.xlsx)"
+                           FontWeight="{StaticResource FontWeightBold}" />
+                <Grid ColumnDefinitions="*,10,Auto">
+                    <TextBox Grid.Column="0" x:Name="OpsBox"
+                             VerticalContentAlignment="Center"
+                             Watermark="Файл не выбран"
+                             TextChanged="OnPathChanged" />
+                    <Button Grid.Column="2" x:Name="OpsBtn"
+                            Classes="dialog" Content="Обзор…" Click="OnBrowseOps" />
+                </Grid>
             </StackPanel>
 
             <!-- Статус -->

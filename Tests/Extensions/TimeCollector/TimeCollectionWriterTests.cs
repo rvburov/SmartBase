@@ -384,6 +384,142 @@ public sealed class TimeCollectionWriterTests
         Assert.All(styles.Values, s => Assert.Equal("#FFCC00", s.Bg));   // группа осталась желтой
     }
 
+    // ── Колонки по операциям ──────────────────────────────────────────────────
+
+    private static readonly OperationCatalog Catalog = new(["Сборка", "Пайка", "Контроль"]);
+
+    private static TimeRow WithOps(TimeRow row, params (string Name, double Value)[] ops) =>
+        row with { Ops = ops.Select(o => new OpEntry(o.Name, o.Value)).ToArray() };
+
+    // Каркас по колонкам операций и заливка — так, как это делает окно.
+    private static (TimeShell Shell, OperationLayout Layout) FillWithOps(TempDatabase db, List<TimeRow> rows)
+    {
+        var ordered = TimeCollectorEngine.Sort(rows);
+        var layout  = OperationColumns.Build(ordered, Catalog, fixText: true, []);
+        var shell   = TimeCollectionWriter.CreateShell(db.Constructor, "Трудоемкость", layout.Columns);
+        TimeCollectionWriter.FillRecords(db.Path, shell, ordered, TimeCollectorEngine.PlanColors(ordered),
+                                         null, None, operations: layout);
+        return (shell, layout);
+    }
+
+    private static int OpField(TimeShell shell, OperationLayout layout, string operation) =>
+        shell.OpFieldIds![layout.Columns.ToList().IndexOf(operation)];
+
+    /// <summary>Колонки по операциям стоят после «Файл расчета», как в макросе после «Ссылки»:
+    /// сначала «Операции» (текст), потом операции (числа в том же виде, что «Тр-ть» — это та же
+    /// трудоемкость, по частям).</summary>
+    [Fact]
+    public void Operation_columns_follow_the_file_column()
+    {
+        using var db = new TempDatabase();
+
+        var shell  = TimeCollectionWriter.CreateShell(db.Constructor, "Трудоемкость", ["Сборка", "Пайка"]);
+        var fields = db.Constructor.GetFields(shell.CollectionId);
+        var order  = db.Constructor.GetColumnOrder(shell.CollectionId);
+
+        Assert.Equal(9, fields.Count);
+        var oper = fields.Single(f => f.Id == shell.OperFieldId);
+        Assert.Equal((TimeCollectionWriter.OperFieldName, "text"), (oper.Name, oper.FieldType));
+        Assert.Equal(["Сборка", "Пайка"], shell.OpFieldIds!.Select(id => fields.Single(f => f.Id == id).Name));
+        Assert.All(shell.OpFieldIds!, id =>
+        {
+            var field = fields.Single(f => f.Id == id);
+            Assert.Equal("number", field.FieldType);
+            Assert.Equal(-1, NumberFormatValue.FromConfig(field.ConfigJson).Decimals);
+        });
+
+        string[] expected =
+        [
+            shell.FileFieldId.ToString(), shell.OperFieldId.ToString(),
+            shell.OpFieldIds![0].ToString(), shell.OpFieldIds[1].ToString(),
+        ];
+        Assert.Equal(expected, expected.OrderBy(key => order[key]).ToArray());
+    }
+
+    /// <summary>Без колонок по операциям каркас прежний: шесть полей, ни «Операций», ни операций.</summary>
+    [Fact]
+    public void Shell_without_operations_is_unchanged()
+    {
+        using var db = new TempDatabase();
+
+        var shell = TimeCollectionWriter.CreateShell(db.Constructor, "Трудоемкость");
+
+        Assert.Equal(0, shell.OperFieldId);
+        Assert.Null(shell.OpFieldIds);
+        Assert.Equal(6, db.Constructor.GetFields(shell.CollectionId).Count);
+    }
+
+    /// <summary>Название операции не из списка может совпасть с колонкой свода — поле с таким
+    /// именем уже есть, и его создание уронило бы весь прогон. Такая колонка получает приписку.</summary>
+    [Fact]
+    public void Operation_named_like_a_summary_column_gets_a_suffix()
+    {
+        using var db = new TempDatabase();
+
+        var shell = TimeCollectionWriter.CreateShell(db.Constructor, "Трудоемкость", ["Дата", "Сборка"]);
+        var names = shell.OpFieldIds!.Select(id => db.Constructor.GetFields(shell.CollectionId)
+                                                     .Single(f => f.Id == id).Name);
+
+        Assert.Equal(["Дата" + TimeCollectionWriter.OpNameSuffix, "Сборка"], names);
+    }
+
+    /// <summary>Время операций ложится в свои колонки в каноне хранения числа; операции,
+    /// которой у изделия нет, ячейка не заводится.</summary>
+    [Fact]
+    public void Operation_times_land_in_their_columns()
+    {
+        using var db = new TempDatabase();
+
+        var (shell, layout) = FillWithOps(db,
+        [
+            WithOps(Row("Корпус", "АБВ.1", 12.5, Day1), ("Сборка", 10), ("Контроль", 2.5)),
+            WithOps(Row("Вал",    "АБВ.2", 3,    Day1), ("Пайка", 3)),
+        ]);
+
+        var records = db.Constructor.GetRecords(shell.CollectionId);
+        var body    = db.Constructor.GetFieldValues(records.Single(r => r.Title == "Корпус").Id!.Value);
+
+        Assert.Equal("10",  body[OpField(shell, layout, "Сборка")]);
+        Assert.Equal("2,5", body[OpField(shell, layout, "Контроль")]);
+        Assert.False(body.ContainsKey(OpField(shell, layout, "Пайка")));
+        Assert.False(body.ContainsKey(shell.OperFieldId));                // расхождений нет
+    }
+
+    /// <summary>
+    /// Одно обозначение, одна трудоемкость, разная разбивка: обе записи «отличается», и
+    /// краснеют ячейки разошедшихся операций — в том числе пустая, где операции нет. Совпавшая
+    /// операция и ячейка «Тр-ть» не краснеют, заливка строк остается от группы: строку целиком
+    /// операции не красят (решение пользователя от 22.09.2026).
+    /// </summary>
+    [Fact]
+    public void Diverging_breakdown_is_marked_and_only_its_cells_turn_red()
+    {
+        using var db = new TempDatabase();
+
+        var (shell, layout) = FillWithOps(db,
+        [
+            WithOps(Row("Корпус", "АБВ.1", 12, Day2), ("Сборка", 10), ("Контроль", 2)),
+            WithOps(Row("Корпус", "АБВ.1", 12, Day1), ("Сборка", 8),  ("Пайка", 2), ("Контроль", 2)),
+        ]);
+
+        var ids   = db.Constructor.GetRecords(shell.CollectionId).Select(r => r.Id!.Value).ToList();
+        var cells = db.Constructor.GetCellStylesBatch(shell.CollectionId, ids);
+
+        foreach (var id in ids)
+        {
+            Assert.Equal(OperationColumns.DiffersText, db.Constructor.GetFieldValues(id)[shell.OperFieldId]);
+
+            var red = cells[id].Where(c => c.Value.Bg == "#FF3B30").Select(c => c.Key).ToHashSet();
+            Assert.Equal(new HashSet<string>
+            {
+                OpField(shell, layout, "Сборка").ToString(),
+                OpField(shell, layout, "Пайка").ToString(),
+            }, red);
+        }
+
+        Assert.All(db.Constructor.GetRowStyles(shell.CollectionId).Values, s => Assert.Equal("#FFCC00", s.Bg));
+    }
+
     // Понижает текущего пользователя до допущенного не-админа с заданной маской на всю базу
     // (тот же прием, что в матрице прав ядра: маски пишет только администратор).
     private static void SetRights(TempDatabase db, PermAction mask)

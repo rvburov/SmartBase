@@ -7,11 +7,15 @@ using SmartBase.Database.Repositories;
 
 namespace SmartBase.Extensions.TimeCollector;
 
-/// <summary>Каркас созданной коллекции: ее id, итоговое имя и id пользовательских полей.</summary>
+/// <summary>Каркас созданной коллекции: ее id, итоговое имя и id пользовательских полей.
+/// <paramref name="OperFieldId"/> и <paramref name="OpFieldIds"/> — колонка «Операции» и колонки
+/// операций в порядке <see cref="OperationLayout.Columns"/>; без колонок по операциям — 0 и
+/// <c>null</c>.</summary>
 public sealed record TimeShell(
     int CollectionId, string CollectionName,
     int DenoFieldId, int NormFieldId, int DateFieldId,
-    int EfioFieldId, int ProjFieldId, int FileFieldId);
+    int EfioFieldId, int ProjFieldId, int FileFieldId,
+    int OperFieldId = 0, IReadOnlyList<int>? OpFieldIds = null);
 
 /// <summary>
 /// Выгрузка свода трудоемкости в коллекцию программы — второй приемник рядом с .xlsm-шаблоном
@@ -32,6 +36,9 @@ public sealed record TimeShell(
 /// «Дата» — дата, «Файл расчета» — тип «файл» с путем к исходному расчету (в Excel его роль
 /// играет колонка «Ссылка» с формулой HYPERLINK). Служебной колонки с номером строки
 /// источника здесь нет: она нужна только макросу шаблона для перехода по «&gt;&gt;&gt;».
+///
+/// С галочкой «Добавить колонки по операциям» после «Файл расчета» идут «Операции» (текст,
+/// пометка «отличается») и по числовой колонке на каждую операцию (<see cref="OperationColumns"/>).
 /// </summary>
 public static class TimeCollectionWriter
 {
@@ -46,6 +53,11 @@ public static class TimeCollectionWriter
     public const string EfioFieldName   = "ФИО";
     public const string ProjFieldName   = "Проект";
     public const string FileFieldName   = "Файл расчета";
+    public const string OperFieldName   = "Операции";
+
+    /// <summary>Приписка к названию операции, совпавшему с колонкой свода: имя поля в коллекции
+    /// обязано быть уникальным, а название операции из расчета может оказаться каким угодно.</summary>
+    public const string OpNameSuffix = " (операция)";
 
     /// <summary>Имя коллекции по умолчанию — как имя файла свода, с датой и временем прогона:
     /// два свода за день различимы, а занятое имя все равно получит номер (см. UniqueName).</summary>
@@ -90,7 +102,10 @@ public static class TimeCollectionWriter
     /// Создать коллекцию и ее колонки. Имя занято — добавляется « (2)», « (3)»… Любая ошибка
     /// после создания коллекции удаляет ее, чтобы не осталось полупустого каркаса.
     /// </summary>
-    public static TimeShell CreateShell(ConstructorRepository repo, string collectionName)
+    /// <param name="operations">Колонки операций (<see cref="OperationLayout.Columns"/>); задан —
+    /// после «Файл расчета» заводятся «Операции» и эти колонки.</param>
+    public static TimeShell CreateShell(ConstructorRepository repo, string collectionName,
+                                        IReadOnlyList<string>? operations = null)
     {
         var existing = repo.GetAllCollections();
         var taken    = existing.Select(c => c.Name).ToHashSet(StringComparer.CurrentCultureIgnoreCase);
@@ -119,12 +134,36 @@ public static class TimeCollectionWriter
             // расчеты лежат в разных папках, а правило умеет ровно одну папку и один формат.
             var file = Field(repo, colId, FileFieldName, "file",   6000);
 
-            // Порядок колонок — как в шапке Excel-свода.
-            repo.SaveColumnOrder(colId,
-                [TitleKey, deno.ToString(), norm.ToString(), date.ToString(),
-                 efio.ToString(), proj.ToString(), file.ToString()]);
+            // Порядок колонок — как в шапке Excel-свода, колонки по операциям — после ссылки
+            // на расчет, как было в макросе.
+            List<string> order =
+            [
+                TitleKey, deno.ToString(), norm.ToString(), date.ToString(),
+                efio.ToString(), proj.ToString(), file.ToString(),
+            ];
 
-            return new TimeShell(colId, name, deno, norm, date, efio, proj, file);
+            var oper = 0;
+            List<int>? ops = null;
+            if (operations is not null)
+            {
+                oper = Field(repo, colId, OperFieldName, "text", 7000);
+                order.Add(oper.ToString());
+
+                // Время операций — в том же виде, что «Тр-ть»: это та же трудоемкость, по частям.
+                var format = JsonSerializer.Serialize(NumberFormatValue.ToConfigObject(NormFormat));
+                ops = [];
+                for (var i = 0; i < operations.Count; i++)
+                {
+                    var id = Field(repo, colId, OperationFieldName(operations[i]), "number",
+                                   8000 + i * 1000, format);
+                    ops.Add(id);
+                    order.Add(id.ToString());
+                }
+            }
+
+            repo.SaveColumnOrder(colId, order);
+
+            return new TimeShell(colId, name, deno, norm, date, efio, proj, file, oper, ops);
         }
         catch
         {
@@ -140,6 +179,19 @@ public static class TimeCollectionWriter
             CollectionId = colId, Name = name, FieldType = type, Position = position,
             ConfigJson = configJson ?? "{}",
         }).Id!.Value;
+
+    // Колонки свода, с которыми не должна совпасть колонка операции.
+    private static readonly HashSet<string> SummaryColumns = new(StringComparer.CurrentCultureIgnoreCase)
+    {
+        TitleColumnName, DenoFieldName, NormFieldName, DateFieldName,
+        EfioFieldName, ProjFieldName, FileFieldName, OperFieldName,
+    };
+
+    /// <summary>Имя поля операции. Названия операций между собой уже различны (сведены по ключу
+    /// сравнения, см. <see cref="OperationCatalog.Key"/>), а с колонкой свода совпасть может разве
+    /// что название не из списка — такое получает приписку, иначе создание поля уронило бы прогон.</summary>
+    public static string OperationFieldName(string operation) =>
+        SummaryColumns.Contains(operation) ? operation + OpNameSuffix : operation;
 
     private static string UniqueName(string baseName, HashSet<string> taken)
     {
@@ -170,53 +222,80 @@ public static class TimeCollectionWriter
     /// <paramref name="from"/>…<paramref name="to"/> — участок шкалы прогресса под запись,
     /// остаток до 1 занимает раскраска.
     /// </summary>
+    /// <param name="operations">Колонки по операциям — те же, по которым собран каркас
+    /// (<see cref="CreateShell"/> с их названиями); <c>null</c> — коллекция без них.</param>
     public static int FillRecords(string dbPath, TimeShell shell, IReadOnlyList<TimeRow> rows,
                                   TimeCollectorEngine.RowPaint[] paints,
                                   IProgress<CollectProgress>? progress, CancellationToken ct,
-                                  double from = 0.70, double to = 0.95)
+                                  double from = 0.70, double to = 0.95,
+                                  OperationLayout? operations = null)
     {
+        if (operations is not null && shell.OpFieldIds?.Count != operations.Columns.Count)
+            throw new ArgumentException("Каркас коллекции собран не по этим колонкам операций.", nameof(operations));
+
         using var ctx = new AppDbContext(dbPath);
         ctx.ApplyBulkPerformancePragmas();
         var repo = new ConstructorRepository(ctx);
 
         // Поля — в том порядке, в каком Values отдает Stream: он и есть контракт с BulkAddRecords.
-        int[] fieldIds =
+        List<int> fieldIds =
         [
             shell.DenoFieldId, shell.NormFieldId, shell.DateFieldId,
             shell.EfioFieldId, shell.ProjFieldId, shell.FileFieldId,
         ];
+        if (operations is not null)
+        {
+            fieldIds.Add(shell.OperFieldId);
+            fieldIds.AddRange(shell.OpFieldIds!);
+        }
 
         var total = rows.Count;
         var ids = repo.BulkAddRecords(
-            shell.CollectionId, fieldIds, Stream(rows), total, ct,
+            shell.CollectionId, fieldIds, Stream(rows, operations), total, ct,
             new SyncProgress<long>(written => progress?.Report(new CollectProgress(
                 from + (to - from) * written / Math.Max(1, total), "Запись строк",
                 $"{written} из {total}"))),
             RecordBatch);
 
-        Paint(repo, shell, ids, paints, progress, ct, to);
+        Paint(repo, shell, ids, paints, operations, progress, ct, to);
         return rows.Count;
     }
+
+    // Значений в строке без колонок по операциям — по числу полей свода.
+    private const int SummaryValues = 6;
 
     /// <summary>
     /// Строки свода → строки массовой заливки, ЛЕНИВО: в памяти живет только текущий пакет,
     /// а не вторая копия свода на 600 тыс. строк. Порядок значений — тот же, что у списка полей
     /// в <see cref="FillRecords"/>. Пустые значения BulkAddRecords пропускает сам, поэтому
     /// условия «писать, только если не пусто» здесь не нужны — кроме даты, которая непуста
-    /// всегда и потому есть у каждой записи (как и раньше).
+    /// всегда и потому есть у каждой записи (как и раньше). Операции, которых у изделия нет,
+    /// остаются <c>null</c> — ячейка не создается.
     /// </summary>
-    private static IEnumerable<BulkRecordRow> Stream(IReadOnlyList<TimeRow> rows)
+    private static IEnumerable<BulkRecordRow> Stream(IReadOnlyList<TimeRow> rows, OperationLayout? operations)
     {
-        foreach (var row in rows)
-            yield return new BulkRecordRow(row.Name,
-            [
-                row.Deno,
-                NormValue(row),
-                DateStorage(row.Date),
-                row.Efio,
-                row.Proj,
-                row.SourcePath,
-            ]);
+        var width = SummaryValues + (operations is null ? 0 : 1 + operations.Columns.Count);
+
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var row    = rows[i];
+            var values = new string?[width];
+            values[0] = row.Deno;
+            values[1] = NormValue(row);
+            values[2] = DateStorage(row.Date);
+            values[3] = row.Efio;
+            values[4] = row.Proj;
+            values[5] = row.SourcePath;
+
+            if (operations is not null)
+            {
+                if (operations.Differs[i]) values[SummaryValues] = OperationColumns.DiffersText;
+                foreach (var cell in operations.Cells[i])
+                    values[SummaryValues + 1 + cell.Column] = NumberStorage(cell.Value);
+            }
+
+            yield return new BulkRecordRow(row.Name, values);
+        }
     }
 
     /// <summary>Прогресс, срабатывающий СИНХРОННО в потоке вызова. Штатный
@@ -233,10 +312,12 @@ public static class TimeCollectionWriter
     /// значение), а формат поля известен — его задает <see cref="NormFormat"/>, и разделитель
     /// в нем десятичная запятая.</summary>
     private static string NormValue(TimeRow row) =>
-        row.Norm is { } value
-            ? NumberFormatValue.NormalizeStorage(value.ToString(CultureInfo.InvariantCulture),
-                                                 NormFormat.DecimalSeparator)
-            : row.NormText;
+        row.Norm is { } value ? NumberStorage(value) : row.NormText;
+
+    // Число в каноне хранения полей «Тр-ть» и операций — у них один формат.
+    private static string NumberStorage(double value) =>
+        NumberFormatValue.NormalizeStorage(value.ToString(CultureInfo.InvariantCulture),
+                                           NormFormat.DecimalSeparator);
 
     /// <summary>Дата расчета в каноне хранения поля «дата» (<see cref="DateValue"/>): день
     /// целиком, как его показывает и правит ячейка таблицы.</summary>
@@ -248,16 +329,18 @@ public static class TimeCollectionWriter
     /// <summary>
     /// Разложить план раскраски (<see cref="TimeCollectorEngine.PlanColors"/>) по оформлению
     /// таблицы: заливка строки — на строку записи, пометка расхождения — на ячейку «Тр-ть».
-    /// Белые строки не трогаем: «без заливки» и есть дефолт таблицы.
+    /// Белые строки не трогаем: «без заливки» и есть дефолт таблицы. С колонками по операциям
+    /// краснеют еще ячейки операций с расхождением (<see cref="OperationLayout.RedCells"/>) —
+    /// тем же красным, что «Тр-ть»: смысл у пометки тот же.
     /// </summary>
     private static void Paint(ConstructorRepository repo, TimeShell shell, IReadOnlyList<int> ids,
-                              TimeCollectorEngine.RowPaint[] paints,
+                              TimeCollectorEngine.RowPaint[] paints, OperationLayout? operations,
                               IProgress<CollectProgress>? progress, CancellationToken ct, double from)
     {
-        var yellow  = new List<int>();
-        var red     = new List<int>();
-        var normRed = new List<(int RecordId, string Key)>();
-        var normKey = shell.NormFieldId.ToString();
+        var yellow   = new List<int>();
+        var red      = new List<int>();
+        var redCells = new List<(int RecordId, string Key)>();
+        var normKey  = shell.NormFieldId.ToString();
 
         var count = Math.Min(ids.Count, paints.Length);
         for (var i = 0; i < count; i++)
@@ -267,10 +350,17 @@ public static class TimeCollectionWriter
                 case TimeCollectorEngine.RowFill.Yellow: yellow.Add(ids[i]); break;
                 case TimeCollectorEngine.RowFill.Red:    red.Add(ids[i]);    break;
             }
-            if (paints[i].NormRed) normRed.Add((ids[i], normKey));
+            if (paints[i].NormRed) redCells.Add((ids[i], normKey));
         }
 
-        if (yellow.Count == 0 && red.Count == 0 && normRed.Count == 0) return;
+        if (operations is not null)
+        {
+            var keys = shell.OpFieldIds!.Select(id => id.ToString()).ToArray();
+            foreach (var (row, column) in operations.RedCells)
+                if (row < ids.Count) redCells.Add((ids[row], keys[column]));
+        }
+
+        if (yellow.Count == 0 && red.Count == 0 && redCells.Count == 0) return;
 
         // Массовые методы, а не поштучные SetRowStyle/SetCellStyle: те на каждый вызов читают
         // прежнее оформление и копят сущности в трекере EF — на 100 тыс. строк раскраска
@@ -278,6 +368,6 @@ public static class TimeCollectionWriter
         progress?.Report(new CollectProgress(from, "Раскраска…", ""));
         repo.BulkSetRowStyle(shell.CollectionId, yellow, StyleAspect.Background, YellowHex, ct);
         repo.BulkSetRowStyle(shell.CollectionId, red, StyleAspect.Background, RedHex, ct);
-        repo.BulkSetCellStyle(shell.CollectionId, normRed, StyleAspect.Background, RedHex, ct);
+        repo.BulkSetCellStyle(shell.CollectionId, redCells, StyleAspect.Background, RedHex, ct);
     }
 }

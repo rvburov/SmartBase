@@ -21,9 +21,11 @@ public sealed class TimeCollectException(string message, Exception? inner = null
 /// </summary>
 /// <param name="Norm">Трудоемкость числом; <c>null</c> — в ячейке был нечисловой текст
 /// (он сохранен в <paramref name="NormText"/> и пишется в свод как есть).</param>
+/// <param name="Ops">Собственные операции изделия, если их просили читать (колонки по операциям
+/// в коллекции, см. <see cref="OperationColumns"/>); иначе <c>null</c>.</param>
 public sealed record TimeRow(
     int RNum, string Name, string Deno, double? Norm, string NormText,
-    DateTime Date, string Efio, string Proj, string SourcePath);
+    DateTime Date, string Efio, string Proj, string SourcePath, OpEntry[]? Ops = null);
 
 /// <summary>Разобранное имя файла расчета «Проект_ГГГГ.ММ.ДД_ФИО.xlsm».</summary>
 public sealed record CalcFileName(string Proj, DateTime Date, string Efio);
@@ -106,10 +108,12 @@ public sealed record CollectResult(
 /// Прочитанный свод — общая часть обоих способов выгрузки (файл Excel и коллекция программы):
 /// строки в конечном порядке, план их раскраски и счетчики с замечаниями. Все, что зависит от
 /// приемника (шаблон, скрытые колонки, поля коллекции), считается уже после.
+/// <paramref name="Operations"/> — колонки по операциям, если их просили (только коллекция).
 /// </summary>
 public sealed record CollectedTable(
     List<TimeRow> Rows, TimeCollectorEngine.RowPaint[] Paints,
-    int TotalFiles, int ProcessedFiles, IReadOnlyList<FileIssue> Issues, TextFixes Text);
+    int TotalFiles, int ProcessedFiles, IReadOnlyList<FileIssue> Issues, TextFixes Text,
+    OperationLayout? Operations = null);
 
 /// <summary>
 /// Сборка сводной таблицы трудоемкости — логика без UI (порт <c>TimeCollector.main</c>).
@@ -157,9 +161,12 @@ public static class TimeCollectorEngine
     /// <param name="fixText">Привести текст к одному алфавиту (см. <see cref="Homoglyphs"/>).
     /// Галочка в окне; настройка настоящая, а не страховка от чужой ошибки: она МЕНЯЕТ данные,
     /// и кому-то свод нужен ровно таким, как в расчетах.</param>
+    /// <param name="operations">Список операций — если задан, читаются и операции изделий, и свод
+    /// получает колонки по ним (<see cref="CollectedTable.Operations"/>). Нужен только коллекции:
+    /// чтение операций разбирает каждую строку листа, а не одни строки изделий.</param>
     public static CollectedTable Collect(
         string folder, bool recursive, IProgress<CollectProgress>? progress, CancellationToken ct,
-        double readTo = ReadTo, bool fixText = true)
+        double readTo = ReadTo, bool fixText = true, OperationCatalog? operations = null)
     {
         if (!Directory.Exists(folder)) throw new TimeCollectException("Папка с расчетами не найдена.");
 
@@ -168,15 +175,17 @@ public static class TimeCollectorEngine
         if (files.Count == 0)
             throw new TimeCollectException("В папке не найдено файлов расчетов (*.xlsm).");
 
-        var results = ReadAll(files, progress, ct, readTo);
+        var results = ReadAll(files, progress, ct, readTo, withOps: operations is not null);
 
-        var rows      = new List<TimeRow>();
-        var issues    = new List<FileIssue>();
-        var processed = 0;
+        var rows       = new List<TimeRow>();
+        var issues     = new List<FileIssue>();
+        var textValues = new List<string>();
+        var processed  = 0;
         foreach (var result in results)
         {
             if (result is null) continue;                       // отменили до чтения этого файла
             if (result.Issue is not null) issues.Add(result.Issue);
+            if (result.TextOps > 0) textValues.Add($"{result.FileName} — строк: {result.TextOps}");
             if (result.Rows.Count == 0) continue;
             rows.AddRange(result.Rows);
             processed++;
@@ -199,7 +208,18 @@ public static class TimeCollectorEngine
         var fixes = fixText ? FixText(rows, progress, ct) : TextFixes.None;
 
         var ordered = Sort(rows);
-        return new CollectedTable(ordered, PlanColors(ordered), files.Count, processed, issues, fixes);
+
+        // Колонки по операциям — после сортировки: «отличается» и красные ячейки сравнивают
+        // соседей в конечном порядке, как и раскраска.
+        OperationLayout? layout = null;
+        if (operations is not null)
+        {
+            progress?.Report(new CollectProgress(null, "Разбор операций…", ""));
+            textValues.Sort(StringComparer.CurrentCultureIgnoreCase);
+            layout = OperationColumns.Build(ordered, operations, fixText, textValues);
+        }
+
+        return new CollectedTable(ordered, PlanColors(ordered), files.Count, processed, issues, fixes, layout);
     }
 
     /// <summary>
@@ -324,7 +344,8 @@ public static class TimeCollectorEngine
     // Результат по каждому файлу кладется в массив ПО ИНДЕКСУ файла: порядок сборки свода
     // и журнала не зависит от того, какой поток закончил раньше.
     private static CalcFileReader.FileReadResult?[] ReadAll(
-        List<string> files, IProgress<CollectProgress>? progress, CancellationToken ct, double readTo)
+        List<string> files, IProgress<CollectProgress>? progress, CancellationToken ct, double readTo,
+        bool withOps)
     {
         var results = new CalcFileReader.FileReadResult?[files.Count];
         var eta     = new EtaEstimator();
@@ -337,7 +358,7 @@ public static class TimeCollectorEngine
         {
             Parallel.For(0, files.Count, options, i =>
             {
-                var result = CalcFileReader.Read(files[i], ct);
+                var result = CalcFileReader.Read(files[i], ct, withOps);
                 results[i] = result;
 
                 var count  = Interlocked.Increment(ref done);
@@ -448,8 +469,9 @@ public static class TimeCollectorEngine
     /// обе строки красные, иначе красными становятся только их ячейки «Тр-ть».</item>
     /// </list>
     /// Красный только добавляется и никогда не снимается, поэтому итог считается за один проход.
-    /// <c>OperationsColor</c> не переносится: его цикл <c>For col = 10 To 8</c> при восьми
-    /// колонках не выполняется ни разу.
+    /// <c>OperationsColor</c> здесь не переносится: в Excel-своде его цикл <c>For col = 10 To 8</c>
+    /// при восьми колонках не выполняется ни разу. Для коллекции с колонками по операциям его
+    /// смысл («отличается») и раскраска ячеек операций — в <see cref="OperationColumns"/>.
     /// </summary>
     public static RowPaint[] PlanColors(IReadOnlyList<TimeRow> rows)
     {

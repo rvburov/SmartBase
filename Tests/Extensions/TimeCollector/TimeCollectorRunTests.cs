@@ -652,6 +652,162 @@ public sealed class TimeCollectorRunTests : IDisposable
         Assert.Equal(2, Run(recursive: true).RowCount);
     }
 
+    // ── Колонки по операциям (коллекция) ─────────────────────────────────────
+
+    // «Операции.xlsx»: лист «Операции» (A — название, B — вид работ) и, если есть исправления,
+    // лист «Исправление» (A — старое, B — правильное). В обоих первая строка — заголовок, как
+    // в настоящем файле: макрос читал их с HDR=yes.
+    private string CreateCatalog(string[] names, (string From, string To)[]? fixes = null,
+                                 string sheet = OperationCatalog.ListSheet)
+    {
+        var path = Path.Combine(_root, "Операции.xlsx");
+        using var wb = new XLWorkbook();
+
+        var list = wb.AddWorksheet(sheet);
+        list.Cell(1, 1).Value = "Операции";
+        list.Cell(1, 2).Value = "Вид работ";
+        for (var i = 0; i < names.Length; i++) list.Cell(i + 2, 1).Value = names[i];
+
+        if (fixes is not null)
+        {
+            var fix = wb.AddWorksheet(OperationCatalog.FixSheet);
+            fix.Cell(1, 1).Value = "Было";
+            fix.Cell(1, 2).Value = "Стало";
+            for (var i = 0; i < fixes.Length; i++)
+            {
+                fix.Cell(i + 2, 1).Value = fixes[i].From;
+                fix.Cell(i + 2, 2).Value = fixes[i].To;
+            }
+        }
+
+        wb.SaveAs(path);
+        return path;
+    }
+
+    private CollectedTable CollectWith(OperationCatalog catalog) =>
+        TimeCollectorEngine.Collect(_calc, recursive: false, progress: null, CancellationToken.None,
+                                    operations: catalog);
+
+    private static Dictionary<string, double> OpCells(CollectedTable table, string productName)
+    {
+        var ops = table.Operations!;
+        var row = table.Rows.FindIndex(r => r.Name == productName);
+        return ops.Cells[row].ToDictionary(c => ops.Columns[c.Column], c => c.Value);
+    }
+
+    // Операции — строки без иерархического номера под изделием, до следующего изделия (так их
+    // делил GetProducts макроса). Составная часть — уже следующее изделие: ее операции в колонки
+    // сборки не входят. Одна операция дважды складывается, пустая строка — разделитель.
+    [Fact]
+    public void Operations_Belong_To_The_Product_Above_And_Are_Summed()
+    {
+        CreateCalc("П_2025.03.14_Иванов.xlsm",
+            ("Изделие", "Блок",     "АБВГ.1", 20.0),
+            ("",        "Сборка",   "",        5.0),
+            ("",        "Контроль", "",        1.5),
+            ("",        "",         "",        null),       // разделитель
+            ("",        "Сборка",   "",        2.0),        // та же операция еще раз
+            ("1",       "Плата",    "АБВГ.2",  3.0),        // составная часть — свои операции
+            ("",        "Пайка",    "",        3.0));
+
+        var table = CollectWith(new OperationCatalog(["Сборка", "Пайка", "Контроль"]));
+
+        Assert.Equal(["Сборка", "Пайка", "Контроль"], table.Operations!.Columns);
+        Assert.Equal(new Dictionary<string, double> { ["Сборка"] = 7, ["Контроль"] = 1.5 },
+                     OpCells(table, "Блок"));
+        Assert.Equal(new Dictionary<string, double> { ["Пайка"] = 3 }, OpCells(table, "Плата"));
+    }
+
+    // Не берется то, что не входит в трудоемкость изделия или ему не принадлежит: время только
+    // в H (трудоемкость считают по G), операции над первым изделием и операции изделия, которое
+    // само в свод не попало, — приписать их соседу значило бы соврать.
+    [Fact]
+    public void Operations_Outside_The_Product_Norm_Are_Not_Taken()
+    {
+        const string file = "П_2025.03.14_Иванов.xlsm";
+        CreateCalc(file,
+            ("",        "Сборка",                     "",   9.0),    // до первого изделия
+            ("Изделие", "Блок",                       "А1", 10.0),
+            ("",        "Сборка",                     "",   4.0),
+            ("",        "Квалификационные испытания", "",   null),   // время только в H — ниже
+            ("1",       "Без нормы",                  "А2", null),   // в свод не идет
+            ("",        "Пайка",                      "",   6.0));   // его операция
+
+        using (var wb = new XLWorkbook(Path.Combine(_calc, file)))
+        {
+            wb.Worksheet("Расшифровка").Cell(5, 8).Value = 512.0;   // H строки «Квалификационные…»
+            wb.Save();
+        }
+
+        var table = CollectWith(new OperationCatalog(["Сборка", "Пайка", "Квалификационные испытания"]));
+
+        Assert.Equal("Блок", Assert.Single(table.Rows).Name);
+        Assert.Equal(["Сборка"], table.Operations!.Columns);
+        Assert.Equal(4, OpCells(table, "Блок")["Сборка"]);
+    }
+
+    // Время операции текстом в колонку не пойдет (колонка числовая), но и молча не пропадет:
+    // журнал назовет расчет и число таких строк.
+    [Fact]
+    public void Text_Time_Of_An_Operation_Is_Skipped_And_Its_File_Named()
+    {
+        CreateCalc("П_2025.03.14_Иванов.xlsm",
+            ("Изделие", "Блок",   "А1", 3.0),
+            ("",        "Сборка", "",   "по факту"),
+            ("",        "Пайка",  "",   2.0));
+
+        var table = CollectWith(new OperationCatalog(["Сборка", "Пайка"]));
+
+        Assert.Equal(["Пайка"], table.Operations!.Columns);
+        Assert.Equal(["П_2025.03.14_Иванов.xlsm — строк: 1"], table.Operations.TextValues);
+    }
+
+    // Без списка операции не читаются вовсе: Excel-свод и коллекция без галочки платят за
+    // чтение ровно столько же, сколько раньше.
+    [Fact]
+    public void Without_The_List_Operations_Are_Not_Read()
+    {
+        CreateCalc("П_2025.03.14_Иванов.xlsm", ("Изделие", "Блок", "А1", 3.0), ("", "Сборка", "", 2.0));
+
+        var table = TimeCollectorEngine.Collect(_calc, recursive: false, progress: null, CancellationToken.None);
+
+        Assert.Null(table.Operations);
+        Assert.All(table.Rows, r => Assert.Null(r.Ops));
+    }
+
+    // Список читается из книги: заголовок листа в список не попадает, повторы и хвосты пробелов
+    // схлопываются, лист «Исправление» дает пары «старое → правильное».
+    [Fact]
+    public void Operations_List_Is_Read_From_The_Workbook()
+    {
+        var path = CreateCatalog(["Сборка", "Сборка", "Упаковывание   ", "Контроль"],
+                                 [("Упаковка", "Упаковывание")]);
+
+        var catalog = OperationCatalog.Load(path);
+
+        Assert.Equal(["Сборка", "Упаковывание", "Контроль"], catalog.Names);
+        Assert.Equal("Упаковывание", catalog.Fix("упаковка"));
+    }
+
+    // Список проверяется до чтения расчетов, и отказ называет причину и путь. Листа
+    // «Исправление» может и не быть — тогда исправлений просто нет.
+    [Fact]
+    public void Operations_List_Problems_Are_Reported_Before_The_Run()
+    {
+        var missing = Path.Combine(_root, "нет такого.xlsx");
+        var notFound = Assert.Throws<TimeCollectException>(() => OperationCatalog.Load(missing));
+        Assert.Contains("не найден", notFound.Message);
+        Assert.Contains(missing, notFound.Message);
+
+        var wrongSheet = CreateCatalog(["Сборка"], sheet: "Лист1");
+        Assert.Contains("нет листа «Операции»",
+                        Assert.Throws<TimeCollectException>(() => OperationCatalog.Load(wrongSheet)).Message);
+
+        var noFixes = OperationCatalog.Load(CreateCatalog(["Сборка"]));
+        Assert.Equal(["Сборка"], noFixes.Names);
+        Assert.Null(noFixes.Fix("Сборочная"));
+    }
+
     // ── Проблемный шаблон ─────────────────────────────────────────────────────
 
     // В шаблоне остается мусорное определенное имя со ссылкой на другую книгу (префикс «[2]»
