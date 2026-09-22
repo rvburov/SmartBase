@@ -76,6 +76,18 @@ public partial class LibraryControllerView : UserControl
     private IReadOnlyDictionary<string, DocFileState>? _states;
     private readonly DocRunGate _censusGate = new();
 
+    // Гистограммы типов: база → коллекция → сколько документов какого типа. Из них без запроса
+    // получается размер ленты в любом виде фильтра типов и числа выпадашки навбара, а фильтр
+    // ставится только через выпадашку — к смене типов гистограмма уже посчитана. Раньше каждая
+    // смена типов пересчитывала все коллекции заново: на 500 000 документов — секунда.
+    //
+    // Живут, пока данные не менялись: перечитывание раздела «с прошлого чтения в базах что-то
+    // коммитили» (SetActiveIds с force), смена набора баз и Refresh их сбрасывают. Поколение
+    // нужно на случай, если сброс пришелся на идущий счет: иначе тот положил бы в кеш
+    // гистограмму данных, которых уже нет.
+    private readonly Dictionary<int, Dictionary<int, ConstructorRepository.DocTypeHistogram>> _histograms = [];
+    private int _histogramsGen;
+
     // Итоги последнего поиска — из них собирается строка подвала.
     private int  _foundInText;
     private int  _foundByTitle;
@@ -145,6 +157,9 @@ public partial class LibraryControllerView : UserControl
     {
         if (!force && DocLoadPlan.SameActiveIds(_activeByDb, activeByDb)) return;
 
+        // force — в базах что-то коммитили: посчитанные типы могли устареть. Простое касание
+        // галочки данных не меняет, и гистограммы остальных коллекций остаются в силе.
+        if (force) ForgetHistograms();
         var quiet = force && DocLoadPlan.SameActiveIds(_activeByDb, activeByDb);
         _activeByDb = activeByDb;
         RefreshCurrent(quiet);
@@ -154,10 +169,15 @@ public partial class LibraryControllerView : UserControl
     public void SetDatabases(IReadOnlyList<DatabaseManager> databases)
     {
         SetDatabaseList(databases);
+        ForgetHistograms();
         RefreshCurrent();
     }
 
-    public void Refresh() => RefreshCurrent();
+    public void Refresh()
+    {
+        ForgetHistograms();
+        RefreshCurrent();
+    }
 
     private void SetDatabaseList(IReadOnlyList<DatabaseManager> databases)
     {
@@ -294,7 +314,13 @@ public partial class LibraryControllerView : UserControl
             var active = ActiveFor(dbId);
             if (active is { Count: 0 }) continue;
 
-            var stats = await repo.GetDocCollectionStatsAsync(active, view);
+            // Без фильтра типов размер — дешевый счет по индексу. С фильтром — сумма по
+            // гистограмме типов: она уже посчитана выпадашкой, через которую фильтр и ставят.
+            var stats = view.IsAll
+                ? await repo.GetDocCollectionStatsAsync(active, view)
+                : (await HistogramsAsync(dbId, repo, active)).ToDictionary(
+                      p => p.Key,
+                      p => new ConstructorRepository.DocCollectionStats(p.Value.CountFor(view), p.Value.TypeFieldId));
             if (gen != _gen) return;
 
             foreach (var (colId, s) in stats.OrderBy(p => p.Key))
@@ -438,20 +464,43 @@ public partial class LibraryControllerView : UserControl
 
     private async Task<List<(string Value, int Count)>> LoadTypeCountsAsync()
     {
-        var totals = new Dictionary<string, int>(StringComparer.Ordinal);
-        foreach (var (dbId, _, repo) in _dbs)
+        var all = new List<ConstructorRepository.DocTypeHistogram>();
+        foreach (var (dbId, _, repo) in _dbs.ToList())
         {
             var active = ActiveFor(dbId);
             if (active is { Count: 0 }) continue;
-
-            foreach (var (value, count) in await repo.GetDocTypeCountsAsync(active))
-                totals[value] = totals.GetValueOrDefault(value) + count;
+            all.AddRange((await HistogramsAsync(dbId, repo, active)).Values);
         }
-        // Порядок как в выпадашке колонки таблицы: по убыванию количества, «(Пусто)» последним.
-        return [.. totals.OrderBy(p => p.Key.Length == 0)
-                         .ThenByDescending(p => p.Value)
-                         .ThenBy(p => p.Key, StringComparer.CurrentCulture)
-                         .Select(p => (p.Key, p.Value))];
+        return ConstructorRepository.MergeTypeCounts(all);
+    }
+
+    /// <summary>
+    /// Гистограммы типов отмеченных коллекций базы: посчитанные берутся из кеша, недостающие
+    /// считаются в фоне и ложатся в кеш — если он не был сброшен, пока шел счет.
+    /// </summary>
+    private async Task<Dictionary<int, ConstructorRepository.DocTypeHistogram>> HistogramsAsync(
+        int dbId, ConstructorRepository repo, ISet<int>? active)
+    {
+        var gen = _histogramsGen;
+        // Копия, а не сам кеш: счет идет в фоне, а кеш тем временем пополняет UI-поток.
+        var known = _histograms.TryGetValue(dbId, out var cached)
+            ? new Dictionary<int, ConstructorRepository.DocTypeHistogram>(cached)
+            : null;
+
+        var result = await repo.GetDocTypeHistogramsAsync(active, known);
+
+        if (gen == _histogramsGen)
+        {
+            if (!_histograms.TryGetValue(dbId, out var cache)) _histograms[dbId] = cache = [];
+            foreach (var (colId, h) in result) cache[colId] = h;
+        }
+        return result;
+    }
+
+    private void ForgetHistograms()
+    {
+        _histograms.Clear();
+        _histogramsGen++;
     }
 
     // ── Миниатюры ────────────────────────────────────────────────────────────

@@ -21,6 +21,10 @@ namespace SmartBase.Views.Library;
 /// Порядок внутри потока — порядок самой коллекции (<c>Position, Id</c>), а разные файловые
 /// столбцы одной записи идут подряд; как это ложится на индексы, описано в
 /// <c>ConstructorRepository.DocsPaging.cs</c>.
+///
+/// Страница читается от соседа: края каждого приехавшего куска запоминаются
+/// (<see cref="Entry.Known"/>), и следующая страница вниз или вверх идет от них keyset-курсором
+/// — одинаково быстро на любой глубине. Путь выбирает <see cref="DocSeekPlan"/>.
 /// </summary>
 internal sealed class DocVirtualList : IList<object>, IList, INotifyCollectionChanged
 {
@@ -40,6 +44,14 @@ internal sealed class DocVirtualList : IList<object>, IList, INotifyCollectionCh
         public required ConstructorRepository.DocView View;
         public int Docs;        // всего документов потока В ЭТОМ виде
         public int FirstRow;
+
+        /// <summary>
+        /// Документы потока, чье место в порядке уже известно: номер в потоке → курсор. Края
+        /// каждого приехавшего куска; хранятся и для вытесненных страниц — это пара чисел, а
+        /// возврат к ним без курсора стоил бы смещения от края. Живет, пока жив список: любая
+        /// правка данных собирает ленту заново, и старые курсоры уходят вместе с ним.
+        /// </summary>
+        public readonly Dictionary<int, DocCursor> Known = [];
     }
 
     private readonly List<Entry> _entries;
@@ -202,8 +214,16 @@ internal sealed class DocVirtualList : IList<object>, IList, INotifyCollectionCh
 
             foreach (var (e, local, n, slot) in Segments(page))
             {
-                var part = await e.Repo.GetDocPageAsync(e.ColId, e.TypeFieldId, e.View, local, n);
+                var seek = DocSeekPlan.Choose(local, n, e.Docs, e.Known);
+                var part = await e.Repo.GetDocPageAsync(e.ColId, e.TypeFieldId, e.View, seek, n);
                 if (gen != _generation) return;
+                // Края куска — курсоры для соседних страниц. Только у полного куска: неполный
+                // значит, что данные успели поменяться, и номера в потоке уже не те.
+                if (n > 0 && part.Count == n)
+                {
+                    e.Known[local]         = part[0].Cursor;
+                    e.Known[local + n - 1] = part[^1].Cursor;
+                }
                 // Файлы страницы спрашиваются здесь, в пуле: продолжение после await идет в
                 // UI-потоке, а карточка без готового ответа спросила бы диск сама — по разу на
                 // каждую из двухсот, и на сетевой папке прокрутка вставала бы на каждой странице.

@@ -138,6 +138,187 @@ public sealed class DocPagingTests
                                      ConstructorRepository.DocView.All, 10, 5));
     }
 
+    // ── Страница от соседа: keyset-курсор ────────────────────────────────────
+    //
+    // Все четыре пути к странице обязаны давать ровно тот же порядок, что и чтение подряд.
+    // Разъедься они, лента показывала бы дубли и дыры на стыках страниц — и только при
+    // прокрутке, то есть там, где тест смещением ничего не заметит.
+
+    private static ConstructorRepository.DocSeek After(DocRecord d, int skip = 0) =>
+        new(ConstructorRepository.DocSeekOrigin.After, skip, d.Cursor);
+
+    private static ConstructorRepository.DocSeek Before(DocRecord d, int skip = 0) =>
+        new(ConstructorRepository.DocSeekOrigin.Before, skip, d.Cursor);
+
+    private static ConstructorRepository.DocSeek FromEnd(int skip) =>
+        new(ConstructorRepository.DocSeekOrigin.End, skip);
+
+    // Поток с подвохами порядка: у каждой четвертой записи второй файловый столбец (документы
+    // одной записи идут подряд), а позиции повторяются по три — порядок между такими записями
+    // держит только id, и курсор обязан его учитывать.
+    private static Shell KeysetStream(ConstructorRepository repo)
+    {
+        var shell = Library(repo);
+        var scan  = SampleData.AddField(repo, shell.ColId, "Скан", "file", 3000);
+        repo.SetFileFieldInLibrary(scan.Id!.Value, true);
+
+        for (var i = 1; i <= 17; i++)
+        {
+            var id = AddDoc(repo, shell, $"D{i:D2}", $"/d{i:D2}.pdf",
+                            type: i % 2 == 0 ? "ГОСТ" : "СТО", position: (i + 2) / 3 * 10);
+            if (i % 4 == 0) repo.SetFieldValue(id, scan.Id!.Value, $"/d{i:D2}-scan.pdf");
+        }
+        return shell;
+    }
+
+    private static List<DocRecord> Whole(ConstructorRepository repo, Shell shell,
+                                         ConstructorRepository.DocView view) =>
+        repo.GetDocPage(shell.ColId, shell.TypeId, view, 0, 1000);
+
+    private static string[] Paths(IEnumerable<DocRecord> docs) => [.. docs.Select(d => d.Path)];
+
+    [Fact]
+    public void Walking_forward_by_cursor_reproduces_the_order()
+    {
+        using var db = new TempDatabase();
+        var repo  = db.Constructor;
+        var shell = KeysetStream(repo);
+        var all   = ConstructorRepository.DocView.All;
+
+        var walked = new List<DocRecord>();
+        var page   = repo.GetDocPage(shell.ColId, shell.TypeId, all, 0, 4);
+        while (page.Count > 0)
+        {
+            walked.AddRange(page);
+            page = repo.GetDocPage(shell.ColId, shell.TypeId, all, After(page[^1]), 4);
+        }
+
+        Assert.Equal(21, walked.Count);   // 17 записей + 4 скана
+        Assert.Equal(Paths(Whole(repo, shell, all)), Paths(walked));
+    }
+
+    /// <summary>Прокрутка вверх после прыжка вглубь: страницы идут назад от известного документа.</summary>
+    [Fact]
+    public void Walking_backward_from_the_end_reproduces_the_order()
+    {
+        using var db = new TempDatabase();
+        var repo  = db.Constructor;
+        var shell = KeysetStream(repo);
+        var all   = ConstructorRepository.DocView.All;
+
+        var walked = new List<DocRecord>();
+        var page   = repo.GetDocPage(shell.ColId, shell.TypeId, all, FromEnd(0), 4);
+        while (page.Count > 0)
+        {
+            walked.InsertRange(0, page);
+            page = repo.GetDocPage(shell.ColId, shell.TypeId, all, Before(page[0]), 4);
+        }
+
+        Assert.Equal(Paths(Whole(repo, shell, all)), Paths(walked));
+    }
+
+    /// <summary>
+    /// Один и тот же кусок потока, взятый каждым из путей и с пропуском, совпадает с куском
+    /// чтения подряд. Кусок берется и из середины, и у самых краев.
+    /// </summary>
+    [Fact]
+    public void Every_way_to_a_chunk_lands_on_the_same_documents()
+    {
+        using var db = new TempDatabase();
+        var repo  = db.Constructor;
+        var shell = KeysetStream(repo);
+        var all   = ConstructorRepository.DocView.All;
+        var whole = Whole(repo, shell, all);
+
+        foreach (var local in new[] { 3, 8, 12, 17 })
+        {
+            const int n = 3;
+            var expected = Paths(whole.Skip(local).Take(n));
+            List<DocRecord> Read(ConstructorRepository.DocSeek s) =>
+                repo.GetDocPage(shell.ColId, shell.TypeId, all, s, n);
+
+            Assert.Equal(expected, Paths(Read(ConstructorRepository.DocSeek.FromStart(local))));
+            Assert.Equal(expected, Paths(Read(FromEnd(whole.Count - local - n))));
+            Assert.Equal(expected, Paths(Read(After(whole[local - 1]))));
+            Assert.Equal(expected, Paths(Read(After(whole[local - 3], skip: 2))));
+            if (local + n < whole.Count)
+                Assert.Equal(expected, Paths(Read(Before(whole[local + n]))));
+            if (local + n + 1 < whole.Count)
+                Assert.Equal(expected, Paths(Read(Before(whole[local + n + 1], skip: 1))));
+        }
+    }
+
+    /// <summary>Курсор идет по отфильтрованному потоку: чужие типы между страницами не вклиниваются.</summary>
+    [Fact]
+    public void The_cursor_walks_a_narrowed_stream_too()
+    {
+        using var db = new TempDatabase();
+        var repo  = db.Constructor;
+        var shell = KeysetStream(repo);
+        var gost  = Types("ГОСТ");
+
+        var walked = new List<DocRecord>();
+        var page   = repo.GetDocPage(shell.ColId, shell.TypeId, gost, 0, 3);
+        while (page.Count > 0)
+        {
+            walked.AddRange(page);
+            page = repo.GetDocPage(shell.ColId, shell.TypeId, gost, After(page[^1]), 3);
+        }
+
+        Assert.Equal(Paths(Whole(repo, shell, gost)), Paths(walked));
+        Assert.All(walked, d => Assert.Equal("ГОСТ", d.DocType));
+    }
+
+    // ── Гистограмма типов ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Размер потока в любом виде, взятый из гистограммы, совпадает со счетом того же вида.
+    /// Разойдись они, виртуальный список обещал бы полосой прокрутки строки, которых нет, или
+    /// терял бы хвост.
+    /// </summary>
+    [Fact]
+    public void The_histogram_sizes_every_view_like_the_count_does()
+    {
+        using var db = new TempDatabase();
+        var repo  = db.Constructor;
+        var shell = KeysetStream(repo);
+        AddDoc(repo, shell, "Без типа 1", "/n1.pdf", position: 5000);
+        AddDoc(repo, shell, "Без типа 2", "/n2.pdf", position: 5010);
+
+        var hist = repo.GetDocTypeHistograms()[shell.ColId];
+
+        foreach (var view in new[]
+                 {
+                     ConstructorRepository.DocView.All, Types("ГОСТ"), Types("СТО", ""), Types(""),
+                     Types(), Types("нет такого"),
+                 })
+            Assert.Equal(repo.CountDocs(shell.ColId, shell.TypeId, view), hist.CountFor(view));
+        Assert.Equal(shell.TypeId, hist.TypeFieldId);
+    }
+
+    /// <summary>
+    /// Посчитанное зовущим не пересчитывается: гистограмма из <c>known</c> возвращается как
+    /// есть, а считаются только недостающие коллекции.
+    /// </summary>
+    [Fact]
+    public void Known_histograms_are_returned_without_a_recount()
+    {
+        using var db = new TempDatabase();
+        var repo   = db.Constructor;
+        var first  = Library(repo, "Стандарты");
+        var second = Library(repo, "Регламенты");
+        AddDoc(repo, first,  "Г1", "/g1.pdf", "ГОСТ");
+        AddDoc(repo, second, "Р1", "/r1.pdf", "СТО");
+
+        var held = new ConstructorRepository.DocTypeHistogram(first.TypeId,
+                       new Dictionary<string, int> { ["ГОСТ"] = 999 });
+        var result = repo.GetDocTypeHistograms(
+            known: new Dictionary<int, ConstructorRepository.DocTypeHistogram> { [first.ColId] = held });
+
+        Assert.Same(held, result[first.ColId]);
+        Assert.Equal(1, result[second.ColId].Counts["СТО"]);
+    }
+
     // ── Фильтр по типу ───────────────────────────────────────────────────────
 
     [Fact]

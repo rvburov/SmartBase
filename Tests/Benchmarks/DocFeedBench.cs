@@ -75,26 +75,37 @@ public static class DocFeedBench
         var narrow = new ConstructorRepository.DocView(new HashSet<string> { "Тип 1", "Тип 2", "Тип 3" });
 
         Console.WriteLine("── Размеры (на каждую перезагрузку ленты) ──");
-        Time("GetDocCollectionStats, все типы",       runs, () => repo.GetDocCollectionStats(null, all));
-        Time("GetDocCollectionStats, три типа из 10", runs, () => repo.GetDocCollectionStats(null, narrow));
-        Time("GetDocTypeCounts (выпадашка типов)",    runs, () => repo.GetDocTypeCounts());
+        Time("размеры, все типы (счет)",              runs, () => repo.GetDocCollectionStats(null, all));
+        Time("размеры, три типа из 10 (счет)",        runs, () => repo.GetDocCollectionStats(null, narrow));
+        Dictionary<int, ConstructorRepository.DocTypeHistogram> hist = [];
+        Time("гистограммы типов (выпадашка)",         runs, () => hist = repo.GetDocTypeHistograms());
+        Time("размеры, три типа из готовых гистограмм", runs, () =>
+        {
+            foreach (var h in hist.Values) h.CountFor(narrow);
+        });
         Console.WriteLine();
 
         Console.WriteLine("── Страница 200 карточек крупнейшей коллекции ──");
-        foreach (var (label, skip) in new[]
-                 {
-                     ("начало",   0),
-                     ("середина", docsInCol / 2),
-                     ("конец",    Math.Max(0, docsInCol - 200)),
-                 })
-            Time($"GetDocPage OFFSET, {label}", runs,
-                 () => repo.GetDocPage(colId, typeId, all, skip, 200));
-        Time("GetDocPage OFFSET, три типа, конец", runs,
-             () => repo.GetDocPage(colId, typeId, narrow, Math.Max(0, docsInCol * 3 / 10 - 200), 200));
+        var end   = Math.Max(0, docsInCol - 200);
+        var mid   = docsInCol / 2;
+        Time("начало",                         runs, () => repo.GetDocPage(colId, typeId, all, 0, 200));
+        Time("середина смещением",             runs, () => repo.GetDocPage(colId, typeId, all, mid, 200));
+        Time("конец смещением от начала",      runs, () => repo.GetDocPage(colId, typeId, all, end, 200));
+        Time("конец от конца",                 runs, () => repo.GetDocPage(colId, typeId, all,
+                                                    new ConstructorRepository.DocSeek(ConstructorRepository.DocSeekOrigin.End, 0), 200));
+        var anchor = repo.GetDocPage(colId, typeId, all, end - 1, 1)[0].Cursor;
+        Time("конец от соседа (прокрутка)",    runs, () => repo.GetDocPage(colId, typeId, all,
+                                                    new ConstructorRepository.DocSeek(ConstructorRepository.DocSeekOrigin.After, 0, anchor), 200));
+        var narrowEnd = Math.Max(0, docsInCol * 3 / 10 - 200);
+        var narrowAnchor = repo.GetDocPage(colId, typeId, narrow, narrowEnd - 1, 1)[0].Cursor;
+        Time("три типа, конец смещением",      runs, () => repo.GetDocPage(colId, typeId, narrow, narrowEnd, 200));
+        Time("три типа, конец от соседа",      runs, () => repo.GetDocPage(colId, typeId, narrow,
+                                                    new ConstructorRepository.DocSeek(ConstructorRepository.DocSeekOrigin.After, 0, narrowAnchor), 200));
         Console.WriteLine();
 
         Console.WriteLine("── Поиск и пути ──");
-        Time("SearchDocs по названию",            runs, () => repo.SearchDocs(null, "Документ 1234", []));
+        Time("поиск по названию, редкое слово",   runs, () => repo.SearchDocs(null, "Документ 1234", []));
+        Time("поиск по названию, частое слово",   runs, () => repo.SearchDocs(null, "документ", []));
         Time("GetDocPaths (перепись, чтение)",    runs, () => repo.GetDocPaths(null, int.MaxValue));
         Console.WriteLine();
 

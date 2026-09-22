@@ -16,6 +16,17 @@ namespace SmartBase.Database.Repositories;
 /// Фильтр по типу документа — обычное SQL-условие, поэтому он ЛИСТАЕТСЯ: сколько бы типов ни
 /// сняли галочками, недостижимых документов не появляется.
 ///
+/// <b>Страница читается от соседа, а не смещением.</b> Порядок ленты — ключ
+/// (<see cref="DocCursor"/>), и страница «после известного документа» стоит одинаково на любой
+/// глубине, тогда как OFFSET шагает по каждой пропущенной строке. Прыжок ползунком соседа не
+/// имеет — тогда смещение считается от ближнего края потока или от ближнего известного
+/// документа (<see cref="DocSeek"/>; выбор — <c>Views/Library/DocSeekPlan.cs</c>).
+///
+/// <b>Размер потока при фильтре типов — из гистограммы типов</b>
+/// (<see cref="DocTypeHistogram"/>): она же дает числа выпадашки навбара, а фильтр ставится только
+/// через выпадашку, поэтому к смене типов гистограмма уже посчитана и новый счет не нужен. Без
+/// фильтра размер — точный счет (<see cref="CountDocs"/>): он идет покрывающим индексом и дешев.
+///
 /// <b>Поиск — исключение и листается не будет.</b> Текст документов лежит не в базе, а в
 /// отдельном кеше (<c>Database/DocIndex/DocTextIndex.cs</c>), и соединить два источника
 /// постранично без временной таблицы нельзя. Поэтому поиск отдает ОГРАНИЧЕННУЮ выдачу и
@@ -40,6 +51,44 @@ public partial class ConstructorRepository
         public bool IsAll => Types is null;
 
         public static DocView All { get; } = new((IReadOnlySet<string>?)null);
+    }
+
+    /// <summary>
+    /// Сколько документов коллекции какого типа: значение «Типа документа» → число документов
+    /// (пустой тип — пустая строка, как в <see cref="DocView"/>). Из нее без единого запроса
+    /// получается и размер потока в любом виде фильтра (<see cref="CountFor"/>), и числа
+    /// выпадашки навбара.
+    /// </summary>
+    /// <param name="TypeFieldId">Поле «Тип документа» коллекции; null — его нет.</param>
+    public sealed record DocTypeHistogram(int? TypeFieldId, IReadOnlyDictionary<string, int> Counts)
+    {
+        public int Total => Counts.Values.Sum();
+
+        /// <summary>Сколько документов подходит виду — сумма по отмеченным типам.</summary>
+        public int CountFor(DocView view) =>
+            view.Types is null ? Total : view.Types.Sum(t => Counts.GetValueOrDefault(t));
+    }
+
+    /// <summary>Откуда идти к странице потока.</summary>
+    public enum DocSeekOrigin
+    {
+        /// <summary>Смещением от начала потока.</summary>
+        Start,
+        /// <summary>Смещением от конца: поток читается в обратном порядке, страница разворачивается.</summary>
+        End,
+        /// <summary>От известного документа вперед — keyset-курсор.</summary>
+        After,
+        /// <summary>От известного документа назад — прокрутка вверх после прыжка вглубь.</summary>
+        Before,
+    }
+
+    /// <summary>
+    /// Путь к странице потока: откуда идти и сколько документов пропустить от этой точки.
+    /// </summary>
+    /// <param name="Anchor">Документ-сосед для <see cref="DocSeekOrigin.After"/> и <see cref="DocSeekOrigin.Before"/>.</param>
+    public readonly record struct DocSeek(DocSeekOrigin From, int Skip, DocCursor Anchor = default)
+    {
+        public static DocSeek FromStart(int skip) => new(DocSeekOrigin.Start, skip);
     }
 
     // Условие вида и его параметры. Типы подставляются плейсхолдерами (@t0, @t1, …), а не
@@ -72,7 +121,8 @@ public partial class ConstructorRepository
         JOIN db_field_values v ON v.RecordId = r.Id AND v.FieldId = f.Id AND v.Value <> ''
         WHERE r.CollectionId = @c";
 
-    private const string DocOrder = "r.Position, r.Id, f.Position, f.Id";
+    private const string DocOrder     = "r.Position, r.Id, f.Position, f.Id";
+    private const string DocOrderDesc = "r.Position DESC, r.Id DESC, f.Position DESC, f.Id DESC";
 
     private const string DocCols =
         "r.Id, f.Id, f.Name, r.CollectionId, r.Title, v.Value";
@@ -92,16 +142,7 @@ public partial class ConstructorRepository
         if (activeIds is not null) collections.RemoveAll(c => !activeIds.Contains(c));
         if (collections.Count == 0) return result;
 
-        // Связь «коллекция → ее поле типа» снимается ОДИН раз через EF (db_fields мала) и
-        // передается в запросы готовым id. Искать поле подзапросом на каждую строку нельзя: на
-        // большой коллекции это столько же лишних выборок по db_fields, сколько в ней записей —
-        // ровно тот дефект, который чинили в счетчике задач.
-        var typeByCollection = RoleOrder(db.DbFields
-                .Where(f => f.IsDocType && (f.FieldType == "select" || f.FieldType == "status")))
-            .Select(f => new { f.CollectionId, f.Id })
-            .ToList()
-            .GroupBy(x => x.CollectionId)
-            .ToDictionary(g => g.Key, g => g.First().Id);
+        var typeByCollection = DocTypeFieldsByCollection();
 
         foreach (var colId in collections)
         {
@@ -111,6 +152,18 @@ public partial class ConstructorRepository
         }
         return result;
     }
+
+    // Связь «коллекция → ее поле типа» снимается ОДИН раз через EF (db_fields мала) и
+    // передается в запросы готовым id. Искать поле подзапросом на каждую строку нельзя: на
+    // большой коллекции это столько же лишних выборок по db_fields, сколько в ней записей —
+    // ровно тот дефект, который чинили в счетчике задач.
+    private Dictionary<int, int> DocTypeFieldsByCollection() =>
+        RoleOrder(db.DbFields
+                .Where(f => f.IsDocType && (f.FieldType == "select" || f.FieldType == "status")))
+            .Select(f => new { f.CollectionId, f.Id })
+            .ToList()
+            .GroupBy(x => x.CollectionId)
+            .ToDictionary(g => g.Key, g => g.First().Id);
 
     /// <summary>Фоновые размеры коллекций на ОТДЕЛЬНОМ подключении (общий контекст однопоточный).</summary>
     public Task<Dictionary<int, DocCollectionStats>> GetDocCollectionStatsAsync(
@@ -152,22 +205,41 @@ public partial class ConstructorRepository
         finally { if (opened) conn.Close(); }
     }
 
+    /// <summary>Страница ленты одной коллекции смещением от начала потока, в порядке показа.</summary>
+    public List<DocRecord> GetDocPage(int collectionId, int typeFieldId, DocView view,
+                                      int skip, int take) =>
+        GetDocPage(collectionId, typeFieldId, view, DocSeek.FromStart(skip), take);
+
     /// <summary>
-    /// Страница ленты одной коллекции, в порядке показа. Смещение — обычный OFFSET по индексу:
-    /// пропускаемые строки не читаются из таблицы, но по дереву SQLite все равно шагает, поэтому
-    /// прыжок ползунком в конец коллекции-миллионника стоит линейно от глубины. Ради этого
-    /// страницы и грузятся в фоне с дебаунсом.
+    /// Страница ленты одной коллекции, в порядке показа, — по заданному пути
+    /// (<see cref="DocSeek"/>). От соседа (<see cref="DocSeekOrigin.After"/>,
+    /// <see cref="DocSeekOrigin.Before"/>) страница стоит одинаково на любой глубине; смещение
+    /// шагает по каждой пропущенной строке, поэтому его и считают от ближнего края.
     /// </summary>
     public List<DocRecord> GetDocPage(int collectionId, int typeFieldId, DocView view,
-                                      int skip, int take)
+                                      DocSeek seek, int take)
     {
         var result = new List<DocRecord>();
         if (take <= 0) return result;
 
         var (where, types) = TypeFilterSql(view);
-        var sql = $@"SELECT {DocCols}, COALESCE({DocTypeValueExpr}, '')
-                     {DocBody} AND ({where})
-                     ORDER BY {DocOrder} LIMIT @take OFFSET @skip";
+        var backward = seek.From is DocSeekOrigin.End or DocSeekOrigin.Before;
+
+        // Граница по r.Position есть у КАЖДОГО пути, а не только у курсора. Без нее планировщик
+        // шел от индекса значений и сортировал всю коллекцию ради одной страницы: на 125 000
+        // документов 75 мс на первую страницу. С ней он идет индексом db_records(CollectionId,
+        // Position) в порядке показа и останавливается на LIMIT — меньше миллисекунды. Для
+        // смещения от края граница пустая по смыслу (все позиции) и нужна только планировщику.
+        var bound = seek.From switch
+        {
+            DocSeekOrigin.After  => $"({DocOrder}) > (@kp, @ki, @kfp, @kfi)",
+            DocSeekOrigin.Before => $"({DocOrder}) < (@kp, @ki, @kfp, @kfi)",
+            DocSeekOrigin.End    => "r.Position <= @edge",
+            _                    => "r.Position >= @edge",
+        };
+        var sql = $@"SELECT {DocCols}, COALESCE({DocTypeValueExpr}, ''), r.Position, f.Position
+                     {DocBody} AND ({where}) AND {bound}
+                     ORDER BY {(backward ? DocOrderDesc : DocOrder)} LIMIT @take OFFSET @skip";
 
         var conn = db.Database.GetDbConnection();
         var opened = conn.State != System.Data.ConnectionState.Open;
@@ -179,7 +251,15 @@ public partial class ConstructorRepository
             AddParam(cmd, "@c").Value    = collectionId;
             AddParam(cmd, "@type").Value = typeFieldId > 0 ? typeFieldId : -1;
             AddParam(cmd, "@take").Value = take;
-            AddParam(cmd, "@skip").Value = skip;
+            AddParam(cmd, "@skip").Value = Math.Max(0, seek.Skip);
+            if (seek.From is DocSeekOrigin.After or DocSeekOrigin.Before)
+            {
+                AddParam(cmd, "@kp").Value  = seek.Anchor.RecordPosition;
+                AddParam(cmd, "@ki").Value  = seek.Anchor.RecordId;
+                AddParam(cmd, "@kfp").Value = seek.Anchor.FieldPosition;
+                AddParam(cmd, "@kfi").Value = seek.Anchor.FieldId;
+            }
+            else AddParam(cmd, "@edge").Value = backward ? int.MaxValue : int.MinValue;
             for (var i = 0; i < types.Count; i++) AddParam(cmd, "@t" + i).Value = types[i];
 
             using var rdr = cmd.ExecuteReader();
@@ -187,18 +267,25 @@ public partial class ConstructorRepository
         }
         finally { if (opened) conn.Close(); }
 
+        // Назад читали в обратном порядке — страница разворачивается в порядок показа.
+        if (backward) result.Reverse();
         StampCollection(result, collectionId);
         return result;
     }
 
-    /// <summary>Фоновая страница на ОТДЕЛЬНОМ подключении.</summary>
+    /// <summary>Фоновая страница смещением от начала на ОТДЕЛЬНОМ подключении.</summary>
     public Task<List<DocRecord>> GetDocPageAsync(int collectionId, int typeFieldId, DocView view,
                                                  int skip, int take) =>
+        GetDocPageAsync(collectionId, typeFieldId, view, DocSeek.FromStart(skip), take);
+
+    /// <summary>Фоновая страница по заданному пути на ОТДЕЛЬНОМ подключении.</summary>
+    public Task<List<DocRecord>> GetDocPageAsync(int collectionId, int typeFieldId, DocView view,
+                                                 DocSeek seek, int take) =>
         Task.Run(() =>
         {
             using var ctx = new AppDbContext(db.DbPath);
             ctx.ApplyPerformancePragmas();
-            return new ConstructorRepository(ctx).GetDocPage(collectionId, typeFieldId, view, skip, take);
+            return new ConstructorRepository(ctx).GetDocPage(collectionId, typeFieldId, view, seek, take);
         });
 
     /// <summary>Фоновый счет на ОТДЕЛЬНОМ подключении.</summary>
@@ -221,6 +308,7 @@ public partial class ConstructorRepository
         Title         = rdr.IsDBNull(4) ? "" : rdr.GetString(4),
         Path          = rdr.IsDBNull(5) ? "" : rdr.GetString(5),
         DocType       = rdr.IsDBNull(6) ? "" : rdr.GetString(6),
+        Cursor        = new DocCursor(rdr.GetInt32(7), rdr.GetInt32(0), rdr.GetInt32(8), rdr.GetInt32(1)),
     };
 
     // Название и цвет коллекции — одним чтением на страницу, а не колонкой в каждой строке.
@@ -252,6 +340,11 @@ public partial class ConstructorRepository
     /// Пути приходят КЛЮЧАМИ кеша (нормализованными), а в поле записи лежит написание самого
     /// человека, поэтому каждый путь разворачивается в свои написания
     /// (<c>DocTextIndex.Spellings</c>) — без этого поиск по содержимому молча терял бы находки.
+    ///
+    /// Поля документов берутся списком ЗАРАНЕЕ, и обход идет только по их значениям. Без списка
+    /// планировщик выбирал полный проход индекса <c>db_field_values</c> — значения ВСЕХ полей
+    /// всех коллекций — и сравнивал подстроку раньше, чем отсеивал поля не из раздела: на
+    /// 500 000 документов (2,5 млн значений) 2,9 с против 0,65 с.
     /// </summary>
     public List<DocRecord> SearchDocs(ISet<int>? activeIds, string query,
                                       IReadOnlyCollection<string> paths, int limit = 500)
@@ -262,9 +355,14 @@ public partial class ConstructorRepository
         query = (query ?? "").Trim();
         if (query.Length == 0 && paths.Count == 0) return result;
 
-        var colFilter = activeIds is null
-            ? ""
-            : $" AND f.CollectionId IN ({string.Join(",", activeIds)})";
+        var docFields = db.DbFields.AsNoTracking()
+            .Where(f => f.FieldType == "file" && f.IsDocFile)
+            .Select(f => new { f.Id, f.CollectionId })
+            .ToList()
+            .Where(f => activeIds is null || activeIds.Contains(f.CollectionId))
+            .Select(f => f.Id)
+            .ToList();
+        if (docFields.Count == 0) return result;
 
         var variants = query.Length > 0 ? SearchVariants(query) : [];
         var likes    = new List<string>();
@@ -296,11 +394,11 @@ public partial class ConstructorRepository
                          WHERE vt.RecordId = r.Id AND ft.CollectionId = f.CollectionId
                            AND ft.IsDocType = 1
                          ORDER BY ft.Position, ft.Id LIMIT 1)
-                FROM db_fields f
+                FROM db_field_values v
+                JOIN db_fields f      ON f.Id = v.FieldId
                 JOIN db_collections c ON c.Id = f.CollectionId
-                JOIN db_records r     ON r.CollectionId = f.CollectionId
-                JOIN db_field_values v ON v.RecordId = r.Id AND v.FieldId = f.Id AND v.Value <> ''
-                WHERE f.FieldType = 'file' AND f.IsDocFile = 1{colFilter} AND ({where})
+                JOIN db_records r     ON r.Id = v.RecordId AND r.CollectionId = f.CollectionId
+                WHERE v.FieldId IN ({string.Join(",", docFields)}) AND v.Value <> '' AND ({where})
                 ORDER BY f.CollectionId, r.Position, r.Id, f.Position, f.Id
                 LIMIT {Math.Max(1, limit)}";
 
@@ -331,21 +429,47 @@ public partial class ConstructorRepository
     /// Пустой тип отдается пустой строкой — подпись «(Пусто)» рисует сам список.
     /// Считается по активным коллекциям, каждая своим полем типа.
     /// </summary>
-    public List<(string Value, int Count)> GetDocTypeCounts(ISet<int>? activeIds = null)
+    public List<(string Value, int Count)> GetDocTypeCounts(ISet<int>? activeIds = null) =>
+        MergeTypeCounts(GetDocTypeHistograms(activeIds).Values);
+
+    /// <summary>
+    /// Сложить гистограммы коллекций в список выпадашки. Порядок как в выпадашке таблицы: по
+    /// убыванию количества, пустое значение — последним.
+    /// </summary>
+    public static List<(string Value, int Count)> MergeTypeCounts(IEnumerable<DocTypeHistogram> histograms)
     {
         var totals = new Dictionary<string, int>(StringComparer.Ordinal);
-        if (activeIds is { Count: 0 }) return [];
+        foreach (var h in histograms)
+            foreach (var (value, count) in h.Counts)
+                totals[value] = totals.GetValueOrDefault(value) + count;
+
+        return [.. totals.OrderBy(p => p.Key.Length == 0)
+                         .ThenByDescending(p => p.Value)
+                         .ThenBy(p => p.Key, StringComparer.CurrentCulture)
+                         .Select(p => (p.Key, p.Value))];
+    }
+
+    /// <summary>
+    /// Гистограммы типов по активным коллекциям: id коллекции → сколько документов какого типа.
+    /// Семантика <paramref name="activeIds"/> — как везде в разделах: null = все коллекции БД,
+    /// ПУСТОЙ набор = ни одной.
+    ///
+    /// Счет — полный проход коллекции с поиском типа у каждой записи (на 125 000 документов
+    /// около четверти секунды), поэтому зовущий держит посчитанное у себя и передает его в
+    /// <paramref name="known"/>: такие коллекции не пересчитываются, а возвращаются как есть.
+    /// Когда посчитанное устарело, решает зовущий, — репозиторий о правках не знает.
+    /// </summary>
+    public Dictionary<int, DocTypeHistogram> GetDocTypeHistograms(
+        ISet<int>? activeIds = null, IReadOnlyDictionary<int, DocTypeHistogram>? known = null)
+    {
+        var result = new Dictionary<int, DocTypeHistogram>();
+        if (activeIds is { Count: 0 }) return result;
 
         var collections = GetDocCollectionIds().ToList();
         if (activeIds is not null) collections.RemoveAll(c => !activeIds.Contains(c));
-        if (collections.Count == 0) return [];
+        if (collections.Count == 0) return result;
 
-        var typeByCollection = RoleOrder(db.DbFields
-                .Where(f => f.IsDocType && (f.FieldType == "select" || f.FieldType == "status")))
-            .Select(f => new { f.CollectionId, f.Id })
-            .ToList()
-            .GroupBy(x => x.CollectionId)
-            .ToDictionary(g => g.Key, g => g.First().Id);
+        var typeByCollection = DocTypeFieldsByCollection();
 
         var conn = db.Database.GetDbConnection();
         var opened = conn.State != System.Data.ConnectionState.Open;
@@ -354,37 +478,44 @@ public partial class ConstructorRepository
         {
             foreach (var colId in collections)
             {
+                if (known is not null && known.TryGetValue(colId, out var ready))
+                {
+                    result[colId] = ready;
+                    continue;
+                }
+
+                var typeId = typeByCollection.GetValueOrDefault(colId, 0);
+                var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+
                 using var cmd = conn.CreateCommand();
                 cmd.CommandText = $@"
                     SELECT COALESCE({DocTypeValueExpr}, '') AS T, COUNT(*)
                     {DocBody}
                     GROUP BY T";
                 AddParam(cmd, "@c").Value    = colId;
-                AddParam(cmd, "@type").Value = typeByCollection.GetValueOrDefault(colId, -1);
+                AddParam(cmd, "@type").Value = typeId > 0 ? typeId : -1;
 
                 using var rdr = cmd.ExecuteReader();
                 while (rdr.Read())
                 {
                     var value = rdr.IsDBNull(0) ? "" : rdr.GetString(0);
-                    totals[value] = totals.GetValueOrDefault(value) + rdr.GetInt32(1);
+                    counts[value] = counts.GetValueOrDefault(value) + Convert.ToInt32(rdr.GetValue(1));
                 }
+                result[colId] = new DocTypeHistogram(typeId > 0 ? typeId : null, counts);
             }
         }
         finally { if (opened) conn.Close(); }
 
-        // Порядок как в выпадашке таблицы: по убыванию количества, пустое значение — последним.
-        return [.. totals.OrderBy(p => p.Key.Length == 0)
-                         .ThenByDescending(p => p.Value)
-                         .ThenBy(p => p.Key, StringComparer.CurrentCulture)
-                         .Select(p => (p.Key, p.Value))];
+        return result;
     }
 
-    /// <summary>Фоновые количества по типам на ОТДЕЛЬНОМ подключении.</summary>
-    public Task<List<(string Value, int Count)>> GetDocTypeCountsAsync(ISet<int>? activeIds = null) =>
+    /// <summary>Фоновые гистограммы типов на ОТДЕЛЬНОМ подключении.</summary>
+    public Task<Dictionary<int, DocTypeHistogram>> GetDocTypeHistogramsAsync(
+        ISet<int>? activeIds = null, IReadOnlyDictionary<int, DocTypeHistogram>? known = null) =>
         Task.Run(() =>
         {
             using var ctx = new AppDbContext(db.DbPath);
             ctx.ApplyPerformancePragmas();
-            return new ConstructorRepository(ctx).GetDocTypeCounts(activeIds);
+            return new ConstructorRepository(ctx).GetDocTypeHistograms(activeIds, known);
         });
 }
