@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Specialized;
 using Avalonia.Threading;
+using SmartBase.Core.Documents;
 using SmartBase.Core.Models;
 using SmartBase.Database.Repositories;
 
@@ -202,6 +203,11 @@ internal sealed class DocVirtualList : IList<object>, IList, INotifyCollectionCh
             foreach (var (e, local, n, slot) in Segments(page))
             {
                 var part = await e.Repo.GetDocPageAsync(e.ColId, e.TypeFieldId, e.View, local, n);
+                if (gen != _generation) return;
+                // Файлы страницы спрашиваются здесь, в пуле: продолжение после await идет в
+                // UI-потоке, а карточка без готового ответа спросила бы диск сама — по разу на
+                // каждую из двухсот, и на сетевой папке прокрутка вставала бы на каждой странице.
+                await Task.Run(() => DocStamps.Probe(part));
                 if (gen != _generation) return;
                 foreach (var d in part) { d.DbId = e.DbId; d.DbName = e.DbName; }
 

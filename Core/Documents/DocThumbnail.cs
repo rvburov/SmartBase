@@ -79,14 +79,24 @@ public static class DocThumbnail
     }
 
     /// <summary>
-    /// Готовая миниатюра из кеша либо <c>null</c>, если ее еще нет. Диск не блокирует и ничего
-    /// не рисует — этим путем ходит отрисовка карточки.
+    /// Готовая миниатюра из кеша либо <c>null</c>, если ее еще нет. Ничего не рисует, но
+    /// спрашивает у диска отметку самого документа — а он может лежать на сервере. Карточка
+    /// ленты поэтому ходит другим путем, с отметкой, снятой в фоне вместе со страницей.
     /// </summary>
     public static string? Cached(string cacheDir, string docPath)
     {
-        if (!IsSupported(docPath)) return null;
-        var (mtime, size) = Stamp(docPath);
-        if (size < 0) return null;
+        var (mtime, size) = DocStamps.Of(docPath);
+        return Cached(cacheDir, docPath, mtime, size);
+    }
+
+    /// <summary>
+    /// Готовая миниатюра по уже известной отметке документа (<see cref="DocStamps"/>): из всех
+    /// обращений к диску остается одно — к локальной папке кеша. Этим путем ходит карточка
+    /// ленты, и в UI-потоке ей нельзя ждать ответа сервера.
+    /// </summary>
+    public static string? Cached(string cacheDir, string docPath, long mtime, long size)
+    {
+        if (!IsSupported(docPath) || size < 0) return null;
 
         var file = CachePath(cacheDir, docPath, mtime, size);
         return File.Exists(file) ? file : null;
@@ -100,7 +110,7 @@ public static class DocThumbnail
     public static string? Render(string cacheDir, string docPath, CancellationToken ct = default)
     {
         if (!IsSupported(docPath)) return null;
-        var (mtime, size) = Stamp(docPath);
+        var (mtime, size) = DocStamps.Of(docPath);
         if (size < 0) return null;
 
         var file = CachePath(cacheDir, docPath, mtime, size);
@@ -231,15 +241,5 @@ public static class DocThumbnail
             });
         }
         catch { return 0; }
-    }
-
-    private static (long Mtime, long Size) Stamp(string path)
-    {
-        try
-        {
-            var info = new FileInfo(path);
-            return info.Exists ? (info.LastWriteTimeUtc.Ticks, info.Length) : (0, -1);
-        }
-        catch { return (0, -1); }
     }
 }

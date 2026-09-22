@@ -1,6 +1,7 @@
 using System.IO;
 using System.Text;
 using SmartBase.Core.Documents;
+using SmartBase.Core.Models;
 using SmartBase.Database.DocIndex;
 
 namespace SmartBase.Tests.Integration;
@@ -332,6 +333,84 @@ public sealed class DocTextIndexTests : IDisposable
         Put(read, "прочитан");
 
         Assert.Equal(_index.Survey([read, fresh]).Pending, _index.Pending([read, fresh]));
+    }
+
+    // ── Состояния для карточек ───────────────────────────────────────────────
+
+    // Перепись отвечает и за чипы карточек. Раньше контроллер после нее отдельно перечитывал
+    // кеш, а каждая карточка еще раз спрашивала у диска время правки своего файла — в UI-потоке,
+    // по вопросу на карточку. Теперь состояние каждого файла приходит из того же прохода, и
+    // чипы не могут разойтись с числами подвала.
+
+    [Fact]
+    public void Survey_names_the_state_of_every_file_for_its_card()
+    {
+        var ok      = Write("ok.txt",     "текст прочитан");
+        var scan    = Write("scan.txt",   "скан");
+        var foreign = Write("draw.txt",   "чертеж");
+        var broken  = Write("broken.txt", "битый");
+        var fresh   = Write("fresh.txt",  "еще не трогали");
+
+        _index.Put(ok,      new DocText(DocTextStatus.Ok, "текст прочитан", Pages: 3));
+        _index.Put(scan,    new DocText(DocTextStatus.NoText, "", Pages: 12));
+        _index.Put(foreign, DocText.Of(DocTextStatus.Unsupported));
+        _index.Put(broken,  DocText.Of(DocTextStatus.Failed));
+
+        var files = _index.Survey([ok, scan, foreign, broken, fresh]).Files;
+
+        Assert.Equal(new DocFileState(DocTextState.Read, 3),        files[DocTextIndex.KeyOf(ok)]);
+        Assert.Equal(new DocFileState(DocTextState.NoText, 12),     files[DocTextIndex.KeyOf(scan)]);
+        Assert.Equal(new DocFileState(DocTextState.Unsupported, 0), files[DocTextIndex.KeyOf(foreign)]);
+        Assert.Equal(new DocFileState(DocTextState.Failed, 0),      files[DocTextIndex.KeyOf(broken)]);
+        Assert.Equal(new DocFileState(DocTextState.NotRead, 0),     files[DocTextIndex.KeyOf(fresh)]);
+    }
+
+    // Изменившийся файл на карточке — «не прочитан», и число страниц прежней редакции ему уже не
+    // обещается.
+    [Fact]
+    public void An_edited_file_shows_as_unread_on_its_card()
+    {
+        var path = Write("doc.txt", "первая редакция");
+        _index.Put(path, new DocText(DocTextStatus.Ok, "первая редакция", Pages: 4));
+
+        File.WriteAllText(path, "вторая редакция, заметно длиннее первой");
+
+        Assert.Equal(new DocFileState(DocTextState.NotRead, 0),
+                     _index.Survey([path]).Files[DocTextIndex.KeyOf(path)]);
+    }
+
+    // Файла нет на диске: в числа подвала он не идет, а карточке остается то, что помнит кеш, —
+    // сверять время правки не с чем. Красная плашка «файл не найден» у нее своя.
+    [Fact]
+    public void A_missing_file_keeps_what_the_cache_remembers()
+    {
+        var path = Write("gone.txt", "был");
+        _index.Put(path, new DocText(DocTextStatus.Ok, "был", Pages: 2));
+        File.Delete(path);
+
+        var survey = _index.Survey([path]);
+
+        Assert.Equal(0, survey.Census.Total);
+        Assert.Equal(new DocFileState(DocTextState.Read, 2), survey.Files[DocTextIndex.KeyOf(path)]);
+    }
+
+    // Большая папка спрашивается листингом (DocStamps), а не по файлу, — а кеш записывал отметку
+    // вопросом по файлу. Правку одного документа перепись обязана заметить, а нетронутые —
+    // признать прочитанными: разойдись листинг с вопросом по файлу, «Обновить» либо перестала
+    // бы видеть измененные документы, либо перечитывала бы все подряд.
+    [Fact]
+    public void A_folder_read_by_listing_agrees_with_what_the_cache_stored()
+    {
+        var paths = Enumerable.Range(0, DocStamps.ListingThreshold * 2)
+                              .Select(i => Write($"doc{i:D2}.txt", $"документ {i}"))
+                              .ToList();
+        foreach (var p in paths) Put(p, "документ");
+
+        File.WriteAllText(paths[5], "эту редакцию поправили, и она заметно длиннее прежней");
+        var (pending, census) = _index.Survey(paths);
+
+        Assert.Equal([paths[5]], pending);
+        Assert.Equal(paths.Count - 1, census.Read);
     }
 
     // ── Страницы ─────────────────────────────────────────────────────────────

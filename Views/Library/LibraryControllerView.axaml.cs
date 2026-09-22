@@ -68,11 +68,13 @@ public partial class LibraryControllerView : UserControl
     private readonly SemaphoreSlim _thumbGate = new(2);
     private readonly HashSet<string> _thumbAsked = new(StringComparer.Ordinal);
 
-    // Перепись документов по состоянию текста и сама карта «путь → что про него знает кеш».
-    // Считается в фоне ПОСЛЕ показа ленты: обход кеша ходит на диск за временем правки каждого
-    // файла, и держать на нем открытие раздела нельзя.
+    // Перепись документов по состоянию текста и то, что сказать про каждый на карточке, — итог
+    // ОДНОГО обхода кеша и диска (DocTextIndex.Survey), поэтому числа подвала и чипы не
+    // расходятся. Считается в фоне ПОСЛЕ показа ленты: обход спрашивает у диска время правки
+    // каждого файла, и держать на нем открытие раздела нельзя. Null — перепись еще не готова.
     private DocCensus _census;
-    private Dictionary<string, DocIndexEntry> _known = new(StringComparer.Ordinal);
+    private IReadOnlyDictionary<string, DocFileState>? _states;
+    private readonly DocRunGate _censusGate = new();
 
     // Итоги последнего поиска — из них собирается строка подвала.
     private int  _foundInText;
@@ -277,7 +279,7 @@ public partial class LibraryControllerView : UserControl
 
         // Подвал показывает то, что известно СЕЙЧАС, и обновится сам, когда досчитается перепись.
         RefreshStatus();
-        _ = RefreshCensusAsync(gen);
+        _ = RefreshCensusAsync();
     }
 
     // Обычная лента: размеры потоков считаются в фоне, дальше — либо все в память, либо страницы.
@@ -321,6 +323,10 @@ public partial class LibraryControllerView : UserControl
             foreach (var e in entries)
             {
                 var part = await e.Repo.GetDocPageAsync(e.ColId, e.TypeFieldId, e.View, 0, e.Docs);
+                if (gen != _gen) return;
+                // Файлы спрашиваются в пуле, а не карточкой в UI-потоке: здесь их до десяти тысяч, и
+                // на сетевой папке раздел висел бы на них при каждом открытии.
+                await Task.Run(() => DocStamps.Probe(part));
                 if (gen != _gen) return;
                 foreach (var d in part)
                 {
@@ -370,6 +376,8 @@ public partial class LibraryControllerView : UserControl
             if (active is { Count: 0 }) continue;
 
             var part = await repo.SearchDocsAsync(active, query, paths, SearchLimit);
+            if (gen != _gen) return;
+            await Task.Run(() => DocStamps.Probe(part));
             if (gen != _gen) return;
 
             foreach (var d in part)
@@ -459,7 +467,9 @@ public partial class LibraryControllerView : UserControl
         var path = card.Doc.Path;
         var gen  = _gen;
 
-        if (DocThumbnail.Cached(AppSettings.DocThumbsDir, path) is { } ready)
+        // Отметка документа уже снята в фоне вместе со страницей — в UI-потоке остается один
+        // вопрос к ЛОКАЛЬНОЙ папке кеша, а не к серверу, где лежит сам документ.
+        if (DocThumbnail.Cached(AppSettings.DocThumbsDir, path, card.Doc.Mtime, card.Doc.SizeBytes) is { } ready)
         {
             LoadInto(card, ready);
             return;
@@ -495,38 +505,22 @@ public partial class LibraryControllerView : UserControl
     /// <summary>
     /// Проставить документу то, что кеш знает про его текст: серый чип и число страниц.
     ///
-    /// Спрашивать кеш на каждую карточку отдельно нельзя — это сотни запросов на экран, —
-    /// поэтому ответ берется из карты <see cref="_known"/>, собранной одним обходом. Пока карта
-    /// не готова, состояние остается <see cref="DocTextState.Unknown"/> и чипа просто нет:
-    /// пустое место честнее, чем «не прочитан» у прочитанного.
+    /// Ни кеш, ни диск здесь не спрашиваются: ответ готов в карте <see cref="_states"/>, которую
+    /// собрала перепись одним обходом в фоне, — вместе со сверкой времени правки файла. Раньше
+    /// эту сверку делала каждая карточка сама, в UI-потоке, — по вопросу к диску на карточку, а
+    /// на сетевой папке это прокрутка, встающая на каждой странице.
+    ///
+    /// Пока перепись не готова, состояние остается <see cref="DocTextState.Unknown"/> и чипа
+    /// просто нет: пустое место честнее, чем «не прочитан» у прочитанного. Документа нет в
+    /// переписи (он появился после нее) — то же самое: чип придет со следующей.
     /// </summary>
     private void ApplyTextState(DocRecord doc)
     {
-        if (doc.Path.Length == 0 || _known.Count == 0) return;
+        if (doc.Path.Length == 0 || _states is null) return;
+        if (!_states.TryGetValue(DocTextIndex.KeyOf(doc.Path), out var state)) return;
 
-        var key = DocTextIndex.KeyOf(doc.Path);
-        if (!_known.TryGetValue(key, out var entry))
-        {
-            doc.TextState = DocTextState.NotRead;
-            return;
-        }
-
-        // Файл изменился после разбора — в кеше лежит текст прежней редакции.
-        var (mtime, size) = DocTextIndex.Stamp(key);
-        if (size >= 0 && (entry.Mtime != mtime || entry.Size != size))
-        {
-            doc.TextState = DocTextState.NotRead;
-            return;
-        }
-
-        doc.Pages     = entry.Pages;
-        doc.TextState = entry.Status switch
-        {
-            DocTextStatus.Ok          => DocTextState.Read,
-            DocTextStatus.NoText      => DocTextState.NoText,
-            DocTextStatus.Unsupported => DocTextState.Unsupported,
-            _                         => DocTextState.Failed,
-        };
+        doc.TextState = state.State;
+        doc.Pages     = state.Pages;
     }
 
     /// <summary>
@@ -574,33 +568,45 @@ public partial class LibraryControllerView : UserControl
     }
 
     /// <summary>
-    /// Перепись состояний текста по отмеченным коллекциям — числа для подвала и чипов карточек.
+    /// Перепись состояний текста по отмеченным коллекциям — числа для подвала и чипы карточек.
     /// Считается ПОСЛЕ показа ленты и в фоне: обход спрашивает у диска время правки каждого
     /// файла, и держать на этом открытие раздела нельзя.
+    ///
+    /// Переписи идут по одной (<see cref="DocRunGate"/>): касание галочки перезапускает ленту, а
+    /// с ней и перепись, и пять касаний подряд раньше давали пять обходов диска разом, из которых
+    /// нужен был только последний.
     /// </summary>
-    private async Task RefreshCensusAsync(int gen)
+    private async Task RefreshCensusAsync()
+    {
+        if (!_censusGate.Request()) return;
+        do
+        {
+            try { await CensusOnceAsync(); }
+            catch (Exception ex)
+            {
+                if (Logging.Diag.Throttle("library-census-fail", TimeSpan.FromMinutes(1)))
+                    Serilog.Log.Warning(ex, "Библиотека: состояние кеша документов не прочитано");
+            }
+        }
+        while (_censusGate.Done());
+    }
+
+    private async Task CensusOnceAsync()
     {
         if (DocIndexService.Current is not { } service) { RefreshStatus(); return; }
 
-        try
-        {
-            var paths = await ActivePathsAsync();
-            if (gen != _gen) return;
+        var gen    = _gen;
+        var paths  = await ActivePathsAsync();
+        var survey = await Task.Run(() => service.Index.Survey(paths));
 
-            var (_, census) = await Task.Run(() => service.Index.Survey(paths));
-            var known       = await Task.Run(() => service.Index.Known([.. paths.Select(DocTextIndex.KeyOf)]));
-            if (gen != _gen) return;
+        // Пока шли на диск, лента сменилась или перепись попросили заново — этот итог про
+        // прежний набор документов, и показывать его нельзя.
+        if (_censusGate.Stale || gen != _gen) return;
 
-            _census = census;
-            _known  = known;
-            ApplyTextStateToShownCards();
-            RefreshStatus();
-        }
-        catch (Exception ex)
-        {
-            if (Logging.Diag.Throttle("library-census-fail", TimeSpan.FromMinutes(1)))
-                Serilog.Log.Warning(ex, "Библиотека: состояние кеша документов не прочитано");
-        }
+        _census = survey.Census;
+        _states = survey.Files;
+        ApplyTextStateToShownCards();
+        RefreshStatus();
     }
 
     /// <summary>
@@ -660,7 +666,12 @@ public partial class LibraryControllerView : UserControl
             // всю ленту, и подменять ею числа подвала было бы неправдой.
             var survey = await Task.Run(() => service.Index.Survey(paths));
             pending = survey.Pending;
-            if (source is null) _census = survey.Census;
+            if (source is null)
+            {
+                _census = survey.Census;
+                _states = survey.Files;
+                ApplyTextStateToShownCards();
+            }
         }
         catch (Exception ex)
         {
@@ -764,7 +775,7 @@ public partial class LibraryControllerView : UserControl
             // Перепись устарела: только что прочитанное поменяло и числа подвала, и чипы
             // карточек. Поиск по содержимому мог не находить того, что как раз разобрали, —
             // выдачу перечитываем; обычную ленту чтение не меняет, и трогать ее незачем.
-            _ = RefreshCensusAsync(_gen);
+            _ = RefreshCensusAsync();
             if (_searchQuery.Trim().Length > 0) RefreshCurrent(quiet: true);
         });
     }

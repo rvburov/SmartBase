@@ -1,6 +1,7 @@
 using System.IO;
 using Microsoft.Data.Sqlite;
 using SmartBase.Core.Documents;
+using SmartBase.Core.Models;
 
 namespace SmartBase.Database.DocIndex;
 
@@ -30,6 +31,30 @@ public readonly record struct DocCensus(
 {
     /// <summary>Внутри скольких документов поиск искать не будет, сколько ни читай.</summary>
     public int NeverSearchable => NoText + Unsupported + Failed;
+}
+
+/// <summary>Что сказать про текст одного документа на его карточке.</summary>
+/// <param name="State">Состояние текста — им подписан серый чип.</param>
+/// <param name="Pages">Число страниц из кеша; 0 — неизвестно (есть только у прочитанных).</param>
+public readonly record struct DocFileState(DocTextState State, int Pages);
+
+/// <summary>
+/// Итог одной переписи: что разобрать, сколько документов в каком состоянии и что сказать про
+/// каждый из них. Все три ответа — из ОДНОГО прохода по кешу и диску, поэтому числа подвала и
+/// чипы карточек не расходятся между собой.
+/// </summary>
+/// <param name="Pending">Пути, которые надо разобрать, — в написании зовущего.</param>
+/// <param name="Census">Разбивка по состояниям — числа подвала.</param>
+/// <param name="Files">
+/// Ключ пути (<see cref="DocTextIndex.KeyOf"/>) → состояние для карточки. Есть у КАЖДОГО
+/// спрошенного пути, в том числе у файла, которого на диске нет.
+/// </param>
+public sealed record DocSurvey(List<string> Pending, DocCensus Census,
+                               IReadOnlyDictionary<string, DocFileState> Files)
+{
+    /// <summary>Разбор на пару — там, где состояния карточек не нужны.</summary>
+    public void Deconstruct(out List<string> pending, out DocCensus census) =>
+        (pending, census) = (Pending, Census);
 }
 
 /// <summary>
@@ -210,33 +235,50 @@ public sealed class DocTextIndex
     public List<string> Pending(IReadOnlyCollection<string> paths) => Survey(paths).Pending;
 
     /// <summary>
-    /// Один проход по набору путей: что надо разобрать И сколько документов в каком состоянии.
+    /// Один проход по набору путей: что надо разобрать, сколько документов в каком состоянии и
+    /// что сказать про каждый на его карточке.
     ///
-    /// Раздельные «что разобрать» и «какая разбивка по состояниям» означали бы ДВА полных
-    /// обхода кеша на каждый заход в раздел — на двадцати тысячах документов это полсотни
-    /// запросов пачками, сделанных дважды подряд ради одних и тех же строк. Поэтому обход один,
-    /// а <see cref="Pending"/> — обертка над ним.
+    /// Раздельные ответы означали бы несколько полных обходов кеша и диска на каждый заход в
+    /// раздел ради одних и тех же строк. Так и было: контроллер после переписи отдельно
+    /// перечитывал кеш ради чипов, а чип каждой карточки еще раз спрашивал у диска время правки
+    /// своего файла — в UI-потоке. Поэтому обход один, а <see cref="Pending"/> — обертка над ним.
+    ///
+    /// Диск спрашивается набором (<see cref="DocStamps"/>) — папками, а не по файлу: на общей
+    /// папке сервера это разница между секундами и десятками секунд на каждый заход в раздел.
     ///
     /// Файл, признанный неподдержанным или битым, в <c>Pending</c> не попадает, пока сам не
     /// изменится: иначе очередь каждый раз перемалывала бы одни и те же сканы.
     /// </summary>
-    public (List<string> Pending, DocCensus Census) Survey(IReadOnlyCollection<string> paths)
+    public DocSurvey Survey(IReadOnlyCollection<string> paths)
     {
-        var known   = Known([.. paths.Select(KeyOf)]);
+        var keys    = paths.Select(KeyOf).ToList();
+        var known   = Known(keys);
+        var stamps  = DocStamps.Of(keys);
         var pending = new List<string>();
+        var files   = new Dictionary<string, DocFileState>(StringComparer.Ordinal);
 
         int total = 0, read = 0, notRead = 0, noText = 0, unsupported = 0, failed = 0;
 
+        var i = 0;
         foreach (var raw in paths)
         {
-            var key = KeyOf(raw);
-            var (mtime, size) = Stamp(key);
+            var key = keys[i++];
+            var (mtime, size) = stamps[key];
+
+            // Нет в кеше или изменился — разбирать. Изменившийся считается непрочитанным даже
+            // если прошлый разбор удался: в кеше лежит текст прежней редакции. У файла, которого
+            // нет на диске, сверять нечего — ему остается то, что помнит кеш.
+            var has     = known.TryGetValue(key, out var e);
+            var changed = !has || (size >= 0 && (e.Mtime != mtime || e.Size != size));
+
+            files[key] = changed
+                ? new DocFileState(DocTextState.NotRead, 0)
+                : new DocFileState(StateOf(e.Status), e.Pages);
+
             if (size < 0) continue;                        // файла нет на диске — он не документ
             total++;
 
-            // Нет в кеше или изменился — разбирать. Изменившийся считается непрочитанным даже
-            // если прошлый разбор удался: в кеше лежит текст прежней редакции.
-            if (!known.TryGetValue(key, out var e) || e.Mtime != mtime || e.Size != size)
+            if (changed)
             {
                 pending.Add(raw);
                 notRead++;
@@ -252,19 +294,19 @@ public sealed class DocTextIndex
             }
         }
 
-        return (pending, new DocCensus(total, read, notRead, noText, unsupported, failed));
+        return new DocSurvey(pending,
+                             new DocCensus(total, read, notRead, noText, unsupported, failed),
+                             files);
     }
 
-    /// <summary>Время правки и размер файла; (0, −1) — файла нет или он недоступен.</summary>
-    public static (long Mtime, long Size) Stamp(string path)
+    // Исход разбора → подпись чипа. Неудача любого рода — «не удалось прочитать».
+    private static DocTextState StateOf(DocTextStatus status) => status switch
     {
-        try
-        {
-            var info = new FileInfo(path);
-            return info.Exists ? (info.LastWriteTimeUtc.Ticks, info.Length) : (0, -1);
-        }
-        catch { return (0, -1); }
-    }
+        DocTextStatus.Ok          => DocTextState.Read,
+        DocTextStatus.NoText      => DocTextState.NoText,
+        DocTextStatus.Unsupported => DocTextState.Unsupported,
+        _                         => DocTextState.Failed,
+    };
 
     // ── Запись ────────────────────────────────────────────────────────────────
 
@@ -276,7 +318,7 @@ public sealed class DocTextIndex
     public void Put(string path, DocText text)
     {
         var key = KeyOf(path);
-        var (mtime, size) = Stamp(key);
+        var (mtime, size) = DocStamps.Of(key);
 
         lock (_lock)
         {

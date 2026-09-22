@@ -768,11 +768,16 @@ public partial class DocCardVm : ObservableObject
         TypeBg   = Brush("BrushAccentLight", "#E5F0FF");
         TypeFg   = Brush("BrushAccent", "#007AFF");
 
-        // «Файл не найден» — то же состояние, что различает FileEditor. Проверка диска на
-        // карточку дешева, а без нее раздел обещал бы открыть то, чего нет. Размер приходит
-        // ТЕМ ЖЕ запросом: FileInfo отдает существование и длину разом, поэтому метрика в
-        // правой колонке не стоит ни одного лишнего обращения к диску.
-        doc.SizeBytes = SafeSize(doc.Path);
+        // «Файл не найден» — то же состояние, что различает FileEditor: без него раздел обещал
+        // бы открыть то, чего нет. Размер приходит ТЕМ ЖЕ вопросом к диску — существование и
+        // длину он отдает разом, — поэтому метрика в правой колонке лишнего не стоит.
+        //
+        // Сам вопрос задан заранее, в фоне, вместе со страницей ленты (DocStamps.Probe). Раньше
+        // его задавала карточка, то есть UI-поток, по разу на карточку: на локальном диске это
+        // копейки, а на общей папке сервера — поход по сети на каждую из двухсот карточек
+        // страницы и подвисшая прокрутка. Здесь диск спрашивается только у документа, который
+        // пришел непроверенным, — медленно, но лучше, чем соврать «файл не найден».
+        if (!doc.OnDiskKnown) DocStamps.Probe([doc]);
         IsMissing   = doc.Path.Length > 0 && doc.SizeBytes < 0;
         MissingBg   = Brush("BrushRedLight", "#FFE5E5");
         MissingFg   = Brush("BrushRed", "#FF3B30");
@@ -815,18 +820,6 @@ public partial class DocCardVm : ObservableObject
         OnPropertyChanged(nameof(UnreadText));
         OnPropertyChanged(nameof(MetaText));
         OnPropertyChanged(nameof(HasMeta));
-    }
-
-    /// <summary>Размер файла или −1, если его нет. Один запрос к диску на существование и длину.</summary>
-    private static long SafeSize(string path)
-    {
-        if (path.Length == 0) return -1;
-        try
-        {
-            var info = new FileInfo(path);
-            return info.Exists ? info.Length : -1;
-        }
-        catch { return -1; }
     }
 
     // Подпись серого чипа по состоянию текста. Пустая строка — чипа нет: у прочитанного

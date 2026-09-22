@@ -16,6 +16,7 @@ if (args.Length == 0)
     Console.WriteLine("  pgdelete [--rows N] [--db ИМЯ]                 — то же удаление на PostgreSQL (стенд sb-pg)");
     Console.WriteLine("  wide    --db PATH [--columns N]                — цена широкой таблицы в ядре: снимок открытия, страницы, значения");
     Console.WriteLine("  docread [--count N] [--pages N] [--dir PATH]  — скорость чтения текста документов (библиотека документов)");
+    Console.WriteLine("  docfeed [--docs N] [--cols N] [--files N] [--root DIR] [--db PATH] — лента библиотеки: счет, страницы, перепись кеша");
     return 1;
 }
 
@@ -34,12 +35,13 @@ return args[0] switch
     "pgdelete" => PgDeleteBench.Run(rest),
     "wide"    => WideBench.Run(rest),
     "docread" => DocReadBench.Run(rest),
+    "docfeed" => DocFeedBench.Run(rest),
     _         => Unknown(args[0]),
 };
 
 static int Unknown(string cmd)
 {
     Console.WriteLine($"Неизвестная команда: {cmd}. Доступно: sidebar | import | export | pgload | pgperf | " +
-                      "csvlog | dbsize | bloat | delete | pgdelete | wide | docread.");
+                      "csvlog | dbsize | bloat | delete | pgdelete | wide | docread | docfeed.");
     return 1;
 }
