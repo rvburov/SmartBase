@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.IO;
-using System.Text;
 using ExcelDataReader;
 using SmartBase.Core.Importers.TableSources;
 
@@ -30,7 +29,8 @@ public sealed class OperationCatalog
     private readonly Dictionary<string, int>    _index = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _fixes = new(StringComparer.Ordinal);
 
-    /// <summary>Названия в порядке листа, без повторов и лишних пробелов.</summary>
+    /// <summary>Названия в порядке листа, без повторов и без пробелов по краям. Сколько их —
+    /// дело файла: список дополняют, и на число названий в коде ничего не завязано.</summary>
     public IReadOnlyList<string> Names { get; }
 
     /// <summary>
@@ -43,7 +43,7 @@ public sealed class OperationCatalog
         foreach (var raw in names)
         {
             var name = Clean(raw);
-            if (name.Length == 0 || !_index.TryAdd(Key(name), list.Count)) continue;
+            if (name.Length == 0 || !_index.TryAdd(name, list.Count)) continue;
             list.Add(name);
         }
         Names = list;
@@ -52,43 +52,31 @@ public sealed class OperationCatalog
         {
             var target = Clean(to);
             if (target.Length == 0 || Clean(from).Length == 0) continue;
-            _fixes.TryAdd(Key(from), target);
+            _fixes.TryAdd(Clean(from), target);
         }
     }
 
     /// <summary>Место названия в списке или -1, если его там нет.</summary>
-    public int IndexOf(string name) => _index.TryGetValue(Key(name), out var index) ? index : -1;
+    public int IndexOf(string name) => _index.TryGetValue(Clean(name), out var index) ? index : -1;
 
     /// <summary>Правильное название по листу «Исправление» или <c>null</c>, если исправления нет.
     /// Как и в макросе (<c>GetJob</c>), спрашивать стоит только про название, которого нет в
     /// списке: исправление — запасной путь, а не замена списка.</summary>
-    public string? Fix(string name) => _fixes.TryGetValue(Key(name), out var target) ? target : null;
+    public string? Fix(string name) => _fixes.TryGetValue(Clean(name), out var target) ? target : null;
 
     /// <summary>
-    /// Ключ сравнения названий: без лишних пробелов, без учета регистра и разницы «е»/«ё».
-    /// Названия набираются и выпадающим списком, и руками, а в самом списке есть «приёмосдаточные»
-    /// с «ё» — из-за таких мелочей одна операция не должна расходиться на две колонки.
+    /// Название для сравнения и для колонки: обрезаны ТОЛЬКО края.
+    ///
+    /// Все остальное — строго: регистр, пробелы внутри, «е»/«ё». Список операций — единственный
+    /// источник колонок (решение пользователя от 23.09.2026), и послабления в сравнении делали
+    /// ровно обратное тому, ради чего список заводился: название, набранное иначе, становилось
+    /// «почти тем же» и тащило за собой лишнюю колонку. Не совпало со списком — не выгружается,
+    /// а журнал назовет такое название.
+    ///
+    /// Края обрезаются потому, что их не видно: в самом списке есть «Сборочно-монтажная   »
+    /// с хвостом пробелов, и без обрезки такая операция не подтянулась бы никогда.
     /// </summary>
-    public static string Key(string name) =>
-        Clean(name).ToLowerInvariant().Replace('ё', 'е');
-
-    /// <summary>Название для показа: края обрезаны, пробелы внутри схлопнуты до одного (в списке
-    /// есть «Сборочно-монтажная   » с хвостом пробелов).</summary>
-    public static string Clean(string name)
-    {
-        var text = name.Trim();
-        if (!text.Any(char.IsWhiteSpace)) return text;
-
-        var sb    = new StringBuilder(text.Length);
-        var space = false;
-        foreach (var ch in text)
-        {
-            if (char.IsWhiteSpace(ch)) { space = true; continue; }
-            if (space) { sb.Append(' '); space = false; }
-            sb.Append(ch);
-        }
-        return sb.ToString();
-    }
+    public static string Clean(string name) => name.Trim();
 
     // ── Чтение книги ──────────────────────────────────────────────────────────
 

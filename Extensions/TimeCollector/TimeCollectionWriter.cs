@@ -8,14 +8,13 @@ using SmartBase.Database.Repositories;
 namespace SmartBase.Extensions.TimeCollector;
 
 /// <summary>Каркас созданной коллекции: ее id, итоговое имя и id пользовательских полей.
-/// <paramref name="OperFieldId"/> и <paramref name="OpFieldIds"/> — колонка «Операции» и колонки
-/// операций в порядке <see cref="OperationLayout.Columns"/>; без колонок по операциям — 0 и
-/// <c>null</c>.</summary>
+/// <paramref name="OpFieldIds"/> — колонки операций в порядке
+/// <see cref="OperationLayout.Columns"/>; без колонок по операциям — <c>null</c>.</summary>
 public sealed record TimeShell(
     int CollectionId, string CollectionName,
     int DenoFieldId, int NormFieldId, int DateFieldId,
     int EfioFieldId, int ProjFieldId, int FileFieldId,
-    int OperFieldId = 0, IReadOnlyList<int>? OpFieldIds = null);
+    IReadOnlyList<int>? OpFieldIds = null);
 
 /// <summary>
 /// Выгрузка свода трудоемкости в коллекцию программы — второй приемник рядом с .xlsm-шаблоном
@@ -37,8 +36,8 @@ public sealed record TimeShell(
 /// играет колонка «Ссылка» с формулой HYPERLINK). Служебной колонки с номером строки
 /// источника здесь нет: она нужна только макросу шаблона для перехода по «&gt;&gt;&gt;».
 ///
-/// С галочкой «Добавить колонки по операциям» после «Файл расчета» идут «Операции» (текст,
-/// пометка «отличается») и по числовой колонке на каждую операцию (<see cref="OperationColumns"/>).
+/// С галочкой «Добавить колонки по операциям» после «Файл расчета» идет по числовой колонке
+/// на каждую операцию списка, которая встретилась в расчетах (<see cref="OperationColumns"/>).
 /// </summary>
 public static class TimeCollectionWriter
 {
@@ -53,7 +52,6 @@ public static class TimeCollectionWriter
     public const string EfioFieldName   = "ФИО";
     public const string ProjFieldName   = "Проект";
     public const string FileFieldName   = "Файл расчета";
-    public const string OperFieldName   = "Операции";
 
     /// <summary>Приписка к названию операции, совпавшему с колонкой свода: имя поля в коллекции
     /// обязано быть уникальным, а название операции из расчета может оказаться каким угодно.</summary>
@@ -142,20 +140,16 @@ public static class TimeCollectionWriter
                 efio.ToString(), proj.ToString(), file.ToString(),
             ];
 
-            var oper = 0;
             List<int>? ops = null;
             if (operations is not null)
             {
-                oper = Field(repo, colId, OperFieldName, "text", 7000);
-                order.Add(oper.ToString());
-
                 // Время операций — в том же виде, что «Тр-ть»: это та же трудоемкость, по частям.
                 var format = JsonSerializer.Serialize(NumberFormatValue.ToConfigObject(NormFormat));
                 ops = [];
                 for (var i = 0; i < operations.Count; i++)
                 {
                     var id = Field(repo, colId, OperationFieldName(operations[i]), "number",
-                                   8000 + i * 1000, format);
+                                   7000 + i * 1000, format);
                     ops.Add(id);
                     order.Add(id.ToString());
                 }
@@ -163,7 +157,7 @@ public static class TimeCollectionWriter
 
             repo.SaveColumnOrder(colId, order);
 
-            return new TimeShell(colId, name, deno, norm, date, efio, proj, file, oper, ops);
+            return new TimeShell(colId, name, deno, norm, date, efio, proj, file, ops);
         }
         catch
         {
@@ -184,12 +178,13 @@ public static class TimeCollectionWriter
     private static readonly HashSet<string> SummaryColumns = new(StringComparer.CurrentCultureIgnoreCase)
     {
         TitleColumnName, DenoFieldName, NormFieldName, DateFieldName,
-        EfioFieldName, ProjFieldName, FileFieldName, OperFieldName,
+        EfioFieldName, ProjFieldName, FileFieldName,
     };
 
-    /// <summary>Имя поля операции. Названия операций между собой уже различны (сведены по ключу
-    /// сравнения, см. <see cref="OperationCatalog.Key"/>), а с колонкой свода совпасть может разве
-    /// что название не из списка — такое получает приписку, иначе создание поля уронило бы прогон.</summary>
+    /// <summary>Имя поля операции. Названия операций между собой различны (это названия списка,
+    /// см. <see cref="OperationCatalog"/>), а с колонкой свода совпасть может разве что операция,
+    /// названная как «Дата» или «Проект», — такая получает приписку, иначе создание поля уронило
+    /// бы прогон.</summary>
     public static string OperationFieldName(string operation) =>
         SummaryColumns.Contains(operation) ? operation + OpNameSuffix : operation;
 
@@ -243,11 +238,7 @@ public static class TimeCollectionWriter
             shell.DenoFieldId, shell.NormFieldId, shell.DateFieldId,
             shell.EfioFieldId, shell.ProjFieldId, shell.FileFieldId,
         ];
-        if (operations is not null)
-        {
-            fieldIds.Add(shell.OperFieldId);
-            fieldIds.AddRange(shell.OpFieldIds!);
-        }
+        if (operations is not null) fieldIds.AddRange(shell.OpFieldIds!);
 
         var total = rows.Count;
         var ids = repo.BulkAddRecords(
@@ -269,12 +260,12 @@ public static class TimeCollectionWriter
     /// а не вторая копия свода на 600 тыс. строк. Порядок значений — тот же, что у списка полей
     /// в <see cref="FillRecords"/>. Пустые значения BulkAddRecords пропускает сам, поэтому
     /// условия «писать, только если не пусто» здесь не нужны — кроме даты, которая непуста
-    /// всегда и потому есть у каждой записи (как и раньше). Операции, которых у изделия нет,
+    /// всегда и потому есть у каждой записи (как и раньше). Операции, которой у изделия нет,
     /// остаются <c>null</c> — ячейка не создается.
     /// </summary>
     private static IEnumerable<BulkRecordRow> Stream(IReadOnlyList<TimeRow> rows, OperationLayout? operations)
     {
-        var width = SummaryValues + (operations is null ? 0 : 1 + operations.Columns.Count);
+        var width = SummaryValues + (operations?.Columns.Count ?? 0);
 
         for (var i = 0; i < rows.Count; i++)
         {
@@ -288,11 +279,8 @@ public static class TimeCollectionWriter
             values[5] = row.SourcePath;
 
             if (operations is not null)
-            {
-                if (operations.Differs[i]) values[SummaryValues] = OperationColumns.DiffersText;
                 foreach (var cell in operations.Cells[i])
-                    values[SummaryValues + 1 + cell.Column] = NumberStorage(cell.Value);
-            }
+                    values[SummaryValues + cell.Column] = NumberStorage(cell.Value);
 
             yield return new BulkRecordRow(row.Name, values);
         }

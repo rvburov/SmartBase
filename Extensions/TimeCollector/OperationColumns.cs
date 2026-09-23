@@ -11,29 +11,29 @@ public readonly record struct OpCell(int Column, double Value);
 /// <summary>
 /// Колонки по операциям — все, что нужно приемнику, чтобы их записать.
 /// </summary>
-/// <param name="Columns">Названия колонок по порядку: сначала операции из списка в его порядке,
-/// потом не найденные в нем — по алфавиту.</param>
+/// <param name="Columns">Названия колонок в порядке листа «Операции»: только те операции списка,
+/// которые встретились в расчетах.</param>
 /// <param name="Cells">Время операций у каждой строки свода (индекс — строка свода), по
 /// возрастанию номера колонки. Пустой массив — у изделия нет собственных операций.</param>
-/// <param name="Differs">Пометка «отличается» в колонке «Операции».</param>
 /// <param name="RedCells">Ячейки операций с расхождением: строка свода и номер колонки.</param>
-/// <param name="Unknown">Операции, которых нет в списке (у них свои колонки в конце).</param>
+/// <param name="Unknown">Названия, которых нет в списке, с числом строк: «название — строк: N».
+/// В коллекцию такие значения не попадают.</param>
 /// <param name="Fixed">Исправления по листу «Исправление», по одному на название: «было → стало».</param>
+/// <param name="SumRows">Строки операции «Сумма операций»: колонки у нее нет намеренно.</param>
 /// <param name="TextValues">Расчеты, где время операции записано не числом: «файл — строк: N».</param>
 public sealed record OperationLayout(
     IReadOnlyList<string> Columns,
     IReadOnlyList<OpCell[]> Cells,
-    bool[] Differs,
     IReadOnlyList<(int Row, int Column)> RedCells,
     IReadOnlyList<string> Unknown,
     IReadOnlyList<string> Fixed,
+    int SumRows,
     IReadOnlyList<string> TextValues);
 
 /// <summary>
 /// Колонки по операциям для выгрузки в коллекцию — порт закомментированной части макроса
 /// <c>TimeCollector</c>: <c>GetProducts</c> складывал операции под изделием в колонки после
-/// «Ссылки», <c>SetHeaderData</c> подписывал их названиями из листа «Операции», а
-/// <c>OperationsColor</c> ставил «отличается».
+/// «Ссылки», а <c>SetHeaderData</c> подписывал их названиями из листа «Операции».
 ///
 /// Правила — как в расчете и в макросе:
 /// <list type="bullet">
@@ -41,64 +41,124 @@ public sealed record OperationLayout(
 /// операции составных частей в его колонки не входят;</item>
 /// <item>значение — время из колонки G, на одну штуку изделия; одна операция дважды у одного
 /// изделия — значения складываются;</item>
-/// <item>название ищется в списке, не нашлось — в листе «Исправление»; не нашлось и там —
-/// у операции своя колонка в конце, а журнал ее называет.</item>
+/// <item>колонки дает ТОЛЬКО список операций: название сверяется с ним строго (см.
+/// <see cref="OperationCatalog.Clean"/>), не нашлось — ищется в листе «Исправление», и если
+/// правильное название есть в списке, значение уходит в его колонку. Не подошло ни то, ни
+/// другое — значение в коллекцию не идет, а журнал называет операцию и число строк.</item>
 /// </list>
 ///
-/// Раскраска — по образцу ячейки «Тр-ть», но без заливки строк (решение пользователя от
-/// 22.09.2026): у соседних строк одного обозначения краснеют ячейки тех операций, время которых
-/// разное или которые есть только у одной строки. Красный цвет строки по-прежнему значит одно —
-/// разную трудоемкость при тех же проекте и дате.
+/// Раскраска — по образцу ячейки «Тр-ть», но без заливки строк: у соседних строк одного
+/// обозначения краснеют ячейки тех операций, время которых разное или которые есть только
+/// у одной строки. Красный цвет строки по-прежнему значит одно — разную трудоемкость при тех
+/// же проекте и дате.
+///
+/// Решения пользователя от 23.09.2026: строгое сравнение и отказ вместо колонки на каждое
+/// незнакомое название (на живом своде их набралось столько, что колонок вышло 517 вместо
+/// 167 названий списка), колонки «Операции» с пометкой «отличается» нет вовсе, колонка
+/// «Сумма операций» не заводится.
 /// </summary>
 public static class OperationColumns
 {
-    /// <summary>Пометка в колонке «Операции»: трудоемкость у соседей одинаковая, а разбивка по
-    /// операциям — нет.</summary>
-    public const string DiffersText = "отличается";
+    /// <summary>Операция, которой колонки нет намеренно: ее строка задает время одной суммой,
+    /// без разбивки, и в таблице разбивки ей не место. В макросе она же была особым случаем
+    /// (<c>SumOperations</c> считала ее отдельно от вида работ).</summary>
+    public const string SumOperation = "Сумма операций";
 
-    /// <summary>Собрать колонки по строкам свода в их КОНЕЧНОМ порядке: пометки и раскраска
-    /// сравнивают соседей, поэтому звать после сортировки.</summary>
-    /// <param name="fixText">Приводить ли названия к одному алфавиту перед поиском в списке —
-    /// та же галочка, что для наименований и обозначений.</param>
+    // Решение по названию: место в списке либо отказ.
+    private const int NotInList = -1;
+    private const int SumSkip   = -2;
+
+    /// <summary>Собрать колонки по строкам свода в их КОНЕЧНОМ порядке: раскраска сравнивает
+    /// соседей, поэтому звать после сортировки.</summary>
     /// <param name="textValues">Расчеты с нечисловым временем операции — собраны при чтении,
     /// здесь только передаются в итог.</param>
     public static OperationLayout Build(IReadOnlyList<TimeRow> rows, OperationCatalog catalog,
-                                        bool fixText, IReadOnlyList<string> textValues)
+                                        IReadOnlyList<string> textValues)
     {
-        var targets = new Targets(catalog, fixText);
+        var fixes = new List<string>();
 
-        // Название из ячейки → цель. Разных названий на весь свод — сотни, а строк операций —
-        // десятки миллионов, поэтому решение принимается один раз на название.
-        var byName = new Dictionary<string, int>(StringComparer.Ordinal);
+        // Решение принимается один раз на НАЗВАНИЕ: разных названий на весь свод — сотни,
+        // а строк операций — десятки миллионов.
+        var decided = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var row in rows)
             foreach (var op in row.Ops ?? [])
-                if (!byName.ContainsKey(op.Name))
-                    byName[op.Name] = targets.Resolve(op.Name);
+                if (!decided.ContainsKey(op.Name))
+                    decided[op.Name] = Decide(op.Name, catalog, fixes);
 
-        var (columns, columnOf) = targets.Order();
+        var (columns, columnOf) = Order(decided, catalog);
 
-        var cells = new OpCell[rows.Count][];
+        var dropped = new Dictionary<string, int>(StringComparer.Ordinal);
+        var sumRows = 0;
+        var cells   = new OpCell[rows.Count][];
         for (var i = 0; i < rows.Count; i++)
-            cells[i] = RowCells(rows[i].Ops, byName, columnOf);
+            cells[i] = RowCells(rows[i].Ops, decided, columnOf, dropped, ref sumRows);
 
-        var (differs, red) = Compare(rows, cells);
-
-        return new OperationLayout(columns, cells, differs, red,
-                                   targets.Unknown(), targets.Fixed, textValues);
+        return new OperationLayout(columns, cells, Compare(rows, cells),
+                                   Unknown(dropped), fixes, sumRows, textValues);
     }
 
-    // Операции строки → ячейки по колонкам: сумма по колонке (одна операция дважды, или старое
-    // и новое название, сведенные исправлением), по возрастанию номера колонки.
-    private static OpCell[] RowCells(OpEntry[]? ops, Dictionary<string, int> byName, int[] columnOf)
+    // Куда ведет название: список → лист «Исправление» → отказ. Исправление спрашивается
+    // только про название, которого в списке нет, — как GetJob в макросе.
+    private static int Decide(string raw, OperationCatalog catalog, List<string> fixes)
+    {
+        var name = OperationCatalog.Clean(raw);
+        if (name == SumOperation) return SumSkip;
+
+        var index = catalog.IndexOf(name);
+        if (index >= 0) return index;
+
+        if (catalog.Fix(name) is not { } target) return NotInList;
+
+        var fixedIndex = target == SumOperation ? SumSkip : catalog.IndexOf(target);
+        if (fixedIndex == NotInList) return NotInList;   // правильного названия нет в списке
+
+        fixes.Add($"{name} → {target}");
+        return fixedIndex;
+    }
+
+    // Колонки — операции списка, которые встретились, в порядке списка. columnOf переводит
+    // место в списке в номер колонки.
+    private static (List<string> Columns, Dictionary<int, int> ColumnOf) Order(
+        Dictionary<string, int> decided, OperationCatalog catalog)
+    {
+        var used = decided.Values.Where(i => i >= 0).Distinct().OrderBy(i => i).ToList();
+
+        var columns  = new List<string>(used.Count);
+        var columnOf = new Dictionary<int, int>(used.Count);
+        foreach (var index in used)
+        {
+            columnOf[index] = columns.Count;
+            columns.Add(catalog.Names[index]);
+        }
+        return (columns, columnOf);
+    }
+
+    // Операции строки → ячейки по колонкам: сумма по колонке (одна операция дважды либо старое
+    // и новое название, сведенные исправлением), по возрастанию номера колонки. Что в колонку
+    // не легло — считается поименно для журнала.
+    private static OpCell[] RowCells(OpEntry[]? ops, Dictionary<string, int> decided,
+                                     Dictionary<int, int> columnOf,
+                                     Dictionary<string, int> dropped, ref int sumRows)
     {
         if (ops is null || ops.Length == 0) return [];
 
         var sums = new SortedDictionary<int, double>();
         foreach (var op in ops)
         {
-            var column = columnOf[byName[op.Name]];
+            var index = decided[op.Name];
+            if (index == SumSkip)   { sumRows++; continue; }
+            if (index == NotInList)
+            {
+                var name = OperationCatalog.Clean(op.Name);
+                dropped[name] = dropped.TryGetValue(name, out var count) ? count + 1 : 1;
+                continue;
+            }
+
+            var column = columnOf[index];
             sums[column] = sums.TryGetValue(column, out var sum) ? sum + op.Value : op.Value;
         }
+
+        if (sums.Count == 0) return [];
 
         var result = new OpCell[sums.Count];
         var k = 0;
@@ -109,19 +169,21 @@ public static class OperationColumns
         return result;
     }
 
+    private static List<string> Unknown(Dictionary<string, int> dropped) =>
+        dropped.OrderBy(p => p.Key, StringComparer.CurrentCultureIgnoreCase)
+               .Select(p => $"{p.Key} — строк: {p.Value}")
+               .ToList();
+
     /// <summary>
     /// Соседи с одинаковым обозначением (равенство побайтовое, как у раскраски
     /// <see cref="TimeCollectorEngine.PlanColors"/>): у операций с разным временем или
-    /// с операцией только у одной строки краснеют ячейки обеих строк; если при этом
-    /// трудоемкость одинаковая — обе строки получают «отличается» (<c>OperationsColor</c>
-    /// макроса звался ровно при равной трудоемкости).
+    /// с операцией только у одной строки краснеют ячейки обеих строк.
     /// </summary>
-    private static (bool[] Differs, List<(int, int)> Red) Compare(IReadOnlyList<TimeRow> rows, OpCell[][] cells)
+    private static List<(int, int)> Compare(IReadOnlyList<TimeRow> rows, OpCell[][] cells)
     {
-        var differs = new bool[rows.Count];
-        var red     = new List<(int, int)>();
-        var marked  = new HashSet<(int, int)>();
-        var diff    = new List<int>();
+        var red    = new List<(int, int)>();
+        var marked = new HashSet<(int, int)>();
+        var diff   = new List<int>();
 
         for (var i = 1; i < rows.Count; i++)
         {
@@ -130,11 +192,6 @@ public static class OperationColumns
                 continue;
 
             DiffColumns(cells[i - 1], cells[i], diff);
-            if (diff.Count == 0) continue;
-
-            if (Norm(rows[i]) == Norm(rows[i - 1]))
-                differs[i] = differs[i - 1] = true;
-
             foreach (var column in diff)
             {
                 if (marked.Add((i - 1, column))) red.Add((i - 1, column));
@@ -142,11 +199,8 @@ public static class OperationColumns
             }
         }
 
-        return (differs, red);
+        return red;
     }
-
-    // Та же трактовка, что у PlanColors: нечисловая трудоемкость идет в сравнение нулем.
-    private static double Norm(TimeRow row) => row.Norm ?? 0;
 
     // Колонки, где две строки расходятся: разное время или операция только у одной.
     // Обе последовательности упорядочены по колонке — хватает одного прохода слиянием.
@@ -162,74 +216,5 @@ public static class OperationColumns
             if (a[i].Value != b[j].Value) diff.Add(a[i].Column);
             i++; j++;
         }
-    }
-
-    // ── Куда ведет название ───────────────────────────────────────────────────
-
-    /// <summary>Цели названий — будущие колонки. Цель из списка помнит место в нем, остальные
-    /// сводятся по ключу сравнения (<see cref="OperationCatalog.Key"/>), чтобы «Упаковка» и
-    /// «упаковка » из двух расчетов не стали двумя колонками.</summary>
-    private sealed class Targets(OperationCatalog catalog, bool fixText)
-    {
-        private readonly List<(string Name, int ListIndex)> _all   = [];
-        private readonly Dictionary<int, int>               _known = new();
-        private readonly Dictionary<string, int>            _other = new(StringComparer.Ordinal);
-        private readonly HashSet<string>                    _fixed = new(StringComparer.Ordinal);
-
-        public List<string> Fixed { get; } = [];
-
-        public int Resolve(string raw)
-        {
-            var name  = fixText ? Homoglyphs.Normalize(raw).Text : raw;
-            var index = catalog.IndexOf(name);
-            if (index >= 0) return Known(index);
-
-            if (catalog.Fix(name) is { } target)
-            {
-                var note = $"{OperationCatalog.Clean(name)} → {target}";
-                if (_fixed.Add(note)) Fixed.Add(note);
-
-                index = catalog.IndexOf(target);
-                return index >= 0 ? Known(index) : Other(target);
-            }
-
-            return Other(OperationCatalog.Clean(name));
-        }
-
-        private int Known(int index)
-        {
-            if (_known.TryGetValue(index, out var id)) return id;
-            _all.Add((catalog.Names[index], index));
-            return _known[index] = _all.Count - 1;
-        }
-
-        private int Other(string name)
-        {
-            var key = OperationCatalog.Key(name);
-            if (_other.TryGetValue(key, out var id)) return id;
-            _all.Add((name, -1));
-            return _other[key] = _all.Count - 1;
-        }
-
-        /// <summary>Колонки по порядку и номер колонки каждой цели: из списка — в его порядке,
-        /// остальные — после них, по алфавиту.</summary>
-        public (List<string> Columns, int[] ColumnOf) Order()
-        {
-            var order = Enumerable.Range(0, _all.Count)
-                .OrderBy(id => _all[id].ListIndex < 0 ? 1 : 0)
-                .ThenBy(id => _all[id].ListIndex)
-                .ThenBy(id => _all[id].Name, StringComparer.CurrentCultureIgnoreCase)
-                .ToList();
-
-            var columnOf = new int[_all.Count];
-            for (var column = 0; column < order.Count; column++) columnOf[order[column]] = column;
-            return (order.Select(id => _all[id].Name).ToList(), columnOf);
-        }
-
-        public List<string> Unknown() =>
-            _all.Where(t => t.ListIndex < 0)
-                .Select(t => t.Name)
-                .OrderBy(n => n, StringComparer.CurrentCultureIgnoreCase)
-                .ToList();
     }
 }

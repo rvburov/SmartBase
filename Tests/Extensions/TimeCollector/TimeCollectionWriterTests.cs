@@ -395,7 +395,7 @@ public sealed class TimeCollectionWriterTests
     private static (TimeShell Shell, OperationLayout Layout) FillWithOps(TempDatabase db, List<TimeRow> rows)
     {
         var ordered = TimeCollectorEngine.Sort(rows);
-        var layout  = OperationColumns.Build(ordered, Catalog, fixText: true, []);
+        var layout  = OperationColumns.Build(ordered, Catalog, []);
         var shell   = TimeCollectionWriter.CreateShell(db.Constructor, "Трудоемкость", layout.Columns);
         TimeCollectionWriter.FillRecords(db.Path, shell, ordered, TimeCollectorEngine.PlanColors(ordered),
                                          null, None, operations: layout);
@@ -405,9 +405,9 @@ public sealed class TimeCollectionWriterTests
     private static int OpField(TimeShell shell, OperationLayout layout, string operation) =>
         shell.OpFieldIds![layout.Columns.ToList().IndexOf(operation)];
 
-    /// <summary>Колонки по операциям стоят после «Файл расчета», как в макросе после «Ссылки»:
-    /// сначала «Операции» (текст), потом операции (числа в том же виде, что «Тр-ть» — это та же
-    /// трудоемкость, по частям).</summary>
+    /// <summary>Колонки по операциям стоят сразу после «Файл расчета», как в макросе после
+    /// «Ссылки»: числа в том же виде, что «Тр-ть» — это та же трудоемкость, по частям. Колонки
+    /// «Операции» с пометкой «отличается» нет (решение пользователя от 23.09.2026).</summary>
     [Fact]
     public void Operation_columns_follow_the_file_column()
     {
@@ -417,9 +417,8 @@ public sealed class TimeCollectionWriterTests
         var fields = db.Constructor.GetFields(shell.CollectionId);
         var order  = db.Constructor.GetColumnOrder(shell.CollectionId);
 
-        Assert.Equal(9, fields.Count);
-        var oper = fields.Single(f => f.Id == shell.OperFieldId);
-        Assert.Equal((TimeCollectionWriter.OperFieldName, "text"), (oper.Name, oper.FieldType));
+        Assert.Equal(8, fields.Count);
+        Assert.DoesNotContain(fields, f => f.Name == "Операции");
         Assert.Equal(["Сборка", "Пайка"], shell.OpFieldIds!.Select(id => fields.Single(f => f.Id == id).Name));
         Assert.All(shell.OpFieldIds!, id =>
         {
@@ -430,13 +429,13 @@ public sealed class TimeCollectionWriterTests
 
         string[] expected =
         [
-            shell.FileFieldId.ToString(), shell.OperFieldId.ToString(),
+            shell.FileFieldId.ToString(),
             shell.OpFieldIds![0].ToString(), shell.OpFieldIds[1].ToString(),
         ];
         Assert.Equal(expected, expected.OrderBy(key => order[key]).ToArray());
     }
 
-    /// <summary>Без колонок по операциям каркас прежний: шесть полей, ни «Операций», ни операций.</summary>
+    /// <summary>Без колонок по операциям каркас прежний: шесть полей.</summary>
     [Fact]
     public void Shell_without_operations_is_unchanged()
     {
@@ -444,13 +443,27 @@ public sealed class TimeCollectionWriterTests
 
         var shell = TimeCollectionWriter.CreateShell(db.Constructor, "Трудоемкость");
 
-        Assert.Equal(0, shell.OperFieldId);
         Assert.Null(shell.OpFieldIds);
         Assert.Equal(6, db.Constructor.GetFields(shell.CollectionId).Count);
     }
 
-    /// <summary>Название операции не из списка может совпасть с колонкой свода — поле с таким
-    /// именем уже есть, и его создание уронило бы весь прогон. Такая колонка получает приписку.</summary>
+    /// <summary>Ни одна операция списка не встретилась — колонок операций нет, но коллекция
+    /// собирается и заполняется как обычно: строгая сверка названий делает этот случай
+    /// достижимым (в расчетах могут быть только незнакомые названия).</summary>
+    [Fact]
+    public void No_matched_operations_still_builds_the_collection()
+    {
+        using var db = new TempDatabase();
+
+        var (shell, _) = FillWithOps(db, [WithOps(Row("Корпус", "АБВ.1", 2, Day1), ("Шлифовка", 3))]);
+
+        Assert.Empty(shell.OpFieldIds!);
+        Assert.Equal(6, db.Constructor.GetFields(shell.CollectionId).Count);
+        Assert.Equal("Корпус", Assert.Single(db.Constructor.GetRecords(shell.CollectionId)).Title);
+    }
+
+    /// <summary>Название операции может совпасть с колонкой свода — поле с таким именем уже
+    /// есть, и его создание уронило бы весь прогон. Такая колонка получает приписку.</summary>
     [Fact]
     public void Operation_named_like_a_summary_column_gets_a_suffix()
     {
@@ -482,17 +495,15 @@ public sealed class TimeCollectionWriterTests
         Assert.Equal("10",  body[OpField(shell, layout, "Сборка")]);
         Assert.Equal("2,5", body[OpField(shell, layout, "Контроль")]);
         Assert.False(body.ContainsKey(OpField(shell, layout, "Пайка")));
-        Assert.False(body.ContainsKey(shell.OperFieldId));                // расхождений нет
     }
 
     /// <summary>
-    /// Одно обозначение, одна трудоемкость, разная разбивка: обе записи «отличается», и
-    /// краснеют ячейки разошедшихся операций — в том числе пустая, где операции нет. Совпавшая
-    /// операция и ячейка «Тр-ть» не краснеют, заливка строк остается от группы: строку целиком
-    /// операции не красят (решение пользователя от 22.09.2026).
+    /// Одно обозначение, разная разбивка: краснеют ячейки разошедшихся операций — в том числе
+    /// пустая, где операции нет. Совпавшая операция и ячейка «Тр-ть» не краснеют, заливка строк
+    /// остается от группы: строку целиком операции не красят (решение пользователя от 22.09.2026).
     /// </summary>
     [Fact]
-    public void Diverging_breakdown_is_marked_and_only_its_cells_turn_red()
+    public void Diverging_breakdown_paints_only_its_cells_red()
     {
         using var db = new TempDatabase();
 
@@ -507,8 +518,6 @@ public sealed class TimeCollectionWriterTests
 
         foreach (var id in ids)
         {
-            Assert.Equal(OperationColumns.DiffersText, db.Constructor.GetFieldValues(id)[shell.OperFieldId]);
-
             var red = cells[id].Where(c => c.Value.Bg == "#FF3B30").Select(c => c.Key).ToHashSet();
             Assert.Equal(new HashSet<string>
             {

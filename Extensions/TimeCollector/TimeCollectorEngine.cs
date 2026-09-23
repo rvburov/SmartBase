@@ -209,14 +209,15 @@ public static class TimeCollectorEngine
 
         var ordered = Sort(rows);
 
-        // Колонки по операциям — после сортировки: «отличается» и красные ячейки сравнивают
-        // соседей в конечном порядке, как и раскраска.
+        // Колонки по операциям — после сортировки: красные ячейки сравнивают соседей
+        // в конечном порядке, как и раскраска. Названия операций сюда приходят ИЗ ЯЧЕЕК как
+        // есть: приведение к одному алфавиту их не касается — со списком они сверяются строго.
         OperationLayout? layout = null;
         if (operations is not null)
         {
             progress?.Report(new CollectProgress(null, "Разбор операций…", ""));
             textValues.Sort(StringComparer.CurrentCultureIgnoreCase);
-            layout = OperationColumns.Build(ordered, operations, fixText, textValues);
+            layout = OperationColumns.Build(ordered, operations, textValues);
         }
 
         return new CollectedTable(ordered, PlanColors(ordered), files.Count, processed, issues, fixes, layout);
@@ -469,9 +470,9 @@ public static class TimeCollectorEngine
     /// обе строки красные, иначе красными становятся только их ячейки «Тр-ть».</item>
     /// </list>
     /// Красный только добавляется и никогда не снимается, поэтому итог считается за один проход.
-    /// <c>OperationsColor</c> здесь не переносится: в Excel-своде его цикл <c>For col = 10 To 8</c>
-    /// при восьми колонках не выполняется ни разу. Для коллекции с колонками по операциям его
-    /// смысл («отличается») и раскраска ячеек операций — в <see cref="OperationColumns"/>.
+    /// <c>OperationsColor</c> не переносится: в Excel-своде его цикл <c>For col = 10 To 8</c>
+    /// при восьми колонках не выполняется ни разу, а его пометка «отличается» пользователю
+    /// не понадобилась. Раскраска ячеек операций в коллекции — в <see cref="OperationColumns"/>.
     /// </summary>
     public static RowPaint[] PlanColors(IReadOnlyList<TimeRow> rows)
     {

@@ -786,7 +786,8 @@ public sealed class TimeCollectorRunTests : IDisposable
         var catalog = OperationCatalog.Load(path);
 
         Assert.Equal(["Сборка", "Упаковывание", "Контроль"], catalog.Names);
-        Assert.Equal("Упаковывание", catalog.Fix("упаковка"));
+        Assert.Equal("Упаковывание", catalog.Fix("Упаковка"));
+        Assert.Null(catalog.Fix("упаковка"));                 // сверка строгая, регистр значим
     }
 
     // Список проверяется до чтения расчетов, и отказ называет причину и путь. Листа
