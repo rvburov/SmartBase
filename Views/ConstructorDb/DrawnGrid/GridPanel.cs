@@ -4,6 +4,7 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.TextFormatting;
+using SmartBase.Logging;
 using SmartBase.Controls.Behaviors;
 using SmartBase.Core.Models;
 using SmartBase.Database.Repositories;
@@ -20,8 +21,12 @@ namespace SmartBase.Views.ConstructorDb.DrawnGrid;
 ///
 /// <see cref="Load"/> открывает коллекцию по снимку так же, как <c>TableView</c>: колонки из полей
 /// и системного «Названия» в сохраненном порядке, скрытые в «Отображении» не строятся, ширины —
-/// ручные из <c>column_meta</c> в ручном режиме, строки — тот же <see cref="VirtualRowList"/>.
-/// Прототип этапа 0 плана [drawn-grid.md]: без правки, выделения, меню и фильтров.
+/// ручные из <c>column_meta</c> в ручном режиме, строки — <see cref="VirtualRowList"/>. Снимок
+/// может нести оценку числа записей (<see cref="CollectionOpenSnapshot.CountIsEstimate"/>) — тогда
+/// точный счет идет в фоне и полоса прокрутки уточняется по его приходе, первый кадр его не ждет.
+/// <see cref="SetQuery"/> меняет отбор и сортировку: источник строк считается в фоне с отменой
+/// (<see cref="RowSourcePlanner"/>), UI-поток не ждет.
+/// Этапы 0–1 плана [drawn-grid.md]: без правки, выделения и меню.
 /// </summary>
 public sealed class GridPanel : Avalonia.Controls.Grid
 {
@@ -32,6 +37,11 @@ public sealed class GridPanel : Avalonia.Controls.Grid
     private readonly ScrollBar _horizontal = new() { Orientation = Orientation.Horizontal, AllowAutoHide = false };
     private readonly Border    _corner     = new();
 
+    private ConstructorRepository?      _repo;
+    private int                         _collectionId;
+    private CollectionOpenSnapshot?     _snapshot;
+    private bool                        _hiddenRecords;
+    private int?                        _exactCount;     // точное число записей, когда пришло из фона
     private VirtualRowList?             _rows;
     private List<TableColumnDef>        _defs        = [];
     private Dictionary<string, double>  _widths      = [];
@@ -39,6 +49,7 @@ public sealed class GridPanel : Avalonia.Controls.Grid
     private Dictionary<int, RowStyle>   _rowStyles   = [];
     private Dictionary<string, RowStyle> _colStyles  = [];
     private readonly RelationLinksCache _relLinks    = new();
+    private CancellationTokenSource?    _query;
     private bool _syncingBars;
 
     /// <summary>Отладочный выключатель для стендов: не трогать полосы прокрутки при сдвиге.</summary>
@@ -81,30 +92,101 @@ public sealed class GridPanel : Avalonia.Controls.Grid
     public IReadOnlyList<TableColumnDef> Columns => _defs;
     public int RowCount => _rows?.Count ?? 0;
 
+    /// <summary>Текущий список строк (для стендов и проверок).</summary>
+    internal VirtualRowList? Rows => _rows;
+
+    /// <summary>Последний запуск <see cref="SetQuery"/>; завершен — источник строк подключен или отменен.</summary>
+    public Task QueryTask { get; private set; } = Task.CompletedTask;
+
     /// <summary>Открыть коллекцию по снимку открытия (прочитан заранее, UI-поток в базу не ходит).</summary>
     public void Load(ConstructorRepository repo, int collectionId, CollectionOpenSnapshot snapshot)
     {
         var (colResize, _, _) = snapshot.UiSettings;
 
-        _defs      = BuildDefs(snapshot);
-        _hidden    = snapshot.ColumnDisplay.Where(kv => !kv.Value.Visible).Select(kv => kv.Key).ToHashSet();
-        _widths    = colResize ? snapshot.ColumnWidths : [];
-        _rowStyles = snapshot.RowStyles;
-        _colStyles = snapshot.ColumnStyles;
+        _repo          = repo;
+        _collectionId  = collectionId;
+        _snapshot      = snapshot;
+        _exactCount    = snapshot.CountIsEstimate ? null : snapshot.VisibleRecordCount;
+        _defs          = BuildDefs(snapshot);
+        _hidden        = snapshot.ColumnDisplay.Where(kv => !kv.Value.Visible).Select(kv => kv.Key).ToHashSet();
+        _widths        = colResize ? snapshot.ColumnWidths : [];
+        _rowStyles     = snapshot.RowStyles;
+        _colStyles     = snapshot.ColumnStyles;
+        _hiddenRecords = snapshot.RecordDisplay.Any(kv => !kv.Value.Visible);
+
+        _query?.Cancel();
+        _query = null;
+        AttachSource(RowSource.Plain);
+    }
+
+    /// <summary>Сменить отбор и сортировку: источник строк считается в фоне (<see cref="RowSourcePlanner"/>),
+    /// прежний незавершенный запрос отменяется, устаревший результат не подключается. Без фильтров и
+    /// сортировки по индексируемому типу подключение мгновенное.</summary>
+    public Task SetQuery(IReadOnlyDictionary<string, HashSet<string>> filters, string? sortKey, bool sortAsc)
+    {
+        if (_repo is null || _snapshot is null) return Task.CompletedTask;
+        _query?.Cancel();
+        var cts = _query = new CancellationTokenSource();
+        return QueryTask = ApplyQueryAsync(filters, sortKey, sortAsc, cts.Token);
+    }
+
+    private async Task ApplyQueryAsync(IReadOnlyDictionary<string, HashSet<string>> filters, string? sortKey, bool sortAsc,
+                                       CancellationToken ct)
+    {
+        RowSource source;
+        try
+        {
+            source = await RowSourcePlanner.BuildAsync(_repo!, _collectionId, _snapshot!.Fields, filters, sortKey, sortAsc,
+                                                       _hiddenRecords, ct);
+        }
+        catch (OperationCanceledException) { return; }
+        if (ct.IsCancellationRequested) return;
+        // Продолжение после фона — на UI-поток явно (стенды без контекста синхронизации).
+        if (Avalonia.Threading.Dispatcher.UIThread.CheckAccess()) AttachSource(source);
+        else await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() => { if (!ct.IsCancellationRequested) AttachSource(source); });
+    }
+
+    // Новый список строк по источнику; число записей — точное, если уже известно, иначе оценка
+    // из снимка с уточнением в фоне (список id знает свою длину сам).
+    private void AttachSource(RowSource source)
+    {
+        var snapshot = _snapshot!;
         _relLinks.Clear();
 
-        var hiddenRecords = snapshot.RecordDisplay.Any(kv => !kv.Value.Visible);
-        _rows = new VirtualRowList(repo, collectionId, snapshot.Fields,
-                                   excludeHidden: hiddenRecords, relLinks: _relLinks,
-                                   knownCount: snapshot.VisibleRecordCount);
+        var idList   = source as IdListRowSource;
+        var known    = idList?.Ids.Count ?? _exactCount ?? snapshot.VisibleRecordCount;
+        var estimate = idList is null && _exactCount is null && snapshot.CountIsEstimate;
+        var rows = new VirtualRowList(_repo!, _collectionId, snapshot.Fields,
+                                      excludeHidden: _hiddenRecords, relLinks: _relLinks,
+                                      knownCount: known, source: source, countIsEstimate: estimate);
+        _rows = rows;
+        if (estimate) _ = RefineCountAsync(rows);
 
-        Surface.Attach(_rows, BuildLayout(),
+        Surface.Attach(rows, BuildLayout(),
                        rid => _rowStyles.GetValueOrDefault(rid),
                        key => _colStyles.GetValueOrDefault(key),
                        _relLinks);
         Surface.OffsetX = 0;
         Surface.OffsetY = 0;
         SyncBars();
+    }
+
+    // Точный счет записей в фоне: полоса прокрутки уточняется по приходе, первый кадр не ждал.
+    private async Task RefineCountAsync(VirtualRowList rows)
+    {
+        try
+        {
+            var n = await _repo!.CountRecordsAsync(_collectionId, _hiddenRecords);
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                _exactCount = n;
+                if (ReferenceEquals(_rows, rows)) rows.SetCount(n);
+            });
+        }
+        catch (Exception ex)
+        {
+            DbErrors.HandleRead(ex, _repo?.DbPath);
+        }
     }
 
     private ColumnLayout BuildLayout() =>
@@ -114,6 +196,7 @@ public sealed class GridPanel : Avalonia.Controls.Grid
     private void SyncBars()
     {
         if (DebugSkipBars) return;
+        var t0 = GridTimings.Start();
         _syncingBars = true;
         try
         {
@@ -138,6 +221,7 @@ public sealed class GridPanel : Avalonia.Controls.Grid
         finally
         {
             _syncingBars = false;
+            GridTimings.Stop(t0, "полосы прокрутки (UI)");
         }
     }
 

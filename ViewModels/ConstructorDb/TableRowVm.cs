@@ -146,6 +146,16 @@ public class TableRowVm : INotifyPropertyChanged
     /// строки-источника изменилось название ЦЕЛИ ее связи: read-ячейка-связь перечитает показ из кеша).</summary>
     public void NotifyCellsChanged() => NotifyAllCells();
 
+    /// <summary>Дочитанные значения колонок, которых не было в окне при загрузке страницы (прокрутка
+    /// вбок): добавить к строке и перечитать ячейки. Записи без значения в словаре нет — ячейка и так
+    /// пустая. Заглушку и строку «+» не трогает.</summary>
+    public void MergeValues(IReadOnlyDictionary<int, string> values)
+    {
+        if (IsLoading || IsAddRow) return;
+        foreach (var (fid, v) in values) _values[fid] = v;
+        NotifyAllCells();
+    }
+
     // Обновить привязки «вычисляемых» ячеек (created_at/updated_at/created_by/updated_by),
     // которые биндятся к именованным свойствам, а не к индексатору значений.
     private void NotifyMeta()

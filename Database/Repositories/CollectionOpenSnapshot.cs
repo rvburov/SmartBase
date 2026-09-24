@@ -10,6 +10,10 @@ namespace SmartBase.Database.Repositories;
 /// колонки и строки. Раньше эти десять с лишним запросов шли с UI-потока по одному, и на медленной
 /// сетевой папке открытие коллекции замораживало окно на секунды («Интерфейс не отвечал 6,7 с —
 /// выполнялось: открытие коллекции»). Отсутствующая коллекция — <see cref="Collection"/> = null.
+///
+/// <see cref="CountIsEstimate"/> — числа записей оценочные (снимок читался без COUNT, см.
+/// <c>ReadOpenSnapshot(deferCount)</c>): на 9 млн строк точный счет стоит 0,7–3 с, и рисованная
+/// сетка уточняет его в фоне уже после первого кадра. Нынешняя таблица читает точные числа.
 /// </summary>
 public sealed record CollectionOpenSnapshot(
     DbCollection?                                Collection,
@@ -24,4 +28,5 @@ public sealed record CollectionOpenSnapshot(
     Dictionary<int, int>                         RowHeights,
     Dictionary<int, RowStyle>                    RowStyles,
     int                                          RecordCount,
-    int                                          VisibleRecordCount);
+    int                                          VisibleRecordCount,
+    bool                                         CountIsEstimate = false);

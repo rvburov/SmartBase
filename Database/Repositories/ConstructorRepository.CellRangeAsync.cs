@@ -26,19 +26,19 @@ public sealed partial class ConstructorRepository
     /// впустую.</summary>
     public sealed record CellRow(int RecordId, int Position, string Title,
                                  string CreatedAt, string UpdatedAt, string CreatedBy, string UpdatedBy,
-                                 Dictionary<int, string> Values);
+                                 Dictionary<int, string> Values, string? SortValue = null);
 
     /// <summary>
-    /// Страница строк выделения в порядке таблицы. Режим — как у <see cref="LoadPageAsync"/>:
-    /// <paramref name="idSlice"/> (фильтр или сортировка), иначе keyset после
-    /// (<paramref name="afterPos"/>, <paramref name="afterId"/>), иначе смещение <paramref name="skip"/>.
+    /// Порция строк выделения в порядке показа. Записи выбирает <paramref name="records"/> на
+    /// изолированном репозитории — режим (keyset, смещение, срез списка id, сортировка по индексу)
+    /// решает вызывающий, как у <see cref="LoadPageAsync"/>; значения читаются только по
+    /// <paramref name="fieldIds"/>.
     /// </summary>
-    public Task<List<CellRow>> ReadCellRowsAsync(int collectionId, bool excludeHidden, IReadOnlyList<int>? idSlice,
-                                                 int skip, int take, int? afterPos, int? afterId,
+    public Task<List<CellRow>> ReadCellRowsAsync(int collectionId, Func<ConstructorRepository, RecordPage> records,
                                                  IReadOnlyList<int> fieldIds, CancellationToken ct)
     {
         Demand(PermAction.ViewCollection, collectionId);
-        var path = db.DbPath;
+        var path   = db.DbPath;
         var fields = fieldIds.ToList();
 
         return Task.Run(() =>
@@ -48,31 +48,15 @@ public sealed partial class ConstructorRepository
             ctx.ApplyPerformancePragmas();
             var repo = new ConstructorRepository(ctx);
 
-            var records = idSlice is not null
-                ? repo.GetRecordsByIdsOrdered(idSlice)
-                : afterPos is int p && afterId is int a
-                    ? repo.GetRecordsPageAfter(collectionId, p, a, take, excludeHidden)
-                    : repo.GetRecordsPage(collectionId, skip, take, excludeHidden);
+            var page   = records(repo);
+            var ids    = page.Records.Select(r => r.Id!.Value).ToList();
+            var values = fields.Count > 0 ? repo.GetFieldValuesBatch(ids, fields) : [];
 
-            var ids    = records.Select(r => r.Id!.Value).ToList();
-            var values = new Dictionary<int, Dictionary<int, string>>();
-            if (fields.Count > 0 && ids.Count > 0)
-            {
-                var rows = ctx.DbFieldValues.AsNoTracking()
-                    .Where(v => ids.Contains(v.RecordId) && fields.Contains(v.FieldId))
-                    .Select(v => new { v.RecordId, v.FieldId, v.Value })
-                    .ToList();
-                foreach (var v in rows)
-                {
-                    if (!values.TryGetValue(v.RecordId, out var byField)) values[v.RecordId] = byField = [];
-                    byField[v.FieldId] = v.Value ?? "";
-                }
-            }
-
-            return records.Select(r => new CellRow(
+            return page.Records.Select((r, i) => new CellRow(
                 r.Id!.Value, r.Position, r.Title ?? "",
                 r.CreatedAt ?? "", r.UpdatedAt ?? "", r.CreatedBy ?? "", r.UpdatedBy ?? "",
-                values.TryGetValue(r.Id!.Value, out var v) ? v : [])).ToList();
+                values.TryGetValue(r.Id!.Value, out var v) ? v : [],
+                page.SortValues?[i])).ToList();
         }, ct);
     }
 

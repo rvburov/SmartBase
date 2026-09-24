@@ -123,9 +123,17 @@ internal static class WideBench
             () => repo.GetCellStylesBatch(colId, ids), r => $"{r.Count} строк со стилями");
 
         // Полный путь страницы, как его зовет VirtualRowList (свой контекст в Task.Run).
-        Row($"LoadPageAsync (весь путь страницы)", rounds,
-            () => repo.LoadPageAsync(colId, false, null, 0, PageSize, null, null).GetAwaiter().GetResult(),
-            d => $"{d.Records.Count} записей, {d.Values.Values.Sum(v => v.Count):N0} значений");
+        Row($"LoadPageAsync (весь путь страницы, все поля)", rounds,
+            () => repo.LoadPageAsync(colId, r => new ConstructorRepository.RecordPage(r.GetRecordsPageAfter(colId, null, null, PageSize)), null)
+                      .GetAwaiter().GetResult(),
+            d => $"{d.Page.Records.Count} записей, {d.Values.Values.Sum(v => v.Count):N0} значений");
+
+        // Окно колонок (этап 1 drawn-grid.md): значения только первых 20 полей страницы.
+        var window = fields.Take(20).Select(f => f.Id!.Value).ToList();
+        Row($"LoadPageAsync (окно {window.Count} колонок)", rounds,
+            () => repo.LoadPageAsync(colId, r => new ConstructorRepository.RecordPage(r.GetRecordsPageAfter(colId, null, null, PageSize)), window)
+                      .GetAwaiter().GetResult(),
+            d => $"{d.Page.Records.Count} записей, {d.Values.Values.Sum(v => v.Count):N0} значений");
 
         // Сборка строк вида (без UI-дерева): ровно то, что делает VirtualRowList.FillFromData.
         Row($"Сборка {PageSize} TableRowVm из значений страницы", rounds, () =>

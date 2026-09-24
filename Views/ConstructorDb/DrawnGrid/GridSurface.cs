@@ -7,6 +7,7 @@ using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Media.TextFormatting;
 using Avalonia.Threading;
+using SmartBase.Logging;
 using SmartBase.Controls.Behaviors;
 using SmartBase.Controls.Components;
 using SmartBase.Core.Models;
@@ -135,8 +136,10 @@ public sealed class GridSurface : Control
 
         if (_rowsNotify is not null) _rowsNotify.CollectionChanged += OnRowsChanged;
 
+        _lastColumnWindow = (-1, -1);
         ClampOffsets();
         ExtentChanged?.Invoke(this, EventArgs.Empty);
+        UpdateWindow();
         InvalidateVisual();
     }
 
@@ -144,9 +147,58 @@ public sealed class GridSurface : Control
     public void SetColumns(ColumnLayout columns)
     {
         _columns = columns;
+        _lastColumnWindow = (-1, -1);
         ClampOffsets();
         ExtentChanged?.Invoke(this, EventArgs.Empty);
+        UpdateWindow();
         InvalidateVisual();
+    }
+
+    // ── Окно строк и колонок для списка ───────────────────────────────────────
+
+    private (int First, int Last) _lastColumnWindow = (-1, -1);
+
+    // Сообщить списку, что сейчас видно: страницы видимых строк (плюс одна упреждающая в сторону
+    // прокрутки) и поля видимых колонок с запасом в одно окно по обе стороны — чтобы при прокрутке
+    // вбок значения соседних колонок уже лежали в строках, а дочитка шла реже. Зовется на каждом
+    // сдвиге; дешево — арифметика и пара обращений к словарю страниц.
+    private void UpdateWindow()
+    {
+        if (_rows is not VirtualRowList list || _columns.Count == 0) return;
+        var w = ViewportWidth;
+        if (w <= 0 || ViewportHeight <= 0) return;
+        var t0 = GridTimings.Start();
+
+        var (c0, c1) = _columns.VisibleRange(_offsetX, w);
+        var span = Math.Max(1, c1 - c0 + 1);
+        var from = Math.Max(0, c0 - span);
+        var to   = Math.Min(_columns.Count - 1, c1 + span);
+        if ((from, to) != _lastColumnWindow)
+        {
+            _lastColumnWindow = (from, to);
+            var fields = new List<int>(to - from + 1);
+            for (var c = from; c <= to; c++)
+                if (_columns[c].Tag is int fid) fields.Add(fid);
+            list.SetFieldWindow(fields);
+        }
+
+        var (r0, r1) = VisibleRows();
+        if (r1 >= r0) list.EnsureRange(r0, r1);
+        GridTimings.Stop(t0, "окно строк и колонок (UI)");
+    }
+
+    /// <summary>Все видимые ячейки с данными: строки заполнены и значения видимых колонок дочитаны
+    /// (для стендов: «кадр с данными» после прокрутки вбок).</summary>
+    public bool VisibleCellsLoaded()
+    {
+        if (!VisibleRowsLoaded()) return false;
+        if (_rows is not VirtualRowList list || ViewportWidth <= 0) return true;
+        var (c0, c1) = _columns.VisibleRange(_offsetX, ViewportWidth);
+        var (r0, r1) = VisibleRows();
+        for (var r = r0; r <= r1; r++)
+            for (var c = c0; c <= c1; c++)
+                if (_columns[c].Tag is int fid && !list.IsCellLoaded(r, fid)) return false;
+        return true;
     }
 
     /// <summary>Строки, попадающие в окно при текущей прокрутке (включая частично видимые).</summary>
@@ -182,6 +234,7 @@ public sealed class GridSurface : Control
         _offsetX = x;
         _offsetY = y;
         OffsetChanged?.Invoke(this, EventArgs.Empty);
+        UpdateWindow();
         InvalidateVisual();
     }
 
@@ -202,6 +255,7 @@ public sealed class GridSurface : Control
         base.OnSizeChanged(e);
         ClampOffsets();
         ExtentChanged?.Invoke(this, EventArgs.Empty);
+        UpdateWindow();
         InvalidateVisual();
     }
 
@@ -222,6 +276,7 @@ public sealed class GridSurface : Control
     {
         ClampOffsets();
         ExtentChanged?.Invoke(this, EventArgs.Empty);
+        UpdateWindow();
         RequestInvalidate();
     }
 
@@ -331,28 +386,34 @@ public sealed class GridSurface : Control
 
             // Тело таблицы — под шапкой.
             var body = new Rect(0, headH, w, Math.Max(0, h - headH));
+            var tRows = 0.0;
             using (ctx.PushClip(body))
             {
                 for (var r = r0; r <= r1; r++)
                 {
+                    var tr  = GridTimings.Start();
                     var row = _rows[r];
+                    GridTimings.Stop(tr, "рисование: строка из списка");
                     _visibleNow.Add(row);
 
                     var y        = headH + r * rowH - _offsetY;
                     var rowStyle = row.IsAddRow || row.IsLoading ? RowStyle.None : _rowStyle(row.RecordId);
 
+                    var tc = GridTimings.Start();
                     for (var c = c0; c <= c1; c++)
                     {
                         var cell = new Rect(_columns.Left(c) - _offsetX, y, _columns.Width(c), rowH);
                         DrawCell(ctx, row, _columns[c], cell, rowStyle);
                         cells++;
                     }
+                    if (tc != 0) tRows += Stopwatch.GetElapsedTime(tc).TotalMilliseconds;
 
                     // Нижняя линия строки — внутри строки, как PART_BottomGridLine.
                     var ly = Snap(y + rowH - t, scale) + t / 2;
                     ctx.DrawLine(_separator, new Point(0, ly), new Point(w, ly));
                 }
             }
+            GridTimings.Record("рисование: ячейки тела", tRows, $"ячеек {cells}");
 
             // Вертикальные линии — у правой границы каждой колонки, сквозь шапку и тело.
             for (var c = c0; c <= c1; c++)
@@ -361,12 +422,17 @@ public sealed class GridSurface : Control
                 ctx.DrawLine(_separator, new Point(lx, 0), new Point(lx, h));
             }
 
+            var th = GridTimings.Start();
             DrawHeader(ctx, c0, c1, w, headH, scale);
+            GridTimings.Stop(th, "рисование: шапка");
         }
 
+        var ts = GridTimings.Start();
         SyncWatched();
+        GridTimings.Stop(ts, "рисование: подписки строк");
         LastCellsDrawn = cells;
         LastRender     = sw.Elapsed;
+        GridTimings.Record("рисование кадра (UI)", LastRender.TotalMilliseconds, $"ячеек {cells}");
     }
 
     private static double Snap(double v, double scale) => Math.Round(v * scale) / scale;

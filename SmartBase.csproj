@@ -274,4 +274,11 @@
     <EmbeddedResource Remove="packages\**" />
   </ItemGroup>
 
+  <!-- Внутренние типы (виртуальный список строк таблицы, разбиение страниц) видны тестам и стендам. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="SmartBase.Tests.Unit" />
+    <InternalsVisibleTo Include="SmartBase.Tests.Integration" />
+    <InternalsVisibleTo Include="SmartBase.Tests.GridProto" />
+  </ItemGroup>
+
 </Project>

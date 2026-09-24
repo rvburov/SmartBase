@@ -251,11 +251,12 @@ public sealed class CellRangeWriteTests
         Assert.Equal("b", repo.GetFieldValues(records[^1].Id!.Value)[f2]);
 
         var none  = System.Threading.CancellationToken.None;
-        var first = await repo.ReadCellRowsAsync(colId, excludeHidden: false, idSlice: null, skip: 0, take: 2_000,
-                                                 afterPos: null, afterId: null, fieldIds: [f2], none);
+        var first = await repo.ReadCellRowsAsync(colId,
+                        r => new ConstructorRepository.RecordPage(r.GetRecordsPage(colId, 0, 2_000)), fieldIds: [f2], none);
         var last  = first[^1];
-        var rest  = await repo.ReadCellRowsAsync(colId, excludeHidden: false, idSlice: null, skip: 0, take: 2_000,
-                                                 afterPos: last.Position, afterId: last.RecordId, fieldIds: [f2], none);
+        var rest  = await repo.ReadCellRowsAsync(colId,
+                        r => new ConstructorRepository.RecordPage(r.GetRecordsPageAfter(colId, last.Position, last.RecordId, 2_000)),
+                        fieldIds: [f2], none);
 
         Assert.Equal(2_000, first.Count);
         Assert.Equal(3_002, first.Concat(rest).Select(r => r.RecordId).Distinct().Count());

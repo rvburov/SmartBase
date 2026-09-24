@@ -3417,26 +3417,51 @@ public partial class ConstructorRepository(AppDbContext db)
     }
 
     /// <summary>Асинхронная версия <see cref="CountRecords"/> на ОТДЕЛЬНОМ подключении — для
-    /// подсчета перед массовыми операциями сайдбара без фриза UI (COUNT на 10 млн — сотни мс).</summary>
-    public Task<int> CountRecordsAsync(int collectionId) =>
+    /// подсчета перед массовыми операциями сайдбара и уточнения протяженности таблицы без фриза
+    /// UI (COUNT на 9 млн — 0,7–1,3 с, со скрытыми записями — 3 с).</summary>
+    public Task<int> CountRecordsAsync(int collectionId, bool excludeHidden = false) =>
         Task.Run(() =>
         {
+            using var slow = Logging.Diag.Measure("счет записей коллекции", Logging.Diag.UiQuery,
+                                                  $"{DbErrors.Display(db.DbPath)}, коллекция {collectionId}");
             using var ctx = new AppDbContext(db.DbPath);
             ctx.ApplyPerformancePragmas();
-            return new ConstructorRepository(ctx).CountRecords(collectionId);
+            return new ConstructorRepository(ctx).CountRecords(collectionId, excludeHidden);
         });
 
     // excludeHidden=true исключает записи, скрытые в окне «Отображение записей»
     // (record_display.Visible=false). Фильтр уходит в SQL до Count/Skip/Take, поэтому
     // виртуализация и пагинация таблицы сохраняются (см. VirtualRowList).
     /// <summary>Снимок всего, что таблица читает при открытии коллекции (см. <see cref="CollectionOpenSnapshot"/>),
-    /// на ЭТОМ контексте — для фонового чтения см. <see cref="ReadOpenSnapshotAsync"/>.</summary>
-    public CollectionOpenSnapshot ReadOpenSnapshot(int collectionId)
+    /// на ЭТОМ контексте — для фонового чтения см. <see cref="ReadOpenSnapshotAsync"/>.
+    /// <paramref name="deferCount"/> — вместо точного COUNT (0,7–3 с на 9 млн строк) в снимок идет
+    /// оценка <see cref="EstimateRecordCount"/> с пометкой <see cref="CollectionOpenSnapshot.CountIsEstimate"/>;
+    /// точное число таблица уточняет в фоне (<see cref="CountRecordsAsync"/>), не задерживая первый кадр.</summary>
+    public CollectionOpenSnapshot ReadOpenSnapshot(int collectionId, bool deferCount = false)
     {
         var collection    = GetAllCollections().FirstOrDefault(c => c.Id == collectionId);
         var recordDisplay = GetRecordDisplay(collectionId);
         var anyHidden     = recordDisplay.Any(kv => !kv.Value.Visible);
-        var count         = CountRecords(collectionId);
+        if (deferCount)
+        {
+            var estimate = EstimateRecordCount(collectionId);
+            return new CollectionOpenSnapshot(
+                collection,
+                GetUiSettings(collectionId),
+                GetFields(collectionId),
+                GetSystemFieldNames(collectionId),
+                GetColumnOrder(collectionId),
+                GetColumnDisplay(collectionId),
+                GetColumnStyles(collectionId),
+                GetColumnWidths(collectionId),
+                recordDisplay,
+                GetRowHeights(collectionId),
+                GetRowStyles(collectionId),
+                estimate,
+                estimate,
+                CountIsEstimate: true);
+        }
+        var count = CountRecords(collectionId);
         return new CollectionOpenSnapshot(
             collection,
             GetUiSettings(collectionId),
@@ -3455,12 +3480,12 @@ public partial class ConstructorRepository(AppDbContext db)
 
     /// <summary>То же в фоне на собственном контексте (общий контекст не потокобезопасен): UI-поток
     /// ждет один await вместо десятка обращений к файлу — на медленной сетевой папке это секунды.</summary>
-    public Task<CollectionOpenSnapshot> ReadOpenSnapshotAsync(int collectionId) =>
+    public Task<CollectionOpenSnapshot> ReadOpenSnapshotAsync(int collectionId, bool deferCount = false) =>
         Task.Run(() =>
         {
             using var ctx = new AppDbContext(db.DbPath);
             ctx.ApplyPerformancePragmas();
-            return new ConstructorRepository(ctx).ReadOpenSnapshot(collectionId);
+            return new ConstructorRepository(ctx).ReadOpenSnapshot(collectionId, deferCount);
         });
 
     public int CountRecords(int collectionId, bool excludeHidden = false) =>
@@ -3495,18 +3520,24 @@ public partial class ConstructorRepository(AppDbContext db)
 
     /// <summary>Страница по offset (прыжок скроллбаром). Смещение идет по ПОКРЫВАЮЩЕМУ индексу
     /// (CollectionId, Position): подзапрос отбирает только Id — пропускаемые записи не читаются
-    /// из таблицы, join достает колонки лишь для строк страницы (~9 млн глубины: 190 мс вместо
-    /// сотен и секунды холодным).</summary>
-    public List<DbRecord> GetRecordsPage(int collectionId, int skip, int take, bool excludeHidden = false)
+    /// из таблицы, join достает колонки лишь для строк страницы. При известном числе записей
+    /// <paramref name="total"/> смещение идет с БЛИЖНЕГО края: прыжок в конец 9 млн строк — 1,5 мс
+    /// вместо 600–750 (скан индекса до глубины); середина в любом случае ~300 мс.</summary>
+    public List<DbRecord> GetRecordsPage(int collectionId, int skip, int take, bool excludeHidden = false, int? total = null)
     {
         if (take <= 0) return [];
+        var fromEnd = total is int n && skip > n / 2;
+        var offset  = fromEnd ? Math.Max(0, total!.Value - skip - take) : skip;
+        var limit   = fromEnd ? Math.Min(take, Math.Max(0, total!.Value - skip)) : take;
+        if (limit <= 0) return [];
+        var order   = fromEnd ? "i.Position DESC, i.Id DESC" : "i.Position, i.Id";
         return ReadRecordRows($@"SELECT {RecordCols}
                                  FROM db_records r
                                  JOIN (SELECT i.Id FROM db_records i
                                        WHERE i.CollectionId = @c{HiddenFilter(excludeHidden, "i")}
-                                       ORDER BY i.Position, i.Id LIMIT @take OFFSET @skip) page ON page.Id = r.Id
+                                       ORDER BY {order} LIMIT @take OFFSET @skip) page ON page.Id = r.Id
                                  ORDER BY r.Position, r.Id",
-                              ("@c", collectionId), ("@take", take), ("@skip", skip));
+                              ("@c", collectionId), ("@take", limit), ("@skip", offset));
     }
 
     /// <summary>
@@ -3561,22 +3592,7 @@ public partial class ConstructorRepository(AppDbContext db)
             foreach (var (name, value) in args)
                 AddParam(cmd, name).Value = value;
             using var rdr = cmd.ExecuteReader();
-            while (rdr.Read())
-                result.Add(new DbRecord
-                {
-                    Id           = rdr.GetInt32(0),
-                    CollectionId = rdr.GetInt32(1),
-                    CreatedAt    = rdr.IsDBNull(2) ? null : rdr.GetString(2),
-                    Position     = rdr.GetInt32(3),
-                    StartDt      = rdr.IsDBNull(4) ? null : rdr.GetString(4),
-                    EndDt        = rdr.IsDBNull(5) ? null : rdr.GetString(5),
-                    AllDay       = rdr.GetInt32(6) != 0,
-                    Title        = rdr.IsDBNull(7) ? "" : rdr.GetString(7),
-                    UpdatedAt    = rdr.IsDBNull(8)  ? null : rdr.GetString(8),
-                    CreatedBy    = rdr.IsDBNull(9)  ? null : rdr.GetString(9),
-                    UpdatedBy    = rdr.IsDBNull(10) ? null : rdr.GetString(10),
-                    Color        = rdr.IsDBNull(11) ? null : rdr.GetString(11),
-                });
+            while (rdr.Read()) result.Add(ReadRecord(rdr));
         }
         finally { if (opened) conn.Close(); }
         return result;
@@ -4797,40 +4813,8 @@ public partial class ConstructorRepository(AppDbContext db)
         return result;
     }
 
-    /// <summary>
-    /// Асинхронно (на фоновом потоке, отдельное read-only подключение) грузит страницу записей
-    /// и их значения. Нужно виртуализации таблицы, чтобы подгрузка строк при скролле НЕ блокировала
-    /// UI-поток (ноль микроподвисаний даже при экстремально быстром скролле). WAL → фоновое чтение
-    /// не конфликтует с основным контекстом. Режим выбирается параметрами: idSlice (фильтр/сортировка),
-    /// иначе keyset вперед по (afterPos, afterId), иначе keyset назад по (beforePos, beforeId) —
-    /// скролл вверх, иначе offset по skip (прыжок скроллбаром).
-    /// </summary>
-    /// <summary>Страница таблицы одним фоновым чтением: записи (со своим цветом в DbRecord.Color),
-    /// значения ячеек и оформление ячеек этой страницы. Цвета ячеек берутся тем же батчем, что и
-    /// значения — на пустой cell_style это один индексный промах, а не запрос на строку.</summary>
-    public Task<(List<DbRecord> Records, Dictionary<int, Dictionary<int, string>> Values,
-                 Dictionary<int, Dictionary<string, RowStyle>> CellStyles)> LoadPageAsync(
-        int collectionId, bool excludeHidden, IReadOnlyList<int>? idSlice,
-        int skip, int take, int? afterPos, int? afterId, int? beforePos = null, int? beforeId = null) =>
-        Task.Run(() =>
-        {
-            using var ctx = new AppDbContext(db.DbPath);
-            ctx.ApplyPerformancePragmas();
-            var repo = new ConstructorRepository(ctx);
-
-            var records = idSlice is not null
-                ? repo.GetRecordsByIdsOrdered(idSlice)
-                : afterPos is int p && afterId is int aid
-                    ? repo.GetRecordsPageAfter(collectionId, p, aid, take, excludeHidden)
-                    : beforePos is int bp && beforeId is int bid
-                        ? repo.GetRecordsPageBefore(collectionId, bp, bid, take, excludeHidden)
-                        : repo.GetRecordsPage(collectionId, skip, take, excludeHidden);
-
-            var ids    = records.Select(r => r.Id!.Value).ToList();
-            var values = repo.GetFieldValuesBatch(ids);
-            var cells  = repo.GetCellStylesBatch(collectionId, ids);
-            return (records, values, cells);
-        });
+    // Фоновая страница таблицы (записи + значения окна колонок + оформление ячеек) —
+    // LoadPageAsync в ConstructorRepository.GridPages.cs.
 
     // ── Фильтр колонок (Excel-стиль): уникальные значения с количеством ───────
     //
@@ -5059,33 +5043,17 @@ public partial class ConstructorRepository(AppDbContext db)
         // репозитории — только отсюда), а фон читает Title целей по этим путям СВЕЖИМИ изолированными
         // подключениями — общий контекст чужой базы не трогаем (см. правило об общем AppDbContext).
         // Связью может быть и считаемая колонка, и любая из фильтрующих (каскад резолвит их цели тем же путем).
-        Dictionary<int, string>? crossPaths = null;
-        foreach (var k in others.Keys.Append(key))
-            if (int.TryParse(k, out var fid) && IsRelationField(fid))
-            {
-                crossPaths ??= new();
-                foreach (var (dbId, path) in CrossDbPathsForField(collectionId, fid)) crossPaths[dbId] = path;
-            }
+        // Для поля-связи crossPaths НЕ null (даже пустой): резолвер отдается всегда, чтобы дефолт
+        // RelationTitlesBySource (RelationDbResolver.RepoFor → общий контекст чужой базы) НИКОГДА не
+        // выполнялся из фона. Путь не снят на UI → dbId нет в карте → null → «(база недоступна)».
+        var crossPaths = CrossDbPathsForKeys(collectionId, others.Keys.Append(key));
 
         return Task.Run(() =>
         {
             using var ctx = new AppDbContext(db.DbPath);
             ctx.ApplyPerformancePragmas();
             var repo = new ConstructorRepository(ctx);
-            // Для поля-связи crossPaths НЕ null (даже пустой): всегда отдаем этот резолвер, чтобы
-            // дефолт RelationTitlesBySource (RelationDbResolver.RepoFor → общий контекст чужой базы)
-            // НИКОГДА не выполнялся из фона. Путь не снят на UI → dbId нет в карте → null →
-            // «(база недоступна)», как в ячейке при недоступной базе (реестр из фона не трогаем).
-            Func<int, IReadOnlyList<int>, Dictionary<int, string>?>? resolveForeign =
-                crossPaths is null ? null
-                : (dbId, ids) =>
-                {
-                    if (!crossPaths.TryGetValue(dbId, out var path)) return null;
-                    using var fctx = new AppDbContext(path);
-                    fctx.ApplyPerformancePragmas();
-                    return new ConstructorRepository(fctx).GetRecordTitles(ids);
-                };
-            return repo.GetColumnCounts(collectionId, key, others, excludeHidden, resolveForeign);
+            return repo.GetColumnCounts(collectionId, key, others, excludeHidden, ForeignResolver(crossPaths));
         });
     }
 

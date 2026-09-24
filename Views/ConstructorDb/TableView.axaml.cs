@@ -4442,32 +4442,9 @@ public partial class TableView : UserControl
         RecordsGrid.ItemsSource = new VirtualCollectionView(filteredRows);
     }
 
-    private static Func<string, string, int> BuildComparer(string fieldType, bool asc)
-    {
-        int Core(string a, string b) => fieldType switch
-        {
-            "number" => ParseNum(a).CompareTo(ParseNum(b)),
-            "date"   => ParseDate(a).CompareTo(ParseDate(b)),
-            _        => string.Compare(a, b, StringComparison.CurrentCultureIgnoreCase),
-        };
-
-        return (a, b) =>
-        {
-            // Пустые значения всегда в конце, независимо от направления.
-            var aEmpty = string.IsNullOrEmpty(a);
-            var bEmpty = string.IsNullOrEmpty(b);
-            if (aEmpty || bEmpty) return aEmpty == bEmpty ? 0 : (aEmpty ? 1 : -1);
-            var r = Core(a, b);
-            return asc ? r : -r;
-        };
-    }
-
-    private static double ParseNum(string s) =>
-        double.TryParse(s.Replace(',', '.'), NumberStyles.Any, CultureInfo.InvariantCulture, out var d)
-            ? d : double.MaxValue;
-
-    private static DateTime ParseDate(string s) =>
-        DateValue.TryParse(s, out var dv) ? dv.Start : DateTime.MaxValue;
+    // Компаратор значений колонки (пустые всегда в конце) — общий с фоновой сортировкой, см. ColumnSort.
+    private static Func<string, string, int> BuildComparer(string fieldType, bool asc) =>
+        ColumnSort.BuildComparer(fieldType, asc);
 
     // ── Ширины колонок ─────────────────────────────────────────────────────────
     //
