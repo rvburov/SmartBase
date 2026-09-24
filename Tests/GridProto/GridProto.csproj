@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Стенд этапа 0 плана drawn-grid.md: прототип рисованной сетки на настоящих данных.
+       Меряет открытие, шаги прокрутки по обеим осям, прыжок в конец и память; сохраняет кадры
+       в PNG для сравнения с нынешней таблицей. Настоящий шрифт (Skia), не входит в автотесты. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>SmartBase.Tests.GridProto</RootNamespace>
+    <AssemblyName>SmartBase.Tests.GridProto</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Headless" Version="11.2.3" />
+    <ProjectReference Include="..\..\SmartBase.csproj" />
+  </ItemGroup>
+
+</Project>

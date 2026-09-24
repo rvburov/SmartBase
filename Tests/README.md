@@ -17,6 +17,7 @@
 | `EditGeometry` | текст не смещается при переходе в правку | `dotnet run --project Tests/EditGeometry -f net10.0` |
 | `PopupGeometry` | зазор и выравнивание краев выпадающих панелей | `dotnet run --project Tests/PopupGeometry -f net10.0` |
 | `DocReader` | панель чтения документа: загрузка разметки, строки, подсветка | `dotnet run --project Tests/DocReader -f net10.0` |
+| `GridProto` | рисованная сетка таблицы на настоящей базе: открытие, шаги прокрутки, прыжок, память, кадры в PNG | `dotnet run -c Release --project Tests/GridProto -- --db PATH [--old] [--probe]` |
 
 `MarkupLayout` стоит отдельно от `Unit`, потому что ему нужен `Avalonia.Headless`, а `Unit`
 объявлен без внешних зависимостей. Проверяет то, чего не видно без раскладки: что абзац не теряет
