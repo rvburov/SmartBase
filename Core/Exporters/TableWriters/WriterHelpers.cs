@@ -17,7 +17,7 @@ public static class WriterHelpers
                && double.IsFinite(value);
     }
 
-    /// <summary>Truthy-значения поля «checkbox» — как FieldDisplayConverter таблицы.</summary>
+    /// <summary>Truthy-значения поля «checkbox» — как показ галочки в таблице (CellDisplayText).</summary>
     public static bool IsChecked(string raw) => raw is "1" or "true" or "True";
 
     /// <summary>Дата для текстовых форматов (CSV/строковая ячейка Excel):

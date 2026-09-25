@@ -493,22 +493,8 @@ public partial class TableView
         TopLevel.GetTopLevel(this)?.PlatformSettings?.HotkeyConfiguration.CommandModifiers ?? KeyModifiers.Control;
 
     // ── Меню самой ячейки ─────────────────────────────────────────────────────
-
-    // Меню ячейки вешаем на саму ячейку в момент правого клика: контекстное меню открывается на
-    // ОТПУСКАНИИ кнопки, так что к этому моменту оно уже на месте, а запрос всплывает от ячейки
-    // и до строки не доходит — меню записи поверх не появляется.
     //
-    // Меню носит ровно одна ячейка: у прежней снимаем. Иначе переиспользованная при прокрутке
-    // ячейка открывала бы меню, собранное для чужой записи и чужого столбца.
-    private DataGridCell? _cellMenuHost;
-
-    private void ShowCellMenuOn(DataGridCell cell, TableRowVm row, TableColumnDef def)
-    {
-        if (_cellMenuHost is { } prev && !ReferenceEquals(prev, cell)) prev.ContextMenu = null;
-
-        _cellMenuHost    = cell;
-        cell.ContextMenu = BuildCellContextMenu(row, def);
-    }
+    // Строится на правом нажатии по ячейке и открывается у указателя (OpenMenu в GridInput).
 
     /// <summary>
     /// Меню ячейки: только то, что относится к значениям и их виду, — про саму запись есть свое

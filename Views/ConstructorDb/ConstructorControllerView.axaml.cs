@@ -166,7 +166,7 @@ public partial class ConstructorControllerView : UserControl
         FooterConstructor.IsVisible = !empty;
         NavbarConstructor.ShowCollectionControls(!empty);
 
-        // Скрываем таблицу/список, чтобы пустая шапка DataGrid не висела серой полосой
+        // Скрываем таблицу/список, чтобы пустая шапка таблицы не висела серой полосой
         // под навбаром. При выборе коллекции SwitchView вернет нужную видимость.
         if (empty)
         {
@@ -214,9 +214,9 @@ public partial class ConstructorControllerView : UserControl
         using (SmartBase.Logging.Diag.Measure("чтение коллекции", SmartBase.Logging.Diag.UiOpen,
                                               $"{SmartBase.Utils.DbErrors.Display(repository.DbPath)}, коллекция {collectionId}"))
         {
-            // Рисованная сетка (переключатель разработчика) не ждет COUNT: число записей она уточнит в
-            // фоне после первого кадра (drawn-grid.md, этап 1).
-            try { snapshot = await repository.ReadOpenSnapshotAsync(collectionId, deferCount: DrawnGrid.DrawnGridSwitch.Enabled); }
+            // Таблица не ждет COUNT: число записей сетка уточнит в фоне после первого кадра
+            // (drawn-grid.md, этап 1).
+            try { snapshot = await repository.ReadOpenSnapshotAsync(collectionId, deferCount: true); }
             catch (Exception ex) { SmartBase.Utils.DbErrors.HandleRead(ex, repository.DbPath); }
         }
 

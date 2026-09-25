@@ -12,7 +12,7 @@
              локальные копии тем DataGrid и переопределение кистей линий на BrushSeparator.
              Подробные комментарии по линиям/округлению — в TableView.axaml. -->
         <ResourceDictionary.MergedDictionaries>
-            <ResourceInclude Source="avares://SmartBase/Views/ConstructorDb/TableViewDataGridThemes.axaml" />
+            <ResourceInclude Source="avares://SmartBase/Assets/Styles/DataGridThemes.axaml" />
         </ResourceDictionary.MergedDictionaries>
         <SolidColorBrush x:Key="DataGridGridLinesBrush"             Color="{StaticResource ColorSeparator}" />
         <SolidColorBrush x:Key="DataGridFillerColumnGridLinesBrush" Color="{StaticResource ColorSeparator}" />
@@ -108,8 +108,8 @@
             <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
         </Style>
 
-        <!-- Стили DataGrid таблицы «Диагностики» — копии стилей TableView.axaml (там же
-             объяснено, почему линии/шапка устроены именно так). -->
+        <!-- Стили DataGrid таблицы «Диагностики»: линии сетки динамической толщины и шапка без
+             своего фона — почему так, объяснено в паспорте копий тем (Assets/Styles/DataGridThemes.axaml). -->
         <Style Selector="DataGridCell">
             <Setter Property="Padding"         Value="0" />
             <Setter Property="BorderThickness" Value="0" />

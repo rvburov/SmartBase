@@ -182,35 +182,20 @@ public partial class TableView
     }
 
     // Контекстное меню с клавиатуры: меню выделенного столбца, если выделены столбцы, иначе
-    // меню строки активной ячейки. Открывается у самой таблицы — под курсором мыши его ставит
-    // сам Avalonia, а с клавиатуры курсора нет.
+    // меню строки активной ячейки (или первой выделенной записи; строка обязана быть загруженной —
+    // id известен), а без того и другого — меню пустого места. Открывается у сетки.
     private bool OpenContextMenuByShortcut()
     {
         if (_selectedColumnKeys.Count > 0 && ColumnMenuFor(_selectedColumnKeys[0]) is { } columnMenu)
         {
-            if (_drawn is not null) OpenDrawnMenu(columnMenu);
-            else columnMenu.Open(this);
+            OpenMenu(columnMenu);
             return true;
         }
 
-        if (_drawn is not null)
-        {
-            // Рисованная сетка: меню строки строится здесь же — для записи активной ячейки, иначе
-            // для первой выделенной записи; строка обязана быть загруженной (id известен).
-            var vm = _cellRange is { } range ? CachedRowAt(range.AnchorRow)
-                   : SelectedRecordIds() is { Count: > 0 } ids ? RowsSource?.FindCachedByRecordId(ids[0])
-                   : null;
-            OpenDrawnMenu(vm is { IsAddRow: false } ? BuildRowContextMenu(() => vm) : BuildGridContextMenu());
-            return true;
-        }
-
-        if (RowUnderSelection() is { ContextMenu: { } rowMenu })
-        {
-            rowMenu.Open(this);
-            return true;
-        }
-
-        BuildGridContextMenu().Open(this);
+        var vm = _cellRange is { } range ? CachedRowAt(range.AnchorRow)
+               : SelectedRecordIds() is { Count: > 0 } ids ? RowsSource?.FindCachedByRecordId(ids[0])
+               : null;
+        OpenMenu(vm is { IsAddRow: false } ? BuildRowContextMenu(() => vm) : BuildGridContextMenu());
         return true;
     }
 
@@ -220,15 +205,4 @@ public partial class TableView
         _colDefs.FirstOrDefault(d => d.Key == key) is { BuildHeaderMenu: { } factory } def
             ? factory(def)
             : null;
-
-    // Строка активной ячейки среди разложенных гридом: у нее уже есть свое меню записи.
-    private DataGridRow? RowUnderSelection()
-    {
-        if (_cellRange is not { } range) return null;
-        if (CachedRowAt(range.AnchorRow) is not { } vm) return null;
-
-        return RecordsGrid.GetVisualDescendants()
-                          .OfType<DataGridRow>()
-                          .FirstOrDefault(r => ReferenceEquals(r.DataContext, vm));
-    }
 }

@@ -10,7 +10,7 @@
     <UserControl.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
-                <ResourceInclude Source="avares://SmartBase/Views/ConstructorDb/TableViewDataGridThemes.axaml" />
+                <ResourceInclude Source="avares://SmartBase/Assets/Styles/DataGridThemes.axaml" />
             </ResourceDictionary.MergedDictionaries>
             <SolidColorBrush x:Key="DataGridGridLinesBrush"             Color="{StaticResource ColorSeparator}" />
             <SolidColorBrush x:Key="DataGridFillerColumnGridLinesBrush" Color="{StaticResource ColorSeparator}" />
@@ -22,8 +22,8 @@
              (Assets/Styles/SettingRows.axaml): панель администратора показывает те же
              строки, что раздел «Интеграции», и вторая копия стилей разошлась бы с первой. -->
 
-        <!-- Стили DataGrid таблицы истории — копии стилей TableView.axaml (там же
-             объяснено, почему линии/шапка устроены именно так). -->
+        <!-- Стили DataGrid таблицы истории: линии сетки динамической толщины и шапка без своего
+             фона — почему так, объяснено в паспорте копий тем (Assets/Styles/DataGridThemes.axaml). -->
         <Style Selector="DataGridCell">
             <Setter Property="Padding"         Value="0" />
             <Setter Property="BorderThickness" Value="0" />

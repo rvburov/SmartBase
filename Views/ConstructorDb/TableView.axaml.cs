@@ -1,37 +1,43 @@
-﻿using System.ComponentModel;
-using Avalonia.Controls.Documents;
 using System.Globalization;
-using System.Reflection;
 using System.Text.Json;
 using Avalonia;
-using Avalonia.Controls;
 using Avalonia.Collections;
+using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
-using Avalonia.Controls.Shapes;
 using Avalonia.Controls.Templates;
 using Avalonia.Data;
-using Avalonia.Diagnostics;
-using Avalonia.Styling;
-using Avalonia.Data.Converters;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.LogicalTree;
 using Avalonia.Media;
+using Avalonia.Styling;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
+using SmartBase.Controls.Behaviors;
+using SmartBase.Controls.Components;
 using SmartBase.Controls.Dialogs;
 using SmartBase.Controls.Widgets;
 using SmartBase.Core.Models;
 using SmartBase.Database.Repositories;
 using SmartBase.Logging;
-using SmartBase.ViewModels.ConstructorDb;
 using SmartBase.Utils;
-using SmartBase.Controls.Behaviors;
-using SmartBase.Controls.Components;
+using SmartBase.ViewModels.ConstructorDb;
+using SmartBase.Views.ConstructorDb.DrawnGrid;
 
 namespace SmartBase.Views.ConstructorDb;
 
+/// <summary>
+/// Таблица коллекции — фасад над рисованной сеткой (<see cref="GridPanel"/>, план drawn-grid.md).
+/// Сетка рисует и раскладывает: шапку, ячейки, линии, цвета, выделение, наведение, полосы, накладной
+/// редактор; данные листает <see cref="VirtualRowList"/>. Здесь — все, что знает о коллекции и о
+/// программе вокруг: определения колонок с меню и хуками, права, фильтр и сортировка (окно фильтра,
+/// память отбора), контекстные меню, операции над записями и свойствами, события наверх. Модель
+/// выделения, буфер обмена, отмена и клавиши — в партиалах <c>CellSelection</c>, <c>CellClipboard</c>,
+/// <c>CellUndo</c>, <c>MenuShortcuts</c>; перевод нажатий и клавиш сетки в ее вызовы и правка ячейки —
+/// в <c>GridInput</c>. Публичный API таблицы (открытие, перезагрузки, прокрутка, выделение записей)
+/// остался прежним — контроллер и панель записи о сетке не знают.
+/// </summary>
 public partial class TableView : UserControl
 {
     // ── Публичные события ─────────────────────────────────────────────────────
@@ -81,22 +87,17 @@ public partial class TableView : UserControl
     public event EventHandler<IReadOnlyList<TableColumnDef>>? ColumnsBuilt;
 
     // ── Константы геометрии ───────────────────────────────────────────────────
-    // MinColWidth — СТАНДАРТНАЯ ширина движимой колонки: минимум авто-режима и ширина
-    // колонки, для которой ручная ширина еще не задана. Ручное перетаскивание опускается
-    // ниже — до MinManualColWidth (иначе «уменьшить столбец» было бы невыполнимо).
-    // Значение задается настройкой раздела (стандарт — прежние 160), поэтому свойство, а
-    // не константа: колонки строятся заново при каждой загрузке коллекции и при смене
-    // настройки, так что читать его на месте достаточно.
+    // MinColWidth — СТАНДАРТНАЯ ширина движимой колонки (настройка раздела, стандарт 160):
+    // колонка без ручной ширины в стандартном режиме не бывает уже нее. Значение читается на
+    // месте — определения колонок строятся заново при каждой загрузке и смене настройки.
     private static int MinColWidth      => ConstructorSettings.ColWidth;
-    private const int MinManualColWidth = 48;
-    private const int NumColWidth       = 36;
+    private const int NumColWidth       = 36;   // ширину «№» под число записей меряет сама сетка
     private const int PlusColWidth      = 36;
 
-    // Боковой отступ содержимого ячейки — ОДИН на показ и на правку. Показ ставит его
-    // Margin'ом надписи, правка — Padding'ом редактора; разойдись эти два числа, и текст
-    // прыгал бы вбок при входе в правку (редактор без Padding берет общий стандарт полей
-    // формы 10px, а надпись стояла на 6px). Правый отступ у списков больше: там за ним
-    // шеврон.
+    // Боковой отступ содержимого ячейки — ОДИН на показ и на правку. Показ рисует сетка с этим
+    // отступом, правка ставит его Padding'ом редактора; разойдись эти два числа, и текст прыгал бы
+    // вбок при входе в правку (редактор без Padding берет общий стандарт полей формы 10px).
+    // Правый отступ у списков больше: там за ним шеврон.
     private const double CellContentPad = 6;
     private const double CellDropdownPadRight = 8;
     private static readonly Thickness CellContentMargin  = new(CellContentPad, 0, CellContentPad, 0);
@@ -107,38 +108,18 @@ public partial class TableView : UserControl
     private int  _collectionId;
     private bool _manualColResize;
     private bool _manualRowResize;
-    private bool _snapPending;
     private List<DbField>        _fields  = [];
     // Снимок открытия коллекции, прочитанный в фоне (см. Load с snapshot): пока он есть,
-    // LoadColumnState/ReloadRows берут данные из него, а не ходят в базу с UI-потока.
+    // LoadColumnState берет данные из него, а не ходит в базу с UI-потока.
     private CollectionOpenSnapshot? _snapshot;
     private List<TableColumnDef> _colDefs = [];
-    private VirtualRowList?      _virtualRows;
-    // ВИДИМЫЙ список строк: = _virtualRows без фильтра/сортировки, = временный filteredRows при них.
-    // Точечные обновления (RefreshRecordRow) адресуем ему — иначе в фильтр-режиме они били бы по
-    // скрытому _virtualRows и не доходили до видимых строк.
-    private VirtualRowList?      _activeRows;
-    // Кеш связей-relation таблицы: батч видимой страницы вместо N точечных GetLinks. Общий для
-    // виртуального списка (пишет при наполнении страниц) и ячеек-связей (читают). Чистится при смене
-    // источника строк (ReloadRows/фильтр). Стабильный экземпляр — шаблоны ячеек ссылаются на него.
-    private readonly RelationLinksCache _relLinks = new();
-    // Виртуализирующая обертка над _virtualRows: кладется в ItemsSource — DataGrid берет ее
-    // как IDataGridCollectionView без материализации и тянет только видимые строки.
-    // Виртуализация всегда включена (часть программы), переключателя нет.
-    private VirtualCollectionView? _virtualView;
-    // Источник по умолчанию для грида (без активного фильтра/сортировки).
-    private System.Collections.IEnumerable? DefaultItemsSource =>
-        (System.Collections.IEnumerable?)_virtualView ?? _virtualRows;
     // Пользовательские подписи системных колонок: ключ → отображаемое имя.
     private Dictionary<string, string> _systemNames = [];
     // Сохраненный порядок колонок: ключ → позиция (пусто, если еще не двигали).
     private Dictionary<string, int> _columnOrder = [];
     // Скрытые колонки (окно «Отображение»): ключ есть в множестве ⇒ колонка скрыта.
-    // Колонки из _colDefs не удаляются (порядок/перемещение целы) — гасим через IsVisible.
+    // Колонки из _colDefs не удаляются (порядок/перемещение целы) — в раскладке сетки их просто нет.
     private HashSet<string> _hiddenColumns = [];
-    // Скрытые записи (окно «Отображение записей»): id есть в множестве ⇒ строка скрыта.
-    // Применяется на уровне SQL (excludeHidden в запросах страницы/фильтра), виртуализация цела.
-    private HashSet<int> _hiddenRecords = [];
     // Выделенные по клику в заголовок колонки (голубая заливка ячеек — как у выделенной
     // записи). Пусто — нет выделения. Обычный клик — одна колонка; Shift+клик — toggle.
     private readonly List<string> _selectedColumnKeys = [];
@@ -146,61 +127,16 @@ public partial class TableView : UserControl
     // ── Фильтр/сортировка колонок (чеклист значений) ───────────────────────────────
     // key колонки → набор разрешенных значений; null-наличие ключа = фильтра нет.
     private readonly Dictionary<string, HashSet<string>> _filters = [];
-    // Шевроны шапки: ключ колонки → Path, чтобы подсвечивать активный фильтр.
-    private readonly Dictionary<string, Avalonia.Controls.Shapes.Path> _chevronPaths = [];
     private string? _sortKey;
     private bool    _sortAsc = true;
 
-    // ── Цвет строк, ячеек и текста ────────────────────────────────────────────
-    // Локальное оформление ЭТОЙ коллекции: recordId → стиль строки, ключ колонки → стиль
-    // колонки. Обе таблицы разрежены (строка только у покрашенного), поэтому читаются
-    // целиком при загрузке — как высоты строк. Оформление ячеек живет в самих строках
-    // (TableRowVm.CellStyles): оно приезжает постранично вместе с данными.
-    private Dictionary<int, RowStyle>    _rowStyles    = [];
+    // Оформление колонок ЭТОЙ коллекции (ключ колонки → стиль) — читается вместе с состоянием
+    // колонок и отдается сетке; оформление строк и ячеек живет в ней и в самих строках.
     private Dictionary<string, RowStyle> _columnStyles = [];
 
-    // ── Ручная высота строк ───────────────────────────────────────────────────
-    // recordId → высота строки (px). Применяется в OnLoadingRow при ручном режиме;
-    // в стандартном режиме пусто (высоты сбрасываются при выключении режима).
-    private Dictionary<int, int> _rowHeights = [];
-
-    private static readonly Cursor RowResizeCursor = new(StandardCursorType.SizeNorthSouth);
-    private const double RowGripThickness = 8;     // высота прозрачной полоски-захвата
-    private const double RowHeightMax     = 600;
-    private bool   _rowHandlesPending;             // отложенная перестройка полосок
-    // Состояние перетаскивания нижней границы строки (одно за раз).
-    private bool   _isResizingRow;
-    private DataGridRow? _resizeRow;
-    private int    _resizeRecordId;
-    private double _resizeStartPointerY;           // в координатах RowResizeLayer
-    private double _resizeStartBottomY;            // нижняя граница строки на старте
-    private double _resizeStartHeight;
-
-    // ── Ручная ширина колонок ─────────────────────────────────────────────────
-    // ключ колонки → ширина (DIP). МОДЕЛЬ, а не снимок раскладки: меняется только жестом
-    // пользователя, ресайз окна ее не трогает — поэтому «развернул окно и свернул обратно»
-    // возвращает ту же картинку. Пусто = ручных ширин нет (колонки делят ширину поровну).
+    // Ручные ширины колонок: ключ → ширина (DIP). Читаются вместе с состоянием колонок и отдаются
+    // сетке; сама модель живет в ней (жест меняет ее и сохраняет один раз на отпускание).
     private Dictionary<string, double> _colWidths = [];
-    // Построенные ячейки шапки (ключ → контрол): от них поднимаемся к DataGridColumnHeader,
-    // чтобы узнать положение правой границы колонки. OwningColumn у заголовка internal.
-    private readonly Dictionary<string, Control> _headerHosts = [];
-
-    private static readonly Cursor ColResizeCursor = new(StandardCursorType.SizeWestEast);
-    private const double ColGripThickness = 8;     // ширина прозрачной полоски-захвата
-    private bool _colHandlesPending;               // отложенная перестройка полосок
-    // Состояние перетаскивания правой границы колонки (одно за раз).
-    private bool    _isResizingCol;
-    private string? _resizeColKey;
-    private double  _resizeStartX;                 // в координатах ColResizeLayer
-    private double  _resizeStartWidth;
-    private double  _resizeStartHOffset;           // гориз. прокрутка на старте жеста
-    private double  _resizeStartGripLeft;          // позиция полоски на старте жеста
-    private double  _resizeFill;                   // ширина, при которой таблица ровно заполнена
-    private Dictionary<string, double> _resizeBase = [];   // снимок модели на старте жеста
-    private List<(string Key, double X, double Top, double H)> _lastColGrips = [];
-    // Презентер шапки: по нему меряем доступную под колонки ширину (у него нет полосы
-    // вертикальной прокрутки, в отличие от самого грида).
-    private DataGridColumnHeadersPresenter? _headersPresenter;
 
     public TableView()
     {
@@ -209,119 +145,34 @@ public partial class TableView : UserControl
         // текстовых полей (например, правой панели открытой записи), иначе Delete будет
         // трактоваться как «удалить символ», а не как удаление выделенных записей.
         Focusable = true;
-        RecordsGrid.CellPointerPressed += OnCellPointerPressed;
-        RecordsGrid.LoadingRow         += OnLoadingRow;
-        // Протягивание выделения мышью. handledEventsToo: кнопки внутри ячеек (галочка, скрепка
-        // «Файла») забирают события указателя себе, а тянуть выделение через них тоже должно.
-        RecordsGrid.AddHandler(PointerMovedEvent,    OnGridPointerMoved,    RoutingStrategies.Bubble, handledEventsToo: true);
-        RecordsGrid.AddHandler(PointerReleasedEvent, OnGridPointerReleased, RoutingStrategies.Bubble, handledEventsToo: true);
-        RecordsGrid.AddHandler(PointerCaptureLostEvent, (_, _) => _dragSelecting = false, RoutingStrategies.Bubble, handledEventsToo: true);
-        // Snap дробных Star-ширин до целочисленных весов — без этого DataGrid
-        // не рисует вертикальные грид-линии в сабпиксельных позициях. Снап сходится
-        // за один шаг (Σ весов = доступная ширина → каждая колонка == вес px).
-        RecordsGrid.LayoutUpdated      += OnGridLayoutUpdated;
-        // Открыт ли редактор ячейки — фоновая синхронизация чужих правок (ChangePoller)
-        // не обновляет строки, пока пользователь печатает, чтобы не затирать ввод.
-        // Заодно точка отказа: без права изменения записей правку отменяем и объясняем
-        // причину (сетка не read-only, иначе двойной клик молчал бы).
-        RecordsGrid.BeginningEdit += (_, e) =>
-        {
-            if (!Can(PermAction.EditRecord))
-            {
-                e.Cancel = true;
-                PermissionNotice.Show(this, PermAction.EditRecord);
-                return;
-            }
-            var cell = e.Row.DataContext is TableRowVm vm
-                ? (vm.RowNumber - 1, RecordsGrid.Columns.IndexOf(e.Column))
-                : ((int, int)?)null;
-            // Правка по мыши — только вторым кликом по ТОЙ ЖЕ ячейке (двойным или медленным) либо
-            // клавишами (Enter, F2 — EditingEventArgs пуст). Штатно грид открывает редактор уже по
-            // ПЕРВОМУ клику в любую ячейку ТЕКУЩЕЙ строки: после правки одной ячейки клик по
-            // соседней, чтобы выделить ее, открывал правку — и Delete стирал букву вместо значений,
-            // а Enter закрывал редактор, которого человек не открывал.
-            if (e.EditingEventArgs is PointerPressedEventArgs { ClickCount: 1 } && cell != _pressPrevCell)
-            {
-                e.Cancel = true;
-                return;
-            }
-            IsCellEditing = true;
-            _editingCell  = cell;
-            // Рамка выделения на время правки НЕ гаснет — она одна на оба состояния и стоит по
-            // границам ячейки (см. RefreshCellSelectionOverlay). Пересчет нужен, потому что
-            // открытие редактора меняет содержимое ячейки и может сдвинуть строки.
-            RefreshCellSelectionOverlay();
-        };
-        // Правка кончилась — строка больше не обязана быть выделенной: возвращаем картинку
-        // «выделена ячейка, а не запись» (при правке она выделена вынужденно, см.
-        // ScheduleRecordSelectionDrop).
-        RecordsGrid.CellEditEnded      += (_, _) =>
-        {
-            IsCellEditing = false;
-            _editingCell  = null;
-            DropEditingBox();
-            RefreshCellSelectionOverlay();
-            ScheduleRecordSelectionDrop();
-        };
-        // Текстовый редактор ячейки известен с PreparingCellForEdit; его значение уходит в базу
-        // ОДИН раз — при коммите правки (Enter, Tab, клик в другую ячейку), а не на каждую букву:
-        // см. BuildEditTemplate и FlushEditingBox. Escape — Cancel, набранное не пишется.
-        RecordsGrid.PreparingCellForEdit += (_, e) =>
-        {
-            var column = RecordsGrid.Columns.IndexOf(e.Column);
-            var def    = column >= 0 && column < _colDefs.Count ? _colDefs[column] : null;
-            _editingBox    = e.EditingElement as TextBox;
-            _editingBoxRow = e.Row.DataContext as TableRowVm;
-            _editingBoxKey = def?.Key;
-            _editingBoxDef = def;
-        };
-        RecordsGrid.CellEditEnding += (_, e) =>
-        {
-            if (e.EditAction == DataGridEditAction.Commit) FlushEditingBox();
-            DropEditingBox();
-        };
-        // Delete по выделенным колонкам. Tunnel — чтобы перехватить раньше, чем
-        // DataGrid обработает клавишу для редактирования/навигации.
+        // Delete по выделенным колонкам и записям, Enter и Tab в правке. Tunnel — раньше редактора.
         AddHandler(KeyDownEvent, OnTableKeyDown, RoutingStrategies.Tunnel);
-        InitDrawnGrid();   // переключатель разработчика (TableView.DrawnGrid.cs)
+        InitGridInput();   // нажатия, протягивание, правка — TableView.GridInput.cs
     }
 
-    /// <summary>Пользователь сейчас редактирует ячейку (открыт cell-editor DataGrid).</summary>
+    /// <summary>Пользователь сейчас редактирует ячейку (открыт накладной редактор).</summary>
     public bool IsCellEditing { get; private set; }
 
-    // Какая именно ячейка сейчас в правке (позиции строки и колонки). Нужна, чтобы отличить
-    // клик ВНУТРИ открытого редактора от клика по другой ячейке — см. OnCellPointerPressed.
+    // Какая именно ячейка сейчас в правке (позиции строки и колонки).
     private (int Row, int Column)? _editingCell;
 
     // Две последние ячейки, по которым нажали левой кнопкой: правка по мыши открывается, только
-    // если ПРЕДЫДУЩИЙ клик пришелся в ту же ячейку (см. BeginningEdit).
+    // если ПРЕДЫДУЩИЙ клик пришелся в ту же ячейку (см. OnGridPressed).
     private (int Row, int Column)? _pressPrevCell;
     private (int Row, int Column)? _pressLastCell;
 
-    /// <summary>
-    /// Забыть открытую правку: источник строк заменили, и редактор умер вместе со старыми
-    /// строками. При подмене <c>ItemsSource</c> грид <c>CellEditEnded</c> НЕ поднимает, поэтому
-    /// без явного сброса <see cref="IsCellEditing"/> остается true навсегда — а тогда рамка
-    /// выделения больше никогда не рисуется и Ctrl+C с Delete молчат.
-    /// </summary>
+    /// <summary>Закрыть открытую правку с записью набранного — перед подменой строк (новый список,
+    /// пересборка колонок): набранное пишется в строку, пока она жива.</summary>
     private void ForgetCellEditing()
     {
-        if (!IsCellEditing) return;
-        if (_drawn is not null) { CommitDrawnEdit(focusGrid: false); return; }
-        FlushEditingBox();   // редактор умирает молча — набранное пишем, а не теряем
-        DropEditingBox();
-        IsCellEditing = false;
-        _editingCell  = null;
-        RefreshCellSelectionOverlay();
+        if (IsCellEditing) CommitEdit(focusGrid: false);
     }
 
     // Открытый текстовый редактор ячейки (текст, ссылка, число, «Название»): сам TextBox, его
     // строка и ключ столбца. В базу значение уходит из FlushEditingBox: при коммите правки, при
-    // уходе фокуса из редактора (человек кликнул в панель записи, а редактор остался открыт — у
-    // шаблонных колонок грид правку при потере фокуса не закрывает) и когда редактор умирает
-    // вместе со строками (ForgetCellEditing). Раньше TextBox был привязан к строке TwoWay, и
-    // каждая буква шла в базу отдельной транзакцией: на сетевой папке — заметная задержка на
-    // нажатие, а каждый коммит еще и будил перечитывание панели записи.
+    // уходе фокуса из редактора (человек кликнул в панель записи, а редактор остался открыт) и
+    // когда редактор снимается вместе со строками (ForgetCellEditing). Каждая буква отдельной
+    // транзакцией шла бы в базу заметной задержкой на сетевой папке и будила бы панель записи.
     private TextBox?        _editingBox;
     private TableRowVm?     _editingBoxRow;
     private string?         _editingBoxKey;
@@ -369,25 +220,18 @@ public partial class TableView : UserControl
     /// в фоновый режим: иначе набранное в редакторе пропало бы вместе с ним.</summary>
     public void CommitCellEdit()
     {
-        if (!IsCellEditing) return;
-        if (_drawn is not null) CommitDrawnEdit(focusGrid: false);
-        else RecordsGrid.CommitEdit();
+        if (IsCellEditing) CommitEdit(focusGrid: false);
     }
 
     // Записать правку, закрыть редактор и вернуть фокус таблице (Enter, Tab): без возврата следующий
     // Ctrl+C или Delete до таблицы не дошел бы — редактор ушел вместе с фокусом.
-    private void CommitEditAndFocusGrid()
-    {
-        if (_drawn is not null) { CommitDrawnEdit(focusGrid: true); return; }
-        RecordsGrid.CommitEdit();
-        RecordsGrid.Focus();
-    }
+    private void CommitEditAndFocusGrid() => CommitEdit(focusGrid: true);
 
     // Окно, на которое навешен обработчик Delete для записей (см. OnTopLevelKeyDown).
     private TopLevel? _keyHookTopLevel;
 
     // Записи удаляем по Delete на уровне окна, а не только когда фокус внутри таблицы:
-    // после выделения строк фокус часто оказывается вне грида (правая панель открытой
+    // после выделения строк фокус часто оказывается вне сетки (правая панель открытой
     // записи и т.п.), и туннельный OnTableKeyDown на TableView клавишу не получает —
     // именно поэтому Delete «не работал». На уровне окна клавиша приходит всегда.
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
@@ -397,17 +241,10 @@ public partial class TableView : UserControl
         _keyHookTopLevel?.AddHandler(KeyDownEvent, OnTopLevelKeyDown, RoutingStrategies.Tunnel);
         _keyHookTopLevel?.AddHandler(KeyUpEvent,   OnTopLevelKeyUp,   RoutingStrategies.Tunnel);
 
-        // Размер шрифта меняется живьем: ячейки строятся с размером из ресурса → пересобрать.
+        // Размер шрифта и стандартная ширина столбцов меняются живьем: сетка перечитывает токены
+        // сама, а раскладку колонок (ширины от стандартной) просит фасад.
         FontScale.Changed += OnFontScaleChanged;
         if (_repository is not null && _renderedFontDelta != FontScale.Delta) Reload();
-
-        // Токены толщины пересчитаны (зум/переезд на монитор с другим DPI): пересадить
-        // границы колонок на новую физическую сетку. Линии заголовков обновляются сами
-        // (GetResourceObservable в WrapHeaderContent), нативные линии — через DynamicResource.
-        LineMetrics.Changed += OnLineMetricsChanged;
-
-        // Настройки раздела меняются живьем: ширина столбцов зашита в построенные колонки,
-        // высота — в реализованные строки, сами они не обновятся.
         ConstructorSettings.Changed += OnConstructorSettingsChanged;
         OnConstructorSettingsChanged();
     }
@@ -418,43 +255,21 @@ public partial class TableView : UserControl
         _keyHookTopLevel?.RemoveHandler(KeyUpEvent,   OnTopLevelKeyUp);
         _keyHookTopLevel = null;
         FontScale.Changed -= OnFontScaleChanged;
-        LineMetrics.Changed -= OnLineMetricsChanged;
         ConstructorSettings.Changed -= OnConstructorSettingsChanged;
         base.OnDetachedFromVisualTree(e);
     }
 
-    // Сверяем ЗНАЧЕНИЯ, а не Stamp (как сайдбар с _renderedRowHeight): событие Changed поднимают
-    // все настройки раздела, а таблицу из них меняют только эти две. Иначе щелчок по тумблеру
-    // «Спрашивать подтверждение при удалении» перестраивал бы таблицу на сотни тысяч записей.
-    // Высота строк доезжает сама токеном RowHeightTable, поэтому пересборка нужна только ради
-    // ширин — уже построенные колонки про новое значение не знают.
-    private int _renderedColWidth  = ConstructorSettings.ColWidth;
-    private int _renderedRowHeight = ConstructorSettings.RowHeight;
+    // Сверяем ЗНАЧЕНИЕ, а не Stamp: событие Changed поднимают все настройки раздела, а раскладку
+    // колонок из них меняет только стандартная ширина. Высота строк доезжает до сетки сама
+    // (она слушает те же настройки и перечитывает токены).
+    private int _renderedColWidth = ConstructorSettings.ColWidth;
 
     private void OnConstructorSettingsChanged()
     {
-        var widthChanged  = _renderedColWidth  != ConstructorSettings.ColWidth;
-        var heightChanged = _renderedRowHeight != ConstructorSettings.RowHeight;
-        _renderedColWidth  = ConstructorSettings.ColWidth;
-        _renderedRowHeight = ConstructorSettings.RowHeight;
-
-        if (_repository is null) return;
-
-        // Ширина: колонки надо пересобрать, но прокрутку сохраняем — таблицу не должно
-        // отбрасывать в начало из-за настройки.
-        if (widthChanged) ReloadPreservingScroll();
-        // Высота: сами строки едут за токеном, а вот полоски-захваты ручной высоты нарисованы
-        // по старым координатам — их пересаживаем.
-        else if (heightChanged) ScheduleRowHandlesRefresh();
-    }
-
-    // Сменился зум или DPI: квант физического пиксела стал другим — переквантовать базу
-    // ручных ширин под новую сетку (ApplyColumnWidths) и пересадить границы на нее (снап).
-    private void OnLineMetricsChanged()
-    {
-        if (_repository is null) return;
-        ApplyColumnWidths();
-        SnapColumnWidths();
+        var widthChanged  = _renderedColWidth != ConstructorSettings.ColWidth;
+        _renderedColWidth = ConstructorSettings.ColWidth;
+        if (_repository is null || !widthChanged) return;
+        Reload();   // новая раскладка, строки и прокрутка на месте
     }
 
     // Дельта последнего рендера — чтобы перерисовать таблицу при возврате, если размер
@@ -519,9 +334,8 @@ public partial class TableView : UserControl
         e.Handled = true;
     }
 
-    // Отпускание Tab грид обрабатывает сам: если строка не выделена, он ВЫДЕЛЯЕТ текущую — и
-    // после Tab по ячейкам строка оставалась выделенной невидимо. Нажатие Tab таблица уже
-    // забрала себе (HandleSelectionKey), отпускание забираем следом.
+    // Отпускание Tab при выделенных ячейках забираем следом за нажатием (его взял HandleSelectionKey):
+    // иначе фокус ушел бы с сетки на следующий контрол окна.
     private void OnTopLevelKeyUp(object? sender, KeyEventArgs e)
     {
         if (e.Key == Key.Tab && IsEffectivelyVisible && HasCellSelection && IsKeyboardFocusWithin)
@@ -536,9 +350,7 @@ public partial class TableView : UserControl
             return;
         }
 
-        // Tab в редакторе: записать значение и перейти к соседней ячейке — выделением, а не
-        // правкой. Грид штатно переносит в соседнюю ячейку саму ПРАВКУ, и рамка оставалась бы
-        // на прежней ячейке.
+        // Tab в редакторе: записать значение и перейти к соседней ячейке — выделением, а не правкой.
         if (IsCellEditing && e.Key == Key.Tab && e.KeyModifiers is KeyModifiers.None or KeyModifiers.Shift)
         {
             e.Handled = true;
@@ -589,14 +401,13 @@ public partial class TableView : UserControl
     }
 
     /// <summary>
-    /// Enter в открытом редакторе. Штатно грид делает из Enter «стрелку вниз»: фиксирует правку и
-    /// переносит текущую ячейку и фокус на строку ниже, а наша рамка остается на прежней — горели
-    /// две разные ячейки, и следующий Delete или Ctrl+C уходил не туда. Здесь Enter только
-    /// фиксирует значение, и выделена остается та же ячейка.
+    /// Enter в открытом редакторе только фиксирует значение, и выделена остается та же ячейка
+    /// (Enter не «стрелка вниз»: иначе рамка и активная ячейка расходились бы, и следующий Delete
+    /// или Ctrl+C уходил бы не туда).
     ///
     /// Alt+Enter в текстовой ячейке — перевод строки внутри значения. В остальных редакторах он
-    /// ничего не делает (перенос в числе или дате превратил бы значение в текст), но и гриду не
-    /// отдается: иначе тот увел бы выделение вниз.
+    /// ничего не делает (перенос в числе или дате превратил бы значение в текст), но и сетке не
+    /// отдается.
     /// </summary>
     private void OnEnterWhileEditing(KeyEventArgs e)
     {
@@ -637,20 +448,10 @@ public partial class TableView : UserControl
         box.SelectionStart = box.SelectionEnd = box.CaretIndex = start + 1;
     }
 
-    // Выделенные записи (без строки «+») в виде списка их id. Пока выделены ЯЧЕЙКИ, записей
-    // выделенных нет: грид при этом может держать строку выделенной внутри себя (без этого не
-    // открывается правка), но на экране она не подсвечена — и попадать в удаление, дубль или
-    // «Действия» то, чего человек не видит выделенным, не должно.
+    // Выделенные записи в виде списка их id. Пока выделены ЯЧЕЙКИ, записей выделенных нет: попадать
+    // в удаление, дубль или «Действия» то, чего человек не видит выделенным, не должно.
     internal List<int> SelectedRecordIds() =>
-        HasCellSelection
-            ? []
-            : _drawn is not null
-                ? [.. _drawn.SelectedRecordIds]
-                : RecordsGrid.SelectedItems
-                    .OfType<TableRowVm>()
-                    .Where(r => !r.IsAddRow)
-                    .Select(r => r.RecordId)
-                    .ToList();
+        HasCellSelection ? [] : [.. RecordsGrid.SelectedRecordIds];
 
     // Фокус внутри текстового поля ячейки — чтобы Delete правил текст, а не удалял строки.
     private static bool IsTextInputFocused(KeyEventArgs e) =>
@@ -659,7 +460,7 @@ public partial class TableView : UserControl
     // ── Публичный API ─────────────────────────────────────────────────────────
 
     // Коллекция, отрисованная в прошлый Load — чтобы понять, сменилась ли она
-    // (тогда горизонтальный скролл сбрасываем) или это refresh той же (скролл храним).
+    // (тогда прокрутка сбрасывается) или это обновление той же (прокрутка хранится).
     private int? _lastLoadedCollectionId;
 
     // Право текущего пользователя в открытой коллекции (нет сервиса прав — без ограничений).
@@ -677,42 +478,36 @@ public partial class TableView : UserControl
 
     /// <summary>Открыть коллекцию. <paramref name="snapshot"/> — данные открытия, прочитанные в фоне
     /// (<see cref="ConstructorRepository.ReadOpenSnapshotAsync"/>): с ним UI-поток в базу не ходит,
-    /// только строит колонки и строки; без него (обновление той же коллекции, смена вида) читает сам.</summary>
+    /// только строит колонки; без него (обновление той же коллекции, смена вида) снимок читается на
+    /// месте без COUNT — точное число записей сетка уточнит в фоне. Колонки строит фасад (с меню и
+    /// хуками) по тому же снимку, что получает сетка, — снимок читается один раз. Отбор и сортировка
+    /// не переносятся между коллекциями; при настройке «Запоминать фильтры и сортировку»
+    /// подставляется запомненное за этой коллекцией, и пока оно считается, на экране прежние строки
+    /// той же коллекции или пустая таблица — не все записи.</summary>
     public void Load(ConstructorRepository repository, int collectionId, CollectionOpenSnapshot? snapshot)
     {
-        // Порог медленности: открытие коллекции (колонки, настройки, первая страница) дольше
-        // Diag.UiOpen — в журнал с базой и коллекцией.
+        // Порог медленности: открытие коллекции (колонки, настройки) дольше Diag.UiOpen — в журнал.
         using var slow = Diag.Measure("открытие коллекции", Diag.UiOpen,
                                       $"{DbErrors.Display(repository.DbPath)}, коллекция {collectionId}");
 
-        if (_drawn is not null) { LoadDrawn(repository, collectionId, snapshot); return; }
-
         var sameCollection = _lastLoadedCollectionId == collectionId;
-
+        ForgetCellEditing();   // набранное в открытом редакторе — в прежнюю строку, пока она жива
         _repository   = repository;
         _collectionId = collectionId;
-        _snapshot     = snapshot;
+        var snap      = snapshot ?? repository.ReadOpenSnapshot(collectionId, deferCount: true);
+        _snapshot     = snap;
         try
         {
-            // Правку без права изменения записей отменяет BeginningEdit (там же — окно
-            // с причиной): read-only сетка молча игнорировала бы двойной клик, и человек
-            // не понимал бы, почему ячейка не открывается.
-            RecordsGrid.IsReadOnly = false;
-
-            // Выделенные ячейки к ДРУГОЙ коллекции отношения не имеют: их координаты указывали
-            // бы на чужие строки и столбцы. А вот перезагрузку той же коллекции выделение
-            // переживает: сюда приходят все фоновые обновления, включая вызванные нашей же
-            // вставкой или правкой соседа, — гасить рамку прямо под руками нельзя. Уехавшие
-            // позиции догоняет FollowSelectionIdentity.
+            // Выделение к ДРУГОЙ коллекции отношения не имеет; перезагрузку той же выделение
+            // переживает (уехавшие позиции догоняет FollowSelectionIdentity по RowsChanged).
             if (!sameCollection)
             {
                 ClearCellSelection();
                 ForgetUndo();   // отмена шагов чужой коллекции скорее навредила бы
+                ClearColumnSelection();
+                RecordsGrid.ClearRecordSelection();
             }
 
-            // Фильтры/сортировка не переносятся между коллекциями: у каждой свои колонки.
-            // При включенном «Запоминать фильтры и сортировку» подставляем запомненное за ЭТОЙ
-            // коллекцией; колонки, которых уже нет, отсеет сама ApplyFilters.
             _filters.Clear();
             _sortKey = null;
             if (ConstructorSettings.RememberFilters
@@ -723,18 +518,19 @@ public partial class TableView : UserControl
                 _sortAsc = remembered.SortAsc;
             }
 
-            var (colResize, rowResize, _) = snapshot?.UiSettings ?? repository.GetUiSettings(collectionId);
+            var (colResize, rowResize, _) = snap.UiSettings;
             _manualColResize = colResize;
             _manualRowResize = rowResize;
 
-            // При refresh той же коллекции (создание/изменение свойства) сохраняем
-            // горизонтальную прокрутку — иначе при 50 колонках откидывает в начало.
-            // Смена коллекции — скролл сбрасываем (новая таблица начинается слева).
-            if (sameCollection)
-                ReloadPreservingScroll();
-            else
-                Reload();
+            LoadColumnState();
+            _colDefs = BuildColDefs();
+            // Запомненный отбор по колонке, которой больше нет, снимается — и в памяти тоже.
+            if (PruneFilters() && ConstructorSettings.RememberFilters)
+                ConstructorFilterMemory.Save(repository.DbPath, collectionId, _filters, _sortKey, _sortAsc);
+            ColumnsBuilt?.Invoke(this, _colDefs);
 
+            RecordsGrid.Load(repository, collectionId, snap, _colDefs, keepOffsets: sameCollection,
+                             CopyFilters(), _sortKey, _sortAsc);
             _lastLoadedCollectionId = collectionId;
         }
         finally
@@ -743,349 +539,43 @@ public partial class TableView : UserControl
         }
     }
 
-    // Avalonia DataGrid НЕ использует ScrollViewer для горизонтальной прокрутки —
-    // offset живет во внутреннем поле и доступен через internal-свойство
-    // HorizontalOffset и метод UpdateHorizontalOffset(double). При Columns.Clear()
-    // DataGrid сам сбрасывает offset в 0 (OnClearingColumns), поэтому после пересборки
-    // его надо вернуть. Доступ — через рефлексию (версия Avalonia зафиксирована 11.2.x).
-    private static readonly PropertyInfo? HOffsetProp =
-        typeof(DataGrid).GetProperty("HorizontalOffset",
-            BindingFlags.Instance | BindingFlags.NonPublic);
-    private static readonly MethodInfo? UpdateHOffsetMethod =
-        typeof(DataGrid).GetMethod("UpdateHorizontalOffset",
-            BindingFlags.Instance | BindingFlags.NonPublic);
+    // Текущая вертикальная прокрутка — для сохранения позиции при создании записи в середине таблицы.
+    public double CurrentVerticalOffset() => RecordsGrid.CurrentVerticalOffset();
 
-    // Вертикальная прокрутка (строки) виртуализирована: чистого UpdateVerticalOffset
-    // нет. Абсолютная прокрутка идет через _vScrollBar.Value + ProcessVerticalScroll
-    // (ветка ThumbTrack инвалидирует measure). Доступ — рефлексией (Avalonia 11.2.x).
-    private static readonly PropertyInfo? VScrollBarProp =
-        typeof(DataGrid).GetProperty("VerticalScrollBar",
-            BindingFlags.Instance | BindingFlags.NonPublic);
-    private static readonly MethodInfo? ProcessVScrollMethod =
-        typeof(DataGrid).GetMethod("ProcessVerticalScroll",
-            BindingFlags.Instance | BindingFlags.NonPublic);
-
-    // Текущая вертикальная прокрутка (0, если API недоступен). Для сохранения позиции
-    // при создании записи в середине таблицы.
-    public double CurrentVerticalOffset() =>
-        _drawn?.CurrentVerticalOffset() ?? (VScrollBarProp?.GetValue(RecordsGrid) as ScrollBar)?.Value ?? 0;
-
-    // Восстанавливает вертикальную прокрутку после пересборки: высота контента готова
-    // не сразу, поэтому ждем через LayoutUpdated, пока Maximum дорастет до offset,
-    // затем выставляем Value и применяем через ProcessVerticalScroll (ThumbTrack).
-    public void RestoreVerticalOffset(double offset)
-    {
-        if (_drawn is not null) { _drawn.RestoreVerticalOffset(offset); return; }
-        if (offset <= 0 || VScrollBarProp is null || ProcessVScrollMethod is null) return;
-
-        // Копии в ненулевые локальные переменные: проверка выше не «доезжает» внутрь Handler —
-        // он локальная функция, и компилятор не берется утверждать, что поля не изменятся
-        // между ее вызовами. Обращаться к полям напрямую пришлось бы через «!».
-        PropertyInfo scrollBarProp  = VScrollBarProp;
-        MethodInfo   processVScroll = ProcessVScrollMethod;
-
-        var attempts = 0;
-
-        void Handler(object? _, EventArgs __)
-        {
-            attempts++;
-            if (scrollBarProp.GetValue(RecordsGrid) is not ScrollBar sb)
-            {
-                if (attempts > 20) RecordsGrid.LayoutUpdated -= Handler;
-                return;
-            }
-
-            // Контент еще не дорос до нужного offset — ждем следующий layout-проход.
-            if (sb.Maximum < offset && attempts <= 20) return;
-
-            sb.Value = Math.Min(offset, sb.Maximum);
-            processVScroll.Invoke(RecordsGrid, [ScrollEventType.ThumbTrack]);
-            RecordsGrid.LayoutUpdated -= Handler;
-        }
-
-        RecordsGrid.LayoutUpdated += Handler;
-    }
+    // Восстанавливает вертикальную прокрутку после пересборки (доезжает по мере уточнения оценки
+    // числа записей).
+    public void RestoreVerticalOffset(double offset) => RecordsGrid.RestoreVerticalOffset(offset);
 
     // ── Навигация по строкам из нижней панели («‹‹ ‹ 10 – 50 из 125 437 › ››») ──────
-    //
-    // Кнопки двигают ту же вертикальную полосу, что и колесо мыши: у DataGrid она
-    // пиксельная (Value/Maximum/ViewportSize в пикселях), поэтому «экран» = ViewportSize,
-    // «в конец» = Maximum. Арифметика — в TableViewportScroll (покрыта тестами), здесь
-    // только доступ к полосе и применение результата.
+    // Арифметика — в TableViewportScroll (покрыта тестами) на смещении сетки.
 
     /// <summary>Видимый кусок таблицы изменился (прокрутка, ресайз, перезагрузка строк).</summary>
     public event EventHandler<TableViewportRange>? VisibleRangeChanged;
 
-    // Последний отданный наверх диапазон — событие поднимаем только на изменение
-    // (пересчет идет из LayoutUpdated, который дергается на каждый проход разметки).
-    private TableViewportRange _lastVisibleRange = TableViewportRange.Empty;
-
-    private ScrollBar? VerticalScrollBar => VScrollBarProp?.GetValue(RecordsGrid) as ScrollBar;
-
     /// <summary>Экран назад (кнопка «‹»).</summary>
-    public void ScrollRowsPageBack()
-    {
-        if (_drawn is not null) { _drawn.ScrollRowsPageBack(); return; }
-        ApplyVerticalScroll(sb => TableViewportScroll.PageBack(sb.Value, sb.ViewportSize, sb.Maximum));
-    }
+    public void ScrollRowsPageBack()    => RecordsGrid.ScrollRowsPageBack();
 
     /// <summary>Экран вперед (кнопка «›»).</summary>
-    public void ScrollRowsPageForward()
-    {
-        if (_drawn is not null) { _drawn.ScrollRowsPageForward(); return; }
-        ApplyVerticalScroll(sb => TableViewportScroll.PageForward(sb.Value, sb.ViewportSize, sb.Maximum));
-    }
+    public void ScrollRowsPageForward() => RecordsGrid.ScrollRowsPageForward();
 
     /// <summary>В начало таблицы (кнопка «‹‹»).</summary>
-    public void ScrollRowsToStart()
-    {
-        if (_drawn is not null) { _drawn.ScrollRowsToStart(); return; }
-        ApplyVerticalScroll(_ => TableViewportScroll.ToStart());
-    }
+    public void ScrollRowsToStart()     => RecordsGrid.ScrollRowsToStart();
 
     /// <summary>В конец таблицы (кнопка «››»).</summary>
-    public void ScrollRowsToEnd()
-    {
-        if (_drawn is not null) { _drawn.ScrollRowsToEnd(); return; }
-        ApplyVerticalScroll(sb => TableViewportScroll.ToEnd(sb.Maximum));
-    }
+    public void ScrollRowsToEnd()       => RecordsGrid.ScrollRowsToEnd();
 
-    // Ставит полосу в посчитанную позицию и применяет ее к строкам. ThumbTrack —
-    // та же ветка, что и у перетаскивания ползунка: инвалидирует measure, поэтому
-    // виртуализация подтягивает страницы новой позиции (см. RestoreVerticalOffset).
-    private void ApplyVerticalScroll(Func<ScrollBar, double> position)
-    {
-        if (VerticalScrollBar is not { } sb || ProcessVScrollMethod is null) return;
+    /// <summary>Номера строк, которые сейчас в окне, и общее число строк среза — из раскладки
+    /// сетки арифметикой (<see cref="TableViewportRange.FromSlots"/>).</summary>
+    public TableViewportRange VisibleRowRange() => RecordsGrid.VisibleRowRange();
 
-        var target = position(sb);
-        if (Math.Abs(target - sb.Value) < 0.5) return;
-
-        sb.Value = target;
-        ProcessVScrollMethod.Invoke(RecordsGrid, [ScrollEventType.ThumbTrack]);
-        RefreshVisibleRange();
-    }
-
-    /// <summary>
-    /// Номера строк, которые сейчас в окне, и общее число строк среза.
-    ///
-    /// Спрашиваем САМ DataGrid, какие слоты он показывает (<c>DisplayData</c>), а не
-    /// считаем по визуальному дереву: в дереве остаются строки, которые контрол уже снял
-    /// с экрана (разбор — у <see cref="VisibleRowRangeByTree"/>). Деление
-    /// <c>offset / RowHeight</c> не годится в любом случае: высота строк бывает ручной.
-    ///
-    /// Перевод слотов в номера строк — <see cref="TableViewportRange.FromSlots"/> (чистый,
-    /// покрыт <c>TableViewportRangeTests</c>); здесь только доступ к гриду.
-    /// </summary>
-    public TableViewportRange VisibleRowRange()
-    {
-        if (_drawn is not null) return _drawn.VisibleRowRange();
-        // Count у списка = записи + строка «+».
-        var total = Math.Max(0, (_activeRows?.Count ?? 0) - 1);
-        if (total == 0) return TableViewportRange.Empty;
-
-        if (DisplayedSlots() is not { } slots) return VisibleRowRangeByTree(total);
-
-        return TableViewportRange.FromSlots(slots.First, slots.Last, total);
-    }
-
-    // Диапазон слотов, показанных гридом сейчас: DisplayData.FirstScrollingSlot и
-    // LastScrollingSlot — то, по чему DataGrid и раскладывает строки (по ним же он сам
-    // отвечает на SlotIsDisplayed). Доступ рефлексией: DisplayData internal, версия Avalonia
-    // зафиксирована 11.2.x (как VerticalScrollBar/ProcessVerticalScroll выше).
-    private static readonly PropertyInfo? DisplayDataProp =
-        typeof(DataGrid).GetProperty("DisplayData",
-            BindingFlags.Instance | BindingFlags.NonPublic);
-    private static PropertyInfo? _firstSlotProp;
-    private static PropertyInfo? _lastSlotProp;
-
-    private (int First, int Last)? DisplayedSlots()
-    {
-        // Public тоже нужен: класс DataGridDisplayData internal, а свойства в нем public —
-        // по одному NonPublic рефлексия их не находит (см. DataGridInternalsTests).
-        const BindingFlags SlotFlags =
-            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
-
-        if (DisplayDataProp?.GetValue(RecordsGrid) is not { } data) return null;
-
-        _firstSlotProp ??= data.GetType().GetProperty("FirstScrollingSlot", SlotFlags);
-        _lastSlotProp  ??= data.GetType().GetProperty("LastScrollingSlot",  SlotFlags);
-
-        if (_firstSlotProp?.GetValue(data) is not int first) return null;
-        if (_lastSlotProp ?.GetValue(data) is not int last)  return null;
-        return (first, last);
-    }
-
-    /// <summary>
-    /// Запасной счет диапазона — по реализованным строкам из визуального дерева. Работает,
-    /// только пока рефлексия к <c>DisplayData</c> жива; после апгрейда Avalonia проверять
-    /// оба пути (qa-checklists/table-navigation.md).
-    ///
-    /// ПОЧЕМУ ЭТО ЛИШЬ ЗАПАСНОЙ ПУТЬ. Обход дерева находит и строки, которых на экране уже
-    /// нет. Прыжок «в начало/в конец» идет через <c>ResetDisplayedRows</c> →
-    /// <c>DisplayData.ClearElements</c>, а тот только помечает старые строки
-    /// переработанными и ЧИСТИТ стек переработки — из <c>_rowsPresenter.Children</c> он их
-    /// не убирает. Переиспользовать их уже некому (новые строки создаются с нуля), заново
-    /// раскладывать тоже: <c>DataGridRowsPresenter.ArrangeOverride</c> ходит только по
-    /// <c>DisplayData.GetScrollingElements()</c>. Строки-сироты так и висят в дереве со
-    /// старыми <c>Bounds</c> и старым <c>DataContext</c>; на экране их не видно только
-    /// потому, что новые строки добавлены в <c>Children</c> позже и рисуются поверх.
-    /// Отсюда и брались «71 – 456 002» после прыжка в конец и «1 – 455 774» после прыжка
-    /// в начало: <c>last</c> от настоящих строк, <c>first</c> от сироты (и наоборот).
-    /// </summary>
-    private TableViewportRange VisibleRowRangeByTree(int total)
-    {
-        // Мерим по ОБЛАСТИ СТРОК, а не по всему гриду: RowResizeLayer лежит поверх всего
-        // DataGrid, и по его высоте нижняя граница окна уходила бы ниже настоящей на шапку
-        // колонок и горизонтальную полосу — примерно на строку.
-        if (RowsPresenter is not { } area || area.Bounds.Height <= 0)
-            return TableViewportRange.Of(0, 0, total);
-
-        var height = area.Bounds.Height;
-        var first  = 0;
-        var last   = 0;
-        foreach (var rowCtrl in RecordsGrid.GetVisualDescendants().OfType<DataGridRow>())
-        {
-            if (IsStaleRow(rowCtrl)) continue;
-            if (rowCtrl.DataContext is not TableRowVm vm || vm.IsAddRow) continue;
-            if (vm.RowNumber <= 0 || rowCtrl.Bounds.Height <= 0) continue;
-
-            var topLeft = rowCtrl.TranslatePoint(new Point(0, 0), area);
-            if (topLeft is null) continue;
-
-            var top    = topLeft.Value.Y;
-            var bottom = top + rowCtrl.Bounds.Height;
-            if (bottom <= 0 || top >= height) continue;   // целиком выше или ниже окна
-
-            if (first == 0 || vm.RowNumber < first) first = vm.RowNumber;
-            if (vm.RowNumber > last) last = vm.RowNumber;
-        }
-
-        return TableViewportRange.Of(first, last, total);
-    }
-
-    // Область строк грида (без шапки колонок и полос прокрутки). Ищем, пока не найдется:
-    // до первой раскладки презентера в дереве еще нет.
-    private DataGridRowsPresenter? _rowsPresenter;
-    private DataGridRowsPresenter? RowsPresenter =>
-        _rowsPresenter ??= RecordsGrid.GetVisualDescendants()
-                                      .OfType<DataGridRowsPresenter>()
-                                      .FirstOrDefault();
-
-    /// <summary>
-    /// Строка ушла с экрана, но осталась в визуальном дереве — ее номер и раскладка от
-    /// прошлой позиции. Таких две породы, и обе надо пропускать при обходе дерева:
-    ///
-    /// • <b>сирота</b> в пуле переработки — спрятана через <c>IsVisible=false</c>
-    ///   (<c>FullyRecycleElements</c>) и брошена в <c>Children</c>
-    ///   (см. <see cref="VisibleRowRangeByTree"/>);
-    /// • <b>паркованная</b> строка с фокусом или в режиме правки — их DataGrid не
-    ///   перерабатывает (<c>IsRowRecyclable</c> = строка не <c>EditingRow</c> и не
-    ///   <c>_focusedRow</c>), а закрывает пустым <c>Clip</c> и оставляет в дереве. Сам он
-    ///   ее не распаркует: фокус остается в гриде — кнопки нижней панели его не забирают
-    ///   (Avalonia Button по клику не фокусируется), поэтому <c>DataGrid_LostFocus</c> →
-    ///   <c>ResetFocusedRow</c> не срабатывает.
-    ///
-    /// Живой строке <c>Clip</c> снимают при возвращении в окно (<c>InsertDisplayedElement</c>),
-    /// видимость возвращает <c>GetUsedRow</c>; сами мы строкам <c>Clip</c> нигде не задаем
-    /// (<c>RoundedClip</c> живет на полях ввода и списках).
-    ///
-    /// ЛОВУШКА: судить по внутреннему флагу <c>IsRecycled</c> нельзя. Он ставится при уходе
-    /// строки в пул и НИКОГДА не сбрасывается — любая переиспользованная строка помечена им
-    /// навсегда. После первой же подмены ItemsSource (перезагрузка строк после вставки,
-    /// очистки, фильтра) ВСЕ живые строки — переиспользованные, и проверка по флагу считала
-    /// бы «застрявшим» весь экран: рамка выделения перестает рисоваться, диапазон нижней
-    /// панели пустеет.
-    /// </summary>
-    private static bool IsStaleRow(DataGridRow row) =>
-        row.Clip is not null || !row.IsVisible;
-
-    // Пересчитывает диапазон и поднимает событие, только если он изменился.
-    private void RefreshVisibleRange()
-    {
-        var range = VisibleRowRange();
-        if (range == _lastVisibleRange) return;
-
-        _lastVisibleRange = range;
-        VisibleRangeChanged?.Invoke(this, range);
-    }
-
-    // Текущий горизонтальный offset DataGrid (0, если API недоступен).
-    private double CurrentScrollOffset() =>
-        HOffsetProp?.GetValue(RecordsGrid) is double x ? x : 0;
-
-    // Ожидающий выставитель скролла — чтобы при быстрых повторных пересборках
-    // не копились хендлеры со старыми offset'ами (новый отменяет предыдущий).
-    private EventHandler? _scrollRestoreHandler;
-
-    // Восстанавливает горизонтальную прокрутку на точную позицию после пересборки.
-    private void RestoreScrollOffset(double offsetX) => ApplyHorizontalOffsetDeferred(offsetX);
-
-    // Прокручивает таблицу к правому краю — к колонке «+» (добавление свойства).
-    // Используется после добавления нового свойства через правый «+»: новая колонка
-    // и кнопка «+» остаются видны (аналог ScrollToRecord, удерживающего add-row «+»).
-    public void ScrollToAddPropertyColumn()
-    {
-        if (_drawn is not null) { _drawn.ScrollToAddPropertyColumn(); return; }
-        ApplyHorizontalOffsetDeferred(double.MaxValue);
-    }
-
-    // Откладывает выставление горизонтального offset до тех пор, пока star-ширины
-    // колонок не осядут (несколько layout-проходов). offsetX — желаемая позиция;
-    // для прокрутки к правому краю передаем double.MaxValue (setter клампит до реального
-    // максимума, останавливаемся, когда offset перестает расти). Отписываемся, когда
-    // цель достигнута, offset вышел на плато (уперлись в максимум) или исчерпали попытки.
-    private void ApplyHorizontalOffsetDeferred(double offsetX)
-    {
-        if (HOffsetProp is null || UpdateHOffsetMethod is null) return;
-
-        // См. RestoreVerticalOffset: копии ради того, чтобы Handler видел их ненулевыми.
-        PropertyInfo hOffsetProp     = HOffsetProp;
-        MethodInfo   updateHOffset   = UpdateHOffsetMethod;
-
-        // Отменяем предыдущее незавершенное восстановление (его offset устарел).
-        if (_scrollRestoreHandler is not null)
-            RecordsGrid.LayoutUpdated -= _scrollRestoreHandler;
-
-        if (offsetX <= 0) { _scrollRestoreHandler = null; return; }
-
-        var attempts   = 0;
-        var lastActual = -1.0;
-        var plateau    = 0;
-        var grew       = false;
-
-        void Handler(object? _, EventArgs __)
-        {
-            attempts++;
-
-            // Setter клампит до (VisibleEdgedColumnsWidth - CellsWidth); пока ширины
-            // не дорастут, offset «осядет» ниже цели — пробуем на следующем проходе.
-            updateHOffset.Invoke(RecordsGrid, [offsetX]);
-            var actual = hOffsetProp.GetValue(RecordsGrid) is double a ? a : 0;
-
-            if (actual > 0.5) grew = true;
-
-            // Плато: offset перестал расти между проходами. Учитываем только после того,
-            // как он реально вырос (grew) — иначе нулевой offset на ранних проходах (ширины
-            // еще не готовы) приняли бы за «уперлись в максимум» и остановились бы на нуле.
-            if (Math.Abs(actual - lastActual) < 0.5) plateau++;
-            else plateau = 0;
-            lastActual = actual;
-
-            if (actual >= offsetX - 0.5 || (grew && plateau >= 2) || attempts > 30)
-            {
-                RecordsGrid.LayoutUpdated -= _scrollRestoreHandler!;
-                _scrollRestoreHandler = null;
-            }
-        }
-
-        _scrollRestoreHandler = Handler;
-        RecordsGrid.LayoutUpdated += Handler;
-    }
+    /// <summary>Прокрутить таблицу к правому краю — к колонке «+» (после добавления свойства):
+    /// новая колонка и кнопка «+» остаются видны.</summary>
+    public void ScrollToAddPropertyColumn() => RecordsGrid.ScrollToAddPropertyColumn();
 
     public void Clear()
     {
         ForgetCellEditing();   // набранное в открытом редакторе пишем, пока строки живы
-        _drawn?.Clear();
+        RecordsGrid.Clear();
         _repository   = null;
         _collectionId = 0;
         _lastLoadedCollectionId = null;
@@ -1093,234 +583,101 @@ public partial class TableView : UserControl
         _colDefs      = [];
         _systemNames  = [];
         _columnOrder  = [];
-        _virtualRows  = null;
-        _virtualView  = null;
+        _hiddenColumns = [];
+        _columnStyles = [];
+        _colWidths    = [];
         _filters.Clear();
-        _chevronPaths.Clear();
         _sortKey = null;
-        ForgetCellEditing();
         ClearCellSelection();
+        ClearColumnSelection();
         ForgetUndo();
-        _rowHeights = [];
-        _isResizingRow = false;
-        _resizeRow = null;
-        _lastRowGrips.Clear();
-        RowResizeLayer.Children.Clear();
-        _colWidths = [];
-        _headerHosts.Clear();
-        _isResizingCol = false;
-        _resizeColKey  = null;
-        _lastColGrips.Clear();
-        ColResizeLayer.Children.Clear();
-        _headersPresenter = null;
-        RecordsGrid.ItemsSource = null;
-        RecordsGrid.Columns.Clear();
     }
 
+    // Режим ширины столбцов (из меню заголовка). Выключение сбрасывает сохраненные ширины на
+    // стандарт; режим запоминается за коллекцией — обоими занимается сетка.
     public void SetColResizeMode(bool manual)
     {
         _manualColResize = manual;
-        if (_drawn is not null) { _drawn.SetColResizeMode(manual); return; }
-
-        // Выключение ручного режима сбрасывает все сохраненные ширины на стандарт
-        // (как сброс высот при переходе на стандартную высоту строк).
-        if (!manual)
-        {
-            _colWidths.Clear();
-            _repository?.ClearColumnWidths(_collectionId);
-        }
-
-        // Запоминаем режим, чтобы он сохранялся между сессиями (раньше управлялся
-        // из футера без персиста; теперь — из меню заголовка).
-        if (_repository is not null)
-        {
-            var (_, rowResize, viewMode) = _repository.GetUiSettings(_collectionId);
-            _repository.SaveUiSettings(_collectionId, manual, rowResize, viewMode);
-        }
-
-        // Колонки не пересобираем: полоски-захваты у границ наши (ColResizeLayer), их
-        // достаточно перестроить. Включение режима вид таблицы НЕ меняет — ширины
-        // появятся в модели только с первым перетаскиванием.
-        if (!manual)
-        {
-            _lastColGrips.Clear();
-            ColResizeLayer.Children.Clear();
-        }
-        ApplyColumnWidths();
+        RecordsGrid.SetColResizeMode(manual);
     }
 
     // Текущий режим ширины столбцов (для отметки активного пункта в меню).
-    public bool IsManualColResize => _drawn?.IsManualColResize ?? _manualColResize;
+    public bool IsManualColResize => RecordsGrid.IsManualColResize;
 
-    // Переключение режима высоты строк (вызывается из меню записи). Запоминаем режим
-    // между сессиями — как и режим ширины столбцов (раньше управлялся из футера).
+    // Режим высоты строк (из меню записи). Выключение сбрасывает сохраненные высоты на стандарт;
+    // режим запоминается за коллекцией.
     public void SetRowResizeMode(bool manual)
     {
         _manualRowResize = manual;
-        if (_drawn is not null) { _drawn.SetRowResizeMode(manual); return; }
-
-        // Выключение ручного режима сбрасывает все сохраненные высоты на стандарт
-        // (как сброс ширин при переходе на стандартную ширину столбцов).
-        if (!manual)
-        {
-            _rowHeights.Clear();
-            _repository?.SaveRowHeights(_collectionId, []);
-        }
-
-        if (_repository is not null)
-        {
-            var (colResize, _, viewMode) = _repository.GetUiSettings(_collectionId);
-            _repository.SaveUiSettings(_collectionId, colResize, manual, viewMode);
-        }
-
-        // Применяем/сбрасываем высоту у уже ОТРИСОВАННЫХ строк на месте — без пересоздания
-        // виртуального списка (как при сдвиге строки): нет мелькания «Загрузка…». Невидимые
-        // строки получат правильную высоту в OnLoadingRow при реализации.
-        ApplyRowHeightsToRealizedRows();
-        ScheduleRowHandlesRefresh();   // показать (ручной) / убрать (стандартный) полоски ресайза
-    }
-
-    // Проставляет высоту уже реализованным строкам по текущему режиму/словарю (та же логика, что
-    // в OnLoadingRow): ручной режим + сохраненная высота → она, иначе double.NaN (стандартная/авто).
-    private void ApplyRowHeightsToRealizedRows()
-    {
-        foreach (var rowCtrl in RecordsGrid.GetVisualDescendants().OfType<DataGridRow>())
-        {
-            if (rowCtrl.DataContext is not TableRowVm vm || vm.IsAddRow) continue;
-            rowCtrl.Height = _manualRowResize && _rowHeights.TryGetValue(vm.RecordId, out var h)
-                ? h
-                : double.NaN;
-        }
+        RecordsGrid.SetRowResizeMode(manual);
     }
 
     // Текущий режим высоты строк (для отметки активного пункта в меню).
-    public bool IsManualRowResize => _drawn?.IsManualRowResize ?? _manualRowResize;
+    public bool IsManualRowResize => RecordsGrid.IsManualRowResize;
 
-    public void ScrollToRecord(int recordId)
-    {
-        if (_drawn is not null) { _drawn.ScrollToRecord(recordId); return; }
-        if (_virtualRows is null) return;
-        Dispatcher.UIThread.Post(() =>
-        {
-            var row = _virtualRows.FindCachedByRecordId(recordId);
-            if (row is not null)
-                RecordsGrid.ScrollIntoView(row, RecordsGrid.Columns.FirstOrDefault());
-            RecordsGrid.ScrollIntoView(_virtualRows.AddRowItem, RecordsGrid.Columns.FirstOrDefault());
-        }, DispatcherPriority.Background);
-    }
+    /// <summary>Показать запись и строку «+» под ней (после создания записи в конце). Строка в
+    /// кеше — сразу; иначе ее индекс в срезе считается в фоне.</summary>
+    public void ScrollToRecord(int recordId) => RecordsGrid.ScrollToRecord(recordId);
 
     // ── Построение таблицы ────────────────────────────────────────────────────
 
-    // Полная пересборка: и КОЛОНКИ, и строки. Тяжелая (при 1000 свойств строит 1000
-    // DataGridColumn с шаблонами/заголовками/меню) — вызывать только когда реально
-    // изменился НАБОР колонок: открытие коллекции, создание/удаление/смена типа свойства.
-    // Для операций со строками есть ReloadRows — там колонки не трогаются (нет «моргания»
-    // шапки и тяжелой пересборки), что и нужно при больших объемах.
+    // Смена шрифта или стандартной ширины столбцов: пересобирать нечего — сетка перечитывает
+    // токены сама, ей хватает новой раскладки; строки и прокрутка на месте.
     private void Reload()
     {
         if (_repository is null) return;
-
         _renderedFontDelta = FontScale.Delta;   // таблица отрисована с текущим размером
-
-        // Рисованной сетке пересобирать нечего: шрифт и токены она перечитывает сама, а сюда
-        // приходят смена шрифта и стандартной ширины столбцов — хватает новой раскладки.
-        if (_drawn is not null) { _drawn.RefreshLayout(); return; }
-
-        LoadColumnState();
-
-        ClearColumnSelection();   // колонки пересобираются — снимаем выделение
-
-        _colDefs = BuildColDefs();
-        ColumnsBuilt?.Invoke(this, _colDefs);
-
-        BuildColumns();
-        RecordsGrid.ContextMenu = BuildGridContextMenu();
-        ApplyColumnWidths();
-
-        ReloadRows();   // источник строк + фильтры + полоски ресайза (общий путь со строковыми операциями)
+        RecordsGrid.RefreshLayout();
     }
 
-    // Пересобирает ТОЛЬКО строки: новый источник данных, фильтры, высоты — НЕ трогая набор
-    // колонок. Дешево при 1000 свойств: DataGrid не пересобирает заголовки/шаблоны колонок
-    // (нет «моргания» шапки), перестраиваются лишь видимые строки (виртуализация). Вызывать
-    // на операциях, меняющих набор/порядок ЗАПИСЕЙ (создание/удаление/дубль/сдвиг записи,
-    // видимость записей) и при переключении ручной высоты строк. _fields берется из последнего
-    // полного Reload — для строковых операций он не меняется.
+    /// <summary>Пересчитать строки, не трогая колонки: видимость записей, высоты, оформление строк
+    /// перечитываются, отбор и сортировка считаются заново в фоне; прокрутка остается. Вызывать на
+    /// операциях над ЗАПИСЯМИ, меняющих их состав или порядок целиком (видимость записей, правило
+    /// файла) и при переключении ручной высоты строк.</summary>
     public void ReloadRows()
     {
         if (_repository is null) return;
-
-        ForgetCellEditing();   // ниже меняется ItemsSource — редактор умрет молча
-        if (_drawn is not null) { _drawn.ReloadRows(); return; }
-
-        var snap = _snapshot;   // снимок открытия (прочитан в фоне) — вместо обращений с UI-потока
-        _hiddenRecords = (snap?.RecordDisplay ?? _repository.GetRecordDisplay(_collectionId))
-            .Where(kv => !kv.Value.Visible)
-            .Select(kv => kv.Key)
-            .ToHashSet();
-        _rowHeights = snap?.RowHeights ?? _repository.GetRowHeights(_collectionId);
-        _rowStyles  = snap?.RowStyles  ?? _repository.GetRowStyles(_collectionId);
-
-        _relLinks.Clear();   // новый источник строк — прежний прогрев связей неактуален
-        _virtualRows = new VirtualRowList(_repository, _collectionId, _fields,
-                                         excludeHidden: _hiddenRecords.Count > 0, relLinks: _relLinks,
-                                         knownCount: snap?.VisibleRecordCount);
-        _virtualRows.RecordEdited += (_, rid) => RecordValueEdited?.Invoke(this, rid);
-        // Виртуализирующая обертка: DataGrid не материализует источник, тянет только видимые
-        // строки → большие коллекции открываются мгновенно. Всегда включена.
-        _virtualView = new VirtualCollectionView(_virtualRows);
-        _activeRows  = _virtualRows;   // без фильтра видимый список — он (ApplyFilters заменит при фильтре)
-
-        RecordsGrid.ItemsSource = DefaultItemsSource;
-
-        ApplyFilters();                // переустановит ItemsSource, если фильтр/сортировка активны
-        ScheduleRowHandlesRefresh();   // полоски ресайза строк (если ручной режим)
+        ForgetCellEditing();   // список строк сменится — набранное пишем, пока строки живы
+        RecordsGrid.ReloadRows();
     }
 
-    // Структурное обновление строк (создание/удаление/дубль записей) БЕЗ пересоздания виртуального
-    // списка и нового ItemsSource: число строк и видимые страницы обновляются на месте (теплый кеш),
-    // затем мягкий Reset — грид перерисовывается сразу из кеша, без заглушек «Загрузка…» (это и есть
-    // источник мелькания). При активном фильтре/сортировке нужен полный ReloadRows (пересобрать список
-    // id) — туда и падаем; и при первом построении, когда списка еще нет.
+    /// <summary>Структурное обновление строк (создание, удаление, дубль записей) без пересоздания
+    /// списка: число строк и загруженные страницы обновляются на месте (теплый кеш, без заглушек
+    /// «Загрузка…»). При отборе или сортировке список пересчитывается целиком.</summary>
     public void ReloadRowsStructural()
     {
         if (_repository is null) return;
         // Строки перезаполняются на месте, и в строке редактора может оказаться другая запись.
-        if (_drawn is not null) { ForgetCellEditing(); _drawn.ReloadRowsStructural(); return; }
-        if (_virtualRows is null || _filters.Count > 0 || _sortKey is not null) { ReloadRows(); return; }
-
-        _virtualRows.RefreshStructural();
-        ScheduleRowHandlesRefresh();
+        ForgetCellEditing();
+        RecordsGrid.ReloadRowsStructural();
     }
 
-    // Пересобирает ТОЛЬКО колонки, СОХРАНЯЯ строки (источник _virtualRows не пересоздается).
-    // Для операций, меняющих набор/порядок КОЛОНОК (сдвиг, удаление/дубль поля, «Отображение»,
-    // создание после): строки не сбрасываются в заглушки «Загрузка…» → нет «белого» мелькания
-    // на больших коллекциях. Полная пересборка колонок надежна (в отличие от точечной
-    // перестановки/удаления, которые Avalonia DataGrid не отрабатывал). Горизонтальную
-    // прокрутку держим на месте (Columns.Clear сбрасывает offset в 0).
+    /// <summary>Пересобрать колонки, СОХРАНЯЯ строки: сдвиг, «Отображение», создание, удаление,
+    /// дубль, смена типа, переименование «Названия». Состояние колонок читается один раз и отдается
+    /// сетке — строки и прокрутка остаются, ширины живут по ключам, выделение ячеек и колонок едет
+    /// за своими ключами, отбор по удаленной колонке снимается.</summary>
     public void ReloadColumns()
     {
         if (_repository is null) return;
-        if (_drawn is not null) { ReloadColumnsDrawn(); return; }
-
-        var keepH = CurrentScrollOffset();
-
+        ForgetCellEditing();   // колонка редактора могла скрыться или уехать
         LoadColumnState();
-        ClearColumnSelection();   // колонки пересобираются — снимаем выделение
-
         _colDefs = BuildColDefs();
         ColumnsBuilt?.Invoke(this, _colDefs);
+        RecordsGrid.ReloadColumns(_colDefs, _fields, _hiddenColumns, _columnStyles, _colWidths);
 
-        BuildColumns();
-        RecordsGrid.ContextMenu = BuildGridContextMenu();
-        ApplyColumnWidths();
-
-        if (keepH > 0) RestoreScrollOffset(keepH);
+        // Удаленные колонки уходят из выделения колонок; оставшиеся — в новом порядке колонок, как их
+        // держит SelectColumn (порядок удаления и дубля).
+        _selectedColumnKeys.RemoveAll(k => ColumnIndexOf(k) < 0);
+        _selectedColumnKeys.Sort((a, b) => ColumnIndexOf(a).CompareTo(ColumnIndexOf(b)));
+        // Колонки могли переехать или скрыться: рамка и заливка колонок — по новым позициям.
+        SyncSelection();
+        ApplyColumnSelection();
+        // Отбор по удаленной колонке снимается, строки пересчитываются без него.
+        if (PruneFilters()) ApplyFilters();
     }
 
-    // Состояние, нужное для построения КОЛОНОК (поля, подписи системных, порядок, скрытые).
-    // Вынесено из Reload, чтобы переиспользовать в точечных операциях со свойствами.
+    // Состояние, нужное для построения КОЛОНОК (поля, подписи системных, порядок, скрытые,
+    // оформление и ширины). Одна точка чтения на все пути пересборки колонок.
     private void LoadColumnState()
     {
         if (_repository is null) return;
@@ -1338,68 +695,19 @@ public partial class TableView : UserControl
             .Select(kv => kv.Key)
             .ToHashSet();
         _columnStyles = snap?.ColumnStyles ?? _repository.GetColumnStyles(_collectionId);
-        // Ручные ширины (аспект column_meta.Width). Читаются здесь, потому что LoadColumnState
-        // вызывается из всех путей пересборки колонок — отдельной точки чтения не нужно.
-        _colWidths = snap?.ColumnWidths ?? _repository.GetColumnWidths(_collectionId);
+        _colWidths    = snap?.ColumnWidths ?? _repository.GetColumnWidths(_collectionId);
     }
 
-    // ── Точечные изменения набора колонок (без полной пересборки) ──────────────
-    // RecordsGrid.Columns[i] выровнен 1:1 с _colDefs[i] (см. BuildColumns). Поэтому
-    // вставку/удаление/замену ОДНОЙ колонки делаем по индексу — без Columns.Clear() и
-    // пересборки всех DataGridColumn: нет «моргания» шапки и тяжелой работы при 1000 свойств.
-    // Везде есть безопасный фоллбек на полную пересборку, если набор/порядок разошелся.
+    // ── Точечные изменения набора колонок ─────────────────────────────────────
+    // Все сходятся в ReloadColumns: у рисованной сетки пересборка колонок — это новая раскладка
+    // и перерисовка, строки при этом не трогаются, поэтому отдельных точечных путей не нужно.
 
-    // Создание/«создать после»/дубль свойства: порядок в БД уже выставлен контроллером
-    // (AddField/MoveColumnAfter), здесь — одна вставка на ее место в порядке.
-    public void AddColumnForField(int fieldId)
-    {
-        if (_repository is null) return;
-        if (_drawn is not null) { ReloadColumnsDrawn(); return; }
+    /// <summary>Создание/«создать после»/дубль свойства: порядок в БД уже выставлен контроллером
+    /// (AddField/MoveColumnAfter), здесь — новая раскладка с колонкой на ее месте.</summary>
+    public void AddColumnForField(int fieldId) => ReloadColumns();
 
-        LoadColumnState();
-        var newDefs = BuildColDefs();
-        var idx     = newDefs.FindIndex(d => d.Key == fieldId.ToString());
-
-        // Норма: добавилась ровно одна колонка, относительный порядок остальных не менялся.
-        if (idx < 0 || newDefs.Count != RecordsGrid.Columns.Count + 1)
-        {
-            _colDefs = newDefs;
-            BuildColumns();              // фоллбек: что-то разошлось — полная пересборка
-            ApplyColumnWidths();
-            return;
-        }
-
-        _colDefs = newDefs;
-        RecordsGrid.Columns.Insert(idx, CreateDataGridColumn(newDefs[idx]));
-        ColumnsBuilt?.Invoke(this, _colDefs);
-        ApplyColumnWidths();
-    }
-
-    // Изменение свойства (имя/тип/опции) или переименование системного заголовка: позиция
-    // не меняется → заменяем одну колонку на месте (мелькнет только она, не вся таблица).
-    public void RebuildColumn(string key)
-    {
-        if (_repository is null) return;
-        if (_drawn is not null) { ReloadColumnsDrawn(); return; }
-
-        LoadColumnState();
-        var newDefs = BuildColDefs();
-        var idx     = newDefs.FindIndex(d => d.Key == key);
-
-        if (idx < 0 || newDefs.Count != RecordsGrid.Columns.Count || idx >= RecordsGrid.Columns.Count)
-        {
-            _colDefs = newDefs;
-            BuildColumns();              // фоллбек: набор/порядок изменился
-            ApplyColumnWidths();
-            return;
-        }
-
-        _colDefs = newDefs;
-        RecordsGrid.Columns.RemoveAt(idx);
-        RecordsGrid.Columns.Insert(idx, CreateDataGridColumn(newDefs[idx]));
-        ColumnsBuilt?.Invoke(this, _colDefs);
-        ApplyColumnWidths();
-    }
+    /// <summary>Изменение свойства (имя/тип/опции) или переименование системного заголовка.</summary>
+    public void RebuildColumn(string key) => ReloadColumns();
 
     private List<TableColumnDef> BuildColDefs()
     {
@@ -1424,8 +732,7 @@ public partial class TableView : UserControl
                 IsStarWidth = true,
                 MinWidth    = MinColWidth,
                 // Чекбоксы, «файл» и «вычисляемые» типы (дата/автор создания-изменения) правятся не
-                // текстовым редактором — read-only на уровне колонки (CellEditingTemplate не строится);
-                // их собственный редактор живет прямо в ячейке показа.
+                // текстовым редактором — read-only на уровне колонки: галочка и файл правятся кликом.
                 IsReadOnly  = f.FieldType is "checkbox" or "file" || FieldTypeInfo.IsComputed(f.FieldType),
                 // «Пользователь» — как select, только опции живые: допущенные пользователи
                 // базы. Снимок на момент построения колонок; редактор ячейки перечитывает
@@ -1439,7 +746,7 @@ public partial class TableView : UserControl
                 NumberFormat = NumberFormatValue.FromConfig(f.ConfigJson),
                 // Папка авто-привязки «Файла» (если правило задано) → ячейка read-only.
                 FileAutoFolder = FileAutoRule.FromConfig(f.ConfigJson)?.Folder ?? "",
-                // Настройка связи (целевая коллекция + one/many), если задана → ячейка рисует чипы.
+                // Настройка связи (целевая коллекция + one/many), если задана → ячейка рисует плашки.
                 Relation    = f.FieldType == "relation" ? RelationConfig.FromConfig(f.ConfigJson) : null,
                 Tag         = fid,
                 BuildHeaderMenu = _ => BuildHeaderContextMenu(fid, f.IsRequired, f.Name, f.FieldType,
@@ -1451,10 +758,12 @@ public partial class TableView : UserControl
         // равных — важно, если у пары колонок совпали ключи дефолта).
         var ordered = movable.OrderBy(EffectiveColumnPosition).ToList();
 
+        // Ширина «№» здесь стандартная: под самый длинный номер (число записей) ее меряет сетка по
+        // точному счету из фона — COUNT на UI-потоке при каждой пересборке колонок ей не нужен.
         var defs = new List<TableColumnDef>
         {
             new() { Key = TableColumnDef.NumKey, Header = "№",
-                    IsStarWidth = false, FixedWidth = NumColumnWidth(),
+                    IsStarWidth = false, FixedWidth = NumColWidth,
                     CanResize = false,   IsReadOnly = true },
         };
         defs.AddRange(ordered);
@@ -1464,28 +773,6 @@ public partial class TableView : UserControl
                          MaxWidth  = PlusColWidth });
 
         return defs;
-    }
-
-    // Ширина служебной колонки «№»: дефолт NumColWidth для коротких номеров, но
-    // расширяется ровно под самый длинный номер (= числу записей), чтобы крупные
-    // числа не обрезались. Фиксированная (не Auto) — иначе DataGrid сбивает экстент
-    // горизонтального скролла, и последняя колонка «+» обрезается при прокрутке полосой.
-    private double NumColumnWidth()
-    {
-        // Рисованная сетка меряет «№» сама по числу записей из снимка и из фонового счета — COUNT на
-        // UI-потоке (секунда на 10 млн строк) при каждой пересборке колонок ей не нужен.
-        if (_repository is null || _drawn is not null) return NumColWidth;
-
-        var maxRow = _repository.CountRecords(_collectionId, _hiddenRecords.Count > 0);
-        var text   = Math.Max(1, maxRow).ToString(CultureInfo.InvariantCulture);
-
-        var fontSize = (double)this.FindResource("FontSizeBase")!;
-        var measured = new FormattedText(text, CultureInfo.InvariantCulture,
-                                         FlowDirection.LeftToRight,
-                                         new Typeface(this.FontFamily), fontSize, null).Width;
-
-        // Поля по бокам, чтобы число не липло к границам колонки.
-        return Math.Max(NumColWidth, Math.Ceiling(measured) + 16);
     }
 
     // Эффективная позиция движимой колонки: сохраненная (column_order) или дефолт.
@@ -1522,7 +809,7 @@ public partial class TableView : UserControl
     //
     // Панель записи показывает те же свойства карточками и дает над ними то же контекстное
     // меню, что заголовок колонки. Порядок, цвет и видимость колонок живут ЗДЕСЬ (column_meta
-    // + кеши + точечная перестройка грида), поэтому панель не делает их сама, а просит через
+    // + кеши + пересборка колонок), поэтому панель не делает их сама, а просит через
     // контроллер — иначе состояние таблицы и БД разъедутся. См. docs/developer/features/constructor/record-page.md.
 
     /// <summary>Порядок свойства: «вверх» в панели = «влево» в таблице (список тот же).</summary>
@@ -1556,74 +843,13 @@ public partial class TableView : UserControl
     /// <summary>«Обновить привязку» файла из панели — пересканировать папку и перечитать строки.</summary>
     public void RefreshAutoFileProperty(int fieldId) => RefreshAutoFileFromMenu(fieldId);
 
-    // Перемещение колонки влево/вправо: пишем порядок в БД и двигаем ТОЛЬКО одну колонку
-    // на месте (RemoveAt+Insert), не сбрасывая весь набор. Полная пересборка (BuildColumns →
-    // Columns.Clear) на коллекции со множеством колонок и сотнями тысяч строк рушит все
-    // визуальное дерево грида и дает «белое» мелькание на 1–2 сек, пока ячейки заново
-    // материализуются. Сдвиг меняет позицию ровно одной колонки (своп с соседом), поэтому
-    // переставляем ее точечно — как AddColumnForField/RebuildColumn. Строки не трогаем,
-    // горизонтальную прокрутку держим на месте. Есть безопасный фоллбек на полную пересборку.
+    // Перемещение колонки влево/вправо: порядок пишется в БД, дальше — новая раскладка: строки и
+    // прокрутка на месте, ширины — по ключам, выделение ячеек и колонок едет за своими ключами.
     private void MoveColumn(string key, bool left)
     {
         if (_repository is null) return;
         _repository.MoveColumn(_collectionId, key, left, MovableKeysInOrder());
-
-        // Рисованная сетка: сдвиг — новая раскладка, строки и прокрутка на месте, ширины — по ключам;
-        // выделение ячеек и колонок едет за своими ключами.
-        if (_drawn is not null) { ReloadColumnsDrawn(); return; }
-
-        var keepH   = CurrentScrollOffset();
-        var oldDefs = _colDefs;
-
-        LoadColumnState();
-        var newDefs = BuildColDefs();
-
-        var oldIdx = oldDefs.FindIndex(d => d.Key == key);
-        var newIdx = newDefs.FindIndex(d => d.Key == key);
-
-        _colDefs = newDefs;
-        ColumnsBuilt?.Invoke(this, _colDefs);
-        ClearColumnSelection();          // колонки переставлены — снимаем выделение (как ReloadColumns)
-
-        // Точечный сдвиг возможен, только если позиция изменилась ровно у этой колонки,
-        // набор и относительный порядок прочих неизменны, а грид выровнен с _colDefs 1:1.
-        var canTargeted =
-            oldIdx >= 0 && newIdx >= 0 &&
-            oldDefs.Count == newDefs.Count &&
-            RecordsGrid.Columns.Count == oldDefs.Count &&
-            SameOrderExcept(oldDefs, newDefs, key);
-
-        if (canTargeted)
-        {
-            RecordsGrid.Columns.RemoveAt(oldIdx);
-            RecordsGrid.Columns.Insert(newIdx, CreateDataGridColumn(newDefs[newIdx]));
-        }
-        else
-        {
-            BuildColumns();              // фоллбек: набор/порядок разошелся — полная пересборка
-            RecordsGrid.ContextMenu = BuildGridContextMenu();
-        }
-
-        ApplyColumnWidths();
-        if (keepH > 0) RestoreScrollOffset(keepH);
-    }
-
-    // true, если два набора колонок совпадают по ключам и порядку после исключения key
-    // (т.е. сдвинулась ровно эта колонка, остальные на местах) — условие точечного сдвига.
-    private static bool SameOrderExcept(
-        IReadOnlyList<TableColumnDef> a, IReadOnlyList<TableColumnDef> b, string key) =>
-        a.Where(d => d.Key != key).Select(d => d.Key)
-         .SequenceEqual(b.Where(d => d.Key != key).Select(d => d.Key));
-
-    // Reload + восстановление горизонтального скролла. Используется операциями,
-    // перестраивающими колонки на месте (сдвиг колонки), чтобы таблица не прыгала
-    // в начало. Сам Reload пересобирает DataGrid, поэтому offset снимаем до него.
-    private void ReloadPreservingScroll()
-    {
-        var keepOffset = CurrentScrollOffset();
-        Reload();
-        if (keepOffset > 0)
-            RestoreScrollOffset(keepOffset);
+        ReloadColumns();
     }
 
     // Можно ли двигать колонку влево/вправо (не крайняя ли она среди движимых).
@@ -1642,378 +868,64 @@ public partial class TableView : UserControl
         return false;
     }
 
-    // Перемещение записи вверх/вниз: пишем порядок в БД и обновляем уже загруженные строки НА МЕСТЕ
-    // (Fill), без Reset — меняется только ПОРЯДОК записей, не их число, поэтому пересоздавать
-    // виртуальный список не нужно. Так нет мелькания «Загрузка…» и прокрутка остается на месте сама.
+    // Перемещение записи вверх/вниз: порядок пишется в БД, загруженные строки перечитываются НА
+    // МЕСТЕ — меняется только ПОРЯДОК записей, не их число, поэтому список не пересоздается: нет
+    // мелькания «Загрузка…», прокрутка остается сама.
     private void MoveRecord(int recordId, bool up)
     {
         if (_repository is null) return;
 
         _repository.MoveRecord(_collectionId, recordId, up);
-        if (_drawn is not null)
+        // Выделение записей — по id, за сдвинутой записью следует само; строки перечитываются на месте
+        // (в строке редактора оказалась бы другая запись — правку записываем до этого).
+        ForgetCellEditing();
+        RecordsGrid.Rows?.RefreshLoadedPages();
+        // Сдвиг с клавиатуры от активной ячейки: рамка едет за записью (следующее нажатие двигает
+        // ее дальше); из меню «№» — выделена сама запись.
+        if (_cellRange is not null)
         {
-            // Выделение записей — по id, за сдвинутой записью следует само; строки перечитываются на месте
-            // (в строке редактора оказалась бы другая запись — правку записываем до этого).
-            ForgetCellEditing();
-            _drawn.Rows?.RefreshLoadedPages();
-            // Сдвиг с клавиатуры от активной ячейки: рамка едет за записью (следующее нажатие двигает
-            // ее дальше); из меню «№» — выделена сама запись.
-            if (_cellRange is not null)
-            {
-                SyncDrawnSelection();
-                if (_cellRange is { } followed) ScrollCellIntoView(followed.AnchorRow, followed.AnchorColumn);
-            }
-            else _drawn.SetRecordSelection([recordId]);
-            return;
+            SyncSelection();
+            if (_cellRange is { } followed) ScrollCellIntoView(followed.AnchorRow, followed.AnchorColumn);
         }
-        _virtualRows?.RefreshLoadedPages();   // порядок изменился — перечитываем видимые строки на месте
-
-        // Выделение «следует» за сдвинутой записью. После пере-Fill строки остаются на своих ИНДЕКСАХ,
-        // а запись переехала в соседний VM — поэтому переустанавливаем выделение на VM, который теперь
-        // держит эту запись (иначе голубая подсветка осталась бы на прежней экранной позиции).
-        var moved = _virtualRows?.FindCachedByRecordId(recordId);
-        if (moved is not null)
-        {
-            RecordsGrid.SelectedItems.Clear();
-            RecordsGrid.SelectedItems.Add(moved);
-        }
+        else RecordsGrid.SetRecordSelection([recordId]);
     }
 
     // Точечное обновление ОДНОЙ строки (после правки записи в правой панели): перечитываем ее данные
-    // и заполняем строку на месте, без пересборки таблицы. Полный Refresh на больших коллекциях с
-    // множеством колонок давал тяжелую перезагрузку при каждой правке.
+    // и заполняем строку на месте, без пересборки таблицы.
     public void RefreshRecordRow(int recordId)
     {
         // Снимаем правку ячейки — только если правится ЭТА ЖЕ запись. Редакторы даты/выбора задают
-        // значение императивно (Storage/SelectedItem ставятся один раз) и НЕ обновляются по
-        // NotifyAllCells — открытый редактор показывал бы устаревшее значение, а при коммите еще и
-        // затер бы свежее из панели. CancelEdit отменяет (не коммитит) правку, после чего ячейка
-        // показывает биндинг-дисплей. Правка ДРУГОЙ записи к обновлению отношения не имеет: раньше
-        // ее закрывало любое перечитывание панели, и набор текста в таблице обрывался на паузе.
-        if (_drawn is not null)
-        {
-            if (IsCellEditing && _drawnEditRecordId == recordId) CancelDrawnEdit(focusGrid: false);
-            _drawn.Rows?.RefreshRecord(recordId);
-            _drawn.Rows?.RefreshRelationTargets(recordId);
-            return;
-        }
-        if (IsCellEditing && _editingCell is { } cell && CachedRowAt(cell.Row)?.RecordId == recordId)
-            RecordsGrid.CancelEdit();
-        _activeRows?.RefreshRecord(recordId);
+        // значение императивно (Storage/SelectedItem ставятся один раз) — открытый редактор показывал
+        // бы устаревшее значение, а при коммите еще и затер бы свежее из панели. Правка ДРУГОЙ
+        // записи к обновлению отношения не имеет: раньше ее закрывало любое перечитывание панели,
+        // и набор текста в таблице обрывался на паузе.
+        if (IsCellEditing && _editRecordId == recordId) CancelEdit(focusGrid: false);
+        RecordsGrid.Rows?.RefreshRecord(recordId);
         // Строки, чьи связи ссылаются на измененную запись, тоже обновляем — иначе название цели в их
-        // ячейке-связи оставалось бы старым до прокрутки/перезагрузки. Адресуем ВИДИМОМУ списку
-        // (_activeRows), чтобы работало и в режиме фильтра/сортировки.
-        _activeRows?.RefreshRelationTargets(recordId);
+        // ячейке-связи оставалось бы старым до прокрутки/перезагрузки.
+        RecordsGrid.Rows?.RefreshRelationTargets(recordId);
     }
 
     // Выделить голубым ровно заданные записи (по id), сняв прежнее выделение. Используется после
-    // структурных операций (создание/дубль): после Reset грид мог «восстановить» выделение по индексам
-    // на уже ДРУГИЕ записи (отсюда лишние/съехавшие подсветки) — мы переустанавливаем его явно на
-    // результат операции. Подсветка появится у тех строк, что сейчас в кеше (видимые/прогретые).
+    // структурных операций (создание/дубль). Подсветка появится у записи, как только ее строка
+    // окажется в кадре.
     public void SelectRecords(IReadOnlyList<int> recordIds)
     {
         ClearCellSelection();   // выделяются записи — рамка ячеек гаснет, иначе Delete двусмыслен
-        if (_drawn is not null)
-        {
-            // Рисованная сетка выделяет по id: подсветка появится у записи, как только ее строка окажется в кадре.
-            _drawn.SetRecordSelection(recordIds);
-            return;
-        }
-        RecordsGrid.SelectedItems.Clear();
-        if (_virtualRows is null) return;
-        foreach (var id in recordIds)
-            if (_virtualRows.FindCachedByRecordId(id) is { } row)
-                RecordsGrid.SelectedItems.Add(row);
+        RecordsGrid.SetRecordSelection(recordIds);
     }
 
     // Снять все выделение записей (после удаления — удаленные строки не должны оставаться «подсвеченными»).
-    public void ClearRecordSelection()
-    {
-        if (_drawn is not null) _drawn.ClearRecordSelection();
-        else RecordsGrid.SelectedItems.Clear();
-    }
+    public void ClearRecordSelection() => RecordsGrid.ClearRecordSelection();
 
     // Можно ли двигать запись вверх/вниз (не крайняя ли она в порядке коллекции).
     // O(1)-сик соседа: вызывается при открытии контекстного меню — никаких COUNT'ов.
     private bool CanMoveRecord(int recordId, bool up) =>
         _repository is not null && _repository.HasNeighborRecord(_collectionId, recordId, up);
 
-    private void BuildColumns()
-    {
-        _chevronPaths.Clear();
-        _headerHosts.Clear();
-        RecordsGrid.Columns.Clear();
+    // ── Иконки ────────────────────────────────────────────────────────────────
 
-        foreach (var def in _colDefs)
-            RecordsGrid.Columns.Add(CreateDataGridColumn(def));
-    }
-
-    private DataGridColumn CreateDataGridColumn(TableColumnDef def)
-    {
-        var width = def.IsStarWidth
-            ? new DataGridLength(1, DataGridLengthUnitType.Star)
-            : new DataGridLength(def.FixedWidth);
-
-        // Ячейку шапки запоминаем: от нее поднимаемся к DataGridColumnHeader, когда нужно
-        // положение правой границы колонки для полоски-захвата.
-        var header = BuildHeaderCell(def);
-        if (def.IsStarWidth) _headerHosts[def.Key] = header;
-
-        var col = new DataGridTemplateColumn
-        {
-            Header         = header,
-            Tag            = def.Tag ?? def.Key,
-            Width          = width,
-            MinWidth       = def.IsStarWidth ? def.MinWidth : def.FixedWidth,
-            IsReadOnly     = def.IsReadOnly,
-            CanUserSort    = false,
-            CanUserResize  = def.CanResize,
-            CanUserReorder = false,
-            CellTemplate   = BuildCellTemplate(def),
-        };
-
-        if (def.MaxWidth.HasValue)
-            col.MaxWidth = def.MaxWidth.Value;
-
-        if (!def.IsReadOnly)
-            col.CellEditingTemplate = BuildEditTemplate(def);
-
-        // Скрытая в окне «Отображение» колонка — гасим, не удаляя из _colDefs
-        // (порядок/перемещение/фильтры продолжают работать с полным набором).
-        col.IsVisible = !_hiddenColumns.Contains(def.Key);
-
-        return col;
-    }
-
-    // ── Ячейки шапки (передаются как Header в DataGridTemplateColumn) ──────────
-
-    private Control BuildHeaderCell(TableColumnDef def)
-    {
-        if (def.Key == TableColumnDef.AddPropKey)
-        {
-            // Размер «+» — как у «+» создания записи (add-row), т.е. стандартный FontSizeBase.
-            var plus = MakeCenteredHeader("+", addRightBorder: false);
-            plus.Cursor = new Cursor(StandardCursorType.Hand);
-            plus.PointerPressed += (_, _) => PermissionNotice.Run(
-                this, Can(PermAction.CreateField), PermAction.CreateField,
-                () => PropertyCreateRequested?.Invoke(this, EventArgs.Empty));
-            return plus;
-        }
-
-        if (def.Key == TableColumnDef.NumKey)
-            return MakeCenteredHeader("№");
-
-        var cell = MakeTextHeader(def);
-
-        if (def.OnHeaderClick is { } clickHandler)
-        {
-            cell.Cursor = new Cursor(StandardCursorType.Hand);
-            cell.PointerPressed += (_, _) => clickHandler(def);
-        }
-
-        // Левый клик по заголовку — выделить колонку голубой рамкой. С Shift —
-        // диапазон от последней обычной выделенной колонки.
-        cell.PointerPressed += (_, e) =>
-        {
-            var props = e.GetCurrentPoint(cell).Properties;
-            if (props.IsLeftButtonPressed)
-                SelectColumn(def.Key, e.KeyModifiers.HasFlag(KeyModifiers.Shift));
-            // Меню шапки собираем на правом НАЖАТИИ, а не заранее на каждую колонку: оно
-            // открывается на отпускании кнопки, так что к показу уже на месте. Тем же
-            // приемом живет меню ячейки (ShowCellMenuOn, TableView.CellClipboard.cs).
-            //
-            // Раньше меню строилось в момент создания колонки — а это полтора десятка пунктов,
-            // у каждого свой составной заголовок с иконкой: около сотни контролов на КАЖДУЮ
-            // колонку, включая те, что скрыты в окне «Отображение» и никогда не видны. На
-            // обычной таблице это незаметно, на коллекции в 1000 свойств — десятки тысяч
-            // объектов и десятки мегабайт, построенные на UI-потоке до появления первой строки.
-            else if (props.IsRightButtonPressed && def.BuildHeaderMenu is { } factory)
-                ShowHeaderMenuOn(cell, def, factory);
-        };
-
-        return cell;
-    }
-
-    // Меню носит ровно одна шапка: у прежней снимаем (как у меню ячейки). Состав меню зависит
-    // от КОНКРЕТНОЙ колонки — имя и тип в карточке-шапке, «Удалить» по IsRequired, пункты сдвига
-    // отсутствуют у крайних, отметка цвета по текущему стилю, — поэтому общего меню на таблицу
-    // тут быть не может, только свое на колонку в момент клика.
-    private Control? _headerMenuHost;
-
-    private void ShowHeaderMenuOn(Control cell, TableColumnDef def,
-                                  Func<TableColumnDef, ContextMenu?> factory)
-    {
-        if (_headerMenuHost is { } prev && !ReferenceEquals(prev, cell)) prev.ContextMenu = null;
-
-        _headerMenuHost  = cell;
-        cell.ContextMenu = factory(def);
-    }
-
-    // Ячейка шапки строится КОНСТРУКЦИЕЙ 1-в-1 как шаблон DataGridCell: Grid "*,Auto",
-    // контент в звездной колонке, вертикальная линия — Rectangle в Auto-колонке (как
-    // PART_RightGridLine, см. TableViewDataGridThemes.axaml). Одинаковые слоты дают
-    // одинаковое округление — линии заголовка совпадают с линиями строк по X и толщине
-    // при любом зуме/DPI и не исчезают при смене числа/ширины колонок. Толщина и
-    // UseLayoutRounding — живые токены LineMetrics через GetResourceObservable.
-    private Control WrapHeaderContent(Control content, bool addRightLine)
-    {
-        var host = new Grid
-        {
-            Background          = Brushes.Transparent,   // hit-test всей области (клики/меню)
-            ColumnDefinitions   = new ColumnDefinitions("*,Auto"),
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment   = VerticalAlignment.Stretch,
-        };
-
-        Grid.SetColumn(content, 0);
-        host.Children.Add(content);
-
-        if (addRightLine)
-        {
-            var line = new Rectangle
-            {
-                Fill              = (IBrush)this.FindResource("BrushSeparator")!,
-                VerticalAlignment = VerticalAlignment.Stretch,
-            };
-            line.Bind(Rectangle.WidthProperty,           line.GetResourceObservable("SeparatorThickness"));
-            line.Bind(Layoutable.UseLayoutRoundingProperty, line.GetResourceObservable("LineUseLayoutRounding"));
-            // Без сглаживания — как у нативных линий строк: на дробных позициях (зум ≠ 1)
-            // линия защелкивается в целый пиксель, а не размазывается.
-            Avalonia.Media.RenderOptions.SetEdgeMode(line, Avalonia.Media.EdgeMode.Aliased);
-            Grid.SetColumn(line, 1);
-            host.Children.Add(line);
-        }
-        return host;
-    }
-
-    private Control MakeCenteredHeader(string text, double fontSize = 0, bool addRightBorder = true) =>
-        WrapHeaderContent(new Border
-        {
-            Background          = Brushes.Transparent,
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment   = VerticalAlignment.Stretch,
-            Child = new TextBlock
-            {
-                Text                = text,
-                FontSize            = fontSize > 0 ? fontSize : (double)this.FindResource("FontSizeBase")!,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment   = VerticalAlignment.Center,
-                Foreground          = (IBrush)this.FindResource("BrushSecondaryText")!,
-            },
-        }, addRightBorder);
-
-    private Control MakeTextHeader(TableColumnDef def)
-    {
-        var text = new TextBlock
-        {
-            Text              = def.Header,
-            FontSize          = (double)this.FindResource("FontSizeBase")!,
-            VerticalAlignment = VerticalAlignment.Center,
-            TextTrimming      = TextTrimming.CharacterEllipsis,
-            Foreground        = (IBrush)this.FindResource("BrushSecondaryText")!,
-        };
-
-        // Слева — иконка типа свойства (если тип известен). Сетка: [иконка][текст][шеврон].
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
-
-        // «Название» — единственное базовое свойство целостности: его нельзя удалить и сменить
-        // тип. Его иконку типа красим красным, чтобы визуально выделять среди обычных свойств
-        // (полезно, когда колонок много и легко перепутать). «Описание» — обычное поле и
-        // рисуется как все остальные.
-        var isSystemColumn = def.Key == TableRowVm.TitleKey;
-        var iconStroke     = isSystemColumn ? (IBrush)this.FindResource("BrushRed")! : null;
-        var typeIcon = BuildTypeIcon(def.FieldType, iconStroke);
-        if (typeIcon is not null)
-        {
-            Grid.SetColumn(typeIcon, 0);
-            grid.Children.Add(typeIcon);
-        }
-
-        Grid.SetColumn(text, 1);
-        grid.Children.Add(text);
-
-        var chevron = BuildFilterChevron(def);
-        Grid.SetColumn(chevron, 2);
-        grid.Children.Add(chevron);
-
-        var border = new Border
-        {
-            Background          = Brushes.Transparent,
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment   = VerticalAlignment.Stretch,
-            Padding             = new Thickness(6, 0),
-            Child               = grid,
-        };
-        border.Classes.Add("colHeader");   // hover-фон через стиль (Assets/Styles/Controls.axaml)
-        return WrapHeaderContent(border, addRightLine: true);
-    }
-
-    // Иконка типа свойства слева от названия колонки (серый цвет шапки). null —
-    // если тип неизвестен (тогда колонка без иконки). stroke — цвет обводки: по умолчанию
-    // серый как у шапки, для системных колонок передается красный (BrushRed).
-    private Control? BuildTypeIcon(string? fieldType, IBrush? stroke = null)
-    {
-        var geo = Controls.Components.FieldTypeIcons.ForType(fieldType);
-        if (geo is null) return null;
-
-        return new Viewbox
-        {
-            Width             = IconSize("IconSizeSmall"),
-            Height            = IconSize("IconSizeSmall"),
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin            = new Thickness(0, 0, 6, 0),
-            Child = new Canvas
-            {
-                Width  = 24,
-                Height = 24,
-                Children =
-                {
-                    new Avalonia.Controls.Shapes.Path
-                    {
-                        Data            = geo,
-                        Stroke          = stroke ?? (IBrush)this.FindResource("BrushSecondaryText")!,
-                        StrokeThickness = IconSize("IconStrokeSmall"),
-                        StrokeLineCap   = PenLineCap.Round,
-                        StrokeJoin      = PenLineJoin.Round,
-                    },
-                },
-            },
-        };
-    }
-
-    /// <summary>Стрелка в шапке колонки — открывает окно фильтра/сортировки.</summary>
-    private Control BuildFilterChevron(TableColumnDef def)
-    {
-        // Обводочная иконка (как в полях даты/навбаре), не PathIcon-заливка.
-        // Спокойное состояние — серый шеврон; активный фильтр/сортировка —
-        // синяя воронка (lucide funnel), см. ApplyChevronState.
-        var path = new Avalonia.Controls.Shapes.Path
-        {
-            StrokeThickness = 2,
-            StrokeLineCap   = PenLineCap.Round,
-            StrokeJoin      = PenLineJoin.Round,
-        };
-        _chevronPaths[def.Key] = path;
-        ApplyChevronState(def.Key, path);
-
-        var canvas = new Canvas { Width = 24, Height = 24 };
-        canvas.Children.Add(path);
-
-        var btn = new Button
-        {
-            Width             = 20,
-            Height            = 20,
-            VerticalAlignment = VerticalAlignment.Center,
-            Content           = new Viewbox { Width = IconSize("IconSizeSmall"), Height = IconSize("IconSizeSmall"), Child = canvas },
-        };
-        btn.Classes.Add("icon");
-        btn.Classes.Add("filterChevron");
-        ToolTip.SetTip(btn, "Фильтр и сортировка");
-        btn.Click += (_, _) => ShowFilterFlyout(btn, def);
-        return btn;
-    }
-
-    // Иконки заголовка/меню фильтра — из общего словаря Assets/Styles/Icons.axaml.
+    // Иконки меню фильтра — из общего словаря Assets/Styles/Icons.axaml.
     private static Geometry Icon(string key) =>
         Application.Current!.TryFindResource(key, out var res) && res is Geometry g
             ? g
@@ -2023,160 +935,16 @@ public partial class TableView : UserControl
     private static double IconSize(string key) =>
         Application.Current!.TryFindResource(key, out var r) && r is double d ? d : 16;
 
-    private static Geometry ChevronIcon => Icon("IconChevronDown");
-    private static Geometry FunnelIcon  => Icon("IconFilter");
     private static Geometry SortAzIcon  => Icon("IconSortAz");
     private static Geometry SortZaIcon  => Icon("IconSortZa");
     private static Geometry CheckIcon   => Icon("IconCheck");
     private static Geometry XIcon       => Icon("IconClose");
 
-    private void ApplyChevronState(string key, Avalonia.Controls.Shapes.Path path)
-    {
-        var active  = _filters.ContainsKey(key) || _sortKey == key;
-        path.Data   = active ? FunnelIcon : ChevronIcon;
-        path.Stroke = active
-            ? (IBrush)this.FindResource("BrushAccent")!
-            : (IBrush)this.FindResource("BrushSecondaryText")!;
-    }
+    // ── Цвет ячейки у редактора ───────────────────────────────────────────────
 
-    private void UpdateChevronStates()
-    {
-        foreach (var (key, path) in _chevronPaths)
-            ApplyChevronState(key, path);
-    }
-
-    // ── Шаблоны ячеек ─────────────────────────────────────────────────────────
-
-    // Шаблон ячейки = содержимое (inner) + заливка выделения колонки (кисть колонки на
-    // ContentPresenter ячейки, AttachColumnFill) + слой пользовательского цвета (CellStyleHost).
-    private IDataTemplate BuildCellTemplate(TableColumnDef def)
-    {
-        var inner = BuildCellContentTemplate(def);
-        return new FuncDataTemplate<TableRowVm>((row, _) =>
-        {
-            var content = inner.Build(row);
-            AttachColumnFill(content, def.Key);
-            return def.Key is TableColumnDef.NumKey or TableColumnDef.AddPropKey
-                ? content
-                : CellStyleHost(content, def.Key);
-        });
-    }
-
-    // ── Слой пользовательского цвета ячейки ───────────────────────────────────
-    //
-    // Заливка ложится на СВОЙ Border ВНУТРИ ContentPresenter'а, а не на его фон: там уже
-    // живет заливка выделения колонки. Заливка ПОЛУПРОЗРАЧНА (ColorTools.Fill), поэтому
-    // выделение колонки, выделение строки и наведение просвечивают сквозь цвет и
-    // смешиваются с ним — вместо «цвет закрыл подсветку».
-    //
-    // Цвет ТЕКСТА ставится ЛОКАЛЬНЫМ значением самим надписям ячейки. Наследуемый
-    // Foreground — со слоя, с DataGridCell, откуда угодно — до текста не доходит В ПРИНЦИПЕ:
-    // цвет всех надписей приложения задан стилем «Style Selector="TextBlock"»
-    // (Assets/Styles/Typography.axaml), а стиль в Avalonia приоритетнее унаследованного
-    // значения. По той же причине не работает и штатный стиль «DataGridRow:selected
-    // DataGridCell» — синим текст выделенной строки не становится. Локальное значение
-    // приоритетнее стиля, поэтому цвет виден и на выделенной строке.
-    //
-    // Исходную кисть надписи запоминаем: у части ячеек цвет свой («вычисляемые» значения
-    // приглушены), и сброс обязан вернуть именно ее, а не обнулить.
-    //
-    // Контейнеры ячеек переиспользуются виртуализацией, поэтому цвет пересчитывается на
-    // КАЖДУЮ смену DataContext (пришла другая строка) и на «Item» строки (страница-заглушка
-    // дозаполнилась данными — DataContext при этом не меняется, см. TableRowVm.Fill).
-    private Border CellStyleHost(Control? content, string key)
-    {
-        var host = new Border
-        {
-            Child               = content,
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment   = VerticalAlignment.Stretch,
-        };
-
-        // Надписи, которым поставили цвет → их СВОЯ кисть (null — своей не было, цвет пришел
-        // от глобального стиля, и сброс = ClearValue). «Своя» — это ровно LocalValue: IsSet
-        // здесь не годится, он True и для стилевого значения, и сброс запирал бы стилевую
-        // кисть локально. Словарь заводится только у покрашенной ячейки — у подавляющего
-        // большинства так и остается null, лишней работы на строку нет.
-        Dictionary<TextBlock, IBrush?>? painted = null;
-
-        void PaintText(IBrush? fg)
-        {
-            if (fg is null)
-            {
-                if (painted is null) return;             // не красили — и снимать нечего
-                foreach (var (text, original) in painted)
-                {
-                    if (original is null) text.ClearValue(TextBlock.ForegroundProperty);
-                    else                  text.Foreground = original;
-                }
-                painted = null;
-                return;
-            }
-
-            painted ??= [];
-            foreach (var text in host.GetVisualDescendants().OfType<TextBlock>())
-            {
-                if (!painted.ContainsKey(text))
-                    painted[text] = text.GetDiagnostic(TextBlock.ForegroundProperty).Priority
-                                    == BindingPriority.LocalValue ? text.Foreground : null;
-                text.Foreground = fg;
-            }
-        }
-
-        void Apply() => ApplyCellStyle(host, key, PaintText);
-
-        // Loaded, а не AttachedToVisualTree: у составных ячеек (связь, файл) на момент
-        // подключения шаблон еще не применен — надписей в дереве нет и красить нечего.
-        host.Loaded += (_, _) => Apply();
-
-        TrackRowStyle(host, Apply);
-        return host;
-    }
-
-    // Держит визуал контрола в согласии со строкой-владельцем: пересчет на смену DataContext
-    // (виртуализация подставила другую строку) и на «Item» строки (заглушка «Загрузка…»
-    // дозаполнилась данными — DataContext при этом тот же, см. TableRowVm.Fill). Подписка
-    // снимается при отсоединении от дерева, чтобы строки не держали мертвые контейнеры.
-    private static void TrackRowStyle(Control host, Action apply)
-    {
-        TableRowVm? bound = null;
-        void OnRowChanged(object? _, PropertyChangedEventArgs e)
-        {
-            if (e.PropertyName is "Item") apply();
-        }
-        void Rebind()
-        {
-            if (bound is not null) bound.PropertyChanged -= OnRowChanged;
-            bound = host.DataContext as TableRowVm;
-            if (bound is not null) bound.PropertyChanged += OnRowChanged;
-            apply();
-        }
-
-        host.DataContextChanged += (_, _) => Rebind();
-        host.DetachedFromVisualTree += (_, _) =>
-        {
-            if (bound is not null) bound.PropertyChanged -= OnRowChanged;
-            bound = null;
-        };
-        Rebind();
-    }
-
-    // Итоговый цвет ячейки: ячейка → строка → цвет записи → колонка (RowStyle.Resolve —
-    // единственное место, где описан приоритет). Заливка — слою, цвет текста — в paintText:
-    // надписи ячейки и их исходные кисти знает он (см. CellStyleHost).
-    private void ApplyCellStyle(Border host, string key, Action<IBrush?> paintText)
-    {
-        var style = host.DataContext is TableRowVm vm && !vm.IsAddRow
-            ? RowStyle.Resolve(vm.CellStyle(key), RowStyleOf(vm.RecordId), ColumnStyleOf(key))
-            : RowStyle.None;
-
-        host.Background = ColorTools.Fill(style.Bg);
-        paintText(ColorTools.Text(style.Fg));
-    }
-
-    /// <summary>Пользовательский цвет ячейки для РЕДАКТОРА. Шаблон правки подменяет шаблон показа
-    /// целиком — вместе со слоем цвета (CellStyleHost), — поэтому заливку и цвет текста редактор
-    /// ставит себе сам: иначе окрашенная ячейка на клике теряла бы цвет и текста, и фона.</summary>
+    /// <summary>Пользовательский цвет ячейки для РЕДАКТОРА: сетка рисует правящуюся ячейку без
+    /// значения и цвета, поэтому заливку и цвет текста редактор ставит себе сам — иначе окрашенная
+    /// ячейка на клике теряла бы цвет и текста, и фона.</summary>
     private (IBrush? Fill, IBrush? Text) EditorCellStyle(TableRowVm row, string key)
     {
         if (row.IsAddRow) return (null, null);
@@ -2192,240 +960,14 @@ public partial class TableView : UserControl
         if (text is not null) editor.Foreground = text;
     }
 
-    // Оформление строк и колонок: у рисованной сетки словари живут в ее панели (она читает их на
-    // кадре и перечитывает при перезагрузке), у нынешней — здесь.
-    private RowStyle RowStyleOf(int recordId) =>
-        _drawn is not null ? _drawn.RowStyleOf(recordId)
-        : _rowStyles.TryGetValue(recordId, out var s) ? s : RowStyle.None;
+    // Оформление строк и колонок живет в сетке: она читает его на кадре и перечитывает при перезагрузке.
+    private RowStyle RowStyleOf(int recordId) => RecordsGrid.RowStyleOf(recordId);
+    private RowStyle ColumnStyleOf(string key) => RecordsGrid.ColumnStyleOf(key);
 
-    private RowStyle ColumnStyleOf(string key) =>
-        _drawn is not null ? _drawn.ColumnStyleOf(key)
-        : _columnStyles.TryGetValue(key, out var s) ? s : RowStyle.None;
+    // ── Редакторы ячеек ───────────────────────────────────────────────────────
 
-    private IDataTemplate BuildCellContentTemplate(TableColumnDef def) =>
-        new FuncDataTemplate<TableRowVm>((row, _) =>
-        {
-            // Серые заливки «№»/«+» — без сглаживания (Aliased): на дробных позициях
-            // (зум ≠ 1) верх/низ непрозрачной заливки размазывался бы рядом с четкими
-            // линиями сетки и линией под шапкой (в прозрачных колонках смаз не виден —
-            // белое по белому). ВАЖНО: Aliased — только на прямоугольнике заливки, ТЕКСТ
-            // вне его поддерева: EdgeMode наследуется и переключает сглаживание текста
-            // (цифры становились тонкими).
-            if (def.Key == TableColumnDef.NumKey)
-            {
-                var fill = new Rectangle { Fill = (IBrush)this.FindResource("BrushInactiveBg")! };
-                Avalonia.Media.RenderOptions.SetEdgeMode(fill, Avalonia.Media.EdgeMode.Aliased);
-
-                var num = new Panel();
-                num.Children.Add(fill);
-                num.Children.Add(new TextBlock
-                {
-                    Text                = row.IsAddRow ? "+" : row.RowNumber.ToString(),
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    VerticalAlignment   = VerticalAlignment.Center,
-                    Foreground          = (IBrush)this.FindResource("BrushSecondaryText")!,
-                });
-
-                return num;
-            }
-
-            if (def.Key == TableColumnDef.AddPropKey)
-            {
-                var plusCell = new Border
-                {
-                    Background          = (IBrush)this.FindResource("BrushInactiveBg")!,
-                    HorizontalAlignment = HorizontalAlignment.Stretch,
-                    VerticalAlignment   = VerticalAlignment.Stretch,
-                };
-                Avalonia.Media.RenderOptions.SetEdgeMode(plusCell, Avalonia.Media.EdgeMode.Aliased);
-                return plusCell;
-            }
-
-            if (row.IsAddRow) return new Border();
-
-            if (def.FieldType == "checkbox")
-            {
-                var cb = new CheckBox
-                {
-                    IsChecked           = IsTruthy(row[def.Key]),
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    VerticalAlignment   = VerticalAlignment.Center,
-                };
-                cb.IsCheckedChanged += (_, _) => row[def.Key] = cb.IsChecked == true ? "1" : "0";
-                return cb;
-            }
-
-            // «Связь»: read-ячейка — названия связанных записей ТЕКСТОМ через разделитель (пусто →
-            // «связи нет»), фон прозрачный. Иконка/список — только в РЕЖИМЕ ПРАВКИ ячейки (как чеклист
-            // «Мультисписка», см. BuildEditTemplate). Данные тянет сам по RecordId строки (GetLinks);
-            // строка приходит асинхронно (виртуализация: заглушка → Fill → "Item", без смены
-            // DataContext) и меняется при переиспользовании контейнера — переустанавливаем RecordId.
-            if (def.FieldType == "relation" && def.Relation is not null && _repository is not null && def.Tag is int relFid)
-            {
-                var rel = new RelationSelectBox(_repository, relFid, def.Relation, editing: false, contentLeftPadding: CellContentPad, cache: _relLinks);
-                BindRelationRow(rel, row);
-                return rel;
-            }
-
-            // «Файл»: ссылка на файл (клик — открыть через ОС), ручной ввод пути + иконка-скрепка
-            // (системный выбор файла). Колонка read-only на уровне DataGrid (см. IsReadOnly ниже) —
-            // редактор живет прямо в ячейке показа, отдельного CellEditingTemplate нет (как у чекбокса).
-            if (def.FieldType == "file")
-            {
-                var editor = new FileEditor
-                {
-                    Flat               = true,
-                    ContentLeftPadding = CellContentPad,   // тот же отступ, что у надписей остальных колонок
-                    VerticalAlignment  = VerticalAlignment.Center,
-                    AutoFolder         = def.FileAutoFolder,   // непусто → read-only авто-режим
-                };
-                // Запись правки — в СТРОКУ ИЗ DataContext (контейнеры переиспользуются между строками),
-                // а не в захваченную при построении шаблона.
-                editor.Changed += (_, _) =>
-                {
-                    if (editor.DataContext is TableRowVm r) r[def.Key] = editor.Storage ?? "";
-                };
-                // Значение приходит асинхронно (виртуализация: заглушка «Загрузка…» → Fill → "Item")
-                // и меняется из панели записи. FileEditor читает Storage разово, поэтому обновляем
-                // показ по уведомлению строки; при смене DataContext переподписываемся.
-                System.ComponentModel.INotifyPropertyChanged? bound = null;
-                void OnRowProp(object? _, System.ComponentModel.PropertyChangedEventArgs e)
-                {
-                    if ((e.PropertyName is "Item" or null) && editor.DataContext is TableRowVm r)
-                        editor.SyncStorage(r[def.Key]);
-                }
-                void Rebind()
-                {
-                    if (bound is not null) bound.PropertyChanged -= OnRowProp;
-                    bound = editor.DataContext as System.ComponentModel.INotifyPropertyChanged;
-                    if (bound is not null) bound.PropertyChanged += OnRowProp;
-                    editor.SyncStorage((editor.DataContext as TableRowVm)?[def.Key] ?? "");
-                }
-                editor.DataContextChanged += (_, _) => Rebind();
-                editor.DetachedFromVisualTree += (_, _) =>
-                {
-                    if (bound is not null) { bound.PropertyChanged -= OnRowProp; bound = null; }
-                };
-                // DataContext ставит фреймворк (наследование от строки) — не задаем его явно,
-                // иначе переиспользование контейнера не переприсвоит строку. Первичный показ —
-                // из строки шаблона; дальше ведет DataContextChanged.
-                editor.SyncStorage(row[def.Key]);
-                return editor;
-            }
-
-            // «Вычисляемые» типы: значение — из аудит-метаданных записи (свойства строки
-            // CreatedAt/UpdatedAt/CreatedBy/UpdatedBy), а не из индексатора значений полей.
-            // Read-only: биндим Text к именованному свойству через формат-конвертер.
-            if (FieldTypeInfo.IsComputed(def.FieldType))
-            {
-                var metaBinding = new Binding(ComputedBindingPath(def.FieldType))
-                {
-                    Converter = new ComputedFieldDisplayConverter(def.FieldType),
-                };
-                return new TextBlock
-                {
-                    Margin              = CellContentMargin,
-                    VerticalAlignment   = VerticalAlignment.Center,
-                    HorizontalAlignment = HorizontalAlignment.Left,
-                    TextTrimming        = TextTrimming.CharacterEllipsis,
-                    Foreground          = (IBrush)this.FindResource("BrushSecondaryText")!,   // авто-значение — приглушенно
-                    [!TextBlock.TextProperty] = metaBinding,
-                };
-            }
-
-            // «Мультисписок»: read-ячейка — выбранные значения обычным текстом через запятую
-            // (FieldDisplayConverter → MultiSelectValue.Display); чипы/чеклист — только в edit.
-            var binding = new Binding($"[{def.Key}]")
-            {
-                Converter = def.Key == TableRowVm.TitleKey
-                    ? EmptyTitleConverter.Instance
-                    : new FieldDisplayConverter(def.FieldType, def.Separator, def.NumberFormat),
-            };
-
-            // Числа выравниваем вправо (для этого TextBlock должен занять всю ширину ячейки).
-            var isNumber = def.FieldType == "number";
-            var text = new TextBlock
-            {
-                Margin              = CellContentMargin,
-                VerticalAlignment   = VerticalAlignment.Center,
-                HorizontalAlignment = isNumber ? HorizontalAlignment.Stretch : HorizontalAlignment.Left,
-                TextAlignment       = isNumber ? TextAlignment.Right : TextAlignment.Left,
-                TextTrimming        = TextTrimming.CharacterEllipsis,
-                [!TextBlock.TextProperty] = binding,
-            };
-            if (!isNumber) FitLinesToCell(text);
-            if (def.Key == TableRowVm.TitleKey) MarkTitlePlaceholder(text);
-            return text;
-        });
-
-    /// <summary>
-    /// «Без названия» в ячейке — серым (стиль <c>TextBlock.titlePlaceholder</c>). Класс следует за
-    /// показанным текстом: он меняется и после правки, и когда виртуализация отдает ячейку другой
-    /// строке.
-    /// </summary>
-    private static void MarkTitlePlaceholder(TextBlock text)
-    {
-        void Mark() => text.Classes.Set("titlePlaceholder", text.Text == TitleText.Placeholder);
-
-        text.PropertyChanged += (_, e) =>
-        {
-            if (e.Property == TextBlock.TextProperty) Mark();
-        };
-        Mark();
-    }
-
-    /// <summary>
-    /// Многострочное значение (перевод строки через Alt+Enter или из буфера) показывается ровно
-    /// столькими строками, сколько влезает в высоту ячейки. Без предела надпись центровалась бы
-    /// целиком и срезалась сверху и снизу — в строке стандартной высоты от двух строк оставались
-    /// бы две половинки. В строке, растянутой вручную, видно больше строк.
-    ///
-    /// Высота строки текста берется у самой надписи после ее разметки, пока ее нет — оценкой по
-    /// размеру шрифта. Пересчет — на смену размера ячейки: ее меняют ручная высота строк и зум.
-    /// </summary>
-    private static void FitLinesToCell(TextBlock text)
-    {
-        void Fit()
-        {
-            if (text.Parent is not Control cell || cell.Bounds.Height <= 0) return;
-
-            var line = text.TextLayout?.TextLines is { Count: > 0 } lines && lines[0].Height > 0
-                ? lines[0].Height
-                : text.FontSize * 1.35;
-            var fit = Math.Max(1, (int)((cell.Bounds.Height - text.Margin.Top - text.Margin.Bottom) / line));
-            if (text.MaxLines != fit) text.MaxLines = fit;
-        }
-
-        Control? sized = null;
-        void OnSized(object? _, SizeChangedEventArgs __) => Fit();
-
-        text.AttachedToVisualTree += (_, _) =>
-        {
-            if (sized is not null) sized.SizeChanged -= OnSized;
-            sized = text.Parent as Control;
-            if (sized is not null) sized.SizeChanged += OnSized;
-            Fit();
-        };
-        text.DetachedFromVisualTree += (_, _) =>
-        {
-            if (sized is not null) sized.SizeChanged -= OnSized;
-            sized = null;
-        };
-    }
-
-    // Имя свойства TableRowVm-источника для «вычисляемого» типа свойства (аудит-метаданные).
-    private static string ComputedBindingPath(string? fieldType) => fieldType switch
-    {
-        "created_at" => nameof(TableRowVm.CreatedAt),
-        "updated_at" => nameof(TableRowVm.UpdatedAt),
-        "created_by" => nameof(TableRowVm.CreatedBy),
-        "updated_by" => nameof(TableRowVm.UpdatedBy),
-        _            => nameof(TableRowVm.CreatedAt),
-    };
-
-    // Привязать поле-связь к строке: RecordId берется у строки (в шаблоне DataContext еще может быть
-    // не проставлен), обновляется по ее уведомлению "Item" (Fill заглушки / правка) и при
-    // переиспользовании контейнера (DataContextChanged). Отписка при отсоединении.
+    // Привязать поле-связь к строке: RecordId берется у строки, обновляется по ее уведомлению "Item"
+    // (заполнение заглушки / правка) и при смене DataContext. Отписка при отсоединении.
     private static void BindRelationRow(RelationSelectBox rel, TableRowVm initialRow)
     {
         TableRowVm? bound = null;
@@ -2446,15 +988,11 @@ public partial class TableView : UserControl
         Bind(initialRow);
     }
 
-    private IDataTemplate BuildEditTemplate(TableColumnDef def) =>
-        new FuncDataTemplate<TableRowVm>((row, _) => BuildCellEditor(def, row, _relLinks));
-
     /// <summary>
-    /// Редактор ячейки по типу поля — один на обе сетки: шаблон правки нынешней и накладной редактор
-    /// рисованной (<see cref="DrawnGrid.EditorHost"/>). Текстовые поля пишут значение при коммите
-    /// правки (<see cref="FlushEditingBox"/>), редакторы с выбором — на каждое изменение.
-    /// <paramref name="relLinks"/> — кеш связей той сетки, в которой правят: из него редактор связи
-    /// берет стартовый набор.
+    /// Редактор ячейки по типу поля — кладется в накладной редактор сетки (<see cref="EditorHost"/>).
+    /// Текстовые поля пишут значение при коммите правки (<see cref="FlushEditingBox"/>), редакторы с
+    /// выбором — на каждое изменение. <paramref name="relLinks"/> — кеш связей таблицы: из него
+    /// редактор связи берет стартовый набор.
     /// </summary>
     private Control BuildCellEditor(TableColumnDef def, TableRowVm row, RelationLinksCache relLinks)
     {
@@ -2489,7 +1027,7 @@ public partial class TableView : UserControl
                 var options = def.FieldType == "user" && _repository is not null
                     ? _repository.GetUserOptions(row[def.Key])
                     : def.Options;
-                // Растягиваем на всю строку и центрируем содержимое: копия темы ставит
+                // Растягиваем на всю ячейку и центрируем содержимое: копия темы ставит
                 // ComboBox'у VerticalAlignment=Top, и при MinHeight=30 в строке 36px список
                 // висел бы у верхнего края — текст вставал на 3px выше надписи показа.
                 var combo = new ComboBox
@@ -2509,9 +1047,9 @@ public partial class TableView : UserControl
                 return combo;
             }
 
-            case "multiselect":   // несколько опций: чипы + выпадающий чеклист, значение — JSON-массив
+            case "multiselect":   // несколько опций: плашки + выпадающий чеклист, значение — JSON-массив
             {
-                var box = new Controls.Components.MultiSelectBox(def.Options, row[def.Key], flat: true, separator: def.Separator)
+                var box = new MultiSelectBox(def.Options, row[def.Key], flat: true, separator: def.Separator)
                 {
                     ContentPadding = new Thickness(CellContentPad, 0),
                 };
@@ -2522,8 +1060,7 @@ public partial class TableView : UserControl
             case "relation" when def.Relation is not null && _repository is not null && def.Tag is int relFid:
             {
                 // Правка ячейки: текст + иконка-связь справа, по клику по иконке — чеклист выбора
-                // (как чеклист «Мультисписка»). «→» у пункта → открыть цель. По выходе из правки
-                // read-ячейка (editing:false) переустановится и перечитает связи (AttachedToVisualTree).
+                // (как чеклист «Мультисписка»). «→» у пункта → открыть цель.
                 var rel = new RelationSelectBox(_repository, relFid, def.Relation, editing: true, contentLeftPadding: CellContentPad, cache: relLinks);
                 rel.Navigate += (_, t) =>
                 {
@@ -2615,157 +1152,6 @@ public partial class TableView : UserControl
         return true;
     }
 
-    // ── Клики и контекстные меню ───────────────────────────────────────────────
-
-    private void OnCellPointerPressed(object? sender, DataGridCellPointerPressedEventArgs e)
-    {
-        // Клик по любой ячейке снимает выделение колонки.
-        ClearColumnSelection();
-
-        if (e.Row.DataContext is not TableRowVm row) return;
-
-        if (row.IsAddRow)
-        {
-            // Создать в конце; открывать ли панель — по настройке. Без права — окно с причиной.
-            PermissionNotice.Run(this, Can(PermAction.CreateRecord), PermAction.CreateRecord,
-                                 () => RecordCreateRequested?.Invoke(this, (ConstructorSettings.OpenNewRecord, null)));
-            return;
-        }
-
-        var props  = e.PointerPressedEventArgs.GetCurrentPoint(null).Properties;
-        var mods   = e.PointerPressedEventArgs.KeyModifiers;
-        var colIdx = RecordsGrid.Columns.IndexOf(e.Column);
-        var rowIdx = row.RowNumber - 1;
-
-        // Клик ВНУТРИ открытого редактора — работа с текстом (поставить каретку, выделить слово),
-        // а не выделение ячейки. Отсечка обязательна: DataGridCell слушает клики классовым
-        // обработчиком с handledEventsToo, поэтому событие доходит сюда, даже когда его уже
-        // забрал редактор. Без нее первый же клик по тексту закрывал бы правку — снятие
-        // выделения строки внутри делает CommitEdit.
-        if (IsCellEditing && _editingCell == (rowIdx, colIdx)) return;
-
-        if (props.IsLeftButtonPressed)
-        {
-            _pressPrevCell = _pressLastCell;
-            _pressLastCell = (rowIdx, colIdx);
-        }
-
-        // ── Столбец «№»: он и только он работает со СТРОКАМИ ──────────────────
-        // Shift/Ctrl по номеру — точечно добавить или убрать строку из выделения (toggle).
-        // Перехватываем до DataGrid (Handled), иначе он сделал бы выделение диапазоном.
-        if (colIdx == 0)
-        {
-            // Пока были выделены ячейки, грид мог держать строку выделенной внутри себя, невидимо
-            // (см. ScheduleRecordSelectionDrop). Ctrl+клик по номеру добавил бы новую строку к ЭТОЙ,
-            // и Delete удалил бы запись, которую человек выделенной не видел.
-            if (HasCellSelection) ClearRecordSelection();
-            ClearCellSelection();
-
-            if (props.IsLeftButtonPressed
-                && (mods.HasFlag(KeyModifiers.Shift) || mods.HasFlag(KeyModifiers.Control)))
-            {
-                ToggleRecordSelection(row);
-                e.PointerPressedEventArgs.Handled = true;
-                // Уводим фокус из возможного текстового поля (правая панель) в таблицу, чтобы
-                // последующий Delete удалял записи, а не правил текст.
-                Focus();
-                return;
-            }
-
-            // Обычный клик по номеру открывает запись (при настройке «двойным кликом» —
-            // на втором клике: счетчик дает сам DataGrid).
-            if (props.IsLeftButtonPressed
-                && (!ConstructorSettings.OpenByDoubleClick
-                    || e.PointerPressedEventArgs.ClickCount >= 2))
-                RecordClicked?.Invoke(this, row.RecordId);
-            return;
-        }
-
-        if (e.Column.Tag as string == TableColumnDef.AddPropKey)
-        {
-            PermissionNotice.Run(this, Can(PermAction.CreateField), PermAction.CreateField,
-                                 () => PropertyCreateRequested?.Invoke(this, EventArgs.Empty));
-            return;
-        }
-
-        if (colIdx >= 0 && colIdx < _colDefs.Count)
-            _colDefs[colIdx].OnCellClick?.Invoke(row, _colDefs[colIdx]);
-
-        // ── Обычная ячейка: выделяем ЕЕ, а не строку ──────────────────────────
-        if (props.IsLeftButtonPressed)
-        {
-            // Клик пришел В ДРУГУЮ ячейку (свою отсекли выше) — правку закрываем сразу сами.
-            // Иначе ее закрывает грид, и по дороге он же открывает редактор в ячейке, по которой
-            // кликнули, если она в той же строке: выделение подменялось бы правкой.
-            if (IsCellEditing) RecordsGrid.CommitEdit();
-
-            var extend = mods.HasFlag(KeyModifiers.Shift);
-            BeginCellSelection(rowIdx, colIdx, extend);
-
-            // Shift-клик забираем себе целиком. Гриду отдавать его нельзя: он передвинул бы
-            // «текущую» ячейку на дальний угол, а повторный Shift-клик по той же ячейке открыл
-            // бы там редактор — внутри выделения появлялась бы вторая рамка. Заодно якорь
-            // остается на месте, и следующий Shift тянет от него же.
-            if (extend) e.PointerPressedEventArgs.Handled = true;
-            else        ScheduleRecordSelectionDrop();   // почему не Handled — см. там же
-            return;
-        }
-
-        // Правый клик: если ячейка вне выделения — переносим выделение на нее, внутри —
-        // прямоугольник оставляем, меню будет работать по всему диапазону.
-        if (props.IsRightButtonPressed)
-        {
-            if (!IsCellSelected(rowIdx, colIdx))
-                SetCellSelection(CellRange.Single(rowIdx, colIdx));
-
-            // Грид выделит строку уже после нас — снимаем следом, как после левого клика: иначе
-            // она осталась бы выделенной невидимо и попала бы в операции над записями.
-            ScheduleRecordSelectionDrop();
-
-            if (colIdx >= 0 && colIdx < _colDefs.Count)
-                ShowCellMenuOn(e.Cell, row, _colDefs[colIdx]);
-        }
-    }
-
-
-    /// <summary>
-    /// Снять выделение строки, которое DataGrid поставил по клику в ячейку.
-    ///
-    /// Погасить сам клик (Handled) нельзя: правка ячейки в Avalonia живет ТОЛЬКО на штатном
-    /// пути грида. <c>DataGridCell</c> при <c>Handled</c> выходит сразу и не зовет
-    /// <c>UpdateStateOnMouseLeftButtonDown</c>, а именно он делает ячейку «текущей» и на втором
-    /// клике по ней открывает редактор; вдобавок <c>DataGrid.BeginEdit</c> прямо требует, чтобы
-    /// строка была ВЫДЕЛЕНА. Поэтому гриду даем отработать целиком, а выделение строки убираем
-    /// следом — «текущую» ячейку <c>ClearRowSelection</c> не трогает, и второй клик по-прежнему
-    /// открывает редактор.
-    ///
-    /// Отложено на тик диспетчера, потому что наш обработчик вызывается ДО работы грида.
-    /// </summary>
-    private bool _recordSelectionDropPending;
-
-    private void ScheduleRecordSelectionDrop()
-    {
-        if (_recordSelectionDropPending) return;
-        _recordSelectionDropPending = true;
-        Dispatcher.UIThread.Post(() =>
-        {
-            _recordSelectionDropPending = false;
-
-            // Идет правка — строка обязана остаться выделенной: SelectedItems.Clear() внутри
-            // делает CommitEdit и закрыл бы только что открытый редактор.
-            if (IsCellEditing || !HasCellSelection) return;
-            ClearRecordSelection();
-        }, DispatcherPriority.Input);
-    }
-
-    // Точечный toggle строки в выделении (Extended-режим поддерживает Add/Remove).
-    private void ToggleRecordSelection(TableRowVm row)
-    {
-        var sel = RecordsGrid.SelectedItems;
-        if (sel.Contains(row)) sel.Remove(row);
-        else                   sel.Add(row);
-    }
-
     // ── Выделение колонок голубой заливкой (одиночное и Shift-диапазон) ────────
 
     private void SelectColumn(string key, bool shift)
@@ -2805,52 +1191,16 @@ public partial class TableView : UserControl
         ApplyColumnSelection();
     }
 
-    // Заливка выделенной колонки — ОДНА кисть на колонку (ключ → кисть): ее держат ячейки
-    // ЗНАЧЕНИЙ (фон ContentPresenter, см. AttachColumnFill). Шапка не красится — заголовок
-    // остается прежним, выделение видно только по ячейкам свойства.
-    // Выделение/снятие — смена Color у самой кисти, поэтому виртуализация не мешает: новая
-    // ячейка получает ту же кисть и сразу верный цвет, а перекраска не требует обхода
-    // дерева и не зависит от скролла (прежний слой рамок пересчитывался в LayoutUpdated).
-    private readonly Dictionary<string, SolidColorBrush> _colSelBrushes = [];
+    // Заливка выделенных колонок — при рисовании (та же BrushAccentLight, что у выделенной записи);
+    // шапка не красится, выделение видно только по ячейкам свойства.
+    private void ApplyColumnSelection() => RecordsGrid.SetColumnSelection(_selectedColumnKeys);
 
-    private SolidColorBrush ColumnSelectionBrush(string key)
-    {
-        if (!_colSelBrushes.TryGetValue(key, out var brush))
-            _colSelBrushes[key] = brush = new SolidColorBrush(Colors.Transparent);
-        return brush;
-    }
-
-    // Красит кисти колонок под текущее выделение: цвет — тот же BrushAccentLight, что у
-    // выделенной записи (DataGridRow:selected, TableView.axaml).
-    private void ApplyColumnSelection()
-    {
-        if (_drawn is not null) { _drawn.SetColumnSelection(_selectedColumnKeys); return; }   // заливка — при рисовании
-        var on = (this.FindResource("BrushAccentLight") as ISolidColorBrush)?.Color ?? Colors.Transparent;
-        foreach (var (key, brush) in _colSelBrushes)
-            brush.Color = _selectedColumnKeys.Contains(key) ? on : Colors.Transparent;
-    }
-
-    // Вешает заливку выделения на ячейку: фон ставится ContentPresenter'у шаблона
-    // DataGridCell — это звездная колонка сетки ячейки, поэтому заливка доходит ровно до
-    // вертикальной линии сетки и не перекрывает ни ее, ни линию соседа слева. Контейнеры
-    // переиспользуются между строками, но не между колонками — кисть на ячейке всегда «своя».
-    private void AttachColumnFill(Control? content, string key)
-    {
-        if (content is null) return;
-        if (key == TableColumnDef.NumKey || key == TableColumnDef.AddPropKey) return;
-
-        var brush = ColumnSelectionBrush(key);
-        content.AttachedToVisualTree += (_, _) =>
-        {
-            if (content.FindAncestorOfType<Avalonia.Controls.Presenters.ContentPresenter>() is { } cp)
-                cp.Background = brush;
-        };
-    }
+    // ── Контекстные меню ──────────────────────────────────────────────────────
 
     private ContextMenu BuildGridContextMenu()
     {
         var menu = new ContextMenu();
-        var mi = new MenuItem { Header = Controls.Components.MenuIcons.CreateRecordHeader() }
+        var mi = new MenuItem { Header = MenuIcons.CreateRecordHeader() }
             .WithGesture("table.createRecord", this);
         // В конце; открывать ли панель — по настройке.
         Guarded(mi, PermAction.CreateRecord,
@@ -2859,7 +1209,7 @@ public partial class TableView : UserControl
 
         // «Отображение» доступно и отсюда — на случай, если все колонки скрыты и до
         // меню заголовка не добраться (окно показывает полный список колонок).
-        var miDisplay = new MenuItem { Header = Controls.Components.MenuIcons.DisplayHeader() }
+        var miDisplay = new MenuItem { Header = MenuIcons.DisplayHeader() }
             .WithGesture("table.columnDisplay", this);
         miDisplay.Click += (_, _) => ColumnDisplayRequested?.Invoke(this, EventArgs.Empty);
         menu.Items.Add(miDisplay);
@@ -2868,9 +1218,9 @@ public partial class TableView : UserControl
     }
 
     // Пересчет пунктов меню на каждое открытие (состав зависит от выделения, прав, буфера, настроек
-    // обмена). Нынешняя сетка открывает меню запросом контекстного меню — Avalonia сама поднимает
-    // Opening; рисованная открывает меню прямо у указателя (ContextMenu.Open), а Open событие Opening
-    // не поднимает, и пересчеты зовет ее путь открытия (OpenDrawnMenu).
+    // обмена). Меню открываются у указателя (ContextMenu.Open), а Open событие Opening не поднимает
+    // (его поднимает только запрос контекстного меню), поэтому обработчики хранятся отдельно и
+    // зовутся путем открытия (OpenMenu); Opening оставлен на случай штатного запроса.
     private readonly System.Runtime.CompilerServices.ConditionalWeakTable<ContextMenu, List<Action>> _menuOpening = new();
 
     private void OnMenuOpening(ContextMenu menu, Action refresh)
@@ -2886,17 +1236,14 @@ public partial class TableView : UserControl
     }
 
     // Меню строится с ЛЕНИВЫМ резолвом строки и ее RecordId (см. RecordIdOf), а не с захватом id в
-    // момент BuildRowContextMenu. Причина: при фоновой подгрузке строк строка сперва realized как
-    // заглушка «Загрузка…» с RecordId=0, и только потом Fill проставляет реальный id в ТОТ ЖЕ VM —
-    // без повторного realized, т.е. без повторного OnLoadingRow. Захваченный id остался бы 0: дубль
-    // падал «Record 0 not found», удаление/изменение/сдвиг — тихий no-op. Чтение на момент клика
-    // всегда дает актуальный id. Нынешняя сетка передает DataContext своей строки (он меняется при
-    // переиспользовании), рисованная — саму строку списка (меню строится на правом нажатии).
+    // момент BuildRowContextMenu: строка сперва заполняется как заглушка «Загрузка…» с RecordId=0, и
+    // только потом Fill проставляет реальный id в ТОТ ЖЕ объект. Чтение на момент клика всегда дает
+    // актуальный id.
     private ContextMenu BuildRowContextMenu(Func<TableRowVm?> row)
     {
         var menu = new ContextMenu();
 
-        var miCreate = new MenuItem { Header = Controls.Components.MenuIcons.CreateRecordHeader() }
+        var miCreate = new MenuItem { Header = MenuIcons.CreateRecordHeader() }
             .WithGesture("table.createRecord", this);
         // После этой строки; открывать ли панель — по настройке. Если строка еще не заполнена
         // (id=0) — создаем в конце.
@@ -2909,25 +1256,25 @@ public partial class TableView : UserControl
 
         menu.Items.Add(new Separator());
 
-        var miEdit = new MenuItem { Header = Controls.Components.MenuIcons.EditHeader() }
+        var miEdit = new MenuItem { Header = MenuIcons.EditHeader() }
             .WithGesture("table.openRecord", this);
         miEdit.Click += (_, _) => { var rid = RecordIdOf(row); if (rid > 0) RecordClicked?.Invoke(this, rid); };
         menu.Items.Add(miEdit);
 
-        var miDuplicate = new MenuItem { Header = Controls.Components.MenuIcons.DuplicateHeader() }
+        var miDuplicate = new MenuItem { Header = MenuIcons.DuplicateHeader() }
             .WithGesture("table.duplicateRecord", this);
         Guarded(miDuplicate, PermAction.DuplicateRecord, () => RequestRecordDuplicateFromMenu(row));
         menu.Items.Add(miDuplicate);
 
         // Перенос = изъятие записи из коллекции: право как у удаления.
-        var miRelocate = new MenuItem { Header = Controls.Components.MenuIcons.LocationHeader() }
+        var miRelocate = new MenuItem { Header = MenuIcons.LocationHeader() }
             .WithGesture("table.relocateRecords", this);
         Guarded(miRelocate, PermAction.DeleteRecord, () => RequestRecordRelocateFromMenu(row));
         menu.Items.Add(miRelocate);
 
         // «Отображение» (записей) — глобальное окно видимости/уровней строк (список всех
         // записей), инициатор-строка не важна.
-        var miDisplay = new MenuItem { Header = Controls.Components.MenuIcons.DisplayHeader() }
+        var miDisplay = new MenuItem { Header = MenuIcons.DisplayHeader() }
             .WithGesture("table.recordDisplay", this);
         miDisplay.Click += (_, _) => RecordDisplayRequested?.Invoke(this, EventArgs.Empty);
         menu.Items.Add(miDisplay);
@@ -2970,7 +1317,7 @@ public partial class TableView : UserControl
 
     // ── Пункт «Действия» в меню строки ────────────────────────────────────────
     //
-    // Состав пересчитывается в menu.Opening: обмен могли настроить, пока таблица открыта, а
+    // Состав пересчитывается при открытии: обмен могли настроить, пока таблица открыта, а
     // собранное один раз меню показывало бы вчерашний список. Пункт применяется ко ВСЕМУ
     // мультивыделению строк — как удаление и цвет.
     private void AddActionItems(ContextMenu menu)
@@ -2979,11 +1326,11 @@ public partial class TableView : UserControl
 
         var host = new MenuItem
         {
-            Header    = Controls.Components.MenuIcons.ActionsHeader(),
+            Header    = MenuIcons.ActionsHeader(),
             IsVisible = false,
         };
 
-        Controls.Components.MenuIcons.FixSubmenuGap(host);
+        MenuIcons.FixSubmenuGap(host);
         menu.Items.Add(host);
 
         OnMenuOpening(menu, () =>
@@ -2999,7 +1346,7 @@ public partial class TableView : UserControl
             {
                 var item = new MenuItem
                 {
-                    Header = Controls.Components.MenuIcons.IntegrationHeader(action.Title),
+                    Header = MenuIcons.IntegrationHeader(action.Title),
                 };
 
                 var run = action.Run;
@@ -3017,13 +1364,13 @@ public partial class TableView : UserControl
     // живет в меню самой ячейки (AddCellColorItems): меню строки открывается только со столбца
     // «№», и ячейки-адресата у него нет. Все это оформление ЭТОЙ таблицы: за ее пределами цвет
     // не виден (сквозной цвет записи был и убран — см. RowStyle.Resolve). Пункты применяются ко
-    // ВСЕМУ мультивыделению строк — как удаление и дубль. Состав пересчитывается в menu.Opening:
+    // ВСЕМУ мультивыделению строк — как удаление и дубль. Состав пересчитывается при открытии:
     // цвета строки к моменту клика могли измениться, а «текущий» цвет в палитре должен быть
     // отмечен верно.
     private void AddColorItems(ContextMenu menu, Func<TableRowVm?> row)
     {
-        var host = new MenuItem { Header = Controls.Components.MenuIcons.ColorHeader() };
-        Controls.Components.MenuIcons.FixSubmenuGap(host);
+        var host = new MenuItem { Header = MenuIcons.ColorHeader() };
+        MenuIcons.FixSubmenuGap(host);
         host.IsEnabled = Can(PermAction.EditRecord);
 
         OnMenuOpening(menu, () =>
@@ -3062,25 +1409,8 @@ public partial class TableView : UserControl
         try { _repository.SetRowStyle(_collectionId, recordIds, aspect, hex); }
         catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { return; }
 
-        // Рисованная сетка держит оформление сама и красит при рисовании.
-        if (_drawn is not null) { _drawn.ApplyRowStyle(recordIds, aspect, hex); return; }
-
-        foreach (var id in recordIds)
-        {
-            var cur  = RowStyleOf(id);
-            var next = aspect == StyleAspect.Background ? cur with { Bg = hex } : cur with { Fg = hex };
-            if (next.IsEmpty) _rowStyles.Remove(id); else _rowStyles[id] = next;
-        }
-        RefreshRowStyleVisuals(recordIds);
-    }
-
-    // Перерисовать цвет уже загруженных строк: ячейки слушают «Item» строки (см. TrackRowStyle).
-    // Строки берем из ВИДИМОГО списка (_activeRows): при фильтре/сортировке на экране живут
-    // строки отфильтрованного списка, а не _virtualRows — как и в точечных рефрешах правки.
-    private void RefreshRowStyleVisuals(IEnumerable<int> recordIds)
-    {
-        foreach (var id in recordIds)
-            _activeRows?.FindCachedByRecordId(id)?.NotifyCellsChanged();
+        // Сетка держит оформление сама и красит при рисовании.
+        RecordsGrid.ApplyRowStyle(recordIds, aspect, hex);
     }
 
     private void ApplyCellStyleChange(List<(int RecordId, string Key)> cells, StyleAspect aspect, string? hex)
@@ -3091,7 +1421,7 @@ public partial class TableView : UserControl
 
         foreach (var (recordId, key) in cells)
         {
-            var row = RowsSource?.FindCachedByRecordId(recordId);   // оформление ячеек живет в строке — обеим сеткам
+            var row = RowsSource?.FindCachedByRecordId(recordId);   // оформление ячеек живет в строке
             if (row is null) continue;
             var next = new Dictionary<string, RowStyle>();
             if (row.CellStyles is { } existing)
@@ -3111,19 +1441,7 @@ public partial class TableView : UserControl
         try { _repository.SetColumnStyle(_collectionId, keys, aspect, hex); }
         catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { return; }
 
-        if (_drawn is not null) _drawn.ApplyColumnStyle(keys, aspect, hex);   // красит при рисовании
-        else
-        {
-            foreach (var key in keys)
-            {
-                var cur  = ColumnStyleOf(key);
-                var next = aspect == StyleAspect.Background ? cur with { Bg = hex } : cur with { Fg = hex };
-                if (next.IsEmpty) _columnStyles.Remove(key); else _columnStyles[key] = next;
-            }
-
-            // Цвет колонки касается всех загруженных строк — уведомляем их разом.
-            _activeRows?.NotifyAllCachedRows();
-        }
+        RecordsGrid.ApplyColumnStyle(keys, aspect, hex);   // красит при рисовании
 
         // Снимаем выделение колонок: его голубая заливка лежит ПОД полупрозрачным цветом,
         // и на выделенной колонке разницу «покрасил / снял цвет» почти не видно. Выделение
@@ -3181,10 +1499,10 @@ public partial class TableView : UserControl
         if (_sortKey is not null || _filters.Count > 0) return;
 
         var sep    = new Separator();
-        var miUp   = new MenuItem { Header = Controls.Components.MenuIcons.MoveUpHeader() }
+        var miUp   = new MenuItem { Header = MenuIcons.MoveUpHeader() }
             .WithGesture("table.moveRecordUp", this);
         miUp.Click += (_, _) => { var rid = RecordIdOf(row); if (rid > 0) MoveRecord(rid, up: true); };
-        var miDown = new MenuItem { Header = Controls.Components.MenuIcons.MoveDownHeader() }
+        var miDown = new MenuItem { Header = MenuIcons.MoveDownHeader() }
             .WithGesture("table.moveRecordDown", this);
         miDown.Click += (_, _) => { var rid = RecordIdOf(row); if (rid > 0) MoveRecord(rid, up: false); };
 
@@ -3202,16 +1520,13 @@ public partial class TableView : UserControl
             sep.IsVisible    = canUp || canDown;
         }
 
-        // ТОЛЬКО при открытии меню, БЕЗ жадного вызова при построении: меню строится в
-        // OnLoadingRow на КАЖДУЮ реализацию строки — обращения к БД здесь подвешивали
-        // прокрутку колесом/кнопками скроллбара (каждая пересеченная строка платила
-        // за проверку соседей; Opening же случается только при правом клике).
+        // ТОЛЬКО при открытии меню (оно строится на правом нажатии): два O(1)-сика соседей на клик.
         OnMenuOpening(menu, Refresh);
     }
 
     // Красный пункт «Удалить» с иконкой корзины — общий для меню записей и свойств.
     private static MenuItem MakeDeleteMenuItem(bool enabled = true) =>
-        new() { Header = Controls.Components.MenuIcons.DeleteHeader(), IsEnabled = enabled };
+        new() { Header = MenuIcons.DeleteHeader(), IsEnabled = enabled };
 
     // Некликабельная шапка контекстного меню (карточка свойства). IsHitTestVisible=
     // false — не подсвечивается при наведении и не реагирует на клик.
@@ -3243,21 +1558,20 @@ public partial class TableView : UserControl
         var menu = new ContextMenu();
 
         // Шапка: иконка типа + подпись колонки + тип «Текст» (Title — текстовый).
-        menu.Items.Add(MakeMenuHeaderItem(
-            Controls.Components.MenuIcons.PropertyMenuHeader(SystemHeader(key), "text")));
+        menu.Items.Add(MakeMenuHeaderItem(MenuIcons.PropertyMenuHeader(SystemHeader(key), "text")));
         menu.Items.Add(new Separator());
 
-        var miEdit = new MenuItem { Header = Controls.Components.MenuIcons.EditHeader() }
+        var miEdit = new MenuItem { Header = MenuIcons.EditHeader() }
             .WithGesture("table.editProperty", this);
         Guarded(miEdit, PermAction.EditField, () => SystemFieldRenameRequested?.Invoke(this, key));
         menu.Items.Add(miEdit);
 
-        var miCreate = new MenuItem { Header = Controls.Components.MenuIcons.CreatePropertyHeader() }
+        var miCreate = new MenuItem { Header = MenuIcons.CreatePropertyHeader() }
             .WithGesture("table.createProperty", this);
         Guarded(miCreate, PermAction.CreateField, () => PropertyCreateAfterRequested?.Invoke(this, key));
         menu.Items.Add(miCreate);
 
-        var miDisplay = new MenuItem { Header = Controls.Components.MenuIcons.DisplayHeader() }
+        var miDisplay = new MenuItem { Header = MenuIcons.DisplayHeader() }
             .WithGesture("table.columnDisplay", this);
         miDisplay.Click += (_, _) => ColumnDisplayRequested?.Invoke(this, EventArgs.Empty);
         menu.Items.Add(miDisplay);
@@ -3286,14 +1600,14 @@ public partial class TableView : UserControl
 
         if (canRight)
         {
-            var mi = new MenuItem { Header = Controls.Components.MenuIcons.MoveRightHeader() }
+            var mi = new MenuItem { Header = MenuIcons.MoveRightHeader() }
                 .WithGesture("table.moveColumnRight", this);
             mi.Click += (_, _) => MoveColumn(key, left: false);
             menu.Items.Add(mi);
         }
         if (canLeft)
         {
-            var mi = new MenuItem { Header = Controls.Components.MenuIcons.MoveLeftHeader() }
+            var mi = new MenuItem { Header = MenuIcons.MoveLeftHeader() }
                 .WithGesture("table.moveColumnLeft", this);
             mi.Click += (_, _) => MoveColumn(key, left: true);
             menu.Items.Add(mi);
@@ -3303,17 +1617,17 @@ public partial class TableView : UserControl
     // Пункт-переключатель режима ширины столбцов (общий для всей таблицы). Текст
     // показывает режим, в который переключит клик: при стандартной ширине — «Ручная
     // ширина столбцов», при ручной — «Стандартная ширина столбцов». Заголовок
-    // пересчитывается при открытии меню (меню кэшируется на заголовке колонки).
+    // пересчитывается при открытии меню.
     private void AddWidthModeItems(ContextMenu menu)
     {
         menu.Items.Add(new Separator());
 
         var item = new MenuItem().WithGesture("table.columnWidthMode", this);
-        item.Click += (_, _) => SetColResizeMode(!_manualColResize);
+        item.Click += (_, _) => SetColResizeMode(!IsManualColResize);
         menu.Items.Add(item);
 
-        void Refresh() => item.Header = Controls.Components.MenuIcons.WidthModeHeader(
-            _manualColResize ? "Стандартная ширина столбцов" : "Ручная ширина столбцов");
+        void Refresh() => item.Header = MenuIcons.WidthModeHeader(
+            IsManualColResize ? "Стандартная ширина столбцов" : "Ручная ширина столбцов");
 
         Refresh();
         OnMenuOpening(menu, Refresh);
@@ -3322,17 +1636,17 @@ public partial class TableView : UserControl
     // Пункт-переключатель режима высоты строк (общий для всей таблицы) — в меню записи.
     // Текст показывает режим, в который переключит клик: при стандартной высоте —
     // «Ручная высота строк», при ручной — «Стандартная высота строк». Заголовок
-    // пересчитывается при открытии меню (меню кэшируется на строке при ее отрисовке).
+    // пересчитывается при открытии меню.
     private void AddHeightModeItems(ContextMenu menu)
     {
         menu.Items.Add(new Separator());
 
         var item = new MenuItem().WithGesture("table.rowHeightMode", this);
-        item.Click += (_, _) => SetRowResizeMode(!_manualRowResize);
+        item.Click += (_, _) => SetRowResizeMode(!IsManualRowResize);
         menu.Items.Add(item);
 
-        void Refresh() => item.Header = Controls.Components.MenuIcons.HeightModeHeader(
-            _manualRowResize ? "Стандартная высота строк" : "Ручная высота строк");
+        void Refresh() => item.Header = MenuIcons.HeightModeHeader(
+            IsManualRowResize ? "Стандартная высота строк" : "Ручная высота строк");
 
         Refresh();
         OnMenuOpening(menu, Refresh);
@@ -3347,25 +1661,25 @@ public partial class TableView : UserControl
         var menu = new ContextMenu();
 
         // Шапка: иконка типа + название свойства + тип данных (некликабельная).
-        menu.Items.Add(MakeMenuHeaderItem(Controls.Components.MenuIcons.PropertyMenuHeader(name, fieldType)));
+        menu.Items.Add(MakeMenuHeaderItem(MenuIcons.PropertyMenuHeader(name, fieldType)));
         menu.Items.Add(new Separator());
 
-        var miEdit = new MenuItem { Header = Controls.Components.MenuIcons.EditHeader() }
+        var miEdit = new MenuItem { Header = MenuIcons.EditHeader() }
             .WithGesture("table.editProperty", this);
         Guarded(miEdit, PermAction.EditField, () => PropertyEditRequested?.Invoke(this, fieldId));
         menu.Items.Add(miEdit);
 
-        var miDuplicate = new MenuItem { Header = Controls.Components.MenuIcons.DuplicateHeader() }
+        var miDuplicate = new MenuItem { Header = MenuIcons.DuplicateHeader() }
             .WithGesture("table.duplicateProperty", this);
         Guarded(miDuplicate, PermAction.DuplicateField, () => RequestDuplicateFromMenu(fieldId));
         menu.Items.Add(miDuplicate);
 
-        var miCreate = new MenuItem { Header = Controls.Components.MenuIcons.CreatePropertyHeader() }
+        var miCreate = new MenuItem { Header = MenuIcons.CreatePropertyHeader() }
             .WithGesture("table.createProperty", this);
         Guarded(miCreate, PermAction.CreateField, () => PropertyCreateAfterRequested?.Invoke(this, fieldId.ToString()));
         menu.Items.Add(miCreate);
 
-        var miDisplay = new MenuItem { Header = Controls.Components.MenuIcons.DisplayHeader() }
+        var miDisplay = new MenuItem { Header = MenuIcons.DisplayHeader() }
             .WithGesture("table.columnDisplay", this);
         miDisplay.Click += (_, _) => ColumnDisplayRequested?.Invoke(this, EventArgs.Empty);
         menu.Items.Add(miDisplay);
@@ -3398,12 +1712,12 @@ public partial class TableView : UserControl
     }
 
     // Цвет колонки — тот же аспект column_meta, что видимость и подпись, поэтому право
-    // как у правки свойства. Состав пересчитывается в Opening: и отметка текущего цвета,
+    // как у правки свойства. Состав пересчитывается при открытии: и отметка текущего цвета,
     // и НАБОР колонок — выделение к моменту клика могло смениться.
     private void AddColumnColorItems(ContextMenu menu, string key)
     {
-        var host = new MenuItem { Header = Controls.Components.MenuIcons.ColorHeader() };
-        Controls.Components.MenuIcons.FixSubmenuGap(host);
+        var host = new MenuItem { Header = MenuIcons.ColorHeader() };
+        MenuIcons.FixSubmenuGap(host);
         host.IsEnabled = Can(PermAction.EditField);
 
         OnMenuOpening(menu, () =>
@@ -3433,15 +1747,15 @@ public partial class TableView : UserControl
     private async void RefreshAutoFileFromMenu(int fieldId)
     {
         if (_repository is null) return;
-        var win = VisualRoot as Avalonia.Controls.Window;
+        var win = VisualRoot as Window;
 
-        using var cts = new System.Threading.CancellationTokenSource();
-        Controls.Dialogs.ProgressDialog? dlg = null;
+        using var cts = new CancellationTokenSource();
+        ProgressDialog? dlg = null;
         var progress = new Progress<double>(f => dlg?.SetProgress(f, "Поиск файлов…"));
         var bg = _repository.ResolveAutoFileFieldAsync(fieldId, progress, cts.Token);
-        if (win is not null && await System.Threading.Tasks.Task.WhenAny(bg, System.Threading.Tasks.Task.Delay(400)) != bg)
+        if (win is not null && await Task.WhenAny(bg, Task.Delay(400)) != bg)
         {
-            dlg = new Controls.Dialogs.ProgressDialog { Title = "Привязка файлов" };
+            dlg = new ProgressDialog { Title = "Привязка файлов" };
             dlg.SetProgress(0, "Поиск файлов…");
             dlg.EnableCancel(() => cts.Cancel());
             var closed = dlg.ShowDialog(win);
@@ -3452,7 +1766,7 @@ public partial class TableView : UserControl
         var result = await bg;
         ReloadRows();
         if (result == ConstructorRepository.FileAutoResolveResult.FolderInaccessible && win is not null)
-            await Controls.Dialogs.ConfirmDialog.Info("Папка недоступна").ShowDialog(win);
+            await ConfirmDialog.Info("Папка недоступна").ShowDialog(win);
     }
 
     // Удаление из контекстного меню «Удалить». Если поле входит в текущее выделение
@@ -3507,363 +1821,6 @@ public partial class TableView : UserControl
         if (removed > 0) ApplyColumnSelection();
     }
 
-    private void OnLoadingRow(object? sender, DataGridRowEventArgs e)
-    {
-        if (e.Row.DataContext is not TableRowVm row) return;
-        if (row.IsAddRow)
-        {
-            e.Row.Height = double.NaN;   // строка «+» всегда стандартная
-            return;
-        }
-        var gridRow = e.Row;
-        e.Row.ContextMenu = BuildRowContextMenu(() => gridRow.DataContext as TableRowVm);
-
-        // Высота строки: в ручном режиме применяем сохраненную (если есть), иначе
-        // сбрасываем на стандартную — важно для переиспользуемых строк (виртуализация).
-        e.Row.Height = _manualRowResize && _rowHeights.TryGetValue(row.RecordId, out var h)
-            ? h
-            : double.NaN;
-
-        ScheduleRowHandlesRefresh();   // строка реализована — обновим полоски ресайза
-    }
-
-    // ── Ручная высота строк: полоски-«грипперы» у нижней границы ───────────────
-
-    private double StandardRowHeight() =>
-        this.TryFindResource(ConstructorSettings.RowHeightResourceKey, out var r) && r is double d
-            ? d
-            : ConstructorSettings.RowHeight;
-
-    // Откладывает перестройку полосок на тик диспетчера (как у рамок колонок —
-    // менять дерево Canvas прямо в LayoutUpdated нельзя). Во время drag не трогаем.
-    private void ScheduleRowHandlesRefresh()
-    {
-        if (_rowHandlesPending || _isResizingRow) return;
-        _rowHandlesPending = true;
-        Dispatcher.UIThread.Post(() =>
-        {
-            _rowHandlesPending = false;
-            RefreshRowResizeHandles();
-        }, DispatcherPriority.Background);
-    }
-
-    // Геометрия последней раскладки полосок — чтобы не трогать дерево, если ничего не
-    // изменилось (иначе перестройка из LayoutUpdated самоподдерживается layout-циклом —
-    // та же защита, что у рамок выделения колонок).
-    private readonly List<(DataGridRow Row, double X, double W, double Top, int Rec)> _lastRowGrips = [];
-
-    // Размещает по прозрачной полоске на нижней границе каждой видимой строки данных.
-    // Полоска кликабельна и несет курсор «↕»; перетаскивание меняет высоту строки.
-    private void RefreshRowResizeHandles()
-    {
-        if (_isResizingRow) return;   // во время перетаскивания полоски не пересобираем
-
-        var layer = RowResizeLayer;
-
-        // Считаем целевую раскладку полосок, НЕ трогая дерево.
-        var target = new List<(DataGridRow Row, double X, double W, double Top, int Rec)>();
-        if (_manualRowResize)
-        {
-            foreach (var rowCtrl in RecordsGrid.GetVisualDescendants().OfType<DataGridRow>())
-            {
-                // Строка с фокусом/в правке, уехавшая за экран, остается в дереве со
-                // старой раскладкой — полоска встала бы у чужой границы (см. IsStaleRow).
-                if (IsStaleRow(rowCtrl)) continue;
-                if (rowCtrl.DataContext is not TableRowVm vm || vm.IsAddRow) continue;
-                if (rowCtrl.Bounds.Height <= 0) continue;
-
-                var topLeft = rowCtrl.TranslatePoint(new Point(0, 0), layer);
-                if (topLeft is null) continue;
-
-                var bottomY = topLeft.Value.Y + rowCtrl.Bounds.Height;
-                if (bottomY < 0 || bottomY > layer.Bounds.Height) continue;   // вне видимой зоны
-
-                target.Add((rowCtrl, topLeft.Value.X, rowCtrl.Bounds.Width,
-                            bottomY - RowGripThickness / 2, vm.RecordId));
-            }
-        }
-
-        // Ничего не изменилось — дерево не трогаем (разрывает layout-цикл).
-        if (RowGripsEqual(target, _lastRowGrips)) return;
-
-        _lastRowGrips.Clear();
-        _lastRowGrips.AddRange(target);
-
-        layer.Children.Clear();
-        foreach (var (rowCtrl, x, w, top, rec) in target)
-        {
-            var grip = new Border
-            {
-                Width      = w,
-                Height     = RowGripThickness,
-                Background = Brushes.Transparent,
-                Cursor     = RowResizeCursor,
-            };
-            grip.PointerPressed  += (_, e) => BeginRowResize(rowCtrl, rec, e);
-            grip.PointerMoved    += (_, e) => DragRowResize(e);
-            grip.PointerReleased += (_, e) => EndRowResize(e);
-
-            Canvas.SetLeft(grip, x);
-            Canvas.SetTop(grip, top);
-            layer.Children.Add(grip);
-        }
-    }
-
-    private static bool RowGripsEqual(
-        List<(DataGridRow Row, double X, double W, double Top, int Rec)> a,
-        List<(DataGridRow Row, double X, double W, double Top, int Rec)> b)
-    {
-        if (a.Count != b.Count) return false;
-        for (var i = 0; i < a.Count; i++)
-        {
-            if (!ReferenceEquals(a[i].Row, b[i].Row) || a[i].Rec != b[i].Rec) return false;
-            if (Math.Abs(a[i].X   - b[i].X)   > 0.5) return false;
-            if (Math.Abs(a[i].W   - b[i].W)   > 0.5) return false;
-            if (Math.Abs(a[i].Top - b[i].Top) > 0.5) return false;
-        }
-        return true;
-    }
-
-    private void BeginRowResize(DataGridRow rowCtrl, int recordId, PointerPressedEventArgs e)
-    {
-        if (!e.GetCurrentPoint(RowResizeLayer).Properties.IsLeftButtonPressed) return;
-
-        var bottom = rowCtrl.TranslatePoint(new Point(0, rowCtrl.Bounds.Height), RowResizeLayer);
-
-        _isResizingRow       = true;
-        _resizeRow           = rowCtrl;
-        _resizeRecordId      = recordId;
-        _resizeStartPointerY = e.GetPosition(RowResizeLayer).Y;
-        _resizeStartBottomY  = bottom?.Y ?? _resizeStartPointerY;
-        _resizeStartHeight   = rowCtrl.Bounds.Height;
-        e.Pointer.Capture(e.Source as IInputElement);
-        e.Handled = true;
-    }
-
-    private void DragRowResize(PointerEventArgs e)
-    {
-        if (!_isResizingRow || _resizeRow is null) return;
-
-        var delta = e.GetPosition(RowResizeLayer).Y - _resizeStartPointerY;
-        var h     = Math.Clamp(_resizeStartHeight + delta, StandardRowHeight(), RowHeightMax);
-        _resizeRow.Height = h;
-
-        // Полоска следует за новой нижней границей (по clamp'нутой высоте, не по Bounds,
-        // которые на этом проходе еще не пересчитаны).
-        if (e.Source is Control grip)
-            Canvas.SetTop(grip, _resizeStartBottomY + (h - _resizeStartHeight) - RowGripThickness / 2);
-
-        e.Handled = true;
-    }
-
-    private void EndRowResize(PointerReleasedEventArgs e)
-    {
-        if (!_isResizingRow) return;
-
-        _isResizingRow = false;
-        e.Pointer.Capture(null);
-        e.Handled = true;
-
-        if (_resizeRow is not null)
-        {
-            var h = (int)Math.Round(Math.Clamp(_resizeRow.Height, StandardRowHeight(), RowHeightMax));
-            _rowHeights[_resizeRecordId] = h;
-            _repository?.SaveRowHeights(_collectionId, _rowHeights);
-        }
-
-        _resizeRow = null;
-        ScheduleRowHandlesRefresh();   // пересобрать полоски под новые позиции строк
-    }
-
-    // ── Ручная ширина колонок: полоски-«грипперы» у правой границы ─────────────
-    //
-    // Встроенный ресайз DataGrid не используется (CanUserResizeColumns остается False):
-    //   • у него нет события «перетаскивание закончено» — ширину негде сохранить;
-    //   • он запрещает тянуть последнюю видимую колонку и вообще любой ресайз, когда
-    //     колонки не помещаются в окно, — а это ровно наш рабочий режим;
-    //   • он перекладывает дельту на соседей справа, сжимая их, вместо того чтобы
-    //     увеличивать общую ширину таблицы.
-    // Поэтому полоски-захваты свои — точная калька слоя высоты строк выше.
-
-    private void ScheduleColHandlesRefresh()
-    {
-        if (_colHandlesPending || _isResizingCol) return;
-        _colHandlesPending = true;
-        Dispatcher.UIThread.Post(() =>
-        {
-            _colHandlesPending = false;
-            RefreshColResizeHandles();
-        }, DispatcherPriority.Background);
-    }
-
-    // Размещает по прозрачной полоске на правой границе каждой видимой движимой колонки.
-    // Полоска кликабельна и несет курсор «↔»; перетаскивание меняет ширину колонки.
-    private void RefreshColResizeHandles()
-    {
-        if (_isResizingCol) return;   // во время перетаскивания полоски не пересобираем
-
-        var layer = ColResizeLayer;
-
-        // Считаем целевую раскладку полосок, НЕ трогая дерево.
-        var target = new List<(string Key, double X, double Top, double H)>();
-        if (_manualColResize)
-        {
-            foreach (var (def, _) in MovableColumns())
-            {
-                if (!_headerHosts.TryGetValue(def.Key, out var host)) continue;
-                var hdr = host.GetVisualAncestors().OfType<DataGridColumnHeader>().FirstOrDefault();
-                if (hdr is null || hdr.Bounds.Width <= 0 || hdr.Bounds.Height <= 0) continue;
-
-                var topRight = hdr.TranslatePoint(new Point(hdr.Bounds.Width, 0), layer);
-                if (topRight is null) continue;
-
-                // Заголовки виртуализованы: за краем видимой зоны полоски не нужны.
-                if (topRight.Value.X < 0 || topRight.Value.X > layer.Bounds.Width) continue;
-
-                target.Add((def.Key, topRight.Value.X - ColGripThickness / 2,
-                            topRight.Value.Y, hdr.Bounds.Height));
-            }
-        }
-
-        // Ничего не изменилось — дерево не трогаем (разрывает layout-цикл).
-        if (ColGripsEqual(target, _lastColGrips)) return;
-
-        _lastColGrips.Clear();
-        _lastColGrips.AddRange(target);
-
-        layer.Children.Clear();
-        foreach (var (key, x, top, h) in target)
-        {
-            var grip = new Border
-            {
-                Width      = ColGripThickness,
-                Height     = h,
-                Background = Brushes.Transparent,
-                Cursor     = ColResizeCursor,
-            };
-            grip.PointerPressed     += (_, e) => BeginColResize(key, e);
-            grip.PointerMoved       += (_, e) => DragColResize(e);
-            grip.PointerReleased    += (_, e) => EndColResize(e);
-            grip.PointerCaptureLost += (_, _) => CancelColResize();
-
-            Canvas.SetLeft(grip, x);
-            Canvas.SetTop(grip, top);
-            layer.Children.Add(grip);
-        }
-    }
-
-    private static bool ColGripsEqual(
-        List<(string Key, double X, double Top, double H)> a,
-        List<(string Key, double X, double Top, double H)> b)
-    {
-        if (a.Count != b.Count) return false;
-        for (var i = 0; i < a.Count; i++)
-        {
-            if (a[i].Key != b[i].Key) return false;
-            if (Math.Abs(a[i].X   - b[i].X)   > 0.5) return false;
-            if (Math.Abs(a[i].Top - b[i].Top) > 0.5) return false;
-            if (Math.Abs(a[i].H   - b[i].H)   > 0.5) return false;
-        }
-        return true;
-    }
-
-    private void BeginColResize(string key, PointerPressedEventArgs e)
-    {
-        if (!e.GetCurrentPoint(ColResizeLayer).Properties.IsLeftButtonPressed) return;
-
-        // Фиксируем в модели текущую раскладку: до первого перетаскивания модель пуста,
-        // и жест должен отталкиваться от того, что человек видит.
-        if (!MaterializeColumnWidths()) return;
-        if (!_colWidths.TryGetValue(key, out var startWidth)) return;
-
-        _isResizingCol       = true;
-        _resizeColKey        = key;
-        _resizeStartWidth    = startWidth;
-        _resizeStartX        = e.GetPosition(ColResizeLayer).X;
-        _resizeStartHOffset  = CurrentScrollOffset();
-        _resizeStartGripLeft = e.Source is Control grip ? Canvas.GetLeft(grip) : 0;
-        _resizeFill          = MovableFillWidth();
-        _resizeBase          = MovableColumns().ToDictionary(c => c.Def.Key, c => ModelWidth(c.Def.Key));
-
-        e.Pointer.Capture(e.Source as IInputElement);
-        e.Handled = true;
-    }
-
-    private void DragColResize(PointerEventArgs e)
-    {
-        if (!_isResizingCol || _resizeColKey is null) return;
-
-        var keys = MovableColumns().Select(c => c.Def.Key).ToList();
-        var idx  = keys.IndexOf(_resizeColKey);
-        if (idx < 0) return;
-
-        double Base(string k) => _resizeBase.TryGetValue(k, out var w) ? w : ModelWidth(k);
-
-        // Слагаемое с прокруткой компенсирует ее клампинг: когда таблица шире окна и
-        // прокрутка сама доезжает до края, без поправки граница отлипает от курсора.
-        var scrolled = CurrentScrollOffset() - _resizeStartHOffset;
-        var raw = _resizeStartWidth + (e.GetPosition(ColResizeLayer).X - _resizeStartX) + scrolled;
-
-        var right  = keys.Skip(idx + 1).ToList();
-        var others = keys.Where(k => k != _resizeColKey).Sum(Base);
-
-        // У последней движимой колонки правую границу нельзя утащить левее точки «таблица
-        // ровно заполнена»: справа некому принять освободившееся место, и появилась бы пустота.
-        var floor = right.Count > 0
-            ? MinManualColWidth
-            : Math.Max(MinManualColWidth, _resizeFill - others);
-
-        var target  = Math.Max(floor, raw);
-        var surplus = _resizeFill - (others + target);
-
-        _colWidths[_resizeColKey] = target;
-
-        // Колонки СЛЕВА не трогаем никогда — иначе перетаскиваемая граница уехала бы
-        // из-под курсора. Освободившееся место (surplus > 0) раздаем колонкам справа
-        // пропорционально их ширине; при росте колонки (surplus < 0) соседи сохраняют
-        // ширину и просто уезжают вправо — таблица становится шире окна.
-        var rightSum = right.Sum(Base);
-        foreach (var k in right)
-            _colWidths[k] = surplus > 0 && rightSum > 0
-                ? Base(k) + surplus * Base(k) / rightSum
-                : Base(k);
-
-        ApplyColumnWidths();
-
-        // Полоска следует за новой границей (Bounds на этом проходе еще не пересчитаны).
-        // Ширина выросла на (target - старт) — на столько же правее уехала граница; прокрутка
-        // сдвигает содержимое влево, поэтому вычитается.
-        if (e.Source is Control grip)
-            Canvas.SetLeft(grip, _resizeStartGripLeft + (target - _resizeStartWidth) - scrolled);
-
-        e.Handled = true;
-    }
-
-    private void EndColResize(PointerReleasedEventArgs e)
-    {
-        if (!_isResizingCol) return;
-
-        _isResizingCol = false;
-        _resizeColKey  = null;
-        e.Pointer.Capture(null);
-        e.Handled = true;
-
-        // Сохраняем один раз на отпускание мыши — точечным upsert'ом, а не на каждый кадр.
-        _repository?.SaveColumnWidths(_collectionId, _colWidths);
-
-        ScheduleColHandlesRefresh();   // пересобрать полоски под новые границы
-    }
-
-    // Захват потерян (Alt+Tab, модальное окно поверх): жест закрываем без записи в БД,
-    // иначе зависший флаг заблокировал бы перестройку полосок.
-    private void CancelColResize()
-    {
-        if (!_isResizingCol) return;
-        _isResizingCol = false;
-        _resizeColKey  = null;
-        ScheduleColHandlesRefresh();
-    }
-
     // ── Фильтр и сортировка колонок (чеклист значений) ──────────────────────────────
 
     private void ShowFilterFlyout(Control anchor, TableColumnDef def)
@@ -3875,7 +1832,7 @@ public partial class TableView : UserControl
         using var slow = Diag.Measure("окно фильтра колонки", Diag.UiOpen,
                                       $"{DbErrors.Display(_repository.DbPath)}, коллекция {_collectionId}, колонка {def.Header}");
 
-        var flyout = Controls.Behaviors.PopupPlate.Filter();
+        var flyout = PopupPlate.Filter();
         // Флайаут рендерится в отдельном попап-окне вне зума приложения — контент
         // оборачивается в зум-трансформ (плашка-презентер остается вне зума).
         flyout.Content = WindowZoom.WrapPopupContent(BuildFilterPanel(def, () => flyout.Hide()));
@@ -4097,7 +2054,7 @@ public partial class TableView : UserControl
             // в шапке предыдущего дерева. Иначе Avalonia бросает «already has a visual parent».
             (selectAll.Parent as Panel)?.Children.Remove(selectAll);
             // Пустой результат поиска показывает «Ничего не найдено» — как у плоского списка.
-            valuesHost.Child = Controls.Components.EmptyListHint.Wrap(
+            valuesHost.Child = EmptyListHint.Wrap(
                 tree.List, search, secondary, fontBase,
                 content: ScrollBarLink.HeaderedList(selectAll, tree.List, gap: 2));
             tree.Search(search.Text);
@@ -4280,7 +2237,7 @@ public partial class TableView : UserControl
                 {
                     // «Загрузка…» → список значений; пустой список показывает надпись
                     // «Список пуст» / «Ничего не найдено» вместо голой белой карточки.
-                    valuesHost.Child = Controls.Components.EmptyListHint.Wrap(
+                    valuesHost.Child = EmptyListHint.Wrap(
                         valuesList, search, secondary, fontBase, content: valuesBox);
                 }
 
@@ -4383,14 +2340,14 @@ public partial class TableView : UserControl
         };
         sep.Bind(HeightProperty, sep.GetResourceObservable("SeparatorThickness"));
         sep.Bind(UseLayoutRoundingProperty, sep.GetResourceObservable("LineUseLayoutRounding"));
-        Avalonia.Media.RenderOptions.SetEdgeMode(sep, Avalonia.Media.EdgeMode.Aliased);
+        RenderOptions.SetEdgeMode(sep, EdgeMode.Aliased);
         return sep;
     }
 
     // Упорядочивает список значений с количеством для панели фильтра. asc задан — сортировка
     // тем же компаратором, что и таблица (text/number/date); null — порядок как в таблице
     // (репозиторий уже отдал по первой позиции, «(Пусто)» в конце). src — SQL-агрегат по колонке.
-    private List<(string Raw, int Count)> SortValueCounts(
+    private static List<(string Raw, int Count)> SortValueCounts(
         List<(string Value, int Count)> src, string fieldType, bool? asc)
     {
         if (asc is bool a)
@@ -4516,17 +2473,16 @@ public partial class TableView : UserControl
         s.Contains('\n') || s.Contains('\r') ? s.ReplaceLineEndings(" ").Trim() : s;
 
     /// <summary>
-    /// Применяет активные фильтры/сортировку. Без них таблица работает на полном
-    /// виртуализированном списке; с ними — фильтр считается в SQL (список id), показ
-    /// тоже виртуализирован по этому списку. Все постранично, без загрузки в память.
+    /// Применяет активные фильтры/сортировку: сетка считает отбор и сортировку в фоне
+    /// (RowSourcePlanner) — воронка в шапке сразу, строки по приходе списка; пока он идет, на
+    /// экране прежние строки. Без отбора таблица работает на полном списке, с ним — на списке id
+    /// или keyset'е по индексу, все постранично, без загрузки в память.
     /// </summary>
     private void ApplyFilters()
     {
-        ForgetCellEditing();   // ниже может смениться ItemsSource — редактор умрет молча
+        ForgetCellEditing();   // список строк сменится — набранное пишем, пока строки живы
 
         PruneFilters();
-        UpdateChevronStates();
-
         if (_repository is null) return;
 
         // Запоминаем уже вычищенный от мертвых колонок отбор — ровно то, что видно на экране.
@@ -4535,47 +2491,8 @@ public partial class TableView : UserControl
         if (ConstructorSettings.RememberFilters && _collectionId > 0)
             ConstructorFilterMemory.Save(_repository.DbPath, _collectionId, _filters, _sortKey, _sortAsc);
 
-        // Рисованная сетка считает отбор и сортировку в фоне (RowSourcePlanner): воронка в шапке —
-        // сразу, строки — по приходе списка. Копия: набор фильтров фасада меняет окно фильтра, а
-        // фоновый запрос читает свой.
-        if (_drawn is not null)
-        {
-            _drawn.SetQuery(CopyFilters(), _sortKey, _sortAsc);
-            return;
-        }
-
-        if (_filters.Count == 0 && _sortKey is null)
-        {
-            if (!ReferenceEquals(RecordsGrid.ItemsSource, DefaultItemsSource))
-                RecordsGrid.ItemsSource = DefaultItemsSource;
-            _activeRows = _virtualRows;   // вернулись к нефильтрованному видимому списку
-            return;
-        }
-
-        // Фильтр уходит в SQL (только id совпавших записей), сортировка — тем же компаратором
-        // по значениям ОДНОЙ колонки, показ виртуализируется постранично по списку id. Не трогаем
-        // нефильтрованные _virtualRows/_virtualView — создаем временный источник; при снятии
-        // фильтра вернемся к DefaultItemsSource.
-        // Порог медленности: отбор и сортировка считаются на UI-потоке, дольше Diag.UiQuery — в журнал.
-        using var slow = Diag.Measure("фильтр и сортировка таблицы", Diag.UiQuery,
-                                      $"{DbErrors.Display(_repository.DbPath)}, коллекция {_collectionId}, фильтров {_filters.Count}" +
-                                      (_sortKey is null ? "" : ", с сортировкой"));
-        var ids = _repository.GetFilteredRecordIds(_collectionId, _filters,
-                                                   excludeHidden: _hiddenRecords.Count > 0);
-        slow.Context += $", отобрано {ids.Count:N0}";
-        if (_sortKey is { } sk)
-        {
-            var def  = _colDefs.FirstOrDefault(d => d.Key == sk);
-            var cmp  = BuildComparer(def?.FieldType ?? "text", _sortAsc);
-            var vals = _repository.GetColumnValues(_collectionId, sk);
-            ids.Sort((a, b) => cmp(vals.GetValueOrDefault(a, ""), vals.GetValueOrDefault(b, "")));
-        }
-
-        _relLinks.Clear();   // новый срез строк (фильтр/сортировка) — прежний прогрев связей неактуален
-        var filteredRows = new VirtualRowList(_repository, _collectionId, _fields, recordIds: ids, relLinks: _relLinks);
-        filteredRows.RecordEdited += (_, rid) => RecordValueEdited?.Invoke(this, rid);
-        _activeRows = filteredRows;   // видимый список теперь отфильтрованный — точечные рефреши сюда
-        RecordsGrid.ItemsSource = new VirtualCollectionView(filteredRows);
+        // Копия: набор фильтров фасада меняет окно фильтра, а фоновый запрос читает свой.
+        RecordsGrid.SetQuery(CopyFilters(), _sortKey, _sortAsc);
     }
 
     // Фильтры и сортировка по колонкам, которых больше нет (поле удалили), снимаются. Скрытые в
@@ -4594,242 +2511,11 @@ public partial class TableView : UserControl
         _filters.ToDictionary(kv => kv.Key, kv => new HashSet<string>(kv.Value));
 
     // Есть ли скрытые в «Отображении записей» записи: их значения не попадают в списки фильтра.
-    private bool AnyHiddenRecords => _drawn?.HasHiddenRecords ?? _hiddenRecords.Count > 0;
+    private bool AnyHiddenRecords => RecordsGrid.HasHiddenRecords;
 
     // Компаратор значений колонки (пустые всегда в конце) — общий с фоновой сортировкой, см. ColumnSort.
     private static Func<string, string, int> BuildComparer(string fieldType, bool asc) =>
         ColumnSort.BuildComparer(fieldType, asc);
-
-    // ── Ширины колонок ─────────────────────────────────────────────────────────
-    //
-    // ГЛАВНОЕ ПРАВИЛО: движимые колонки ВСЕГДА остаются звездными (Star), в обоих режимах.
-    // Именно наличие хотя бы одной видимой Star-колонки заставляет Avalonia каждым
-    // проходом разметки доводить сумму ширин до ширины вьюпорта, а внутренняя filler-колонка
-    // получает нулевую ширину — только поэтому служебная «+» прижата к правому краю.
-    // Перевод колонок в пиксельную ширину это ломает: справа от «+» появляется полоса
-    // filler'а с лишней вертикальной линией. Пришпилено к Avalonia 11.2.3.
-    //
-    // Ручная ширина выражается так: звездный ВЕС колонки == ее ширине в пикселях, и та же
-    // величина ставится в MinWidth. Дальше все делает сам движок:
-    //   сумма > вьюпорта — колонки упираются в MinWidth, не сжимаются, появляется
-    //                      горизонтальная прокрутка (растянутый столбец «уводит» соседей вправо);
-    //   сумма < вьюпорта — остаток раздается пропорционально весам, пустоты справа нет.
-    // Наш код задает базу, движок — гарантированно попадает в ширину вьюпорта.
-
-    // Модель ручных ширин применима: включен ручной режим и хоть у одной видимой движимой
-    // колонки ширина задана. Пока модель пуста, ручной режим выглядит как стандартный —
-    // включение режима больше не схлопывает все колонки до минимума.
-    private bool HasManualWidths =>
-        _manualColResize && _colWidths.Count > 0 &&
-        MovableColumns().Any(c => _colWidths.ContainsKey(c.Def.Key));
-
-    // Квант раскладки — один ФИЗИЧЕСКИЙ пиксель в DIP (учитывает DPI монитора и зум).
-    private double Quant() => 1.0 / LineMetrics.EffectiveScale(this);
-
-    private double Quantize(double w)
-    {
-        var q = Quant();
-        return Math.Round(w / q) * q;
-    }
-
-    // Ширина колонки по модели; не задана — стандартная.
-    private double ModelWidth(string key) =>
-        _colWidths.TryGetValue(key, out var w) && w > 0 ? w : MinColWidth;
-
-    // Видимые движимые колонки (без служебных «№» и «+») в порядке слева направо.
-    // Связка _colDefs[i] ↔ Columns[i] держится на индексе, поэтому сверяем Tag: если
-    // наборы разошлись, лучше отдать пусто, чем править чужие колонки.
-    private IEnumerable<(TableColumnDef Def, DataGridColumn Col)> MovableColumns()
-    {
-        if (_colDefs.Count != RecordsGrid.Columns.Count) yield break;
-
-        for (var i = 0; i < _colDefs.Count; i++)
-        {
-            var def = _colDefs[i];
-            var col = RecordsGrid.Columns[i];
-            if (!def.IsStarWidth || !col.IsVisible) continue;
-            if (!Equals(col.Tag, def.Tag ?? def.Key)) yield break;
-            yield return (def, col);
-        }
-    }
-
-    // Запись ТОЧНОГО звездного веса (вес == ширине в пикселях). Присваивание Width с ТЕМ ЖЕ
-    // типом длины Avalonia трактует как ресайз и перекладывает дельту на соседей справа;
-    // присваивание со СМЕНОЙ типа — просто запись. Поэтому сначала переключаем тип, потом
-    // ставим целевое значение. Явные desired/display убирают NaN-коэрцию.
-    // Пришпилено к Avalonia 11.2.3 (DataGridColumn.Width → Resize).
-    private static void SetColWidth(DataGridColumn col, double px)
-    {
-        var target = new DataGridLength(px, DataGridLengthUnitType.Star, px, px);
-        if (col.Width.IsStar)
-            col.Width = new DataGridLength(Math.Max(1, col.ActualWidth));
-        col.Width = target;
-    }
-
-    private void ApplyColumnWidths()
-    {
-        if (_repository is null) return;
-
-        var manual = HasManualWidths;
-        var cols   = MovableColumns().ToList();
-
-        // Два прохода обязательны: сеттер MinWidth изнутри дергает пересчет ширин соседей
-        // справа и портит уже выставленные веса. Второй проход переписывает их из модели.
-        foreach (var (def, col) in cols)
-            col.MinWidth = manual ? Quantize(ModelWidth(def.Key)) : def.MinWidth;
-
-        foreach (var (def, col) in cols)
-        {
-            if (manual) SetColWidth(col, Quantize(ModelWidth(def.Key)));
-            // Стандартный режим — равные веса, ширину считает движок (как было всегда).
-            else col.Width = new DataGridLength(1, DataGridLengthUnitType.Star);
-        }
-
-        ScheduleColHandlesRefresh();
-    }
-
-    // Ширина, доступная под движимые колонки: столько, чтобы таблица ровно заполнила окно.
-    // Занижаем на один физический пиксель — остаток дораздаст звездный движок, а фантомная
-    // горизонтальная полоса прокрутки от промаха в доли пиксела не появится.
-    private double MovableFillWidth()
-    {
-        _headersPresenter ??= RecordsGrid.GetVisualDescendants()
-                                         .OfType<DataGridColumnHeadersPresenter>()
-                                         .FirstOrDefault();
-
-        var total = _headersPresenter?.Bounds.Width ?? RecordsGrid.Bounds.Width;
-        if (total <= 0) return 0;
-
-        var service = 0.0;
-        for (var i = 0; i < _colDefs.Count && i < RecordsGrid.Columns.Count; i++)
-            if (!_colDefs[i].IsStarWidth && RecordsGrid.Columns[i].IsVisible)
-                service += RecordsGrid.Columns[i].ActualWidth;
-
-        return Math.Max(0, total - service - Quant());
-    }
-
-    // Зафиксировать в модели то, что человек сейчас видит на экране. Вызывается в начале
-    // жеста: до первого перетаскивания модель пуста (колонки поровну), и жест должен
-    // отталкиваться именно от текущей раскладки, а не от стандартных ширин.
-    private bool MaterializeColumnWidths()
-    {
-        var cols = MovableColumns().ToList();
-        if (cols.Count == 0 || cols.Any(c => c.Col.ActualWidth <= 0)) return false;
-
-        foreach (var (def, col) in cols)
-            _colWidths[def.Key] = Quantize(col.ActualWidth);
-
-        return true;
-    }
-
-    private void OnGridLayoutUpdated(object? s, EventArgs e)
-    {
-        // Заливка выделенных колонок за скроллом не следит: цвет живет в кисти колонки,
-        // которую держат сами ячейки (см. ColumnSelectionBrush) — пересчет по
-        // LayoutUpdated ей не нужен.
-
-        // Индикатор нижней панели следит за прокруткой и ресайзом: пересчет дешевый
-        // (обход реализованных строк), наверх уходит только изменение диапазона.
-        RefreshVisibleRange();
-
-        // Рамка выделенных ячеек нарисована слоем поверх сетки, поэтому за прокруткой и
-        // ресайзом она следует здесь же, где полоски ресайза — и так же откладывается на тик
-        // диспетчера со сверкой геометрии (правка Canvas прямо отсюда дает layout-цикл).
-        ScheduleCellOverlayRefresh();
-
-        // Полоски ресайза строк следуют за скроллом/ресайзом.
-        if (_manualRowResize && !_isResizingRow)
-            ScheduleRowHandlesRefresh();
-
-        // То же для полосок ресайза колонок.
-        if (_manualColResize && !_isResizingCol)
-            ScheduleColHandlesRefresh();
-
-        // Во время самого перетаскивания снап выключен — иначе жест становится дерганым.
-        if (_snapPending || _isResizingCol) return;
-
-        // Снапим Star-колонки к ФИЗИЧЕСКОЙ пиксельной сетке (квант = 1 физ. пиксель в DIP
-        // с учетом DPI и зума; при зуме 1 и DPI 1x — целые DIP) — иначе DataGrid рисует
-        // вертикальные грид-линии в сабпиксельных позициях и они округляются по-разному
-        // с линиями заголовков. Нужен в ОБОИХ режимах: ручные ширины тоже дают дробные
-        // доли при раздаче остатка.
-        var q = Quant();
-        var hasFractional = false;
-        foreach (var (_, col) in MovableColumns())
-        {
-            if (col.ActualWidth <= 0 || !col.Width.IsStar) continue;
-            var units = col.ActualWidth / q;
-            if (Math.Abs(units - Math.Round(units)) > 0.001) { hasFractional = true; break; }
-        }
-        if (!hasFractional) return;
-
-        _snapPending = true;
-        Dispatcher.UIThread.Post(() =>
-        {
-            _snapPending = false;
-            SnapColumnWidths();
-        }, DispatcherPriority.Background);
-    }
-
-    // Посадить границы колонок на физическую пиксельную сетку, сохранив пропорции.
-    // totalUnits берем из ФАКТИЧЕСКОЙ раскладки (сумма ActualWidth), а не из своей оценки
-    // ширины вьюпорта: только так сумма весов гарантированно равна доступной ширине и
-    // следующий проход разметки уже не видит дробного — снап сходится за один шаг.
-    private void SnapColumnWidths()
-    {
-        var cols = MovableColumns()
-            .Where(c => c.Col.Width.IsStar && c.Col.ActualWidth > 0)
-            .ToList();
-        if (cols.Count == 0) return;
-
-        var q          = Quant();
-        var totalUnits = (int)Math.Round(cols.Sum(c => c.Col.ActualWidth) / q);
-        var units      = new int[cols.Count];
-
-        if (HasManualWidths)
-        {
-            // Ручные ширины: доли считаем ОТ МОДЕЛИ, а не от текущей раскладки — иначе
-            // многократные ресайзы окна накапливали бы дрейф. Ниже своей ширины колонка
-            // не опускается (это и дает горизонтальную прокрутку при переполнении).
-            var minUnits = cols.Select(c => Math.Max(1, (int)Math.Round(ModelWidth(c.Def.Key) / q))).ToArray();
-            var minSum   = minUnits.Sum();
-
-            if (totalUnits <= minSum)
-            {
-                Array.Copy(minUnits, units, units.Length);
-            }
-            else
-            {
-                // Остаток — методом наибольших остатков пропорционально ширинам колонок:
-                // сумма долей точно равна остатку, без потерянных и лишних пикселей.
-                var extra = totalUnits - minSum;
-                var share = new double[cols.Count];
-                for (var i = 0; i < cols.Count; i++)
-                {
-                    share[i] = extra * (double)minUnits[i] / minSum;
-                    units[i] = minUnits[i] + (int)Math.Floor(share[i]);
-                }
-                var left = extra - (units.Sum() - minSum);
-                foreach (var i in Enumerable.Range(0, cols.Count)
-                             .OrderByDescending(i => share[i] - Math.Floor(share[i]))
-                             .Take(Math.Max(0, left)))
-                    units[i]++;
-            }
-        }
-        else
-        {
-            // Стандартный режим: колонки делят ширину поровну.
-            var baseU = totalUnits / cols.Count;
-            var rem   = totalUnits % cols.Count;
-            for (var i = 0; i < cols.Count; i++) units[i] = baseU + (i < rem ? 1 : 0);
-        }
-
-        // Star-вес == целому числу ФИЗИЧЕСКИХ пикселей: сумма весов равна доступной ширине,
-        // каждая колонка получает ровно weight DIP, границы ложатся на физическую сетку.
-        // MinWidth и саму модель снап НЕ трогает — он выравнивает только показ.
-        for (var i = 0; i < cols.Count; i++)
-            SetColWidth(cols[i].Col, units[i] * q);
-    }
 
     // ── Утилиты ────────────────────────────────────────────────────────────────
 
@@ -4847,49 +2533,4 @@ public partial class TableView : UserControl
         catch { }
         return [];
     }
-}
-
-// ── Конвертеры ─────────────────────────────────────────────────────────────────
-
-internal sealed class EmptyTitleConverter : IValueConverter
-{
-    public static readonly EmptyTitleConverter Instance = new();
-
-    public object? Convert(object? v, Type t, object? p, CultureInfo c) =>
-        string.IsNullOrWhiteSpace(v as string) ? TitleText.Placeholder : v;
-
-    public object? ConvertBack(object? v, Type t, object? p, CultureInfo c) =>
-        v?.ToString() ?? "";
-}
-
-internal sealed class FieldDisplayConverter(string fieldType, string separator = ", ", NumberFormat? numberFormat = null) : IValueConverter
-{
-    public object? Convert(object? v, Type t, object? p, CultureInfo c)
-    {
-        var s = v?.ToString() ?? "";
-        return fieldType switch
-        {
-            "checkbox"    => s is "1" or "true" or "True" ? "✓" : "",
-            "date"        => DateValue.TryParse(s, out var dv) ? dv.ToDisplay() : s,
-            "multiselect" => MultiSelectValue.Display(s, separator),
-            "number"      => NumberFormatValue.Format(s, numberFormat ?? NumberFormat.Default),
-            _             => s,
-        };
-    }
-
-    public object? ConvertBack(object? v, Type t, object? p, CultureInfo c) =>
-        v?.ToString() ?? "";
-}
-
-// Отображение «вычисляемых» типов (аудит-метаданные записи). Даты создания/изменения хранятся
-// как ISO "o" (полный момент с долями секунды и смещением — DateValue его не парсит), поэтому
-// разбираем round-trip и показываем «дд.MM.гггг чч:мм»; создатель/изменивший — снимок имени,
-// показываем как есть. Пустое (старые записи без автора) — пустая ячейка.
-internal sealed class ComputedFieldDisplayConverter(string fieldType) : IValueConverter
-{
-    public object? Convert(object? v, Type t, object? p, CultureInfo c) =>
-        FieldTypeInfo.FormatComputedDisplay(v?.ToString(), fieldType);
-
-    public object? ConvertBack(object? v, Type t, object? p, CultureInfo c) =>
-        v?.ToString() ?? "";
 }

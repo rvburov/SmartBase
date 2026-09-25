@@ -280,6 +280,7 @@
     <InternalsVisibleTo Include="SmartBase.Tests.Integration" />
     <InternalsVisibleTo Include="SmartBase.Tests.GridProto" />
     <InternalsVisibleTo Include="SmartBase.Tests.EditGeometry" />
+    <InternalsVisibleTo Include="SmartBase.Tests.WideGui" />
   </ItemGroup>
 
 </Project>

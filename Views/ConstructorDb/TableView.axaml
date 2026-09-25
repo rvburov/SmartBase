@@ -1,96 +1,39 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:grid="using:SmartBase.Views.ConstructorDb.DrawnGrid"
              x:Class="SmartBase.Views.ConstructorDb.TableView"
              Background="{StaticResource BrushBg}">
 
-    <!-- Переопределяем встроенные кисти линий DataGrid из темы Fluent на единый
-         цвет BrushSeparator — иначе тема рисует разделитель под шапкой более темным,
-         чем горизонтальные линии между строками. Локальные копии тем DataGrid
-         (TableViewDataGridThemes.axaml) дают линиям сетки динамическую толщину
-         SeparatorThickness — см. комментарий в том файле. -->
-    <UserControl.Resources>
-        <ResourceDictionary>
-            <ResourceDictionary.MergedDictionaries>
-                <ResourceInclude Source="avares://SmartBase/Views/ConstructorDb/TableViewDataGridThemes.axaml" />
-            </ResourceDictionary.MergedDictionaries>
-            <SolidColorBrush x:Key="DataGridGridLinesBrush"             Color="{StaticResource ColorSeparator}" />
-            <SolidColorBrush x:Key="DataGridFillerColumnGridLinesBrush" Color="{StaticResource ColorSeparator}" />
-        </ResourceDictionary>
-    </UserControl.Resources>
-
+    <!-- Таблица коллекции — рисованная сетка (Views/ConstructorDb/DrawnGrid, план drawn-grid.md):
+         шапку, ячейки, линии, цвета, выделение и наведение рисует GridSurface, контролов в кадре
+         нет. Единственный контрол над ячейкой — накладной редактор (EditorHost, холст с классом
+         cellEditor), и стили ниже — только про него. -->
     <UserControl.Styles>
-        <Style Selector="DataGridCell">
-            <Setter Property="Padding"         Value="0" />
-            <Setter Property="BorderThickness" Value="0" />
-            <Setter Property="FontSize"        Value="{DynamicResource FontSizeBase}" />
-            <Setter Property="Foreground"      Value="{StaticResource BrushPrimaryText}" />
-        </Style>
-        <Style Selector="DataGridCell:current /template/ Grid#FocusVisual">
-            <Setter Property="IsVisible" Value="False" />
-        </Style>
-        <!-- Фокус-рамку ячейки не показываем и когда ячейка получает клавиатурный фокус
-             (интерактивный контент read-only-колонок: «файл» и т.п. — иначе тема рисует
-             черный прямоугольник вокруг ячейки). -->
-        <Style Selector="DataGridCell:focus /template/ Grid#FocusVisual">
-            <Setter Property="IsVisible" Value="False" />
-        </Style>
-        <!-- Метка «текущей» ячейки от темы тоже не нужна: это отдельная тонкая рамка ВНУТРИ
-             выделения (у грида свое понятие текущей ячейки, оно живет ради правки). Где стоит
-             курсор, показывает наша рамка выделения — одна на всех. -->
-        <Style Selector="DataGridCell:current /template/ Rectangle#CurrencyVisual">
-            <Setter Property="IsVisible" Value="False" />
-        </Style>
-
-        <!-- Толщина линий сетки — динамический токен LineMetrics (визуально ~1 пиксель
-             при любом зуме/DPI). Задается стилями, а не в шаблоне: локальные Width/Height
-             из копий тем убраны (TableViewDataGridThemes.axaml, отличие 1).
-             EdgeMode=Aliased (атрибутом в самих шаблонах — сеттеру стиля RenderOptions
-             недоступен) — без сглаживания: на дробных позициях (зум ≠ 1) линия
-             защелкивается в целый физический пиксель вместо размазывания по соседним. -->
-        <Style Selector="DataGridCell /template/ Rectangle#PART_RightGridLine">
-            <Setter Property="Width"             Value="{DynamicResource SeparatorThickness}" />
-            <Setter Property="UseLayoutRounding" Value="{DynamicResource LineUseLayoutRounding}" />
-        </Style>
-        <Style Selector="DataGridRow /template/ Rectangle#PART_BottomGridLine">
-            <Setter Property="Height"            Value="{DynamicResource SeparatorThickness}" />
-            <Setter Property="UseLayoutRounding" Value="{DynamicResource LineUseLayoutRounding}" />
-        </Style>
-        <Style Selector="DataGrid /template/ Rectangle#PART_ColumnHeadersAndRowsSeparator">
-            <Setter Property="Height"            Value="{DynamicResource SeparatorThickness}" />
-            <Setter Property="UseLayoutRounding" Value="{DynamicResource LineUseLayoutRounding}" />
-        </Style>
-
-        <!-- Накладной редактор рисованной сетки (переключатель разработчика, этап 4 плана
-             drawn-grid.md) — те же шрифт и цвет текста, что DataGridCell отдает своему
-             содержимому; стили редакторов ниже действуют и на него (вторая половина селекторов,
-             «Canvas.cellEditor»). После переезда (этап 6) остается только она. -->
+        <!-- Шрифт и цвет текста редактора — те же, что у нарисованных ячеек. -->
         <Style Selector="Canvas.cellEditor">
             <Setter Property="TextElement.FontSize"   Value="{DynamicResource FontSizeBase}" />
             <Setter Property="TextElement.Foreground" Value="{StaticResource BrushPrimaryText}" />
         </Style>
 
-        <!-- Редакторы ВНУТРИ ячейки — без скруглений. Рамка правки стоит там же, где рамка
-             выделения ячейки, а та прямоугольная (садится на линии сетки): одно и то же место
-             таблицы не должно выглядеть то квадратным, то круглым. Скругления остаются у тех же
-             полей вне таблицы — в панели записи и в окнах. -->
+        <!-- Редакторы В ЯЧЕЙКЕ — без скруглений. Рамка правки стоит там же, где рамка выделения
+             ячейки, а та прямоугольная (садится на линии сетки): одно и то же место таблицы не
+             должно выглядеть то квадратным, то круглым. Скругления остаются у тех же полей вне
+             таблицы — в панели записи и в окнах. -->
         <!-- Фон редактора — прозрачный по умолчанию и цвет ячейки у окрашенной (его ставит
-             ApplyEditorCellStyle прямо редактору). Серая плашка поля формы перекрывала бы и
-             цвет ячейки, и подсветку выделенной колонки/строки — ячейка на клике «выцветала».
+             ApplyEditorCellStyle прямо редактору). Серая плашка поля формы перекрывала бы и цвет
+             ячейки, и подсветку выделенной колонки/строки — ячейка на клике «выцветала».
 
-             Тема Fluent в состояниях :pointerover и :focus подменяет фон внутренней рамки
-             СВОЕЙ кистью, перебивая TemplateBinding, — поэтому во всех трех состояниях
-             возвращаем ее на фон самого редактора. Иначе фокус (а он в правке всегда) красил
-             бы ячейку белым. -->
+             Тема Fluent в состояниях :pointerover и :focus подменяет фон внутренней рамки СВОЕЙ
+             кистью, перебивая TemplateBinding, — поэтому во всех трех состояниях возвращаем ее
+             на фон самого редактора. Иначе фокус (а он в правке всегда) красил бы ячейку белым. -->
         <!-- СВОЕЙ рамки у редактора ячейки нет ни в одном состоянии. Тема Fluent рисует
              сфокусированному полю синюю рамку в 2px прямо в шаблоне, перебивая BorderThickness
-             самого поля, — и она на линию сетки УЖЕ ячейки. Получались две разные синие рамки
-             вокруг одного места: наша (по границам ячейки) на выделении и темы (на пиксель
-             левее правого края) в правке, из-за чего квадрат на втором клике «съезжал».
-             Теперь рамка ровно одна — наша, из слоя выделения, и в правке она не гаснет.
+             самого поля, — и она на линию сетки УЖЕ ячейки. Рамка ровно одна — рамка выделения,
+             ее рисует слой сетки над редактором (SelectionOverlay), и в правке она не гаснет.
 
-             MinHeight — ноль: стандарт поля формы (30) выше «компактной» строки таблицы (28),
-             и редактор распирал бы строку. Высоту задает ячейка. -->
-        <Style Selector="DataGridCell TextBox, Canvas.cellEditor TextBox">
+             MinHeight — ноль: стандарт поля формы (30) выше «компактной» строки таблицы (28), и
+             редактор распирал бы строку. Высоту задает ячейка. -->
+        <Style Selector="Canvas.cellEditor TextBox">
             <Setter Property="CornerRadius"    Value="0" />
             <Setter Property="Background"      Value="Transparent" />
             <Setter Property="MinHeight"       Value="0" />
@@ -98,177 +41,46 @@
             <Setter Property="LineHeight"      Value="{DynamicResource LineHeightBase}" />
         </Style>
         <!-- ЦЕЛАЯ высота строки — одна на показ и правку. Естественная высота строки шрифта
-             дробная, и TextBlock с TextBox округляют ее по разным сеткам (целый DIP против
-             1/RenderScaling): боксы выходили разной высоты, каждый центрировался в ячейке
-             своим округлением, и текст опускался на пиксель при входе в правку. Целый
-             LineHeight обоим (токен пишет FontScale.Write) уравнивает боксы на любой сетке.
-             Селектор задевает ВСЕ надписи ячеек, включая водяной знак редактора, — это и
-             нужно: одна высота строки на всю таблицу. Стережет Tests/EditGeometry. -->
-        <Style Selector="DataGridCell TextBlock, Canvas.cellEditor TextBlock">
+             дробная, и надпись с полем округляют ее по разным сеткам (целый DIP против
+             1/RenderScaling): боксы выходили разной высоты, каждый центрировался в ячейке своим
+             округлением, и текст опускался на пиксель при входе в правку. Целый LineHeight (токен
+             пишет FontScale.Write) уравнивает боксы на любой сетке; сетка рисует текст ячеек той
+             же высотой строки. Стережет Tests/EditGeometry. -->
+        <Style Selector="Canvas.cellEditor TextBlock">
             <Setter Property="LineHeight" Value="{DynamicResource LineHeightBase}" />
         </Style>
-        <Style Selector="DataGridCell TextBox /template/ Border#PART_BorderElement, Canvas.cellEditor TextBox /template/ Border#PART_BorderElement">
+        <Style Selector="Canvas.cellEditor TextBox /template/ Border#PART_BorderElement">
             <Setter Property="CornerRadius"    Value="0" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Background"      Value="{Binding $parent[TextBox].Background}" />
         </Style>
-        <Style Selector="DataGridCell TextBox:pointerover /template/ Border#PART_BorderElement, Canvas.cellEditor TextBox:pointerover /template/ Border#PART_BorderElement">
+        <Style Selector="Canvas.cellEditor TextBox:pointerover /template/ Border#PART_BorderElement">
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Background"      Value="{Binding $parent[TextBox].Background}" />
         </Style>
-        <Style Selector="DataGridCell TextBox:focus /template/ Border#PART_BorderElement, Canvas.cellEditor TextBox:focus /template/ Border#PART_BorderElement">
+        <Style Selector="Canvas.cellEditor TextBox:focus /template/ Border#PART_BorderElement">
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Background"      Value="{Binding $parent[TextBox].Background}" />
         </Style>
-        <Style Selector="DataGridCell ComboBox, Canvas.cellEditor ComboBox">
+        <Style Selector="Canvas.cellEditor ComboBox">
             <Setter Property="CornerRadius" Value="0" />
             <Setter Property="Background"   Value="Transparent" />
         </Style>
         <!-- То же для списка: копия темы подменяет фон рамки по наведению и нажатию. -->
-        <Style Selector="DataGridCell ComboBox:pointerover /template/ Border#Background, Canvas.cellEditor ComboBox:pointerover /template/ Border#Background">
+        <Style Selector="Canvas.cellEditor ComboBox:pointerover /template/ Border#Background">
             <Setter Property="Background" Value="{Binding $parent[ComboBox].Background}" />
         </Style>
-        <Style Selector="DataGridCell ComboBox:pressed /template/ Border#Background, Canvas.cellEditor ComboBox:pressed /template/ Border#Background">
+        <Style Selector="Canvas.cellEditor ComboBox:pressed /template/ Border#Background">
             <Setter Property="Background" Value="{Binding $parent[ComboBox].Background}" />
         </Style>
-        <Style Selector="DataGridCell Border.timeField, Canvas.cellEditor Border.timeField">
+        <Style Selector="Canvas.cellEditor Border.timeField">
             <Setter Property="CornerRadius" Value="0" />
-        </Style>
-
-        <!-- «Без названия» в ячейке «Название» — серым, как в шапке записи: это подсказка, а не
-             данные. Стилем, а не локальным цветом: цвет текста, выбранный пользователем, ставится
-             надписи локальным значением (CellStyleHost) и перекрывает серый. Класс ставит
-             MarkTitlePlaceholder в code-behind. -->
-        <Style Selector="TextBlock.titlePlaceholder">
-            <Setter Property="Foreground" Value="{StaticResource BrushSecondaryText}" />
-        </Style>
-
-        <!-- Наведение подсвечивает ЯЧЕЙКУ, а не строку целиком: курсор ходит по значениям,
-             и видеть надо ту ячейку, в которую сейчас попадешь, — выделение и правка тоже
-             поячеечные. Подсветка всей строки осталась за выделением записи (клик по «№»). -->
-        <Style Selector="DataGridCell:pointerover /template/ Border#CellBorder">
-            <Setter Property="Background" Value="{StaticResource BrushSecondaryBg}" />
-        </Style>
-
-        <Style Selector="DataGridRow:selected /template/ Rectangle#BackgroundRectangle">
-            <Setter Property="Fill"    Value="{StaticResource BrushAccentLight}" />
-            <Setter Property="Opacity" Value="1" />
-        </Style>
-        <Style Selector="DataGridRow:selected:pointerover /template/ Rectangle#BackgroundRectangle">
-            <Setter Property="Fill"    Value="{StaticResource BrushAccentLight}" />
-            <Setter Property="Opacity" Value="1" />
-        </Style>
-        <!-- ВНИМАНИЕ: этот сеттер до текста НЕ доходит и цвет выделенной строки не меняет.
-             Foreground ячейки тема отдает ContentPresenter'у, а дальше значение только
-             НАСЛЕДУЕТСЯ — и проигрывает глобальному стилю «Style Selector="TextBlock"»
-             (Typography.axaml), который задает цвет всем надписям приложения. Оставлен как
-             есть: заработает сам, если тот глобальный сеттер когда-нибудь уберут. Цвет
-             текста ячейки, выбранный пользователем, ставится по-другому — локальным
-             значением самим надписям, см. CellStyleHost в code-behind. -->
-        <Style Selector="DataGridRow:selected DataGridCell">
-            <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
-        </Style>
-
-        <!-- Пока выделены ЯЧЕЙКИ, строка голубым не заливается: выделена ячейка (рамкой), а не
-             запись. Внутри DataGrid строка при этом все равно выделена — иначе не работает
-             правка ячейки (см. ScheduleRecordSelectionDrop в code-behind), поэтому прячем
-             именно ВИД. Класс «cellselect» ставит на грид SetCellSelection. -->
-        <Style Selector="DataGrid.cellselect DataGridRow:selected /template/ Rectangle#BackgroundRectangle">
-            <Setter Property="Fill"    Value="{DynamicResource DataGridRowBackgroundBrush}" />
-            <Setter Property="Opacity" Value="1" />
-        </Style>
-        <Style Selector="DataGrid.cellselect DataGridRow:selected:pointerover /template/ Rectangle#BackgroundRectangle">
-            <Setter Property="Fill"    Value="{DynamicResource DataGridRowBackgroundBrush}" />
-            <Setter Property="Opacity" Value="1" />
-        </Style>
-
-        <!-- Заголовки ПРОЗРАЧНЫЕ: фон строки заголовков рисуется одним прямоугольником
-             на всю ширину в шаблоне DataGrid (TableViewDataGridThemes.axaml) — иначе
-             непрозрачный сосед закрашивал правую линию предыдущего заголовка (ячейка
-             при округлении растет вверх). Линию под шапкой рисует нативный
-             PART_ColumnHeadersAndRowsSeparator той же толщины, что линии строк. -->
-        <Style Selector="DataGridColumnHeader">
-            <!-- Округление раскладки — динамическое, СИНХРОННО с ячейками и DataGrid:
-                 при зуме ≠ 1 ширины колонок кратны физическому пикселю (снап), а сетка
-                 округления другая (1/DPI) — округление растягивало бы ячейки вверх,
-                 и непрозрачный сосед закрашивал линию предыдущей колонки. -->
-            <Setter Property="UseLayoutRounding"          Value="{DynamicResource LineUseLayoutRounding}" />
-            <Setter Property="Background"                 Value="Transparent" />
-            <Setter Property="Padding"                    Value="0" />
-            <Setter Property="Height"                     Value="{DynamicResource RowHeightTable}" />
-            <!-- MinHeight штатной темы (32) перебил бы Height при «компактной» плотности:
-                 шапка осталась бы 32 при строках 28, и сайдбар разъехался бы с таблицей. -->
-            <Setter Property="MinHeight"                  Value="{DynamicResource RowHeightTable}" />
-            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-            <Setter Property="VerticalContentAlignment"   Value="Stretch" />
-            <Setter Property="Template">
-                <ControlTemplate>
-                    <Border Background="{TemplateBinding Background}">
-                        <ContentPresenter Content="{TemplateBinding Content}"
-                                          HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
-                                          VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}" />
-                    </Border>
-                </ControlTemplate>
-            </Setter>
         </Style>
     </UserControl.Styles>
 
-    <!-- ВНИМАНИЕ по линиям сетки. Линии рисует НАТИВНАЯ сетка DataGrid
-         (GridLinesVisibility="All"): цвет — BrushSeparator, толщина — динамический токен
-         SeparatorThickness через локальные копии тем (TableViewDataGridThemes.axaml),
-         те же, что у линий всего приложения (Border.separator, Controls.axaml).
-         НЕ переводить на линии-Border в ячейках без проверки на Windows.
-         Вертикальные линии ЗАГОЛОВКОВ — Rectangle в тех же слотах Grid
-         "*,Auto", что и в ячейках (MakeCenteredHeader/MakeTextHeader) — округляются
-         одинаково с линиями строк и совпадают с ними по X при любом зуме/DPI.
-         Выделение колонки — голубая ЗАЛИВКА ячеек значений (как у выделенной записи):
-         фон ContentPresenter'а ячейки, звездная колонка ее сетки, поэтому линии не
-         перекрываются. Шапка не красится (см. ColumnSelectionBrush в code-behind).
-
-         ВНИМАНИЕ по ширинам. CanUserResizeColumns="False" стоит НАВСЕГДА: у встроенного
-         ресайза Avalonia нет события конца перетаскивания (ширину негде сохранить), он
-         запрещает тянуть последнюю колонку и любой ресайз при переполнении, и сжимает
-         соседей вместо расширения таблицы. Ширины ведет код — ApplyColumnWidths плюс свои
-         полоски-захваты (ColResizeLayer). Заодно False защищает служебные «№» и «+» от
-         раздачи ширин движком. -->
+    <!-- Сетка и над ней — плашки (например, «Папка недоступна» под ячейкой файла). -->
     <Panel x:Name="Root">
-        <DataGrid x:Name="RecordsGrid"
-                  AutoGenerateColumns="False"
-                  RowHeight="{DynamicResource RowHeightTable}"
-                  CanUserResizeColumns="False"
-                  CanUserReorderColumns="False"
-                  CanUserSortColumns="False"
-                  GridLinesVisibility="All"
-                  HorizontalGridLinesBrush="{StaticResource BrushSeparator}"
-                  VerticalGridLinesBrush="{StaticResource BrushSeparator}"
-                  HeadersVisibility="Column"
-                  SelectionMode="Extended"
-                  IsReadOnly="False"
-                  Background="Transparent"
-                  UseLayoutRounding="{DynamicResource LineUseLayoutRounding}"
-                  RowBackground="{StaticResource BrushBg}"
-                  HorizontalScrollBarVisibility="Auto"
-                  VerticalScrollBarVisibility="Auto"
-                  />
-
-        <!-- Рамка выделенных ячеек. Отдельным слоем, а не в самой ячейке: строки
-             виртуализованы и переиспользуются при прокрутке — рамка, прибитая к ячейке,
-             уехала бы на чужую запись. Кликов не ловит (IsHitTestVisible=False), иначе
-             перекрыл бы и правку ячейки, и полоски ресайза ниже. -->
-        <Canvas x:Name="CellSelectionLayer"
-                IsHitTestVisible="False" />
-
-        <!-- Слой прозрачных полосок-«грипперов» у нижней границы строк для ручного
-             изменения высоты — кликабельный (ловит drag). Полоски строятся в коде
-             (RefreshRowResizeHandles) только в ручном режиме. -->
-        <Canvas x:Name="RowResizeLayer"
-                IsHitTestVisible="True" />
-
-        <!-- То же для ручной ширины колонок: полоски у ПРАВОЙ границы заголовков
-             (RefreshColResizeHandles). Идет после слоя строк — полоски колонок живут
-             в шапке, а полоски строк ниже, так что они не пересекаются. -->
-        <Canvas x:Name="ColResizeLayer"
-                IsHitTestVisible="True" />
+        <grid:GridPanel x:Name="RecordsGrid" />
     </Panel>
 
 </UserControl>

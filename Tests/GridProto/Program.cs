@@ -1,11 +1,12 @@
-// Стенд этапов 0–5 плана drawn-grid.md: рисованная сетка (GridPanel/GridSurface) на настоящей
+// Стенд этапов 0–6 плана drawn-grid.md: рисованная сетка (GridPanel/GridSurface) на настоящей
 // базе. Меряет то, что план называет критериями готовности:
 //   открытие без COUNT (первый кадр, кадр с данными, приход точного счетчика), теплые шаги
 //   колесом вниз и вверх, шаги вбок и дочитка колонок, прыжок ползунком в конец, сортировка по
 //   индексу и в фоне, отбор в фоне (UI-поток при этом), память сетки; кадры сохраняются в PNG.
 //   В конце — счетчики GridTimings: сколько стоила каждая операция на UI-потоке и в фоне.
-// Режимы этапа 2: --snap — нынешняя и новая таблица при масштабе 1 и 2, попиксельное сравнение с
-// разбивкой различий по строкам и колонкам, карты и вырезки в PNG (с этапа 3 — и сцены выделения);
+// Режимы этапа 2: --snap — кадры сетки при масштабе 1 и 2 против эталонных (папка --ref, по
+// умолчанию --out; нет эталона — кадр сохраняется как эталон), попиксельное сравнение с разбивкой
+// различий по строкам и колонкам, карты и вырезки в PNG (с этапа 3 — и сцены выделения);
 // --gestures — безголовая мышь на копии базы: наведение, полоски ширины и высоты, ресайз окна,
 // режимы, навигация нижней панели. Режим этапа 3: --keys — клавиши и мышь на настоящем TableView
 // с рисованной сеткой (выделение, протягивание с автопрокруткой, меню, буфер, отмена). Режим этапа 4:
@@ -13,10 +14,10 @@
 // Режим этапа 5: --ops — операции на нем же (окно фильтра у кнопки заголовка, отбор и сортировка в
 // фоне, память отбора, колонки и записи набором, скрытие записи, счет «№» из фона; OpsStand.cs).
 // Платформа — Avalonia.Headless с НАСТОЯЩИМ шрифтом (Skia): цена раскладки текста честная,
-// а кадр можно сохранить и сравнить с нынешней таблицей (--old рисует ее на той же базе).
+// а кадр можно сохранить и сравнить с эталоном.
 // Оговорка: Pump() выгребает все, что успело прийти, — «первый кадр» включает заполнения страниц.
 //
-//   dotnet run -c Release --project Tests/GridProto -- --db PATH [--collection NAME] [--steps 100] [--out DIR] [--old] [--probe] [--snap] [--gestures] [--keys] [--edit] [--ops]
+//   dotnet run -c Release --project Tests/GridProto -- --db PATH [--collection NAME] [--steps 100] [--out DIR] [--ref DIR] [--probe] [--snap] [--gestures] [--keys] [--edit] [--ops]
 
 using System.Diagnostics;
 using Avalonia;
@@ -37,7 +38,6 @@ var path = Arg("--db");
 if (path is null || !File.Exists(path)) { Console.WriteLine("Нужен --db PATH к файлу базы."); return 1; }
 var steps  = int.TryParse(Arg("--steps"), out var s) ? Math.Max(1, s) : 100;
 var outDir = Arg("--out") ?? Path.Combine(Path.GetTempPath(), "gridproto");
-var old    = args.Contains("--old");
 Directory.CreateDirectory(outDir);
 
 Console.OutputEncoding = System.Text.Encoding.UTF8;
@@ -69,46 +69,21 @@ Console.WriteLine($"Коллекция «{col.Name}»: {snap.Fields.Count:N0} с
 Console.WriteLine($"Снимок открытия: с точным COUNT {Ms(tSnapExact)}, без COUNT {Ms(tSnapDefer)} (оценка {snapDeferred.RecordCount:N0})");
 Console.WriteLine();
 
-// Стенд снимков (этап 2): нынешняя и новая таблица на одной коллекции при масштабе 1 и 2,
-// попиксельное сравнение. Отдельный режим — окна и ожидания свои.
+// Стенд снимков (этап 2): кадры сетки при масштабе 1 и 2 против эталонных, попиксельное
+// сравнение. Отдельный режим — окна и ожидания свои.
 if (args.Contains("--snap")) return RunSnapshots();
 // Стенд жестов и навигации (этап 2): наведение, полоски-захваты ширины и высоты, ресайз окна,
 // кнопки нижней панели — безголовой мышью на копии базы (режимы и ширины пишутся в нее).
 if (args.Contains("--gestures")) return RunGestures();
-// Стенд клавиш и мыши на фасаде (этап 3): выделение, буфер, отмена, меню — отдельным процессом,
-// потому что включает переключатель разработчика на весь процесс.
+// Стенд клавиш и мыши на фасаде (этап 3): выделение, буфер, отмена, меню — на копии базы.
 if (args.Contains("--keys")) return RunKeys();
-// Стенд правки (этап 4): набор с паузами, коммит и отмена, уход фокуса, редакторы по типам — тоже
-// отдельным процессом с переключателем.
+// Стенд правки (этап 4): набор с паузами, коммит и отмена, уход фокуса, редакторы по типам.
 if (args.Contains("--edit")) return RunEdit();
 // Стенд операций (этап 5): фильтр и сортировка из шапки, память отбора, операции с колонками и
-// записями — отдельным процессом с переключателем.
+// записями.
 if (args.Contains("--ops")) return OpsStand.Run(path, outDir, col.Name);
 
 var window = new Window { Width = 1600, Height = 900 };
-
-if (old)
-{
-    // Нынешняя таблица — только кадр для сравнения глаз в глаз (числа по ней есть в WideGui).
-    var table = new TableView();
-    window.Content = table;
-    window.Show();
-    Settle(window);
-    var sw = Stopwatch.StartNew();
-    table.Load(repo, cid, snap);
-    Pump();
-    var first = sw.Elapsed;
-    var loaded = WaitUntil(() =>
-    {
-        var rows = window.GetVisualDescendants().OfType<DataGridRow>()
-                         .Select(r => r.DataContext as TableRowVm).Where(r => r is not null).ToList();
-        return rows.Count > 0 && rows.All(r => !r!.IsLoading);
-    }, TimeSpan.FromSeconds(20));
-    var frame = Capture(window, out _);
-    Console.WriteLine($"Нынешняя таблица: первый кадр {Ms(first)}, данные {(loaded ? "пришли" : "НЕ пришли")} за {Ms(sw.Elapsed)}");
-    Save(frame, Path.Combine(outDir, $"old-{tag}.png"));
-    return 0;
-}
 
 var panel = new GridPanel();
 window.Content = panel;
@@ -741,8 +716,7 @@ int RunGestures()
 
 // ── Стенд клавиш и мыши на фасаде (этап 3) ───────────────────────────────────
 //
-// Настоящий TableView с рисованной сеткой (переключатель разработчика включается здесь же, до
-// первого обращения к нему) на копии базы. Безголовая мышь и клавиатура проходят чеклист
+// Настоящий TableView на копии базы. Безголовая мышь и клавиатура проходят чеклист
 // table-cells (разделы 1–3, 5–6 частично, 9–10, 12) и блок «Таблица» чеклиста shortcuts: клик,
 // протягивание с автопрокруткой, Shift-клик, «№» и «+», правый клик внутри и вне выделения,
 // стрелки и Shift/Ctrl, Home/End, PageUp/PageDown, Tab, Ctrl+A, Escape, перешагивание скрытой
@@ -751,9 +725,6 @@ int RunGestures()
 // журнал безопасности (без него копирование отказывает).
 int RunKeys()
 {
-    Environment.SetEnvironmentVariable("SMARTBASE_DRAWN_GRID", "1");
-    if (!DrawnGridSwitch.Enabled) { Console.WriteLine("Переключатель прочитан раньше без переменной — --keys запускается отдельным процессом."); return 4; }
-
     var tmp = Path.Combine(outDir, "keys-" + Path.GetFileName(path));
     File.Copy(path, tmp, overwrite: true);
     using var mgr3 = DatabaseManager.Open(9403, "gridkeys", tmp);
@@ -1066,7 +1037,7 @@ int RunKeys()
 
 // ── Стенд правки (этап 4): набор, коммит и отмена на настоящем TableView ──────
 //
-// Копия базы, рисованная сетка с переключателем (отдельный процесс, как --keys), видимы поля всех
+// Копия базы, видимы поля всех
 // правящихся типов. Пункты — раздел 4 чеклиста table-cells: правило второго клика, фокус и каретка
 // как у нынешней таблицы, набор с паузами (редактор не закрывается, база не меняется до выхода),
 // Enter / Tab / Shift+Tab / Escape / Alt+Enter, уход фокуса (пишет, не закрывая), клавиши таблицы в
@@ -1075,9 +1046,6 @@ int RunKeys()
 // обновлением записи из панели и подменой строк, прокрутка с открытым редактором, правый клик.
 int RunEdit()
 {
-    Environment.SetEnvironmentVariable("SMARTBASE_DRAWN_GRID", "1");
-    if (!DrawnGridSwitch.Enabled) { Console.WriteLine("Переключатель прочитан раньше без переменной — --edit запускается отдельным процессом."); return 4; }
-
     var tmp = Path.Combine(outDir, "edit-" + Path.GetFileName(path));
     File.Copy(path, tmp, overwrite: true);
     using var mgr4 = DatabaseManager.Open(9404, "gridedit", tmp);
@@ -1407,73 +1375,78 @@ int RunEdit()
     return failed == 0 ? 0 : 3;
 }
 
-// ── Стенд снимков: нынешняя таблица против новой сетки ───────────────────────
+// ── Стенд снимков: сетка против эталонных кадров ─────────────────────────────
 //
-// Обе таблицы открывают одну коллекцию в окнах 1600×900 при масштабе окна 1 и 2 (RenderScaling
-// выставляется рефлексией, как в Tests/EditGeometry), дожидаются данных и снимают кадр. Кадры
-// сравниваются попиксельно: строго и с допуском на сглаживание; различия раскладываются по
-// строкам и колонкам новой сетки, чтобы было видно, ЧТО именно не совпало. Сохраняются оба кадра и
-// карта различий (кадр нынешней таблицы, различия — красным). Критерий этапа 2: различий нет.
+// Эталоны — кадры сетки, принятые за верные (первые из них сняты с сетки, попиксельно сведенной с
+// таблицей на DataGrid перед ее удалением на этапе 6). Таблица открывает коллекцию в окне 1600×900
+// при масштабе окна 1 и 2 (RenderScaling выставляется рефлексией, как в Tests/EditGeometry),
+// дожидается данных и снимает кадр; сцены выделения ставятся состоянием. Кадр сравнивается с
+// эталоном попиксельно: строго и с допуском на сглаживание; различия раскладываются по строкам и
+// колонкам, чтобы было видно, ЧТО именно не совпало. Сохраняются кадр и карта различий (эталон,
+// выбеленный наполовину, различия — красным). Эталоны лежат в папке --ref (по умолчанию — --out);
+// нет эталона — кадр сохраняется как эталон, следующий прогон сравнивает с ним. Оба кадра читаются
+// из PNG одним декодером — порядок каналов у них один. Критерий: различий нет.
 int RunSnapshots()
 {
-    // Ответы «есть ли файл» — синхронно, как у нынешней таблицы: иначе кадр новой сетки зависел бы
-    // от того, успела ли фоновая проверка.
+    // Ответы «есть ли файл» — синхронно: иначе кадр зависел бы от того, успела ли фоновая проверка.
     FileProbe.Synchronous = true;
-    var worst = 0;
+    var refDir  = Arg("--ref") ?? outDir;
+    Directory.CreateDirectory(refDir);
+    var worst   = 0;
+    var created = 0;
     foreach (var scale in new[] { 1.0, 2.0 })
     {
         Console.WriteLine($"Масштаб {scale:N0}:");
-        var (wOld, oldMs) = OpenOld(scale);
         var (wNew, panel, newMs) = OpenNew(scale);
         var surface = panel.Surface;
         var columns = surface.Columns;
         var headH   = surface.HeaderHeight;
         var pitch   = surface.RowPitch;
         var offsetX = surface.OffsetX;
-        Console.WriteLine($"  нынешняя таблица: кадр с данными {oldMs:N0} мс; новая сетка: {newMs:N0} мс");
-        if (wOld.GetVisualDescendants().OfType<DataGrid>().FirstOrDefault() is { } grid)
-            Console.WriteLine($"  колонки нынешней таблицы: {string.Join(", ", grid.Columns.Where(c => c.IsVisible).Select(c => $"{(c.Header as Control)?.GetVisualDescendants().OfType<TextBlock>().FirstOrDefault()?.Text}={c.ActualWidth:N2}"))}");
-        Console.WriteLine($"  колонки новой сетки: {string.Join(", ", Enumerable.Range(0, columns.Count).Select(i => $"{columns[i].Header}={columns.Width(i):N2}"))}");
+        Console.WriteLine($"  кадр с данными {newMs:N0} мс");
+        Console.WriteLine($"  колонки: {string.Join(", ", Enumerable.Range(0, columns.Count).Select(i => $"{columns[i].Header}={columns.Width(i):N2}"))}");
 
-        // Сцены выделения (этап 3): нынешней таблице — мышью, новой сетке — состоянием; координаты
-        // по раскладке новой сетки (геометрия совпала в базовой сцене). Порядок сцен таков, что
-        // каждый жест нынешней таблицы сам снимает предыдущее выделение: колонка → запись → ячейка →
-        // прямоугольник. Указатель после жеста уводится в угол «№» шапки — там наведение не красится.
+        // Сцены выделения (этап 3) — состоянием; порядок таков, что каждая сцена сама снимает
+        // предыдущее выделение: колонка → запись → ячейка → прямоугольник. Указатель уводится в угол
+        // «№» шапки — там наведение не красится.
         var data = Enumerable.Range(0, columns.Count).Where(i => columns[i].IsStarWidth).ToList();
         var cA   = data[1];
         var cB   = data[2];
         var rid  = panel.Rows![3].RecordId;
-        Point Cell(int row, int c) => new(columns.Left(c) - offsetX + columns.Width(c) / 2, headH + pitch * row + pitch / 2);
-        var scenes = new (string Name, Action Old, Action New)[]
+        var scenes = new (string Name, Action Apply)[]
         {
-            ("base",   () => { }, () => { }),
-            ("column", () => ClickAt(wOld, new Point(columns.Left(cA) - offsetX + 20, headH / 2)),
-                       () => panel.SetColumnSelection([columns[cA].Key])),
-            ("row",    () => ClickAt(wOld, Cell(3, 0)),
-                       () => { panel.SetColumnSelection([]); panel.SetRecordSelection([rid]); }),
-            ("cell",   () => ClickAt(wOld, Cell(3, cA)),
-                       () => { panel.ClearRecordSelection(); panel.SetCellSelection(3, 3, columns[cA].Key, columns[cA].Key, tinted: false); }),
-            ("range",  () => DragAt(wOld, Cell(2, cA), Cell(4, cB)),
-                       () => panel.SetCellSelection(2, 4, columns[cA].Key, columns[cB].Key, tinted: true)),
+            ("base",   () => { }),
+            ("column", () => panel.SetColumnSelection([columns[cA].Key])),
+            ("row",    () => { panel.SetColumnSelection([]); panel.SetRecordSelection([rid]); }),
+            ("cell",   () => { panel.ClearRecordSelection(); panel.SetCellSelection(3, 3, columns[cA].Key, columns[cA].Key, tinted: false); }),
+            ("range",  () => panel.SetCellSelection(2, 4, columns[cA].Key, columns[cB].Key, tinted: true)),
         };
 
-        foreach (var (name, doOld, doNew) in scenes)
+        foreach (var (name, apply) in scenes)
         {
-            doOld();
-            doNew();
-            wOld.MouseMove(new Point(10, 10));
+            apply();
             wNew.MouseMove(new Point(10, 10));
-            for (var i = 0; i < 6; i++) { Pump(); wOld.CaptureRenderedFrame(); wNew.CaptureRenderedFrame(); Thread.Sleep(5); }
-            var oldFrame = wOld.CaptureRenderedFrame();
-            var newFrame = wNew.CaptureRenderedFrame();
+            for (var i = 0; i < 6; i++) { Pump(); wNew.CaptureRenderedFrame(); Thread.Sleep(5); }
+            var captured = wNew.CaptureRenderedFrame();
             var suffix   = name == "base" ? "" : $"-{name}";
-            if (oldFrame is null || newFrame is null) { Console.WriteLine($"  сцена «{name}»: кадр не снят"); worst = int.MaxValue; continue; }
-            Save(oldFrame, Path.Combine(outDir, $"snap-old-{tag}-x{scale:N0}{suffix}.png"));
-            Save(newFrame, Path.Combine(outDir, $"snap-new-{tag}-x{scale:N0}{suffix}.png"));
+            if (captured is null) { Console.WriteLine($"  сцена «{name}»: кадр не снят"); worst = int.MaxValue; continue; }
+            var newPath = Path.Combine(outDir, $"snap-new-{tag}-x{scale:N0}{suffix}.png");
+            Save(captured, newPath);
 
-            if (oldFrame.PixelSize != newFrame.PixelSize)
+            var refPath = Path.Combine(refDir, $"snap-ref-{tag}-x{scale:N0}{suffix}.png");
+            if (!File.Exists(refPath))
             {
-                Console.WriteLine($"  РАЗМЕРЫ КАДРОВ РАЗНЫЕ: {oldFrame.PixelSize} и {newFrame.PixelSize}");
+                File.Copy(newPath, refPath);
+                created++;
+                Console.WriteLine($"  сцена «{name}»: эталона не было — кадр принят за эталон: {refPath}");
+                continue;
+            }
+            var refFrame = LoadFrame(refPath);
+            var newFrame = LoadFrame(newPath);
+
+            if (refFrame.PixelSize != newFrame.PixelSize)
+            {
+                Console.WriteLine($"  РАЗМЕРЫ КАДРОВ РАЗНЫЕ: эталон {refFrame.PixelSize}, кадр {newFrame.PixelSize}");
                 worst = int.MaxValue;
                 continue;
             }
@@ -1485,67 +1458,31 @@ int RunSnapshots()
                 : [("sel", (int)(columns.Left(cA) - offsetX) - 8, (int)(headH + pitch * 2) - 8, 120, 60)];
             foreach (var (crop, x, y, cw, ch) in crops)
             {
-                SaveCrop(oldFrame, x, y, cw, ch, scale, Path.Combine(outDir, $"snap-old-{tag}-x{scale:N0}{suffix}-{crop}.png"));
+                SaveCrop(refFrame, x, y, cw, ch, scale, Path.Combine(outDir, $"snap-ref-{tag}-x{scale:N0}{suffix}-{crop}.png"));
                 SaveCrop(newFrame, x, y, cw, ch, scale, Path.Combine(outDir, $"snap-new-{tag}-x{scale:N0}{suffix}-{crop}.png"));
             }
 
-            var (strict, loose, diff, bands) = CompareFrames(oldFrame, newFrame, tolerance: 24, scale, columns, headH, pitch, offsetX);
-            var total = oldFrame.PixelSize.Width * (long)oldFrame.PixelSize.Height;
-            // Галочки нынешней таблицы — известный дефект: ячейка строится из заглушки и по приходу
-            // данных не обновляется (все пустые), новая сетка рисует по данным. Считаем отдельно.
-            var checkboxHeaders = Enumerable.Range(0, columns.Count).Where(i => columns[i].FieldType == "checkbox")
-                                            .Select(i => $"«{columns[i].Header}»").ToHashSet();
-            bool KnownBand(string band) => checkboxHeaders.Any(h => band.EndsWith(h)) && !band.StartsWith("шапка");
-            var known = bands.Where(b => KnownBand(b.Name)).Sum(b => b.Count);
-            Console.WriteLine($"  сцена «{name}»: различий строго {strict:N0} пикс. ({100.0 * strict / total:N3} %), с допуском 24 — {loose:N0} ({100.0 * loose / total:N3} %), " +
-                              $"из них галочки по данным (дефект нынешней) {known:N0}");
-            foreach (var (band, count) in bands.Where(b => !KnownBand(b.Name)).OrderByDescending(b => b.Count).Take(name == "base" ? 24 : 10))
+            var (strict, loose, diff, bands) = CompareFrames(refFrame, newFrame, tolerance: 24, scale, columns, headH, pitch, offsetX);
+            var total = refFrame.PixelSize.Width * (long)refFrame.PixelSize.Height;
+            Console.WriteLine($"  сцена «{name}»: различий строго {strict:N0} пикс. ({100.0 * strict / total:N3} %), с допуском 24 — {loose:N0} ({100.0 * loose / total:N3} %)");
+            foreach (var (band, count) in bands.OrderByDescending(b => b.Count).Take(name == "base" ? 24 : 10))
                 Console.WriteLine($"    {band,-46} {count,8:N0} пикс.");
             Save(diff, Path.Combine(outDir, $"snap-diff-{tag}-x{scale:N0}{suffix}.png"));
-            worst = Math.Max(worst, loose - known);
+            worst = Math.Max(worst, loose);
         }
-        wOld.Close();
         wNew.Close();
     }
     Console.WriteLine();
-    Console.WriteLine(worst == 0 ? "Кадры совпадают." : $"Кадры расходятся: до {worst:N0} пикс. с допуском. Карты различий: {outDir}");
+    if (created > 0) Console.WriteLine($"Эталонов принято: {created} (сравнивать было не с чем — следующий прогон сравнит с ними).");
+    Console.WriteLine(worst == 0 ? "Кадры совпадают с эталоном." : $"Кадры расходятся с эталоном: до {worst:N0} пикс. с допуском. Карты различий: {outDir}");
     return worst == 0 ? 0 : 2;
 }
 
-static void ClickAt(Window w, Point p)
+// Кадр из PNG — тем же декодером для эталона и снятого кадра, чтобы порядок каналов совпал.
+static Avalonia.Media.Imaging.WriteableBitmap LoadFrame(string file)
 {
-    w.MouseMove(p); w.MouseDown(p, MouseButton.Left); w.MouseUp(p, MouseButton.Left); Pump();
-}
-
-static void DragAt(Window w, Point a, Point b)
-{
-    w.MouseMove(a); w.MouseDown(a, MouseButton.Left); Pump();
-    w.MouseMove(new Point((a.X + b.X) / 2, (a.Y + b.Y) / 2), RawInputModifiers.LeftMouseButton); Pump();
-    w.MouseMove(b, RawInputModifiers.LeftMouseButton); Pump();
-    w.MouseUp(b, MouseButton.Left); Pump();
-}
-
-// Нынешняя таблица в окне 1600×900 при заданном масштабе — открыта, данные пришли, раскладка осела.
-(Window Window, double Ms) OpenOld(double scale)
-{
-    var w = new Window { Width = 1600, Height = 900 };
-    SetScale(w, scale);
-    var table = new TableView();
-    w.Content = table;
-    w.Show();
-    Settle(w);
-    var sw = Stopwatch.StartNew();
-    table.Load(repo, cid, snap);
-    Pump();
-    WaitUntil(() =>
-    {
-        var rows = w.GetVisualDescendants().OfType<DataGridRow>()
-                    .Select(r => r.DataContext as TableRowVm).Where(r => r is not null).ToList();
-        return rows.Count > 0 && rows.All(r => !r!.IsLoading);
-    }, TimeSpan.FromSeconds(30));
-    // Снап ширин и полоски идут отложенными тиками — даем раскладке осесть.
-    for (var i = 0; i < 8; i++) { Pump(); w.CaptureRenderedFrame(); Thread.Sleep(5); }
-    return (w, sw.Elapsed.TotalMilliseconds);
+    using var fs = File.OpenRead(file);
+    return Avalonia.Media.Imaging.WriteableBitmap.Decode(fs);
 }
 
 // Вырезка кадра, увеличенная в 6 раз без сглаживания (DIP-координаты × масштаб окна).
@@ -1575,8 +1512,8 @@ static void SaveCrop(Avalonia.Media.Imaging.WriteableBitmap src, int x, int y, i
     dst.Save(f);
 }
 
-// Новая сетка в окне 1600×900 при заданном масштабе — открыта по точному снимку (ширина «№» у
-// нынешней таблицы считается по точному числу), видимые ячейки с данными.
+// Сетка в окне 1600×900 при заданном масштабе — открыта по точному снимку (эталоны сняты с точным
+// числом записей, от него ширина «№»), видимые ячейки с данными.
 (Window Window, GridPanel Panel, double Ms) OpenNew(double scale)
 {
     var w = new Window { Width = 1600, Height = 900 };
@@ -1604,8 +1541,8 @@ static void SetScale(Window w, double scale)
     field.SetValue(impl, scale);
 }
 
-// Сравнение кадров: число различий строго и с допуском на канал; карта различий; разбивка по
-// строкам и колонкам новой сетки (по ее раскладке — у нынешней таблицы те же границы, если вид совпал).
+// Сравнение кадров (a — эталон, b — снятый): число различий строго и с допуском на канал; карта
+// различий; разбивка по строкам и колонкам сетки по ее раскладке.
 static (int Strict, int Loose, Avalonia.Media.Imaging.WriteableBitmap Diff, List<(string Name, int Count)> Bands)
     CompareFrames(Avalonia.Media.Imaging.WriteableBitmap a, Avalonia.Media.Imaging.WriteableBitmap b, int tolerance,
                   double scale, ColumnLayout columns, double headH, double pitch, double offsetX)
@@ -1634,7 +1571,7 @@ static (int Strict, int Loose, Avalonia.Media.Imaging.WriteableBitmap Diff, List
             var id = y * fd.RowBytes + x * 4;
             var d = Math.Max(Math.Max(Math.Abs(bufA[ia] - bufB[ib]), Math.Abs(bufA[ia + 1] - bufB[ib + 1])),
                              Math.Abs(bufA[ia + 2] - bufB[ib + 2]));
-            // Карта: нынешний кадр, выбеленный наполовину; различия — красным.
+            // Карта: эталон, выбеленный наполовину; различия — красным.
             if (d == 0)
             {
                 bufD[id]     = (byte)(128 + bufA[ia] / 2);

@@ -6,7 +6,6 @@
 //   строки и прокрутка на месте; операции с записями (создание при отборе и без, сдвиг меню и
 //   клавишами, удаление, дубль, «Расположение», «Действия», «Отображение записей»), ширина «№» по
 //   точному счету из фона, стандартная ширина столбцов из настроек.
-// Запускается отдельным процессом: переключатель разработчика читается раз на процесс.
 
 using System.Diagnostics;
 using System.Reflection;
@@ -41,8 +40,6 @@ static class OpsStand
 
     public static int Run(string path, string outDir, string collectionName)
     {
-        Environment.SetEnvironmentVariable("SMARTBASE_DRAWN_GRID", "1");
-        if (!DrawnGridSwitch.Enabled) { Console.WriteLine("Переключатель прочитан раньше без переменной — --ops запускается отдельным процессом."); return 4; }
         AppSettings.AttachStore(new MemoryStore());
         Dispatcher.UIThread.UnhandledException += (_, e) => Console.WriteLine($"    [исключение UI] {e.Exception}");
 
@@ -85,7 +82,7 @@ static class OpsStand
         table.RecordRelocateRequested   += (_, ids) => relocated.Add(ids);
         table.DataActions = () => [new DataAction("Выгрузить", ids => { acted.Add(ids); return Task.CompletedTask; })];
 
-        // Открытие — как у раздела с переключателем: снимок без COUNT, точный счет в фоне.
+        // Открытие — как у раздела: снимок без COUNT, точный счет в фоне.
         table.Load(repo, cid, repo.ReadOpenSnapshot(cid, deferCount: true));
         Pump();
         var p = table.DrawnPanel!;

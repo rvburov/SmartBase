@@ -153,7 +153,7 @@ public static class AppSettings
         else                               _store?.Set(KeyGuideTocWidth, width.ToString(CultureInfo.InvariantCulture));
     }
 
-    // Виртуализация таблицы (постраничная подгрузка через VirtualCollectionView) и фоновая
+    // Виртуализация таблицы (постраничная подгрузка через VirtualRowList) и фоновая
     // подгрузка строк с заглушкой «Загрузка…» — всегда включены, это часть программы,
     // переключателей нет (без них большие коллекции зависают). Бывший ключ asyncRowLoad
     // удален: оставшиеся в app.db значения игнорируются.
