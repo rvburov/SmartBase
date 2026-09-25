@@ -1,4 +1,4 @@
-// Стенд этапов 0–3 плана drawn-grid.md: рисованная сетка (GridPanel/GridSurface) на настоящей
+// Стенд этапов 0–4 плана drawn-grid.md: рисованная сетка (GridPanel/GridSurface) на настоящей
 // базе. Меряет то, что план называет критериями готовности:
 //   открытие без COUNT (первый кадр, кадр с данными, приход точного счетчика), теплые шаги
 //   колесом вниз и вверх, шаги вбок и дочитка колонок, прыжок ползунком в конец, сортировка по
@@ -8,12 +8,13 @@
 // разбивкой различий по строкам и колонкам, карты и вырезки в PNG (с этапа 3 — и сцены выделения);
 // --gestures — безголовая мышь на копии базы: наведение, полоски ширины и высоты, ресайз окна,
 // режимы, навигация нижней панели. Режим этапа 3: --keys — клавиши и мышь на настоящем TableView
-// с рисованной сеткой (выделение, протягивание с автопрокруткой, меню, буфер, отмена).
+// с рисованной сеткой (выделение, протягивание с автопрокруткой, меню, буфер, отмена). Режим этапа 4:
+// --edit — правка на том же фасаде (набор с паузами, коммит и отмена, уход фокуса, редакторы по типам).
 // Платформа — Avalonia.Headless с НАСТОЯЩИМ шрифтом (Skia): цена раскладки текста честная,
 // а кадр можно сохранить и сравнить с нынешней таблицей (--old рисует ее на той же базе).
 // Оговорка: Pump() выгребает все, что успело прийти, — «первый кадр» включает заполнения страниц.
 //
-//   dotnet run -c Release --project Tests/GridProto -- --db PATH [--collection NAME] [--steps 100] [--out DIR] [--old] [--probe] [--snap] [--gestures] [--keys]
+//   dotnet run -c Release --project Tests/GridProto -- --db PATH [--collection NAME] [--steps 100] [--out DIR] [--old] [--probe] [--snap] [--gestures] [--keys] [--edit]
 
 using System.Diagnostics;
 using Avalonia;
@@ -23,6 +24,7 @@ using Avalonia.Input;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using SmartBase.Logging;
+using SmartBase.Controls.Widgets;
 using SmartBase.Core.Models;
 using SmartBase.Database;
 using SmartBase.ViewModels.ConstructorDb;
@@ -74,6 +76,9 @@ if (args.Contains("--gestures")) return RunGestures();
 // Стенд клавиш и мыши на фасаде (этап 3): выделение, буфер, отмена, меню — отдельным процессом,
 // потому что включает переключатель разработчика на весь процесс.
 if (args.Contains("--keys")) return RunKeys();
+// Стенд правки (этап 4): набор с паузами, коммит и отмена, уход фокуса, редакторы по типам — тоже
+// отдельным процессом с переключателем.
+if (args.Contains("--edit")) return RunEdit();
 
 var window = new Window { Width = 1600, Height = 900 };
 
@@ -982,6 +987,8 @@ int RunKeys()
         WaitUntil(() => t.IsCompleted, TimeSpan.FromSeconds(2));
         return t.IsCompletedSuccessfully ? t.Result : null;
     }
+    // Ячейка уже выделена прошлым кликом: второй клик по ней открыл бы правку (этап 4) — снимаем.
+    Key(Avalonia.Input.Key.Escape);
     Click(Center(2, textKey));
     Key(Avalonia.Input.Key.C, RawInputModifiers.Control);
     Expect(WaitUntil(() => Clip() == value2, TimeSpan.FromSeconds(5)), $"Ctrl+C: в буфере «{value2}»");
@@ -1002,6 +1009,7 @@ int RunKeys()
     Key(Avalonia.Input.Key.Z, RawInputModifiers.Control);
     Expect(WaitUntil(() => repo3.GetFieldValues(rid2).GetValueOrDefault(textId) == value2, TimeSpan.FromSeconds(10)), "Ctrl+Z: очистка отменена");
     WaitUntil(() => p.QueryTask.IsCompleted && s.VisibleCellsLoaded(), TimeSpan.FromSeconds(20)); Pump();
+    Key(Avalonia.Input.Key.Escape);   // та же ячейка выделена — второй клик открыл бы правку
     Click(Center(2, textKey));
     Key(Avalonia.Input.Key.X, RawInputModifiers.Control);
     Expect(WaitUntil(() => repo3.GetFieldValues(rid2).GetValueOrDefault(textId, "") == "" && Clip() == value2, TimeSpan.FromSeconds(10)), "Ctrl+X: значение в буфере и стерто");
@@ -1011,6 +1019,7 @@ int RunKeys()
     WaitUntil(() => p.QueryTask.IsCompleted && s.VisibleCellsLoaded(), TimeSpan.FromSeconds(20)); Pump();
 
     Console.WriteLine("Автопрокрутка при протягивании:");
+    Key(Avalonia.Input.Key.Escape);   // ячейка выделена прошлым шагом — второй клик открыл бы правку
     Click(Center(2, f[1]));
     var start = Center(2, f[1]);
     w.MouseMove(start); w.MouseDown(start, MouseButton.Left); Pump();
@@ -1021,10 +1030,14 @@ int RunKeys()
     Expect(scrolled > 0, $"таблица едет за указателем: смещение {scrolled:N0}");
     Expect(focusRow > 2 && Range()?.AnchorRow == 2, $"выделение дотянуто до нижней видимой строки: {R(Range())}");
     Expect(focusRow == p.VisibleRowRange().Last - 1 || focusRow == p.VisibleRowRange().Last - 2, $"фокус на краю окна ({focusRow + 1} при {p.VisibleRowRange().Label})");
+    // Меряется от отпускания: тик автопрокрутки мог прийти в тот же прогон диспетчера, что и оно.
     w.MouseUp(below, MouseButton.Left); Pump();
-    var after = Range();
-    w.MouseMove(new Point(start.X, 500)); Pump();
-    Expect(Range() == after && Near(s.OffsetY, scrolled), "после отпускания за краем — не тянется и не едет");
+    var after       = Range();
+    var afterOffset = s.OffsetY;
+    w.MouseMove(new Point(start.X, 500));
+    WaitUntil(() => false, TimeSpan.FromMilliseconds(300));   // таймер, будь он жив, успел бы тикнуть
+    Expect(Range() == after && Near(s.OffsetY, afterOffset),
+           $"после отпускания за краем — не тянется и не едет ({R(after)} → {R(Range())}, {afterOffset:N0} → {s.OffsetY:N0})");
 
     Console.WriteLine("Выделение следует за данными:");
     s.OffsetY = 0; Pump();
@@ -1041,6 +1054,349 @@ int RunKeys()
 
     w.Close();
     SecurityJournal.Attach(null);
+    Console.WriteLine();
+    Console.WriteLine(failed == 0 ? "Все проверки прошли." : $"ПРОВАЛОВ: {failed}");
+    return failed == 0 ? 0 : 3;
+}
+
+// ── Стенд правки (этап 4): набор, коммит и отмена на настоящем TableView ──────
+//
+// Копия базы, рисованная сетка с переключателем (отдельный процесс, как --keys), видимы поля всех
+// правящихся типов. Пункты — раздел 4 чеклиста table-cells: правило второго клика, фокус и каретка
+// как у нынешней таблицы, набор с паузами (редактор не закрывается, база не меняется до выхода),
+// Enter / Tab / Shift+Tab / Escape / Alt+Enter, уход фокуса (пишет, не закрывая), клавиши таблицы в
+// редакторе молчат, число в формате показа, «Без названия», списки (Enter в раскрытом), дата и
+// связь с фокусом в таблице, галочка кликом и пробелом, ручная правка пути файла, закрытие правки
+// обновлением записи из панели и подменой строк, прокрутка с открытым редактором, правый клик.
+int RunEdit()
+{
+    Environment.SetEnvironmentVariable("SMARTBASE_DRAWN_GRID", "1");
+    if (!DrawnGridSwitch.Enabled) { Console.WriteLine("Переключатель прочитан раньше без переменной — --edit запускается отдельным процессом."); return 4; }
+
+    var tmp = Path.Combine(outDir, "edit-" + Path.GetFileName(path));
+    File.Copy(path, tmp, overwrite: true);
+    using var mgr4 = DatabaseManager.Open(9404, "gridedit", tmp);
+    var repo4 = mgr4.Constructor;
+    var cid4  = repo4.GetAllCollections().First(c => c.Name == col.Name).Id!.Value;
+
+    var failed = 0;
+    void Expect(bool ok, string what)
+    {
+        Console.WriteLine($"  {(ok ? "ок    " : "ПРОВАЛ")} {what}");
+        if (!ok) failed++;
+    }
+
+    // Видимы поля по одному на тип: текст, число, дата, список, статус, галочка, ссылка, файл, связь.
+    var snap0  = repo4.ReadOpenSnapshot(cid4);
+    DbField F(string type) => snap0.Fields.First(f => f.FieldType == type);
+    var fText = F("text"); var fNum = F("number"); var fDate = F("date"); var fSel = F("select");
+    var fStat = F("status"); var fCheck = F("checkbox"); var fUrl = F("url"); var fFile = F("file"); var fRel = F("relation");
+    var shownFields = new[] { fText, fNum, fDate, fSel, fStat, fCheck, fUrl, fFile, fRel };
+    repo4.SaveColumnDisplay(cid4, snap0.Fields.Select(f => (f.Id!.Value.ToString(), shownFields.Contains(f), 1)));
+
+    // Рядом с таблицей — постороннее поле ввода: в него уводится фокус (как клик в панель записи).
+    var outside = new TextBox { Width = 160 };
+    var table   = new TableView();
+    var dock    = new DockPanel();
+    DockPanel.SetDock(outside, Dock.Left);
+    dock.Children.Add(outside);
+    dock.Children.Add(table);
+    var w = new Window { Width = 2200, Height = 900, Content = dock };
+    w.Show();
+    Settle(w);
+
+    IReadOnlyList<TableColumnDef> defs = [];
+    var edited = new List<int>();
+    table.ColumnsBuilt      += (_, d) => defs = d;
+    table.RecordValueEdited += (_, rid) => edited.Add(rid);
+    table.Load(repo4, cid4, repo4.ReadOpenSnapshot(cid4));
+    Pump();
+    var p = table.DrawnPanel!;
+    var s = p.Surface;
+    WaitUntil(s.VisibleCellsLoaded, TimeSpan.FromSeconds(20));
+    var L = s.Columns;
+    var sOrigin = s.TranslatePoint(new Point(0, 0), w)!.Value;
+
+    int Col(string key) => defs.ToList().FindIndex(d => d.Key == key);
+    string K(DbField f) => f.Id!.Value.ToString();
+    var title = TableRowVm.TitleKey;
+    Point Center(int row, string key)
+    {
+        var c = L.IndexOf(key);
+        return new Point(sOrigin.X + L.Left(c) - s.OffsetX + L.Width(c) / 2,
+                         sOrigin.Y + s.HeaderHeight + s.RowLayout.Top(row) - s.OffsetY + s.RowPitch / 2);
+    }
+    Point ToWindow(Point surfacePoint) => new(sOrigin.X + surfacePoint.X, sOrigin.Y + surfacePoint.Y);
+    void Click(Point pt, RawInputModifiers m = RawInputModifiers.None, MouseButton button = MouseButton.Left)
+    {
+        w.MouseMove(pt, m); w.MouseDown(pt, button, m); w.MouseUp(pt, button, m); Pump();
+    }
+    void DoubleClick(Point pt)
+    {
+        w.MouseMove(pt); w.MouseDown(pt, MouseButton.Left); w.MouseUp(pt, MouseButton.Left);
+        w.MouseDown(pt, MouseButton.Left); w.MouseUp(pt, MouseButton.Left); Pump();
+    }
+    void Key(Key k, RawInputModifiers m = RawInputModifiers.None) { w.KeyPress(k, m); w.KeyRelease(k, m); Pump(); }
+    void Type(string text) { w.KeyTextInput(text); Pump(); }
+    // Пауза посреди набора: таймеры и фоновые задачи отрабатывают, как у живого человека.
+    void Pause(int ms) { var sw = Stopwatch.StartNew(); while (sw.ElapsedMilliseconds < ms) { Pump(); Thread.Sleep(10); } }
+    // Второй клик по той же ячейке через паузу больше двойного — «медленный» второй клик.
+    void OpenBySecondClick(int row, string key) { Click(Center(row, key)); Pause(600); Click(Center(row, key)); }
+    TextBox? Box() => p.Editor.Editor as TextBox;
+    string Db(int rid, DbField f) => repo4.GetFieldValues(rid).GetValueOrDefault(f.Id!.Value, "");
+    CellRange? Range() => table.CurrentCellRange;
+    TableRowVm Row(int i) => p.Rows!.TryGetCached(i)!;
+    void Reload() { WaitUntil(() => p.QueryTask.IsCompleted && s.VisibleCellsLoaded(), TimeSpan.FromSeconds(20)); Pump(); }
+
+    Console.WriteLine($"Колонки: {string.Join(", ", Enumerable.Range(0, L.Count).Select(i => L[i].Header))}");
+
+    Console.WriteLine("Открытие правки:");
+    var rid2 = Row(2).RecordId;
+    var text2 = Db(rid2, fText);
+    Click(Center(2, K(fText)));
+    Expect(!table.IsCellEditing, "первый клик только выделяет");
+    Click(Center(3, K(fText)));
+    Click(Center(2, K(fText)));
+    Expect(!table.IsCellEditing, "клик по ячейке, выделенной раньше другой, — снова только выделение");
+    Pause(600);
+    Click(Center(2, K(fText)));
+    Expect(table.IsCellEditing && Box() is { } b0 && b0.IsFocused, "медленный второй клик по той же ячейке — правка, фокус в поле");
+    Expect(Box() is { CaretIndex: 0, SelectionStart: 0, SelectionEnd: 0 }, "каретка в начале, без выделения — как у нынешней таблицы");
+    Expect(Range() == CellRange.Single(2, Col(K(fText))) && s.CellSelectionBounds() is not null, "рамка выделения на правящейся ячейке");
+    Expect(p.Editor.EditorBounds is { } eb && s.EditorRect(2, K(fText)) is { } er && eb == er, "редактор стоит в области ячейки");
+    Key(Avalonia.Input.Key.Escape);
+    Expect(!table.IsCellEditing && Db(rid2, fText) == text2 && (s.IsFocused || s.IsKeyboardFocusWithin), "Escape без набора — правка закрыта, фокус в таблице");
+    DoubleClick(Center(4, K(fText)));
+    Expect(table.IsCellEditing && p.Editor.Row == 4, "двойной клик по новой ячейке — правка");
+    Key(Avalonia.Input.Key.Escape);
+    Key(Avalonia.Input.Key.Enter);
+    Expect(table.IsCellEditing && p.Editor.Row == 4, "Enter на выделенной ячейке — правка");
+    Key(Avalonia.Input.Key.Escape);
+    Key(Avalonia.Input.Key.F2);
+    Expect(table.IsCellEditing, "F2 — правка");
+    Key(Avalonia.Input.Key.Escape);
+
+    Console.WriteLine("Набор с паузами и запись при выходе:");
+    OpenBySecondClick(2, K(fText));
+    Key(Avalonia.Input.Key.A, RawInputModifiers.Control);   // выделить весь текст поля, а не таблицу
+    Expect(table.CurrentCellRange == CellRange.Single(2, Col(K(fText))), "Ctrl+A в редакторе выделяет текст, а не таблицу");
+    var phrase = new[] { "Первое", " слово.", " Второе", " слово." };
+    var stayed = true; var untouched = true;
+    foreach (var word in phrase)
+    {
+        Type(word);
+        Pause(700);
+        stayed    &= table.IsCellEditing;
+        untouched &= Db(rid2, fText) == text2;
+    }
+    Expect(stayed, "редактор не закрылся ни на пробеле, ни на точке, ни на паузе");
+    Expect(untouched, "пока печатают, в базу ничего не пишется");
+    var edits = edited.Count;
+    Key(Avalonia.Input.Key.Enter);
+    Expect(Db(rid2, fText) == "Первое слово. Второе слово.", $"Enter: записано целиком «{Db(rid2, fText)}»");
+    Expect(edited.Count == edits + 1 && edited[^1] == rid2, "одно событие правки записи — наверх, в панель");
+    Expect(!table.IsCellEditing && Range() == CellRange.Single(2, Col(K(fText))), "рамка на той же ячейке, а не ниже");
+    Expect(s.IsFocused || s.IsKeyboardFocusWithin, "фокус вернулся таблице");
+    Expect(Row(2)[K(fText)] == "Первое слово. Второе слово.", "ячейка показывает записанное");
+    Key(Avalonia.Input.Key.Delete);
+    Expect(WaitUntil(() => Db(rid2, fText) == "", TimeSpan.FromSeconds(10)), "Delete сразу после — стирает значение этой ячейки");
+    Reload();
+    Key(Avalonia.Input.Key.Z, RawInputModifiers.Control);
+    Expect(WaitUntil(() => Db(rid2, fText) == "Первое слово. Второе слово.", TimeSpan.FromSeconds(10)), "Ctrl+Z возвращает");
+    Reload();
+
+    Console.WriteLine("Escape, Tab, Alt+Enter, клавиши в редакторе:");
+    OpenBySecondClick(2, K(fText));
+    Key(Avalonia.Input.Key.A, RawInputModifiers.Control);
+    Type("не должно записаться");
+    Key(Avalonia.Input.Key.Escape);
+    Expect(!table.IsCellEditing && Db(rid2, fText) == "Первое слово. Второе слово.", "Escape после набора — значение прежнее");
+    OpenBySecondClick(2, K(fText));
+    Key(Avalonia.Input.Key.A, RawInputModifiers.Control);
+    Key(Avalonia.Input.Key.Delete);
+    Expect(table.IsCellEditing && Box()?.Text == "" && Db(rid2, fText) != "", "Delete в редакторе стирает текст поля, а не значения таблицы");
+    Type("строка 1");
+    Key(Avalonia.Input.Key.Enter, RawInputModifiers.Alt);
+    Type("строка 2");
+    Expect(table.IsCellEditing && Box()?.Text == "строка 1\nстрока 2", "Alt+Enter в тексте — перевод строки, правка открыта");
+    Key(Avalonia.Input.Key.Tab);
+    Expect(Db(rid2, fText) == "строка 1\nстрока 2", "Tab — значение записано");
+    Expect(!table.IsCellEditing && Range() == CellRange.Single(2, Col(K(fNum))), "Tab — редактор закрыт, рамка на ячейке правее");
+    OpenBySecondClick(2, K(fNum));
+    Key(Avalonia.Input.Key.A, RawInputModifiers.Control);
+    Type("12,5");
+    Key(Avalonia.Input.Key.Enter, RawInputModifiers.Alt);
+    Expect(table.IsCellEditing && Box()?.Text == "12,5", "Alt+Enter в числе ничего не делает, правка открыта");
+    Type("x");
+    Expect(Box()?.Text == "12,5", "в число буква не вводится");
+    Key(Avalonia.Input.Key.Tab, RawInputModifiers.Shift);
+    Expect(Db(rid2, fNum) == "12,5" && Row(2)[K(fNum)] == "12,5", $"число записано: «{Db(rid2, fNum)}»");
+    Expect(Range() == CellRange.Single(2, Col(K(fText))), "Shift+Tab — рамка левее");
+    OpenBySecondClick(3, K(fUrl));
+    Key(Avalonia.Input.Key.End);
+    Key(Avalonia.Input.Key.Enter, RawInputModifiers.Alt);
+    Expect(table.IsCellEditing && Box()?.Text?.EndsWith('\n') == true, "Alt+Enter в ссылке — перевод строки");
+    Key(Avalonia.Input.Key.Escape);
+
+    Console.WriteLine("Уход фокуса:");
+    var rid5 = Row(5).RecordId;
+    OpenBySecondClick(5, K(fText));
+    Key(Avalonia.Input.Key.A, RawInputModifiers.Control);
+    Type("набрано до ухода");
+    outside.Focus(); Pump();
+    Expect(Db(rid5, fText) == "набрано до ухода", "фокус ушел из редактора — значение записано");
+    Expect(table.IsCellEditing && p.Editor.IsOpen, "редактор остался открыт");
+    Box()!.Focus(); Pump();
+    Key(Avalonia.Input.Key.End);
+    Type(", и после");
+    Key(Avalonia.Input.Key.Enter);
+    Expect(Db(rid5, fText) == "набрано до ухода, и после", "вернулся, дописал, Enter — записано целиком");
+    OpenBySecondClick(5, K(fText));
+    Key(Avalonia.Input.Key.A, RawInputModifiers.Control);
+    Type("клик мимо");
+    Click(Center(6, K(fNum)));
+    Expect(!table.IsCellEditing && Db(rid5, fText) == "клик мимо" && Range() == CellRange.Single(6, Col(K(fNum))), "клик в другую ячейку — записано, выделена она");
+    Key(Avalonia.Input.Key.Delete);
+    Expect(!table.IsCellEditing, "одиночный клик после правки не открыл редактор: Delete — по значению");
+    Reload();
+
+    Console.WriteLine("«Без названия»:");
+    var rid7 = Row(7).RecordId;
+    OpenBySecondClick(7, title);
+    Key(Avalonia.Input.Key.A, RawInputModifiers.Control);
+    Key(Avalonia.Input.Key.Delete);
+    Key(Avalonia.Input.Key.Enter);
+    Expect(repo4.GetRecord(rid7)?.Title == TitleText.Placeholder, $"стертое название — «{TitleText.Placeholder}»");
+    OpenBySecondClick(7, title);
+    Expect(Box() is { Text: "" } tb7 && tb7.Watermark as string == TitleText.Placeholder, "в правке пустое поле с серой подсказкой");
+    Type("Новое название");
+    Key(Avalonia.Input.Key.Enter);
+    Expect(repo4.GetRecord(rid7)?.Title == "Новое название", "набрано и записано");
+
+    Console.WriteLine("Списки, дата, связь:");
+    var rid8 = Row(8).RecordId;
+    OpenBySecondClick(8, K(fStat));
+    var combo = p.Editor.Editor as ComboBox;
+    Expect(combo is { IsFocused: true }, "статус: редактор — выпадающий список, фокус в нем");
+    if (combo is not null)
+    {
+        var other = combo.Items.Cast<object>().Select(o => o.ToString()).First(o => o != Db(rid8, fStat));
+        combo.IsDropDownOpen = true; Pump();
+        combo.SelectedItem = other; Pump();
+        Expect(Db(rid8, fStat) == other, "выбор пишется сразу");
+        Key(Avalonia.Input.Key.Enter);
+        Expect(table.IsCellEditing, "Enter в раскрытом списке — ему, правка не закрылась");
+        combo.IsDropDownOpen = false; Pump();
+        Key(Avalonia.Input.Key.Enter);
+        Expect(!table.IsCellEditing, "Enter в закрытом — правка закрыта");
+    }
+    OpenBySecondClick(8, K(fDate));
+    Expect(p.Editor.Editor is DateEditor && (s.IsFocused || s.IsKeyboardFocusWithin), "дата: редактор даты, фокус остался в таблице");
+    Key(Avalonia.Input.Key.Escape);
+    Expect(!table.IsCellEditing, "Escape с таблицы закрывает правку даты");
+    OpenBySecondClick(8, K(fRel));
+    Expect(p.Editor.Editor is RelationSelectBox, "связь: редактор связи");
+    Key(Avalonia.Input.Key.Tab);
+    Expect(!table.IsCellEditing && Range() != CellRange.Single(8, Col(K(fRel))), "Tab с таблицы закрывает правку связи и переходит");
+
+    Console.WriteLine("Галочка и файл:");
+    var rid9  = Row(9).RecordId;
+    var check = Db(rid9, fCheck) is "1" or "true" or "True";
+    var cell9 = s.CellRect(9, L.IndexOf(K(fCheck)));
+    var box9  = s.CheckboxRect(cell9);
+    Click(ToWindow(box9.Center));
+    Expect(WaitUntil(() => (Db(rid9, fCheck) is "1" or "true" or "True") != check, TimeSpan.FromSeconds(5)), "клик по квадрату переключает галочку");
+    Click(ToWindow(new Point(cell9.Right - 6, cell9.Center.Y)));
+    Expect((Db(rid9, fCheck) is "1" or "true" or "True") != check && !table.IsCellEditing, "клик мимо квадрата — только выделение");
+    Key(Avalonia.Input.Key.Space);
+    Expect((Db(rid9, fCheck) is "1" or "true" or "True") == check, "пробел на выделенной галочке переключает");
+    Key(Avalonia.Input.Key.Enter);
+    Expect(!table.IsCellEditing, "Enter на галочке правку не открывает");
+
+    var rid10 = Row(10).RecordId;
+    var missing = Path.Combine(outDir, "нет-такого-файла.txt");
+    repo4.SetFieldValue(rid10, fFile.Id!.Value, missing);
+    table.ReloadRows(); Reload();
+    var cell10 = s.CellRect(10, L.IndexOf(K(fFile)));
+    Click(ToWindow(new Point(cell10.X + 30, cell10.Center.Y)));
+    Expect(WaitUntil(() => p.Editor.Editor is FileEditor, TimeSpan.FromSeconds(5)), "клик по имени отсутствующего файла — ручная правка пути");
+    Expect(table.IsCellEditing && w.FocusManager?.GetFocusedElement() is TextBox, $"поле пути в фокусе ({w.FocusManager?.GetFocusedElement()?.GetType().Name})");
+    Key(Avalonia.Input.Key.A, RawInputModifiers.Control);
+    Type(tmp);
+    Key(Avalonia.Input.Key.Enter);
+    Expect(Db(rid10, fFile) == tmp && !table.IsCellEditing, "путь набран, Enter — записан, правка закрыта");
+    Reload();
+    DoubleClick(ToWindow(new Point(cell10.X + 30, cell10.Center.Y)));
+    Expect(WaitUntil(() => p.Editor.Editor is FileEditor, TimeSpan.FromSeconds(5)), "двойной клик по имени — ручная правка пути");
+    Key(Avalonia.Input.Key.A, RawInputModifiers.Control);
+    Type("мусор");
+    Key(Avalonia.Input.Key.Escape);
+    Expect(Db(rid10, fFile) == tmp && !table.IsCellEditing, "Escape — путь прежний");
+    Expect(s.FileButtonRect(cell10, defs.First(d => d.Key == K(fFile))) is { Width: > 0 }, "у ручного файла есть скрепка");
+
+    // Авто-привязка к недоступной папке: клик по ячейке — плашка «Папка недоступна», скрепки нет.
+    var fAuto = repo4.AddField(new DbField
+    {
+        CollectionId = cid4, Name = "Авто-файл", FieldType = "file", Position = 5000,
+        ConfigJson   = new FileAutoRule(FileAutoRule.TitleSource, Path.Combine(outDir, "нет-такой-папки"), "pdf").ToConfigJson(),
+    });
+    var shownIds = shownFields.Select(f => f.Id).Append(fAuto.Id).ToHashSet();
+    repo4.SaveColumnDisplay(cid4, repo4.ReadOpenSnapshot(cid4).Fields.Select(f => (f.Id!.Value.ToString(), shownIds.Contains(f.Id), 1)));
+    table.ReloadColumns(); Pump();
+    L = s.Columns;
+    var cellAuto = s.CellRect(1, L.IndexOf(K(fAuto)));
+    Expect(s.FileButtonRect(cellAuto, defs.First(d => d.Key == K(fAuto))) is null, "у авто-привязки скрепки нет");
+    Click(ToWindow(new Point(cellAuto.X + 30, cellAuto.Center.Y)));
+    Expect(WaitUntil(() => table.DrawnNoticeText == "Папка недоступна", TimeSpan.FromSeconds(5)), $"клик — плашка «{table.DrawnNoticeText}»");
+    Expect(!table.IsCellEditing, "ручной правки у авто-привязки нет");
+
+    Console.WriteLine("Синхронизация и подмена строк:");
+    var rid11 = Row(11).RecordId;
+    OpenBySecondClick(11, K(fDate));
+    table.RefreshRecordRow(Row(12).RecordId); Pump();
+    Expect(table.IsCellEditing, "обновление ДРУГОЙ записи из панели правку не закрывает");
+    table.RefreshRecordRow(rid11); Pump();
+    Expect(!table.IsCellEditing, "обновление ЭТОЙ записи из панели закрывает правку (отмена)");
+    OpenBySecondClick(11, K(fText));
+    Key(Avalonia.Input.Key.A, RawInputModifiers.Control);
+    Type("до перезагрузки");
+    table.ReloadRows(); Reload();
+    Expect(Db(rid11, fText) == "до перезагрузки" && !table.IsCellEditing, "подмена строк — набранное записано, редактор закрыт");
+    OpenBySecondClick(11, K(fText));
+    Key(Avalonia.Input.Key.A, RawInputModifiers.Control);
+    Type("перед закрытием окна");
+    table.CommitCellEdit(); Pump();
+    Expect(Db(rid11, fText) == "перед закрытием окна" && !table.IsCellEditing, "закрытие окна — правка записана");
+
+    Console.WriteLine("Прокрутка, цвет, линия ячейки, правый клик:");
+    OpenBySecondClick(11, K(fText));
+    s.OffsetY += s.RowPitch; Pump();
+    Expect(p.Editor.EditorBounds is { } moved && s.EditorRect(11, K(fText)) is { } want && moved == want, "прокрутка — редактор едет вместе с ячейкой");
+    var before = s.OffsetY;
+    w.MouseWheel(Center(11, K(fText)), new Vector(0, -1), RawInputModifiers.None); Pump();
+    Expect(s.OffsetY > before && table.IsCellEditing, "колесо над редактором крутит таблицу, правка открыта");
+    Key(Avalonia.Input.Key.Escape);
+    s.OffsetY = 0; Pump();
+
+    // Окрашенная ячейка: заливку и цвет текста редактор ставит себе сам (EditorCellStyle), поверхность
+    // под ним цвет не рисует — иначе полупрозрачная заливка легла бы дважды.
+    var rid13 = Row(13).RecordId;
+    repo4.BulkSetCellStyle(cid4, [(rid13, K(fText))], StyleAspect.Background, "#FF3B30", CancellationToken.None);
+    table.ReloadRows(); Reload();
+    OpenBySecondClick(13, K(fText));
+    Expect(Box()?.Background is Avalonia.Media.ISolidColorBrush fill && fill.Color == ((Avalonia.Media.ISolidColorBrush)SmartBase.Utils.ColorTools.Fill("#FF3B30")!).Color,
+           "редактор окрашенной ячейки — с ее заливкой");
+    Key(Avalonia.Input.Key.Escape);
+    OpenBySecondClick(11, K(fText));
+    var line = s.CellRect(11, L.IndexOf(K(fText)));
+    Click(ToWindow(new Point(line.Right - s.LineWidth / 2, line.Center.Y)));
+    Expect(table.IsCellEditing, "клик по линии правящейся ячейки правку не закрывает");
+    Click(Center(12, K(fNum)), button: MouseButton.Right);
+    Expect(!table.IsCellEditing && table.LastOpenedMenu is not null && Range() == CellRange.Single(12, Col(K(fNum))),
+           "правый клик по другой ячейке — правка закрыта, меню открыто");
+    table.LastOpenedMenu?.Close(); Pump();
+
+    w.Close();
     Console.WriteLine();
     Console.WriteLine(failed == 0 ? "Все проверки прошли." : $"ПРОВАЛОВ: {failed}");
     return failed == 0 ? 0 : 3;

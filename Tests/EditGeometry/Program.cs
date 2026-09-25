@@ -9,6 +9,11 @@
 // Правило, которое стенд стережет, — в docs/developer/ui/theming.md, раздел «Текст не
 // двигается при смене состояния»: меняешь толщину рамки по состоянию — компенсируй отступ
 // на ту же величину.
+//
+// Рисованная сетка таблицы (этап 4 плана drawn-grid.md) проверяется отдельным процессом с
+// ключом --drawn: переключатель разработчика читается раз на процесс, а нынешняя таблица выше
+// уже прочитала его выключенным. Ее ячейка сверяется по ПИКСЕЛЯМ: показ рисует сама сетка, у
+// него нет контрола, чью точку можно было бы взять.
 
 using Avalonia;
 using Avalonia.Controls;
@@ -42,8 +47,17 @@ foreach (var name in new[] { "Typography", "WindowMetrics", "Controls" })
         Source = new Uri($"avares://SmartBase/Assets/Styles/{name}.axaml"),
     });
 SmartBase.Utils.FontScale.Init();
+Console.OutputEncoding = System.Text.Encoding.UTF8;
 
 var failed = 0;
+
+if (args.Contains("--drawn"))
+{
+    Environment.SetEnvironmentVariable("SMARTBASE_DRAWN_GRID", "1");
+    DrawnCellNoJump();
+    Console.WriteLine(failed == 0 ? "\nРисованная сетка: все проверки пройдены." : $"\nРисованная сетка: не пройдено проверок: {failed}.");
+    return failed == 0 ? 0 : 1;
+}
 
 // ── Поля даты и времени: фокус не двигает текст ─────────────────────────────────
 //
@@ -78,6 +92,10 @@ FlatHasNoOwnHeight("редактор даты в плоском режиме н�
                    () => new DateEditor { Flat = true });
 FlatHasNoOwnHeight("редактор файла в плоском режиме не держит своей высоты",
                    () => new FileEditor { Flat = true });
+
+// ── Рисованная сетка — тем же стендом, отдельным процессом ─────────────────────
+
+RunDrawnChild();
 
 Console.WriteLine(failed == 0 ? "\nВсе проверки пройдены." : $"\nНе пройдено проверок: {failed}.");
 return failed == 0 ? 0 : 1;
@@ -257,6 +275,190 @@ void CellNoJump()
         try { Directory.Delete(dir, recursive: true); } catch { /* временная папка */ }
     }
 }
+
+// Рисованная сетка в дочернем процессе (--drawn): переключатель разработчика включается на весь
+// процесс, а этот уже построил нынешнюю таблицу с выключенным.
+void RunDrawnChild()
+{
+    var exe  = Environment.ProcessPath!;
+    var self = typeof(Program).Assembly.Location;
+    var psi  = Path.GetFileNameWithoutExtension(exe).Equals("dotnet", StringComparison.OrdinalIgnoreCase)
+        ? new System.Diagnostics.ProcessStartInfo(exe, $"\"{self}\" --drawn")
+        : new System.Diagnostics.ProcessStartInfo(exe, "--drawn");
+    psi.UseShellExecute        = false;
+    psi.RedirectStandardOutput = true;
+    psi.StandardOutputEncoding = System.Text.Encoding.UTF8;
+    psi.Environment["SMARTBASE_DRAWN_GRID"] = "1";
+    using var child = System.Diagnostics.Process.Start(psi)!;
+    Console.Write(child.StandardOutput.ReadToEnd());
+    child.WaitForExit();
+    if (child.ExitCode != 0) failed++;
+}
+
+// Ячейка рисованной сетки: первый клик выделяет, второй по той же ячейке открывает накладной
+// редактор. Кадр снимается в обоих состояниях, и в области ячейки сравниваются «чернила» — темные
+// серые пиксели текста: их рамка (левый, верхний, правый, нижний край) обязана совпасть до
+// физического пикселя. Рамка выделения (синяя) и подсветка наведения (светлая) в чернила не
+// попадают; фон под текстом и синий край рамки сверяются отдельно — рамка стоит над редактором,
+// наведение видно сквозь него. У списка и даты справа в правке появляется кнопка — эта полоса
+// из сравнения исключена.
+void DrawnCellNoJump()
+{
+    Console.WriteLine("\nрисованная сетка: показ и правка ячейки в одном месте (масштаб 2)");
+
+    var dir = Path.Combine(Path.GetTempPath(), "sb-editgeometry-drawn-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(dir);
+    try
+    {
+        using var mgr = SmartBase.Database.DatabaseManager.Open(9402, "editgeometry-drawn", Path.Combine(dir, "test.db"));
+        var repo = mgr.Constructor;
+        var col  = repo.AddCollection(new SmartBase.Core.Models.DbCollection { Name = "Проверка" });
+        var cid  = col.Id!.Value;
+        int Field(string name, string type, int pos, string config = "{}") => repo.AddField(new SmartBase.Core.Models.DbField
+        {
+            CollectionId = cid, Name = name, FieldType = type, Position = pos, ConfigJson = config,
+        }).Id!.Value;
+        var fText   = Field("Текст", "text", 1000);
+        var fNumber = Field("Число", "number", 1010);
+        var fSelect = Field("Список", "select", 1020, "{\"options\":[\"Первая\",\"Вторая\"]}");
+        var fDate   = Field("Дата", "date", 1030);
+        var rec = repo.AddRecord(new SmartBase.Core.Models.DbRecord { CollectionId = cid, Title = "Список", Position = 10 });
+        var rid = rec.Id!.Value;
+        repo.SetFieldValue(rid, fText, "Проба текста");
+        repo.SetFieldValue(rid, fNumber, "1234.5");
+        repo.SetFieldValue(rid, fSelect, "Вторая");
+        repo.SetFieldValue(rid, fDate, "2026-09-25");
+
+        var window = new Window { Width = 1200, Height = 400 };
+        SetRetinaScale(window);
+        var table  = new SmartBase.Views.ConstructorDb.TableView();
+        window.Content = table;
+        window.Show();
+        Pump();
+        table.Load(repo, cid, repo.ReadOpenSnapshot(cid));
+        Pump();
+
+        var panel = table.DrawnPanel;
+        if (panel is null) { Expect(false, "рисованная сетка не включилась — переключатель прочитан без переменной"); return; }
+        var surface = panel.Surface;
+        for (var i = 0; i < 100 && !surface.VisibleCellsLoaded(); i++) Pump();
+
+        foreach (var (key, name, rightPad) in new[]
+                 {
+                     (SmartBase.ViewModels.ConstructorDb.TableRowVm.TitleKey, "«Название»", 0.0),
+                     (fText.ToString(),   "текст",  0.0),
+                     (fNumber.ToString(), "число",  0.0),
+                     (fSelect.ToString(), "список", 32.0),
+                     (fDate.ToString(),   "дата",   32.0),
+                 })
+        {
+            var c = surface.Columns.IndexOf(key);
+            if (c < 0) { Expect(false, $"{name}: колонки нет в раскладке"); continue; }
+            var cell   = surface.CellRect(0, c);
+            var origin = surface.TranslatePoint(new Point(0, 0), window)!.Value;
+            var at     = new Point(origin.X + cell.X + cell.Width / 2, origin.Y + cell.Y + cell.Height / 2);
+            // Область сравнения: ячейка без рамки выделения (два пикселя экрана внутрь) и без линий.
+            var inner  = new Rect(origin.X + cell.X + 2, origin.Y + cell.Y + 2,
+                                  cell.Width - surface.LineWidth - 4 - rightPad, cell.Height - surface.LineWidth - 4);
+
+            Click(window, at);
+            var shown = window.CaptureRenderedFrame()!;
+            Click(window, at);
+            var editor = panel.Editor.Editor;
+            if (!table.IsCellEditing || editor is null) { Expect(false, $"{name}: второй клик не открыл правку"); continue; }
+            // Каретка мигает, а поле в фокусе ее рисует: красим в красный — в «чернила» он не попадает
+            // (прозрачную кисть поле подменяет своей), сравнивается только текст.
+            foreach (var box in editor.GetVisualDescendants().OfType<TextBox>().Prepend(editor as TextBox).OfType<TextBox>())
+            {
+                box.CaretBrush = Brushes.Red;
+                box.SelectionStart = box.SelectionEnd = 0;
+            }
+            // Новая кисть доходит до кадра со следующим миганием каретки — ждем пару циклов.
+            for (var i = 0; i < 25; i++) { Pump(); window.CaptureRenderedFrame(); }
+            var edited = window.CaptureRenderedFrame()!;
+
+            if (Environment.GetEnvironmentVariable("EDITGEOM_DUMP") is { Length: > 0 } dump)
+            {
+                using (var f1 = File.Create(Path.Combine(dump, $"{name}-shown.png"))) shown.Save(f1);
+                using (var f2 = File.Create(Path.Combine(dump, $"{name}-edited.png"))) edited.Save(f2);
+                if (editor is TextBox tbx)
+                {
+                    var pres = tbx.GetVisualDescendants().OfType<Avalonia.Controls.Presenters.TextPresenter>().First();
+                    Console.WriteLine($"      поле {tbx.TranslatePoint(default, window)} {tbx.Bounds.Size}, презентер {pres.TranslatePoint(default, window)} {pres.Bounds.Size}"
+                                      + $", ячейка {origin.X + cell.X} ширина {cell.Width}, текст {pres.TextLayout.Width:F3}/{pres.TextLayout.WidthIncludingTrailingWhitespace:F3}, предел {pres.TextLayout.MaxWidth:F3}");
+                }
+            }
+            var a = InkBounds(shown, inner, 2.0);
+            var b = InkBounds(edited, inner, 2.0);
+            var frames = OwnFrames(editor, window);
+            Console.WriteLine($"    {name}: редактор {editor.GetType().Name}, чернила показ {ShowPx(a)} → правка {ShowPx(b)}");
+            foreach (var line in frames) Console.WriteLine($"      чужая рамка: {line}");
+            Expect(a is not null && b is not null, $"{name}: текст не найден в одном из состояний");
+            if (a is { } ia && b is { } ib)
+                Expect(ia == ib, $"{name}: текст сдвигается: {ShowPx(a)} → {ShowPx(b)}");
+            Expect(frames.Count == 0, $"{name}: у редактора своя рамка ({frames.Count})");
+
+            // Край рамки выделения — синий в обоих состояниях: рамка лежит над редактором.
+            var edge = new Point(origin.X + cell.X + 0.25, origin.Y + cell.Y + cell.Height / 2);
+            Expect(IsAccent(Pixel(shown, edge, 2.0)) && IsAccent(Pixel(edited, edge, 2.0)),
+                   $"{name}: рамка выделения не видна в одном из состояний");
+            // Фон под текстом (наведение) одинаков: редактор прозрачный, подсветка видна сквозь него.
+            var bg = new Point(origin.X + cell.X + 3, origin.Y + cell.Y + 3);
+            Expect(Pixel(shown, bg, 2.0) == Pixel(edited, bg, 2.0),
+                   $"{name}: фон ячейки в правке другой: #{Pixel(shown, bg, 2.0):X6} → #{Pixel(edited, bg, 2.0):X6}");
+
+            window.KeyPress(Avalonia.Input.Key.Escape, Avalonia.Input.RawInputModifiers.None);
+            window.KeyRelease(Avalonia.Input.Key.Escape, Avalonia.Input.RawInputModifiers.None);
+            Pump();
+            Expect(!table.IsCellEditing, $"{name}: Escape не закрыл правку");
+        }
+        window.Close();
+    }
+    finally
+    {
+        try { Directory.Delete(dir, recursive: true); } catch { /* временная папка */ }
+    }
+}
+
+// Прямоугольник «чернил» (темных серых пикселей текста) в области (DIP) — в физических пикселях.
+static (int L, int T, int R, int B)? InkBounds(Avalonia.Media.Imaging.WriteableBitmap bmp, Rect area, double scale)
+{
+    using var fb = bmp.Lock();
+    var x0 = (int)Math.Floor(area.X * scale); var y0 = (int)Math.Floor(area.Y * scale);
+    var x1 = (int)Math.Ceiling(area.Right * scale); var y1 = (int)Math.Ceiling(area.Bottom * scale);
+    x1 = Math.Min(x1, fb.Size.Width); y1 = Math.Min(y1, fb.Size.Height);
+    int l = int.MaxValue, t = int.MaxValue, r = -1, bt = -1;
+    var row = new byte[fb.RowBytes];
+    for (var y = Math.Max(0, y0); y < y1; y++)
+    {
+        System.Runtime.InteropServices.Marshal.Copy(fb.Address + y * fb.RowBytes, row, 0, fb.RowBytes);
+        for (var x = Math.Max(0, x0); x < x1; x++)
+        {
+            int bl = row[x * 4], g = row[x * 4 + 1], rd = row[x * 4 + 2];
+            var hi = Math.Max(rd, Math.Max(g, bl)); var lo = Math.Min(rd, Math.Min(g, bl));
+            if (hi >= 170 || hi - lo >= 40) continue;
+            l = Math.Min(l, x); t = Math.Min(t, y); r = Math.Max(r, x); bt = Math.Max(bt, y);
+        }
+    }
+    return r < 0 ? null : (l, t, r, bt);
+}
+
+// Цвет пикселя как 0xRRGGBB: кадр безголовой платформы бывает и RGBA, и BGRA.
+static uint Pixel(Avalonia.Media.Imaging.WriteableBitmap bmp, Point p, double scale)
+{
+    using var fb = bmp.Lock();
+    var x = (int)(p.X * scale); var y = (int)(p.Y * scale);
+    var px = new byte[4];
+    System.Runtime.InteropServices.Marshal.Copy(fb.Address + y * fb.RowBytes + x * 4, px, 0, 4);
+    var rgba = fb.Format == Avalonia.Platform.PixelFormat.Rgba8888;
+    var (r, g, bl) = rgba ? (px[0], px[1], px[2]) : (px[2], px[1], px[0]);
+    return (uint)(r << 16 | g << 8 | bl);
+}
+
+// Синий акцент: синего заметно больше, чем красного.
+static bool IsAccent(uint rgb) => (int)(rgb & 0xFF) - (int)((rgb >> 16) & 0xFF) > 80;
+
+static string ShowPx((int L, int T, int R, int B)? r) => r is { } v ? $"[{v.L}..{v.R}]×[{v.T}..{v.B}]" : "нет";
 
 // Что вообще рисует видимую рамку внутри ячейки в режиме правки: ищем все, у чего есть
 // ненулевая обводка, — так видно, не спорят ли за одно место две рамки сразу.

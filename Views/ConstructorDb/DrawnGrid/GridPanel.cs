@@ -5,6 +5,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.TextFormatting;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using SmartBase.Logging;
 using SmartBase.Controls.Behaviors;
 using SmartBase.Core.Models;
@@ -36,7 +37,14 @@ namespace SmartBase.Views.ConstructorDb.DrawnGrid;
 /// дубля, «Расположения», «Действий») и выделенные КОЛОНКИ (ключи) и отдает поверхности «выделена
 /// ли»; прямоугольник ячеек живет у фасада (<c>CellRange</c> в позициях показанной таблицы), панель
 /// лишь передает поверхности его края и прокручивает к ячейке (<see cref="ScrollToCell"/>).
-/// Этапы 0–3 плана [drawn-grid.md]: без правки и фильтра из шапки.
+///
+/// Правка (этап 4): над поверхностью лежат накладной редактор ячейки (<see cref="Editor"/>) и слой
+/// рамки выделения (<see cref="SelectionOverlay"/>) — рамка стоит поверх редактора, как у нынешней
+/// таблицы. Указатель и колесо над редактором панель передает поверхности: подсветка ячейки видна
+/// сквозь прозрачный редактор, колесо прокручивает таблицу. Правки значений строк списка поднимаются
+/// наверх (<see cref="RecordEdited"/>), подмена списка — заранее (<see cref="RowsReplacing"/>), чтобы
+/// фасад успел записать набранное в строку, пока она еще живая.
+/// Этапы 0–4 плана [drawn-grid.md]: без фильтра из шапки.
 /// </summary>
 public sealed class GridPanel : Avalonia.Controls.Grid
 {
@@ -98,6 +106,11 @@ public sealed class GridPanel : Avalonia.Controls.Grid
 
     public GridSurface Surface { get; } = new();
 
+    /// <summary>Накладной редактор ячейки (один на сетку).</summary>
+    public EditorHost Editor { get; }
+
+    private readonly SelectionOverlay _overlay;
+
     /// <summary>Видимый кусок таблицы изменился (прокрутка, ресайз, перезагрузка строк, уточнение счетчика).</summary>
     public event EventHandler<TableViewportRange>? VisibleRangeChanged;
 
@@ -115,17 +128,31 @@ public sealed class GridPanel : Avalonia.Controls.Grid
     /// за своими записью и столбцами (<c>FollowSelectionIdentity</c>).</summary>
     public event EventHandler? RowsChanged;
 
+    /// <summary>Список строк сейчас заменят новым (перезагрузка, отбор): последний момент, когда строки
+    /// прежнего списка еще подписаны, — фасад записывает в них открытую правку.</summary>
+    public event EventHandler? RowsReplacing;
+
+    /// <summary>Значение записи изменено правкой строки (ячейка, галочка, путь файла) — id записи.</summary>
+    public event EventHandler<int>? RecordEdited;
+
     public GridPanel()
     {
         ColumnDefinitions = new ColumnDefinitions("*,Auto");
         RowDefinitions    = new RowDefinitions("*,Auto");
 
+        Editor   = new EditorHost(Surface);
+        _overlay = new SelectionOverlay(Surface);
+
         SetColumn(Surface, 0);      SetRow(Surface, 0);
+        SetColumn(Editor, 0);       SetRow(Editor, 0);
+        SetColumn(_overlay, 0);     SetRow(_overlay, 0);
         SetColumn(_vertical, 1);    SetRow(_vertical, 0);
         SetColumn(_horizontal, 0);  SetRow(_horizontal, 1);
         SetColumn(_corner, 1);      SetRow(_corner, 1);
 
         Children.Add(Surface);
+        Children.Add(Editor);
+        Children.Add(_overlay);
         Children.Add(_vertical);
         Children.Add(_horizontal);
         Children.Add(_corner);
@@ -149,6 +176,20 @@ public sealed class GridPanel : Avalonia.Controls.Grid
         Surface.IsRecordSelected = rid => _selectedRecordSet.Contains(rid);
         Surface.IsColumnSelected = key => _selectedColumns.Contains(key);
 
+        // Редактор лежит над поверхностью и забирает указатель: наведение и колесо — ей. Колесо из
+        // раскрытого списка редактора (свое окно-попап) таблицу не крутит.
+        Editor.AddHandler(PointerMovedEvent, (_, e) => Surface.HoverAt(e.GetPosition(Surface)),
+                          Avalonia.Interactivity.RoutingStrategies.Bubble, handledEventsToo: true);
+        // Редактор открылся под неподвижным указателем: поверхность получила «ушел», движения нет —
+        // наведение ставится по входу на редактор.
+        Editor.PointerEntered += (_, e) => Surface.HoverAt(e.GetPosition(Surface));
+        Editor.PointerExited  += (_, _) => Surface.HoverAt(null);
+        Editor.AddHandler(PointerWheelChangedEvent, (_, e) =>
+        {
+            if (e.Handled || e.Source is not Visual v || v.GetVisualRoot() is Avalonia.Controls.Primitives.PopupRoot) return;
+            Surface.ScrollByWheel(e);
+        }, Avalonia.Interactivity.RoutingStrategies.Bubble);
+
         AttachedToVisualTree += (_, _) =>
         {
             if (this.TryFindResource("BrushScrollbarTrack", out var b) && b is IBrush brush)
@@ -161,6 +202,10 @@ public sealed class GridPanel : Avalonia.Controls.Grid
 
     /// <summary>Текущий список строк (для стендов и проверок).</summary>
     internal VirtualRowList? Rows => _rows;
+
+    /// <summary>Кеш связей таблицы — его прогревает список строк и читает поверхность; редактор связи
+    /// берет из него стартовый набор.</summary>
+    internal RelationLinksCache RelationLinks => _relLinks;
 
     /// <summary>Последний запуск <see cref="SetQuery"/>; завершен — источник строк подключен или отменен.</summary>
     public Task QueryTask { get; private set; } = Task.CompletedTask;
@@ -211,7 +256,12 @@ public sealed class GridPanel : Avalonia.Controls.Grid
     {
         _query?.Cancel();  _query = null;
         _ranks?.Cancel();  _ranks = null;
-        if (_rows is not null) _rows.CollectionChanged -= OnRowsCollectionChanged;
+        if (_rows is not null)
+        {
+            _rows.CollectionChanged -= OnRowsCollectionChanged;
+            _rows.RecordEdited      -= OnRecordEdited;
+        }
+        Editor.Close();
         _repo         = null;
         _collectionId = 0;
         _snapshot     = null;
@@ -356,6 +406,8 @@ public sealed class GridPanel : Avalonia.Controls.Grid
         if (ReferenceEquals(sender, _rows)) RowsChanged?.Invoke(this, EventArgs.Empty);
     }
 
+    private void OnRecordEdited(object? sender, int recordId) => RecordEdited?.Invoke(this, recordId);
+
     /// <summary>Сменить отбор и сортировку: источник строк считается в фоне (<see cref="RowSourcePlanner"/>),
     /// прежний незавершенный запрос отменяется, устаревший результат не подключается. Без фильтров и
     /// сортировки по индексируемому типу подключение мгновенное.</summary>
@@ -432,6 +484,7 @@ public sealed class GridPanel : Avalonia.Controls.Grid
     private void AttachSource(RowSource source, bool keepOffsets)
     {
         var snapshot = _snapshot!;
+        if (_rows is not null) RowsReplacing?.Invoke(this, EventArgs.Empty);
         _relLinks.Clear();
         _ranks?.Cancel();
         _rowIndexes = [];
@@ -442,9 +495,14 @@ public sealed class GridPanel : Avalonia.Controls.Grid
         var rows = new VirtualRowList(_repo!, _collectionId, snapshot.Fields,
                                       excludeHidden: _hiddenRecords, relLinks: _relLinks,
                                       knownCount: known, source: source, countIsEstimate: estimate);
-        if (_rows is not null) _rows.CollectionChanged -= OnRowsCollectionChanged;
+        if (_rows is not null)
+        {
+            _rows.CollectionChanged -= OnRowsCollectionChanged;
+            _rows.RecordEdited      -= OnRecordEdited;
+        }
         _rows = rows;
         rows.CollectionChanged += OnRowsCollectionChanged;
+        rows.RecordEdited      += OnRecordEdited;
         if (estimate) _ = RefineCountAsync(rows);
 
         var (x, y) = (Surface.OffsetX, Surface.OffsetY);

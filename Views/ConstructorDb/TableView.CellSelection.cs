@@ -249,6 +249,12 @@ public partial class TableView
             case Key.Enter or Key.F2 when mods == KeyModifiers.None:
                 BeginEditAt(range.AnchorRow, range.AnchorColumn);
                 return true;
+
+            // Пробел на выделенной галочке переключает ее: у нынешней таблицы после клика фокус стоит
+            // на самом CheckBox, и пробел достается ему; в рисованной сетке кнопки в ячейке нет.
+            case Key.Space when mods == KeyModifiers.None && _drawn is not null && range.IsSingleCell
+                                && ToggleDrawnCheckbox(range.AnchorRow, range.AnchorColumn):
+                return true;
         }
 
         CellNavKey? nav = e.Key switch
@@ -305,7 +311,7 @@ public partial class TableView
     /// </summary>
     private void BeginEditAt(int row, int column)
     {
-        if (_drawn is not null) return;   // правка в рисованной сетке — этап 4
+        if (_drawn is not null) { BeginDrawnEdit(row, column, byMouse: false); return; }
         if (!IsDataColumn(column) || CachedRowAt(row) is not { } item) return;
 
         var col = RecordsGrid.Columns[column];

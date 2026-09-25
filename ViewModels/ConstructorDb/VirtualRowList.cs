@@ -821,6 +821,16 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
                  rec.CreatedAt ?? "", rec.UpdatedAt ?? "", rec.CreatedBy ?? "", rec.UpdatedBy ?? "");
     }
 
+    /// <summary>Связи записи изменены правкой ячейки: редактор связи пишет их сам и выбрасывает запись из
+    /// кеша, а рисованная ячейка читает только кеш — перечитываем связи этой записи и перерисовываем
+    /// ее строку. Записи нет в кеше строк — ничего (прочитается при загрузке).</summary>
+    public void RefreshLinks(int recordId)
+    {
+        if (_relLinks is null || _relationFieldIds.Length == 0 || FindCachedByRecordId(recordId) is not { } row) return;
+        PrimeRelationLinks([recordId], null);
+        row.NotifyCellsChanged();
+    }
+
     /// <summary>Запись <paramref name="targetId"/> изменилась (напр., переименована в панели): строки,
     /// чьи связи ССЫЛАЮТСЯ на нее, показывают устаревшее название из батч-кеша. Пере-праймим связи этих
     /// строк свежими названиями и уведомляем — их read-ячейки-связи перечитают показ. Точечно, без Reset

@@ -37,11 +37,16 @@ namespace SmartBase.Views.ConstructorDb.DrawnGrid;
 ///
 /// Выделение (этап 3) поверхность только рисует, модель — у фасада: прямоугольник ячеек
 /// (<see cref="SetCellSelection"/>) — рамка в два физических пикселя внутрь границ и тонировка
-/// акцентом у диапазона больше одной ячейки, в том же кадре, что ячейки; выделенные записи и
-/// колонки (<see cref="IsRecordSelected"/>, <see cref="IsColumnSelected"/>) — заливка
-/// <c>BrushAccentLight</c> строки и ячеек колонки, как у нынешней таблицы. Отдельного слоя,
-/// отложенного пересчета и защиты от петли раскладки нет — рамка стоит по тем же границам, что
-/// линии сетки, по построению.
+/// акцентом у диапазона больше одной ячейки; выделенные записи и колонки
+/// (<see cref="IsRecordSelected"/>, <see cref="IsColumnSelected"/>) — заливка
+/// <c>BrushAccentLight</c> строки и ячеек колонки, как у нынешней таблицы. Рамку рисует
+/// <see cref="SelectionOverlay"/> поверх редактора ячейки (<see cref="RenderSelectionFrame"/>): у
+/// нынешней таблицы она тоже лежит над правкой. Отложенного пересчета и защиты от петли раскладки
+/// нет — рамка стоит по тем же границам, что линии сетки, по построению.
+///
+/// Правка (этап 4): редактор — настоящий контрол в <see cref="EditorHost"/> над поверхностью, в
+/// геометрии <see cref="EditorRect"/>; правящуюся ячейку (<see cref="SetEditingCell"/>) поверхность
+/// рисует без значения и цвета — их показывает редактор, как шаблон правки нынешней таблицы.
 /// </summary>
 public sealed class GridSurface : Control
 {
@@ -98,6 +103,9 @@ public sealed class GridSurface : Control
     private (int Top, int Bottom, string First, string Last)? _cellSel;
     private bool _cellSelTinted;
 
+    // Правящаяся ячейка (строка среза, ключ колонки): значение показывает редактор над ней.
+    private (int Row, string Key)? _editing;
+
     // ── Токены вида ───────────────────────────────────────────────────────────
     private bool     _tokensReady;
     private IBrush   _bg          = Brushes.White;
@@ -144,6 +152,9 @@ public sealed class GridSurface : Control
     // ── События ───────────────────────────────────────────────────────────────
     public event EventHandler? OffsetChanged;
     public event EventHandler? ExtentChanged;
+    /// <summary>Сменилось что-то, от чего зависят положение ячеек и рамки: прокрутка, раскладки,
+    /// размер, токены, рамка выделения. Слушают слой рамки и редактор ячейки.</summary>
+    public event EventHandler? ViewChanged;
     /// <summary>Токены перечитаны (зум, DPI, шрифт, высота строк, тема): панели пора пересобрать раскладки.</summary>
     public event EventHandler? MetricsChanged;
     /// <summary>Нажатие указателя на ячейке, строке «+», заголовке, кнопке фильтра или «+» шапки.</summary>
@@ -196,7 +207,7 @@ public sealed class GridSurface : Control
         if (_cellSel == next && _cellSelTinted == tinted) return;
         _cellSel       = next;
         _cellSelTinted = tinted;
-        InvalidateVisual();
+        RaiseViewChanged();
     }
 
     /// <summary>Снять рамку выделения ячеек.</summary>
@@ -204,7 +215,83 @@ public sealed class GridSurface : Control
     {
         if (_cellSel is null) return;
         _cellSel = null;
+        RaiseViewChanged();
+    }
+
+    /// <summary>Ячейка правится: ее значение и цвет показывает редактор над поверхностью, поверхность
+    /// рисует только фон с наведением — как у нынешней таблицы, где шаблон правки подменяет показ.</summary>
+    public void SetEditingCell(int row, string key)
+    {
+        if (_editing == (row, key)) return;
+        _editing = (row, key);
         InvalidateVisual();
+    }
+
+    public void ClearEditingCell()
+    {
+        if (_editing is null) return;
+        _editing = null;
+        InvalidateVisual();
+    }
+
+    /// <summary>Где стоит редактор ячейки: ее область содержимого (без вертикальной линии справа и
+    /// линии под строкой — как содержимое <c>DataGridCell</c>) при текущей прокрутке; null — колонки
+    /// нет в раскладке или строки нет в срезе.</summary>
+    public Rect? EditorRect(int row, string key)
+    {
+        EnsureTokens();
+        var c = _columns.IndexOf(key);
+        if (c < 0 || row < 0 || row >= RowCount) return null;
+        var cell = CellRect(row, c);
+        return new Rect(cell.X, cell.Y, Math.Max(0, cell.Width - _lineWidth), Math.Max(0, cell.Height - _lineWidth));
+    }
+
+    /// <summary>Квадрат галочки в ячейке (координаты поверхности) — по нему щелкают, как по квадрату
+    /// <c>CheckBox</c> нынешней таблицы.</summary>
+    public Rect CheckboxRect(Rect cell)
+    {
+        EnsureTokens();
+        return CheckboxBox(ContentRect(cell), LineMetrics.EffectiveScale(this));
+    }
+
+    /// <summary>Кнопка-скрепка ячейки «Файла» (координаты поверхности); у авто-привязки кнопки нет.</summary>
+    public Rect? FileButtonRect(Rect cell, TableColumnDef def)
+    {
+        EnsureTokens();
+        if (def.FileAutoFolder.Length > 0) return null;
+        var inner = ContentRect(cell);
+        var w = Math.Min(inner.Width, ClipPadLeft + IconSize + ClipPadRight);
+        return new Rect(inner.Right - w, inner.Y, w, inner.Height);
+    }
+
+    // Область содержимого ячейки: без вертикальной линии справа и линии под строкой.
+    private Rect ContentRect(Rect cell) =>
+        new(cell.X, cell.Y, Math.Max(0, cell.Width - _lineWidth), Math.Max(0, cell.Height - _lineWidth));
+
+    /// <summary>Указатель над редактором ячейки (он лежит над поверхностью и забирает события): наведение
+    /// ведется так же, как над самой поверхностью, — подсветка ячейки видна сквозь редактор.
+    /// null — указатель ушел.</summary>
+    public void HoverAt(Point? p)
+    {
+        _lastPointer = p;
+        if (_drag != Drag.None) return;
+        SetHover(p is { } q ? HitTest(q) : GridHit.None);
+    }
+
+    /// <summary>Колесо над редактором ячейки — таблица прокручивается, как под ним.</summary>
+    public void ScrollByWheel(PointerWheelEventArgs e)
+    {
+        var dy = -e.Delta.Y * RowPitch * 3;
+        var dx = -e.Delta.X * 48;
+        if (e.KeyModifiers.HasFlag(KeyModifiers.Shift) && dx == 0) { dx = dy; dy = 0; }
+        SetOffsets(_offsetX + dx, _offsetY + dy);
+        e.Handled = true;
+    }
+
+    private void RaiseViewChanged()
+    {
+        InvalidateVisual();
+        ViewChanged?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>Выделение записей или колонок сменилось — перерисовать (сами множества — у фасада).</summary>
@@ -273,7 +360,7 @@ public sealed class GridSurface : Control
         ClampOffsets();
         ExtentChanged?.Invoke(this, EventArgs.Empty);
         UpdateWindow();
-        InvalidateVisual();
+        RaiseViewChanged();
     }
 
     /// <summary>Отключить источник строк: пустая поверхность (коллекция закрыта).</summary>
@@ -290,7 +377,7 @@ public sealed class GridSurface : Control
         _lastColumnWindow = (-1, -1);
         _offsetX = _offsetY = 0;
         ExtentChanged?.Invoke(this, EventArgs.Empty);
-        InvalidateVisual();
+        RaiseViewChanged();
     }
 
     /// <summary>Сменить раскладку колонок (ресайз окна, скрытие, сдвиг, ширины) — строки не трогаются.</summary>
@@ -301,7 +388,7 @@ public sealed class GridSurface : Control
         ClampOffsets();
         ExtentChanged?.Invoke(this, EventArgs.Empty);
         UpdateWindow();
-        InvalidateVisual();
+        RaiseViewChanged();
     }
 
     /// <summary>Сменить раскладку строк (ручные высоты, смена высоты строк «Оформления»).</summary>
@@ -311,7 +398,7 @@ public sealed class GridSurface : Control
         ClampOffsets();
         ExtentChanged?.Invoke(this, EventArgs.Empty);
         UpdateWindow();
-        InvalidateVisual();
+        RaiseViewChanged();
     }
 
     // ── Окно строк и колонок для списка ───────────────────────────────────────
@@ -455,7 +542,7 @@ public sealed class GridSurface : Control
         OffsetChanged?.Invoke(this, EventArgs.Empty);
         UpdateWindow();
         RefreshHover();
-        InvalidateVisual();
+        RaiseViewChanged();
     }
 
     // Под указателем теперь другая ячейка (прокрутка колесом или полосой, приход строк) —
@@ -471,11 +558,7 @@ public sealed class GridSurface : Control
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
     {
         base.OnPointerWheelChanged(e);
-        var dy = -e.Delta.Y * RowPitch * 3;
-        var dx = -e.Delta.X * 48;
-        if (e.KeyModifiers.HasFlag(KeyModifiers.Shift) && dx == 0) { dx = dy; dy = 0; }
-        SetOffsets(_offsetX + dx, _offsetY + dy);
-        e.Handled = true;
+        ScrollByWheel(e);
     }
 
     protected override void OnSizeChanged(SizeChangedEventArgs e)
@@ -484,7 +567,7 @@ public sealed class GridSurface : Control
         ClampOffsets();
         ExtentChanged?.Invoke(this, EventArgs.Empty);
         UpdateWindow();
-        InvalidateVisual();
+        RaiseViewChanged();
     }
 
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
@@ -529,7 +612,7 @@ public sealed class GridSurface : Control
         var before = (_rowHeight, _lineWidth, _fontSize, _lineHeight, _typeface);
         _tokensReady = false;
         EnsureTokens();
-        InvalidateVisual();
+        RaiseViewChanged();
         if (before != (_rowHeight, _lineWidth, _fontSize, _lineHeight, _typeface))
             MetricsChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -605,21 +688,50 @@ public sealed class GridSurface : Control
     private void SetHover(GridHit hit)
     {
         var same = hit.Kind == _hover.Kind && hit.Row == _hover.Row && hit.Column == _hover.Column;
-        if (same) return;
+        if (same)
+        {
+            // В ячейке «Файла» курсор и подсказка разные над именем и над скрепкой — внутри одной ячейки.
+            if (IsFileCell(hit)) { _hover = hit; ApplyPointerLook(hit); }
+            return;
+        }
 
         // Перерисовывается только то, что меняет вид: ячейка, заголовок и его кнопка.
         var visual = HoverVisible(hit) || HoverVisible(_hover);
         _hover = hit;
+        ApplyPointerLook(hit);
+        if (visual) InvalidateVisual();
+    }
+
+    private void ApplyPointerLook(GridHit hit)
+    {
+        var overClip = IsFileCell(hit) && _lastPointer is { } p && FileButtonRect(hit.Bounds, hit.Def!) is { } clip && clip.Contains(p);
         Cursor = hit.Kind switch
         {
-            GridHitKind.ColumnGrip => ColResizeCursor,
-            GridHitKind.RowGrip    => RowResizeCursor,
-            GridHitKind.HeaderAdd  => HandCursor,
+            GridHitKind.ColumnGrip   => ColResizeCursor,
+            GridHitKind.RowGrip      => RowResizeCursor,
+            GridHitKind.HeaderAdd    => HandCursor,
             GridHitKind.HeaderFilter => HandCursor,   // Button.icon несет курсор-руку
-            _                      => null,
+            GridHitKind.Cell when overClip || FileLinkClickable(hit) => HandCursor,
+            _                        => null,
         };
-        ToolTip.SetTip(this, hit.Kind == GridHitKind.HeaderFilter ? "Фильтр и сортировка" : null);
-        if (visual) InvalidateVisual();
+        ToolTip.SetTip(this, hit.Kind == GridHitKind.HeaderFilter ? "Фильтр и сортировка"
+                             : overClip ? "Выбрать файл"
+                             : null);
+    }
+
+    private bool IsFileCell(GridHit hit) =>
+        hit.Kind == GridHitKind.Cell && hit.Def is { FieldType: "file" } && _rows is not null
+        && hit.Row >= 0 && hit.Row < _rows.Count && !_rows[hit.Row].IsLoading && !_rows[hit.Row].IsAddRow;
+
+    // Имя файла кликабельно (рука), как LinkHost у FileEditor: путь есть — открыть или поправить; у
+    // авто-привязки — недоступная папка (плашка) или найденный файл; пустое «Выбрать файл…» — нет.
+    private bool FileLinkClickable(GridHit hit)
+    {
+        if (!IsFileCell(hit)) return false;
+        var def  = hit.Def!;
+        var path = _rows![hit.Row][def.Key];
+        if (def.FileAutoFolder.Length == 0) return path.Length > 0;
+        return FileProbe.FolderExists(def.FileAutoFolder) == false || (path.Length > 0 && FileProbe.FileExists(path) == true);
     }
 
     private static bool HoverVisible(GridHit hit) =>
@@ -776,6 +888,7 @@ public sealed class GridSurface : Control
                     var y        = headH + _rowLayout.Top(r) - _offsetY;
                     var rowStyle = row.IsAddRow || row.IsLoading ? RowStyle.None : _rowStyle(row.RecordId);
                     var hoverCol = _hover.Kind is GridHitKind.Cell or GridHitKind.AddRow && _hover.Row == r ? _hover.Column : -1;
+                    var editKey  = _editing is { } ed && ed.Row == r ? ed.Key : null;
 
                     // Выделенная запись — заливка всей строки под ячейками (BackgroundRectangle строки
                     // нынешней таблицы); «№» и «+» закроют ее своей серой заливкой.
@@ -786,7 +899,7 @@ public sealed class GridSurface : Control
                     for (var c = c0; c <= c1; c++)
                     {
                         var cell = new Rect(_columns.Left(c) - _offsetX, y, _columns.Width(c), pitch);
-                        DrawCell(ctx, row, _columns[c], cell, rowStyle, hoverCol == c, scale);
+                        DrawCell(ctx, row, _columns[c], cell, rowStyle, hoverCol == c, _columns[c].Key == editKey, scale);
                         cells++;
                     }
                     if (tc != 0) tRows += Stopwatch.GetElapsedTime(tc).TotalMilliseconds;
@@ -809,11 +922,6 @@ public sealed class GridSurface : Control
                 ctx.DrawLine(_separator, new Point(lx, 0), new Point(lx, h));
             }
 
-            // Рамка выделения ячеек — поверх линий, обрезана по области строк (не ложится на шапку;
-            // полосы прокрутки — отдельные контролы за краем поверхности).
-            if (CellSelectionBounds() is { } sel && sel.Intersects(body))
-                using (ctx.PushClip(body))
-                    DrawSelectionFrame(ctx, sel, scale);
         }
 
         var ts = GridTimings.Start();
@@ -825,6 +933,19 @@ public sealed class GridSurface : Control
     }
 
     private static double Snap(double v, double scale) => Math.Round(v * scale) / scale;
+
+    /// <summary>Рамка выделения ячеек — для слоя над редактором (<see cref="SelectionOverlay"/>, того же
+    /// размера, что поверхность): поверх линий и редактора, обрезана по области строк (не ложится на
+    /// шапку; полосы прокрутки — отдельные контролы за краем поверхности).</summary>
+    public void RenderSelectionFrame(DrawingContext ctx, double scale)
+    {
+        EnsureTokens();
+        if (_rows is null || _columns.Count == 0) return;
+        var body = new Rect(0, HeaderHeight, Bounds.Width, Math.Max(0, Bounds.Height - HeaderHeight));
+        if (CellSelectionBounds() is not { } sel || !sel.Intersects(body)) return;
+        using (ctx.PushClip(body))
+            DrawSelectionFrame(ctx, sel, scale);
+    }
 
     // Одна рамка на все выделение (а не вокруг каждой ячейки), как в табличных редакторах: два
     // физических пикселя ВНУТРЬ границ, одинаково со всех сторон, края на целых пикселях — при
@@ -902,12 +1023,11 @@ public sealed class GridSurface : Control
     }
 
     private void DrawCell(DrawingContext ctx, TableRowVm row, TableColumnDef def, Rect cell, RowStyle rowStyle,
-                          bool hovered, double scale)
+                          bool hovered, bool editing, double scale)
     {
         if (DebugSkipCells) return;
-        var t = _lineWidth;
         // Область содержимого: без вертикальной линии справа и линии под строкой.
-        var inner = new Rect(cell.X, cell.Y, Math.Max(0, cell.Width - t), Math.Max(0, cell.Height - t));
+        var inner = ContentRect(cell);
 
         // «№» и «+»: непрозрачная серая заливка поверх подсветки наведения — как сегодня, где
         // прямоугольник заливки закрывает фон ячейки целиком.
@@ -930,6 +1050,9 @@ public sealed class GridSurface : Control
         // Выделенная колонка — заливка ячеек значений (фон ContentPresenter'а ячейки у нынешней
         // таблицы): до вертикальной линии, поверх наведения, под полупрозрачным цветом ячейки.
         if (IsColumnSelected(def.Key)) ctx.FillRectangle(_accentLight, inner);
+
+        // Правящаяся ячейка: значение и цвет ячейки показывает редактор над поверхностью.
+        if (editing) return;
 
         // Цвет: ячейка → строка → колонка; заливка полупрозрачная, текст — насыщенный.
         var style = ResolveStyle(row, def.Key, rowStyle);
@@ -1037,10 +1160,11 @@ public sealed class GridSurface : Control
             text = name + " — файл не найден"; brush = _secondary; brushId = "s";
         }
 
-        var clipW    = ClipPadLeft + IconSize + ClipPadRight;
+        // У авто-привязки скрепки нет (FileEditor прячет кнопку выбора) — надпись во всю ширину.
+        var clipW    = auto ? 0 : ClipPadLeft + IconSize + ClipPadRight;
         var textRect = new Rect(inner.X, inner.Y, Math.Max(1, inner.Width - clipW), inner.Height);
         DrawText(ctx, text, textRect, brush, brushId, TextAlignment.Left, 1, _lineHeight, underline: underline);
-        if (_paperclip is not null)
+        if (!auto && _paperclip is not null)
             DrawIcon(ctx, _paperclip, inner.Right - ClipPadRight - IconSize, Snap(inner.Y + (inner.Height - IconSize) / 2, scale), _secondary);
     }
 
@@ -1100,11 +1224,15 @@ public sealed class GridSurface : Control
     // остается отступ Padding=8) — квадрат стоит на 4 px левее центра ячейки, как в нынешней таблице.
     private const double CheckControlWidth = CheckSize + 8;
 
+    private static Rect CheckboxBox(Rect inner, double scale) =>
+        new(Snap(inner.X + (inner.Width  - CheckControlWidth) / 2, scale),
+            Snap(inner.Y + (inner.Height - CheckSize) / 2, scale), CheckSize, CheckSize);
+
     private void DrawCheckbox(DrawingContext ctx, Rect inner, bool isChecked, double scale)
     {
-        var x   = Snap(inner.X + (inner.Width  - CheckControlWidth) / 2, scale);
-        var y   = Snap(inner.Y + (inner.Height - CheckSize) / 2, scale);
-        var box = new RoundedRect(new Rect(x, y, CheckSize, CheckSize), 2);
+        var square = CheckboxBox(inner, scale);
+        var (x, y) = (square.X, square.Y);
+        var box = new RoundedRect(square, 2);
         if (isChecked)
         {
             ctx.DrawRectangle(_accent, null, box);

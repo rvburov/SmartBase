@@ -32,6 +32,10 @@ public partial class FileEditor : UserControl
     /// <summary>Поднимается при изменении значения пользователем.</summary>
     public event EventHandler? Changed;
 
+    /// <summary>Ручная правка пути кончилась (Enter, Escape, уход фокуса, выбор файла) — до того, как
+    /// поле ввода спрячется: в обработчике еще видно, был ли фокус в редакторе.</summary>
+    public event EventHandler? EditEnded;
+
     public FileEditor()
     {
         InitializeComponent();
@@ -165,35 +169,54 @@ public partial class FileEditor : UserControl
         else BeginEdit();                           // файла нет — даем поправить путь руками
     }
 
-    // Открыть файл штатным приложением ОС. UseShellExecute=true делегирует системе:
-    // open (macOS), explorer/ассоциация (Windows), xdg-open (Linux).
-    private void OpenFile()
+    private void OpenFile() => OpenWithSystem(_path);
+
+    /// <summary>Открыть файл штатным приложением ОС. UseShellExecute=true делегирует системе:
+    /// open (macOS), explorer/ассоциация (Windows), xdg-open (Linux). Общее с ячейкой «Файла»
+    /// рисованной таблицы — у нее нет своего контрола в ячейке.</summary>
+    public static void OpenWithSystem(string path)
     {
-        try { Process.Start(new ProcessStartInfo { FileName = _path, UseShellExecute = true }); }
+        try { Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true }); }
         catch (Exception ex)
         {
             // Нечем открыть / нет прав — для человека тихо, для журнала нет: «файл не открывается»
             // разбирается по этой записи (сетевой путь недоступен, ассоциации нет).
-            Serilog.Log.Warning(ex, "Не удалось открыть файл системой: {Path:l}", _path);
+            Serilog.Log.Warning(ex, "Не удалось открыть файл системой: {Path:l}", path);
         }
+    }
+
+    /// <summary>Системный выбор одного файла; null — отказались. Общее с ячейкой «Файла» рисованной таблицы.</summary>
+    public static async Task<string?> PickPathAsync(TopLevel top)
+    {
+        var files = await top.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title         = "Выберите файл",
+            AllowMultiple = false,
+        });
+        return files.Count == 0 ? null : files[0].Path.LocalPath;
     }
 
     private async Task PickFileAsync()
     {
         var top = TopLevel.GetTopLevel(this);
         if (top is null) return;
-        var files = await top.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
-        {
-            Title         = "Выберите файл",
-            AllowMultiple = false,
-        });
-        if (files.Count == 0) return;
-        SetPath(files[0].Path.LocalPath, raise: true);
+        if (await PickPathAsync(top) is not { } picked) return;
+        SetPath(picked, raise: true);
         EndEdit();
         UpdateVisual();
     }
 
     // ── Ручная правка пути ──────────────────────────────────────────────────────
+
+    /// <summary>Начать ручную правку пути (двойной клик по имени, клик по отсутствующему файлу) —
+    /// рисованная таблица ставит редактор над ячейкой и сразу открывает в нем поле ввода.</summary>
+    public void BeginManualEdit() => BeginEdit();
+
+    /// <summary>Записать набранный путь и закончить правку (Enter у таблицы, коммит правки ячейки).</summary>
+    public void CommitManualEdit() => CommitManual();
+
+    /// <summary>Закончить правку без записи (Escape у таблицы).</summary>
+    public void CancelManualEdit() => CancelEdit();
 
     private void BeginEdit()
     {
@@ -228,7 +251,11 @@ public partial class FileEditor : UserControl
 
     private void EndEdit()
     {
+        // Флаг снимается ДО события: обработчик может снять редактор с экрана, поле потеряет фокус, и
+        // его LostFocus (CommitManual) не должен начать вторую запись.
+        var was = _editing;
         _editing = false;
+        if (was) EditEnded?.Invoke(this, EventArgs.Empty);
         Input.IsVisible    = false;
         LinkHost.IsVisible = true;
         HideError();

@@ -60,6 +60,15 @@
             <Setter Property="UseLayoutRounding" Value="{DynamicResource LineUseLayoutRounding}" />
         </Style>
 
+        <!-- Накладной редактор рисованной сетки (переключатель разработчика, этап 4 плана
+             drawn-grid.md) — те же шрифт и цвет текста, что DataGridCell отдает своему
+             содержимому; стили редакторов ниже действуют и на него (вторая половина селекторов,
+             «Canvas.cellEditor»). После переезда (этап 6) остается только она. -->
+        <Style Selector="Canvas.cellEditor">
+            <Setter Property="TextElement.FontSize"   Value="{DynamicResource FontSizeBase}" />
+            <Setter Property="TextElement.Foreground" Value="{StaticResource BrushPrimaryText}" />
+        </Style>
+
         <!-- Редакторы ВНУТРИ ячейки — без скруглений. Рамка правки стоит там же, где рамка
              выделения ячейки, а та прямоугольная (садится на линии сетки): одно и то же место
              таблицы не должно выглядеть то квадратным, то круглым. Скругления остаются у тех же
@@ -81,7 +90,7 @@
 
              MinHeight — ноль: стандарт поля формы (30) выше «компактной» строки таблицы (28),
              и редактор распирал бы строку. Высоту задает ячейка. -->
-        <Style Selector="DataGridCell TextBox">
+        <Style Selector="DataGridCell TextBox, Canvas.cellEditor TextBox">
             <Setter Property="CornerRadius"    Value="0" />
             <Setter Property="Background"      Value="Transparent" />
             <Setter Property="MinHeight"       Value="0" />
@@ -95,34 +104,34 @@
              LineHeight обоим (токен пишет FontScale.Write) уравнивает боксы на любой сетке.
              Селектор задевает ВСЕ надписи ячеек, включая водяной знак редактора, — это и
              нужно: одна высота строки на всю таблицу. Стережет Tests/EditGeometry. -->
-        <Style Selector="DataGridCell TextBlock">
+        <Style Selector="DataGridCell TextBlock, Canvas.cellEditor TextBlock">
             <Setter Property="LineHeight" Value="{DynamicResource LineHeightBase}" />
         </Style>
-        <Style Selector="DataGridCell TextBox /template/ Border#PART_BorderElement">
+        <Style Selector="DataGridCell TextBox /template/ Border#PART_BorderElement, Canvas.cellEditor TextBox /template/ Border#PART_BorderElement">
             <Setter Property="CornerRadius"    Value="0" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Background"      Value="{Binding $parent[TextBox].Background}" />
         </Style>
-        <Style Selector="DataGridCell TextBox:pointerover /template/ Border#PART_BorderElement">
+        <Style Selector="DataGridCell TextBox:pointerover /template/ Border#PART_BorderElement, Canvas.cellEditor TextBox:pointerover /template/ Border#PART_BorderElement">
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Background"      Value="{Binding $parent[TextBox].Background}" />
         </Style>
-        <Style Selector="DataGridCell TextBox:focus /template/ Border#PART_BorderElement">
+        <Style Selector="DataGridCell TextBox:focus /template/ Border#PART_BorderElement, Canvas.cellEditor TextBox:focus /template/ Border#PART_BorderElement">
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Background"      Value="{Binding $parent[TextBox].Background}" />
         </Style>
-        <Style Selector="DataGridCell ComboBox">
+        <Style Selector="DataGridCell ComboBox, Canvas.cellEditor ComboBox">
             <Setter Property="CornerRadius" Value="0" />
             <Setter Property="Background"   Value="Transparent" />
         </Style>
         <!-- То же для списка: копия темы подменяет фон рамки по наведению и нажатию. -->
-        <Style Selector="DataGridCell ComboBox:pointerover /template/ Border#Background">
+        <Style Selector="DataGridCell ComboBox:pointerover /template/ Border#Background, Canvas.cellEditor ComboBox:pointerover /template/ Border#Background">
             <Setter Property="Background" Value="{Binding $parent[ComboBox].Background}" />
         </Style>
-        <Style Selector="DataGridCell ComboBox:pressed /template/ Border#Background">
+        <Style Selector="DataGridCell ComboBox:pressed /template/ Border#Background, Canvas.cellEditor ComboBox:pressed /template/ Border#Background">
             <Setter Property="Background" Value="{Binding $parent[ComboBox].Background}" />
         </Style>
-        <Style Selector="DataGridCell Border.timeField">
+        <Style Selector="DataGridCell Border.timeField, Canvas.cellEditor Border.timeField">
             <Setter Property="CornerRadius" Value="0" />
         </Style>
 
