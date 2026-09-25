@@ -466,12 +466,12 @@ public partial class TableView
         // Пустой буфер — вставлять нечего: пункт гаснет при открытии меню, а не молчит по нажатию.
         // Буфер спрашивается на КАЖДОЕ открытие: его могли заполнить в другой программе. Занятый
         // буфер считается непустым — пусть нажатие скажет, что он занят, а не пункт молча погаснет.
-        menu.Opening += async (_, _) =>
+        OnMenuOpening(menu, async () =>
         {
             if (TopLevel.GetTopLevel(this)?.Clipboard is not { } clipboard) return;
             try { paste.IsEnabled = !string.IsNullOrWhiteSpace(await clipboard.GetTextAsync()); }
             catch (Exception) { paste.IsEnabled = true; }
-        };
+        });
 
         var clear = new MenuItem
         {
@@ -541,7 +541,7 @@ public partial class TableView
         var host = new MenuItem { Header = MenuIcons.ColorHeader() };
         MenuIcons.FixSubmenuGap(host);
 
-        menu.Opening += (_, _) =>
+        OnMenuOpening(menu, () =>
         {
             host.Items.Clear();
             host.IsEnabled = Can(PermAction.EditRecord);
@@ -551,7 +551,7 @@ public partial class TableView
                 hex => Fire(() => ApplySelectedCellsStyleAsync(StyleAspect.Background, hex))));
             host.Items.Add(ColorMenu.Build("Цвет текста ячейки", current.Fg,
                 hex => Fire(() => ApplySelectedCellsStyleAsync(StyleAspect.Text, hex))));
-        };
+        });
 
         menu.Items.Add(host);
     }

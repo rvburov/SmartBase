@@ -39,7 +39,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
 
     private readonly ConstructorRepository _repo;
     private readonly int                   _collectionId;
-    private readonly List<DbField>         _fields;
+    private List<DbField>                  _fields;          // меняется SetFields (свойство создано, удалено, сменило тип)
     private readonly bool                  _excludeHidden;   // исключать скрытые записи (окно «Отображение записей»)
     private readonly RowSource             _source;
     private readonly IReadOnlyList<int>?   _recordIds;       // режим списка id
@@ -77,7 +77,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
     // Кеш связей-relation (батч-префетч видимой страницы вместо N точечных GetLinks) и id полей-связей
     // коллекции. null-кеш → префетч выключен (ячейки читают связи сами).
     private readonly RelationLinksCache? _relLinks;
-    private readonly int[] _relationFieldIds;
+    private int[] _relationFieldIds;
 
     // Курсор keyset: в порядке таблицы и в хвосте сортировки — (Position, Id); в голове сортировки —
     // (Value, Id) по индексу значений.
@@ -160,6 +160,29 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
 
     /// <summary>Текущее окно колонок (null — все поля).</summary>
     public IReadOnlyList<int>? FieldWindow => _window;
+
+    /// <summary>Набор полей коллекции сменился без пересоздания списка (свойство создано, удалено,
+    /// сменило тип): окно колонок меряется новым числом полей, а связи новых полей-связей
+    /// подчитываются для загруженных строк — ячейка рисованной сетки читает связи только из кеша, и
+    /// без этого новая колонка-связь показывала бы «связи нет» даже после правки.</summary>
+    public void SetFields(List<DbField> fields)
+    {
+        var before = _relationFieldIds;
+        _fields           = fields;
+        _relationFieldIds = fields.Where(f => f.FieldType == "relation" && f.Id is not null)
+                                  .Select(f => f.Id!.Value).ToArray();
+        SetFieldWindow(_window);
+
+        var added = _relationFieldIds.Except(before).ToList();
+        if (added.Count == 0 || _relLinks is null) return;
+        var rows = _pages.Where(kv => !_pending.Contains(kv.Key))
+                         .SelectMany(kv => kv.Value)
+                         .Where(r => r.RecordId > 0)
+                         .ToList();
+        if (rows.Count == 0) return;
+        PrimeRelationLinks(rows.Select(r => r.RecordId).ToList(), added);
+        foreach (var row in rows) row.NotifyCellsChanged();
+    }
 
     /// <summary>Видимое окно строк [first, last]: завести загрузку недостающих страниц, дочитать
     /// поля окна у загруженных, подгрузить одну страницу вперед по направлению прокрутки.

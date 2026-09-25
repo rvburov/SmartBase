@@ -1222,6 +1222,10 @@ public partial class TableView : UserControl
 
         _renderedFontDelta = FontScale.Delta;   // таблица отрисована с текущим размером
 
+        // Рисованной сетке пересобирать нечего: шрифт и токены она перечитывает сама, а сюда
+        // приходят смена шрифта и стандартной ширины столбцов — хватает новой раскладки.
+        if (_drawn is not null) { _drawn.RefreshLayout(); return; }
+
         LoadColumnState();
 
         ClearColumnSelection();   // колонки пересобираются — снимаем выделение
@@ -1468,7 +1472,9 @@ public partial class TableView : UserControl
     // горизонтального скролла, и последняя колонка «+» обрезается при прокрутке полосой.
     private double NumColumnWidth()
     {
-        if (_repository is null) return NumColWidth;
+        // Рисованная сетка меряет «№» сама по числу записей из снимка и из фонового счета — COUNT на
+        // UI-потоке (секунда на 10 млн строк) при каждой пересборке колонок ей не нужен.
+        if (_repository is null || _drawn is not null) return NumColWidth;
 
         var maxRow = _repository.CountRecords(_collectionId, _hiddenRecords.Count > 0);
         var text   = Math.Max(1, maxRow).ToString(CultureInfo.InvariantCulture);
@@ -1562,6 +1568,10 @@ public partial class TableView : UserControl
         if (_repository is null) return;
         _repository.MoveColumn(_collectionId, key, left, MovableKeysInOrder());
 
+        // Рисованная сетка: сдвиг — новая раскладка, строки и прокрутка на месте, ширины — по ключам;
+        // выделение ячеек и колонок едет за своими ключами.
+        if (_drawn is not null) { ReloadColumnsDrawn(); return; }
+
         var keepH   = CurrentScrollOffset();
         var oldDefs = _colDefs;
 
@@ -1646,7 +1656,14 @@ public partial class TableView : UserControl
             // (в строке редактора оказалась бы другая запись — правку записываем до этого).
             ForgetCellEditing();
             _drawn.Rows?.RefreshLoadedPages();
-            _drawn.SetRecordSelection([recordId]);
+            // Сдвиг с клавиатуры от активной ячейки: рамка едет за записью (следующее нажатие двигает
+            // ее дальше); из меню «№» — выделена сама запись.
+            if (_cellRange is not null)
+            {
+                SyncDrawnSelection();
+                if (_cellRange is { } followed) ScrollCellIntoView(followed.AnchorRow, followed.AnchorColumn);
+            }
+            else _drawn.SetRecordSelection([recordId]);
             return;
         }
         _virtualRows?.RefreshLoadedPages();   // порядок изменился — перечитываем видимые строки на месте
@@ -2850,6 +2867,24 @@ public partial class TableView : UserControl
         return menu;
     }
 
+    // Пересчет пунктов меню на каждое открытие (состав зависит от выделения, прав, буфера, настроек
+    // обмена). Нынешняя сетка открывает меню запросом контекстного меню — Avalonia сама поднимает
+    // Opening; рисованная открывает меню прямо у указателя (ContextMenu.Open), а Open событие Opening
+    // не поднимает, и пересчеты зовет ее путь открытия (OpenDrawnMenu).
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<ContextMenu, List<Action>> _menuOpening = new();
+
+    private void OnMenuOpening(ContextMenu menu, Action refresh)
+    {
+        menu.Opening += (_, _) => refresh();
+        _menuOpening.GetOrCreateValue(menu).Add(refresh);
+    }
+
+    private void RunMenuOpening(ContextMenu menu)
+    {
+        if (_menuOpening.TryGetValue(menu, out var refreshers))
+            foreach (var refresh in refreshers) refresh();
+    }
+
     // Меню строится с ЛЕНИВЫМ резолвом строки и ее RecordId (см. RecordIdOf), а не с захватом id в
     // момент BuildRowContextMenu. Причина: при фоновой подгрузке строк строка сперва realized как
     // заглушка «Загрузка…» с RecordId=0, и только потом Fill проставляет реальный id в ТОТ ЖЕ VM —
@@ -2951,7 +2986,7 @@ public partial class TableView : UserControl
         Controls.Components.MenuIcons.FixSubmenuGap(host);
         menu.Items.Add(host);
 
-        menu.Opening += (_, _) =>
+        OnMenuOpening(menu, () =>
         {
             var actions = DataActions?.Invoke() ?? [];
 
@@ -2973,7 +3008,7 @@ public partial class TableView : UserControl
             }
 
             host.ItemsSource = items;
-        };
+        });
     }
 
     // ── Пункты цвета в меню строки ────────────────────────────────────────────
@@ -2991,7 +3026,7 @@ public partial class TableView : UserControl
         Controls.Components.MenuIcons.FixSubmenuGap(host);
         host.IsEnabled = Can(PermAction.EditRecord);
 
-        menu.Opening += (_, _) =>
+        OnMenuOpening(menu, () =>
         {
             host.Items.Clear();
             var ids = TargetRecordIds(row);
@@ -3005,7 +3040,7 @@ public partial class TableView : UserControl
                 hex => ApplyRowStyle(ids, StyleAspect.Background, hex)));
             host.Items.Add(ColorMenu.Build("Цвет текста строки", rowStyle.Fg,
                 hex => ApplyRowStyle(ids, StyleAspect.Text, hex)));
-        };
+        });
 
         menu.Items.Add(new Separator());
         menu.Items.Add(host);
@@ -3171,7 +3206,7 @@ public partial class TableView : UserControl
         // OnLoadingRow на КАЖДУЮ реализацию строки — обращения к БД здесь подвешивали
         // прокрутку колесом/кнопками скроллбара (каждая пересеченная строка платила
         // за проверку соседей; Opening же случается только при правом клике).
-        menu.Opening += (_, _) => Refresh();
+        OnMenuOpening(menu, Refresh);
     }
 
     // Красный пункт «Удалить» с иконкой корзины — общий для меню записей и свойств.
@@ -3281,7 +3316,7 @@ public partial class TableView : UserControl
             _manualColResize ? "Стандартная ширина столбцов" : "Ручная ширина столбцов");
 
         Refresh();
-        menu.Opening += (_, _) => Refresh();
+        OnMenuOpening(menu, Refresh);
     }
 
     // Пункт-переключатель режима высоты строк (общий для всей таблицы) — в меню записи.
@@ -3300,7 +3335,7 @@ public partial class TableView : UserControl
             _manualRowResize ? "Стандартная высота строк" : "Ручная высота строк");
 
         Refresh();
-        menu.Opening += (_, _) => Refresh();
+        OnMenuOpening(menu, Refresh);
     }
 
     // Меню заголовка пользовательского поля:
@@ -3371,7 +3406,7 @@ public partial class TableView : UserControl
         Controls.Components.MenuIcons.FixSubmenuGap(host);
         host.IsEnabled = Can(PermAction.EditField);
 
-        menu.Opening += (_, _) =>
+        OnMenuOpening(menu, () =>
         {
             host.Items.Clear();
             var keys = TargetColumnKeys(key);
@@ -3380,7 +3415,7 @@ public partial class TableView : UserControl
                 hex => ApplyColumnStyle(keys, StyleAspect.Background, hex)));
             host.Items.Add(ColorMenu.Build("Цвет текста колонки", cur.Fg,
                 hex => ApplyColumnStyle(keys, StyleAspect.Text, hex)));
-        };
+        });
 
         menu.Items.Add(host);
     }
@@ -3847,8 +3882,12 @@ public partial class TableView : UserControl
         // Окно закроет панель, если потеряет фокус: иначе на macOS она зависает поверх
         // других программ (см. TransientPopups).
         TransientPopups.Track(flyout);
+        LastOpenedFilter = flyout;
         flyout.ShowAt(anchor);
     }
+
+    // Для стендов: последнее открытое окно фильтра колонки.
+    internal Flyout? LastOpenedFilter { get; private set; }
 
     private Control BuildFilterPanel(TableColumnDef def, Action close)
     {
@@ -4197,7 +4236,7 @@ public partial class TableView : UserControl
         var countsSlow = Diag.Measure("список значений фильтра", Diag.UiQuery,
                                       $"{DbErrors.Display(_repository!.DbPath)}, коллекция {_collectionId}, колонка {def.Header}");
         _repository!.GetColumnCountsAsync(_collectionId, def.Key, _filters,
-                                          excludeHidden: _hiddenRecords.Count > 0).ContinueWith(t =>
+                                          excludeHidden: AnyHiddenRecords).ContinueWith(t =>
         {
             countsSlow.Dispose();
             if (t.IsFaulted)
@@ -4485,12 +4524,7 @@ public partial class TableView : UserControl
     {
         ForgetCellEditing();   // ниже может смениться ItemsSource — редактор умрет молча
 
-        // Чистим фильтры по колонкам, которых больше нет (поле удалили).
-        var validKeys = _colDefs.Select(d => d.Key).ToHashSet();
-        foreach (var stale in _filters.Keys.Where(k => !validKeys.Contains(k)).ToList())
-            _filters.Remove(stale);
-        if (_sortKey is not null && !validKeys.Contains(_sortKey)) _sortKey = null;
-
+        PruneFilters();
         UpdateChevronStates();
 
         if (_repository is null) return;
@@ -4500,6 +4534,15 @@ public partial class TableView : UserControl
         // не расходится с показанным.
         if (ConstructorSettings.RememberFilters && _collectionId > 0)
             ConstructorFilterMemory.Save(_repository.DbPath, _collectionId, _filters, _sortKey, _sortAsc);
+
+        // Рисованная сетка считает отбор и сортировку в фоне (RowSourcePlanner): воронка в шапке —
+        // сразу, строки — по приходе списка. Копия: набор фильтров фасада меняет окно фильтра, а
+        // фоновый запрос читает свой.
+        if (_drawn is not null)
+        {
+            _drawn.SetQuery(CopyFilters(), _sortKey, _sortAsc);
+            return;
+        }
 
         if (_filters.Count == 0 && _sortKey is null)
         {
@@ -4534,6 +4577,24 @@ public partial class TableView : UserControl
         _activeRows = filteredRows;   // видимый список теперь отфильтрованный — точечные рефреши сюда
         RecordsGrid.ItemsSource = new VirtualCollectionView(filteredRows);
     }
+
+    // Фильтры и сортировка по колонкам, которых больше нет (поле удалили), снимаются. Скрытые в
+    // «Отображении» колонки остаются в _colDefs — их отбор действует. true — что-то снято.
+    private bool PruneFilters()
+    {
+        var validKeys = _colDefs.Select(d => d.Key).ToHashSet();
+        var stale     = _filters.Keys.Where(k => !validKeys.Contains(k)).ToList();
+        foreach (var key in stale) _filters.Remove(key);
+        var sortGone = _sortKey is not null && !validKeys.Contains(_sortKey);
+        if (sortGone) _sortKey = null;
+        return stale.Count > 0 || sortGone;
+    }
+
+    private Dictionary<string, HashSet<string>> CopyFilters() =>
+        _filters.ToDictionary(kv => kv.Key, kv => new HashSet<string>(kv.Value));
+
+    // Есть ли скрытые в «Отображении записей» записи: их значения не попадают в списки фильтра.
+    private bool AnyHiddenRecords => _drawn?.HasHiddenRecords ?? _hiddenRecords.Count > 0;
 
     // Компаратор значений колонки (пустые всегда в конце) — общий с фоновой сортировкой, см. ColumnSort.
     private static Func<string, string, int> BuildComparer(string fieldType, bool asc) =>

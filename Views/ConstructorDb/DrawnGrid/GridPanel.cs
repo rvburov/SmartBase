@@ -44,7 +44,14 @@ namespace SmartBase.Views.ConstructorDb.DrawnGrid;
 /// сквозь прозрачный редактор, колесо прокручивает таблицу. Правки значений строк списка поднимаются
 /// наверх (<see cref="RecordEdited"/>), подмена списка — заранее (<see cref="RowsReplacing"/>), чтобы
 /// фасад успел записать набранное в строку, пока она еще живая.
-/// Этапы 0–4 плана [drawn-grid.md]: без фильтра из шапки.
+///
+/// Операции (этап 5): отбор и сортировка из шапки приходят в <see cref="SetQuery"/> (воронка в шапке —
+/// сразу, список — из фона; пока он считается, на экране прежние строки), запомненные за коллекцией —
+/// в <see cref="Load"/>. Перезагрузка строк держит прокрутку, смена отбора возвращает ее к началу, как
+/// у нынешней таблицы. Ширину «№» панель считает сама по числу записей коллекции: оценке снимка, а
+/// потом точному счету из фона — фасад больше не считает записи на UI-потоке. Флайаут фильтра
+/// крепится к невидимому якорю на месте кнопки заголовка (<see cref="AnchorAt"/>).
+/// Этапы 0–5 плана [drawn-grid.md].
 /// </summary>
 public sealed class GridPanel : Avalonia.Controls.Grid
 {
@@ -79,7 +86,14 @@ public sealed class GridPanel : Avalonia.Controls.Grid
     private bool    _sortAsc = true;
     private bool    _syncingBars;
     private double? _pendingOffsetY;
+    private int?    _pendingScrollRecord;   // прокрутка к записи, заказанная, пока список считался в фоне
+    private int     _countGeneration;       // отбрасывает точный счет, пришедший к устаревшему открытию
     private TableViewportRange _lastRange = TableViewportRange.Empty;
+
+    // Невидимые якоря всплывающих окон: у рисованной шапки нет контролов, и флайаут фильтра крепится
+    // к прямоугольнику на месте кнопки заголовка.
+    private readonly Canvas _anchors      = new() { IsHitTestVisible = false };
+    private readonly Border _filterAnchor = new();
 
     // Жест ширины колонки.
     private string? _resizeKey;
@@ -146,13 +160,17 @@ public sealed class GridPanel : Avalonia.Controls.Grid
         SetColumn(Surface, 0);      SetRow(Surface, 0);
         SetColumn(Editor, 0);       SetRow(Editor, 0);
         SetColumn(_overlay, 0);     SetRow(_overlay, 0);
+        SetColumn(_anchors, 0);     SetRow(_anchors, 0);
         SetColumn(_vertical, 1);    SetRow(_vertical, 0);
         SetColumn(_horizontal, 0);  SetRow(_horizontal, 1);
         SetColumn(_corner, 1);      SetRow(_corner, 1);
 
+        _anchors.Children.Add(_filterAnchor);
+
         Children.Add(Surface);
         Children.Add(Editor);
         Children.Add(_overlay);
+        Children.Add(_anchors);
         Children.Add(_vertical);
         Children.Add(_horizontal);
         Children.Add(_corner);
@@ -175,6 +193,7 @@ public sealed class GridPanel : Avalonia.Controls.Grid
 
         Surface.IsRecordSelected = rid => _selectedRecordSet.Contains(rid);
         Surface.IsColumnSelected = key => _selectedColumns.Contains(key);
+        Surface.IsColumnFiltered = key => _filters.ContainsKey(key) || _sortKey == key;
 
         // Редактор лежит над поверхностью и забирает указатель: наведение и колесо — ей. Колесо из
         // раскрытого списка редактора (свое окно-попап) таблицу не крутит.
@@ -216,16 +235,24 @@ public sealed class GridPanel : Avalonia.Controls.Grid
     public bool IsManualColResize => _manualCol;
     public bool IsManualRowResize => _manualRow;
 
+    /// <summary>Есть ли записи, скрытые в «Отображении записей» (их нет в строках и в списках фильтра).</summary>
+    public bool HasHiddenRecords => _hiddenRecords;
+
     // ── Открытие ──────────────────────────────────────────────────────────────
 
     /// <summary>Открыть коллекцию по снимку открытия (прочитан заранее, UI-поток в базу не ходит).
     /// <paramref name="defs"/> — готовые определения колонок фасада (с меню и хуками); без них
     /// панель строит их сама, как <c>TableView.BuildColDefs</c>. <paramref name="keepOffsets"/> —
-    /// обновление той же коллекции: прокрутку не сбрасывать.</summary>
+    /// обновление той же коллекции: прокрутку не сбрасывать. <paramref name="filters"/> и
+    /// <paramref name="sortKey"/> — отбор и сортировка, запомненные за коллекцией: список считается в
+    /// фоне, и пока он идет, на экране прежние строки той же коллекции или пустая таблица — показать
+    /// неотобранные строки значило бы на миг показать то, что человек отфильтровал.</summary>
     public void Load(ConstructorRepository repo, int collectionId, CollectionOpenSnapshot snapshot,
-                     IReadOnlyList<TableColumnDef>? defs = null, bool keepOffsets = false)
+                     IReadOnlyList<TableColumnDef>? defs = null, bool keepOffsets = false,
+                     IReadOnlyDictionary<string, HashSet<string>>? filters = null, string? sortKey = null, bool sortAsc = true)
     {
         var (colResize, rowResize, _) = snapshot.UiSettings;
+        var sameList = keepOffsets && _rows is not null && _repo == repo && _collectionId == collectionId;
 
         _repo          = repo;
         _collectionId  = collectionId;
@@ -240,15 +267,26 @@ public sealed class GridPanel : Avalonia.Controls.Grid
         _colStyles     = snapshot.ColumnStyles;
         _rowHeights    = rowResize ? new Dictionary<int, int>(snapshot.RowHeights) : [];
         _hiddenRecords = snapshot.RecordDisplay.Any(kv => !kv.Value.Visible);
-        _filters       = new Dictionary<string, HashSet<string>>();
-        _sortKey       = null;
+        _filters       = filters ?? new Dictionary<string, HashSet<string>>();
+        _sortKey       = sortKey;
+        _sortAsc       = sortAsc;
+        _pendingScrollRecord = null;
+        UpdateNumWidth(relayout: false);
 
         Surface.ColumnGripsEnabled = _manualCol;
         Surface.RowGripsEnabled    = _manualRow;
 
         _query?.Cancel();
         _query = null;
-        AttachSource(RowSource.Plain, keepOffsets);
+        RefineCount();
+        if (_filters.Count == 0 && _sortKey is null)
+        {
+            AttachSource(RowSource.Plain, keepOffsets, keepOffsets);
+            return;
+        }
+        if (sameList) Surface.SetColumns(BuildLayout());
+        else AttachSource(new IdListRowSource([]), keepX: false, keepY: false);
+        StartQuery(keepY: keepOffsets);
     }
 
     /// <summary>Забыть коллекцию: пустая поверхность, фоновые запросы отменены.</summary>
@@ -256,6 +294,7 @@ public sealed class GridPanel : Avalonia.Controls.Grid
     {
         _query?.Cancel();  _query = null;
         _ranks?.Cancel();  _ranks = null;
+        _countGeneration++;
         if (_rows is not null)
         {
             _rows.CollectionChanged -= OnRowsCollectionChanged;
@@ -265,11 +304,16 @@ public sealed class GridPanel : Avalonia.Controls.Grid
         _repo         = null;
         _collectionId = 0;
         _snapshot     = null;
+        _exactCount   = null;
         _rows         = null;
         _defs         = [];
         _widths       = [];
         _rowHeights   = [];
         _rowIndexes   = [];
+        _filters      = new Dictionary<string, HashSet<string>>();
+        _sortKey      = null;
+        _pendingOffsetY      = null;
+        _pendingScrollRecord = null;
         _relLinks.Clear();
         _selectedRecords.Clear();
         _selectedRecordSet.Clear();
@@ -410,36 +454,62 @@ public sealed class GridPanel : Avalonia.Controls.Grid
 
     /// <summary>Сменить отбор и сортировку: источник строк считается в фоне (<see cref="RowSourcePlanner"/>),
     /// прежний незавершенный запрос отменяется, устаревший результат не подключается. Без фильтров и
-    /// сортировки по индексируемому типу подключение мгновенное.</summary>
+    /// сортировки по индексируемому типу подключение мгновенное. Воронка в шапке меняется сразу, строки
+    /// до прихода нового списка остаются прежними; новый список показывается с начала, горизонтальная
+    /// прокрутка остается — колонки те же.</summary>
     public Task SetQuery(IReadOnlyDictionary<string, HashSet<string>> filters, string? sortKey, bool sortAsc)
     {
         if (_repo is null || _snapshot is null) return Task.CompletedTask;
         _filters = filters;
         _sortKey = sortKey;
         _sortAsc = sortAsc;
+        return StartQuery(keepY: false);
+    }
+
+    // Список строк еще считается в фоне: _query жив до подключения результата (или отмены новым запросом).
+    private bool QueryPending => _query is not null;
+
+    private Task StartQuery(bool keepY)
+    {
+        Surface.RefreshSelectionVisuals();   // воронка в шапке
         _query?.Cancel();
         var cts = _query = new CancellationTokenSource();
-        return QueryTask = ApplyQueryAsync(filters, sortKey, sortAsc, cts.Token);
+        return QueryTask = ApplyQueryAsync(_filters, _sortKey, _sortAsc, keepY, cts);
     }
 
     private async Task ApplyQueryAsync(IReadOnlyDictionary<string, HashSet<string>> filters, string? sortKey, bool sortAsc,
-                                       CancellationToken ct)
+                                       bool keepY, CancellationTokenSource cts)
     {
+        var ct   = cts.Token;
+        var repo = _repo!;
         RowSource source;
         try
         {
-            source = await RowSourcePlanner.BuildAsync(_repo!, _collectionId, _snapshot!.Fields, filters, sortKey, sortAsc,
+            source = await RowSourcePlanner.BuildAsync(repo, _collectionId, _snapshot!.Fields, filters, sortKey, sortAsc,
                                                        _hiddenRecords, ct);
         }
         catch (OperationCanceledException) { return; }
-        if (ct.IsCancellationRequested) return;
+        catch (Exception ex)
+        {
+            // База пропала или занята: строки остаются прежними, причина — в журнале и окне ошибки чтения.
+            DbErrors.HandleRead(ex, repo.DbPath);
+            Dispatcher.UIThread.Post(() => { if (ReferenceEquals(_query, cts)) _query = null; });
+            return;
+        }
+
+        void Attach()
+        {
+            if (ct.IsCancellationRequested) return;
+            if (ReferenceEquals(_query, cts)) _query = null;
+            AttachSource(source, keepX: true, keepY);
+        }
         // Продолжение после фона — на UI-поток явно (стенды без контекста синхронизации).
-        if (Dispatcher.UIThread.CheckAccess()) AttachSource(source, keepOffsets: false);
-        else await Dispatcher.UIThread.InvokeAsync(() => { if (!ct.IsCancellationRequested) AttachSource(source, keepOffsets: false); });
+        if (Dispatcher.UIThread.CheckAccess()) Attach();
+        else await Dispatcher.UIThread.InvokeAsync(Attach);
     }
 
     /// <summary>Пересобрать строки: перечитать видимость записей, ручные высоты и оформление строк,
-    /// новый список по текущему отбору и сортировке. Колонки не трогаются.</summary>
+    /// новый список по текущему отбору и сортировке. Колонки и прокрутка не трогаются.</summary>
     public void ReloadRows()
     {
         if (_repo is null || _snapshot is null) return;
@@ -447,10 +517,14 @@ public sealed class GridPanel : Avalonia.Controls.Grid
         _hiddenRecords = display.Any(kv => !kv.Value.Visible);
         _rowHeights    = _manualRow ? _repo.GetRowHeights(_collectionId) : [];
         _rowStyles     = _repo.GetRowStyles(_collectionId);
+        // Число записей могло измениться (видимость, создание, удаление): до точного счета из фона
+        // список живет последним известным — оно ближе к правде, чем оценка по позициям.
+        var lastKnown  = _exactCount ?? _snapshot.VisibleRecordCount;
         _exactCount    = null;
         _snapshot      = _snapshot with { RecordDisplay = display, RowHeights = _rowHeights, RowStyles = _rowStyles,
-                                          CountIsEstimate = true, RecordCount = _repo.EstimateRecordCount(_collectionId) };
-        SetQuery(_filters, _sortKey, _sortAsc);
+                                          CountIsEstimate = true, RecordCount = lastKnown, VisibleRecordCount = lastKnown };
+        RefineCount();
+        StartQuery(keepY: true);
     }
 
     /// <summary>Структурное обновление строк (создание, удаление, дубль) без пересоздания списка —
@@ -458,9 +532,16 @@ public sealed class GridPanel : Avalonia.Controls.Grid
     public void ReloadRowsStructural()
     {
         if (_repo is null) return;
-        if (_rows is null || _rows.Source is not PlainRowSource) { ReloadRows(); return; }
-        _exactCount = null;
-        _rows.RefreshStructural();
+        // Отбор или сортировка (список пересчитывается целиком) либо новый список еще считается в фоне.
+        if (_rows is null || _rows.Source is not PlainRowSource || QueryPending)
+        {
+            ReloadRows();
+            return;
+        }
+        _countGeneration++;             // счет в полете считал прежний состав
+        _rows.RefreshStructural();      // считает записи заново — число точное
+        _exactCount = _rows.DataCount;
+        UpdateNumWidth();
         ResolveRowIndexes();
     }
 
@@ -469,19 +550,52 @@ public sealed class GridPanel : Avalonia.Controls.Grid
     public void ReloadColumns(IReadOnlyList<TableColumnDef>? defs = null)
     {
         if (_repo is null || _snapshot is null) return;
-        var fresh  = _repo.ReadOpenSnapshot(_collectionId, deferCount: true);
-        _snapshot  = fresh with { RecordCount = _snapshot.RecordCount, VisibleRecordCount = _snapshot.VisibleRecordCount,
-                                  CountIsEstimate = _snapshot.CountIsEstimate };
-        _defs      = defs?.ToList() ?? BuildDefs(fresh);
-        _hidden    = fresh.ColumnDisplay.Where(kv => !kv.Value.Visible).Select(kv => kv.Key).ToHashSet();
-        _colStyles = fresh.ColumnStyles;
-        _widths    = _manualCol ? new Dictionary<string, double>(fresh.ColumnWidths) : [];
+        var fresh = _repo.ReadOpenSnapshot(_collectionId, deferCount: true);
+        ReloadColumns(defs ?? BuildDefs(fresh), fresh.Fields,
+                      fresh.ColumnDisplay.Where(kv => !kv.Value.Visible).Select(kv => kv.Key).ToHashSet(),
+                      fresh.ColumnStyles, fresh.ColumnWidths);
+    }
+
+    /// <summary>То же по состоянию колонок, уже прочитанному фасадом (он читает его для своих
+    /// определений) — база второй раз не спрашивается. Строки и прокрутка остаются.</summary>
+    public void ReloadColumns(IReadOnlyList<TableColumnDef> defs, List<DbField> fields, IReadOnlySet<string> hidden,
+                              Dictionary<string, RowStyle> columnStyles, IReadOnlyDictionary<string, double> widths)
+    {
+        if (_repo is null || _snapshot is null) return;
+        _snapshot  = _snapshot with { Fields = fields };
+        _defs      = defs.ToList();
+        _hidden    = hidden.ToHashSet();
+        _colStyles = columnStyles;
+        _widths    = _manualCol ? new Dictionary<string, double>(widths) : [];
+        UpdateNumWidth(relayout: false);
+        _rows?.SetFields(fields);
         Surface.SetColumns(BuildLayout());
+    }
+
+    /// <summary>Пересобрать раскладку колонок по текущим настройкам (стандартная ширина столбцов из
+    /// «Оформления», шрифт «№») — строки и модель ширин не трогаются.</summary>
+    public void RefreshLayout()
+    {
+        if (_rows is null) return;
+        UpdateNumWidth(relayout: false);
+        Surface.SetColumns(BuildLayout());
+    }
+
+    /// <summary>Невидимый якорь на месте прямоугольника поверхности — к нему крепится всплывающее окно
+    /// (флайаут фильтра у кнопки заголовка). Раскладывается сразу: окно встает по его границам.</summary>
+    public Control AnchorAt(Rect surfaceRect)
+    {
+        Canvas.SetLeft(_filterAnchor, surfaceRect.X);
+        Canvas.SetTop(_filterAnchor, surfaceRect.Y);
+        _filterAnchor.Width  = Math.Max(1, surfaceRect.Width);
+        _filterAnchor.Height = Math.Max(1, surfaceRect.Height);
+        _anchors.UpdateLayout();
+        return _filterAnchor;
     }
 
     // Новый список строк по источнику; число записей — точное, если уже известно, иначе оценка
     // из снимка с уточнением в фоне (список id знает свою длину сам).
-    private void AttachSource(RowSource source, bool keepOffsets)
+    private void AttachSource(RowSource source, bool keepX, bool keepY)
     {
         var snapshot = _snapshot!;
         if (_rows is not null) RowsReplacing?.Invoke(this, EventArgs.Empty);
@@ -503,7 +617,6 @@ public sealed class GridPanel : Avalonia.Controls.Grid
         _rows = rows;
         rows.CollectionChanged += OnRowsCollectionChanged;
         rows.RecordEdited      += OnRecordEdited;
-        if (estimate) _ = RefineCountAsync(rows);
 
         var (x, y) = (Surface.OffsetX, Surface.OffsetY);
         Surface.SetRowLayout(BuildRowLayout());
@@ -511,33 +624,67 @@ public sealed class GridPanel : Avalonia.Controls.Grid
                        rid => _rowStyles.GetValueOrDefault(rid),
                        key => _colStyles.GetValueOrDefault(key),
                        _relLinks);
-        Surface.OffsetX = keepOffsets ? x : 0;
-        Surface.OffsetY = keepOffsets ? y : 0;
+        Surface.OffsetX = keepX ? x : 0;
+        Surface.OffsetY = keepY ? y : 0;
         SyncBars();
+        ApplyPendingOffset();
         RefreshVisibleRange();
         ResolveRowIndexes();
         RowsChanged?.Invoke(this, EventArgs.Empty);
+        if (_pendingScrollRecord is int rid && !QueryPending)
+        {
+            _pendingScrollRecord = null;
+            ScrollToRecord(rid);
+        }
     }
 
-    // Точный счет записей в фоне: полоса прокрутки уточняется по приходе, первый кадр не ждал.
-    private async Task RefineCountAsync(VirtualRowList rows)
+    // Точный счет записей коллекции в фоне, когда известна только оценка: полоса прокрутки и ширина
+    // «№» уточняются по приходе, первый кадр его не ждал. Список id знает свою длину сам — ему счет
+    // нужен только для «№» (как у нынешней таблицы, она меряется всеми записями, а не отобранными).
+    private void RefineCount()
     {
-        try
+        if (_exactCount is not null || _repo is null) return;
+        var gen    = ++_countGeneration;
+        var repo   = _repo;
+        var cid    = _collectionId;
+        var hidden = _hiddenRecords;
+        _ = repo.CountRecordsAsync(cid, hidden).ContinueWith(t =>
         {
-            var n = await _repo!.CountRecordsAsync(_collectionId, _hiddenRecords);
+            if (!t.IsCompletedSuccessfully)
+            {
+                if (t.Exception?.GetBaseException() is { } ex) DbErrors.HandleRead(ex, repo.DbPath);
+                return;
+            }
             Dispatcher.UIThread.Post(() =>
             {
-                if (!ReferenceEquals(_rows, rows)) return;
-                _exactCount = n;
-                rows.SetCount(n);
+                if (gen != _countGeneration || !ReferenceEquals(_repo, repo) || _collectionId != cid) return;
+                _exactCount = t.Result;
+                if (_rows is { CountIsEstimate: true } rows) rows.SetCount(t.Result);
+                UpdateNumWidth();
                 ApplyPendingOffset();
                 RefreshVisibleRange();
             });
-        }
-        catch (Exception ex)
+        }, TaskScheduler.Default);
+    }
+
+    // Ширина «№» — под самый длинный номер: число записей коллекции, точное или оценка снимка.
+    // Определение «№» у панели свое (у фасада без ширины): меняется только при смене числа разрядов
+    // или шрифта, и тогда раскладка пересобирается.
+    private void UpdateNumWidth(bool relayout = true)
+    {
+        var i = _defs.FindIndex(d => d.Key == TableColumnDef.NumKey);
+        if (i < 0) return;
+        var width = NumColumnWidth(_exactCount ?? _snapshot?.VisibleRecordCount ?? 0);
+        var cur   = _defs[i];
+        if (cur.FixedWidth == width) return;
+        _defs[i] = new TableColumnDef
         {
-            DbErrors.HandleRead(ex, _repo?.DbPath);
-        }
+            Key = cur.Key, Header = cur.Header, IsStarWidth = false, FixedWidth = width,
+            CanResize = false, IsReadOnly = true,
+            OnHeaderClick = cur.OnHeaderClick, BuildHeaderMenu = cur.BuildHeaderMenu,
+            OnCellClick = cur.OnCellClick, BuildCellMenu = cur.BuildCellMenu,
+        };
+        if (relayout && _rows is not null) Surface.SetColumns(BuildLayout());
     }
 
     // ── Раскладки ─────────────────────────────────────────────────────────────
@@ -618,6 +765,7 @@ public sealed class GridPanel : Avalonia.Controls.Grid
     private void OnMetricsChanged()
     {
         if (_rows is null) return;
+        UpdateNumWidth(relayout: false);   // «№» меряется шрифтом таблицы
         Surface.SetRowLayout(BuildRowLayout());
         Surface.SetColumns(BuildLayout());
     }
@@ -836,6 +984,13 @@ public sealed class GridPanel : Avalonia.Controls.Grid
     public void ScrollToRecord(int recordId)
     {
         if (_rows is null || _repo is null) return;
+        // Новый список еще считается (запись создана при отборе или сортировке) — прокрутка к ней
+        // выполнится, когда он подключится: в прежнем списке ее нет.
+        if (QueryPending)
+        {
+            _pendingScrollRecord = recordId;
+            return;
+        }
         var rows = _rows;
         if (rows.FindCachedByRecordId(recordId) is { } cached)
         {

@@ -31,8 +31,13 @@ namespace SmartBase.Views.ConstructorDb;
 /// клик мимо редактора, подмена строк пишут; Escape не пишет; уход фокуса пишет, не закрывая.
 /// Второй клик по той же ячейке открывает правку по своей паре «прошлый клик / выделенная ячейка»
 /// без обходов невидимого выделения строки. Галочка и скрепка «Файла» — кнопки на отпускании, имя
-/// файла — действие <c>FileEditor</c> (открыть, поправить путь руками). Фильтр из шапки — этап 5;
-/// этап 6 удаляет этот файл вместе с нынешней сеткой.
+/// файла — действие <c>FileEditor</c> (открыть, поправить путь руками).
+///
+/// Этап 5 — операции: кнопка фильтра в заголовке открывает то же окно фильтра и сортировки, что у
+/// нынешней сетки, прикрепленное к невидимому якорю на месте кнопки; отбор и сортировка считаются в
+/// фоне (<see cref="GridPanel.SetQuery"/>), запомненные за коллекцией приходят с открытием. Колонки
+/// пересобираются по одному чтению состояния колонок, строки и прокрутка при этом остаются, а отбор по
+/// удаленной колонке снимается. Этап 6 удаляет этот файл вместе с нынешней сеткой.
 /// </summary>
 public partial class TableView
 {
@@ -50,8 +55,10 @@ public partial class TableView
     private TableRowVm? _drawnEditRow;
     private int         _drawnEditRecordId;
 
-    // Нажатие на галочку или скрепку «Файла»: действие — на отпускании над тем же местом, как у кнопки.
-    private (int Row, string Key, Rect Area, bool Paperclip)? _drawnButtonPress;
+    // Нажатие на кнопку, нарисованную сеткой: галочку, скрепку «Файла» или кнопку фильтра в заголовке.
+    // Действие — на отпускании над тем же местом, как у кнопки.
+    private enum DrawnButton { Checkbox, Paperclip, Filter }
+    private (int Row, string Key, Rect Area, DrawnButton Kind)? _drawnButtonPress;
 
     // Второй клик по выделенной ячейке: правка открывается на отпускании, если выделение не утянули в
     // другую ячейку, — нажать на выделенную ячейку и потянуть значит протянуть выделение.
@@ -75,10 +82,13 @@ public partial class TableView
     internal ContextMenu?           LastOpenedMenu     { get; private set; }
 
     // Меню открываются у указателя на самой поверхности (ContextMenu ставится по положению мыши).
+    // Open не поднимает Opening (его поднимает только запрос контекстного меню), поэтому пересчеты
+    // «при открытии» — цвета, сдвиг записи, «Действия», вставка — зовутся здесь.
     private void OpenDrawnMenu(ContextMenu? menu)
     {
         if (menu is null) return;
         LastOpenedMenu = menu;
+        RunMenuOpening(menu);
         menu.Open(_drawn!.Surface);
     }
 
@@ -159,8 +169,14 @@ public partial class TableView
                     hdef.OnHeaderClick?.Invoke(hdef);
                     SelectColumn(hdef.Key, shift);   // выделение колонки гасит выделение ячеек
                 }
-                // Левый клик по кнопке фильтра — флайаут этапа 5. Меню шапки — фабрика колонки, как у
-                // нынешней сетки (строится на нажатии).
+                // Кнопка фильтра — кнопка: окно фильтра открывается на отпускании над ней, выделение
+                // колонки не трогается (у нынешней шапки кнопка забирает нажатие себе).
+                if (left && hit.Kind == GridHitKind.HeaderFilter)
+                {
+                    _drawnButtonPress = (-1, hdef.Key, hit.Bounds, DrawnButton.Filter);
+                    e.Pointer.Handled = true;
+                }
+                // Меню шапки — фабрика колонки, как у нынешней сетки (строится на нажатии).
                 if (right && hdef.BuildHeaderMenu is { } factory) OpenDrawnMenu(factory(hdef));
                 return;
 
@@ -221,7 +237,7 @@ public partial class TableView
             // нажатии, как у FileEditor (одиночный клик ждет, не станет ли он двойным).
             var point = e.Pointer.GetPosition(surface);
             if (!shift && !ctrl && DrawnButtonAt(vm, def, hit.Bounds, point) is { } button)
-                _drawnButtonPress = (hit.Row, def.Key, button.Area, button.Paperclip);
+                _drawnButtonPress = (hit.Row, def.Key, button.Area, button.Paperclip ? DrawnButton.Paperclip : DrawnButton.Checkbox);
             else if (!shift && !ctrl && def.FieldType == "file" && !vm.IsLoading)
                 OnDrawnFileLinkPressed(hit.Row, def, e.Pointer.ClickCount);
 
@@ -304,8 +320,20 @@ public partial class TableView
         if (_drawnButtonPress is not { } press) return;
         _drawnButtonPress = null;
         if (e.InitialPressMouseButton != MouseButton.Left || !press.Area.Contains(e.GetPosition(_drawn!.Surface))) return;
-        if (press.Paperclip) PickDrawnFile(press.Row, press.Key);
-        else                 ToggleDrawnCheckbox(press.Row, ColumnIndexOf(press.Key));
+        switch (press.Kind)
+        {
+            case DrawnButton.Paperclip: PickDrawnFile(press.Row, press.Key); break;
+            case DrawnButton.Checkbox:  ToggleDrawnCheckbox(press.Row, ColumnIndexOf(press.Key)); break;
+            case DrawnButton.Filter:    ShowDrawnFilterFlyout(press.Key, press.Area); break;
+        }
+    }
+
+    // Окно фильтра и сортировки — то же, что у нынешней шапки, у правого края кнопки; якорь — невидимый
+    // прямоугольник сетки на месте нарисованной кнопки.
+    private void ShowDrawnFilterFlyout(string key, Rect button)
+    {
+        if (_drawn is null || _colDefs.FirstOrDefault(d => d.Key == key) is not { } def) return;
+        ShowFilterFlyout(_drawn.AnchorAt(button), def);
     }
 
     private void EndDrawnDrag()
@@ -671,15 +699,19 @@ public partial class TableView
 
     // ── Открытие и пересборка ─────────────────────────────────────────────────
 
-    // Открытие коллекции рисованной сеткой: колонки строит фасад (с меню и хуками), снимок —
-    // как у нынешней (без него читается на месте).
+    // Открытие коллекции рисованной сеткой: колонки строит фасад (с меню и хуками) по тому же снимку,
+    // что получает сетка, — снимок читается один раз. Без готового снимка (обновление той же
+    // коллекции, смена вида) он читается на месте без COUNT: точное число записей сетка уточнит в фоне.
+    // Отбор и сортировка — как у нынешней таблицы: не переносятся между коллекциями, при настройке
+    // «Запоминать фильтры и сортировку» подставляется запомненное за этой коллекцией.
     private void LoadDrawn(ConstructorRepository repository, int collectionId, CollectionOpenSnapshot? snapshot)
     {
         var sameCollection = _lastLoadedCollectionId == collectionId;
         ForgetCellEditing();   // набранное в открытом редакторе — в прежнюю строку, пока она жива
         _repository   = repository;
         _collectionId = collectionId;
-        _snapshot     = snapshot;
+        var snap      = snapshot ?? repository.ReadOpenSnapshot(collectionId, deferCount: true);
+        _snapshot     = snap;
         try
         {
             // Выделение к ДРУГОЙ коллекции отношения не имеет; перезагрузку той же выделение
@@ -694,16 +726,27 @@ public partial class TableView
 
             _filters.Clear();
             _sortKey = null;
-            var (colResize, rowResize, _) = snapshot?.UiSettings ?? repository.GetUiSettings(collectionId);
+            if (ConstructorSettings.RememberFilters
+                && ConstructorFilterMemory.Load(repository.DbPath, collectionId) is { } remembered)
+            {
+                foreach (var (col, values) in remembered.Filters) _filters[col] = values;
+                _sortKey = remembered.SortKey;
+                _sortAsc = remembered.SortAsc;
+            }
+
+            var (colResize, rowResize, _) = snap.UiSettings;
             _manualColResize = colResize;
             _manualRowResize = rowResize;
 
             LoadColumnState();
             _colDefs = BuildColDefs();
+            // Запомненный отбор по колонке, которой больше нет, снимается — и в памяти тоже.
+            if (PruneFilters() && ConstructorSettings.RememberFilters)
+                ConstructorFilterMemory.Save(repository.DbPath, collectionId, _filters, _sortKey, _sortAsc);
             ColumnsBuilt?.Invoke(this, _colDefs);
 
-            _drawn!.Load(repository, collectionId, snapshot ?? repository.ReadOpenSnapshot(collectionId), _colDefs,
-                         keepOffsets: sameCollection);
+            _drawn!.Load(repository, collectionId, snap, _colDefs, keepOffsets: sameCollection,
+                         CopyFilters(), _sortKey, _sortAsc);
             _lastLoadedCollectionId = collectionId;
         }
         finally
@@ -712,6 +755,8 @@ public partial class TableView
         }
     }
 
+    // Пересборка колонок (сдвиг, «Отображение», создание, удаление, дубль, смена типа, переименование
+    // «Названия»): состояние колонок читается один раз и отдается сетке — строки и прокрутка остаются.
     private void ReloadColumnsDrawn()
     {
         if (_repository is null) return;
@@ -719,9 +764,16 @@ public partial class TableView
         LoadColumnState();
         _colDefs = BuildColDefs();
         ColumnsBuilt?.Invoke(this, _colDefs);
-        _drawn!.ReloadColumns(_colDefs);
+        _drawn!.ReloadColumns(_colDefs, _fields, _hiddenColumns, _columnStyles, _colWidths);
+
+        // Удаленные колонки уходят из выделения колонок; оставшиеся — в новом порядке колонок, как их
+        // держит SelectColumn (порядок удаления и дубля).
+        _selectedColumnKeys.RemoveAll(k => ColumnIndexOf(k) < 0);
+        _selectedColumnKeys.Sort((a, b) => ColumnIndexOf(a).CompareTo(ColumnIndexOf(b)));
         // Колонки могли переехать или скрыться: рамка и заливка колонок — по новым позициям.
         SyncDrawnSelection();
         ApplyColumnSelection();
+        // Отбор по удаленной колонке снимается, строки пересчитываются без него.
+        if (PruneFilters()) ApplyFilters();
     }
 }

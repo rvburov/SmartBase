@@ -522,6 +522,16 @@ public sealed class GridSurface : Control
 
     private Rect HeaderRect(int c) => new(_columns.Left(c) - _offsetX, 0, _columns.Width(c), HeaderHeight);
 
+    /// <summary>Кнопка фильтра в заголовке колонки (координаты поверхности при текущей прокрутке);
+    /// null — колонки нет среди показанных или это «№» и «+».</summary>
+    public Rect? FilterButtonRect(string key)
+    {
+        EnsureTokens();
+        var c = _columns.IndexOf(key);
+        if (c < 0 || key is TableColumnDef.NumKey or TableColumnDef.AddPropKey) return null;
+        return ChevronRect(HeaderRect(c), _lineWidth);
+    }
+
     // Кнопка фильтра 20×20 у правого края заголовка за отступом (Border Padding 6 у нынешней шапки),
     // перед вертикальной линией; по вертикали — по центру.
     private static Rect ChevronRect(Rect header, double lineWidth) =>

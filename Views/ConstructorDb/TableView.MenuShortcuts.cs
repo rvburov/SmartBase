@@ -188,7 +188,8 @@ public partial class TableView
     {
         if (_selectedColumnKeys.Count > 0 && ColumnMenuFor(_selectedColumnKeys[0]) is { } columnMenu)
         {
-            columnMenu.Open(this);
+            if (_drawn is not null) OpenDrawnMenu(columnMenu);
+            else columnMenu.Open(this);
             return true;
         }
 

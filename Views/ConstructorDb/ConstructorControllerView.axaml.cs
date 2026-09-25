@@ -214,7 +214,9 @@ public partial class ConstructorControllerView : UserControl
         using (SmartBase.Logging.Diag.Measure("чтение коллекции", SmartBase.Logging.Diag.UiOpen,
                                               $"{SmartBase.Utils.DbErrors.Display(repository.DbPath)}, коллекция {collectionId}"))
         {
-            try { snapshot = await repository.ReadOpenSnapshotAsync(collectionId); }
+            // Рисованная сетка (переключатель разработчика) не ждет COUNT: число записей она уточнит в
+            // фоне после первого кадра (drawn-grid.md, этап 1).
+            try { snapshot = await repository.ReadOpenSnapshotAsync(collectionId, deferCount: DrawnGrid.DrawnGridSwitch.Enabled); }
             catch (Exception ex) { SmartBase.Utils.DbErrors.HandleRead(ex, repository.DbPath); }
         }
 
