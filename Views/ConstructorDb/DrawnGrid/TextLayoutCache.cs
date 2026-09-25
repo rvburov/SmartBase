@@ -6,15 +6,17 @@ namespace SmartBase.Views.ConstructorDb.DrawnGrid;
 /// <summary>
 /// Кеш готовых раскладок текста для рисованной сетки. Раскладка (шейпинг глифов, перенос,
 /// обрезка многоточием) — самая дорогая часть рисования ячейки; без кеша каждый кадр
-/// перекладывал бы тысячу надписей заново. Ключ — текст, ширина, выравнивание, кисть и предел
-/// строк; вытеснение по давности обращения.
+/// перекладывал бы тысячу надписей заново. Ключ — текст, ширина, выравнивание, кисть, предел
+/// строк, высота строки и подчеркивание; вытеснение по давности обращения.
 ///
 /// Кисть входит в ключ, потому что цвет текста задается при создании раскладки. Кистей мало:
-/// основная, приглушенная, акцентная и редкие пользовательские цвета ячеек.
+/// основная, приглушенная, акцентная и редкие пользовательские цвета ячеек. Высота строки —
+/// целый токен LineHeightBase у ячеек (как у надписей и редакторов нынешней таблицы) и
+/// естественная у заголовков.
 /// </summary>
 internal sealed class TextLayoutCache
 {
-    private readonly record struct Key(string Text, int Width, TextAlignment Align, string Brush, int MaxLines);
+    private readonly record struct Key(string Text, int Width, TextAlignment Align, string Brush, int MaxLines, double LineHeight, bool Underline);
 
     private sealed class Entry(Key key, TextLayout layout)
     {
@@ -42,13 +44,14 @@ internal sealed class TextLayoutCache
 
     /// <summary>
     /// Раскладка текста в полосе шириной <paramref name="maxWidth"/>. Одна строка с многоточием
-    /// при <paramref name="maxLines"/> = 1, иначе перенос по словам не больше указанного числа
-    /// строк (последняя — с многоточием).
+    /// при <paramref name="maxLines"/> = 1, иначе явные переводы строки не больше указанного
+    /// числа строк (каждая режется многоточием). <paramref name="lineHeight"/> NaN — естественная.
     /// </summary>
-    public TextLayout Get(string text, double maxWidth, TextAlignment align, IBrush brush, string brushId, int maxLines)
+    public TextLayout Get(string text, double maxWidth, TextAlignment align, IBrush brush, string brushId, int maxLines,
+                          double lineHeight = double.NaN, TextDecorationCollection? decorations = null)
     {
         var width = Math.Max(1, maxWidth);
-        var key   = new Key(text, (int)Math.Ceiling(width), align, brushId, maxLines);
+        var key   = new Key(text, (int)Math.Ceiling(width), align, brushId, maxLines, lineHeight, decorations is not null);
 
         if (_map.TryGetValue(key, out var node))
         {
@@ -65,8 +68,8 @@ internal sealed class TextLayoutCache
         // Без переноса по словам — как у надписей нынешней таблицы (TextWrapping не задан):
         // несколько строк дают только явные переводы строки (Alt+Enter), каждая режется многоточием.
         var layout = new TextLayout(text, Typeface, FontSize, brush, align, TextWrapping.NoWrap,
-                                    TextTrimming.CharacterEllipsis, null, FlowDirection.LeftToRight,
-                                    width, double.PositiveInfinity, double.NaN, 0, Math.Max(1, maxLines));
+                                    TextTrimming.CharacterEllipsis, decorations, FlowDirection.LeftToRight,
+                                    width, double.PositiveInfinity, lineHeight, 0, Math.Max(1, maxLines));
         var added = _lru.AddFirst(new Entry(key, layout));
         _map[key] = added;
 

@@ -563,9 +563,9 @@ public partial class TableView
     }
 
     /// <summary>Выделить все ячейки строки — для пунктов меню строки.</summary>
-    private void SelectWholeRow(DataGridRow row)
+    private void SelectWholeRow(Func<TableRowVm?> row)
     {
-        if (row.DataContext is not TableRowVm vm || vm.IsAddRow) return;
+        if (row() is not { IsAddRow: false } vm) return;
         var index = vm.RowNumber - 1;
         SetCellSelection(new CellRange(index, FirstDataColumn, index, LastDataColumn));
     }

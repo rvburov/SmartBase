@@ -305,6 +305,94 @@ public sealed partial class ConstructorRepository
             return new ConstructorRepository(ctx).CountNonEmptyValues(collectionId, fieldId, excludeHidden);
         }, ct);
 
+    // ── Ранг записи в срезе: индекс строки по id ─────────────────────────────
+    //
+    // Ручные высоты строк хранятся по id записи, а раскладке рисованной сетки нужны индексы строк
+    // в текущем срезе (положение строки — сумма высот строк выше). Ранг — счет записей, идущих в
+    // порядке среза раньше данной: по индексу (CollectionId, Position) для порядка таблицы, по
+    // индексу (FieldId, Value) для головы сортировки; хвост без значения — как порядок таблицы.
+    // Один запрос на запись; записей с ручной высотой единицы.
+
+    /// <summary>Индекс записи в порядке таблицы (Position, Id) среди показанных; null — записи
+    /// в коллекции нет или она скрыта.</summary>
+    public int? RankInTableOrder(int collectionId, int recordId, bool excludeHidden)
+    {
+        if (!RecordShown(collectionId, recordId, excludeHidden)) return null;
+        return (int)ScalarSql($@"SELECT COUNT(*) FROM db_records i
+                                 WHERE i.CollectionId = @c{HiddenFilter(excludeHidden, "i")}
+                                   AND (i.Position, i.Id) < (SELECT r.Position, r.Id FROM db_records r WHERE r.Id = @id)",
+                              ("@c", collectionId), ("@id", recordId));
+    }
+
+    /// <summary>Индекс записи в сортированном по индексу виде: в голове (непустое значение поля) —
+    /// по (Value, RecordId) в направлении сортировки; в хвосте — длина головы плюс ранг среди записей
+    /// без значения в порядке таблицы. null — записи нет или скрыта.</summary>
+    public int? RankInSortedView(int collectionId, int fieldId, bool asc, bool excludeHidden, int recordId, int headCount)
+    {
+        if (!RecordShown(collectionId, recordId, excludeHidden)) return null;
+        var args = new List<(string, object)> { ("@c", collectionId), ("@f", fieldId), ("@id", recordId) };
+        var hidden = HiddenFilterByRecordId(excludeHidden, "fv.RecordId");
+        var value  = ScalarText("SELECT Value FROM db_field_values WHERE RecordId = @id AND FieldId = @f", ("@id", recordId), ("@f", fieldId));
+        if (value is { Length: > 0 })
+        {
+            args.Add(("@v", value));
+            return (int)ScalarSql($@"SELECT COUNT(*) FROM db_field_values fv
+                                     WHERE fv.FieldId = @f AND fv.Value <> '' AND (fv.Value, fv.RecordId) {(asc ? "<" : ">")} (@v, @id){hidden}",
+                                  args.ToArray());
+        }
+        var tailRank = ScalarSql($@"SELECT COUNT(*) FROM db_records i
+                                    WHERE i.CollectionId = @c{HiddenFilter(excludeHidden, "i")}
+                                      AND NOT EXISTS (SELECT 1 FROM db_field_values v WHERE v.RecordId = i.Id AND v.FieldId = @f AND v.Value <> '')
+                                      AND (i.Position, i.Id) < (SELECT r.Position, r.Id FROM db_records r WHERE r.Id = @id)",
+                                 args.ToArray());
+        return headCount + (int)tailRank;
+    }
+
+    /// <summary>Индексы записей в срезе на отдельном подключении в фоне: порядок таблицы или
+    /// сортировка по индексу (<paramref name="sortFieldId"/>). Записей, которых в срезе нет, в ответе нет.</summary>
+    public Task<Dictionary<int, int>> RankRecordsAsync(int collectionId, IReadOnlyList<int> recordIds, bool excludeHidden,
+                                                       int? sortFieldId, bool sortAsc, CancellationToken ct = default) =>
+        Task.Run(() =>
+        {
+            using var slow = Diag.Measure("индексы строк с ручной высотой", Diag.UiQuery,
+                                          $"{SmartBase.Utils.DbErrors.Display(db.DbPath)}, коллекция {collectionId}, записей {recordIds.Count}");
+            using var ctx = new AppDbContext(db.DbPath);
+            ctx.ApplyPerformancePragmas();
+            var repo   = new ConstructorRepository(ctx);
+            var result = new Dictionary<int, int>();
+            var head   = sortFieldId is int f ? repo.CountNonEmptyValues(collectionId, f, excludeHidden) : 0;
+            foreach (var rid in recordIds)
+            {
+                ct.ThrowIfCancellationRequested();
+                var rank = sortFieldId is int fid
+                    ? repo.RankInSortedView(collectionId, fid, sortAsc, excludeHidden, rid, head)
+                    : repo.RankInTableOrder(collectionId, rid, excludeHidden);
+                if (rank is int r) result[rid] = r;
+            }
+            return result;
+        }, ct);
+
+    private bool RecordShown(int collectionId, int recordId, bool excludeHidden) =>
+        ScalarSql($"SELECT COUNT(*) FROM db_records r WHERE r.Id = @id AND r.CollectionId = @c{HiddenFilter(excludeHidden)}",
+                  ("@id", recordId), ("@c", collectionId)) > 0;
+
+    // Текстовый скаляр raw SQL; null — строки нет или NULL.
+    private string? ScalarText(string sql, params (string Name, object Value)[] args)
+    {
+        var conn   = db.Database.GetDbConnection();
+        var opened = conn.State != System.Data.ConnectionState.Open;
+        if (opened) conn.Open();
+        try
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = sql;
+            foreach (var (name, value) in args) AddParam(cmd, name).Value = value;
+            var v = cmd.ExecuteScalar();
+            return v is null || v is DBNull ? null : Convert.ToString(v);
+        }
+        finally { if (opened) conn.Close(); }
+    }
+
     // ── Счетчик записей без ожидания ─────────────────────────────────────────
 
     /// <summary>

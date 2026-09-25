@@ -699,7 +699,12 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
     /// Индексатор для этого не годится: на каждой незагруженной странице он стартует фоновую
     /// загрузку, и обход столбца большой коллекции завел бы тысячи загрузок подряд.
     /// </summary>
-    public IReadOnlyList<TableRowVm> MaterializeRange(int start, int count)
+    public IReadOnlyList<TableRowVm> MaterializeRange(int start, int count) => MaterializeRange(start, count, null);
+
+    /// <summary>То же, но с проверкой окна колонок: страница из кеша годится, только если у нее
+    /// прочитаны все <paramref name="fieldIds"/> (при окне колонок в строках лежат значения лишь
+    /// видимых полей) — иначе строки читаются из базы целиком, мимо кеша.</summary>
+    public IReadOnlyList<TableRowVm> MaterializeRange(int start, int count, IReadOnlyList<int>? fieldIds)
     {
         var end    = Math.Min((long)start + count, _dataCount);
         var result = new List<TableRowVm>((int)Math.Max(0, end - start));
@@ -711,7 +716,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
             var skip = page * PageSize;
             var take = Math.Min(PageSize, _dataCount - skip);
 
-            var rows = _pages.TryGetValue(page, out var cached) && !_pending.Contains(page)
+            var rows = _pages.TryGetValue(page, out var cached) && !_pending.Contains(page) && PageHasFields(page, fieldIds)
                 ? cached
                 : ReadDetachedRows(skip, take);
 
@@ -767,6 +772,16 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
         }
 
         return result;
+    }
+
+    // Все ли нужные поля у страницы прочитаны (null у страницы — все поля; null в запросе — годится любая).
+    private bool PageHasFields(int page, IReadOnlyList<int>? fieldIds)
+    {
+        if (fieldIds is null || fieldIds.Count == 0) return true;
+        if (!_pageFields.TryGetValue(page, out var loaded) || loaded is null) return true;
+        foreach (var f in fieldIds)
+            if (Array.IndexOf(loaded, f) < 0) return false;
+        return true;
     }
 
     // Строки страницы прямо из базы, мимо кеша и без подписок: см. MaterializeRange.

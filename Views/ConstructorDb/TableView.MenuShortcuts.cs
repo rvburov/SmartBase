@@ -192,6 +192,17 @@ public partial class TableView
             return true;
         }
 
+        if (_drawn is not null)
+        {
+            // Рисованная сетка: меню строки строится здесь же — для записи активной ячейки, иначе
+            // для первой выделенной записи; строка обязана быть загруженной (id известен).
+            var vm = _cellRange is { } range ? CachedRowAt(range.AnchorRow)
+                   : SelectedRecordIds() is { Count: > 0 } ids ? RowsSource?.FindCachedByRecordId(ids[0])
+                   : null;
+            OpenDrawnMenu(vm is { IsAddRow: false } ? BuildRowContextMenu(() => vm) : BuildGridContextMenu());
+            return true;
+        }
+
         if (RowUnderSelection() is { ContextMenu: { } rowMenu })
         {
             rowMenu.Open(this);

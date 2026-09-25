@@ -487,4 +487,86 @@ public sealed class GridPagesTests
         Assert.All(rows, r => Assert.Equal(s.TextOf[r.RecordId], r.SortValue));
         Assert.All(rows, r => Assert.Equal(s.TextOf[r.RecordId], r.Values[s.Text]));
     }
+
+    // ── Ранг записи в срезе (индексы строк с ручной высотой, этап 2) ─────────
+
+    [Fact]
+    public void Rank_in_table_order_matches_position_and_skips_hidden()
+    {
+        using var db = new TempDatabase();
+        var s    = Seed(db);
+        var repo = db.Constructor;
+        var order = Ids(s.Recs.OrderBy(r => r.Position).ThenBy(r => r.Id));
+
+        Assert.Equal(0,               repo.RankInTableOrder(s.Col, order[0], false));
+        Assert.Equal(7,               repo.RankInTableOrder(s.Col, order[7], false));
+        Assert.Equal(order.Count - 1, repo.RankInTableOrder(s.Col, order[^1], false));
+        Assert.Null(repo.RankInTableOrder(s.Col, 999_999, false));
+
+        repo.SaveRecordDisplay(s.Col, [(order[2], false, 0)]);
+        Assert.Null(repo.RankInTableOrder(s.Col, order[2], true));       // скрытая — не в срезе
+        Assert.Equal(6, repo.RankInTableOrder(s.Col, order[7], true));   // без скрытой выше
+        Assert.Equal(7, repo.RankInTableOrder(s.Col, order[7], false));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Rank_in_sorted_view_covers_head_and_tail(bool asc)
+    {
+        using var db = new TempDatabase();
+        var s    = Seed(db);
+        var repo = db.Constructor;
+        var view      = HeadReference(s, asc).Concat(TailReference(s)).ToList();
+        var headCount = repo.CountNonEmptyValues(s.Col, s.Text, false);
+
+        for (var i = 0; i < view.Count; i++)
+            Assert.Equal(i, repo.RankInSortedView(s.Col, s.Text, asc, false, view[i], headCount));
+    }
+
+    [Fact]
+    public async Task Rank_records_async_resolves_indexes_for_plain_and_sorted()
+    {
+        using var db = new TempDatabase();
+        var s    = Seed(db);
+        var repo = db.Constructor;
+        var order = Ids(s.Recs.OrderBy(r => r.Position).ThenBy(r => r.Id));
+
+        var plain = await repo.RankRecordsAsync(s.Col, [order[3], order[10], 424242], false, null, true);
+        Assert.Equal(new Dictionary<int, int> { [order[3]] = 3, [order[10]] = 10 }, plain);
+
+        var view   = HeadReference(s, false).Concat(TailReference(s)).ToList();
+        var sorted = await repo.RankRecordsAsync(s.Col, [view[0], view[^1]], false, s.Text, false);
+        Assert.Equal(0,              sorted[view[0]]);
+        Assert.Equal(view.Count - 1, sorted[view[^1]]);
+    }
+
+    // Копирование и вставка (этап 3) читают диапазон строк синхронно из кеша страниц, а страницы
+    // рисованной сетки несут значения только колонок окна: поле вне окна из кеша брать нельзя.
+    [Fact]
+    public void Materialize_range_reads_fields_outside_the_column_window_from_the_database()
+    {
+        using var db = new TempDatabase();
+        var s    = Seed(db, 12);
+        var repo = db.Constructor;
+        var list = new VirtualRowList(repo, s.Col, repo.GetFields(s.Col), knownCount: 12);
+
+        list.SetFieldWindow([s.Text]);
+        list.RefreshStructural();   // страница 0 строится синхронно — только с полем окна
+
+        var cached = list.TryGetCached(1)!;
+        Assert.Equal(s.TextOf.GetValueOrDefault(cached.RecordId, ""), cached[s.Text.ToString()]);
+        Assert.Equal("", cached[s.Num.ToString()]);   // числа в кеше нет — колонка вне окна
+
+        // Поле окна — из кеша (те же строки); поле вне окна — из базы, со значениями.
+        var fromCache = list.MaterializeRange(0, 5, [s.Text]);
+        Assert.Same(cached, fromCache[1]);
+
+        var fromDb = list.MaterializeRange(0, 5, [s.Num]);
+        Assert.Equal(5, fromDb.Count);
+        Assert.NotSame(cached, fromDb[1]);
+        foreach (var row in fromDb)
+            Assert.Equal(s.NumOf.GetValueOrDefault(row.RecordId, ""), row[s.Num.ToString()]);
+        Assert.Equal(cached.RecordId, fromDb[1].RecordId);
+    }
 }

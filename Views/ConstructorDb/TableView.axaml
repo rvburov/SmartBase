@@ -222,7 +222,7 @@
          соседей вместо расширения таблицы. Ширины ведет код — ApplyColumnWidths плюс свои
          полоски-захваты (ColResizeLayer). Заодно False защищает служебные «№» и «+» от
          раздачи ширин движком. -->
-    <Panel>
+    <Panel x:Name="Root">
         <DataGrid x:Name="RecordsGrid"
                   AutoGenerateColumns="False"
                   RowHeight="{DynamicResource RowHeightTable}"

@@ -86,6 +86,7 @@ public partial class TableView
     public void ClearCellSelection()
     {
         _dragSelecting = false;
+        EndDrawnDrag();
         if (_cellRange is null) return;
         _cellRange         = null;
         _selectionIdentity = null;
@@ -94,10 +95,21 @@ public partial class TableView
 
     private void AfterSelectionChanged()
     {
+        if (_drawn is not null)
+        {
+            // Рисованная сетка: рамка — часть кадра, класс на гриде не нужен.
+            PushDrawnCellSelection();
+            RaiseSelectionLabel();
+            return;
+        }
         ApplyCellSelectionClass();
         RefreshCellSelectionOverlay();
         RaiseSelectionLabel();
     }
+
+    // Источник строк показанной таблицы: список рисованной сетки либо нынешний (отфильтрованный
+    // или полный). Все разрешения позиций в строки идут через него.
+    private VirtualRowList? RowsSource => _drawn is not null ? _drawn.Rows : _activeRows ?? _virtualRows;
 
     private SelectionIdentity? IdentityOf(CellRange range)
     {
@@ -181,7 +193,7 @@ public partial class TableView
                 _selectionIdentity = id with { AnchorRecordId = atAnchor.RecordId };
             else if (atAnchor.RecordId != id.AnchorRecordId)
             {
-                if ((_activeRows ?? _virtualRows)?.FindCachedByRecordId(id.AnchorRecordId) is not { } moved)
+                if (RowsSource?.FindCachedByRecordId(id.AnchorRecordId) is not { } moved)
                 {
                     ClearCellSelection();
                     return;
@@ -265,15 +277,22 @@ public partial class TableView
 
     // На сколько строк листают PageUp/PageDown: сколько их сейчас на экране.
     private int PageRows() =>
-        DisplayedSlots() is { } slots ? Math.Max(1, slots.Last - slots.First) : 10;
+        _drawn is not null ? _drawn.PageRows()
+        : DisplayedSlots() is { } slots ? Math.Max(1, slots.Last - slots.First) : 10;
 
     /// <summary>Прокрутить таблицу к ячейке. Индексатор списка заведет загрузку только ОДНОЙ
     /// страницы — той, куда едем.</summary>
     private void ScrollCellIntoView(int row, int column)
     {
+        if (row < 0 || row >= VisibleRowCount || column < 0 || column >= _colDefs.Count) return;
+        if (_drawn is not null)
+        {
+            // Арифметика раскладок: Ctrl+End на 10 млн строк — сразу, страницу заведет само окно.
+            _drawn.ScrollToCell(row, _colDefs[column].Key);
+            return;
+        }
         var source = _activeRows ?? _virtualRows;
-        if (source is null || row < 0 || row >= VisibleRowCount) return;
-        if (column < 0 || column >= RecordsGrid.Columns.Count) return;
+        if (source is null || column >= RecordsGrid.Columns.Count) return;
 
         RecordsGrid.ScrollIntoView(source[row], RecordsGrid.Columns[column]);
     }
@@ -286,6 +305,7 @@ public partial class TableView
     /// </summary>
     private void BeginEditAt(int row, int column)
     {
+        if (_drawn is not null) return;   // правка в рисованной сетке — этап 4
         if (!IsDataColumn(column) || CachedRowAt(row) is not { } item) return;
 
         var col = RecordsGrid.Columns[column];
@@ -343,17 +363,10 @@ public partial class TableView
     // ── Разрешение координат в данные ─────────────────────────────────────────
 
     /// <summary>Строка по позиции, только если она уже загружена; загрузку не заводит.</summary>
-    private TableRowVm? CachedRowAt(int index) => (_activeRows ?? _virtualRows)?.TryGetCached(index);
+    private TableRowVm? CachedRowAt(int index) => RowsSource?.TryGetCached(index);
 
     /// <summary>Сколько строк с данными показано сейчас (без строки «+»).</summary>
-    private int VisibleRowCount
-    {
-        get
-        {
-            var source = _activeRows ?? (System.Collections.IList?)_virtualRows;
-            return source is null ? 0 : Math.Max(0, source.Count - 1);
-        }
-    }
+    private int VisibleRowCount => RowsSource is { } source ? Math.Max(0, source.Count - 1) : 0;
 
     /// <summary>
     /// Сколько строк выделения обрабатывается за один раз. Больше <see cref="SyncRangeRows"/>
@@ -399,10 +412,10 @@ public partial class TableView
     /// отменили (человеку уже сказано или он сам нажал «Отмена»).</summary>
     private async Task<IReadOnlyList<TableRowVm>?> RowsOfRangeAsync(int top, int count, IReadOnlyList<int> fieldIds)
     {
-        var source = _activeRows ?? _virtualRows;
+        var source = RowsSource;
         if (source is null || count <= 0) return [];
         if (TooManyRows(count)) return null;
-        if (count <= SyncRangeRows) return source.MaterializeRange(top, count);
+        if (count <= SyncRangeRows) return source.MaterializeRange(top, count, fieldIds);
 
         return await WithProgressAsync<IReadOnlyList<TableRowVm>>("Чтение выделенных строк…",
             async (progress, ct) => await source.MaterializeRangeAsync(top, count, fieldIds, progress, ct));
@@ -531,6 +544,7 @@ public partial class TableView
         // выделение догоняет свои записи, потом рисуется.
         FollowSelectionIdentity();
         RaiseSelectionLabel();
+        if (_drawn is not null) { PushDrawnCellSelection(); return; }   // рамку рисует сама сетка
 
         // Сначала считаем целевую геометрию, НЕ трогая дерево.
         var target = new List<Rect>();

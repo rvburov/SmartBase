@@ -282,6 +282,7 @@ public partial class TableView : UserControl
         // Delete по выделенным колонкам. Tunnel — чтобы перехватить раньше, чем
         // DataGrid обработает клавишу для редактирования/навигации.
         AddHandler(KeyDownEvent, OnTableKeyDown, RoutingStrategies.Tunnel);
+        InitDrawnGrid();   // переключатель разработчика (TableView.DrawnGrid.cs)
     }
 
     /// <summary>Пользователь сейчас редактирует ячейку (открыт cell-editor DataGrid).</summary>
@@ -629,14 +630,16 @@ public partial class TableView : UserControl
     // выделенных нет: грид при этом может держать строку выделенной внутри себя (без этого не
     // открывается правка), но на экране она не подсвечена — и попадать в удаление, дубль или
     // «Действия» то, чего человек не видит выделенным, не должно.
-    private List<int> SelectedRecordIds() =>
+    internal List<int> SelectedRecordIds() =>
         HasCellSelection
             ? []
-            : RecordsGrid.SelectedItems
-                .OfType<TableRowVm>()
-                .Where(r => !r.IsAddRow)
-                .Select(r => r.RecordId)
-                .ToList();
+            : _drawn is not null
+                ? [.. _drawn.SelectedRecordIds]
+                : RecordsGrid.SelectedItems
+                    .OfType<TableRowVm>()
+                    .Where(r => !r.IsAddRow)
+                    .Select(r => r.RecordId)
+                    .ToList();
 
     // Фокус внутри текстового поля ячейки — чтобы Delete правил текст, а не удалял строки.
     private static bool IsTextInputFocused(KeyEventArgs e) =>
@@ -670,6 +673,8 @@ public partial class TableView : UserControl
         // Diag.UiOpen — в журнал с базой и коллекцией.
         using var slow = Diag.Measure("открытие коллекции", Diag.UiOpen,
                                       $"{DbErrors.Display(repository.DbPath)}, коллекция {collectionId}");
+
+        if (_drawn is not null) { LoadDrawn(repository, collectionId, snapshot); return; }
 
         var sameCollection = _lastLoadedCollectionId == collectionId;
 
@@ -752,13 +757,14 @@ public partial class TableView : UserControl
     // Текущая вертикальная прокрутка (0, если API недоступен). Для сохранения позиции
     // при создании записи в середине таблицы.
     public double CurrentVerticalOffset() =>
-        (VScrollBarProp?.GetValue(RecordsGrid) as ScrollBar)?.Value ?? 0;
+        _drawn?.CurrentVerticalOffset() ?? (VScrollBarProp?.GetValue(RecordsGrid) as ScrollBar)?.Value ?? 0;
 
     // Восстанавливает вертикальную прокрутку после пересборки: высота контента готова
     // не сразу, поэтому ждем через LayoutUpdated, пока Maximum дорастет до offset,
     // затем выставляем Value и применяем через ProcessVerticalScroll (ThumbTrack).
     public void RestoreVerticalOffset(double offset)
     {
+        if (_drawn is not null) { _drawn.RestoreVerticalOffset(offset); return; }
         if (offset <= 0 || VScrollBarProp is null || ProcessVScrollMethod is null) return;
 
         // Копии в ненулевые локальные переменные: проверка выше не «доезжает» внутрь Handler —
@@ -806,20 +812,32 @@ public partial class TableView : UserControl
     private ScrollBar? VerticalScrollBar => VScrollBarProp?.GetValue(RecordsGrid) as ScrollBar;
 
     /// <summary>Экран назад (кнопка «‹»).</summary>
-    public void ScrollRowsPageBack() =>
+    public void ScrollRowsPageBack()
+    {
+        if (_drawn is not null) { _drawn.ScrollRowsPageBack(); return; }
         ApplyVerticalScroll(sb => TableViewportScroll.PageBack(sb.Value, sb.ViewportSize, sb.Maximum));
+    }
 
     /// <summary>Экран вперед (кнопка «›»).</summary>
-    public void ScrollRowsPageForward() =>
+    public void ScrollRowsPageForward()
+    {
+        if (_drawn is not null) { _drawn.ScrollRowsPageForward(); return; }
         ApplyVerticalScroll(sb => TableViewportScroll.PageForward(sb.Value, sb.ViewportSize, sb.Maximum));
+    }
 
     /// <summary>В начало таблицы (кнопка «‹‹»).</summary>
-    public void ScrollRowsToStart() =>
+    public void ScrollRowsToStart()
+    {
+        if (_drawn is not null) { _drawn.ScrollRowsToStart(); return; }
         ApplyVerticalScroll(_ => TableViewportScroll.ToStart());
+    }
 
     /// <summary>В конец таблицы (кнопка «››»).</summary>
-    public void ScrollRowsToEnd() =>
+    public void ScrollRowsToEnd()
+    {
+        if (_drawn is not null) { _drawn.ScrollRowsToEnd(); return; }
         ApplyVerticalScroll(sb => TableViewportScroll.ToEnd(sb.Maximum));
+    }
 
     // Ставит полосу в посчитанную позицию и применяет ее к строкам. ThumbTrack —
     // та же ветка, что и у перетаскивания ползунка: инвалидирует measure, поэтому
@@ -849,6 +867,7 @@ public partial class TableView : UserControl
     /// </summary>
     public TableViewportRange VisibleRowRange()
     {
+        if (_drawn is not null) return _drawn.VisibleRowRange();
         // Count у списка = записи + строка «+».
         var total = Math.Max(0, (_activeRows?.Count ?? 0) - 1);
         if (total == 0) return TableViewportRange.Empty;
@@ -993,7 +1012,11 @@ public partial class TableView : UserControl
     // Прокручивает таблицу к правому краю — к колонке «+» (добавление свойства).
     // Используется после добавления нового свойства через правый «+»: новая колонка
     // и кнопка «+» остаются видны (аналог ScrollToRecord, удерживающего add-row «+»).
-    public void ScrollToAddPropertyColumn() => ApplyHorizontalOffsetDeferred(double.MaxValue);
+    public void ScrollToAddPropertyColumn()
+    {
+        if (_drawn is not null) { _drawn.ScrollToAddPropertyColumn(); return; }
+        ApplyHorizontalOffsetDeferred(double.MaxValue);
+    }
 
     // Откладывает выставление горизонтального offset до тех пор, пока star-ширины
     // колонок не осядут (несколько layout-проходов). offsetX — желаемая позиция;
@@ -1050,6 +1073,7 @@ public partial class TableView : UserControl
 
     public void Clear()
     {
+        _drawn?.Clear();
         _repository   = null;
         _collectionId = 0;
         _lastLoadedCollectionId = null;
@@ -1084,6 +1108,7 @@ public partial class TableView : UserControl
     public void SetColResizeMode(bool manual)
     {
         _manualColResize = manual;
+        if (_drawn is not null) { _drawn.SetColResizeMode(manual); return; }
 
         // Выключение ручного режима сбрасывает все сохраненные ширины на стандарт
         // (как сброс высот при переходе на стандартную высоту строк).
@@ -1113,13 +1138,14 @@ public partial class TableView : UserControl
     }
 
     // Текущий режим ширины столбцов (для отметки активного пункта в меню).
-    public bool IsManualColResize => _manualColResize;
+    public bool IsManualColResize => _drawn?.IsManualColResize ?? _manualColResize;
 
     // Переключение режима высоты строк (вызывается из меню записи). Запоминаем режим
     // между сессиями — как и режим ширины столбцов (раньше управлялся из футера).
     public void SetRowResizeMode(bool manual)
     {
         _manualRowResize = manual;
+        if (_drawn is not null) { _drawn.SetRowResizeMode(manual); return; }
 
         // Выключение ручного режима сбрасывает все сохраненные высоты на стандарт
         // (как сброс ширин при переходе на стандартную ширину столбцов).
@@ -1156,10 +1182,11 @@ public partial class TableView : UserControl
     }
 
     // Текущий режим высоты строк (для отметки активного пункта в меню).
-    public bool IsManualRowResize => _manualRowResize;
+    public bool IsManualRowResize => _drawn?.IsManualRowResize ?? _manualRowResize;
 
     public void ScrollToRecord(int recordId)
     {
+        if (_drawn is not null) { _drawn.ScrollToRecord(recordId); return; }
         if (_virtualRows is null) return;
         Dispatcher.UIThread.Post(() =>
         {
@@ -1206,6 +1233,7 @@ public partial class TableView : UserControl
     public void ReloadRows()
     {
         if (_repository is null) return;
+        if (_drawn is not null) { _drawn.ReloadRows(); return; }
 
         ForgetCellEditing();   // ниже меняется ItemsSource — редактор умрет молча
 
@@ -1241,6 +1269,7 @@ public partial class TableView : UserControl
     public void ReloadRowsStructural()
     {
         if (_repository is null) return;
+        if (_drawn is not null) { _drawn.ReloadRowsStructural(); return; }
         if (_virtualRows is null || _filters.Count > 0 || _sortKey is not null) { ReloadRows(); return; }
 
         _virtualRows.RefreshStructural();
@@ -1256,6 +1285,7 @@ public partial class TableView : UserControl
     public void ReloadColumns()
     {
         if (_repository is null) return;
+        if (_drawn is not null) { ReloadColumnsDrawn(); return; }
 
         var keepH = CurrentScrollOffset();
 
@@ -1307,6 +1337,7 @@ public partial class TableView : UserControl
     public void AddColumnForField(int fieldId)
     {
         if (_repository is null) return;
+        if (_drawn is not null) { ReloadColumnsDrawn(); return; }
 
         LoadColumnState();
         var newDefs = BuildColDefs();
@@ -1332,6 +1363,7 @@ public partial class TableView : UserControl
     public void RebuildColumn(string key)
     {
         if (_repository is null) return;
+        if (_drawn is not null) { ReloadColumnsDrawn(); return; }
 
         LoadColumnState();
         var newDefs = BuildColDefs();
@@ -1595,6 +1627,13 @@ public partial class TableView : UserControl
         if (_repository is null) return;
 
         _repository.MoveRecord(_collectionId, recordId, up);
+        if (_drawn is not null)
+        {
+            // Выделение записей — по id, за сдвинутой записью следует само; строки перечитываются на месте.
+            _drawn.Rows?.RefreshLoadedPages();
+            _drawn.SetRecordSelection([recordId]);
+            return;
+        }
         _virtualRows?.RefreshLoadedPages();   // порядок изменился — перечитываем видимые строки на месте
 
         // Выделение «следует» за сдвинутой записью. После пере-Fill строки остаются на своих ИНДЕКСАХ,
@@ -1619,6 +1658,12 @@ public partial class TableView : UserControl
         // затер бы свежее из панели. CancelEdit отменяет (не коммитит) правку, после чего ячейка
         // показывает биндинг-дисплей. Правка ДРУГОЙ записи к обновлению отношения не имеет: раньше
         // ее закрывало любое перечитывание панели, и набор текста в таблице обрывался на паузе.
+        if (_drawn is not null)
+        {
+            _drawn.Rows?.RefreshRecord(recordId);
+            _drawn.Rows?.RefreshRelationTargets(recordId);
+            return;
+        }
         if (IsCellEditing && _editingCell is { } cell && CachedRowAt(cell.Row)?.RecordId == recordId)
             RecordsGrid.CancelEdit();
         _activeRows?.RefreshRecord(recordId);
@@ -1635,6 +1680,12 @@ public partial class TableView : UserControl
     public void SelectRecords(IReadOnlyList<int> recordIds)
     {
         ClearCellSelection();   // выделяются записи — рамка ячеек гаснет, иначе Delete двусмыслен
+        if (_drawn is not null)
+        {
+            // Рисованная сетка выделяет по id: подсветка появится у записи, как только ее строка окажется в кадре.
+            _drawn.SetRecordSelection(recordIds);
+            return;
+        }
         RecordsGrid.SelectedItems.Clear();
         if (_virtualRows is null) return;
         foreach (var id in recordIds)
@@ -1643,7 +1694,11 @@ public partial class TableView : UserControl
     }
 
     // Снять все выделение записей (после удаления — удаленные строки не должны оставаться «подсвеченными»).
-    public void ClearRecordSelection() => RecordsGrid.SelectedItems.Clear();
+    public void ClearRecordSelection()
+    {
+        if (_drawn is not null) _drawn.ClearRecordSelection();
+        else RecordsGrid.SelectedItems.Clear();
+    }
 
     // Можно ли двигать запись вверх/вниз (не крайняя ли она в порядке коллекции).
     // O(1)-сик соседа: вызывается при открытии контекстного меню — никаких COUNT'ов.
@@ -2104,11 +2159,15 @@ public partial class TableView : UserControl
         if (text is not null) editor.Foreground = text;
     }
 
+    // Оформление строк и колонок: у рисованной сетки словари живут в ее панели (она читает их на
+    // кадре и перечитывает при перезагрузке), у нынешней — здесь.
     private RowStyle RowStyleOf(int recordId) =>
-        _rowStyles.TryGetValue(recordId, out var s) ? s : RowStyle.None;
+        _drawn is not null ? _drawn.RowStyleOf(recordId)
+        : _rowStyles.TryGetValue(recordId, out var s) ? s : RowStyle.None;
 
     private RowStyle ColumnStyleOf(string key) =>
-        _columnStyles.TryGetValue(key, out var s) ? s : RowStyle.None;
+        _drawn is not null ? _drawn.ColumnStyleOf(key)
+        : _columnStyles.TryGetValue(key, out var s) ? s : RowStyle.None;
 
     private IDataTemplate BuildCellContentTemplate(TableColumnDef def) =>
         new FuncDataTemplate<TableRowVm>((row, _) =>
@@ -2723,6 +2782,7 @@ public partial class TableView : UserControl
     // выделенной записи (DataGridRow:selected, TableView.axaml).
     private void ApplyColumnSelection()
     {
+        if (_drawn is not null) { _drawn.SetColumnSelection(_selectedColumnKeys); return; }   // заливка — при рисовании
         var on = (this.FindResource("BrushAccentLight") as ISolidColorBrush)?.Color ?? Colors.Transparent;
         foreach (var (key, brush) in _colSelBrushes)
             brush.Color = _selectedColumnKeys.Contains(key) ? on : Colors.Transparent;
@@ -2765,13 +2825,14 @@ public partial class TableView : UserControl
         return menu;
     }
 
-    // Меню строится с ЛЕНИВЫМ резолвом RecordId из текущего DataContext строки (см. RowRecordId),
-    // а не с захватом id в момент BuildRowContextMenu. Причина: при фоновой подгрузке строк
-    // строка сперва realized как заглушка «Загрузка…» с RecordId=0,
-    // и только потом Fill проставляет реальный id в ТОТ ЖЕ VM — без повторного realized, т.е. без
-    // повторного OnLoadingRow. Захваченный id остался бы 0: дубль падал «Record 0 not found»,
-    // удаление/изменение/сдвиг — тихий no-op. Чтение на момент клика всегда дает актуальный id.
-    private ContextMenu BuildRowContextMenu(DataGridRow row)
+    // Меню строится с ЛЕНИВЫМ резолвом строки и ее RecordId (см. RecordIdOf), а не с захватом id в
+    // момент BuildRowContextMenu. Причина: при фоновой подгрузке строк строка сперва realized как
+    // заглушка «Загрузка…» с RecordId=0, и только потом Fill проставляет реальный id в ТОТ ЖЕ VM —
+    // без повторного realized, т.е. без повторного OnLoadingRow. Захваченный id остался бы 0: дубль
+    // падал «Record 0 not found», удаление/изменение/сдвиг — тихий no-op. Чтение на момент клика
+    // всегда дает актуальный id. Нынешняя сетка передает DataContext своей строки (он меняется при
+    // переиспользовании), рисованная — саму строку списка (меню строится на правом нажатии).
+    private ContextMenu BuildRowContextMenu(Func<TableRowVm?> row)
     {
         var menu = new ContextMenu();
 
@@ -2781,7 +2842,7 @@ public partial class TableView : UserControl
         // (id=0) — создаем в конце.
         Guarded(miCreate, PermAction.CreateRecord, () =>
         {
-            var rid = RowRecordId(row);
+            var rid = RecordIdOf(row);
             RecordCreateRequested?.Invoke(this, (ConstructorSettings.OpenNewRecord, rid > 0 ? rid : (int?)null));
         });
         menu.Items.Add(miCreate);
@@ -2790,7 +2851,7 @@ public partial class TableView : UserControl
 
         var miEdit = new MenuItem { Header = Controls.Components.MenuIcons.EditHeader() }
             .WithGesture("table.openRecord", this);
-        miEdit.Click += (_, _) => { var rid = RowRecordId(row); if (rid > 0) RecordClicked?.Invoke(this, rid); };
+        miEdit.Click += (_, _) => { var rid = RecordIdOf(row); if (rid > 0) RecordClicked?.Invoke(this, rid); };
         menu.Items.Add(miEdit);
 
         var miDuplicate = new MenuItem { Header = Controls.Components.MenuIcons.DuplicateHeader() }
@@ -2830,10 +2891,9 @@ public partial class TableView : UserControl
         return menu;
     }
 
-    // Текущий RecordId строки из ее DataContext (0 — заглушка «Загрузка…» или add-row).
-    // Резолвится на момент вызова, поэтому видит id, проставленный async-заполнением строки.
-    private static int RowRecordId(DataGridRow row) =>
-        (row.DataContext as TableRowVm)?.RecordId ?? 0;
+    // Текущий RecordId строки (0 — заглушка «Загрузка…» или add-row). Резолвится на момент
+    // вызова, поэтому видит id, проставленный async-заполнением строки.
+    private static int RecordIdOf(Func<TableRowVm?> row) => row()?.RecordId ?? 0;
 
     /// <summary>
     /// Действия обмена, настроенные для открытой коллекции (docs/ROADMAP-API.md, шаг 6). Пусто —
@@ -2900,7 +2960,7 @@ public partial class TableView : UserControl
     // ВСЕМУ мультивыделению строк — как удаление и дубль. Состав пересчитывается в menu.Opening:
     // цвета строки к моменту клика могли измениться, а «текущий» цвет в палитре должен быть
     // отмечен верно.
-    private void AddColorItems(ContextMenu menu, DataGridRow row)
+    private void AddColorItems(ContextMenu menu, Func<TableRowVm?> row)
     {
         var host = new MenuItem { Header = Controls.Components.MenuIcons.ColorHeader() };
         Controls.Components.MenuIcons.FixSubmenuGap(host);
@@ -2915,7 +2975,7 @@ public partial class TableView : UserControl
 
             // Отмечаем цвет ТОЙ строки, по которой кликнули (в выделении она не обязательно
             // первая), а применяем ко всему набору — как у колонок.
-            var rowStyle = RowStyleOf(RowRecordId(row));
+            var rowStyle = RowStyleOf(RecordIdOf(row));
             host.Items.Add(ColorMenu.Build("Фон строки", rowStyle.Bg,
                 hex => ApplyRowStyle(ids, StyleAspect.Background, hex)));
             host.Items.Add(ColorMenu.Build("Цвет текста строки", rowStyle.Fg,
@@ -2928,9 +2988,9 @@ public partial class TableView : UserControl
 
     // Записи, к которым применяется команда меню строки: все мультивыделение, если строка
     // в него входит (правый клик по выделенной строке выделение сохраняет), иначе только она.
-    private List<int> TargetRecordIds(DataGridRow row)
+    private List<int> TargetRecordIds(Func<TableRowVm?> row)
     {
-        var recordId = RowRecordId(row);
+        var recordId = RecordIdOf(row);
         if (recordId <= 0) return [];
         var selected = SelectedRecordIds();
         return selected.Contains(recordId) && selected.Count > 1 ? selected : [recordId];
@@ -2941,6 +3001,9 @@ public partial class TableView : UserControl
         if (_repository is null) return;
         try { _repository.SetRowStyle(_collectionId, recordIds, aspect, hex); }
         catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { return; }
+
+        // Рисованная сетка держит оформление сама и красит при рисовании.
+        if (_drawn is not null) { _drawn.ApplyRowStyle(recordIds, aspect, hex); return; }
 
         foreach (var id in recordIds)
         {
@@ -2968,7 +3031,7 @@ public partial class TableView : UserControl
 
         foreach (var (recordId, key) in cells)
         {
-            var row = _activeRows?.FindCachedByRecordId(recordId);
+            var row = RowsSource?.FindCachedByRecordId(recordId);   // оформление ячеек живет в строке — обеим сеткам
             if (row is null) continue;
             var next = new Dictionary<string, RowStyle>();
             if (row.CellStyles is { } existing)
@@ -2988,15 +3051,19 @@ public partial class TableView : UserControl
         try { _repository.SetColumnStyle(_collectionId, keys, aspect, hex); }
         catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { return; }
 
-        foreach (var key in keys)
+        if (_drawn is not null) _drawn.ApplyColumnStyle(keys, aspect, hex);   // красит при рисовании
+        else
         {
-            var cur  = ColumnStyleOf(key);
-            var next = aspect == StyleAspect.Background ? cur with { Bg = hex } : cur with { Fg = hex };
-            if (next.IsEmpty) _columnStyles.Remove(key); else _columnStyles[key] = next;
-        }
+            foreach (var key in keys)
+            {
+                var cur  = ColumnStyleOf(key);
+                var next = aspect == StyleAspect.Background ? cur with { Bg = hex } : cur with { Fg = hex };
+                if (next.IsEmpty) _columnStyles.Remove(key); else _columnStyles[key] = next;
+            }
 
-        // Цвет колонки касается всех загруженных строк — уведомляем их разом.
-        _activeRows?.NotifyAllCachedRows();
+            // Цвет колонки касается всех загруженных строк — уведомляем их разом.
+            _activeRows?.NotifyAllCachedRows();
+        }
 
         // Снимаем выделение колонок: его голубая заливка лежит ПОД полупрозрачным цветом,
         // и на выделенной колонке разницу «покрасил / снял цвет» почти не видно. Выделение
@@ -3009,9 +3076,9 @@ public partial class TableView : UserControl
     // клик по выделенной строке его сохраняет) — удаляем весь набор; иначе только ее.
     // В любом случае идем через пакетный путь с подтверждением (RecordsDeleteRequested) —
     // как и удаление свойств.
-    private void RequestRecordDeleteFromMenu(DataGridRow row)
+    private void RequestRecordDeleteFromMenu(Func<TableRowVm?> row)
     {
-        var recordId = RowRecordId(row);
+        var recordId = RecordIdOf(row);
         if (recordId <= 0) return;   // строка-заглушка еще не заполнена — удалять нечего
 
         var selected = SelectedRecordIds();
@@ -3022,9 +3089,9 @@ public partial class TableView : UserControl
     // Дубль из меню записи (по аналогии с удалением): запись в мультивыделении → дублируем весь
     // набор; иначе только ее. Контроллер сам решает: одна — копия после исходной мгновенно,
     // несколько — bulk в фоне с индикатором.
-    private void RequestRecordDuplicateFromMenu(DataGridRow row)
+    private void RequestRecordDuplicateFromMenu(Func<TableRowVm?> row)
     {
-        var recordId = RowRecordId(row);
+        var recordId = RecordIdOf(row);
         if (recordId <= 0) return;   // строка-заглушка еще не заполнена — дублировать нечего
 
         var selected = SelectedRecordIds();
@@ -3034,9 +3101,9 @@ public partial class TableView : UserControl
 
     // «Расположение» из меню записи (как дубль/удаление): запись в мультивыделении →
     // переносим весь набор; иначе только ее. Контроллер открывает окно выбора БД/коллекции.
-    private void RequestRecordRelocateFromMenu(DataGridRow row)
+    private void RequestRecordRelocateFromMenu(Func<TableRowVm?> row)
     {
-        var recordId = RowRecordId(row);
+        var recordId = RecordIdOf(row);
         if (recordId <= 0) return;   // строка-заглушка еще не заполнена — переносить нечего
 
         var selected = SelectedRecordIds();
@@ -3049,17 +3116,17 @@ public partial class TableView : UserControl
     // сортировка, а не позиция, поэтому ручной сдвиг был бы невидим. Неприменимое
     // направление (крайняя запись) скрываем; видимость уточняем при открытии меню — тогда
     // же резолвится RecordId строки (async-заполнение к моменту открытия уже прошло).
-    private void AddRecordMoveItems(ContextMenu menu, DataGridRow row)
+    private void AddRecordMoveItems(ContextMenu menu, Func<TableRowVm?> row)
     {
         if (_sortKey is not null || _filters.Count > 0) return;
 
         var sep    = new Separator();
         var miUp   = new MenuItem { Header = Controls.Components.MenuIcons.MoveUpHeader() }
             .WithGesture("table.moveRecordUp", this);
-        miUp.Click += (_, _) => { var rid = RowRecordId(row); if (rid > 0) MoveRecord(rid, up: true); };
+        miUp.Click += (_, _) => { var rid = RecordIdOf(row); if (rid > 0) MoveRecord(rid, up: true); };
         var miDown = new MenuItem { Header = Controls.Components.MenuIcons.MoveDownHeader() }
             .WithGesture("table.moveRecordDown", this);
-        miDown.Click += (_, _) => { var rid = RowRecordId(row); if (rid > 0) MoveRecord(rid, up: false); };
+        miDown.Click += (_, _) => { var rid = RecordIdOf(row); if (rid > 0) MoveRecord(rid, up: false); };
 
         menu.Items.Add(sep);
         menu.Items.Add(miUp);
@@ -3067,7 +3134,7 @@ public partial class TableView : UserControl
 
         void Refresh()
         {
-            var rid     = RowRecordId(row);
+            var rid     = RecordIdOf(row);
             var canUp   = rid > 0 && CanMoveRecord(rid, up: true);
             var canDown = rid > 0 && CanMoveRecord(rid, up: false);
             miUp.IsVisible   = canUp;
@@ -3388,7 +3455,8 @@ public partial class TableView : UserControl
             e.Row.Height = double.NaN;   // строка «+» всегда стандартная
             return;
         }
-        e.Row.ContextMenu = BuildRowContextMenu(e.Row);
+        var gridRow = e.Row;
+        e.Row.ContextMenu = BuildRowContextMenu(() => gridRow.DataContext as TableRowVm);
 
         // Высота строки: в ручном режиме применяем сохраненную (если есть), иначе
         // сбрасываем на стандартную — важно для переиспользуемых строк (виртуализация).

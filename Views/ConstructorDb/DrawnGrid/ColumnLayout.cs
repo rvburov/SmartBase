@@ -106,43 +106,79 @@ public sealed class ColumnLayout
         var widths = new double[shown.Length];
 
         var service = 0.0;
-        var movable = 0;
+        var movable = new List<int>();
         for (var i = 0; i < shown.Length; i++)
         {
-            if (shown[i].IsStarWidth) { movable++; continue; }
+            if (shown[i].IsStarWidth) { movable.Add(i); continue; }
             widths[i] = Q(shown[i].FixedWidth);
             service  += widths[i];
         }
-        if (movable == 0) return new ColumnLayout(shown, widths);
+        if (movable.Count == 0) return new ColumnLayout(shown, widths);
 
-        var available = Math.Max(0, viewportWidth - service);
-        var manual    = manualWidths.Count > 0;
+        // Все в целых физических пикселях (квантах): сумма ширин обязана точно равняться ширине
+        // окна, когда таблица помещается, — иначе справа от «+» остается полоса или на пиксель
+        // вылезает горизонтальная прокрутка. Остатки раздаются методом наибольших остатков, как
+        // снап ширин нынешней таблицы.
+        var availUnits = (int)Math.Floor(Math.Max(0, viewportWidth - service) / quant + 1e-6);
+        var units      = new int[movable.Count];
+        var manual     = manualWidths.Count > 0;
 
         if (!manual)
         {
-            // Стандартный режим: поровну от ширины окна, но не уже стандартной ширины.
-            var share = Q(Math.Max(standardWidth, Math.Floor(available / movable / quant) * quant));
-            for (var i = 0; i < shown.Length; i++)
-                if (shown[i].IsStarWidth) widths[i] = share;
-            return new ColumnLayout(shown, widths);
+            // Стандартный режим: поровну от ширины окна, остаток — первым колонкам; уже
+            // стандартной ширины колонки не бывают (тогда таблица шире окна).
+            var baseU = availUnits / movable.Count;
+            if (baseU * quant < standardWidth)
+            {
+                var std = (int)Math.Max(1, Math.Round(standardWidth / quant));
+                for (var k = 0; k < units.Length; k++) units[k] = std;
+            }
+            else
+            {
+                var rem = availUnits - baseU * movable.Count;
+                for (var k = 0; k < units.Length; k++) units[k] = baseU + (k < rem ? 1 : 0);
+            }
+        }
+        else
+        {
+            // Ручной режим: ширина из модели, ниже своей колонка не опускается; остаток окна
+            // раздается пропорционально ширинам — пустоты справа нет, «+» у правого края.
+            var model = new double[movable.Count];
+            var sumU  = 0;
+            for (var k = 0; k < movable.Count; k++)
+            {
+                var key = shown[movable[k]].Key;
+                var w   = manualWidths.TryGetValue(key, out var m) && m > 0 ? m : standardWidth;
+                model[k] = Math.Max(MinManualWidth, w) / quant;
+                units[k] = Math.Max(1, (int)Math.Floor(model[k] + 1e-6));
+                sumU    += units[k];
+            }
+            if (availUnits <= sumU)
+            {
+                // Таблица шире окна: ширины из модели, округленные к ближайшему кванту.
+                for (var k = 0; k < units.Length; k++) units[k] = Math.Max(1, (int)Math.Round(model[k]));
+            }
+            else
+            {
+                var extra = availUnits - sumU;
+                var share = new double[units.Length];
+                var given = 0;
+                for (var k = 0; k < units.Length; k++)
+                {
+                    share[k]  = extra * (double)units[k] / sumU;
+                    var whole = (int)Math.Floor(share[k]);
+                    units[k] += whole;
+                    given    += whole;
+                }
+                foreach (var k in Enumerable.Range(0, units.Length)
+                                            .OrderByDescending(k => share[k] - Math.Floor(share[k]))
+                                            .ThenBy(k => k)
+                                            .Take(Math.Max(0, extra - given)))
+                    units[k]++;
+            }
         }
 
-        // Ручной режим: ширина из модели, ниже своей колонка не опускается; остаток окна
-        // раздается пропорционально ширинам — пустоты справа нет, «+» у правого края.
-        var sum = 0.0;
-        for (var i = 0; i < shown.Length; i++)
-        {
-            if (!shown[i].IsStarWidth) continue;
-            var w = manualWidths.TryGetValue(shown[i].Key, out var m) && m > 0 ? m : standardWidth;
-            widths[i] = Q(Math.Max(MinManualWidth, w));
-            sum += widths[i];
-        }
-        if (sum < available && sum > 0)
-        {
-            var extra = available - sum;
-            for (var i = 0; i < shown.Length; i++)
-                if (shown[i].IsStarWidth) widths[i] = Q(widths[i] + extra * widths[i] / sum);
-        }
+        for (var k = 0; k < movable.Count; k++) widths[movable[k]] = units[k] * quant;
         return new ColumnLayout(shown, widths);
     }
 }
