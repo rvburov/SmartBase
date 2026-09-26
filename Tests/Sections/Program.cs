@@ -22,6 +22,9 @@
 //   выделение, наведение) на неделе, которую стенд заводит в копию «Основной», против эталонов в
 //   --ref (по умолчанию ~/TestData/regress; нет эталона — кадр им становится); --dump — ширины блоков
 //   событий и поле их текста (сверка геометрии блока с прежней раскладкой).
+//   --only calops — операции календаря на базах 10 млн и wide1000: дублирование, удаление, перенос,
+//   растяжение, создание в «Неделе», «Дне», «Месяце», Диаграмме и «Журнале»; ожидание результата,
+//   паузы UI, полные перезагрузки вида, прокрутка и выделение после операции.
 
 using System.Diagnostics;
 using System.Reflection;
@@ -308,6 +311,7 @@ async Task Scenario()
     Console.WriteLine($"  Старт затих к {clock.Elapsed.TotalSeconds:0.0} с; смонтировано баз {workspace.Mounted.Count} из {registry.GetAll().Count}");
     if (only == "start") return;
     if (only == "frames") { await CalendarFrames(); return; }
+    if (only == "calops") { await CalendarOps(); return; }
 
     if (Want("modules"))
     foreach (var module in new[] { "calendar", "tasks", "library", "notes", "profile", "settings", "extensions", "constructor" })
@@ -319,7 +323,7 @@ async Task Scenario()
 
     // Календарь: все виды (0 — день … 6 — диаграмма), затем обратно к месяцу.
     if (Want("calendar")) ShowModule("calendar");
-    var calendar = main!.FindControl<Control>("CalendarModule")!;
+    var calendar = CalendarModule();
     // --repeat N — обход видов N раз: первый показ (построение вида, холодный кеш) отдельно
     // от повторных.
     if (Want("calendar"))
@@ -395,7 +399,7 @@ async Task CalendarFrames()
     var worst = 0;
 
     ShowModule("calendar");
-    var calendar = main!.FindControl<Control>("CalendarModule")!;
+    var calendar = CalendarModule();
     SetField(calendar, "_currentDate", new DateTime(2026, 7, 8));
     SetField(calendar, "_weekCentered", false);
     foreach (var (view, name, ctrl) in new[] { (3, "week", "WeekViewCtrl"), (2, "day", "DayViewCtrl") })
@@ -451,6 +455,40 @@ async Task CalendarFrames()
     await Frame($"cal-month-selected-{tag}");
     main.MouseDown(new Point(700, 880), MouseButton.Left);
     main.MouseUp(new Point(700, 880), MouseButton.Left);
+    // Диаграмма: июль 2026 — группы свернуты (как по умолчанию), затем раскрыта коллекция с
+    // заведенной неделей; выделение записи и наведение на строку.
+    Step("кадры: diagram");
+    SetField(calendar, "_currentDate", new DateTime(2026, 7, 8));
+    Call(calendar, "SwitchView", 6);
+    await Settle(quietSec: 1, capSec: 30);
+    var diagram = calendar.FindControl<Control>("DiagramViewCtrl")!;
+    await Frame($"cal-diagram-{tag}");
+    var seededCol = def.Constructor.GetAllCollections()
+                       .First(c => def.Constructor.GetFields(c.Id!.Value).Any(f => f.FieldType == "date" && f.IsCalStart)).Id!.Value;
+    ((System.Collections.IDictionary)Get(diagram, "_collapsed")!)[(def.DbId, seededCol)] = false;
+    Call(diagram, "BuildGroups");
+    Call(diagram, "BuildAll");
+    await Settle(quietSec: 0.5, capSec: 10);
+    await Frame($"cal-diagram-open-{tag}");
+    var rowH = (double)diagram.GetType().GetProperty("RowH", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
+    var pane = diagram.FindControl<Control>("TimelinePane")!;
+    foreach (var b in (System.Collections.IEnumerable)Get(diagram, "_barEntries")!)
+    {
+        var ev = (SmartBase.Core.Models.CalendarRecord)Get(b, "Ev")!;
+        if (ev.Title != "Конференция") continue;
+        var barAt = pane.TranslatePoint(new Point(((double)Get(b, "X1")! + (double)Get(b, "X2")!) / 2, (double)Get(b, "Y")! + rowH / 2), main)!.Value;
+        main.MouseMove(barAt);
+        main.MouseDown(barAt, MouseButton.Left);
+        main.MouseUp(barAt, MouseButton.Left);
+        break;
+    }
+    await Frame($"cal-diagram-selected-{tag}");
+    main.MouseDown(new Point(700, 880), MouseButton.Left);
+    main.MouseUp(new Point(700, 880), MouseButton.Left);
+    main.MouseMove(new Point(120, 300));
+    await Frame($"cal-diagram-hover-{tag}");
+    main.MouseMove(new Point(2, 2));
+
     // «Год»: 2027-й целиком (без сегодняшнего дня — кадр постоянный).
     Step("кадры: year");
     SetField(calendar, "_currentDate", new DateTime(2027, 3, 1));
@@ -550,6 +588,456 @@ async Task CalendarFrames()
     }
 }
 
+// Операции календаря на больших базах (--only calops): дублирование, удаление, перенос, растяжение
+// и создание в «Неделе», «Дне», «Месяце», Диаграмме и «Журнале» — на базе 10 млн (1270 событий в
+// день) и на wide1000 (запись с 1000 свойств). По каждой операции: сколько ждать результата, самая
+// длинная пауза UI-потока, была ли полная перезагрузка вида, осталась ли прокрутка на месте и что
+// выделено. Окна подтверждения и новой записи стенд заполняет сам. Созданное он удаляет, перенесенное
+// возвращает — база стенда после прогона прежняя.
+async Task CalendarOps()
+{
+    var big  = workspace.Mounted.First(d => d.Name == "test_database");
+    var wide = workspace.Mounted.FirstOrDefault(d => d.Name == "wide1000");
+    ShowModule("calendar");
+    await Settle(quietSec: 1, capSec: 60);
+    var calendar = CalendarModule();
+    var day      = new DateTime(2026, 9, 24);
+    var failures = new List<string>();
+    var startIds = workspace.Mounted.ToDictionary(d => d.DbId, MaxRecordId);
+
+    Window.WindowOpenedEvent.AddClassHandler<Window>((w, _) =>
+    {
+        if (w is MainWindow) return;
+        Dispatcher.UIThread.Post(() => AnswerDialog(w), DispatcherPriority.Background);
+    });
+
+    // ── «Неделя» 21–27.09.2026: часовая сетка на базе 10 млн, полоса «весь день» на wide1000 ──
+    SetField(calendar, "_currentDate", day);
+    SetField(calendar, "_weekCentered", false);
+    Call(calendar, "SwitchView", 3);
+    await Settle(1, 60);
+    var week = calendar.FindControl<Control>("WeekViewCtrl")!;
+    week.FindControl<ScrollViewer>("TimeScroll")!.Offset = new Vector(0, 10 * 60);
+    await Settle(0.5, 10);
+    await HourGridOps("неделя", week, big);
+    if (wide is not null) await AllDayOps("неделя", week, wide);
+
+    // ── «День» 24.09.2026 ──
+    Call(calendar, "SwitchView", 2);
+    await Settle(1, 60);
+    var dayView = calendar.FindControl<Control>("DayViewCtrl")!;
+    dayView.FindControl<ScrollViewer>("TimeScroll")!.Offset = new Vector(0, 10 * 60);
+    await Settle(0.5, 10);
+    await HourGridOps("день", dayView, big);
+
+    // ── «Месяц» сентябрь 2026: плашка базы 10 млн ──
+    Call(calendar, "SwitchView", 4);
+    await Settle(1, 60);
+    var month = calendar.FindControl<MonthView>("MonthViewCtrl")!;
+    {
+        // Видимая плашка или полоса однодневного события (в переполненном дне часть уходит в
+        // «+N еще»; на wide1000 полосы «весь день» занимают все строки ячеек), база 10 млн — первой.
+        var ev = ((IEnumerable<SmartBase.Core.Models.CalendarRecord>)Get(calendar, "_gridRecords")!)
+                 .Where(r => r.StartDt.Date == r.EndDt.Date && r.StartDt.Day < 20
+                             && r.StartDt.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday or DayOfWeek.Friday)
+                             && month.EventCenter(r.Title) is not null)
+                 .OrderBy(r => r.DbId == big.DbId ? 0 : 1).First();
+        var mdb = workspace.Mounted.First(d => d.DbId == ev.DbId);
+        Point At() => month.TranslatePoint(month.EventCenter(ev.Title)!.Value, main)!.Value;
+        await Click(At());
+        Console.WriteLine($"    месяц: цель «{ev.Title}» ({mdb.Name}, {ev.StartDt:dd.MM HH:mm}, весь день {ev.AllDay}) в точке {At()}, " +
+                          $"под указателем {main.InputHitTest(At())?.GetType().Name}, выделено {SelectedOf(month).Count}");
+        await DupDelete($"месяц ({mdb.Name})", month, ev, mdb);
+        var start = DbDates(mdb, ev).Start;
+        await Op("месяц: перенос на следующий день", month, () => Drag(At(), month.Bounds.Width / 7, 0),
+                 () => DbDates(mdb, ev).Start.Date == start.Date.AddDays(1), ev);
+        await Op("месяц: перенос обратно", month, () => Drag(At(), -month.Bounds.Width / 7, 0),
+                 () => DbDates(mdb, ev).Start.Date == start.Date, ev);
+    }
+
+    // ── Диаграмма сентябрь 2026: группа wide1000 — растяжение за правый край ──
+    // Многодневное событие базы 10 млн в начале месяца (первые строки группы) — растягивать бар.
+    var bigCol   = big.Constructor.GetAllCollections().First(c => big.Constructor.GetFields(c.Id!.Value).Any(f => f.IsCalStart)).Id!.Value;
+    var longEv   = big.Constructor.AddCalendarRecord(new SmartBase.Core.Models.CalendarRecord
+    {
+        CollectionId = bigCol, Title = "Стенд: многодневное",
+        StartDt = new DateTime(2026, 9, 1), EndDt = new DateTime(2026, 9, 3, 12, 0, 0),
+    });
+    Call(calendar, "SwitchView", 6);
+    await Settle(1, 60);
+    var diagram = calendar.FindControl<Control>("DiagramViewCtrl")!;
+    foreach (var db in wide is null ? [big] : new[] { big, wide })
+    {
+        var colId  = db.Constructor.GetAllCollections().First(c => db.Constructor.GetFields(c.Id!.Value).Any(f => f.IsCalStart)).Id!.Value;
+        var groups = (System.Collections.IDictionary)Get(diagram, "_collapsed")!;
+        groups[(db.DbId, colId)] = false;
+        Call(diagram, "BuildGroups");
+        Call(diagram, "BuildAll");
+        await Settle(0.5, 10);
+        var entry = DiagramEntries(diagram).OrderBy(b => b.IsDot ? 1 : 0).First(b => b.Ev.DbId == db.DbId);
+        var rowsScroll = diagram.FindControl<ScrollViewer>("RowsScroll")!;
+        rowsScroll.Offset = new Vector(0, Math.Max(0, entry.Y - 120));
+        await Settle(0.5, 10);
+        var ev = entry.Ev;
+        await Click(DiagramPoint(diagram, ev, 0.5));
+        await DupDelete($"диаграмма ({db.Name})", diagram, ev, db);
+        if (!DiagramEntries(diagram).First(b => b.Ev.Id == ev.Id).IsDot)
+        {
+            // Шкала привязывает конец к границе дня — сверка с допуском, исходные даты (с
+            // секундами) в конце возвращаются записью в базу.
+            var dayW  = (double)Get(diagram, "_lastTimelineW")! / (int)Get(diagram, "_rangeDays")!;
+            var (start, end) = DbDates(db, ev);
+            await Op($"диаграмма ({db.Name}): растяжение на день", diagram,
+                     () => Drag(DiagramPoint(diagram, ev, 1, -2), dayW, 0), () => DbDates(db, ev).End >= end.AddHours(12), ev);
+            var stretched = DbDates(db, ev).End;
+            await Op($"диаграмма ({db.Name}): растяжение обратно", diagram,
+                     () => Drag(DiagramPoint(diagram, ev, 1, -2), -dayW, 0), () => DbDates(db, ev).End <= stretched.AddHours(-12), ev);
+            RestoreDates(db, ev, start, end);
+        }
+        else Console.WriteLine($"  диаграмма ({db.Name}): событие — точка на шкале месяца, растягивать нечего");
+    }
+    big.Constructor.DeleteCalendarRecord(longEv.Id!.Value);
+
+    // ── «Журнал»: переход в вид — к сегодня; дублирование и удаление строки базы 10 млн ──
+    Call(calendar, "SwitchView", 1);
+    await Settle(1, 60);
+    var journal = calendar.FindControl<Control>("JournalViewCtrl")!;
+    var jScroll = journal.FindControl<ScrollViewer>("JournalScroll")!;
+    jScroll.Offset = new Vector(0, Math.Max(0, jScroll.Offset.Y - 20000));
+    await Settle(0.5, 10);
+    Call(calendar, "SwitchView", 4);
+    await Settle(1, 60);
+    Step("операции: журнал — переход в вид");
+    Call(calendar, "SwitchView", 1);
+    await Settle(1, 60);
+    var list     = Get(journal, "_list")!;
+    var todayRow = (int?)list.GetType().GetProperty("TodayHeaderRow")!.GetValue(list);
+    var todayY   = todayRow is int tr
+        ? (double)journal.GetType().GetMethod("OffsetOfRow", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, [tr])!
+        : -1;
+    var onToday  = Math.Abs(jScroll.Offset.Y - Math.Min(todayY, jScroll.Extent.Height - jScroll.Viewport.Height)) < 1;
+    Console.WriteLine($"  журнал: после перехода в вид прокрутка {jScroll.Offset.Y:N0}, строка сегодня {todayY:N0} — {(onToday ? "на сегодня" : "НЕ НА СЕГОДНЯ")}");
+    if (!onToday) failures.Add("журнал: переход к сегодня");
+    {
+        // Строки дня заполняются чтением по требованию — ждем, пока появятся события.
+        var wait = Stopwatch.StartNew();
+        while (JournalRows(journal).Count == 0 && wait.Elapsed.TotalSeconds < 10) await Task.Delay(50);
+        var rows = JournalRows(journal);
+        var row  = rows.OrderBy(r => r.Ev.DbId == big.DbId ? 0 : 1).First();
+        var jdb  = workspace.Mounted.First(d => d.DbId == row.Ev.DbId);
+        await Click(row.At);
+        await DupDelete($"журнал ({jdb.Name})", journal, row.Ev, jdb);
+    }
+
+    // Уборка: записи, созданные стендом и не удаленные (проверка не прошла), — прочь.
+    foreach (var db in workspace.Mounted)
+    {
+        var left = Query(db, $"SELECT Id FROM db_records WHERE Id > {startIds[db.DbId]}").Select(r => Convert.ToInt32(r[0])).ToList();
+        if (left.Count == 0) continue;
+        db.Constructor.DeleteRecordsData(left, log: false);
+        Console.WriteLine($"  уборка: в «{db.Name}» удалено оставшихся записей стенда {left.Count}");
+        failures.Add($"остались записи в «{db.Name}»");
+    }
+
+    Console.WriteLine();
+    Console.WriteLine(failures.Count == 0 ? "  Операции календаря: все проверки прошли"
+                                          : $"  Операции календаря: НЕ ПРОШЛИ {failures.Count}: {string.Join("; ", failures)}");
+
+    // ── Сценарии ──
+
+    // Часовая сетка: дублирование и удаление копии, перенос на час и обратно, растяжение на
+    // полчаса и обратно, создание кнопкой «+» и удаление созданного.
+    async Task HourGridOps(string view, Control ctrl, DatabaseManager db)
+    {
+        var ev = PickHourEvent(ctrl, db.DbId, day);
+        await Click(EventPoint(ctrl, ev, 0.5));
+        await DupDelete(view, ctrl, ev, db);
+
+        // Сетка привязывает время к 15 минутам — сверка с допуском, а в конце исходные даты
+        // (с секундами) возвращаются записью в базу.
+        var (start, end) = DbDates(db, ev);
+        static bool Near(DateTime a, DateTime b) => Math.Abs((a - b).TotalMinutes) < 15;
+        await Op($"{view}: перенос на час", ctrl, () => Drag(EventPoint(ctrl, ev, 0.5), 0, 60),
+                 () => Near(DbDates(db, ev).Start, start.AddHours(1)), ev);
+        await Op($"{view}: перенос обратно", ctrl, () => Drag(EventPoint(ctrl, ev, 0.5), 0, -60),
+                 () => Near(DbDates(db, ev).Start, start), ev);
+        var end2 = DbDates(db, ev).End;
+        await Op($"{view}: растяжение на полчаса", ctrl, () => Drag(EventPoint(ctrl, ev, 1, -2), 0, 32),
+                 () => DbDates(db, ev).End >= end2.AddMinutes(10), ev);
+        var end3 = DbDates(db, ev).End;
+        await Op($"{view}: растяжение обратно", ctrl, () => Drag(EventPoint(ctrl, ev, 1, -2), 0, -32),
+                 () => DbDates(db, ev).End <= end3.AddMinutes(-10), ev);
+        RestoreDates(db, ev, start, end);
+
+        var maxId = MaxRecordId(db);
+        SmartBase.Core.Models.CalendarRecord? made = null;
+        await Op($"{view}: создание (окно записи)", ctrl,
+                 () => { _ = Call(calendar, "OpenAddDialog", day.AddHours(10), (TimeSpan?)TimeSpan.FromHours(10.5)); return Task.CompletedTask; },
+                 () => (made = SelectedOf(ctrl).FirstOrDefault(r => r.DbId == db.DbId && r.Id > maxId)) is not null, null);
+        if (made is not null)
+            await Op($"{view}: удаление созданной", ctrl, () => Key(PhysicalKey.Delete),
+                     () => !RecordExists(db, made.Id!.Value), null);
+    }
+
+    // Полоса «весь день»: дублирование плашки записи с 1000 свойств и удаление копии, перенос на
+    // день и обратно.
+    async Task AllDayOps(string view, Control ctrl, DatabaseManager db)
+    {
+        var bar = ctrl.FindControl<SmartBase.Controls.Components.AllDayBar>("AllDayBarCtrl")!;
+        var ev  = ((IEnumerable<SmartBase.Core.Models.CalendarRecord>)Get(calendar, "_gridRecords")!)
+                  .First(r => r.DbId == db.DbId && r.StartDt.Date == day
+                              && bar.EventCenter(r.Title) is { } c && c.Y > 4 && c.Y < bar.Bounds.Height - 8);
+        // Плашка в видимой части полосы: после переноса она может встать в строку ниже края —
+        // полоса прокручивается к ней, как прокрутил бы человек.
+        Point At()
+        {
+            var c  = bar.EventCenter(ev.Title)!.Value;
+            var sv = bar.FindControl<ScrollViewer>("EventsScroll")!;
+            if (c.Y < 4 || c.Y > bar.Bounds.Height - 8)
+            {
+                sv.Offset = new Vector(0, Math.Max(0, sv.Offset.Y + c.Y - bar.Bounds.Height / 2));
+                bar.UpdateLayout();
+                c = bar.EventCenter(ev.Title)!.Value;
+            }
+            return bar.TranslatePoint(c, main)!.Value;
+        }
+        await Click(At());
+        await DupDelete($"{view}, «весь день» (1000 свойств)", ctrl, ev, db, values: true);
+        var colW  = ctrl.FindControl<Control>("WeekColumns")!.Bounds.Width / 7;
+        var start = DbDates(db, ev).Start;
+        await Op($"{view}, «весь день»: перенос на день", ctrl, () => Drag(At(), colW, 0),
+                 () => DbDates(db, ev).Start == start.AddDays(1), ev);
+        await Op($"{view}, «весь день»: перенос обратно", ctrl, () => Drag(At(), -colW, 0),
+                 () => DbDates(db, ev).Start == start, ev);
+    }
+
+    // Выделенная запись: Ctrl+D — копия выделена вместо исходной; Delete — копии нет в базе.
+    async Task DupDelete(string view, Control ctrl, SmartBase.Core.Models.CalendarRecord ev, DatabaseManager db, bool values = false)
+    {
+        var maxId = MaxRecordId(db);
+        SmartBase.Core.Models.CalendarRecord? copy = null;
+        await Op($"{view}: дублирование", ctrl, () => Key(PhysicalKey.D, RawInputModifiers.Control),
+                 () => SelectedOf(ctrl) is [var c] && c.DbId == db.DbId && c.Id > maxId && (copy = c) is not null, null);
+        if (copy is null) return;
+        if (values)
+        {
+            var n = db.Constructor.GetFieldValuesBatch([copy.Id!.Value]).GetValueOrDefault(copy.Id!.Value)?.Count ?? 0;
+            var m = db.Constructor.GetFieldValuesBatch([ev.Id!.Value]).GetValueOrDefault(ev.Id!.Value)?.Count ?? 0;
+            Console.WriteLine($"    значений у копии {n} из {m}");
+            if (n != m) failures.Add($"{view}: значения копии");
+        }
+        await Op($"{view}: удаление копии", ctrl, () => Key(PhysicalKey.Delete),
+                 () => !RecordExists(db, copy.Id!.Value) && SelectedOf(ctrl).Count == 0, null);
+        // Исходную — снова выделить для следующих операций (если видна).
+        if (EventPointAny(ctrl, ev) is { } again && again != default) await Click(again);
+    }
+
+    // Одна операция: действие, ожидание результата, отчет.
+    async Task Op(string name, Control ctrl, Func<Task> act, Func<bool> done,
+                  SmartBase.Core.Models.CalendarRecord? keepSelected)
+    {
+        Step($"операции: {name}");
+        var stepName = probe.Step;
+        var loads    = FullLoads();
+        var before   = ScrollOf(ctrl);
+        var sw       = Stopwatch.StartNew();
+        await act();
+        while (!done() && sw.Elapsed.TotalSeconds < 30) await Task.Delay(10);
+        var ms = sw.Elapsed.TotalMilliseconds;
+        var ok = done();
+        await Settle(0.5, 30);
+        var maxStall = probe.Stalls.Where(s => s.Step == stepName).Select(s => s.Ms).DefaultIfEmpty(0).Max();
+        var reloads  = FullLoads() - loads;
+        var after    = ScrollOf(ctrl);
+        var jumped   = before is { } a && after is { } b && Math.Abs(a.Y - b.Y) + Math.Abs(a.X - b.X) > 0.5;
+        var selected = SelectedOf(ctrl);
+        // «Журнал» едет к копии, только если ее строка не видна (по замыслу) — сдвигом это не
+        // считается, когда выделенная строка после операции на экране.
+        var revealed = jumped && ctrl.Name == "JournalViewCtrl"
+                       && JournalRows(ctrl).Any(r => selected.Any(x => x.Id == r.Ev.Id && x.DbId == r.Ev.DbId));
+        if (revealed) jumped = false;
+        var keptSel  = keepSelected is null || selected.Any(r => r.Id == keepSelected.Id && r.DbId == keepSelected.DbId);
+        Console.WriteLine($"  {name}: {(ok ? "готово" : "НЕ ВЫШЛО")} за {ms:N0} мс; пауза UI макс {maxStall:N0} мс; " +
+                          $"полных загрузок {reloads}; прокрутка {(jumped ? $"СДВИНУЛАСЬ {before} → {after}" : revealed ? "к выделенной копии" : "на месте")}; " +
+                          $"выделено {selected.Count}{(keptSel ? "" : " — НЕ ТА ЗАПИСЬ")}");
+        if (!ok && keepSelected is not null && workspace.Mounted.FirstOrDefault(d => d.DbId == keepSelected.DbId) is { } kdb)
+            Console.WriteLine($"    даты в базе: {DbDates(kdb, keepSelected).Start:dd.MM HH:mm:ss} — {DbDates(kdb, keepSelected).End:dd.MM HH:mm:ss}");
+        if (!ok || reloads > 0 || jumped || !keptSel) failures.Add(name);
+    }
+
+    // ── Помощники ──
+
+    int FullLoads() => diagLog.Ops.ToList().Count(o => o.Name is "загрузка календаря" or "счетчики журнала календаря");
+
+    async Task Click(Point p)
+    {
+        main!.MouseMove(p);
+        main.MouseDown(p, MouseButton.Left);
+        main.MouseUp(p, MouseButton.Left);
+        main.MouseMove(new Point(2, 2));
+        await Task.Delay(400);   // мимо времени двойного нажатия
+    }
+
+    Task Drag(Point from, double dx, double dy)
+    {
+        main!.MouseMove(from);
+        main.MouseDown(from, MouseButton.Left);
+        main.MouseMove(new Point(from.X + dx / 3, from.Y + dy / 3));
+        main.MouseMove(new Point(from.X + dx, from.Y + dy));
+        main.MouseUp(new Point(from.X + dx, from.Y + dy), MouseButton.Left);
+        main.MouseMove(new Point(2, 2));
+        return Task.CompletedTask;
+    }
+
+    Task Key(PhysicalKey key, RawInputModifiers mods = RawInputModifiers.None)
+    {
+        main!.KeyPressQwerty(key, mods);
+        main.KeyReleaseQwerty(key, mods);
+        return Task.CompletedTask;
+    }
+
+    // Окна: подтверждение — «Да»; новая запись — база 10 млн, ее единственная коллекция, название.
+    void AnswerDialog(Window w)
+    {
+        if (w is SmartBase.Controls.Dialogs.ConfirmDialog)
+        {
+            w.FindControl<Button>("ConfirmBtn")!.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            return;
+        }
+        if (w is SmartBase.Controls.Dialogs.RecordDialog)
+        {
+            var dbCombo = w.FindControl<ComboBox>("DbCombo")!;
+            dbCombo.SelectedIndex = ((IList<string>)dbCombo.ItemsSource!).IndexOf("test_database");
+            w.FindControl<TextBox>("TitleBox")!.Text = "Стенд: созданная запись";
+            w.FindControl<Button>("SaveBtn")!.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            return;
+        }
+        Console.WriteLine($"    [окно без ответа стенда: {w.GetType().Name} «{w.Title}»]");
+    }
+
+    // Событие часовой сетки базы в день day, чей блок виден в окне прокрутки.
+    SmartBase.Core.Models.CalendarRecord PickHourEvent(Control view, int dbId, DateTime d)
+    {
+        var scroll = view.FindControl<ScrollViewer>("TimeScroll")!;
+        foreach (var entry in (System.Collections.IEnumerable)Get(view, "_eventEntries")!)
+        {
+            var ev   = (SmartBase.Core.Models.CalendarRecord)Get(entry, "Ev")!;
+            var item = (CalendarDayCanvas.Item)Get(entry, "Btn")!;
+            if (ev.DbId != dbId || ev.StartDt.Date != d || item.Bounds.Height < 30) continue;
+            if (item.Bounds.Y < scroll.Offset.Y + 60 || item.Bounds.Bottom > scroll.Offset.Y + scroll.Viewport.Height - 120) continue;
+            return ev;
+        }
+        throw new InvalidOperationException("Нет подходящего события в часовой сетке");
+    }
+
+    // Точка блока события часовой сетки: fy — доля высоты (1 — низ), dy — сдвиг в пикселях.
+    Point EventPoint(Control view, SmartBase.Core.Models.CalendarRecord ev, double fy, double dy = 0)
+    {
+        foreach (var entry in (System.Collections.IEnumerable)Get(view, "_eventEntries")!)
+        {
+            var e = (SmartBase.Core.Models.CalendarRecord)Get(entry, "Ev")!;
+            if (e.Id != ev.Id || e.DbId != ev.DbId) continue;
+            var item = (CalendarDayCanvas.Item)Get(entry, "Btn")!;
+            var b    = item.Bounds;
+            return item.Owner.TranslatePoint(new Point(b.X + b.Width / 2, b.Y + b.Height * fy + dy), main!)!.Value;
+        }
+        throw new InvalidOperationException($"Нет блока события {ev.Id}");
+    }
+
+    Point EventPointAny(Control view, SmartBase.Core.Models.CalendarRecord ev) => view switch
+    {
+        MonthView m => m.TranslatePoint(m.EventCenter(ev.Title)!.Value, main!)!.Value,
+        _ when view.Name == "DiagramViewCtrl" => DiagramPoint(view, ev, 0.5),
+        _ when view.Name == "JournalViewCtrl" => JournalRows(view).FirstOrDefault(r => r.Ev.Id == ev.Id).At,
+        _ when ev.AllDay => view.FindControl<SmartBase.Controls.Components.AllDayBar>("AllDayBarCtrl") is { } bar
+                                ? bar.TranslatePoint(bar.EventCenter(ev.Title)!.Value, main!)!.Value : default,
+        _ => EventPoint(view, ev, 0.5),
+    };
+
+    List<(SmartBase.Core.Models.CalendarRecord Ev, double X1, double X2, double Y, bool IsDot)> DiagramEntries(Control diagram)
+    {
+        var list = new List<(SmartBase.Core.Models.CalendarRecord, double, double, double, bool)>();
+        foreach (var b in (System.Collections.IEnumerable)Get(diagram, "_barEntries")!)
+            list.Add(((SmartBase.Core.Models.CalendarRecord)Get(b, "Ev")!, (double)Get(b, "X1")!, (double)Get(b, "X2")!,
+                      (double)Get(b, "Y")!, (bool)Get(b, "IsDot")!));
+        return list;
+    }
+
+    // Точка бара Диаграммы: fx — доля ширины (1 — правый край), dx — сдвиг.
+    Point DiagramPoint(Control diagram, SmartBase.Core.Models.CalendarRecord ev, double fx, double dx = 0)
+    {
+        var e    = DiagramEntries(diagram).First(b => b.Ev.Id == ev.Id && b.Ev.DbId == ev.DbId);
+        var rowH = (double)diagram.GetType().GetProperty("RowH", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
+        var pane = diagram.FindControl<Control>("TimelinePane")!;
+        return pane.TranslatePoint(new Point(e.X1 + (e.X2 - e.X1) * fx + dx, e.Y + rowH / 2), main!)!.Value;
+    }
+
+    List<(SmartBase.Core.Models.CalendarRecord Ev, Point At)> JournalRows(Control journal) =>
+        Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(journal).OfType<Border>()
+            .Where(b => b.Tag is JournalRow { IsEvent: true, OriginalEvent: not null } && b.IsEffectivelyVisible && b.Bounds.Height > 0)
+            .Select(b => (((JournalRow)b.Tag!).OriginalEvent!, b.TranslatePoint(b.Bounds.Center - b.Bounds.Position, main!)!.Value))
+            .Where(r => r.Item2.Y > 150 && r.Item2.Y < 850)
+            .ToList();
+
+    List<SmartBase.Core.Models.CalendarRecord> SelectedOf(Control view)
+    {
+        switch (view.Name)
+        {
+            case "WeekViewCtrl" or "DayViewCtrl":
+                return (List<SmartBase.Core.Models.CalendarRecord>)Call(view, "_SelectedAll")!;
+            case "MonthViewCtrl":
+                return ((System.Collections.IDictionary)Get(view, "_selections")!).Keys.Cast<SmartBase.Core.Models.CalendarRecord>().ToList();
+            case "DiagramViewCtrl":
+                return ((System.Collections.IEnumerable)Get(view, "_selection")!).Cast<object>()
+                       .Select(b => (SmartBase.Core.Models.CalendarRecord)Get(b, "Ev")!).ToList();
+            default:
+                var l = Get(view, "_list");
+                if (l is null) return [];
+                return ((IEnumerable<JournalRow>)l.GetType().GetProperty("RealizedItems")!.GetValue(l)!)
+                       .Where(i => i.IsEvent && i.IsSelected).Select(i => i.OriginalEvent!).ToList();
+        }
+    }
+
+    Vector? ScrollOf(Control view) => view.Name switch
+    {
+        "WeekViewCtrl" or "DayViewCtrl" => view.FindControl<ScrollViewer>("TimeScroll")!.Offset,
+        "DiagramViewCtrl"               => view.FindControl<ScrollViewer>("RowsScroll")!.Offset,
+        "JournalViewCtrl"               => view.FindControl<ScrollViewer>("JournalScroll")!.Offset,
+        _                               => null,
+    };
+
+    // Даты события в базе — строка проекции calendar_index (что покажет следующее чтение).
+    (DateTime Start, DateTime End) DbDates(DatabaseManager db, SmartBase.Core.Models.CalendarRecord ev)
+    {
+        var rows = Query(db, $"SELECT StartIso, EndIso FROM calendar_index WHERE RecordId = {ev.Id} AND FieldId = {ev.FieldId}");
+        return rows.Count == 0 ? default : (DateTime.Parse((string)rows[0][0]), DateTime.Parse((string)rows[0][1]));
+    }
+
+    // Исходные даты события — записью в базу (как правка из окна записи).
+    void RestoreDates(DatabaseManager db, SmartBase.Core.Models.CalendarRecord ev, DateTime start, DateTime end)
+    {
+        ev.StartDt = start;
+        ev.EndDt   = end;
+        db.Constructor.UpdateCalendarRecord(ev);
+    }
+
+    bool RecordExists(DatabaseManager db, int id) => Query(db, $"SELECT 1 FROM db_records WHERE Id = {id}").Count > 0;
+
+    int MaxRecordId(DatabaseManager db) => Convert.ToInt32(Query(db, "SELECT MAX(Id) FROM db_records")[0][0]);
+
+    List<object[]> Query(DatabaseManager db, string sql)
+    {
+        using var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={db.Path};Mode=ReadOnly");
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+        using var rd = cmd.ExecuteReader();
+        var rows = new List<object[]>();
+        while (rd.Read()) { var r = new object[rd.FieldCount]; rd.GetValues(r); rows.Add(r); }
+        return rows;
+    }
+}
+
 // Ширины всех блоков вида: ширина до округления и итоговая (правило округления рисованной колонки).
 void DumpAll(Control view)
 {
@@ -575,6 +1063,11 @@ Point EntryCenter(Control view, string title)
     }
     throw new InvalidOperationException($"Нет события «{title}» в виде");
 }
+
+// Раздел календаря: окно строит его при первом показе, поэтому по имени в разметке его нет —
+// берем свойством окна (построит, если еще не построен).
+Control CalendarModule() =>
+    (Control)typeof(MainWindow).GetProperty("CalendarModule", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(main)!;
 
 // Как клик по коллекции в дереве конструктора (обработчик CollectionSelected главного окна).
 void OpenCollection(DatabaseManager db, int collectionId)

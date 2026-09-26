@@ -1,13 +1,10 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:comp="using:SmartBase.Controls.Components"
-        xmlns:cal="using:SmartBase.Views.ConstructorDb.Calendar"
         xmlns:con="using:SmartBase.Views.ConstructorDb"
-        xmlns:settings="using:SmartBase.Views.Settings"
         xmlns:ext="using:SmartBase.Views.Extensions"
         xmlns:profile="using:SmartBase.Views.Profile"
         xmlns:tasks="using:SmartBase.Views.Tasks"
-        xmlns:notes="using:SmartBase.Views.Notes"
         xmlns:lib="using:SmartBase.Views.Library"
         xmlns:b="using:SmartBase.Controls.Behaviors"
         x:Class="SmartBase.Views.MainWindow"
@@ -68,14 +65,12 @@
                 HorizontalAlignment="Right" />
 
         <!-- Основная область контента -->
-        <Grid Grid.Column="3">
-            <cal:CalendarControllerView x:Name="CalendarModule" IsVisible="False" />
+        <!-- Календарь, настройки и заметки добавляет сюда первый показ (MainWindow.Sections.cs). -->
+        <Grid Grid.Column="3" x:Name="ModulesHost">
             <tasks:TasksControllerView x:Name="TasksModule" IsVisible="False" />
             <con:ConstructorControllerView x:Name="ConstructorModule" IsVisible="False" />
-            <settings:SettingsView x:Name="SettingsModule" IsVisible="False" />
             <ext:ExtensionsView x:Name="ExtensionsModule" IsVisible="False" />
             <profile:ProfileView x:Name="ProfileModule" IsVisible="False" />
-            <notes:NotesControllerView x:Name="NotesModule" IsVisible="False" />
             <lib:LibraryControllerView x:Name="LibraryModule" IsVisible="False" />
         </Grid>
 

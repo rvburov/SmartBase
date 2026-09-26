@@ -165,7 +165,7 @@ public partial class JournalView : UserControl
     public void LoadFrom(IReadOnlyList<(int dbId, ConstructorRepository repo, ISet<int>? active)> dbs,
                          string search, CalendarRecord? anchorRecord = null,
                          IReadOnlyList<(CalendarRecord Rec, int Delta)>? delta = null,
-                         bool selectAddedOnly = false)
+                         bool selectAddedOnly = false, bool toToday = false)
     {
         var gen = ++_loadGeneration;
         search ??= "";
@@ -238,7 +238,7 @@ public partial class JournalView : UserControl
             LoadingHint.IsVisible  = true;
         }
         _ = LoadCountsThenBuildAsync(gen, sorted, key, search,
-                                     fresh, anchorRecord, oldOffset, preserveSelection);
+                                     fresh, anchorRecord, oldOffset, preserveSelection, toToday);
     }
 
     // Точечная правка: сперва пробуем мутировать ТЕКУЩИЙ список НА МЕСТЕ (страницы и кеши
@@ -280,7 +280,7 @@ public partial class JournalView : UserControl
     private async Task LoadCountsThenBuildAsync(
         int gen, List<(int dbId, ConstructorRepository repo, ISet<int>? active)> dbs, string key,
         string search, bool fresh, CalendarRecord? anchorRecord, double oldOffset,
-        HashSet<(int DbId, int RecId, int FieldId)>? preserveSelection)
+        HashSet<(int DbId, int RecId, int FieldId)>? preserveSelection, bool toToday = false)
     {
         var rangeStart = JournalVirtualList.RangeStart;
         var rangeEnd   = JournalVirtualList.RangeEnd;
@@ -333,10 +333,11 @@ public partial class JournalView : UserControl
         _list = list;
         RowsList.ItemsSource  = list;
         LoadingHint.IsVisible = false;
-        ApplyPosition(gen, list, fresh, anchorRecord, oldOffset);
+        ApplyPosition(gen, list, fresh || toToday, anchorRecord, oldOffset);
     }
 
-    // Позиция после подмены списка (после отрисовки — нужен Extent): свежая загрузка — к сегодня;
+    // Позиция после подмены списка (после отрисовки — нужен Extent): свежая загрузка и переход в
+    // вид — к сегодня;
     // тихое обновление — остаемся на месте, а если создали/изменили запись — прокрутка к САМОЙ
     // записи (не к заголовку дня: в большом дне она может быть далеко ниже) с центрированием,
     // и только когда ее строка сейчас не видна.

@@ -263,11 +263,11 @@ internal sealed class AllDayCanvas : Control
         }
     }
 
+    // Из общего кеша: после правки полоса строится заново, плашки с тем же текстом берут готовые.
     private static TextLayout Layout(string text, Typeface face, double fontSize, IBrush brush,
                                      double maxWidth, double maxHeight, bool trim) =>
-        new(text, face, fontSize, brush, TextAlignment.Left, TextWrapping.NoWrap,
-            trim ? TextTrimming.CharacterEllipsis : null, null, FlowDirection.LeftToRight,
-            maxWidth, maxHeight, double.NaN, 0, 0);
+        SharedTextLayouts.Get(text, face, fontSize, brush, TextAlignment.Left, TextWrapping.NoWrap, trim,
+                              maxWidth, maxHeight, 0);
 
     // Размер надписи как у TextBlock: ширина и высота текста вверх до целого DIP.
     private static Size Desired(TextLayout l) =>

@@ -210,6 +210,19 @@ public partial class DiagramView : UserControl
     private Border? _hoverBandRight;
     private int     _hoverRowIdx = -1;
 
+    // Строки строятся контролами только в видимой части ленты (с запасом в экран сверху и снизу)
+    // и докладываются при прокрутке: раскрытые группы — сотни строк по восемь контролов, и полная
+    // пересборка после каждой правки (дубль, удаление, растяжение) стоила 0,2–0,4 с на UI-потоке.
+    // Геометрия баров (попадание указателя, выделение, перенос) считается для всех строк сразу —
+    // она дешевая. Заливки строк групп и разделители строк — в своих слоях, в прежнем порядке
+    // наложения: под полосой наведения и линиями дней, как были.
+    private readonly HashSet<int> _realizedRows = [];
+    private readonly Dictionary<int, BarEntry> _entryByRow = [];
+    private Canvas _bandLayer = new(), _leftBandLayer = new(), _lineLayer = new(), _leftLineLayer = new();
+    private double _buildDayW;
+    private double _lineT;
+    private IBrush _lineBrush = Brushes.Transparent;
+
     // drag/resize state
     private BarEntry?    _pressEntry;
     private Point        _pressPos;
@@ -248,6 +261,7 @@ public partial class DiagramView : UserControl
             _timelineW = e.NewSize.Width;
             BuildAll();
         };
+        RowsScroll.ScrollChanged += (_, _) => RealizeVisibleRows();
 
         _timeLineTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
         _timeLineTimer.Tick += (_, _) => UpdateTodayLine();
@@ -349,8 +363,16 @@ public partial class DiagramView : UserControl
                         bool scrollToNow = false,
                         IReadOnlyList<(int DbId, DbCollection Col)>? collections = null,
                         bool hideEmptyGroups = false,
-                        IReadOnlyDictionary<(int DbId, int ColId), DiagramGroupStat>? stats = null)
+                        IReadOnlyDictionary<(int DbId, int ColId), DiagramGroupStat>? stats = null,
+                        IReadOnlyCollection<CalendarRecord>? select = null)
     {
+        // select (созданная запись, копии, перенесенная) заменяет выделение — как нажатие по ним;
+        // записи свернутых групп не выделяются.
+        if (select is not null)
+        {
+            DeselectAll();
+            _restoreSelection = KeysOf(select);
+        }
         _events          = events.ToList();
         _currentDate     = currentDate;
         var (rs, re)     = RangeFor(currentDate);
@@ -464,6 +486,9 @@ public partial class DiagramView : UserControl
 
     private void BuildAll()
     {
+        // Выделение переживает пересборку (приход агрегатов, правка, сворачивание группы): ключи
+        // записей — до очистки, восстанавливается на новых строках. Якорь и ховер не переживают.
+        var keep = _selection.Count > 0 ? KeysOf(_selection.Select(b => b.Ev)) : _restoreSelection;
         CancelDrag();
         DayHeaderCanvas.Children.Clear();
         LeftRowsCanvas.Children.Clear();
@@ -471,7 +496,7 @@ public partial class DiagramView : UserControl
         BarsCanvas.Children.Clear();
         DragOverlay.Children.Clear();
         _barEntries.Clear();
-        _selection.Clear();   // визуалы пересоздаются — выделение/якорь/ховер не переживают пересборку
+        _selection.Clear();
         _rangeAnchor = null;
         _hover       = null;
 
@@ -482,7 +507,7 @@ public partial class DiagramView : UserControl
         // последний день ПОД полосой (шкала обрывалась на полуцифре). Как в таблице
         // конструктора: ячейки заканчиваются там, где начинается полоса.
         var timelineW = _timelineW;
-        if (timelineW <= 0 || _rangeDays <= 0) return;
+        if (timelineW <= 0 || _rangeDays <= 0) { _restoreSelection = keep; return; }
         var dayW = timelineW / _rangeDays;
         _lastTimelineW = timelineW;
 
@@ -502,18 +527,35 @@ public partial class DiagramView : UserControl
         TodayOverlay.Height   = contentH;
         DragOverlay.Height    = contentH;
 
-        BuildBackground(rows, dayW, timelineW, contentH);
+        BuildBackground(dayW, timelineW, contentH);
 
+        _realizedRows.Clear();
+        _entryByRow.Clear();
+        _buildDayW = dayW;
         for (var i = 0; i < rows.Count; i++)
-        {
-            var y = i * RowH;
-            var r = rows[i];
-            if      (r.Ev is not null)   BuildRecordRow(r.Group, r.Ev, y, dayW, timelineW);
-            else if (r.Note is not null) BuildNoteRow(r.Note, y);
-            else                         BuildGroupRow(r.Group, y, dayW, timelineW);
-        }
+            if (rows[i].Ev is { } ev)
+            {
+                var entry = EntryFor(ev, i, dayW);
+                _barEntries.Add(entry);
+                _entryByRow[i] = entry;
+            }
+        RealizeVisibleRows();
 
         UpdateTodayLine();
+        _restoreSelection = null;
+        if (keep is not null) ApplySelection(keep);
+    }
+
+    // Выделение, которое восстановит следующая пересборка (эта не состоялась: нет ширины).
+    private HashSet<(int DbId, int Id, int FieldId)>? _restoreSelection;
+
+    private static HashSet<(int DbId, int Id, int FieldId)> KeysOf(IEnumerable<CalendarRecord> records) =>
+        records.Where(r => r.Id.HasValue).Select(r => (r.DbId, r.Id!.Value, r.FieldId)).ToHashSet();
+
+    private void ApplySelection(HashSet<(int DbId, int Id, int FieldId)> keys)
+    {
+        foreach (var b in _barEntries)
+            if (b.Ev.Id is int id && keys.Contains((b.Ev.DbId, id, b.Ev.FieldId))) AddToSelection(b);
     }
 
     private void BuildDayHeader(double dayW)
@@ -636,7 +678,7 @@ public partial class DiagramView : UserControl
     // Все обрывается на последней строке (contentH), ниже — чистый фон.
     // Линии — пустые Border с Aliased + LayoutRounding (защелкиваются в целый пиксель,
     // текста в поддереве нет — сглаживанию текста не мешают), см. docs/ui/theming.md.
-    private void BuildBackground(List<RowItem> rows, double dayW, double timelineW, double contentH)
+    private void BuildBackground(double dayW, double timelineW, double contentH)
     {
         // Заливка выходных — только на месячном масштабе: уже на годовом ячейка
         // дня ~3 px, и 52 пары серых полос сливаются в рябь.
@@ -653,17 +695,11 @@ public partial class DiagramView : UserControl
             }
         }
 
-        for (var i = 0; i < rows.Count; i++)
-        {
-            if (rows[i].Ev is not null || rows[i].Note is not null) continue;
-            var tint = new SolidColorBrush(ColorTools.BlendWithWhite(DisplayColor(rows[i].Group.Color), 14));
-            var band = new Border { Width = timelineW, Height = RowH, Background = tint };
-            Canvas.SetTop(band, i * RowH);
-            BgCanvas.Children.Add(band);
-            var bandL = new Border { Width = LeftW, Height = RowH, Background = tint, IsHitTestVisible = false };
-            Canvas.SetTop(bandL, i * RowH);
-            LeftRowsCanvas.Children.Add(bandL);
-        }
+        // Заливки строк групп — слой под полосой наведения (строки добавляются по мере показа).
+        _bandLayer     = new Canvas { IsHitTestVisible = false };
+        _leftBandLayer = new Canvas { IsHitTestVisible = false };
+        BgCanvas.Children.Add(_bandLayer);
+        LeftRowsCanvas.Children.Add(_leftBandLayer);
 
         // Полоса наведения строки записи — голубая, как ховер строки таблицы
         // конструктора; под линиями сетки, поверх заливок. Позиционирует SetRowHover.
@@ -675,6 +711,8 @@ public partial class DiagramView : UserControl
 
         var lineT     = LineMetrics.ThicknessFor(this);
         var lineBrush = new SolidColorBrush(Color.Parse("#E8E8E8"));
+        _lineT     = lineT;
+        _lineBrush = lineBrush;
         // Разделитель левой панели в теле (продолжение separator'а шапки) — до
         // последней строки, как и остальные линии.
         var paneLine = new Border { Width = lineT, Height = contentH, Background = BrushOf("BrushSeparator") };
@@ -699,19 +737,68 @@ public partial class DiagramView : UserControl
             Canvas.SetLeft(line, i * dayW);
             BgCanvas.Children.Add(line);
         }
-        // Горизонтальные разделители строк — по низу каждой строки, слева и справа встык.
-        for (var i = 0; i < rows.Count; i++)
+        // Горизонтальные разделители строк — слой поверх линий дней (строки — по мере показа).
+        _lineLayer     = new Canvas { IsHitTestVisible = false };
+        _leftLineLayer = new Canvas { IsHitTestVisible = false };
+        BgCanvas.Children.Add(_lineLayer);
+        LeftRowsCanvas.Children.Add(_leftLineLayer);
+    }
+
+    // Строки видимой части ленты (с запасом в экран сверху и снизу), еще не построенные.
+    private void RealizeVisibleRows()
+    {
+        if (_rowPlan.Count == 0 || _lastTimelineW <= 0) return;
+        var rowH  = RowH;
+        var view  = RowsScroll.Viewport.Height > 0 ? RowsScroll.Viewport.Height : Math.Max(Bounds.Height, 900);
+        var top   = RowsScroll.Offset.Y;
+        var first = Math.Max(0, (int)((top - view) / rowH));
+        var last  = Math.Min(_rowPlan.Count - 1, (int)((top + 2 * view) / rowH));
+        for (var i = first; i <= last; i++)
+            if (_realizedRows.Add(i)) RealizeRow(i);
+    }
+
+    private void RealizeRow(int i)
+    {
+        var r = _rowPlan[i];
+        var y = i * RowH;
+        var timelineW = _lastTimelineW;
+
+        if (r.Ev is null && r.Note is null)
         {
-            var y = (i + 1) * RowH - lineT;
-            foreach (var (canvas, w) in new[] { (BgCanvas, timelineW), (LeftRowsCanvas, LeftW) })
-            {
-                var line = new Border { Width = w, Height = lineT, Background = lineBrush };
-                line.Bind(UseLayoutRoundingProperty, line.GetResourceObservable("LineUseLayoutRounding"));
-                RenderOptions.SetEdgeMode(line, EdgeMode.Aliased);
-                Canvas.SetTop(line, y);
-                canvas.Children.Add(line);
-            }
+            var tint = new SolidColorBrush(ColorTools.BlendWithWhite(DisplayColor(r.Group.Color), 14));
+            var band = new Border { Width = timelineW, Height = RowH, Background = tint };
+            Canvas.SetTop(band, y);
+            _bandLayer.Children.Add(band);
+            var bandL = new Border { Width = LeftW, Height = RowH, Background = tint, IsHitTestVisible = false };
+            Canvas.SetTop(bandL, y);
+            _leftBandLayer.Children.Add(bandL);
         }
+
+        // Разделитель — по низу строки, слева и справа встык.
+        foreach (var (layer, w) in new[] { (_lineLayer, timelineW), (_leftLineLayer, LeftW) })
+        {
+            var line = new Border { Width = w, Height = _lineT, Background = _lineBrush };
+            line.Bind(UseLayoutRoundingProperty, line.GetResourceObservable("LineUseLayoutRounding"));
+            RenderOptions.SetEdgeMode(line, EdgeMode.Aliased);
+            Canvas.SetTop(line, (i + 1) * RowH - _lineT);
+            layer.Children.Add(line);
+        }
+
+        if      (r.Ev is not null)   BuildRecordRow(_entryByRow[i], y, _buildDayW, timelineW);
+        else if (r.Note is not null) BuildNoteRow(r.Note, y);
+        else                         BuildGroupRow(r.Group, y, _buildDayW, timelineW);
+    }
+
+    // Геометрия бара записи без контролов — для попадания указателя, выделения и переноса.
+    private BarEntry EntryFor(CalendarRecord ev, int rowIdx, double dayW)
+    {
+        var g = EventGeometry(ev.StartDt, ev.EndDt, ev.AllDay, dayW);
+        return new BarEntry
+        {
+            Ev = ev, Y = rowIdx * RowH, RowIdx = rowIdx,
+            X1 = g.IsDot ? g.Cx - BarH / 2 : g.X1, X2 = g.IsDot ? g.Cx + BarH / 2 : g.X2,
+            IsDot = g.IsDot, ClipL = g.ClipL, ClipR = g.ClipR,
+        };
     }
 
     // ── строки ──────────────────────────────────────────────────────────────────
@@ -831,8 +918,9 @@ public partial class DiagramView : UserControl
                           color, dayW, timelineW);
     }
 
-    private void BuildRecordRow(GroupRow g, CalendarRecord ev, double y, double dayW, double timelineW)
+    private void BuildRecordRow(BarEntry entry, double y, double dayW, double timelineW)
     {
+        var ev = entry.Ev;
         // Левая панель: только название записи.
         var row = new Grid
         {
@@ -857,22 +945,16 @@ public partial class DiagramView : UserControl
         Grid.SetColumn(title, 1);
         row.Children.Add(title);
 
-        var rowIdx = (int)(y / RowH);
+        var rowIdx = entry.RowIdx;
         row.PointerEntered += (_, _) => SetRowHover(rowIdx);
         row.PointerExited  += (_, _) => SetRowHover(-1);
         LeftRowsCanvas.Children.Add(row);
 
-        // Таймлайн: бар или круг + хит-запись для drag/resize.
-        var entry = new BarEntry { Ev = ev, Y = y };
-        var vis = RenderEventVisual(
+        // Таймлайн: бар или круг; геометрия записи уже посчитана (EntryFor), здесь — визуалы.
+        entry.Vis = RenderEventVisual(
             BarsCanvas, entry.Visuals, y, ev.StartDt, ev.EndDt, ev.AllDay,
             DisplayColor(ev.Color), dayW, timelineW);
-        entry.X1 = vis.X1; entry.X2 = vis.X2; entry.IsDot = vis.IsDot;
-        entry.ClipL = vis.ClipL; entry.ClipR = vis.ClipR;
-        entry.Vis = vis;
-        _barEntries.Add(entry);
-
-        entry.RowIdx = rowIdx;
+        if (_selection.Contains(entry)) ApplySelectedVisual(entry, on: true);
 
         // Клик по строке слева — как по блоку: одиночный выделяет (Shift/Ctrl+Shift —
         // аддитивно/диапазон), двойной открывает; правый — меню по выделению.
@@ -905,12 +987,10 @@ public partial class DiagramView : UserControl
         LeftRowsCanvas.Children.Add(tb);
     }
 
-    // Рисует событие (блок или круг) в строке y и возвращает геометрию + слои
-    // для эффектов. Используется для записей, диапазона группы и ghost при drag.
-    private EventVisual RenderEventVisual(
-        Canvas canvas, List<Control> visuals, double y,
-        DateTime start, DateTime end, bool allDay, Color color,
-        double dayW, double timelineW)
+    // Геометрия события на шкале (без контролов): края блока, ячейки, обрезка краем периода,
+    // круг ли и его центр. Общая для визуалов (RenderEventVisual) и записей строк (EntryFor).
+    private (double X1, double X2, int I1, int I2, bool ClipL, bool ClipR, bool IsDot, double Cx) EventGeometry(
+        DateTime start, DateTime end, bool allDay, double dayW)
     {
         // Геометрия — ПО ЯЧЕЙКАМ ДНЕЙ, как бары Месяца: блок занимает колонки от
         // первого до последнего дня события целиком, время суток на позицию не
@@ -931,6 +1011,19 @@ public partial class DiagramView : UserControl
         var insetR = dayW >= 8 ? 2.0 : 0.0;
         var x1     = i1 * dayW + (clipL ? 0 : insetL);
         var x2     = (i2 + 1) * dayW - (clipR ? 0 : insetR);
+        // Круг — однодневное событие или блок не шире круга (см. RenderEventVisual).
+        var isDot = startIdx == endIdx || x2 - x1 < BarH;
+        return (x1, x2, i1, i2, clipL, clipR, isDot, (i1 + i2 + 1) / 2.0 * dayW);
+    }
+
+    // Рисует событие (блок или круг) в строке y и возвращает геометрию + слои
+    // для эффектов. Используется для записей, диапазона группы и ghost при drag.
+    private EventVisual RenderEventVisual(
+        Canvas canvas, List<Control> visuals, double y,
+        DateTime start, DateTime end, bool allDay, Color color,
+        double dayW, double timelineW)
+    {
+        var (x1, x2, i1, i2, clipL, clipR, isDot, cx) = EventGeometry(start, end, allDay, dayW);
 
         var dark  = new SolidColorBrush(ColorTools.Darken(color));
         var label = new TextBlock
@@ -962,9 +1055,8 @@ public partial class DiagramView : UserControl
         // превратились бы в невидимую полоску. Круг стоит по центру закрытых событием
         // ячеек: на пороге (блок ровно в круг) это та же точка, где у блока стоит круг
         // начала, — перехода не видно.
-        if (startIdx == endIdx || x2 - x1 < BarH)
+        if (isDot)
         {
-            var cx  = (i1 + i2 + 1) / 2.0 * dayW;
             var dot = new Avalonia.Controls.Shapes.Ellipse
             {
                 Width = BarH, Height = BarH,

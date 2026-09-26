@@ -3769,55 +3769,113 @@ public partial class ConstructorRepository(AppDbContext db)
         return AddRecord(record);
     }
 
-    // Позиция для вставки записи сразу после afterRecordId (между ней и следующей).
-    // Соседи берутся запросами по индексу (CollectionId, Position) — без загрузки всей
-    // коллекции в память (иначе на 100k+ зависание). Инициатор не найден — позиция в конце.
-    // Если зазора между соседями нет — редкая перенумерация одним bulk-SQL (RenumberPositions),
-    // тоже без материализации в EF.
-    private int PositionAfterRecord(int collectionId, int afterRecordId)
+    // Позиция для вставки записи сразу после afterRecordId; инициатор не найден — в конец.
+    private int PositionAfterRecord(int collectionId, int afterRecordId) =>
+        AllocatePositions(collectionId, RecordKey(collectionId, afterRecordId), 1).At(0);
+
+    // ── Номера новых записей ─────────────────────────────────────────────────
+    // Порядок записей коллекции — (Position, Id), Position — int. Новая запись получает номер
+    // между якорем и следующей записью. Места нет — раздвигаются только ближайшие следующие
+    // записи (не больше PositionWindow); не хватает и их — новые записи получают номер якоря:
+    // Id у них больше всех, и в порядке (Position, Id) они встают сразу за якорем и записями с
+    // тем же номером. Прежде при нехватке места перенумеровывалась вся коллекция шагом 1000, а
+    // массовый дубль сдвигал весь хвост: на 10 млн записей — две минуты на UI-потоке, и номера
+    // уходили за пределы int (такие записи переставали читаться). Отсюда номера всегда в int.
+    private const int PositionStep   = 1000;
+    private const int PositionWindow = 1024;
+
+    // Номера пакета новых записей: i-я (с нуля) получает Anchor + (i + 1) · Num / Den.
+    private readonly record struct PositionRun(long Anchor, long Num, long Den)
     {
-        var after = db.DbRecords.AsNoTracking()
-            .Where(r => r.Id == afterRecordId && r.CollectionId == collectionId)
-            .Select(r => new { r.Position, r.Id })
-            .FirstOrDefault();
-
-        if (after is null)   // инициатор не найден — в конец
-            return (db.DbRecords.Where(r => r.CollectionId == collectionId)
-                        .Select(r => (int?)r.Position).Max() ?? 0) + 1000;
-
-        var nextPos = db.DbRecords.AsNoTracking()
-            .Where(r => r.CollectionId == collectionId
-                && (r.Position > after.Position || (r.Position == after.Position && r.Id > after.Id)))
-            .OrderBy(r => r.Position).ThenBy(r => r.Id)
-            .Select(r => (int?)r.Position)
-            .FirstOrDefault();
-
-        if (nextPos is not int np) return after.Position + 1000;          // после последней
-        if (np - after.Position >= 2) return after.Position + (np - after.Position) / 2;
-
-        // Зазора нет — перенумеровываем всю коллекцию одним SQL-запросом, затем считаем середину.
-        RenumberPositions(collectionId);
-        var ap = db.DbRecords.AsNoTracking().Where(r => r.Id == afterRecordId).Select(r => r.Position).First();
-        var n2 = db.DbRecords.AsNoTracking()
-            .Where(r => r.CollectionId == collectionId && r.Position > ap)
-            .OrderBy(r => r.Position).Select(r => (int?)r.Position).FirstOrDefault();
-        return n2 is int n ? ap + (n - ap) / 2 : ap + 1000;
+        public int At(long i) => (int)(Anchor + (i + 1) * Num / Den);
+        // То же в SQL: rank — ранг записи в пакете, с единицы.
+        public string Sql(string rank) => $"{Anchor} + ({rank} * {Num}) / {Den}";
     }
 
-    // Перенумеровать Position всех записей коллекции с шагом 1000 ОДНИМ bulk-SQL-запросом
-    // (оконная функция ROW_NUMBER), не загружая записи в EF. Используется как редкий
-    // «ребаланс», когда между соседями не осталось зазора для вставки.
-    private void RenumberPositions(int collectionId)
+    // Ключ записи (Position, Id); null — записи нет в этой коллекции.
+    private (long Pos, int Id)? RecordKey(int collectionId, int recordId)
     {
-        db.Database.ExecuteSqlInterpolated($@"
-            UPDATE db_records
-            SET Position = sub.rn * 1000
-            FROM (SELECT Id, ROW_NUMBER() OVER (ORDER BY Position, Id) AS rn
-                  FROM db_records WHERE CollectionId = {collectionId}) AS sub
-            WHERE db_records.Id = sub.Id");
-        // Сбрасываем закешированные EF позиции, чтобы последующие чтения видели свежие значения.
+        var k = ReadRecordKeys("SELECT Position, Id FROM db_records WHERE Id = @id AND CollectionId = @c",
+                               ("@c", collectionId), ("@id", recordId));
+        return k.Count > 0 ? k[0] : null;
+    }
+
+    // Номера для count новых записей сразу после якоря (null — в конец коллекции).
+    private PositionRun AllocatePositions(int collectionId, (long Pos, int Id)? anchor, int count)
+    {
+        if (anchor is null)
+        {
+            var last = ReadRecordKeys(
+                "SELECT Position, Id FROM db_records WHERE CollectionId = @c ORDER BY Position DESC, Id DESC LIMIT 1",
+                ("@c", collectionId));
+            // Пустая коллекция: шаг 1000, на больших пакетах мельче — чтобы уложиться в int.
+            if (last.Count == 0)
+                return new PositionRun(0, Math.Clamp(int.MaxValue / ((long)count + 1), 1, PositionStep), 1);
+            anchor = last[0];
+        }
+        var a = anchor.Value.Pos;
+        var next = ReadRecordKeys(
+            "SELECT Position, Id FROM db_records WHERE CollectionId = @c AND (Position, Id) > (@p, @id) " +
+            "ORDER BY Position, Id LIMIT @n",
+            ("@c", collectionId), ("@p", a), ("@id", anchor.Value.Id), ("@n", PositionWindow + 1));
+
+        for (var j = 0; j <= Math.Min(next.Count, PositionWindow); j++)
+        {
+            // Раздвигаем j следующих записей; j == next.Count — за ними конец коллекции.
+            var end = j == next.Count;
+            var upper = end ? (long)int.MaxValue + 1 : next[j].Pos;
+            var need  = (long)count + j;
+            if (upper - a - 1 < need) continue;
+            var run = end
+                ? new PositionRun(a, Math.Min(PositionStep, (upper - a - 1) / need), 1)
+                : new PositionRun(a, upper - a, need + 1);
+            if (j > 0) MoveRecordPositions(next.Take(j).Select((k, i) => (k.Id, run.At(count + i))).ToList());
+            return run;
+        }
+        return new PositionRun(Math.Clamp(a, int.MinValue, int.MaxValue), 0, 1);
+    }
+
+    // Ключи (Position, Id) по запросу. Position читается как long: номер за пределами int
+    // (базы, испорченные прежней перенумерацией) не должен ронять чтение.
+    private List<(long Pos, int Id)> ReadRecordKeys(string sql, params (string Name, object Value)[] args)
+    {
+        db.Database.OpenConnection();
+        try
+        {
+            using var cmd = db.Database.GetDbConnection().CreateCommand();
+            if (db.Database.CurrentTransaction is { } t) cmd.Transaction = t.GetDbTransaction();
+            cmd.CommandText = sql;
+            foreach (var (name, value) in args) AddParam(cmd, name).Value = value;
+            var keys = new List<(long, int)>();
+            using var rd = cmd.ExecuteReader();
+            while (rd.Read()) keys.Add((Convert.ToInt64(rd.GetValue(0)), Convert.ToInt32(rd.GetValue(1))));
+            return keys;
+        }
+        finally { db.Database.CloseConnection(); }
+    }
+
+    // Новые номера раздвинутых записей; закешированные EF копии перечитываем.
+    private void MoveRecordPositions(List<(int Id, int Pos)> moves)
+    {
+        db.Database.OpenConnection();
+        try
+        {
+            using var cmd = db.Database.GetDbConnection().CreateCommand();
+            if (db.Database.CurrentTransaction is { } t) cmd.Transaction = t.GetDbTransaction();
+            cmd.CommandText = "UPDATE db_records SET Position = @p WHERE Id = @id";
+            var p  = AddParam(cmd, "@p",  System.Data.DbType.Int32);
+            var id = AddParam(cmd, "@id", System.Data.DbType.Int32);
+            foreach (var m in moves)
+            {
+                p.Value = m.Pos;
+                id.Value = m.Id;
+                cmd.ExecuteNonQuery();
+            }
+        }
+        finally { db.Database.CloseConnection(); }
+        var moved = moves.Select(m => m.Id).ToHashSet();
         foreach (var e in db.ChangeTracker.Entries<DbRecordEntity>().ToList())
-            if (e.Entity.CollectionId == collectionId) e.Reload();
+            if (moved.Contains(e.Entity.Id) && e.State == EntityState.Unchanged) e.Reload();
     }
 
     public void UpdateRecord(DbRecord record)
@@ -3983,7 +4041,7 @@ public partial class ConstructorRepository(AppDbContext db)
         ctx.ApplyPerformancePragmas();
         var repo = new ConstructorRepository(ctx);
         if (afterRecordId is { } aid) return repo.AddRecordAfter(record, aid);
-        record.Position = (repo.CountRecords(record.CollectionId) + 1) * 1000;
+        record.Position = repo.AllocatePositions(record.CollectionId, null, 1).At(0);
         return repo.AddRecord(record);
     }
 
@@ -4136,31 +4194,27 @@ public partial class ConstructorRepository(AppDbContext db)
             SELECT MAX(r.Id) FROM db_records r JOIN _dup_recsel s ON s.src_id = r.Id
             WHERE r.CollectionId = {collectionId} AND r.Position = {anchorPos}");
 
-        // Освобождаем count слотов сразу после якоря: все, что идет после него в порядке (Position, Id),
-        // сдвигаем на (count+1)*1000 — с запасом, чтобы копии (anchorPos + ранг*1000, ранг 1..count) не
-        // столкнулись даже с записями, делящими Position якоря (Id > anchorId). Перенумерация всей коллекции
-        // не нужна — трогаем только хвост. Сами выбранные (Position ≤ anchorPos, при равенстве Id ≤ anchorId)
-        // НЕ сдвигаются, поэтому их ранг для значений совпадет с рангом при вставке копий.
-        var shift = (count + 1) * 1000;
-        db.Database.ExecuteSqlInterpolated($@"
-            UPDATE db_records SET Position = Position + {shift}
-            WHERE CollectionId = {collectionId}
-              AND (Position > {anchorPos} OR (Position = {anchorPos} AND Id > {anchorId}))");
+        // Номера копий сразу после якоря (AllocatePositions): раздвигаются только ближайшие следующие
+        // записи, хвост коллекции не трогается. Сами выбранные (Position ≤ anchorPos, при равенстве
+        // Id ≤ anchorId) не двигаются, поэтому их ранг для значений совпадет с рангом при вставке копий.
+        var run = AllocatePositions(collectionId, (anchorPos, anchorId), count);
 
         var createdAt = DateTime.Now.ToString("o");
         var createdBy = CurrentUser.DisplayName;   // дубль = новая запись (свой автор/время)
 
-        // 1) Копии записей в освобожденный диапазон сразу после якоря: Position = anchorPos + ранг*1000
-        //    (ранг по Position, Id исходников). Новые rowid — непрерывный блок в этом порядке (мы
-        //    единственный писатель в транзакции).
-        db.Database.ExecuteSqlInterpolated($@"
+        // 1) Копии записей сразу после якоря, номера — по рангу (Position, Id) исходников. Новые rowid —
+        //    непрерывный блок в этом порядке (мы единственный писатель в транзакции).
+        // EF1002: в строку подставляются только числа номеров, посчитанные здесь же.
+        #pragma warning disable EF1002
+        db.Database.ExecuteSqlRaw($@"
             INSERT INTO db_records (CollectionId, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, StartDt, EndDt, AllDay, Title, Color)
-            SELECT {collectionId}, {createdAt}, {createdAt}, {createdBy}, {createdBy},
-                   {anchorPos} + ROW_NUMBER() OVER (ORDER BY r.Position, r.Id) * 1000,
+            SELECT {{0}}, {{1}}, {{1}}, {{2}}, {{2}},
+                   {run.Sql("ROW_NUMBER() OVER (ORDER BY r.Position, r.Id)")},
                    r.StartDt, r.EndDt, r.AllDay, r.Title, r.Color
             FROM db_records r JOIN _dup_recsel s ON s.src_id = r.Id
-            WHERE r.CollectionId = {collectionId}
-            ORDER BY r.Position, r.Id");
+            WHERE r.CollectionId = {{0}}
+            ORDER BY r.Position, r.Id", collectionId, createdAt, createdBy);
+        #pragma warning restore EF1002
         var firstNew = (int)(LastInsertRowid() - count + 1);
 
         // 2) Значения пакетами по рангу: новый RecordId = firstNew + ранг − 1, один INSERT по всем полям.
@@ -4240,11 +4294,7 @@ public partial class ConstructorRepository(AppDbContext db)
                 SELECT MAX(r.Id) FROM db_records r JOIN _dup_recsel s ON s.src_id = r.Id
                 WHERE r.CollectionId = {collectionId} AND r.Position = {anchorPos}");
 
-            var shift = (count + 1) * 1000;
-            db.Database.ExecuteSqlInterpolated($@"
-                UPDATE db_records SET Position = Position + {shift}
-                WHERE CollectionId = {collectionId}
-                  AND (Position > {anchorPos} OR (Position = {anchorPos} AND Id > {anchorId}))");
+            var run = AllocatePositions(collectionId, (anchorPos, anchorId), count);
 
             db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS _dup_rmap");
             // EF1002 «возможная SQL-инъекция»: в строку подставляются только целые идентификаторы
@@ -4254,20 +4304,22 @@ public partial class ConstructorRepository(AppDbContext db)
             #pragma warning disable EF1002
             db.Database.ExecuteSqlRaw($@"
                 CREATE TEMP TABLE _dup_rmap AS
-                SELECT r.Id AS old_id,
-                       nextval(pg_get_serial_sequence('db_records', 'id')) AS new_id,
-                       ROW_NUMBER() OVER (ORDER BY r.Position, r.Id) AS rn
-                FROM db_records r JOIN _dup_recsel s ON s.src_id = r.Id
-                WHERE r.CollectionId = {collectionId}");
-            #pragma warning restore EF1002
+                SELECT q.old_id, nextval(pg_get_serial_sequence('db_records', 'id')) AS new_id, q.rn
+                FROM (SELECT r.Id AS old_id, ROW_NUMBER() OVER (ORDER BY r.Position, r.Id) AS rn
+                      FROM db_records r JOIN _dup_recsel s ON s.src_id = r.Id
+                      WHERE r.CollectionId = {collectionId}
+                      ORDER BY rn) q");
 
+            // Номер копии — по рангу; id выдаются в том же порядке (выборка выше упорядочена), чтобы
+            // копии с одинаковым номером (места у якоря нет) шли по рангу.
             var createdAt = DateTime.Now.ToString("o");
             var createdBy = CurrentUser.DisplayName;   // дубль = новая запись (свой автор/время)
-            db.Database.ExecuteSqlInterpolated($@"
+            db.Database.ExecuteSqlRaw($@"
                 INSERT INTO db_records (Id, CollectionId, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, StartDt, EndDt, AllDay, Title, Color)
-                SELECT m.new_id, {collectionId}, {createdAt}, {createdAt}, {createdBy}, {createdBy}, {anchorPos} + m.rn * 1000,
+                SELECT m.new_id, {{0}}, {{1}}, {{1}}, {{2}}, {{2}}, {run.Sql("m.rn")},
                        r.StartDt, r.EndDt, r.AllDay, r.Title, r.Color
-                FROM db_records r JOIN _dup_rmap m ON m.old_id = r.Id");
+                FROM db_records r JOIN _dup_rmap m ON m.old_id = r.Id", collectionId, createdAt, createdBy);
+            #pragma warning restore EF1002
 
             var processed = 0;
             while (processed < count)
@@ -6022,11 +6074,6 @@ public partial class ConstructorRepository(AppDbContext db)
         var dateFieldId = ResolveCalendarDateField(colId, r.FieldId);
         var descFieldId = EnsureDescriptionField(colId);
 
-        var maxPos = db.DbRecords
-            .Where(rec => rec.CollectionId == colId)
-            .Select(rec => (int?)rec.Position)
-            .Max() ?? 0;
-
         var rec = new DbRecordEntity
         {
             CollectionId = colId,
@@ -6034,7 +6081,7 @@ public partial class ConstructorRepository(AppDbContext db)
             EndDt        = DateTime.SpecifyKind(r.EndDt,   DateTimeKind.Unspecified).ToString("o"),
             AllDay       = r.AllDay,
             CreatedAt    = DateTime.Now.ToString("o"),
-            Position     = maxPos + 1000,
+            Position     = AllocatePositions(colId, null, 1).At(0),
             Title        = r.Title,
         };
         db.DbRecords.Add(rec);

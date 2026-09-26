@@ -161,9 +161,9 @@ public partial class MainWindow : Window
                 CalendarSidebar.UpdatePendingStatus(dbId, st.Text, failed);
                 TasksSidebar.UpdatePendingStatus(dbId, st.Text, failed);
                 // Список БД в настройках живет теми же процентами/временем, что и сайдбар.
-                SettingsModule.UpdateQueueStatus(dbId, st.Text, failed);
+                _settingsView?.UpdateQueueStatus(dbId, st.Text, failed);
             }
-            if (stateChanged) SettingsModule.RefreshDatabases();
+            if (stateChanged) _settingsView?.RefreshDatabases();
         });
         _mountQueue.Completed += (dbId, manager) => Dispatcher.UIThread.Post(() =>
         {
@@ -211,82 +211,15 @@ public partial class MainWindow : Window
         // фоновые операции) → обновить те части UI, что читали данные раньше (см. FlushLocalChanges).
         ChangeBus.Committed += OnLocalCommit;
 
-        // Раздел настроек «Управление базой данных»: реестр + статус монтирования/очереди.
-        SettingsModule.Initialize(workspace.Registry,
-            dbId => _workspace.Get(dbId) is not null,
-            dbId => _mountQueue.StatusOf(dbId) is { } st
-                ? (st.Text, st.State == MountQueue.ItemState.Failed)
-                : null,
-            // Сведения о файле — снимок, снятый при монтировании (без обращения к файлу с UI-потока).
-            dbId => _workspace.Get(dbId)?.Storage,
-            // Администратор базы: он обслуживает файл (сжать/копия) и правит в окне настроек
-            // название с паролем подключения. Провайдер здесь не при чем — где нужен именно
-            // SQLite, это проверяется на месте.
-            dbId => _workspace.Get(dbId) is { } m && m.Permissions.IsAdmin,
-            // Стадии задач всех допущенных баз — для списка «Стадия новой задачи».
-            taskStages: () => GrantedDbs().SelectMany(m => m.Constructor.GetTaskStages()).Distinct().ToList(),
-            // Открытые базы — «Интеграциям»: ответ сторонней программы укладывается в коллекцию
-            // выбранной базы, и список должен быть тем, что есть на экране прямо сейчас.
-            databases: GrantedDbs,
-            // Кнопка «Проверить папку» ведет ту же службу, что ходит по расписанию: две
-            // реализации одного обхода разошлись бы на первой же правке.
-            inboxSweep: ct => _inbox.RunNowAsync(ct),
-            // Служба приема по сети: экран включает ее и показывает, слушает она или нет.
-            ingress: _ingress,
-            // «Запустить» у сценария ведет ту же службу, что ходит по расписанию: проверка,
-            // идущая другой дорогой, не отвечает на вопрос «а что будет само».
-            scenarioRun: (scenario, ct) => _scenarios.RunNowAsync(scenario, ct));
-
-        // Live mount/unmount: добавление/удаление БД в настройках сразу отражается в
-        // сайдбаре конструктора без перезапуска. Новая база встает в хвост очереди —
-        // даже если сейчас мигрирует другая, ничего не блокируется.
-        SettingsModule.DatabaseAdded += (_, entry) =>
-        {
-            _mountQueue.Enqueue(entry);
-            SyncMountedToUi();   // заглушка «в очереди…» появляется сразу
-        };
-        SettingsModule.DatabaseRemoved += (_, dbId) =>
-        {
-            // Если открыта коллекция удаляемой БД — отвязываем модуль на дефолтную БД.
-            if (_currentConstructorDbId == dbId)
-            {
-                _currentConstructorDbId = _workspace.Default.DbId;
-                ConstructorModule.DetachDatabase(_workspace.Default.Constructor);
-            }
-            _mountQueue.Forget(dbId);
-            _health.Forget(dbId);
-            _lostDbIds.Remove(dbId);
-            _workspace.Unmount(dbId);
-            SyncMountedToUi();
-        };
-        SettingsModule.DatabaseReconnectRequested += (_, dbId) =>
-        {
-            // Повторная попытка монтирования (например, сетевая папка снова доступна).
-            var entry = _workspace.Registry.GetAll().FirstOrDefault(d => d.Id == dbId);
-            if (entry is null) return;
-            _mountQueue.Enqueue(entry);
-            SyncMountedToUi();
-        };
-        // Обслуживание файла базы из «Управления базой данных»: сжатие через очередь,
-        // с отключением базы на время VACUUM.
-        SettingsModule.DatabaseCompactRequested += (_, dbId) => _ = CompactDatabaseAsync(dbId);
-        // Раздел «Резервное копирование»: ручной запуск — службе; ход и итог — обратно в
-        // раздел (прогресс приходит из фонового потока — маршалим, остальное уже на UI).
-        SettingsModule.BackupNowRequested += (_, dbId) => _ = _backup.RunNowAsync(dbId);
-        _backup.BackupStarted  += dbId => SettingsModule.OnBackupStarted(dbId);
+        // Службы → раздел настроек (ход копирования, обход папки обмена, порт, сценарии): только
+        // построенному разделу — строящийся читает состояние служб сам.
+        _backup.BackupStarted  += dbId => _settingsView?.OnBackupStarted(dbId);
         _backup.BackupProgress += (dbId, msg, frac) =>
-            Dispatcher.UIThread.Post(() => SettingsModule.OnBackupProgress(dbId, msg, frac));
-        _backup.BackupFinished += (dbId, ok, msg) => SettingsModule.OnBackupFinished(dbId, ok, msg);
-        // Автоматический обход папки обмена что-то тронул — показать это на вкладке «Прием»:
-        // включенный тумблер иначе ничем не отличается от выключенного, пока файлы не придут.
-        _inbox.Swept += run => SettingsModule.OnInboxSwept(run);
-        // Порт открылся или закрылся — перерисовать строку состояния на вкладке «Доступ извне».
-        _ingress.Changed += () => Dispatcher.UIThread.Post(SettingsModule.OnIngressChanged);
-        // Сценарий отработал сам — обновить открытый журнал: смотреть на устаревший список,
-        // пока обмен идет у тебя на глазах, незачем.
-        _scenarios.Ran += (_, _) => SettingsModule.OnScenarioRan();
-        // Переименование в окне настроек базы (см. OnDatabaseRenamed).
-        SettingsModule.DatabaseRenamed += OnDatabaseRenamed;
+            Dispatcher.UIThread.Post(() => _settingsView?.OnBackupProgress(dbId, msg, frac));
+        _backup.BackupFinished += (dbId, ok, msg) => _settingsView?.OnBackupFinished(dbId, ok, msg);
+        _inbox.Swept += run => _settingsView?.OnInboxSwept(run);
+        _ingress.Changed += () => Dispatcher.UIThread.Post(() => _settingsView?.OnIngressChanged());
+        _scenarios.Ran += (_, _) => _settingsView?.OnScenarioRan();
         _mountQueue.MaintenanceFinished += (dbId, error) => Dispatcher.UIThread.Post(() =>
         {
             var name = _workspace.Registry.GetAll().FirstOrDefault(d => d.Id == dbId)?.Name ?? "";
@@ -296,17 +229,8 @@ public partial class MainWindow : Window
                 NotifyInfo($"Файл базы «{name}» сжат: {DatabaseRowSize(sizes.Before)} → {DatabaseRowSize(sizes.After)}.");
         });
 
-        // Тумблер «Общее → Уведомления»: включаем/выключаем службу на лету.
-        SettingsModule.NotificationsEnabledChanged += (_, on) => _notifications.SetEnabled(on);
-        // Тумблеры уведомлений по задачам — тем же путем, каждый сам по себе.
-        SettingsModule.TaskAssignedNotificationsChanged += (_, on) => _notifications.SetTaskAssignedEnabled(on);
-        SettingsModule.TaskStatusNotificationsChanged   += (_, on) => _notifications.SetTaskStatusEnabled(on);
-        // Тумблер «Общее → Фоновый режим»: показать/скрыть значок в трее (и вернуть окно при выкл).
-        SettingsModule.BackgroundEnabledChanged += (_, on) => OnBackgroundChanged(on);
-
         // Инициализируем модули через AXAML-конструкторы.
         // Календарь агрегирует события только из ДОПУЩЕННЫХ БД (без допуска — данные не видны).
-        CalendarModule.Initialize(GrantedDbs(), _categories);
         TasksModule.Initialize(GrantedDbs());
         LibraryModule.Initialize(GrantedDbs());
         ConstructorModule.Initialize(_constructor);
@@ -366,9 +290,7 @@ public partial class MainWindow : Window
         //
         // Хранилище раздается ДО первого ShowModule: иначе при запуске сразу в «Заметках» раздел
         // открылся бы с пустым деревом и без прошлой заметки.
-        var notesVault = AppSettings.LoadNotesVault();
-        NotesSidebar.SetVault(notesVault);
-        NotesModule.SetVault(notesVault);
+        NotesSidebar.SetVault(AppSettings.LoadNotesVault());
 
         // Начальное состояние: раздел при запуске берем из настроек (стандарт — конструктор).
         // Его могли скрыть в «Оформлении» уже после выбора — тогда открываем первый видимый,
@@ -387,7 +309,7 @@ public partial class MainWindow : Window
         // Сайдбар настроек: пункты из SettingsRegistry; выбор раздела открывает его в основной области.
         SettingsSidebar.Title = "Настройки";
         SettingsSidebar.SetItems(SettingsRegistry.All.Select(c => new SidebarListItem(c.Key, c.Label, c.Icon)));
-        SettingsSidebar.CategorySelected += (_, key) => SettingsModule.ShowCategory(key);
+        SettingsSidebar.CategorySelected += (_, key) => _settingsView?.ShowCategory(key);
 
         // Сайдбар расширений: пункты из каталога — то есть из реестра расширений, но уже без
         // скрытых («Настройки → Расширения → Отображение раздела расширений»). Одна иконка на
@@ -412,63 +334,19 @@ public partial class MainWindow : Window
 
         NotesSidebar.NoteSelected        += (_, rel)  => NotesModule.OpenNote(rel);
         NotesSidebar.UnsupportedSelected += (_, name) => NotesModule.ShowUnsupported(name);
-        NotesSidebar.NoteMoved           += (_, m)    => NotesModule.NotePathChanged(m.OldPath, m.NewPath);
-        NotesSidebar.NoteRemoved         += (_, rel)  => NotesModule.NoteRemoved(rel);
-        NotesSidebar.VaultChanged        += (_, _)    => NotesModule.Refresh();
-
-        // Переименование из шапки раздела — та же операция, что и из дерева: файл трогает
-        // только сайдбар, а раздел узнает о новом пути событием NoteMoved.
-        NotesModule.NoteRenamed += (_, r) =>
-        {
-            // Имя не подошло (занято, запрещенные символы, отказ ФС) — заголовок откатывается
-            // и объясняет причину прямо у себя, а не всплывашкой над деревом.
-            if (NotesSidebar.RenameFromHeader(r.RelativePath, r.NewName) is { } error)
-                NotesModule.RejectRename(error);
-        };
-
-        // Кнопка «Открыть настройки» из пустого состояния. Переключаем ровно тем же путем, что и
-        // панель активности, иначе подсветка кнопки разъедется с показанным разделом.
-        NotesModule.OpenSettingsRequested += (_, _) =>
-        {
-            ActivityBarControl.SetModuleActive("settings");
-            ShowModule("settings");
-            SettingsSidebar.Select("notes");
-        };
-
-        // «Показать политику» с карточки соединения: отказ адреса объясняет себя строкой, а
-        // правила целиком живут в контуре безопасности — в другом модуле. Переключаем тем же
-        // путем, что и панель активности, иначе подсветка кнопки разъедется с показанным
-        // разделом.
-        SettingsModule.PolicyRequested += (_, _) =>
-        {
-            ActivityBarControl.SetModuleActive("profile");
-            ShowModule("profile");
-            ProfileSidebar.Select("security");
-        };
-
-        // Папку хранилища сменили в настройках — раздать новый путь дереву и разделу.
-        SettingsModule.NotesVaultChanged += (_, path) =>
-        {
-            NotesSidebar.SetVault(path);
-            NotesModule.SetVault(path);
-        };
+        NotesSidebar.NoteMoved           += (_, m)    => _notesView?.NotePathChanged(m.OldPath, m.NewPath);
+        NotesSidebar.NoteRemoved         += (_, rel)  => _notesView?.NoteRemoved(rel);
+        NotesSidebar.VaultChanged        += (_, _)    => _notesView?.Refresh();
 
         // Sidebar коллекций передает активные id в CalendarModule
         CalendarSidebar.ActiveIdsChanged += (_, ids) =>
-            CalendarModule.SetActiveIds(ids);
+            _calendarView?.SetActiveIds(ids);
 
         // Смена цвета коллекции в сайдбаре → перерисовать календарь и дерево конструктора
         CalendarSidebar.CalendarsChanged += (_, _) =>
         {
-            CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
+            _calendarView?.SetActiveIds(CalendarSidebar.GetActiveIds());
             ConstructorSidebar.Refresh();
-        };
-
-        // После создания/изменения события обновляем Sidebar (могла появиться новая коллекция)
-        CalendarModule.CollectionsMayHaveChanged += (_, _) =>
-        {
-            CalendarSidebar.Refresh();
-            CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
         };
 
         // Сайдбар задач: галочки решают, какие коллекции показывать (клик по строке —
@@ -484,7 +362,7 @@ public partial class MainWindow : Window
         TasksSidebar.RequestRefresh += (_, _) =>
         {
             CalendarSidebar.Refresh();
-            CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
+            _calendarView?.SetActiveIds(CalendarSidebar.GetActiveIds());
             ConstructorSidebar.Refresh();
             ConstructorModule.Refresh();
         };
@@ -498,7 +376,7 @@ public partial class MainWindow : Window
             // которое раздел запускает следом.
             TasksModule.SetActiveIds(TasksSidebar.GetActiveIds());
             CalendarSidebar.Refresh();
-            CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
+            _calendarView?.SetActiveIds(CalendarSidebar.GetActiveIds());
             ConstructorSidebar.Refresh();
             ConstructorModule.Refresh();
         };
@@ -536,7 +414,7 @@ public partial class MainWindow : Window
         ConstructorSidebar.RequestRefresh += (_, _) =>
         {
             CalendarSidebar.Refresh();
-            CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
+            _calendarView?.SetActiveIds(CalendarSidebar.GetActiveIds());
             ConstructorModule.Refresh();
         };
         ConstructorSidebar.CollectionDeleted += (_, _) => ConstructorModule.Refresh();
@@ -545,7 +423,7 @@ public partial class MainWindow : Window
         ConstructorModule.CollectionsChanged += (_, _) =>
         {
             CalendarSidebar.Refresh();
-            CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
+            _calendarView?.SetActiveIds(CalendarSidebar.GetActiveIds());
             ConstructorSidebar.Refresh();
         };
 
@@ -633,9 +511,6 @@ public partial class MainWindow : Window
         _recordPanelWidth = AppSettings.LoadRecordPanelWidth();
         _readerWidth      = AppSettings.LoadLibraryReaderWidth();
 
-        // Первоначальная загрузка фильтра
-        CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
-
         // При потере фокуса окном закрываем открытые контекстные меню/flyout —
         // иначе на macOS popup «зависает» поверх других приложений (Avalonia issue).
         // Заодно переводим синхронизацию чужих правок в экономный режим.
@@ -646,7 +521,7 @@ public partial class MainWindow : Window
             // Ушли в другую программу — дописать черновик заметки: пользователь мог уйти
             // править тот же файл снаружи. Вызов синхронный и без диалогов (на macOS
             // Deactivated приходит и при открытии собственной модалки).
-            NotesModule.FlushPendingSave();
+            _notesView?.FlushPendingSave();
         };
 
         // Уровень масштабирования: применяем сохраненный и реагируем на изменения из настроек.
@@ -705,7 +580,7 @@ public partial class MainWindow : Window
         {
             // Первым делом — черновик заметки на диск и открытую правку ячейки в базу: дальше окно
             // может уйти в фоновый режим или закрыться совсем, и несохраненный текст пропал бы.
-            NotesModule.FlushPendingSave();
+            _notesView?.FlushPendingSave();
             ConstructorModule.CommitCellEdit();
 
             // Фоновый режим: нажатие на «крестик» окна не завершает приложение, а СКРЫВАЕТ его
@@ -988,7 +863,9 @@ public partial class MainWindow : Window
         ConstructorSidebar.SetDatabaseStatus(dbId, text);
         CalendarSidebar.SetDatabaseStatus(dbId, text);
         TasksSidebar.SetDatabaseStatus(dbId, text);
-        SettingsModule.SetDatabaseStatus(dbId, text);
+        // Настройкам — если построены; построенные получат накопленные статусы (CreateSettingsModule).
+        if (text is null) _dbStatuses.Remove(dbId); else _dbStatuses[dbId] = text;
+        _settingsView?.SetDatabaseStatus(dbId, text);
     }
 
     // Чужие правки в БД (другой пользователь общей базы / другая копия приложения):
@@ -1052,7 +929,7 @@ public partial class MainWindow : Window
         // Видимый агрегатный модуль перечитывает события/задачи затронутой БД. Задачи — принудительно:
         // при том же наборе галочек SetActiveIds чтение пропускает, а чужая правка галочек не меняет.
         if (_activeModule == "calendar")
-            CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
+            _calendarView?.SetActiveIds(CalendarSidebar.GetActiveIds());
         else if (_activeModule == "tasks")
             TasksModule.SetActiveIds(TasksSidebar.GetActiveIds(), force: true);
 
@@ -1137,7 +1014,8 @@ public partial class MainWindow : Window
             TasksSidebarStamp:       TasksSidebar.DataStamp,
             ConstructorSidebarStamp: ConstructorSidebar.DataStamp,
             LibrarySidebarStamp:     LibrarySidebar.DataStamp,
-            CalendarStamp:           CalendarModule.DataStamp,
+            // Раздел еще не построен — читать ему нечего, он прочитает все при показе.
+            CalendarStamp:           _calendarView?.DataStamp ?? long.MaxValue,
             TasksStamp:              TasksModule.DataStamp,
             LibraryStamp:            LibraryModule.DataStamp,
             ConstructorShowsDb:      _currentConstructorDbId == dbId && ConstructorModule.IsVisible,
@@ -1153,7 +1031,7 @@ public partial class MainWindow : Window
         if (steps.Has(RefreshPlan.Steps.ConstructorSidebar)) ConstructorSidebar.Refresh();
         if (steps.Has(RefreshPlan.Steps.LibrarySidebar))     LibrarySidebar.Refresh();
 
-        if (steps.Has(RefreshPlan.Steps.Calendar)) CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
+        if (steps.Has(RefreshPlan.Steps.Calendar)) _calendarView?.SetActiveIds(CalendarSidebar.GetActiveIds());
         if (steps.Has(RefreshPlan.Steps.Tasks))    TasksModule.SetActiveIds(TasksSidebar.GetActiveIds(), force: true);
         if (steps.Has(RefreshPlan.Steps.Library))  LibraryModule.SetActiveIds(LibrarySidebar.GetActiveIds(), force: true);
 
@@ -1373,7 +1251,10 @@ public partial class MainWindow : Window
     {
         if (_updateChecked) return;
         _updateChecked = true;   // ставим ДО await — второй вход не должен начать вторую проверку
-        await SettingsModule.CheckForUpdatesOnStartupAsync();   // не бросает — см. SettingsView
+        // Проверка идет без раздела настроек; он нужен, только если обновление нашлось (окно
+        // «Обновить» и загрузка). Итог проверки раздел покажет, когда его откроют.
+        if (await Views.Settings.SettingsView.CheckForUpdatesOnStartupAsync())   // не бросает
+            await SettingsModule.StartFoundUpdateAsync();
     }
 
     // Явный выход (трей «Выход», Ctrl+Q): не скрывать окно, а завершить приложение.
@@ -1427,14 +1308,14 @@ public partial class MainWindow : Window
         CalendarSidebar.InitializeWorkspace(GrantedDbs(), Controls.Components.SidebarMode.Calendar, pending);
         TasksSidebar.InitializeWorkspace(GrantedDbs(), Controls.Components.SidebarMode.Tasks, pending);
         LibrarySidebar.InitializeWorkspace(GrantedDbs(), Controls.Components.SidebarMode.Library, pending);
-        CalendarModule.SetDatabases(GrantedDbs());
+        _calendarView?.SetDatabases(GrantedDbs());
         TasksModule.SetDatabases(GrantedDbs());
         LibraryModule.SetDatabases(GrantedDbs());
         ConstructorModule.SetDatabases(GrantedDbs());
-        CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
+        _calendarView?.SetActiveIds(CalendarSidebar.GetActiveIds());
         TasksModule.SetActiveIds(TasksSidebar.GetActiveIds());
         LibraryModule.SetActiveIds(LibrarySidebar.GetActiveIds());
-        SettingsModule.RefreshDatabases();   // обновить статус «подключена/не подключена»
+        _settingsView?.RefreshDatabases();   // обновить статус «подключена/не подключена»
         ProfileModule.OnDatabasesChanged();  // история — только базы с допуском, панель администратора — свои базы
         SyncProfileSidebar();                // админство пропало вместе с базой — «Журнал безопасности» уходит из меню
     }
@@ -1526,16 +1407,17 @@ public partial class MainWindow : Window
 
         // Уходим из заметок — дописать несохраненный текст: автосохранение работает с паузой,
         // и последние набранные символы иначе остались бы только в редакторе.
-        if (_activeModule == "notes" && module != "notes") NotesModule.FlushPendingSave();
+        if (_activeModule == "notes" && module != "notes") _notesView?.FlushPendingSave();
 
         _activeModule = module;
 
-        CalendarModule.IsVisible   = module == "calendar";
+        // Разделы, которые строит первый показ: видимым — построить, прочим — скрыть построенные.
+        ShowSection(_calendarView, () => CalendarModule, module == "calendar");
+        ShowSection(_settingsView, () => SettingsModule, module == "settings");
+        ShowSection(_notesView,    () => NotesModule,    module == "notes");
         TasksModule.IsVisible      = module == "tasks";
-        SettingsModule.IsVisible   = module == "settings";
         ExtensionsModule.IsVisible = module == "extensions";
         ProfileModule.IsVisible    = module == "profile";
-        NotesModule.IsVisible      = module == "notes";
         LibraryModule.IsVisible    = module == "library";
         // Видимость ConstructorModule зависит еще и от _collectionOpen — ее ставит ApplyColumns.
 

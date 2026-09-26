@@ -6,6 +6,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.TextFormatting;
 using Avalonia.VisualTree;
+using SmartBase.Controls.Components;
 using SmartBase.Core.Models;
 using SmartBase.Utils;
 
@@ -297,16 +298,14 @@ internal sealed class CalendarDayCanvas : Control
         var width      = Math.Max(0, rect.Width - TextLeft - textRight);
         if (item.TitleLayout is null || item.LayoutWidth != width || !ReferenceEquals(item.LayoutBrush, foreground))
         {
-            item.TitleLayout?.Dispose();
-            item.TimeLayout?.Dispose();
-            item.TitleLayout = new TextLayout(item.Title, item.TitleFace, item.FontSize, foreground, TextAlignment.Left,
-                                              TextWrapping.Wrap, TextTrimming.CharacterEllipsis, null,
-                                              FlowDirection.LeftToRight, width, double.PositiveInfinity,
-                                              double.NaN, 0, item.TitleMaxLines);
+            // Раскладки — из общего кеша: после правки неделя строит колонки заново, и блоки с тем
+            // же текстом и шириной берут готовые.
+            item.TitleLayout = SharedTextLayouts.Get(item.Title, item.TitleFace, item.FontSize, foreground,
+                                                     TextAlignment.Left, TextWrapping.Wrap, trim: true,
+                                                     width, double.PositiveInfinity, item.TitleMaxLines);
             item.TimeLayout = item.Time is null ? null
-                : new TextLayout(item.Time, item.TimeFace, item.FontSize, foreground, TextAlignment.Left,
-                                 TextWrapping.NoWrap, null, null, FlowDirection.LeftToRight,
-                                 width, double.PositiveInfinity, double.NaN, 0, 0);
+                : SharedTextLayouts.Get(item.Time, item.TimeFace, item.FontSize, foreground, TextAlignment.Left,
+                                        TextWrapping.NoWrap, trim: false, width, double.PositiveInfinity, 0);
             item.LayoutWidth = width;
             item.LayoutBrush = foreground;
         }

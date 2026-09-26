@@ -197,10 +197,14 @@ public partial class DayView : UserControl
         }
     }
 
-    public void Refresh(IEnumerable<CalendarRecord> events, DateOnly date, bool scrollToNow = false)
+    public void Refresh(IEnumerable<CalendarRecord> events, DateOnly date, bool scrollToNow = false,
+                        IReadOnlyCollection<CalendarRecord>? select = null)
     {
         var day       = date.ToDateTime(TimeOnly.MinValue);
         var allEvents = events.ToList();
+        // Выделение переживает пересборку; select (созданная запись, копии, перенесенная) его
+        // заменяет — как нажатие по ним.
+        var keep      = select is null ? SelectionKeys() : KeysOf(select);
 
         _currentDays = [day];
         _eventEntries.Clear();
@@ -244,7 +248,7 @@ public partial class DayView : UserControl
 
         foreach (var group in GroupOverlapping(sortedDayEvents))
         {
-            foreach (var (ev, colIdx, nCols, rightLimit) in AssignColumns(group))
+            foreach (var (ev, colIdx, nCols, rightLimit) in AssignColumns(group, keep))
             {
                 // Сегменты многодневного события обрезаются рабочими часами (см. WeekView):
                 // граница дня ведет себя как полночь, ночные часы не закрашиваются.
@@ -304,10 +308,29 @@ public partial class DayView : UserControl
             _pendingSelectId = null;
         }
 
+        if (keep.Count > 0) ApplySelection(keep);
+
         if (scrollToNow)
             Dispatcher.UIThread.Post(
                 () => TimeScroll.Offset = new Vector(0, Math.Max(0, DateTime.Now.Hour * 60 - 120)),
                 DispatcherPriority.Loaded);
+    }
+
+    // Ключи выделенного по обеим зонам (сетка + полоса «весь день»).
+    private HashSet<(int DbId, int Id, int FieldId)> SelectionKeys() =>
+        _SelectedAll().Where(r => r.Id.HasValue).Select(r => (r.DbId, r.Id!.Value, r.FieldId)).ToHashSet();
+
+    private static HashSet<(int DbId, int Id, int FieldId)> KeysOf(IEnumerable<CalendarRecord> records) =>
+        records.Where(r => r.Id.HasValue).Select(r => (r.DbId, r.Id!.Value, r.FieldId)).ToHashSet();
+
+    // Событие сетки выделяется всеми сегментами, плашка «весь день» — в полосе.
+    private void ApplySelection(HashSet<(int DbId, int Id, int FieldId)> keys)
+    {
+        foreach (var entry in _eventEntries)
+            if (entry.Ev.Id is int id && keys.Contains((entry.Ev.DbId, id, entry.Ev.FieldId))
+                && !_selections.ContainsKey(entry.Ev))
+                _SelectEvent(entry);
+        AllDayBarCtrl.SelectKeys(keys);
     }
 
     private void _Deselect()
@@ -1275,21 +1298,35 @@ public partial class DayView : UserControl
         return groups;
     }
 
-    private static List<(CalendarRecord Ev, int ColIdx, int NCols, int RightLimit)> AssignColumns(List<CalendarRecord> group)
+    // pinned — выделенные: они раскладываются первыми, в левые колонки. На переполненном дне
+    // (пересечений больше лимита колонок) перенесенное, созданное или скопированное событие иначе
+    // могло уйти за лимит и пропасть с экрана вместе с выделением.
+    private static List<(CalendarRecord Ev, int ColIdx, int NCols, int RightLimit)> AssignColumns(
+        List<CalendarRecord> group, IReadOnlySet<(int DbId, int Id, int FieldId)>? pinned = null)
     {
         var evs     = group.OrderBy(e => e.StartDt).ThenBy(e => -(e.EndDt - e.StartDt).Ticks).ToList();
         var colEnds = new List<DateTime>();
         var evCol   = new Dictionary<CalendarRecord, int>(ReferenceEqualityComparer.Instance);
 
-        foreach (var ev in evs)
+        bool IsPinned(CalendarRecord e) => pinned is { Count: > 0 } && e.Id is int id && pinned.Contains((e.DbId, id, e.FieldId));
+        void Place(CalendarRecord ev, int from)
         {
             var col = -1;
-            for (var i = 0; i < colEnds.Count; i++)
+            for (var i = from; i < colEnds.Count; i++)
                 if (ev.StartDt >= colEnds[i]) { col = i; break; }
             if (col == -1) { col = colEnds.Count; colEnds.Add(ev.EndDt); }
             else colEnds[col] = ev.EndDt;
             evCol[ev] = col;
         }
+        var firstFree = 0;
+        if (pinned is { Count: > 0 })
+        {
+            foreach (var ev in evs)
+                if (IsPinned(ev)) Place(ev, 0);
+            firstFree = colEnds.Count;
+        }
+        foreach (var ev in evs)
+            if (!evCol.ContainsKey(ev)) Place(ev, firstFree);
 
         // Сверх лимита параллельных колонок события не рисуются. Правая граница рисуемого —
         // ближайшая правее колонка пересекающегося с ним рисуемого; сравниваются только

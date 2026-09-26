@@ -5,6 +5,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.TextFormatting;
 using Avalonia.Rendering;
+using SmartBase.Controls.Components;
 using SmartBase.Controls.Behaviors;
 using SmartBase.Core.Models;
 using SmartBase.Utils;
@@ -119,12 +120,11 @@ internal sealed class MonthChip
 
 internal static class MonthText
 {
+    // Из общего кеша: после правки месяц строится заново, плашки с тем же текстом берут готовые.
     internal static TextLayout Layout(string text, Typeface face, double fontSize, IBrush brush,
                                       double maxWidth, double maxHeight, bool trim,
                                       TextAlignment align = TextAlignment.Left) =>
-        new(text, face, fontSize, brush, align, TextWrapping.NoWrap,
-            trim ? TextTrimming.CharacterEllipsis : null, null, FlowDirection.LeftToRight,
-            maxWidth, maxHeight, double.NaN, 0, 0);
+        SharedTextLayouts.Get(text, face, fontSize, brush, align, TextWrapping.NoWrap, trim, maxWidth, maxHeight, 0);
 
     // Размер надписи как у TextBlock: ширина и высота текста вверх до целого DIP.
     internal static Size Desired(TextLayout l) =>

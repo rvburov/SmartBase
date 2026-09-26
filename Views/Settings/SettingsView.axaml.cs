@@ -60,6 +60,7 @@ public partial class SettingsView : UserControl
     public SettingsView()
     {
         InitializeComponent();
+        ApplyStartupUpdateStatus();
 
         // ── О программе ──────────────────────────────────────────────────────
         var version = Assembly.GetExecutingAssembly().GetName().Version;
@@ -572,15 +573,22 @@ public partial class SettingsView : UserControl
     // Метод НИКОГДА не бросает: его зовут из обработчика Opened (async void), и любое
     // исключение оттуда прилетает пользователю крэш-окном вместо обычного запуска — так
     // «Cannot show window with non-visible owner» и вылезал при автозапуске в фоне.
-    public async Task CheckForUpdatesOnStartupAsync()
+    //
+    // Проверка идет без раздела (он строится при первом показе — см. MainWindow.Sections): итог
+    // запоминается и показывается, когда раздел откроют; true — нашлось обновление, и окно
+    // зовет StartFoundUpdateAsync уже у построенного раздела.
+    private static (string Text, bool IsError)? _startupStatus;
+    private static UpdateInfo? _startupFound;
+
+    public static async Task<bool> CheckForUpdatesOnStartupAsync()
     {
         try
         {
             var folder = AppSettings.LoadUpdatePath().Trim();
-            if (folder.Length == 0) return;
+            if (folder.Length == 0) return false;
 
             var info = await Task.Run(() => CheckRemoteVersion(folder));
-            SetUpdateStatus(info.Message, isError: info.Result == UpdateCheck.Error);
+            _startupStatus = (info.Message, info.Result == UpdateCheck.Error);
             // Результат проверки — в журнал целиком, а не только сбой: «обновление лежит в папке
             // с понедельника, а у пользователя старая версия» иначе не отличить от «папка недоступна».
             switch (info.Result)
@@ -598,13 +606,33 @@ public partial class SettingsView : UserControl
                     break;
             }
             if (info.Result == UpdateCheck.Available && info.RemoteExe is not null && info.Remote is not null)
-                await StartUpdateAsync(info.RemoteExe, info.Remote);
+            {
+                _startupFound = info;
+                return true;
+            }
         }
         catch (Exception ex)
         {
             Serilog.Log.Error(ex, "Автопроверка обновления при запуске не удалась");
-            SetUpdateStatus($"Не удалось проверить обновление: {ex.Message}", isError: true);
+            _startupStatus = ($"Не удалось проверить обновление: {ex.Message}", true);
         }
+        return false;
+    }
+
+    /// <summary>Окно «Обновить» по найденному при запуске обновлению (см.
+    /// <see cref="CheckForUpdatesOnStartupAsync"/>). Не бросает — зовется из Opened.</summary>
+    public async Task StartFoundUpdateAsync()
+    {
+        ApplyStartupUpdateStatus();
+        if (_startupFound is not { RemoteExe: { } exe, Remote: { } remote }) return;
+        try { await StartUpdateAsync(exe, remote); }
+        catch (Exception ex) { Serilog.Log.Error(ex, "Автообновление при запуске не удалось"); }
+    }
+
+    // Итог проверки при запуске — строкой в разделе (раздел построен позже проверки или раньше).
+    private void ApplyStartupUpdateStatus()
+    {
+        if (_startupStatus is { } st) SetUpdateStatus(st.Text, st.IsError);
     }
 
     private async void OnCheckUpdateClick(object? sender, RoutedEventArgs e)

@@ -254,6 +254,16 @@ public partial class AllDayBar : UserControl
     // часовой сетки, чтобы Delete/«Удалить» сносили общий набор разом.
     public IReadOnlyList<CalendarRecord> SelectedRecords => _selections.Keys.ToList();
 
+    // Выделить плашки записей по ключам (DbId, Id, FieldId), добавляя к набору, — как нажатие с
+    // Shift по каждой. Родитель зовет после пересборки полосы и после правки в контроллере.
+    public void SelectKeys(IReadOnlySet<(int DbId, int Id, int FieldId)> keys)
+    {
+        foreach (var entry in _allDayEntries)
+            if (entry.Ev.Id is int id && keys.Contains((entry.Ev.DbId, id, entry.Ev.FieldId))
+                && !_selections.ContainsKey(entry.Ev))
+                _SelectEntry(entry);
+    }
+
     private void _DeselectOne(CalendarRecord ev)
     {
         if (_selections.TryGetValue(ev, out var d))

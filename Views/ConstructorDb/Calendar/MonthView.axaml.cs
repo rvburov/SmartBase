@@ -185,8 +185,15 @@ public partial class MonthView : UserControl
     private IReadOnlyDictionary<DateOnly, int>? _dayTotals;
 
     public void Refresh(IEnumerable<CalendarRecord> events, DateTime currentDate,
-                        IReadOnlyDictionary<DateOnly, int>? dayTotals = null)
+                        IReadOnlyDictionary<DateOnly, int>? dayTotals = null,
+                        IReadOnlyCollection<CalendarRecord>? select = null)
     {
+        // select (созданная запись, копии, перенесенная) заменяет выделение — как нажатие по ним.
+        if (select is not null)
+        {
+            _Deselect();
+            _restoreSelection = select.Where(r => r.Id.HasValue).Select(r => (r.DbId, r.Id!.Value, r.FieldId)).ToHashSet();
+        }
         _events      = events.ToList();
         _spanning    = _events.Where(IsSpanning).ToList();
         _currentDate = currentDate;
@@ -206,14 +213,18 @@ public partial class MonthView : UserControl
 
     private readonly record struct LayoutEntry(int RowIdx, int Sc, int Ec);
 
-    private Dictionary<int, LayoutEntry> _ComputeWeekLayout(DateTime weekStart)
+    // pinned — выделенные полосы, которые ставятся в верхние строки (см. _BuildAll: только когда
+    // иначе они ушли бы за край ячейки).
+    private Dictionary<int, LayoutEntry> _ComputeWeekLayout(DateTime weekStart,
+                                                            Func<CalendarRecord, bool>? pinned = null)
     {
         var weekEnd  = weekStart.AddDays(6).Date;
         var spanning = _spanning
             .Where(e => e.StartDt.Date <= weekEnd
                      && e.EndDt.Date   >= weekStart.Date
                      && e.Id.HasValue)
-            .OrderBy(e => e.StartDt.Date)
+            .OrderBy(e => pinned is not null && pinned(e) ? 0 : 1)
+            .ThenBy(e => e.StartDt.Date)
             .ThenByDescending(e => (e.EndDt - e.StartDt).TotalDays)
             .ToList();
 
@@ -301,6 +312,9 @@ public partial class MonthView : UserControl
 
     private void _BuildAll()
     {
+        // Выделение переживает пересборку (приход счетчиков, смена размера).
+        var keep = _selections.Count > 0 ? SelectionKeys() : _restoreSelection ?? [];
+        _restoreSelection = null;
         _Deselect();
         _BuildGridLines();
         _dayUiMap.Clear();
@@ -341,11 +355,20 @@ public partial class MonthView : UserControl
         var cw = W > 0 ? W / 7.0 : 0;
         var ch = H > 0 ? H / 6.0 : 0;
 
+        // Выделенное (перенесенное, созданное, копия) не уходит в «+N еще»: если ему не хватило
+        // видимой строки, оно поднимается в видимые. Раскладка остальных меняется только тогда —
+        // на обычном месяце все помещается, и ничего не сдвигается.
+        bool Pinned(CalendarRecord e) => keep.Count > 0 && e.Id is int id && keep.Contains((e.DbId, id, e.FieldId));
+        bool BarHidden(int rowIdx) => ch > 0 && DateH + rowIdx * BarStep + BarH > ch - BPad - MoreH;
+
         for (var wrow = 0; wrow < 6; wrow++)
         {
             var weekStart = gridStart.AddDays(wrow * 7);
             var weekEnd   = weekStart.AddDays(6);
             var layout    = _ComputeWeekLayout(weekStart);
+            if (keep.Count > 0 && _spanning.Any(e => Pinned(e) && e.Id is int pid
+                                                  && layout.TryGetValue(pid, out var le) && BarHidden(le.RowIdx)))
+                layout = _ComputeWeekLayout(weekStart, Pinned);
 
             // ── многодневные бары для этой строки недели ──────────────────────
             var hiddenSpans = new int[7];
@@ -421,6 +444,8 @@ public partial class MonthView : UserControl
                 var occupied = new HashSet<int>(spanRows);
                 var hiddenSingles = 0;
                 var free = 0;
+                if (keep.Count > 0)
+                    singles = PinVisible(singles, Enumerable.Range(0, maxVisRow + 1).Count(r => !spanRows.Contains(r)), Pinned);
                 foreach (var ev in singles)
                 {
                     while (occupied.Contains(free)) free++;
@@ -446,6 +471,39 @@ public partial class MonthView : UserControl
 
         _cells.Relayout(GridContainer.Bounds.Size);
         _bars.InvalidateVisual();
+        ApplySelection(keep);
+    }
+
+    // Выделенные плашки дня — в видимые строки: те, кому по времени досталась бы строка за краем
+    // ячейки, занимают последние видимые; остальные сохраняют порядок начала.
+    private static List<CalendarRecord> PinVisible(List<CalendarRecord> singles, int capacity,
+                                                   Func<CalendarRecord, bool> pinned)
+    {
+        if (capacity <= 0 || singles.Count <= capacity) return singles;
+        var late = singles.Skip(capacity).Where(pinned).Take(capacity).ToList();
+        if (late.Count == 0) return singles;
+        var rest = singles.Where(e => !late.Contains(e)).ToList();
+        rest.InsertRange(capacity - late.Count, late);
+        return rest;
+    }
+
+    private HashSet<(int DbId, int Id, int FieldId)> SelectionKeys() =>
+        _selections.Keys.Where(r => r.Id.HasValue).Select(r => (r.DbId, r.Id!.Value, r.FieldId)).ToHashSet();
+
+    // Выделение, которое восстановит следующая пересборка (задано вызывающим через Refresh).
+    private HashSet<(int DbId, int Id, int FieldId)>? _restoreSelection;
+
+    // Полоса выделяется всеми сегментами (по записи), плашка ячейки — своя.
+    private void ApplySelection(HashSet<(int DbId, int Id, int FieldId)> keys)
+    {
+        if (keys.Count == 0) return;
+        bool Match(CalendarRecord ev) => ev.Id is int id && keys.Contains((ev.DbId, id, ev.FieldId))
+                                         && !_selections.ContainsKey(ev);
+        foreach (var bar in _bars.Bars)
+            if (Match(bar.Ev)) _SelectThis(bar.Ev, bar: true, additive: true);
+        foreach (var cell in _cells.Cells)
+            foreach (var (chip, _) in cell.Chips)
+                if (Match(chip.Ev)) _SelectThis(chip.Ev, bar: false, additive: true);
     }
 
     // ── плашки и полосы: нажатие, отпускание, меню ────────────────────────────

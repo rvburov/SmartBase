@@ -344,6 +344,14 @@ public partial class ConstructorRepository
     public bool EnsureRoles(int collectionId, IReadOnlyList<FieldRole> roles,
                             bool adoptByName, int excludeFieldId = 0)
     {
+        // Обычно разметка уже полная (каждая правка события зовет сюда за «Описанием»): решаем по
+        // выборке без отслеживания, а отслеживаемые поля грузим, только если есть что менять. На
+        // коллекции в тысячу свойств отслеживание всех полей стоило 20–30 мс на каждый перенос.
+        var probe = RoleOrder(db.DbFields.AsNoTracking().Where(f => f.CollectionId == collectionId).ToList()).ToList();
+        if (roles.All(role => (adoptByName ? RoleCandidateField(probe, role, excludeFieldId) : null) is null
+                              && RoleHolder(probe, role) is not null))
+            return false;
+
         var fields  = CollectionFields(collectionId);
         var adopt   = new List<(DbFieldEntity Field, FieldRole Role)>();
         var create  = new List<FieldRole>();
