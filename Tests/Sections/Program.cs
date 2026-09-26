@@ -14,6 +14,10 @@
 //   --only start | tour | группы через запятую: modules, calendar, tasks, constructor, settings, profile
 //   --only app — настоящий старт App (сплэш, подготовка, окно) в отладочной сборке, положенной в
 //   ~/TestData/sections/apptest/bin с меткой SmartBase.csproj в apptest: время до сплэша и до окна.
+//   --only readbench [--big путь] — чтение окон календаря без интерфейса (по пять раз).
+//   --repeat N — обход видов календаря N раз (первый показ отдельно от повторных).
+//   --under Класс.Метод[,…] — в разборе медленных замеров Diag еще и что внутри этих методов
+//   (кадры библиотек тоже), например --under WeekView.Refresh,AllDayBar.SetData.
 //   --only frames [--scale 1|2] [--dbs main] [--ref DIR] — кадры недели и дня календаря (обычный,
 //   выделение, наведение) на неделе, которую стенд заводит в копию «Основной», против эталонов в
 //   --ref (по умолчанию ~/TestData/regress; нет эталона — кадр им становится); --dump — ширины блоков
@@ -26,6 +30,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Input;
+using Avalonia.Media;
 using Avalonia.Threading;
 using Serilog;
 using SmartBase.Database;
@@ -35,6 +40,7 @@ using SmartBase.Tests.Sections;
 using SmartBase.Tests.ServiceGrids;
 using SmartBase.Utils;
 using SmartBase.Views;
+using SmartBase.Views.ConstructorDb.Calendar;
 
 var home     = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 var dataDir  = Arg("--data") ?? Path.Combine(home, "TestData", "sections");
@@ -47,6 +53,7 @@ var trace    = !args.Contains("--no-trace");
 var fresh    = args.Contains("--fresh");
 var echoInfo = args.Contains("--info");
 var scale    = double.Parse(Arg("--scale") ?? "1", System.Globalization.CultureInfo.InvariantCulture);
+var repeat   = int.Parse(Arg("--repeat") ?? "1");
 Console.OutputEncoding = System.Text.Encoding.UTF8;
 
 // Настоящий старт App (сплэш, фоновая подготовка, окно) без экрана — --only app. Папку данных
@@ -98,6 +105,39 @@ if (only == "app")
     Console.WriteLine("--only app работает только в отладочной сборке стенда (папка данных — .localdata у метки)");
     return 1;
 #endif
+}
+
+// Чтение окон календаря без интерфейса — --only readbench [--big путь]: сколько стоит само
+// чтение (недели, дня, месяца, диаграммы) на базе 10 млн, по пять раз подряд.
+if (only == "readbench")
+{
+    SQLitePCL.Batteries_V2.Init();
+    var benchPath = Arg("--big") ?? Path.Combine(FindRoot(), "Tests", "test_database.db");
+    using var benchCtx = new SmartBase.Database.AppDbContext(benchPath);
+    benchCtx.ApplyPerformancePragmas();
+    var benchRepo = new SmartBase.Database.Repositories.ConstructorRepository(benchCtx);
+    var benchCases = new (string Name, Func<int> Run)[]
+    {
+        ("неделя 21–28.09.2026, 2000 на день", () => benchRepo.GetCalendarRecordsByRangeCapped(new DateTime(2026, 9, 21), new DateTime(2026, 9, 28), null, 2000).Count),
+        ("день 26.09.2026, 2000",              () => benchRepo.GetCalendarRecordsByRangeCapped(new DateTime(2026, 9, 26), new DateTime(2026, 9, 27), null, 2000).Count),
+        ("месяц 31.08–12.10.2026, 24 на день", () => benchRepo.GetCalendarRecordsByRangeCapped(new DateTime(2026, 8, 31), new DateTime(2026, 10, 12), null, 24, 2000, 24).Count),
+        ("диаграмма сентябрь 2026",            () => benchRepo.GetDiagramRecordsCapped(new DateTime(2026, 9, 1), new DateTime(2026, 10, 1), null, 200).Count),
+        ("агрегаты диаграммы сентябрь 2026",   () => benchRepo.GetDiagramStats(new DateTime(2026, 9, 1), new DateTime(2026, 10, 1), null).Count),
+        ("многодневные 2026 года",             () => benchRepo.GetCalendarSpanningRecords(new DateTime(2026, 1, 1), new DateTime(2027, 1, 1), null, 2000).Count),
+    };
+    foreach (var (name, run) in benchCases)
+    {
+        var times = new List<double>();
+        var n = 0;
+        for (var i = 0; i < 5; i++)
+        {
+            var sw = Stopwatch.StartNew();
+            n = run();
+            times.Add(sw.Elapsed.TotalMilliseconds);
+        }
+        Console.WriteLine($"  {name,-40} строк {n,6}: {string.Join(" / ", times.Select(t => t.ToString("0")))} мс");
+    }
+    return 0;
 }
 
 var srcDir  = Path.Combine(dataDir, "src");
@@ -205,6 +245,12 @@ var frames = new DispatcherTimer(TimeSpan.FromMilliseconds(16), DispatcherPriori
 frames.Start();
 
 var steps = new List<(string Name, double StartSec, double EndSec)>();
+// Сборка мусора по шагам: снимок на начале каждого шага и в конце прогона — паузы GC видны
+// отдельно от работы (в выборках стеков они выглядят как Thread.PollGC в любом месте кода).
+var gcMarks = new List<(TimeSpan Pause, int G0, int G1, int G2, long HeapMb)>();
+(TimeSpan, int, int, int, long) GcNow() =>
+    (GC.GetTotalPauseDuration(), GC.CollectionCount(0), GC.CollectionCount(1), GC.CollectionCount(2),
+     GC.GetTotalMemory(false) / 1048576);
 MainWindow? main = null;
 var exit = new CancellationTokenSource();
 Dispatcher.UIThread.Post(async () =>
@@ -225,6 +271,30 @@ return 0;
 
 async Task Scenario()
 {
+    // --modules-cost — холодная цена построения каждого раздела по отдельности (до окна).
+    if (args.Contains("--modules-cost"))
+    {
+        foreach (var make in new (string, Func<Control>)[]
+                 {
+                     ("календарь",  () => new SmartBase.Views.ConstructorDb.Calendar.CalendarControllerView()),
+                     ("задачи",     () => new SmartBase.Views.Tasks.TasksControllerView()),
+                     ("конструктор", () => new SmartBase.Views.ConstructorDb.ConstructorControllerView()),
+                     ("настройки",  () => new SmartBase.Views.Settings.SettingsView()),
+                     ("расширения", () => new SmartBase.Views.Extensions.ExtensionsView()),
+                     ("профиль",    () => new SmartBase.Views.Profile.ProfileView()),
+                     ("заметки",    () => new SmartBase.Views.Notes.NotesControllerView()),
+                     ("библиотека", () => new SmartBase.Views.Library.LibraryControllerView()),
+                 })
+        {
+            var msw = Stopwatch.StartNew();
+            make.Item2();
+            var cold = msw.Elapsed.TotalMilliseconds;
+            msw.Restart();
+            make.Item2();
+            Console.WriteLine($"  раздел {make.Item1}: холодно {cold:N0} мс, повторно {msw.Elapsed.TotalMilliseconds:N0} мс");
+        }
+    }
+
     Step("старт: построение окна");
     var sw = Stopwatch.StartNew();
     main = new MainWindow(workspace) { Width = 1600, Height = 900 };
@@ -250,10 +320,13 @@ async Task Scenario()
     // Календарь: все виды (0 — день … 6 — диаграмма), затем обратно к месяцу.
     if (Want("calendar")) ShowModule("calendar");
     var calendar = main!.FindControl<Control>("CalendarModule")!;
+    // --repeat N — обход видов N раз: первый показ (построение вида, холодный кеш) отдельно
+    // от повторных.
     if (Want("calendar"))
+    for (var round = 1; round <= repeat; round++)
     foreach (var view in new[] { 0, 1, 2, 3, 5, 6, 4 })
     {
-        Step($"календарь: вид {view}");
+        Step(repeat > 1 ? $"календарь: вид {view}, проход {round}" : $"календарь: вид {view}");
         Call(calendar, "SwitchView", view);
         await Settle(quietSec: 1.5, capSec: 90);
     }
@@ -344,7 +417,114 @@ async Task CalendarFrames()
         main.MouseMove(EntryCenter(viewCtrl, "Кофе"));
         await Frame($"cal-{name}-hover-{tag}");
         main.MouseMove(new Point(2, 2));
+
+        // Полоса «весь день»: наведение на «Конференцию», выделение «Командировки».
+        var bar = viewCtrl.FindControl<SmartBase.Controls.Components.AllDayBar>("AllDayBarCtrl")!;
+        main.MouseMove(bar.TranslatePoint(bar.EventCenter("Конференция")!.Value, main)!.Value);
+        await Frame($"cal-{name}-allday-hover-{tag}");
+        var trip = bar.TranslatePoint(bar.EventCenter("Командировка")!.Value, main)!.Value;
+        main.MouseMove(trip);
+        main.MouseDown(trip, MouseButton.Left);
+        main.MouseUp(trip, MouseButton.Left);
+        main.MouseMove(new Point(2, 2));
+        await Frame($"cal-{name}-allday-selected-{tag}");
+        main.MouseDown(new Point(700, 880), MouseButton.Left);   // снять выделение нажатием мимо
+        main.MouseUp(new Point(700, 880), MouseButton.Left);
     }
+
+    // «Месяц»: июль 2026 — плашки, полосы через края недель, наведение и выделение.
+    Step("кадры: month");
+    SetField(calendar, "_currentDate", new DateTime(2026, 7, 8));
+    Call(calendar, "SwitchView", 4);
+    await Settle(quietSec: 1, capSec: 30);
+    var month = calendar.FindControl<MonthView>("MonthViewCtrl")!;
+    await Frame($"cal-month-{tag}");
+    main.MouseMove(month.TranslatePoint(month.EventCenter("Итоги недели")!.Value, main)!.Value);
+    await Frame($"cal-month-hover-{tag}");
+    main.MouseMove(month.TranslatePoint(month.EventCenter("Конференция")!.Value, main)!.Value);
+    await Frame($"cal-month-bar-hover-{tag}");
+    var call = month.TranslatePoint(month.EventCenter("Планерка отдела")!.Value, main)!.Value;
+    main.MouseMove(call);
+    main.MouseDown(call, MouseButton.Left);
+    main.MouseUp(call, MouseButton.Left);
+    main.MouseMove(new Point(2, 2));
+    await Frame($"cal-month-selected-{tag}");
+    main.MouseDown(new Point(700, 880), MouseButton.Left);
+    main.MouseUp(new Point(700, 880), MouseButton.Left);
+    // «Год»: 2027-й целиком (без сегодняшнего дня — кадр постоянный).
+    Step("кадры: year");
+    SetField(calendar, "_currentDate", new DateTime(2027, 3, 1));
+    Call(calendar, "SwitchView", 5);
+    await Settle(quietSec: 1, capSec: 30);
+    await Frame($"cal-year-{tag}");
+
+    // Поведение «Года»: нажатие по числу — список событий дня под ячейкой, двойное — «Месяц».
+    // 10 февраля 2027 (12 событий): февраль начинается с понедельника — третья колонка, вторая
+    // строка чисел.
+    var yearView = calendar.FindControl<Control>("YearViewCtrl")!;
+    var feb = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(yearView)
+                  .OfType<SmartBase.Views.ConstructorDb.Calendar.YearMonthCard>().First(c => c.Month == 2);
+    var cellCenter = new Point(Math.Round((YearMonthCard.CardW - YearMonthCard.GridW) / 2) + 2.5 * YearMonthCard.CellW,
+                               YearMonthCard.TitleH + 2.5 * YearMonthCard.Dch);
+    var at = feb.TranslatePoint(cellCenter, main)!.Value;
+    main.MouseMove(at);
+    var cursorOverDay = feb.Cursor is null ? "обычный" : "рука";
+    main.MouseDown(at, MouseButton.Left);
+    main.MouseUp(at, MouseButton.Left);
+    await Settle(quietSec: 1, capSec: 30);
+    var popup = yearView.FindControl<Avalonia.Controls.Primitives.Popup>("DayPopup")!;
+    var list  = yearView.FindControl<StackPanel>("DayPopupList")!;
+    var title = yearView.FindControl<TextBlock>("DayPopupTitle")!.Text;
+    Console.WriteLine($"  проверка «Год»: нажатие по 10.02 — список {(popup.IsOpen ? "открыт" : "НЕ ОТКРЫТ")}, " +
+                      $"«{title}», строк {list.Children.Count}, курсор над числом {cursorOverDay}");
+    popup.IsOpen = false;
+    await Task.Delay(600);   // мимо времени двойного нажатия
+    // Двойное — по названию месяца (по числу первое нажатие открывает список дня, как и прежде).
+    var titleAt = feb.TranslatePoint(new Point(20, 16), main)!.Value;
+    main.MouseMove(titleAt);
+    main.MouseDown(titleAt, MouseButton.Left);
+    main.MouseUp(titleAt, MouseButton.Left);
+    main.MouseDown(titleAt, MouseButton.Left);
+    main.MouseUp(titleAt, MouseButton.Left);
+    await Settle(quietSec: 1, capSec: 30);
+    Console.WriteLine($"  проверка «Год»: двойное нажатие по названию февраля — вид {Get(calendar, "_currentViewIndex")} (4 — «Месяц»), " +
+                      $"дата {(DateTime)Get(calendar, "_currentDate")!:dd.MM.yyyy}");
+
+    // Перенос мышью на соседний день: в «Месяце» — плашка «Итоги недели» (пт → чт), в «Неделе» —
+    // блок «Кофе» (ср → чт); проверка — дата события в базе стенда.
+    DateTime StartOf(string t) => def.Constructor.GetCalendarRecordsByRange(new DateTime(2026, 6, 1), new DateTime(2026, 9, 1))
+                                     .First(r => r.Title == t).StartDt;
+    async Task DragBy(Point from, double dx)
+    {
+        main!.MouseMove(from);
+        main.MouseDown(from, MouseButton.Left);
+        main.MouseMove(new Point(from.X + dx / 3, from.Y));
+        main.MouseMove(new Point(from.X + dx, from.Y));
+        main.MouseUp(new Point(from.X + dx, from.Y), MouseButton.Left);
+        await Settle(quietSec: 1, capSec: 30);
+    }
+    SetField(calendar, "_currentDate", new DateTime(2026, 7, 8));
+    Call(calendar, "SwitchView", 4);
+    await Settle(quietSec: 1, capSec: 30);
+    var monthView = calendar.FindControl<MonthView>("MonthViewCtrl")!;
+    var before = StartOf("Итоги недели");
+    await DragBy(monthView.TranslatePoint(monthView.EventCenter("Итоги недели")!.Value, main)!.Value, -monthView.Bounds.Width / 7);
+    Console.WriteLine($"  проверка «Месяц»: перенос «Итоги недели» {before:dd.MM HH:mm} → {StartOf("Итоги недели"):dd.MM HH:mm} (ждали 09.07 16:00)");
+
+    Call(calendar, "SwitchView", 3);
+    await Settle(quietSec: 1, capSec: 30);
+    var weekView = calendar.FindControl<Control>("WeekViewCtrl")!;
+    weekView.FindControl<ScrollViewer>("TimeScroll")!.Offset = new Vector(0, 8 * 60);
+    await Settle(quietSec: 0.5, capSec: 10);
+    var colWidth = weekView.FindControl<Control>("WeekColumns")!.Bounds.Width / 7;
+    before = StartOf("Кофе");
+    await DragBy(EntryCenter(weekView, "Кофе"), colWidth);
+    Console.WriteLine($"  проверка «Неделя»: перенос «Кофе» {before:dd.MM HH:mm} → {StartOf("Кофе"):dd.MM HH:mm} (ждали 09.07 08:00)");
+    var weekBar = weekView.FindControl<SmartBase.Controls.Components.AllDayBar>("AllDayBarCtrl")!;
+    before = StartOf("Отпуск");
+    await DragBy(weekBar.TranslatePoint(weekBar.EventCenter("Отпуск")!.Value, main)!.Value, colWidth);
+    Console.WriteLine($"  проверка «весь день»: перенос «Отпуск» {before:dd.MM} → {StartOf("Отпуск"):dd.MM} (ждали 10.07)");
+
     Console.WriteLine($"  Кадры календаря: наибольшее различие с допуском {worst} пикселей");
 
     async Task Frame(string name)
@@ -354,7 +534,9 @@ async Task CalendarFrames()
         Frames.Save(main!.CaptureRenderedFrame(), file);
         var reference = Path.Combine(refDir, name + ".png");
         if (!File.Exists(reference)) { File.Copy(file, reference); Console.WriteLine($"  {name}: эталон создан"); return; }
-        var (strict, loose, diff, _) = Frames.Compare(Frames.Load(reference), Frames.Load(file), 16, (_, _) => "кадр");
+        // Различия — по квадратам 20 × 20 пикселей кадра: где именно разошлось.
+        var (strict, loose, diff, bands) = Frames.Compare(Frames.Load(reference), Frames.Load(file), 16,
+                                                          (x, y) => $"x {x / 20 * 20}, y {y / 20 * 20}");
         Frames.Save(diff, Path.Combine(outDir, name + "-diff.png"));
         // Увеличенные вырезки блока «Планерка отдела» в среду — глазами видно, в чем различие.
         if (name.StartsWith("cal-week", StringComparison.Ordinal) && loose > 0)
@@ -363,25 +545,24 @@ async Task CalendarFrames()
             Frames.SaveCrop(Frames.Load(file), 698, 180, 180, 66, scale, Path.Combine(outDir, name + "-crop-new.png"));
         }
         worst = Math.Max(worst, loose);
-        Console.WriteLine($"  {name}: различий строго {strict}, с допуском {loose}");
+        Console.WriteLine($"  {name}: различий строго {strict}, с допуском {loose}" +
+                          (strict > 0 ? "; места: " + string.Join("; ", bands.OrderByDescending(b => b.Count).Take(4).Select(b => $"{b.Name} ({b.Count})")) : ""));
     }
 }
 
-// Ширины всех блоков вида и поле их текста (прежний блок: StackPanel) — правило округления.
+// Ширины всех блоков вида: ширина до округления и итоговая (правило округления рисованной колонки).
 void DumpAll(Control view)
 {
     var entries = (System.Collections.IEnumerable)Get(view, "_eventEntries")!;
     foreach (var entry in entries)
     {
-        var btn = (Control)Get(entry, "Btn")!;
-        var stack = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(btn).OfType<StackPanel>().FirstOrDefault();
-        var at = stack?.TranslatePoint(new Point(0, 0), btn) ?? default;
-        Console.WriteLine($"    W {btn.Width:0.####} L {Canvas.GetLeft(btn):0.####} → {btn.Bounds.Width:0.##}; текст x {at.X:0.##} w {stack?.Bounds.Width:0.##} (справа {btn.Bounds.Width - at.X - (stack?.Bounds.Width ?? 0):0.##})");
+        var item = (CalendarDayCanvas.Item)Get(entry, "Btn")!;
+        Console.WriteLine($"    W {item.RawWidth:0.####} → {item.Bounds.Width:0.##}; x {item.Bounds.X:0.##}, y {item.Bounds.Y:0.##}");
     }
 }
 
-// Середина блока события по названию — через записи вида (_eventEntries: Ev + Btn), одинаковые
-// в прежней и нынешней версии блока.
+// Середина блока события по названию — через записи вида (_eventEntries: Ev + Btn — блок
+// рисованной колонки дня).
 Point EntryCenter(Control view, string title)
 {
     var entries = (System.Collections.IEnumerable)Get(view, "_eventEntries")!;
@@ -389,8 +570,8 @@ Point EntryCenter(Control view, string title)
     {
         var ev = (SmartBase.Core.Models.CalendarRecord)Get(entry, "Ev")!;
         if (ev.Title != title) continue;
-        var btn = (Control)Get(entry, "Btn")!;
-        return btn.TranslatePoint(new Point(btn.Bounds.Width / 2, btn.Bounds.Height / 2), main!) ?? default;
+        var item = (CalendarDayCanvas.Item)Get(entry, "Btn")!;
+        return item.Owner.TranslatePoint(item.Bounds.Center, main!) ?? default;
     }
     throw new InvalidOperationException($"Нет события «{title}» в виде");
 }
@@ -422,6 +603,7 @@ void Step(string name)
     var now = clock.Elapsed.TotalSeconds;
     if (steps.Count > 0) steps[^1] = steps[^1] with { EndSec = now };
     steps.Add((name, now, now));
+    gcMarks.Add(GcNow());
     probe.Step = name;
     Console.WriteLine($"[{now,6:0.0} с] {name}");
 }
@@ -455,6 +637,7 @@ int MountsPending()
 void Report()
 {
     if (steps.Count > 0) steps[^1] = steps[^1] with { EndSec = clock.Elapsed.TotalSeconds };
+    gcMarks.Add(GcNow());
     var stalls = probe.Stalls.ToList();
     double Rel(DateTime utc) => (utc - t0Utc).TotalSeconds;
 
@@ -462,11 +645,14 @@ void Report()
     Console.WriteLine($"== Паузы UI-потока ≥ {stallMs} мс: {stalls.Count} (≥100 мс: {stalls.Count(s => s.Ms >= 100)}, " +
                       $"≥250: {stalls.Count(s => s.Ms >= 250)}, ≥1000: {stalls.Count(s => s.Ms >= 1000)}), " +
                       $"сумма {stalls.Sum(s => s.Ms):N0} мс, самая длинная {(stalls.Count > 0 ? stalls.Max(s => s.Ms) : 0):N0} мс");
-    foreach (var (name, start, end) in steps)
+    for (var i = 0; i < steps.Count; i++)
     {
+        var (name, start, end) = steps[i];
         var mine = stalls.Where(s => s.Step == name).ToList();
+        var (a, b) = (gcMarks[i], gcMarks[i + 1]);
         Console.WriteLine($"  {name,-50} {end - start,6:0.0} с  пауз {mine.Count,3}  " +
-                          $"сумма {mine.Sum(s => s.Ms),7:N0} мс  макс {(mine.Count > 0 ? mine.Max(s => s.Ms) : 0),6:N0} мс");
+                          $"сумма {mine.Sum(s => s.Ms),7:N0} мс  макс {(mine.Count > 0 ? mine.Max(s => s.Ms) : 0),6:N0} мс" +
+                          $"   GC {(b.Pause - a.Pause).TotalMilliseconds,5:N0} мс ({b.G0 - a.G0}/{b.G1 - a.G1}/{b.G2 - a.G2}), куча {b.HeapMb} МБ");
     }
 
     var spans = stalls.Where(s => s.Ms >= reportMs)
@@ -527,6 +713,17 @@ void Report()
             Console.WriteLine($"  {span.Label}   выборок с кодом программы {span.Samples.Count}");
             foreach (var (n, m) in Sampler.Inclusive([span], top: 10))
                 Console.WriteLine($"          · {100.0 * n / Math.Max(1, span.Samples.Count),5:0}%  {m}");
+            // --under Метод,Метод — что внутри названных методов (кадры библиотек тоже).
+            foreach (var method in (Arg("--under") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var (total, inner) = Sampler.Under(span, method);
+                if (total == 0) continue;
+                Console.WriteLine($"            внутри {method} ({total} выборок):");
+                foreach (var (n, m) in inner)
+                    Console.WriteLine($"              ◦ {100.0 * n / total,5:0}%  {m}");
+                foreach (var (n, chain) in Sampler.Chains(span, method))
+                    Console.WriteLine($"              ⇠ {n} выборок: {chain}");
+            }
         }
     }
 
@@ -599,6 +796,28 @@ static void SeedCalendarWeek(SmartBase.Database.Repositories.ConstructorReposito
     Ev("Встреча В с длинным названием", wed.AddHours(12.5), wed.AddHours(14));
     Ev("Отпуск", mon.AddDays(3), mon.AddDays(3), allDay: true);
     Ev("Итоги недели", mon.AddDays(4).AddHours(16), mon.AddDays(4).AddHours(17));
+    // Полоса «весь день»: многодневные внутри недели и через ее края, событие со временем
+    // длиннее суток (подпись «, ЧЧ:мм»), длинное название (многоточие).
+    Ev("Конференция", mon.AddDays(1), mon.AddDays(2), allDay: true);
+    Ev("Командировка", mon.AddDays(-3), mon.AddDays(2), allDay: true);
+    Ev("Проект", mon.AddDays(4), mon.AddDays(9), allDay: true);
+    Ev("Дежурство", mon.AddDays(3).AddHours(18), mon.AddDays(5).AddHours(9));
+    Ev("Очень длинное название события на весь день, которое не помещается", mon, mon, allDay: true);
+
+    // 2027 год — для кадров «Года» (в нем нет сегодняшнего дня, кадр не меняется день ото дня):
+    // все ступени подсветки чисел (1, 2–5, 6–8, 9 и больше), многодневные, выходной, край года.
+    void Many(DateTime day, int n)
+    {
+        for (var i = 0; i < n; i++) Ev($"Событие {i + 1}", day.AddHours(8 + i * 0.5), day.AddHours(8.5 + i * 0.5));
+    }
+    Many(new DateTime(2027, 1, 5), 1);
+    Many(new DateTime(2027, 1, 12), 3);
+    Many(new DateTime(2027, 2, 3), 7);
+    Many(new DateTime(2027, 2, 10), 12);
+    Ev("Командировка", new DateTime(2027, 3, 1), new DateTime(2027, 3, 4), allDay: true);
+    Ev("Субботник", new DateTime(2027, 3, 6).AddHours(10), new DateTime(2027, 3, 6).AddHours(13));
+    Ev("Через май", new DateTime(2027, 4, 30).AddHours(18), new DateTime(2027, 5, 2).AddHours(9));
+    Ev("Под Новый год", new DateTime(2027, 12, 31).AddHours(20), new DateTime(2027, 12, 31).AddHours(23));
 }
 
 static object? Call(object target, string name, params object[] a)

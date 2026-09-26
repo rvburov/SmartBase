@@ -6266,20 +6266,25 @@ public partial class ConstructorRepository(AppDbContext db)
         var conn = db.Database.GetDbConnection();
         var opened = conn.State != System.Data.ConnectionState.Open;
         if (opened) conn.Open();
-        try
-        {
-            var firstFull = start.TimeOfDay == TimeSpan.Zero ? start.Date : SafeAddDays(start.Date, 1);
-            var endFull   = end.Date;
-            if (firstFull < endFull && HasCalendarDayCounts(conn))
-            {
-                CountDaysBySummary(conn, colIds, hidden, firstFull, endFull, counts);
-                if (start < firstFull) CountDaysByIndex(conn, colIds, hidden, start, firstFull, counts);
-                if (endFull < end)     CountDaysByIndex(conn, colIds, hidden, endFull, end, counts);
-            }
-            else CountDaysByIndex(conn, colIds, hidden, start, end, counts);
-        }
+        try { FillDayCounts(conn, colIds, hidden, start, end, counts); }
         finally { if (opened) conn.Close(); }
         return counts.Select(kv => (kv.Key, kv.Value)).ToList();
+    }
+
+    // Счет по дням окна [start, end) в counts: полные дни — из сводки, неполные крайние дни и
+    // база без сводки — по самой проекции.
+    private void FillDayCounts(System.Data.Common.DbConnection conn, List<int> colIds, string hidden,
+                               DateTime start, DateTime end, SortedDictionary<string, int> counts)
+    {
+        var firstFull = start.TimeOfDay == TimeSpan.Zero ? start.Date : SafeAddDays(start.Date, 1);
+        var endFull   = end.Date;
+        if (firstFull < endFull && HasCalendarDayCounts(conn))
+        {
+            CountDaysBySummary(conn, colIds, hidden, firstFull, endFull, counts);
+            if (start < firstFull) CountDaysByIndex(conn, colIds, hidden, start, firstFull, counts);
+            if (endFull < end)     CountDaysByIndex(conn, colIds, hidden, endFull, end, counts);
+        }
+        else CountDaysByIndex(conn, colIds, hidden, start, end, counts);
     }
 
     // Полные дни [from, to) из сводки: несколько строк на день (по коллекциям и полям).
@@ -6354,21 +6359,77 @@ public partial class ConstructorRepository(AppDbContext db)
             }
     }
 
-    // Есть ли в базе сводка дней (миграция AddCalendarDayCounts): база, открытая этой версией,
-    // ее имеет всегда — проверка страхует чтение от базы, к которой миграция не прошла.
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> DayCountsPresent = new();
+    // Есть ли в базе сводка календаря (миграции AddCalendarDayCounts, AddCalendarSpans): база,
+    // открытая этой версией, их имеет всегда — проверка страхует чтение от базы, к которой
+    // миграция не прошла.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string Db, string Table), bool> CalendarTablesPresent = new();
 
-    private bool HasCalendarDayCounts(System.Data.Common.DbConnection conn)
+    private bool HasCalendarDayCounts(System.Data.Common.DbConnection conn) =>
+        HasCalendarTable(conn, "calendar_day_counts");
+
+    private bool HasCalendarTable(System.Data.Common.DbConnection conn, string table)
     {
-        if (DayCountsPresent.TryGetValue(db.DbPath, out var known)) return known;
+        if (CalendarTablesPresent.TryGetValue((db.DbPath, table), out var known)) return known;
         using var cmd = conn.CreateCommand();
         cmd.CommandText = db.IsPostgres
-            ? "SELECT to_regclass('calendar_day_counts') IS NOT NULL"
-            : "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'calendar_day_counts')";
+            ? $"SELECT to_regclass('{table}') IS NOT NULL"
+            : $"SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '{table}')";
         var present = Convert.ToBoolean(cmd.ExecuteScalar());
-        if (present) DayCountsPresent[db.DbPath] = true;   // отсутствие не запоминаем: миграция может догнать
+        if (present) CalendarTablesPresent[(db.DbPath, table)] = true;   // отсутствие не запоминаем: миграция может догнать
         return present;
     }
+
+    // ── Сводка длительностей (calendar_spans) ───────────────────────────────────────
+    //
+    // Наибольшая длительность события на коллекцию и признак «весь день»; ее держат триггеры
+    // проекции (миграция AddCalendarSpans). Событие, пересекающее момент T, началось не раньше
+    // T − M и кончается не позже T + M, поэтому события, начавшиеся до окна, и самый поздний
+    // конец ищутся в полосе шириной M у границы окна, а не во всем прошлом или будущем
+    // коллекции (на 10 млн событий — это миллионы строк индекса на каждое окно). Граница только
+    // растет (удаление ее не уменьшает): чтение от этого шире, но событий не теряет.
+
+    // Длительность, которую триггер ставит неразобранной дате: границы нет.
+    private const long CalendarSpanUnbounded = 99_999_999_999;
+
+    private sealed class CalendarSpans(Dictionary<(int CollectionId, int AllDay), long>? seconds)
+    {
+        /// <summary>Сводка есть в базе; без нее чтения идут как до нее.</summary>
+        public bool Known => seconds is not null;
+
+        /// <summary>Есть ли у коллекции события этого вида (без сводки неизвестно — считаем, что есть).</summary>
+        public bool Has(int collectionId, bool allDay) =>
+            seconds is null || seconds.ContainsKey((collectionId, allDay ? 1 : 0));
+
+        /// <summary>Верхняя граница длительности события этого вида в коллекции; null — границы
+        /// нет (сводки нет, дата не разобрана или событий этого вида нет — тогда см. <see cref="Has"/>).</summary>
+        public TimeSpan? Max(int collectionId, bool allDay) =>
+            seconds is not null && seconds.TryGetValue((collectionId, allDay ? 1 : 0), out var s) ? Bound(s) : null;
+
+        /// <summary>То же по всем коллекциям базы (для чтений с фильтром по нескольким коллекциям).</summary>
+        public TimeSpan? MaxAll(bool allDay) =>
+            seconds is null ? null
+                : Bound(seconds.Where(kv => kv.Key.AllDay == (allDay ? 1 : 0)).Select(kv => kv.Value).DefaultIfEmpty(0).Max());
+
+        private static TimeSpan? Bound(long s) => s >= CalendarSpanUnbounded ? null : TimeSpan.FromSeconds(s);
+    }
+
+    private CalendarSpans ReadCalendarSpans(System.Data.Common.DbConnection conn)
+    {
+        if (!HasCalendarTable(conn, "calendar_spans")) return new CalendarSpans(null);
+        var map = new Dictionary<(int, int), long>();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT CollectionId, AllDay, MaxSeconds FROM calendar_spans";
+        using var rdr = cmd.ExecuteReader();
+        while (rdr.Read())
+            map[(Convert.ToInt32(rdr.GetValue(0)), Convert.ToInt32(rdr.GetValue(1)))] = Convert.ToInt64(rdr.GetValue(2));
+        return new CalendarSpans(map);
+    }
+
+    // Сдвиг момента с защитой от выхода за диапазон DateTime (граница «вся история» — 0001 год).
+    private static DateTime SafeAdd(DateTime dt, TimeSpan delta) =>
+        delta < TimeSpan.Zero
+            ? (dt.Ticks + delta.Ticks < DateTime.MinValue.Ticks ? DateTime.MinValue : dt + delta)
+            : (dt.Ticks > DateTime.MaxValue.Ticks - delta.Ticks ? DateTime.MaxValue : dt + delta);
 
     /// <summary>
     /// Убрать из сводки дней нулевые строки. Триггер удаления строки проекции только уменьшает
@@ -6488,8 +6549,8 @@ public partial class ConstructorRepository(AppDbContext db)
             using var rdr = cmd.ExecuteReader();
             while (rdr.Read())
             {
-                if (!DateTime.TryParse(rdr.GetString(3), out var st)) continue;
-                if (!DateTime.TryParse(rdr.GetString(4), out var en)) continue;
+                if (!TryParseIso(rdr.GetString(3), out var st)) continue;
+                if (!TryParseIso(rdr.GetString(4), out var en)) continue;
                 result.Add(new CalendarRecord
                 {
                     Id = rdr.GetInt32(0), FieldId = rdr.GetInt32(1), CollectionId = rdr.GetInt32(2),
@@ -6554,8 +6615,8 @@ public partial class ConstructorRepository(AppDbContext db)
             using var rdr = cmd.ExecuteReader();
             while (rdr.Read())
             {
-                if (!DateTime.TryParse(rdr.GetString(3), out var st)) continue;
-                if (!DateTime.TryParse(rdr.GetString(4), out var en)) continue;
+                if (!TryParseIso(rdr.GetString(3), out var st)) continue;
+                if (!TryParseIso(rdr.GetString(4), out var en)) continue;
                 result.Add(new CalendarRecord
                 {
                     Id             = rdr.GetInt32(0),
@@ -6664,8 +6725,8 @@ public partial class ConstructorRepository(AppDbContext db)
             using var rdr = cmd.ExecuteReader();
             while (rdr.Read())
             {
-                if (!DateTime.TryParse(rdr.GetString(3), out var st)) continue;
-                if (!DateTime.TryParse(rdr.GetString(4), out var en)) continue;
+                if (!TryParseIso(rdr.GetString(3), out var st)) continue;
+                if (!TryParseIso(rdr.GetString(4), out var en)) continue;
                 result.Add(new CalendarRecord
                 {
                     Id = rdr.GetInt32(0), FieldId = rdr.GetInt32(1), CollectionId = rdr.GetInt32(2),
@@ -6759,12 +6820,10 @@ public partial class ConstructorRepository(AppDbContext db)
         finally { if (opened) conn.Close(); }
     }
 
-    // Верхняя граница длительности «короткого/timed» события — задает, насколько далеко
-    // назад от начала окна сканируется timed-под-запрос (нижняя граница StartIso). Событие
-    // длиннее считается «многодневным» и берется отдельным all-day-под-запросом без нижней
-    // границы, поэтому НЕ теряется. 62 дня — с большим запасом: не-all-day событий такой
-    // длины в календаре не бывает (длинное — это all-day/«проект»). Влияет только на скорость
-    // timed-под-запроса, не на корректность.
+    // Граница длительности timed-события для базы БЕЗ сводки длительностей (calendar_spans):
+    // насколько далеко назад от начала окна ищутся timed, начавшиеся до него. Держится на
+    // допущении «timed длиннее 62 дней не бывает» — timed длиннее в такой базе сетки теряют.
+    // Со сводкой граница точная (наибольшая длительность коллекции) и допущения нет.
     private const int CalendarTimedBufferDays = 62;
 
     // Строит события окна календаря из проекции calendar_index. Чтобы индекс не сканировал
@@ -6787,10 +6846,9 @@ public partial class ConstructorRepository(AppDbContext db)
 
     private List<CalendarRecord> ReadCalendarEvents(DateTime rangeStart, DateTime rangeEnd, ISet<int>? activeIds)
     {
-        var startIso = DateTime.SpecifyKind(rangeStart, DateTimeKind.Unspecified).ToString("o");
-        var endIso   = DateTime.SpecifyKind(rangeEnd,   DateTimeKind.Unspecified).ToString("o");
-        var lowerIso = SafeAddDays(DateTime.SpecifyKind(rangeStart, DateTimeKind.Unspecified),
-                                   -CalendarTimedBufferDays).ToString("o");
+        string Iso(DateTime dt) => DateTime.SpecifyKind(dt, DateTimeKind.Unspecified).ToString("o");
+        var startIso = Iso(rangeStart);
+        var endIso   = Iso(rangeEnd);
 
         // Фильтр видимости: активные коллекции + скрытые поля-даты (пустой набор = ничего).
         var colFilter = VisibilityFilter(activeIds, "ci.");
@@ -6801,13 +6859,22 @@ public partial class ConstructorRepository(AppDbContext db)
         if (opened) conn.Open();
         try
         {
-            // Короткие/timed — с нижней границей; многодневные/all-day — без нее (их мало).
+            // Нижняя граница начала — наибольшая длительность вида по базе (сводка длительностей);
+            // без сводки timed — прежний буфер, all-day — без границы.
+            var spans   = ReadCalendarSpans(conn);
+            var timedLo = spans.Known ? spans.MaxAll(false) : TimeSpan.FromDays(CalendarTimedBufferDays);
+            var allDayLo = spans.MaxAll(true);
+            var timedArgs = new List<(string, string)> { ("@end", endIso), ("@start", startIso) };
+            if (timedLo is { } tl) timedArgs.Add(("@lo", Iso(SafeAdd(rangeStart, -tl))));
+            var allDayArgs = new List<(string, string)> { ("@end", endIso), ("@start", startIso) };
+            if (allDayLo is { } al) allDayArgs.Add(("@lo", Iso(SafeAdd(rangeStart, -al))));
+
             ReadCalendarRows(conn, result,
-                $"ci.AllDay = 0{colFilter} AND ci.StartIso >= @lo AND ci.StartIso < @end AND ci.EndIso >= @start",
-                [("@lo", lowerIso), ("@end", endIso), ("@start", startIso)]);
+                $"ci.AllDay = 0{colFilter}{(timedLo is null ? "" : " AND ci.StartIso >= @lo")} AND ci.StartIso < @end AND ci.EndIso >= @start",
+                timedArgs);
             ReadCalendarRows(conn, result,
-                $"ci.AllDay = 1{colFilter} AND ci.StartIso < @end AND ci.EndIso >= @start",
-                [("@end", endIso), ("@start", startIso)]);
+                $"ci.AllDay = 1{colFilter}{(allDayLo is null ? "" : " AND ci.StartIso >= @lo")} AND ci.StartIso < @end AND ci.EndIso >= @start",
+                allDayArgs);
         }
         finally { if (opened) conn.Close(); }
 
@@ -6833,7 +6900,8 @@ public partial class ConstructorRepository(AppDbContext db)
     /// но полосы «весь день» ему нужны все, как и прежде.
     /// </summary>
     public List<CalendarRecord> GetCalendarRecordsByRangeCapped(
-        DateTime rangeStart, DateTime rangeEnd, ISet<int>? activeIds, int perDayCap, int? allDayCap = null)
+        DateTime rangeStart, DateTime rangeEnd, ISet<int>? activeIds, int perDayCap, int? allDayCap = null,
+        int? multiDayPerDay = null)
     {
         // Per-collection запросы — нужны явные id: null — все коллекции БД, ПУСТОЙ набор —
         // ни одной (циклы не выполняются). Коллекции, у которых ВСЕ поля-даты скрыты,
@@ -6848,7 +6916,6 @@ public partial class ConstructorRepository(AppDbContext db)
         string Iso(DateTime dt) => DateTime.SpecifyKind(dt, DateTimeKind.Unspecified).ToString("o");
         var startIso = Iso(rangeStart);
         var endIso   = Iso(rangeEnd);
-        var lowerIso = Iso(SafeAddDays(rangeStart, -CalendarTimedBufferDays));
 
         var result = new List<CalendarRecord>();
         var conn = db.Database.GetDbConnection();
@@ -6856,45 +6923,80 @@ public partial class ConstructorRepository(AppDbContext db)
         if (opened) conn.Open();
         try
         {
+            var spans = ReadCalendarSpans(conn);
+            var desc  = DescriptionExprs();
+
             // Timed по дням окна (окна сеток выровнены по дням — см. GetDateRange контроллера).
+            // Коллекции без timed (по сводке длительностей) не спрашиваются вовсе.
+            var timedCols = colIds.Where(c => spans.Has(c, false)).ToList();
             for (var day = rangeStart.Date; day < rangeEnd; day = day.AddDays(1))
             {
                 var dayIso  = Iso(day);
                 var nextIso = Iso(day.AddDays(1));
-                foreach (var colId in colIds)
+                foreach (var colId in timedCols)
                     ReadCalendarRows(conn, result,
                         $"ci.CollectionId = {colId} AND ci.AllDay = 0{hidden}" +
                         " AND ci.StartIso >= @d AND ci.StartIso < @d2",
-                        [("@d", dayIso), ("@d2", nextIso)], perDayCap);
+                        [("@d", dayIso), ("@d2", nextIso)], perDayCap, desc: desc(colId));
+            }
+
+            // Многодневные timed, начинающиеся в дне окна (конец — в следующем дне или позже), —
+            // отдельно от однодневных: при малом cap дня (Месяц) переполненный день иначе отдавал
+            // только ранние события, и многодневные, начавшиеся вечером, пропадали. Сик по
+            // EndIso-индексу от следующей полуночи в полосе наибольшей длительности, начало — в
+            // дне (residual в том же индексе). Со строками однодневного прохода они пересекаются
+            // (начало в том же дне) — повторы отбрасываются.
+            if (multiDayPerDay is { } multiCap)
+            {
+                var seen = result.Where(r => !r.AllDay).Select(r => (r.Id, r.FieldId)).ToHashSet();
+                var multi = new List<CalendarRecord>();
+                for (var day = rangeStart.Date; day < rangeEnd; day = day.AddDays(1))
+                {
+                    var dayIso  = Iso(day);
+                    var nextIso = Iso(day.AddDays(1));
+                    foreach (var colId in timedCols)
+                    {
+                        var (band, args) = NearEdge(spans.Max(colId, false), day, day.AddDays(1));
+                        ReadCalendarRows(conn, multi,
+                            $"ci.CollectionId = {colId} AND ci.AllDay = 0{hidden}" +
+                            " AND ci.EndIso >= @d2 AND ci.StartIso >= @d AND ci.StartIso < @d2" + band,
+                            [("@d", dayIso), ("@d2", nextIso), .. args], multiCap, "ci.EndIso", desc(colId));
+                    }
+                }
+                result.AddRange(multi.Where(r => seen.Add((r.Id, r.FieldId))));
             }
 
             // Timed-спилловеры (начались ДО окна, но пересекают его) — сик по EndIso-индексу:
-            // EndIso ∈ [начало окна, начало+буфер). Верхняя граница следует из того же инварианта
-            // «timed длиннее буфера не бывает», что и нижняя по StartIso (StartIso ≥ lo и
-            // длительность ≤ буфера ⇒ EndIso < win+буфер). Прежний проход сканировал весь
-            // StartIso-буфер с проверкой EndIso чтением строк — день-гигант в буфере стоил секунд
-            // при каждом открытии «Дня»/«Недели» следующие 62 дня (замер на 10 млн: 3.15 с → 7 мс).
-            // Порядок LIMIT'а — по EndIso: его отдает сам индекс, скан обрывается на cap.
-            var upperIso = Iso(SafeAddDays(rangeStart, CalendarTimedBufferDays));
-            foreach (var colId in colIds)
+            // EndIso ∈ [начало окна, начало + M], StartIso ∈ [начало − M, начало), где M —
+            // наибольшая длительность timed коллекции (сводка длительностей): полоса у границы
+            // окна, а не все будущее коллекции. Без сводки M — буфер CalendarTimedBufferDays
+            // (прежнее допущение). Прежний проход сканировал StartIso-буфер с проверкой EndIso
+            // чтением строк — день-гигант в буфере стоил секунд при каждом открытии «Дня»/«Недели»
+            // (замер на 10 млн: 3.15 с → 7 мс). Порядок LIMIT'а — по EndIso: его отдает сам индекс.
+            foreach (var colId in timedCols)
+            {
+                var span = spans.Known ? spans.Max(colId, false) : TimeSpan.FromDays(CalendarTimedBufferDays);
+                var (band, args) = NearEdge(span, rangeStart, rangeStart);
                 ReadCalendarRows(conn, result,
                     $"ci.CollectionId = {colId} AND ci.AllDay = 0{hidden}" +
-                    " AND ci.EndIso >= @win AND ci.EndIso < @hi" +
-                    " AND ci.StartIso >= @lo AND ci.StartIso < @win",
-                    [("@win", startIso), ("@hi", upperIso), ("@lo", lowerIso)], perDayCap, "ci.EndIso");
+                    " AND ci.EndIso >= @start AND ci.StartIso < @start" + band,
+                    [("@start", startIso), .. args], perDayCap, "ci.EndIso", desc(colId));
+            }
 
-            // All-day/многодневные — сик по EndIso-индексу: у StartIso нет нижней границы
-            // (многодневное могло начаться сколь угодно давно), и прежний StartIso-скан шел от
-            // НАЧАЛА таймлайна с проверкой EndIso чтением строк — миллионы прошлых all-day
-            // (импорт дат «без времени») стоили секунды на каждое окно после них (замер:
-            // 2.2 с → 0 мс). EndIso >= start отсекает прошлое сиком; верхней границы нет —
-            // all-day, в отличие от timed, не ограничен буфером по длительности. Cap тем же
-            // LIMIT: сетке и панели «весь день» больше все равно не отрисовать.
-            foreach (var colId in colIds)
+            // All-day/многодневные — сик по EndIso-индексу: многодневное могло начаться задолго до
+            // окна, поэтому StartIso-скан шел бы от НАЧАЛА таймлайна — миллионы прошлых all-day
+            // (импорт дат «без времени») стоили секунды на каждое окно после них (замер: 2.2 с →
+            // 0 мс). EndIso >= start отсекает прошлое сиком, граница сверху — конец окна + M
+            // all-day коллекции (без сводки — все будущее). Cap тем же LIMIT: сетке и панели
+            // «весь день» больше все равно не отрисовать.
+            foreach (var colId in colIds.Where(c => spans.Has(c, true)))
+            {
+                var (band, args) = NearEdge(spans.Max(colId, true), rangeStart, rangeEnd);
                 ReadCalendarRows(conn, result,
                     $"ci.CollectionId = {colId} AND ci.AllDay = 1{hidden}" +
-                    " AND ci.EndIso >= @start AND ci.StartIso < @end",
-                    [("@start", startIso), ("@end", endIso)], allDayCap ?? perDayCap, "ci.EndIso");
+                    " AND ci.EndIso >= @start AND ci.StartIso < @end" + band,
+                    [("@start", startIso), ("@end", endIso), .. args], allDayCap ?? perDayCap, "ci.EndIso", desc(colId));
+            }
         }
         finally { if (opened) conn.Close(); }
 
@@ -6908,13 +7010,14 @@ public partial class ConstructorRepository(AppDbContext db)
     /// поэтому контроллер грузит ее ВТОРОЙ фазой (<see cref="LoadCalendarDayCountsAsync"/>)
     /// и тихо уточняет уже показанную сетку.</summary>
     public Task<List<CalendarRecord>> LoadCalendarGridRangeAsync(
-        DateTime rangeStart, DateTime rangeEnd, ISet<int>? activeIds, int perDayCap, int? allDayCap = null) =>
+        DateTime rangeStart, DateTime rangeEnd, ISet<int>? activeIds, int perDayCap, int? allDayCap = null,
+        int? multiDayPerDay = null) =>
         Task.Run(() =>
         {
             using var ctx = new AppDbContext(db.DbPath);
             ctx.ApplyPerformancePragmas();
             return new ConstructorRepository(ctx)
-                .GetCalendarRecordsByRangeCapped(rangeStart, rangeEnd, activeIds, perDayCap, allDayCap);
+                .GetCalendarRecordsByRangeCapped(rangeStart, rangeEnd, activeIds, perDayCap, allDayCap, multiDayPerDay);
         });
 
     /// <summary>
@@ -6948,12 +7051,20 @@ public partial class ConstructorRepository(AppDbContext db)
         if (opened) conn.Open();
         try
         {
+            // Полоса у окна шириной наибольшей длительности вида (сводка длительностей): конец
+            // многодневного — не позже конца окна + M, без сводки — все будущее коллекции.
+            var bounds = ReadCalendarSpans(conn);
+            var desc   = DescriptionExprs();
             foreach (var colId in colIds)
-                foreach (var allDay in new[] { 0, 1 })
+                foreach (var allDay in new[] { false, true })
+                {
+                    if (!bounds.Has(colId, allDay)) continue;
+                    var (band, args) = NearEdge(bounds.Max(colId, allDay), rangeStart, rangeEnd);
                     ReadCalendarRows(conn, result,
-                        $"ci.CollectionId = {colId} AND ci.AllDay = {allDay}{hidden}" +
-                        " AND ci.EndIso >= @start AND ci.StartIso < @end" + spans,
-                        [("@start", startIso), ("@end", endIso)], perCollectionCap, "ci.EndIso");
+                        $"ci.CollectionId = {colId} AND ci.AllDay = {(allDay ? 1 : 0)}{hidden}" +
+                        " AND ci.EndIso >= @start AND ci.StartIso < @end" + spans + band,
+                        [("@start", startIso), ("@end", endIso), .. args], perCollectionCap, "ci.EndIso", desc(colId));
+                }
         }
         finally { if (opened) conn.Close(); }
 
@@ -7028,32 +7139,42 @@ public partial class ConstructorRepository(AppDbContext db)
         if (opened) conn.Open();
         try
         {
+            var spans = ReadCalendarSpans(conn);
+            var desc  = DescriptionExprs();
             foreach (var colId in colIds)
             {
-                // Timed, начавшиеся в окне: порядок отдает индекс (CollectionId, AllDay,
-                // StartIso), residual-фильтра нет (EndIso ≥ StartIso ≥ start автоматически).
-                ReadCalendarRows(conn, result,
-                    $"ci.CollectionId = {colId} AND ci.AllDay = 0{hidden}" +
-                    " AND ci.StartIso >= @start AND ci.StartIso < @end",
-                    [("@start", startIso), ("@end", endIso)], perCollectionCap);
+                if (spans.Has(colId, false))
+                {
+                    // Timed, начавшиеся в окне: порядок отдает индекс (CollectionId, AllDay,
+                    // StartIso), residual-фильтра нет (EndIso ≥ StartIso ≥ start автоматически).
+                    ReadCalendarRows(conn, result,
+                        $"ci.CollectionId = {colId} AND ci.AllDay = 0{hidden}" +
+                        " AND ci.StartIso >= @start AND ci.StartIso < @end",
+                        [("@start", startIso), ("@end", endIso)], perCollectionCap, desc: desc(colId));
 
-                // Timed-спилловеры (начались ДО окна и пересекают его) — БЕЗ буфера
-                // длительности, форма запроса как у all-day: сик по EndIso-индексу,
-                // residual StartIso лежит в том же индексе. Буфер сеток
-                // (CalendarTimedBufferDays) здесь не годится: он держится на допущении
-                // «timed длиннее двух месяцев не бывает», а в Диаграмме окно — до 10 лет,
-                // и растянутое мышью timed-событие на полгода терялось в КАЖДОМ окне,
-                // которое оно лишь пересекает (см. DiagramWindowTests).
-                ReadCalendarRows(conn, result,
-                    $"ci.CollectionId = {colId} AND ci.AllDay = 0{hidden}" +
-                    " AND ci.EndIso >= @start AND ci.StartIso < @start",
-                    [("@start", startIso)], perCollectionCap, "ci.EndIso");
+                    // Timed-спилловеры (начались ДО окна и пересекают его) — сик по EndIso-индексу
+                    // в полосе шириной наибольшей длительности timed коллекции (сводка
+                    // длительностей), residual StartIso лежит в том же индексе. Без сводки — без
+                    // границы: буфер сеток (CalendarTimedBufferDays) держится на допущении «timed
+                    // длиннее двух месяцев не бывает», а в Диаграмме окно — до 10 лет, и
+                    // растянутое мышью timed-событие на полгода терялось в КАЖДОМ окне, которое
+                    // оно лишь пересекает (см. CalendarWindowTests).
+                    var (band, args) = NearEdge(spans.Max(colId, false), rangeStart, rangeStart);
+                    ReadCalendarRows(conn, result,
+                        $"ci.CollectionId = {colId} AND ci.AllDay = 0{hidden}" +
+                        " AND ci.EndIso >= @start AND ci.StartIso < @start" + band,
+                        [("@start", startIso), .. args], perCollectionCap, "ci.EndIso", desc(colId));
+                }
 
-                // All-day/многодневные — сик по EndIso-индексу (у StartIso нет нижней границы).
-                ReadCalendarRows(conn, result,
-                    $"ci.CollectionId = {colId} AND ci.AllDay = 1{hidden}" +
-                    " AND ci.EndIso >= @start AND ci.StartIso < @end",
-                    [("@start", startIso), ("@end", endIso)], perCollectionCap, "ci.EndIso");
+                // All-day/многодневные — сик по EndIso-индексу, сверху — конец окна + M all-day.
+                if (spans.Has(colId, true))
+                {
+                    var (band, args) = NearEdge(spans.Max(colId, true), rangeStart, rangeEnd);
+                    ReadCalendarRows(conn, result,
+                        $"ci.CollectionId = {colId} AND ci.AllDay = 1{hidden}" +
+                        " AND ci.EndIso >= @start AND ci.StartIso < @end" + band,
+                        [("@start", startIso), ("@end", endIso), .. args], perCollectionCap, "ci.EndIso", desc(colId));
+                }
             }
         }
         finally { if (opened) conn.Close(); }
@@ -7065,10 +7186,13 @@ public partial class ConstructorRepository(AppDbContext db)
     /// <summary>
     /// Точные агрегаты окна Диаграммы по коллекциям: число событий, min(начало), max(конец)
     /// по классам timed/all-day — для счетчиков групп, «+N еще» и суммарных баров, которые
-    /// должны считаться по ВСЕМ событиям окна, а не по обрезанным cap'ом. Все запросы —
-    /// покрывающие индексные сканы (в таблицу не ходят): COUNT пропорционален строкам окна
-    /// (индексный, ~миллионы/с), MIN/MAX — сик до первой подходящей строки. Контроллер зовет
-    /// это ФОНОВОЙ фазой 2 (как карту счетчиков Месяца/Года) и тихо уточняет уже показанное.
+    /// должны считаться по ВСЕМ событиям окна, а не по обрезанным cap'ом. Начавшиеся в окне
+    /// считает сводка дней (полный день — строка на поле), начавшиеся до окна, all-day и самый
+    /// поздний конец — покрывающие сканы EndIso-индекса в полосе шириной наибольшей длительности
+    /// вида у границы окна (сводка длительностей); первое начало в окне — сик. Цена не зависит от
+    /// объема коллекции и длины окна (прежние сканы шли по всему будущему коллекции: на 10 млн
+    /// событий — 1 с на окно). Контроллер зовет это ФОНОВОЙ фазой 2 (как карту счетчиков
+    /// Месяца/Года) и тихо уточняет уже показанное.
     /// </summary>
     public Dictionary<int, DiagramGroupStat> GetDiagramStats(
         DateTime rangeStart, DateTime rangeEnd, ISet<int>? activeIds)
@@ -7090,72 +7214,125 @@ public partial class ConstructorRepository(AppDbContext db)
         if (opened) conn.Open();
         try
         {
+            var spans = ReadCalendarSpans(conn);
             foreach (var colId in colIds)
             {
-                // (count, minStart[, maxEnd]) одним сканом соответствующего диапазона индекса.
-                (int Count, DateTime? Min, DateTime? Max) Agg(string select, string where,
-                    params (string Name, string Value)[] args)
+                var hasTimed  = spans.Has(colId, false);
+                var hasAllDay = spans.Has(colId, true);
+                if (!hasTimed && !hasAllDay) continue;
+
+                // Одна строка агрегатов по условию над calendar_index коллекции.
+                object?[] Row(string select, string where, IEnumerable<(string Name, string Value)> args)
                 {
                     using var cmd = conn.CreateCommand();
                     cmd.CommandText = $"SELECT {select} FROM calendar_index WHERE CollectionId = {colId}{where}{hidden}";
                     foreach (var (name, value) in args) AddParam(cmd, name).Value = value;
                     using var rdr = cmd.ExecuteReader();
-                    if (!rdr.Read()) return (0, null, null);
-                    var count = rdr.IsDBNull(0) ? 0 : rdr.GetInt32(0);
-                    DateTime? At(int i) =>
-                        rdr.FieldCount > i && !rdr.IsDBNull(i) && DateTime.TryParse(rdr.GetString(i), out var d)
-                            ? d : null;
-                    return (count, At(1), At(2));
+                    var row = new object?[rdr.FieldCount];
+                    if (rdr.Read())
+                        for (var i = 0; i < row.Length; i++) row[i] = rdr.IsDBNull(i) ? null : rdr.GetValue(i);
+                    return row;
                 }
+                static int Int(object? v) => v is null ? 0 : Convert.ToInt32(v);
+                static DateTime? Date(object? v) => v is string s && DateTime.TryParse(s, out var d) ? d : null;
 
-                // Timed, начавшиеся в окне: диапазон StartIso ∈ [start, end) индекса
-                // (CollectionId, AllDay, StartIso, …) — без residual.
-                var tWin = Agg("COUNT(*), MIN(StartIso)",
-                    " AND AllDay = 0 AND StartIso >= @start AND StartIso < @end",
-                    ("@start", startIso), ("@end", endIso));
-                // Только MAX(EndIso) — единственный агрегат включает min/max-оптимизацию
-                // SQLite: обратный сик по EndIso-индексу до первой строки, прошедшей
-                // residual (он тоже в индексе). COUNT рядом заставил бы сканировать
-                // весь диапазон.
-                DateTime? AggMaxEnd(string where, params (string Name, string Value)[] args)
+                // Начавшиеся в окне — оба вида: полные дни из сводки дней, неполные края — по индексу.
+                var days = new SortedDictionary<string, int>(StringComparer.Ordinal);
+                FillDayCounts(conn, [colId], hidden, rangeStart, rangeEnd, days);
+                var startsInWindow = days.Values.Sum();
+
+                // All-day, пересекающие окно: число, первое начало, последний конец и сколько из них
+                // начались в окне — одним сканом EndIso-диапазона (residual StartIso — в индексе).
+                int aCount = 0, aInWindow = 0;
+                DateTime? aMin = null, aMax = null;
+                if (hasAllDay)
                 {
-                    using var cmd = conn.CreateCommand();
-                    cmd.CommandText = $"SELECT MAX(EndIso) FROM calendar_index WHERE CollectionId = {colId}{where}{hidden}";
-                    foreach (var (name, value) in args) AddParam(cmd, name).Value = value;
-                    var v = cmd.ExecuteScalar();
-                    return v is string s && DateTime.TryParse(s, out var d) ? d : null;
+                    var (band, args) = NearEdge(spans.Max(colId, true), rangeStart, rangeEnd, "");
+                    var r = Row("COUNT(*), MIN(StartIso), MAX(EndIso), SUM(CASE WHEN StartIso >= @start THEN 1 ELSE 0 END)",
+                                " AND AllDay = 1 AND EndIso >= @start AND StartIso < @end" + band,
+                                [("@start", startIso), ("@end", endIso), .. args]);
+                    (aCount, aMin, aMax, aInWindow) = (Int(r[0]), Date(r[1]), Date(r[2]), Int(r[3]));
                 }
 
-                // Timed-спилловеры — тот же EndIso-сик без буфера, что и у чтения строк:
-                // счетчик группы обязан считать те же события, что показаны строками.
-                var tSpill = Agg("COUNT(*), MIN(StartIso)",
-                    " AND AllDay = 0 AND EndIso >= @start AND StartIso < @start",
-                    ("@start", startIso));
-                // Max(конец) timed — по всем timed окна (начавшимся в нем и до него).
-                var tMaxEnd = AggMaxEnd(
-                    " AND AllDay = 0 AND EndIso >= @start AND StartIso < @end",
-                    ("@start", startIso), ("@end", endIso));
-                // All-day: count/min/max одним сканом EndIso-диапазона (residual StartIso — в индексе).
-                var aday = Agg("COUNT(*), MIN(StartIso), MAX(EndIso)",
-                    " AND AllDay = 1 AND EndIso >= @start AND StartIso < @end",
-                    ("@start", startIso), ("@end", endIso));
+                int tSpill = 0;
+                DateTime? tMin = null, tMaxEnd = null;
+                if (hasTimed)
+                {
+                    var span = spans.Max(colId, false);
 
-                var count = tWin.Count + tSpill.Count + aday.Count;
-                if (count == 0) continue;
-                var mins = new[] { tWin.Min, tSpill.Min, aday.Min }.Where(d => d.HasValue).ToList();
+                    // Timed, начавшиеся ДО окна и пересекающие его: полоса у начала окна.
+                    var (band, args) = NearEdge(span, rangeStart, rangeStart, "");
+                    var r = Row("COUNT(*), MIN(StartIso)",
+                                " AND AllDay = 0 AND EndIso >= @start AND StartIso < @start" + band,
+                                [("@start", startIso), .. args]);
+                    (tSpill, tMin) = (Int(r[0]), Date(r[1]));
+
+                    // Первое начало timed в окне — сик (MIN — единственный агрегат, SQLite берет
+                    // первую строку диапазона индекса); нужно, только если до окна timed не начинались.
+                    if (tSpill == 0)
+                        tMin = Date(Row("MIN(StartIso)", " AND AllDay = 0 AND StartIso >= @start AND StartIso < @end",
+                                        [("@start", startIso), ("@end", endIso)])[0]);
+
+                    // Самый поздний конец timed окна: обратный сик по EndIso-индексу от конца окна + M
+                    // до первой строки, начавшейся раньше конца окна. MAX — единственный агрегат:
+                    // COUNT рядом заставил бы сканировать весь диапазон.
+                    var (endBand, endArgs) = NearEdge(span, rangeStart, rangeEnd, "");
+                    tMaxEnd = Date(Row("MAX(EndIso)", " AND AllDay = 0 AND EndIso >= @start AND StartIso < @end" + endBand,
+                                       [("@start", startIso), ("@end", endIso), .. endArgs])[0]);
+                }
+
+                // Все начавшиеся в окне (сводка) без all-day из них — это timed окна.
+                var count = (startsInWindow - aInWindow) + tSpill + aCount;
+                if (count <= 0) continue;
+                var mins = new[] { tMin, aMin }.Where(d => d.HasValue).ToList();
                 result[colId] = new DiagramGroupStat
                 {
                     Count        = count,
-                    AllDayCount  = aday.Count,
-                    MinStart     = mins.Min()!.Value,
+                    AllDayCount  = aCount,
+                    MinStart     = mins.Count > 0 ? mins.Min()!.Value : rangeStart,
                     MaxEndTimed  = tMaxEnd,
-                    MaxEndAllDay = aday.Max,
+                    MaxEndAllDay = aMax,
                 };
             }
         }
         finally { if (opened) conn.Close(); }
         return result;
     }
+
+    // Полоса у границы окна для событий, пересекающих ее: наибольшая длительность вида M (сводка
+    // длительностей) ограничивает конец сверху (edge + M) и начало снизу (from − M). null — без
+    // границы (сводки нет или длительность не разобрана): условие не добавляется.
+    private static (string Sql, (string Name, string Value)[] Args) NearEdge(TimeSpan? span, DateTime from, DateTime edge,
+                                                                             string prefix = "ci.")
+    {
+        if (span is not { } m) return ("", []);
+        string Iso(DateTime dt) => DateTime.SpecifyKind(dt, DateTimeKind.Unspecified).ToString("o");
+        return ($" AND {prefix}EndIso <= @spanHi AND {prefix}StartIso >= @spanLo",
+                [("@spanHi", Iso(SafeAdd(edge, m))), ("@spanLo", Iso(SafeAdd(from, -m)))]);
+    }
+
+    // Описание для карточек ОДНОЙ коллекции: ее поля с ролью «Описание» известны заранее, и значение
+    // берется сиком по ключу (RecordId, FieldId), а не перебором всех значений записи с соединением
+    // полей на каждое событие (DescExpr). Порядок тот же — первое по номеру поле со значением. Нет
+    // таких полей — NULL без подзапроса. Для чтений, где коллекция зафиксирована условием.
+    private Func<int, string> DescriptionExprs()
+    {
+        var map = db.DbFields.AsNoTracking().Where(f => f.IsDescription)
+                    .Select(f => new { f.CollectionId, f.Id }).ToList()
+                    .GroupBy(f => f.CollectionId)
+                    .ToDictionary(g => g.Key, g =>
+                        "(SELECT fv.Value FROM db_field_values fv WHERE fv.RecordId = r.Id" +
+                        $" AND fv.FieldId IN ({string.Join(",", g.Select(x => x.Id).Order())}) LIMIT 1)");
+        return colId => map.GetValueOrDefault(colId, "NULL");
+    }
+
+    // Дата строки проекции: пишется форматом «o» без зоны (2026-09-21T00:31:12.0000000), и точный
+    // разбор этого формата в разы дешевле общего (на неделе в девять тысяч событий общий разбор
+    // стоил десятки мс); иной вид строки — общим разбором, как раньше.
+    private static bool TryParseIso(string s, out DateTime value) =>
+        DateTime.TryParseExact(s, "O", System.Globalization.CultureInfo.InvariantCulture,
+                               System.Globalization.DateTimeStyles.None, out value)
+        || DateTime.TryParse(s, out value);
 
     // Общий читатель окна: строки calendar_index (+заголовок записи и цвет коллекции) по условию
     // WHERE над ci. limit > 0 добавляет ORDER BY {orderBy} LIMIT n — чтобы порядок отдал индекс
@@ -7164,11 +7341,11 @@ public partial class ConstructorRepository(AppDbContext db)
     // (см. GetCalendarRecordsByRangeCapped).
     private static void ReadCalendarRows(System.Data.Common.DbConnection conn, List<CalendarRecord> into,
                                          string where, IReadOnlyList<(string Name, string Value)> args,
-                                         int limit = 0, string orderBy = "ci.StartIso")
+                                         int limit = 0, string orderBy = "ci.StartIso", string? desc = null)
     {
         using var cmd = conn.CreateCommand();
         cmd.CommandText = $@"SELECT ci.RecordId, ci.FieldId, ci.CollectionId, ci.StartIso, ci.EndIso, ci.AllDay,
-                                    r.Title, {DescExpr}, c.Name, c.Color
+                                    r.Title, {desc ?? DescExpr}, c.Name, c.Color
                              FROM calendar_index ci
                              JOIN db_records r ON r.Id = ci.RecordId
                              JOIN db_collections c ON c.Id = r.CollectionId
@@ -7179,8 +7356,8 @@ public partial class ConstructorRepository(AppDbContext db)
         using var rdr = cmd.ExecuteReader();
         while (rdr.Read())
         {
-            if (!DateTime.TryParse(rdr.GetString(3), out var s)) continue;
-            if (!DateTime.TryParse(rdr.GetString(4), out var e)) continue;
+            if (!TryParseIso(rdr.GetString(3), out var s)) continue;
+            if (!TryParseIso(rdr.GetString(4), out var e)) continue;
             into.Add(new CalendarRecord
             {
                 Id             = rdr.GetInt32(0),

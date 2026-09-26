@@ -32,11 +32,11 @@ public partial class MonthView : UserControl
     public event EventHandler<IReadOnlyList<CalendarRecord>>? RecordsDuplicateRequested;
 
     // Константы макета (высоты элементов ячейки дня и полос событий).
-    private const int DateH   = 34;
-    private const int BarH    = 20;
-    private const int BarStep = 22;
-    private const int MoreH   = 16;
-    private const int BPad    = 4;
+    private const double DateH   = MonthCellsSurface.DateH;
+    private const double BarH    = MonthCellsSurface.BarH;
+    private const double BarStep = MonthCellsSurface.BarStep;
+    private const double MoreH   = MonthCellsSurface.MoreH;
+    private const double BPad    = MonthCellsSurface.BPad;
 
     private List<CalendarRecord> _events      = [];
     private DateTime    _currentDate = DateTime.Today;
@@ -51,7 +51,7 @@ public partial class MonthView : UserControl
     private DateTime  _dragSourceDay;
     private DateTime  _dragTargetDay;
     private IPointer? _dragPointer;
-    private Control?  _dragSrcControl;
+    private MonthChip? _dragSrc;   // плашка или сегмент полосы, за который тащат
     private Grid?     _dragGhost;
     private DateTime? _shiftedDay;
     private bool      _srcCounterShifted; // в исходном дне «+N еще» временно уменьшен на утащенное
@@ -62,12 +62,11 @@ public partial class MonthView : UserControl
     // (Shift+клик) копит несколько; одиночный клик оставляет одно.
     private readonly Dictionary<CalendarRecord, Action> _selections = new();
 
-    private readonly Dictionary<DateTime, (Grid Panel, TextBlock More, HashSet<int> Occupied, int OrigHidden)> _dayUiMap    = new();
-    private readonly Dictionary<int, List<(Border SelFrame, Border? LeftStripe)>>                             _spanFrames    = new();
-    private readonly Dictionary<int, List<Border>>                                                             _spanBgBorders = new();
-    private readonly Dictionary<int, List<TextBlock>>                                                          _spanTextBlocks = new();
-    private readonly Dictionary<DateTime, (Border Cell, IBrush BaseBg)>                                       _dayCellMap   = new();
-    private readonly Dictionary<DateTime, (Action Show, Action Hide)>                                         _dayPlusMap   = new();
+    // Ячейки месяца по дате (раскладка и «+N еще» — для счетчиков при перетаскивании).
+    private readonly Dictionary<DateTime, MonthCell> _dayUiMap = new();
+    // Две рисованные поверхности вместо контролов ячеек, плашек и полос (см. MonthSurfaces).
+    private readonly MonthCellsSurface _cells = new();
+    private readonly MonthBarsSurface  _bars  = new();
     private DateTime? _hoveredDay;
     private DateTime? _hoveredCircleDay;
     private readonly HashSet<int> _selectedSpanIds = [];
@@ -78,6 +77,21 @@ public partial class MonthView : UserControl
     public MonthView()
     {
         InitializeComponent();
+        // Ячейки — под линиями сетки, полосы — над ними (полоса закрывает линии белой подложкой),
+        // призрак перетаскивания — на холсте поверх всего.
+        GridContainer.Children.Insert(0, _cells);
+        GridContainer.Children.Insert(GridContainer.Children.IndexOf(SpanCanvas), _bars);
+        _cells.IsSelected = ev => _selections.ContainsKey(ev);
+        _bars.IsSelected  = ev => ev.Id.HasValue && _selectedSpanIds.Contains(ev.Id.Value);
+        _cells.PointerPressed  += OnCellsPressed;
+        _cells.PointerMoved    += (_, e) => _OnDragMoved(e);
+        _cells.PointerReleased += OnChipReleased;
+        _bars.PointerPressed   += OnBarsPressed;
+        _bars.PointerMoved     += (_, e) => _OnDragMoved(e);
+        _bars.PointerReleased  += OnChipReleased;
+        // Меню правой кнопкой — по месту нажатия: над плашкой — меню события, мимо — меню дня.
+        _cells.AddHandler(PointerPressedEvent, OnCellsRightPressed, Avalonia.Interactivity.RoutingStrategies.Tunnel);
+        _bars.AddHandler(PointerPressedEvent, OnBarsRightPressed, Avalonia.Interactivity.RoutingStrategies.Tunnel);
         GridContainer.SizeChanged    += (_, _) => _BuildAll();
         GridContainer.PointerMoved   += (_, e) => { var pos = e.GetPosition(GridContainer); _UpdateCellHover(_DayAtPos(pos)); _UpdateCircleHover(pos); };
         GridContainer.PointerExited  += (_, _) => { _UpdateCellHover(null); _UpdateCircleHover(null); };
@@ -288,18 +302,16 @@ public partial class MonthView : UserControl
     private void _BuildAll()
     {
         _Deselect();
-        DayGrid.Children.Clear();
         _BuildGridLines();
-        SpanCanvas.Children.Clear();
         _dayUiMap.Clear();
-        _spanFrames.Clear();
-        _spanBgBorders.Clear();
-        _spanTextBlocks.Clear();
         _selectedSpanIds.Clear();
-        _dayCellMap.Clear();
-        _dayPlusMap.Clear();
+        _cells.Cells.Clear();
+        _cells.HoveredChip = null;
+        _bars.Bars.Clear();
+        _bars.HoveredId = null;
         _hoveredDay       = null;
         _hoveredCircleDay = null;
+        _cells.HoveredDay = _cells.HoveredCircleDay = null;
 
         var W = GridContainer.Bounds.Width;
         var H = GridContainer.Bounds.Height;
@@ -367,7 +379,7 @@ public partial class MonthView : UserControl
                     var insetR = rightCap ? 2.0 : 0.0;
                     var bx = sc * cw + insetL;
                     var bw = (ec + 1) * cw - insetR - bx;
-                    _AddSpanBar(ev, bx, barY, bw, leftCap, rightCap);
+                    _bars.Add(ev, bx, barY, bw, leftCap, rightCap);
                 }
             }
 
@@ -401,15 +413,19 @@ public partial class MonthView : UserControl
                 // возрастанию, поэтому первая свободная ищется бегущим курсором, а не с нуля:
                 // на дне-гиганте (тысячи событий) поиск с нуля был квадратичным и держал
                 // UI-поток секундами.
+                var cell = new MonthCell
+                {
+                    Date = d, IsCurrentMonth = isCurrentMonth, IsToday = isToday, IsWeekend = isWeekend,
+                    Index = wrow * 7 + col,
+                };
                 var occupied = new HashSet<int>(spanRows);
-                var placed   = new List<(CalendarRecord Ev, int Row)>();
                 var hiddenSingles = 0;
                 var free = 0;
                 foreach (var ev in singles)
                 {
                     while (occupied.Contains(free)) free++;
                     occupied.Add(free);
-                    if (free <= maxVisRow) placed.Add((ev, free));
+                    if (free <= maxVisRow) cell.Chips.Add((new MonthChip(ev, bar: false, true, true), free));
                     else                   hiddenSingles++;
                 }
 
@@ -420,546 +436,161 @@ public partial class MonthView : UserControl
                     && _dayTotals!.TryGetValue(DateOnly.FromDateTime(d), out var total))
                     hidden += Math.Max(0, total - received.GetValueOrDefault(d.Date));
 
-                DayGrid.Children.Add(
-                    _MakeCell(d, isCurrentMonth, isToday, isWeekend,
-                              placed, occupied, hidden));
+                cell.Occupied   = occupied;
+                cell.OrigHidden = hidden;
+                cell.More       = hidden > 0 ? hidden : null;
+                _cells.Cells.Add(cell);
+                _dayUiMap[d] = cell;
             }
         }
+
+        _cells.Relayout(GridContainer.Bounds.Size);
+        _bars.InvalidateVisual();
     }
 
-    // ── ячейка дня ────────────────────────────────────────────────────────────
+    // ── плашки и полосы: нажатие, отпускание, меню ────────────────────────────
 
-    private Control _MakeCell(
-        DateTime    date,
-        bool        isCurrentMonth,
-        bool        isToday,
-        bool        isWeekend,
-        List<(CalendarRecord Ev, int Row)> placed,
-        HashSet<int> occupied,
-        int         hidden)
+    // additive (Shift+клик): добавляет/убирает событие из набора, не трогая остальные. Иначе —
+    // одиночное выделение (сначала снимаем все). Полоса подсвечивает все сегменты события.
+    private void _SelectThis(CalendarRecord ev, bool bar, bool additive)
     {
-        // Число дня
-        var labelFg = isToday ? Brushes.White
-            : isWeekend ? (IBrush)new SolidColorBrush(Color.Parse("#FF3B30"))
-            : new SolidColorBrush(isCurrentMonth ? Color.Parse("#1C1C1E") : Color.Parse("#8E8E93"));
-
-        var dayLabel = new TextBlock
+        if (additive)
         {
-            Text                = date.Day.ToString(),
-            FontSize            = FontSizeBase,
-            TextAlignment       = TextAlignment.Center,
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment   = VerticalAlignment.Center,
-            Foreground          = labelFg,
-            FontWeight          = isToday ? WeightBold : WeightNormal,
-        };
-
-        // Плюс — как в кнопке «Создать» в сайдбаре (Sidebar.axaml):
-        // Path на Canvas 24×24 внутри Viewbox 18×18 — так и геометрия,
-        // и толщина штриха масштабируются одинаково (визуально тоньше и компактнее).
-        Application.Current!.TryFindResource("IconPlus", out var plusRes);
-        Application.Current!.TryFindResource("IconStrokeMediumBold", out var plusStroke);
-        var plusPath = new Avalonia.Controls.Shapes.Path
-        {
-            Data            = plusRes as Geometry,
-            Stroke          = new SolidColorBrush(Color.Parse("#636366")),
-            StrokeThickness = plusStroke is double ps ? ps : 2,
-            StrokeLineCap   = PenLineCap.Round,
-            StrokeJoin      = PenLineJoin.Round,
-        };
-        var plusCanvas = new Canvas { Width = 24, Height = 24 };
-        plusCanvas.Children.Add(plusPath);
-        var plusSz = Application.Current!.TryFindResource("IconSizeMedium", out var pszR) && pszR is double pszD ? pszD : 18d;
-        var plusIcon = new Viewbox
-        {
-            Width               = plusSz,
-            Height              = plusSz,
-            Child               = plusCanvas,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment   = VerticalAlignment.Center,
-            IsVisible           = false,
-        };
-
-        var dayContent = new Grid();
-        dayContent.Children.Add(dayLabel);
-        dayContent.Children.Add(plusIcon);
-
-        IBrush normalCircleBg = isToday
-            ? new SolidColorBrush(Color.Parse("#FF3B30"))
-            : Brushes.Transparent;
-        IBrush hoverCircleBg  = new SolidColorBrush(Color.Parse("#F2F2F7"));
-        IBrush hoverBorderBrush = new SolidColorBrush(Color.Parse("#E8E8E8"));
-
-        var dayCircle = new Border
-        {
-            Width               = 24,
-            Height              = 24,
-            CornerRadius        = new CornerRadius(12),
-            HorizontalAlignment = HorizontalAlignment.Right,
-            VerticalAlignment   = VerticalAlignment.Top,
-            Margin              = new Thickness(0, 4, 4, 0),
-            Background          = normalCircleBg,
-            Cursor              = new Cursor(StandardCursorType.Hand),
-            Child               = dayContent,
-        };
-
-        _dayPlusMap[date] = (
-            () =>
-            {
-                dayLabel.IsVisible      = false;
-                plusIcon.IsVisible      = true;
-                dayCircle.Background    = hoverCircleBg;
-                dayCircle.BorderBrush   = hoverBorderBrush;
-                dayCircle.BorderThickness = new Thickness(LineMetrics.ThicknessFor(this));
-            },
-            () =>
-            {
-                dayLabel.IsVisible      = true;
-                plusIcon.IsVisible      = false;
-                dayCircle.Background    = normalCircleBg;
-                dayCircle.BorderBrush   = Brushes.Transparent;
-                dayCircle.BorderThickness = new Thickness(0);
-            }
-        );
-
-        // Однодневные события: каждый чип в свою строку дня (DateH + row*BarStep),
-        // заполняя «дыры» между spanning-барами. Grid-контейнер без строк —
-        // чипы разводятся по вертикали верхним отступом, ширина тянется по ячейке.
-        var eventsPanel = new Grid
-        {
-            VerticalAlignment   = VerticalAlignment.Top,
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-        };
-        foreach (var (ev, row) in placed)
-        {
-            var chip = _MakeChip(ev);
-            chip.Margin            = new Thickness(2, DateH + row * BarStep, 2, 0);
-            chip.VerticalAlignment = VerticalAlignment.Top;
-            eventsPanel.Children.Add(chip);
-        }
-
-        // «+N еще» — прижата к нижнему краю ячейки
-        var moreLabel = new TextBlock
-        {
-            Text                = $"+{hidden} еще",
-            IsVisible           = hidden > 0,
-            FontSize            = FontSizeBase,
-            Foreground          = new SolidColorBrush(Color.Parse("#8E8E93")),
-            Margin              = new Thickness(6, 0, 0, 4),
-            VerticalAlignment   = VerticalAlignment.Bottom,
-            HorizontalAlignment = HorizontalAlignment.Left,
-        };
-
-        _dayUiMap[date] = (eventsPanel, moreLabel, occupied, hidden);
-
-        var inner = new Grid();
-        inner.Children.Add(dayCircle);
-        inner.Children.Add(eventsPanel);
-        inner.Children.Add(moreLabel);
-
-        IBrush baseBg = new SolidColorBrush(
-            isCurrentMonth ? Color.Parse("#FFFFFF") : Color.Parse("#F9F9F9"));
-
-        // Линии сетки рисует отдельный слой GridLines (см. _BuildGridLines) —
-        // бордер на ячейке с текстом нельзя алиасить, линии были бы размытыми при зуме.
-        var cellBorder = new Border
-        {
-            Background   = baseBg,
-            ClipToBounds = true,
-            Child        = inner,
-        };
-
-        if (isCurrentMonth)
-            _dayCellMap[date] = (cellBorder, baseBg);
-
-        // Клик по «+» → создать событие; двойной клик по числу → перейти в день
-        dayCircle.PointerPressed += (_, e) =>
-        {
-            if (!e.GetCurrentPoint(null).Properties.IsLeftButtonPressed) return;
-            if (_hoveredCircleDay == date)
-            {
-                DayAddClicked?.Invoke(this, date);
-                e.Handled = true;
-            }
-            else if (e.ClickCount >= 2)
-            {
-                DaySelected?.Invoke(this, date);
-                e.Handled = true;
-            }
-        };
-        cellBorder.ContextMenu = _BuildDayContextMenu(date);
-        cellBorder.PointerPressed += (_, e) =>
-        {
-            if (e.ClickCount >= 2 && e.GetCurrentPoint(null).Properties.IsLeftButtonPressed)
-            {
-                DaySelected?.Invoke(this, date);
-                e.Handled = true;
-            }
-        };
-
-        return cellBorder;
-    }
-
-    // ── плашка однодневного события ───────────────────────────────────────────
-
-    private Border _MakeChip(CalendarRecord ev)
-    {
-        var color      = Color.Parse(EventColors.Display(ev.Color));
-        var normalBg   = new SolidColorBrush(Color.FromArgb(50, color.R, color.G, color.B));
-        var hoverBg    = new SolidColorBrush(Color.FromArgb(90, color.R, color.G, color.B));
-        var selectedBg = new SolidColorBrush(color);
-        var darkBrush  = new SolidColorBrush(ColorTools.Darken(color));
-
-        // Полоска утоплена внутрь плашки (как в Неделе): прижатая к краю она
-        // выступала «усиками» за скругленный силуэт — ее радиус меньше радиуса плашки.
-        var leftStripe = new Border
-        {
-            Width               = 3,
-            Margin              = new Thickness(2, 2, 0, 2),
-            Background          = new SolidColorBrush(color),
-            CornerRadius        = new CornerRadius(2),
-            HorizontalAlignment = HorizontalAlignment.Left,
-        };
-        var content = new Grid();
-        content.Children.Add(leftStripe);
-
-        List<TextBlock> chipTextBlocks = [];
-        if (ev.AllDay)
-        {
-            var tb = new TextBlock
-            {
-                Text              = ev.DisplayTitle,
-                FontSize          = FontSizeBase,
-                FontWeight        = WeightBold,
-                Foreground        = darkBrush,
-                Margin            = new Thickness(8, 0, 2, 0),
-                TextTrimming      = TextTrimming.CharacterEllipsis,
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            chipTextBlocks.Add(tb);
-            content.Children.Add(tb);
+            if (_selections.ContainsKey(ev)) { _DeselectOne(ev); return; }
         }
         else
         {
-            // Grid [время Auto][заголовок *] — заголовок в колонке * получает конечную
-            // ширину и обрезается многоточием, когда событие не помещается.
-            var timeAndTitle = new Grid
-            {
-                VerticalAlignment   = VerticalAlignment.Center,
-                Margin              = new Thickness(8, 0, 2, 0),
-                ColumnDefinitions   = new ColumnDefinitions("Auto,*"),
-            };
-            var timeTb = new TextBlock
-            {
-                Text       = $"{ev.StartDt:HH:mm} ",
-                FontSize   = FontSizeBase,
-                FontWeight = WeightNormal,
-                Foreground = darkBrush,
-            };
-            var titleTb = new TextBlock
-            {
-                Text         = ev.DisplayTitle,
-                FontSize     = FontSizeBase,
-                FontWeight   = WeightBold,
-                Foreground   = darkBrush,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-            };
-            Grid.SetColumn(timeTb, 0);
-            Grid.SetColumn(titleTb, 1);
-            chipTextBlocks.Add(timeTb);
-            chipTextBlocks.Add(titleTb);
-            timeAndTitle.Children.Add(timeTb);
-            timeAndTitle.Children.Add(titleTb);
-            content.Children.Add(timeAndTitle);
+            _Deselect();
         }
-
-        var wrapper = new Grid();
-        wrapper.Children.Add(content);
-
-        var chip = new Border
+        if (bar && ev.Id.HasValue) _selectedSpanIds.Add(ev.Id.Value);
+        _selections[ev] = () =>
         {
-            Height       = BarH,
-            Background   = normalBg,
-            CornerRadius = new CornerRadius(4),
-            Cursor       = new Cursor(StandardCursorType.Hand),
-            Child        = wrapper,
+            if (bar && ev.Id.HasValue) _selectedSpanIds.Remove(ev.Id.Value);
+            _cells.InvalidateVisual();
+            _bars.InvalidateVisual();
         };
-
-        var isSelected = false;
-
-        void Highlight()
-        {
-            isSelected           = true;
-            chip.Background      = selectedBg;
-            leftStripe.IsVisible = false;
-            foreach (var tb in chipTextBlocks) tb.Foreground = Brushes.White;
-        }
-        void Unhighlight()
-        {
-            isSelected           = false;
-            chip.Background      = normalBg;
-            leftStripe.IsVisible = true;
-            foreach (var tb in chipTextBlocks) tb.Foreground = darkBrush;
-        }
-
-        // additive (Shift+клик): добавляет/убирает событие из набора, не трогая
-        // остальные. Иначе — одиночное выделение (сначала снимаем все).
-        void SelectThis(bool additive)
-        {
-            if (additive)
-            {
-                if (_selections.ContainsKey(ev)) { _DeselectOne(ev); return; }
-            }
-            else
-            {
-                _Deselect();
-            }
-            Highlight();
-            _selections[ev] = Unhighlight;
-        }
-
-        chip.PointerEntered += (_, _) => { if (!isSelected) chip.Background = hoverBg; };
-        chip.PointerExited  += (_, _) => { if (!isSelected) chip.Background = normalBg; };
-        chip.ContextMenu = _BuildEventContextMenu(ev);
-        // Правый клик: если событие уже в множественном выделении — оставляем набор
-        // как есть (меню удалит все). Иначе выделяем только это (как одиночный клик),
-        // чтобы было видно, с чем работаем. Окно снимает выделение только на левый
-        // клик мимо, поэтому переключение правой кнопкой подсветку не гасит.
-        chip.PointerPressed  += (_, e) =>
-        {
-            var props = e.GetCurrentPoint(null).Properties;
-            if (props.IsRightButtonPressed)
-            {
-                if (!_selections.ContainsKey(ev)) SelectThis(additive: false);
-                return;
-            }
-            if (props.IsLeftButtonPressed)  { _skipNextDeselect = true; _BeginDragTrack(ev, chip, e); e.Handled = true; }
-        };
-        chip.PointerMoved    += (_, e) => _OnDragMoved(e);
-        chip.PointerReleased += (_, e) =>
-        {
-            // Правый клик уже обработан в PointerPressed (выделение + меню) —
-            // не запускаем логику по левой кнопке.
-            if (e.InitialPressMouseButton != MouseButton.Left) return;
-            var wasDrag = _dragActive;
-            _OnDragReleased(e);
-            if (wasDrag) return;
-            if (_pressClickCount >= 2)
-            {
-                _Deselect();
-                RecordClicked?.Invoke(this, ev);
-            }
-            else
-            {
-                SelectThis(additive: e.KeyModifiers.HasFlag(KeyModifiers.Shift));
-            }
-        };
-        return chip;
+        _cells.InvalidateVisual();
+        _bars.InvalidateVisual();
     }
 
-    // ── бар многодневного события на Canvas ───────────────────────────────────
-
-    private void _AddSpanBar(CalendarRecord ev, double bx, double by, double bw,
-                              bool leftCap, bool rightCap)
+    // Левое нажатие по плашке ячейки: начало возможного перетаскивания (выделение — по отпусканию).
+    private void OnCellsPressed(object? sender, PointerPressedEventArgs e)
     {
-        var color      = Color.Parse(EventColors.Display(ev.Color));
-        var cr         = new CornerRadius(
-            leftCap  ? 4 : 0, rightCap ? 4 : 0,
-            rightCap ? 4 : 0, leftCap  ? 4 : 0);
-        var normalBg   = new SolidColorBrush(Color.FromArgb(50, color.R, color.G, color.B));
-        var hoverBg    = new SolidColorBrush(Color.FromArgb(90, color.R, color.G, color.B));
-        var selectedBg = new SolidColorBrush(color);
-        var darkBrush  = new SolidColorBrush(ColorTools.Darken(color));
-
-        var bar = new Grid { Width = bw, Height = BarH, Cursor = new Cursor(StandardCursorType.Hand) };
-
-        // Белый непрозрачный слой блокирует линии сетки снизу
-        bar.Children.Add(new Border { Background = Brushes.White, CornerRadius = cr });
-
-        // Полупрозрачный цветной фон поверх белого
-        var bgBorder = new Border { Background = normalBg, CornerRadius = cr };
-        bar.Children.Add(bgBorder);
-
-        if (ev.Id.HasValue)
+        var props = e.GetCurrentPoint(null).Properties;
+        var pos   = e.GetPosition(_cells);
+        var chip  = _cells.ChipAt(pos);
+        if (chip is not null)
         {
-            if (!_spanBgBorders.ContainsKey(ev.Id.Value))
-                _spanBgBorders[ev.Id.Value] = new List<Border>();
-            _spanBgBorders[ev.Id.Value].Add(bgBorder);
+            if (props.IsLeftButtonPressed) { _skipNextDeselect = true; _BeginDragTrack(chip, _cells, e); e.Handled = true; }
+            return;
         }
 
-        // Цветной акцент слева — только у начала события
-        Border? leftStripeBar = null;
-        if (leftCap)
+        // Кружок числа: «+» под указателем — создать событие в дне; двойной — перейти в день.
+        if (!props.IsLeftButtonPressed || _cells.CellAt(pos) is not { } cell) return;
+        if (_cells.CircleRect(cell).Contains(pos))
         {
-            // Утоплена внутрь бара (как в Неделе) — прижатая к краю выступала
-            // «усиками» за скругленный силуэт.
-            leftStripeBar = new Border
+            if (_hoveredCircleDay == cell.Date)
             {
-                Width               = 3,
-                Margin              = new Thickness(2, 2, 0, 2),
-                Background          = new SolidColorBrush(color),
-                CornerRadius        = new CornerRadius(2),
-                HorizontalAlignment = HorizontalAlignment.Left,
-            };
-            bar.Children.Add(leftStripeBar);
+                DayAddClicked?.Invoke(this, cell.Date);
+                e.Handled = true;
+                return;
+            }
+            if (e.ClickCount >= 2)
+            {
+                DaySelected?.Invoke(this, cell.Date);
+                e.Handled = true;
+                return;
+            }
         }
-
-        List<TextBlock> barTextBlocks = [];
-        if (ev.AllDay)
+        // Двойной клик по ячейке — перейти в день.
+        if (e.ClickCount >= 2)
         {
-            var tb = new TextBlock
-            {
-                Text              = ev.DisplayTitle,
-                FontSize          = FontSizeBase,
-                FontWeight        = WeightBold,
-                Foreground        = darkBrush,
-                Margin            = new Thickness(8, 0, 4, 0),
-                TextTrimming      = TextTrimming.CharacterEllipsis,
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            barTextBlocks.Add(tb);
-            bar.Children.Add(tb);
+            DaySelected?.Invoke(this, cell.Date);
+            e.Handled = true;
+        }
+    }
+
+    private void OnBarsPressed(object? sender, PointerPressedEventArgs e)
+    {
+        var bar = _bars.BarAt(e.GetPosition(_bars));
+        if (bar is null) return;
+        if (e.GetCurrentPoint(null).Properties.IsLeftButtonPressed)
+        {
+            _skipNextDeselect = true;
+            _BeginDragTrack(bar, _bars, e);
+        }
+    }
+
+    // Правый клик: если событие уже в множественном выделении — оставляем набор как есть (меню
+    // удалит все). Иначе выделяем только это (как одиночный клик), чтобы было видно, с чем
+    // работаем. Окно снимает выделение только на левый клик мимо, поэтому переключение правой
+    // кнопкой подсветку не гасит. Меню — по месту: событие или день.
+    private readonly Dictionary<CalendarRecord, ContextMenu> _eventMenus = new();
+    private readonly Dictionary<DateTime, ContextMenu> _dayMenus = new();
+
+    private void OnCellsRightPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (!e.GetCurrentPoint(null).Properties.IsRightButtonPressed) return;
+        var pos  = e.GetPosition(_cells);
+        var chip = _cells.ChipAt(pos);
+        if (chip is not null)
+        {
+            if (!_selections.ContainsKey(chip.Ev)) _SelectThis(chip.Ev, bar: false, additive: false);
+            _cells.ContextMenu = MenuFor(chip.Ev);
+            return;
+        }
+        if (_cells.CellAt(pos) is { } cell)
+        {
+            if (!_dayMenus.TryGetValue(cell.Date, out var menu))
+                _dayMenus[cell.Date] = menu = _BuildDayContextMenu(cell.Date);
+            _cells.ContextMenu = menu;
+        }
+        else _cells.ContextMenu = null;
+    }
+
+    private void OnBarsRightPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (!e.GetCurrentPoint(null).Properties.IsRightButtonPressed) return;
+        var bar = _bars.BarAt(e.GetPosition(_bars));
+        if (bar is null) { _bars.ContextMenu = null; return; }
+        if (!_selections.ContainsKey(bar.Ev)) _SelectThis(bar.Ev, bar: true, additive: false);
+        _bars.ContextMenu = MenuFor(bar.Ev);
+    }
+
+    private ContextMenu MenuFor(CalendarRecord ev)
+    {
+        if (!_eventMenus.TryGetValue(ev, out var menu)) _eventMenus[ev] = menu = _BuildEventContextMenu(ev);
+        return menu;
+    }
+
+    private void OnChipReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        // Правый клик уже обработан при нажатии (выделение + меню) — не запускаем логику по левой.
+        if (e.InitialPressMouseButton != MouseButton.Left) return;
+        if (_dragEv is not { } ev || _dragSrc is not { } src) return;
+        var wasDrag = _dragActive;
+        _OnDragReleased(e);
+        if (wasDrag) return;
+        if (_pressClickCount >= 2)
+        {
+            _Deselect();
+            RecordClicked?.Invoke(this, ev);
         }
         else
         {
-            // Grid [время Auto][заголовок *] — заголовок в колонке * получает
-            // конечную ширину бара и обрезается многоточием, как у однодневного чипа.
-            var timeAndTitle = new Grid
-            {
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin            = new Thickness(8, 0, 4, 0),
-                ColumnDefinitions = new ColumnDefinitions("Auto,*"),
-            };
-            var timeTb = new TextBlock
-            {
-                Text       = $"{ev.StartDt:HH:mm} ",
-                FontSize   = FontSizeBase,
-                FontWeight = WeightNormal,
-                Foreground = darkBrush,
-            };
-            var titleTb = new TextBlock
-            {
-                Text         = ev.DisplayTitle,
-                FontSize     = FontSizeBase,
-                FontWeight   = WeightBold,
-                Foreground   = darkBrush,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-            };
-            Grid.SetColumn(timeTb, 0);
-            Grid.SetColumn(titleTb, 1);
-            barTextBlocks.Add(timeTb);
-            barTextBlocks.Add(titleTb);
-            timeAndTitle.Children.Add(timeTb);
-            timeAndTitle.Children.Add(titleTb);
-            bar.Children.Add(timeAndTitle);
+            _SelectThis(ev, src.IsBar, additive: e.KeyModifiers.HasFlag(KeyModifiers.Shift));
         }
-
-        if (ev.Id.HasValue)
-        {
-            if (!_spanTextBlocks.ContainsKey(ev.Id.Value))
-                _spanTextBlocks[ev.Id.Value] = new List<TextBlock>();
-            _spanTextBlocks[ev.Id.Value].AddRange(barTextBlocks);
-        }
-
-        // Проверяем общий словарь _selectedSpanIds — он один на все сегменты события,
-        // поэтому ховер на любом сегменте не перебивает выделение другого сегмента.
-        var isSelected = () => ev.Id.HasValue && _selectedSpanIds.Contains(ev.Id.Value);
-
-        bar.PointerEntered += (_, _) =>
-        {
-            if (isSelected()) return;
-            var all = ev.Id.HasValue && _spanBgBorders.TryGetValue(ev.Id.Value, out var bs) ? bs : [bgBorder];
-            foreach (var b in all) b.Background = hoverBg;
-        };
-        bar.PointerExited += (_, _) =>
-        {
-            if (isSelected()) return;
-            var all = ev.Id.HasValue && _spanBgBorders.TryGetValue(ev.Id.Value, out var bs) ? bs : [bgBorder];
-            foreach (var b in all) b.Background = normalBg;
-        };
-
-        // Выделение бара подсвечивает все сегменты события сразу через _selectedSpanIds.
-        void Highlight()
-        {
-            if (ev.Id.HasValue) _selectedSpanIds.Add(ev.Id.Value);
-            var allBg  = ev.Id.HasValue && _spanBgBorders.TryGetValue(ev.Id.Value, out var bs) ? bs : [bgBorder];
-            var allTbs = ev.Id.HasValue && _spanTextBlocks.TryGetValue(ev.Id.Value, out var tbs) ? tbs : barTextBlocks;
-            foreach (var b in allBg)  b.Background = selectedBg;
-            foreach (var tb in allTbs) tb.Foreground = Brushes.White;
-            if (leftStripeBar is not null) leftStripeBar.IsVisible = false;
-        }
-        void Unhighlight()
-        {
-            if (ev.Id.HasValue) _selectedSpanIds.Remove(ev.Id.Value);
-            var allBg  = ev.Id.HasValue && _spanBgBorders.TryGetValue(ev.Id.Value, out var bs) ? bs : [bgBorder];
-            var allTbs = ev.Id.HasValue && _spanTextBlocks.TryGetValue(ev.Id.Value, out var tbs) ? tbs : barTextBlocks;
-            foreach (var b in allBg)   b.Background = normalBg;
-            foreach (var tb in allTbs) tb.Foreground = darkBrush;
-            if (leftStripeBar is not null) leftStripeBar.IsVisible = true;
-        }
-
-        // additive (Shift+клик): добавляет/убирает событие из набора, не трогая
-        // остальные. Иначе — одиночное выделение (сначала снимаем все).
-        void SelectThis(bool additive)
-        {
-            if (additive)
-            {
-                if (_selections.ContainsKey(ev)) { _DeselectOne(ev); return; }
-            }
-            else
-            {
-                _Deselect();
-            }
-            Highlight();
-            _selections[ev] = Unhighlight;
-        }
-
-        bar.ContextMenu = _BuildEventContextMenu(ev);
-        // Правый клик: если событие уже в множественном выделении — оставляем набор;
-        // иначе выделяем только это (как одиночный клик).
-        bar.PointerPressed  += (_, e) =>
-        {
-            var props = e.GetCurrentPoint(null).Properties;
-            if (props.IsRightButtonPressed)
-            {
-                if (!_selections.ContainsKey(ev)) SelectThis(additive: false);
-                return;
-            }
-            if (props.IsLeftButtonPressed)  { _skipNextDeselect = true; _BeginDragTrack(ev, bar, e); }
-        };
-        bar.PointerMoved    += (_, e) => _OnDragMoved(e);
-        bar.PointerReleased += (_, e) =>
-        {
-            // Правый клик уже обработан в PointerPressed (выделение + меню) —
-            // не запускаем логику по левой кнопке.
-            if (e.InitialPressMouseButton != MouseButton.Left) return;
-            var wasDrag = _dragActive;
-            _OnDragReleased(e);
-            if (wasDrag) return;
-            if (_pressClickCount >= 2)
-            {
-                _Deselect();
-                RecordClicked?.Invoke(this, ev);
-            }
-            else
-            {
-                SelectThis(additive: e.KeyModifiers.HasFlag(KeyModifiers.Shift));
-            }
-        };
-
-        Canvas.SetLeft(bar, bx);
-        Canvas.SetTop(bar, by);
-        SpanCanvas.Children.Add(bar);
     }
 
     // ── drag-and-drop ─────────────────────────────────────────────────────────
 
-    private void _BeginDragTrack(CalendarRecord ev, Control src, PointerPressedEventArgs e)
+    private void _BeginDragTrack(MonthChip chip, Control surface, PointerPressedEventArgs e)
     {
         if (_dragEv is not null) return;
+        var ev = chip.Ev;
         _dragEv          = ev;
         _dragActive      = false;
-        _dragSrcControl  = src;
+        _dragSrc         = chip;
         _pressClickCount = e.ClickCount;
         _dragPress       = e.GetPosition(GridContainer);
         _dragOrigStart = ev.StartDt;
@@ -967,7 +598,7 @@ public partial class MonthView : UserControl
         _dragSourceDay = ev.StartDt.Date;
         _dragTargetDay = ev.StartDt.Date;
         _dragPointer   = e.Pointer;
-        e.Pointer.Capture(src);
+        e.Pointer.Capture(surface);
     }
 
     private void _OnDragMoved(PointerEventArgs e)
@@ -980,7 +611,7 @@ public partial class MonthView : UserControl
             _dragActive = true;
             _Deselect();
             // Оригинал остается прозрачным (Opacity 0.45) на исходном месте.
-            if (_dragSrcControl is not null) _dragSrcControl.Opacity = 0.45;
+            if (_dragSrc is not null) { _dragSrc.Opacity = 0.45; _cells.InvalidateVisual(); _bars.InvalidateVisual(); }
         }
         var target = _DayAtPos(pos);
         if (!target.HasValue) return;
@@ -1038,7 +669,7 @@ public partial class MonthView : UserControl
     {
         _dragPointer?.Capture(null);
         _dragPointer = null;
-        if (_dragSrcControl is not null) { _dragSrcControl.Opacity = 1.0; _dragSrcControl = null; }
+        if (_dragSrc is not null) { _dragSrc.Opacity = 1.0; _dragSrc = null; _cells.InvalidateVisual(); _bars.InvalidateVisual(); }
         if (_dragGhost is not null) { SpanCanvas.Children.Remove(_dragGhost); _dragGhost = null; }
         if (_shiftedDay.HasValue) _RestoreShift(_shiftedDay.Value);
         _RestoreSourceCounter();
@@ -1049,22 +680,18 @@ public partial class MonthView : UserControl
     private void _UpdateCellHover(DateTime? day)
     {
         if (day == _hoveredDay) return;
-        if (_hoveredDay.HasValue && _dayCellMap.TryGetValue(_hoveredDay.Value, out var prev))
-            prev.Cell.Background = prev.BaseBg;
         _hoveredDay = day;
-        if (day.HasValue && _dayCellMap.TryGetValue(day.Value, out var curr))
-            curr.Cell.Background = new SolidColorBrush(Color.Parse("#E5F0FF"));
+        _cells.HoveredDay = day;
+        _cells.InvalidateVisual();
     }
 
     private void _UpdateCircleHover(Point? pos)
     {
         var day = pos.HasValue ? _CircleDayAtPos(pos.Value) : null;
         if (day == _hoveredCircleDay) return;
-        if (_hoveredCircleDay.HasValue && _dayPlusMap.TryGetValue(_hoveredCircleDay.Value, out var prev))
-            prev.Hide();
         _hoveredCircleDay = day;
-        if (day.HasValue && _dayPlusMap.TryGetValue(day.Value, out var curr))
-            curr.Show();
+        _cells.HoveredCircleDay = day;
+        _cells.InvalidateVisual();
     }
 
     private DateTime? _CircleDayAtPos(Point pos)
@@ -1104,8 +731,8 @@ public partial class MonthView : UserControl
     {
         if (_dayUiMap.TryGetValue(day, out var ui))
         {
-            ui.More.IsVisible = ui.OrigHidden > 0;
-            ui.More.Text      = $"+{ui.OrigHidden} еще";
+            ui.More = ui.OrigHidden > 0 ? ui.OrigHidden : null;
+            _cells.InvalidateVisual();
         }
         _shiftedDay = null;
     }
@@ -1118,8 +745,8 @@ public partial class MonthView : UserControl
         if (_dayUiMap.TryGetValue(_dragSourceDay, out var ui) && ui.OrigHidden > 0)
         {
             var n = ui.OrigHidden - 1;
-            ui.More.IsVisible = n > 0;
-            ui.More.Text      = $"+{n} еще";
+            ui.More = n > 0 ? n : null;
+            _cells.InvalidateVisual();
         }
         _srcCounterShifted = true;
     }
@@ -1130,8 +757,8 @@ public partial class MonthView : UserControl
         if (!_srcCounterShifted) return;
         if (_dayUiMap.TryGetValue(_dragSourceDay, out var ui))
         {
-            ui.More.IsVisible = ui.OrigHidden > 0;
-            ui.More.Text      = $"+{ui.OrigHidden} еще";
+            ui.More = ui.OrigHidden > 0 ? ui.OrigHidden : null;
+            _cells.InvalidateVisual();
         }
         _srcCounterShifted = false;
     }
@@ -1175,17 +802,14 @@ public partial class MonthView : UserControl
         // Возврат в исходный день: ставим ghost ровно на место оригинала (по его
         // фактическим координатам), не пересчитывая строку — так яркая плашка
         // садится точно туда, откуда тащим.
-        if (_dragTargetDay == _dragSourceDay && _dragSrcControl is not null)
+        if (_dragTargetDay == _dragSourceDay && _dragSrc is not null)
         {
             if (_shiftedDay.HasValue) _RestoreShift(_shiftedDay.Value);
-            var topLeft = _dragSrcControl.TranslatePoint(new Point(0, 0), SpanCanvas);
-            if (topLeft.HasValue)
-            {
-                _EnsureDragGhost(color);
-                _dragGhost!.Width = _dragSrcControl.Bounds.Width;
-                Canvas.SetLeft(_dragGhost, topLeft.Value.X);
-                Canvas.SetTop(_dragGhost, topLeft.Value.Y);
-            }
+            // Поверхности лежат в начале сетки, как и холст призрака: координаты плашки — его.
+            _EnsureDragGhost(color);
+            _dragGhost!.Width = _dragSrc.Bounds.Width;
+            Canvas.SetLeft(_dragGhost, _dragSrc.Bounds.X);
+            Canvas.SetTop(_dragGhost, _dragSrc.Bounds.Y);
             return;
         }
 
@@ -1219,9 +843,8 @@ public partial class MonthView : UserControl
                 _RestoreShift(_shiftedDay.Value);
             if (_dayUiMap.TryGetValue(_dragTargetDay, out var uiHidden))
             {
-                var n = uiHidden.OrigHidden + 1;
-                uiHidden.More.IsVisible = true;
-                uiHidden.More.Text      = $"+{n} еще";
+                uiHidden.More = uiHidden.OrigHidden + 1;
+                _cells.InvalidateVisual();
             }
             _shiftedDay = _dragTargetDay;
             return;
@@ -1229,7 +852,10 @@ public partial class MonthView : UserControl
 
         // Если ghost заняло бы строку «+N еще» — прячем подпись на время drag.
         if (_dayUiMap.TryGetValue(_dragTargetDay, out var ui2))
-            ui2.More.IsVisible = false;
+        {
+            ui2.More = null;
+            _cells.InvalidateVisual();
+        }
         _shiftedDay = _dragTargetDay;
 
         _EnsureDragGhost(color);
@@ -1237,6 +863,18 @@ public partial class MonthView : UserControl
         _dragGhost!.Width = bw;
         Canvas.SetLeft(_dragGhost, bx);
         Canvas.SetTop(_dragGhost, by);
+    }
+
+    /// <summary>Середина плашки или полосы события по названию в координатах вида (стенд кадров
+    /// Tests/Sections наводит и нажимает по ней); null — такой нет.</summary>
+    internal Point? EventCenter(string title)
+    {
+        foreach (var cell in _cells.Cells)
+            foreach (var (chip, _) in cell.Chips)
+                if (chip.Ev.Title == title) return _cells.TranslatePoint(chip.Bounds.Center, this);
+        foreach (var bar in _bars.Bars)
+            if (bar.Ev.Title == title) return _bars.TranslatePoint(bar.Bounds.Center, this);
+        return null;
     }
 
     private DateTime? _DayAtPos(Point pos)

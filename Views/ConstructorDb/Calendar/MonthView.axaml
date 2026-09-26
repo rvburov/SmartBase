@@ -26,11 +26,11 @@
         </UniformGrid>
         </Border>
 
-        <!-- Сетка дней + слой линий сетки + прозрачный оверлей для многодневных событий.
+        <!-- Сетка дней (рисованные ячейки, см. MonthSurfaces — вставляются в код) + слой линий
+             сетки + полосы многодневных (тоже рисованные) + холст призрака перетаскивания.
              Линии — отдельным слоем НАД ячейками (ячейки с текстом алиасить нельзя,
              а hover-заливка ячейки не должна закрашивать линии). -->
         <Grid Grid.Row="1" x:Name="GridContainer">
-            <UniformGrid x:Name="DayGrid" Columns="7" />
             <UniformGrid x:Name="GridLines" Columns="7" IsHitTestVisible="False" />
             <Canvas x:Name="SpanCanvas" />
         </Grid>

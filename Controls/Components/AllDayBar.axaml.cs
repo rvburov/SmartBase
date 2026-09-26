@@ -86,7 +86,7 @@ public partial class AllDayBar : UserControl
     // drag
     private CalendarRecord?         _dragEvent;
     private Border?        _dragGhost;
-    private Control?       _dragSource;
+    private AllDayCanvas.Item? _dragSource;
     private Point          _dragStartPos;
     private bool           _isDragging;
     private int            _dragSourceCol;
@@ -99,14 +99,13 @@ public partial class AllDayBar : UserControl
     private List<DateOnly> _currentDays = [];
     private Dictionary<(int col, int row), bool> _occupied = [];
 
-    private sealed class AllDayEntry(CalendarRecord ev, int col, int span, int row, Control root, Border colorBorder)
+    private sealed class AllDayEntry(CalendarRecord ev, int col, int span, int row, AllDayCanvas.Item block)
     {
         public CalendarRecord Ev          = ev;
         public int     Col         = col;
         public int     Span        = span;
         public int     Row         = row;
-        public Control Root        = root;        // what goes in the Grid
-        public Border  ColorBorder = colorBorder; // what gets background/hover
+        public AllDayCanvas.Item Block = block;   // плашка на рисованной поверхности полосы
         public Action? Select;
         public Action? Deselect;
     }
@@ -207,7 +206,7 @@ public partial class AllDayBar : UserControl
         }
 
         _dragEvent      = entry.Ev;
-        _dragSource     = entry.Root;
+        _dragSource     = entry.Block;
         _dragStartPos   = pos;
         _isDragging     = false;
         _pressClickCount = e.ClickCount;
@@ -369,7 +368,7 @@ public partial class AllDayBar : UserControl
 
         e.Pointer.Capture(null);
         if (_dragGhost is not null) EventsPanel.Children.Remove(_dragGhost);
-        if (_dragSource != null) _dragSource.Opacity = 1.0;
+        if (_dragSource is not null) _dragSource.Opacity = 1.0;
 
         _dragEvent  = null;
         _dragGhost  = null;
@@ -433,6 +432,7 @@ public partial class AllDayBar : UserControl
 
         var occupied = new Dictionary<(int col, int row), bool>();
         _occupied = occupied;
+        var canvas = new AllDayCanvas();
 
         foreach (var ev in allDayEvents)
         {
@@ -456,51 +456,31 @@ public partial class AllDayBar : UserControl
             for (var c = startCol; c <= endCol; c++)
                 occupied[(c, row)] = true;
 
+            // Строки плашек — по 26 px (плашка 24 и 2 снизу), как прежние строки по содержимому.
             while (EventsPanel.RowDefinitions.Count <= row)
-                EventsPanel.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+                EventsPanel.RowDefinitions.Add(new RowDefinition(new GridLength(AllDayCanvas.RowH)));
 
             // Есть ли начало/конец события в пределах видимых дней. Если событие
             // тянется за границу недели/дня — с того края cap == false.
             var leftCap  = evStart >= _currentDays[0];
             var rightCap = evEnd   <= _currentDays[^1];
 
-            var (root, block, titleBlock, timeBlock, stripBlock) = BuildBlock(ev, span, leftCap, rightCap);
-            Grid.SetColumn(root, startCol);
-            Grid.SetColumnSpan(root, span);
-            Grid.SetRow(root, row);
-            EventsPanel.Children.Add(root);
-
-            var color      = Color.Parse(EventColors.Display(ev.Color));
-            var normalBg   = new SolidColorBrush(Color.FromArgb(40, color.R, color.G, color.B));
-            var solidBrush = new SolidColorBrush(color);
-            var darkBrush  = new SolidColorBrush(ColorTools.Darken(color));
-
-            var isSelected = false;
-
-            var entry = new AllDayEntry(ev, startCol, span, row, root, block)
+            var block = canvas.Add(ev, startCol, span, row, leftCap, rightCap);
+            _allDayEntries.Add(new AllDayEntry(ev, startCol, span, row, block)
             {
-                Select = () =>
-                {
-                    isSelected            = true;
-                    block.Background      = solidBrush;
-                    titleBlock.Foreground = Brushes.White;
-                    if (timeBlock != null) timeBlock.Foreground = Brushes.White;
-                    stripBlock.IsVisible  = false;
-                },
-                Deselect = () =>
-                {
-                    isSelected            = false;
-                    block.Background      = normalBg;
-                    titleBlock.Foreground = darkBrush;
-                    if (timeBlock != null) timeBlock.Foreground = darkBrush;
-                    stripBlock.IsVisible  = leftCap; // без начала — полоски нет
-                },
-            };
-            _allDayEntries.Add(entry);
+                Select   = () => block.Selected = true,
+                Deselect = () => block.Selected = false,
+            });
+        }
 
-            var hoverBg = new SolidColorBrush(Color.FromArgb(90, color.R, color.G, color.B));
-            block.PointerEntered += (_, _) => { if (!isSelected) block.Background = hoverBg; };
-            block.PointerExited  += (_, _) => { if (!isSelected) block.Background = normalBg; };
+        // Плашки — одна рисованная поверхность поверх всех колонок и строк событий (колонки
+        // считает сама сетка — плашки встают вровень с делителями дней).
+        if (EventsPanel.RowDefinitions.Count > 0)
+        {
+            Grid.SetColumnSpan(canvas, Math.Max(1, _currentDays.Count));
+            canvas.Days = Math.Max(1, _currentDays.Count);
+            Grid.SetRowSpan(canvas, EventsPanel.RowDefinitions.Count);
+            EventsPanel.Children.Add(canvas);
         }
 
         // «+N еще» — не отрисованные сверх лимита, строкой на всю ширину внизу
@@ -523,114 +503,6 @@ public partial class AllDayBar : UserControl
         }
 
         UpdateAutoHeight();
-    }
-
-    // leftCap/rightCap: событие начинается/заканчивается в пределах видимых дней.
-    // Где cap == false — событие «тянется» за границу недели/дня: с той стороны нет
-    // скругления и бокового отступа (стыкуется встык), а слева без начала — без
-    // цветной полоски. По аналогии с многодневным баром в режиме «Месяц».
-    private static (Control root, Border colorBorder, TextBlock titleBlock, TextBlock? timeBlock, Border stripBorder) BuildBlock(CalendarRecord ev, int span, bool leftCap = true, bool rightCap = true)
-    {
-        var color      = Color.Parse(EventColors.Display(ev.Color));
-        var normalBg   = new SolidColorBrush(Color.FromArgb(40, color.R, color.G, color.B));
-        var darkBrush  = new SolidColorBrush(ColorTools.Darken(color));
-        var colorBrush = new SolidColorBrush(color);
-
-        var strip = new Border
-        {
-            Background        = colorBrush,
-            CornerRadius      = new CornerRadius(2),
-            Width             = 3,
-            Margin            = new Thickness(2, 2, 0, 2),
-            VerticalAlignment = VerticalAlignment.Stretch,
-            IsVisible         = leftCap, // полоска только у начала события
-        };
-
-        var title = new TextBlock
-        {
-            Text              = ev.DisplayTitle,
-            FontSize          = FontSizeBase,
-            FontWeight        = WeightBold,
-            Foreground        = darkBrush,
-            TextTrimming      = Avalonia.Media.TextTrimming.CharacterEllipsis,
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin            = new Thickness(4, 0, 0, 0),
-        };
-
-        var inner = new Grid();
-        inner.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(4, GridUnitType.Pixel)));
-        inner.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
-        inner.Children.Add(strip);
-
-        TextBlock? timeBlock = null;
-        if (!ev.AllDay)
-        {
-            title.Margin = new Thickness(4, 0, 0, 0);
-
-            var timeTb = new TextBlock
-            {
-                Text              = $", {ev.StartDt:HH:mm}",
-                FontSize          = FontSizeBase,
-                FontWeight        = WeightNormal,
-                Foreground        = darkBrush,
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin            = new Thickness(0, 0, 4, 0),
-            };
-            timeBlock = timeTb;
-
-            var stack = new StackPanel { Orientation = Orientation.Horizontal };
-            stack.Children.Add(title);
-            stack.Children.Add(timeTb);
-
-            void UpdateMaxWidth()
-            {
-                var tw = timeTb.Bounds.Width + timeTb.Margin.Right;
-                var sw = stack.Bounds.Width;
-                if (sw > 0)
-                    title.MaxWidth = Math.Max(0, sw - tw);
-            }
-            stack.SizeChanged += (_, _) => UpdateMaxWidth();
-            timeTb.SizeChanged += (_, _) => UpdateMaxWidth();
-
-            Grid.SetColumn(stack, 1);
-            inner.Children.Add(stack);
-        }
-        else
-        {
-            title.Margin = new Thickness(4, 0, 4, 0);
-            Grid.SetColumn(title, 1);
-            inner.Children.Add(title);
-        }
-
-        // Скругления только с того края, где у события есть начало/конец; где
-        // событие обрезано границей недели — угол прямой.
-        var cr = new CornerRadius(
-            leftCap  ? 3 : 0, rightCap ? 3 : 0,
-            rightCap ? 3 : 0, leftCap  ? 3 : 0);
-
-        // Отступы как у событий часовой сетки: слева 1px, справа 2px (см. WeekView
-        // LayoutDayEntries). С обрезанного края отступ убираем — плашка стыкуется
-        // встык через границу недели.
-        var margin = new Thickness(leftCap ? 1 : 0, 0, rightCap ? 2 : 0, 2);
-
-        var block = new Border
-        {
-            Background   = normalBg,
-            CornerRadius = cr,
-            Height       = 24,
-            Margin       = margin,
-            Cursor       = new Cursor(StandardCursorType.Hand),
-            Child        = inner,
-        };
-
-        if (span <= 1) return (block, block, title, timeBlock, strip);
-
-        // white opaque wrapper covers internal divider lines
-        var wrapper = new Grid { Height = 24, Margin = margin };
-        wrapper.Children.Add(new Border { Background = SecondaryBg, CornerRadius = cr });
-        block.Margin = new Thickness(0);
-        wrapper.Children.Add(block);
-        return (wrapper, block, title, timeBlock, strip);
     }
 
     private static Border CreateGhost(CalendarRecord ev, double height)
@@ -719,6 +591,15 @@ public partial class AllDayBar : UserControl
     }
 
     // ── helpers ───────────────────────────────────────────────────────────────
+
+    /// <summary>Середина плашки события по названию в координатах полосы (стенд кадров
+    /// Tests/Sections наводит и нажимает по ней); null — такой плашки нет.</summary>
+    internal Point? EventCenter(string title)
+    {
+        var entry = _allDayEntries.FirstOrDefault(en => en.Ev.Title == title);
+        if (entry is null || EventsPanel.Children.OfType<AllDayCanvas>().FirstOrDefault() is not { } canvas) return null;
+        return canvas.TranslatePoint(entry.Block.Bounds.Center, this);
+    }
 
     private AllDayEntry? HitTest(Point pos)
     {

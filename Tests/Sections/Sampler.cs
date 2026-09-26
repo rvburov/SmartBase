@@ -164,6 +164,40 @@ sealed class Sampler
                      .OrderByDescending(kv => kv.Value).Take(top).Select(kv => (kv.Value, kv.Key));
     }
 
+    /// <summary>Что внутри метода (<paramref name="method"/> — короткое имя, как в отчете): включающие доли
+    /// кадров, вызванных из него, по выборкам окна, прошедшим через него. Total — сколько таких выборок.</summary>
+    public static (int Total, List<(int Samples, string Method)> Top) Under(Span span, string method, int top = 12)
+    {
+        var counts = new Dictionary<string, int>();
+        var total  = 0;
+        foreach (var frames in span.Samples)
+        {
+            var names = frames.Select(Short).ToArray();
+            var at = Array.IndexOf(names, method);   // кадры от листа к корню: вызванные — левее
+            if (at < 0) continue;
+            total++;
+            foreach (var m in names.Take(at).Where(n => !n.EndsWith("!?", StringComparison.Ordinal)).Distinct())
+                counts[m] = counts.GetValueOrDefault(m) + 1;
+        }
+        return (total, counts.OrderByDescending(kv => kv.Value).Take(top).Select(kv => (kv.Value, kv.Key)).ToList());
+    }
+
+    /// <summary>Самые частые цепочки вызовов от <paramref name="method"/> до листа (кадры библиотек тоже,
+    /// до <paramref name="depth"/> кадров от листа): чей именно код горячий внутри метода.</summary>
+    public static List<(int Samples, string Chain)> Chains(Span span, string method, int top = 3, int depth = 14)
+    {
+        var counts = new Dictionary<string, int>();
+        foreach (var frames in span.Samples)
+        {
+            var names = frames.Select(Short).ToArray();
+            var at = Array.IndexOf(names, method);
+            if (at <= 0) continue;
+            var chain = string.Join(" ← ", names.Take(Math.Min(at, depth)));
+            counts[chain] = counts.GetValueOrDefault(chain) + 1;
+        }
+        return counts.OrderByDescending(kv => kv.Value).Take(top).Select(kv => (kv.Value, kv.Key)).ToList();
+    }
+
     /// <summary>Включающее время методов программы по всем окнам: сколько выборок прошло через метод.</summary>
     public static IEnumerable<(int Samples, string Method)> Inclusive(IEnumerable<Span> spans, int top = 25)
     {

@@ -46,7 +46,7 @@ public partial class DayView : UserControl
     private TextBlock?        _dragGhostTimeBlock;
     private StackPanel?       _dragGhostContentStack;
     private double            _dragGhostOriginalHeight;
-    private Control?          _dragSourceBtn;
+    private CalendarDayCanvas.Item? _dragSourceBtn;
     private List<EventEntry>  _dragDimmedBtns = [];
     private Point             _dragStartPos;
     private double            _dragOffsetY;
@@ -78,12 +78,12 @@ public partial class DayView : UserControl
     // позиция последнего правого клика по сетке — для меню «Создать запись»
     private Point _gridContextPos;
 
-    private sealed class EventEntry(CalendarRecord ev, int startMin, int endMin, Control btn)
+    private sealed class EventEntry(CalendarRecord ev, int startMin, int endMin, CalendarDayCanvas.Item btn)
     {
         public CalendarRecord Ev  = ev;
         public int     StartMin   = startMin;
         public int     EndMin     = endMin;
-        public Control Btn        = btn;
+        public CalendarDayCanvas.Item Btn = btn;   // блок события в рисованной колонке дня
         public int     SubCol     = 0;
         public int     SubColSpan = 1;
         public int     TotalCols  = 1;
@@ -211,7 +211,18 @@ public partial class DayView : UserControl
         WeekColumns.Children.Clear();
         _todayTimeOverlay = null;
 
-        var canvas  = new Canvas { Background = Brushes.Transparent };
+        // Колонка дня — все события одним рисованным контролом (CalendarDayCanvas), как в
+        // «Неделе». Меню события — по первому правому нажатию; перед открытием событие
+        // выделяется (если оно еще не в наборе) — как в режимах «Месяц»/«Неделя».
+        var canvas  = new CalendarDayCanvas { MenuFactory = it => _BuildEventContextMenu((EventEntry)it.Tag!) };
+        canvas.ItemRightPressed += it =>
+        {
+            var entry = (EventEntry)it.Tag!;
+            if (_selections.ContainsKey(entry.Ev)) return;
+            _Deselect();
+            _ClearAllDaySelection();
+            _SelectEvent(entry);
+        };
         var dayDate = date;
         // Порог «сетка или полоса „весь день"» — FitsHourGrid (см. WeekView): с настройкой
         // «длинные события в сетке» событие любой длины остается блоками по дням.
@@ -230,8 +241,6 @@ public partial class DayView : UserControl
             .OrderBy(e => e.StartDt)
             .ThenBy(e => e.Title)
             .ToList();
-
-        var dayEntryLayouts = new List<EventEntry>();
 
         foreach (var group in GroupOverlapping(sortedDayEvents))
         {
@@ -253,11 +262,9 @@ public partial class DayView : UserControl
                     : (isStartDay ? rawStart : segS) < segE ? segE : 1440;
                 var evH        = Math.Max(22, effectiveEndMin - startMin);
                 var evHVisible = evH - 2;
-                // Событие — один рисованный контрол (CalendarEventBlock), как в «Неделе».
-                var block = new CalendarEventBlock(ev, evHVisible, FontSizeBase, WeightBold);
-                Canvas.SetTop(block, startMin + 2);
-                canvas.Children.Add(block);
-
+                // Блок события — запись рисованной колонки (раскладку по ширине она ведет сама).
+                var block = canvas.Add(ev, startMin + 2, evHVisible, colIdx, rightLimit - colIdx, nCols,
+                                       FontSizeBase, WeightBold);
                 var entry = new EventEntry(ev, startMin, startMin + evH, block)
                 {
                     SubCol     = colIdx,
@@ -268,39 +275,10 @@ public partial class DayView : UserControl
                     Dim        = () => block.Opacity = 0.45,
                     Undim      = () => block.Opacity = 1.0,
                 };
+                block.Tag = entry;
                 _eventEntries.Add(entry);
-                dayEntryLayouts.Add(entry);
-
-                // Контекстное меню по правому клику — по требованию. Перед открытием выделяем
-                // событие (если оно еще не в наборе) — как в режимах «Месяц»/«Неделя».
-                block.AddHandler(PointerPressedEvent, (_, pe) =>
-                {
-                    if (!pe.GetCurrentPoint(block).Properties.IsRightButtonPressed) return;
-                    block.ContextMenu ??= _BuildEventContextMenu(entry);
-                    if (!_selections.ContainsKey(entry.Ev))
-                    {
-                        _Deselect();
-                        _ClearAllDaySelection();
-                        _SelectEvent(entry);
-                    }
-                }, RoutingStrategies.Tunnel);
             }
         }
-
-        void LayoutEntries(double canvasW)
-        {
-            foreach (var entry in dayEntryLayouts)
-            {
-                var seg  = canvasW / entry.TotalCols;
-                var left = entry.SubCol * seg + 1.0;
-                var w    = Math.Max(1, entry.SubColSpan * seg - 3.0);
-                Canvas.SetLeft(entry.Btn, left);
-                entry.Btn.Width = w;
-            }
-        }
-
-        canvas.SizeChanged += (_, args) => LayoutEntries(args.NewSize.Width);
-        canvas.AttachedToVisualTree += (_, _) => LayoutEntries(canvas.Bounds.Width > 0 ? canvas.Bounds.Width : canvas.Width);
 
         var dayGrid = new Grid();
         dayGrid.Children.Add(canvas);
@@ -1313,20 +1291,21 @@ public partial class DayView : UserControl
             evCol[ev] = col;
         }
 
-        var nCols  = Math.Min(colEnds.Count, MaxEventColumns);
-        var result = new List<(CalendarRecord, int, int, int)>();
+        // Сверх лимита параллельных колонок события не рисуются. Правая граница рисуемого —
+        // ближайшая правее колонка пересекающегося с ним рисуемого; сравниваются только
+        // рисуемые: на дне-гиганте группа пересечений — весь день (1270 событий), и перебор
+        // всех со всеми стоил 1,6 млн шагов с поиском в словаре на каждый день.
+        var nCols = Math.Min(colEnds.Count, MaxEventColumns);
+        var drawn = new List<(CalendarRecord Ev, int Col)>();
         foreach (var ev in group)
+            if (evCol[ev] < nCols) drawn.Add((ev, evCol[ev]));
+        var result = new List<(CalendarRecord, int, int, int)>(drawn.Count);
+        foreach (var (ev, colIdx) in drawn)
         {
-            var colIdx = evCol[ev];
-            if (colIdx >= MaxEventColumns) continue;   // сверх лимита параллельных — не рисуем
             var rightLimit = nCols;
-            foreach (var other in group)
-            {
-                var oc = evCol[other];
-                if (!ReferenceEquals(other, ev) && oc > colIdx && oc < nCols)
-                    if (ev.StartDt < other.EndDt && ev.EndDt > other.StartDt)
-                        rightLimit = Math.Min(rightLimit, oc);
-            }
+            foreach (var (other, oc) in drawn)
+                if (oc > colIdx && oc < rightLimit && ev.StartDt < other.EndDt && ev.EndDt > other.StartDt)
+                    rightLimit = oc;
             result.Add((ev, colIdx, nCols, rightLimit));
         }
         return result;

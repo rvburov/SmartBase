@@ -47,11 +47,11 @@ public partial class CalendarControllerView : UserControl
     // Месяцу timed-событий дня нужно не больше, чем влезает в ячейку (строк 13–14 даже на
     // высоком окне), остальное считает «+N еще» по карте счетчиков. Читать по 2000 на день
     // значило тянуть в окно месяца до 84 тысяч событий на днях-гигантах и строить по ним
-    // раскладку. Запас над ячейкой — ради многодневных timed-событий: они читаются вместе с
-    // событиями дня своего начала и в переполненном дне, начавшись поздно, отсекаются тем же
-    // cap (как и прежде, только прежний порог был 2000). Полосы «весь день» месяц читает с
-    // общим cap — они нужны все.
-    private const int MonthDayCap = 256;
+    // раскладку. Столько же на день читаются многодневные timed, начинающиеся в этот день
+    // (отдельным проходом по концам): раньше они шли вместе с однодневными и в переполненном
+    // дне, начавшись поздно, отсекались тем же cap. Полосы «весь день» месяц читает с общим
+    // cap — они нужны все.
+    private const int MonthDayCap = 24;
     private long _gridGen;          // текущее поколение загрузки сетки
     private long _gridAppliedGen;   // последнее примененное поколение (для оверлея «Загрузка…»)
 
@@ -520,20 +520,21 @@ public partial class CalendarControllerView : UserControl
         using var slow = Logging.Diag.Measure("загрузка календаря", Logging.Diag.UiOpen, context);
         try
         {
-            foreach (var (dbId, _, repo) in _dbs.ToList())
+            // Диаграмма — свой загрузчик «по коллекциям» (cap на коллекцию, а не на день): ее
+            // окно бывает десятилетием, и per-day чтение сеток стоило бы тысяч запросов и
+            // миллионов строк при потолке отрисовки ~200 на группу.
+            var jobs = StartForAllDbs((repo, active) => spanningOnly
+                ? repo.LoadCalendarSpanningAsync(startDt, endDt, active, GridDayCap)
+                : viewIdx == 6
+                    ? repo.LoadDiagramWindowAsync(startDt, endDt, active, DiagramView.MaxRecordsPerCollection)
+                    : viewIdx == 4
+                        ? repo.LoadCalendarGridRangeAsync(startDt, endDt, active, MonthDayCap,
+                                                          allDayCap: GridDayCap, multiDayPerDay: MonthDayCap)
+                        : repo.LoadCalendarGridRangeAsync(startDt, endDt, active, GridDayCap));
+            foreach (var (dbId, repo, task) in jobs)
             {
                 loadingPath = repo.DbPath;
-                ISet<int>? active = _activeByDb is not null && _activeByDb.TryGetValue(dbId, out var s) ? s : null;
-                // Диаграмма — свой загрузчик «по коллекциям» (cap на коллекцию, а не на
-                // день): ее окно бывает десятилетием, и per-day чтение сеток стоило бы
-                // тысяч запросов и миллионов строк при потолке отрисовки ~200 на группу.
-                var part = spanningOnly
-                    ? await repo.LoadCalendarSpanningAsync(startDt, endDt, active, GridDayCap)
-                    : viewIdx == 6
-                        ? await repo.LoadDiagramWindowAsync(startDt, endDt, active, DiagramView.MaxRecordsPerCollection)
-                        : viewIdx == 4
-                            ? await repo.LoadCalendarGridRangeAsync(startDt, endDt, active, MonthDayCap, allDayCap: GridDayCap)
-                            : await repo.LoadCalendarGridRangeAsync(startDt, endDt, active, GridDayCap);
+                var part = await task;
                 if (gen != _gridGen) { slow.Discard(); return; }   // вид/дата уже другие — не применяем
                 foreach (var r in part) r.DbId = dbId;
                 records.AddRange(part);
@@ -574,6 +575,8 @@ public partial class CalendarControllerView : UserControl
         // Каркас групп Диаграммы: коллекции — крошечная таблица, читается на месте.
         if (viewIdx == 6) _diagramCollections = LoadDiagramCollections();
 
+        // В записи о медленной загрузке — и доля чтения: медленно ли база или построение вида.
+        slow.Context = $"{context}, чтение {slow.Elapsed.TotalMilliseconds:N0} мс";
         ApplyGridData(viewIdx, records, null, currentDate, scrollToNow);
         slow.Dispose();
 
@@ -588,10 +591,9 @@ public partial class CalendarControllerView : UserControl
             var stats = new Dictionary<(int DbId, int ColId), DiagramGroupStat>();
             try
             {
-                foreach (var (dbId, _, repo) in _dbs.ToList())
+                foreach (var (dbId, _, task) in StartForAllDbs((repo, active) => repo.LoadDiagramStatsAsync(startDt, endDt, active)))
                 {
-                    ISet<int>? active = _activeByDb is not null && _activeByDb.TryGetValue(dbId, out var s) ? s : null;
-                    foreach (var (colId, stat) in await repo.LoadDiagramStatsAsync(startDt, endDt, active))
+                    foreach (var (colId, stat) in await task)
                         stats[(dbId, colId)] = stat;
                     if (gen != _gridGen) { statsSlow.Discard(); return; }
                 }
@@ -612,10 +614,9 @@ public partial class CalendarControllerView : UserControl
         var totals = new Dictionary<DateOnly, int>();
         try
         {
-            foreach (var (dbId, _, repo) in _dbs.ToList())
+            foreach (var (_, _, task) in StartForAllDbs((repo, active) => repo.LoadCalendarDayCountsAsync(startDt, endDt, active)))
             {
-                ISet<int>? active = _activeByDb is not null && _activeByDb.TryGetValue(dbId, out var s) ? s : null;
-                foreach (var (dayStr, count) in await repo.LoadCalendarDayCountsAsync(startDt, endDt, active))
+                foreach (var (dayStr, count) in await task)
                     if (DateOnly.TryParseExact(dayStr, "yyyy-MM-dd", out var d))
                         totals[d] = totals.GetValueOrDefault(d) + count;
                 if (gen != _gridGen) { countsSlow.Discard(); return; }
@@ -624,9 +625,29 @@ public partial class CalendarControllerView : UserControl
         catch { return; }   // карта не критична — «+N еще» останется от полученного
 
         _gridTotals = totals;
+        countsSlow.Context = $"{context}, чтение {countsSlow.Elapsed.TotalMilliseconds:N0} мс";
         // Между фазами могла пройти точечная правка (TryApplyGridDelta мутирует _gridRecords,
         // поколение не меняя) — применяем АКТУАЛЬНЫЙ снимок, а не локальный records.
         ApplyGridData(viewIdx, _gridRecords ?? records, totals, currentDate, scrollToNow: false);
+    }
+
+    // Чтение окна по всем базам ОДНОВРЕМЕННО: у каждой свое изолированное подключение в фоне, так
+    // что загрузка стоит, сколько самая долгая база, а не их сумма. Задания запускаются сразу,
+    // ждать их — по порядку баз (результат складывается в прежнем порядке, а сбой называет свою
+    // базу). Брошенные ожидающим (устаревшее поколение, сбой другой базы) задания досчитываются
+    // впустую; их исключения наблюдаются, чтобы не всплыть необработанными.
+    private List<(int DbId, ConstructorRepository Repo, Task<T> Task)> StartForAllDbs<T>(
+        Func<ConstructorRepository, ISet<int>?, Task<T>> load)
+    {
+        var jobs = new List<(int, ConstructorRepository, Task<T>)>();
+        foreach (var (dbId, _, repo) in _dbs.ToList())
+        {
+            ISet<int>? active = _activeByDb is not null && _activeByDb.TryGetValue(dbId, out var s) ? s : null;
+            var task = load(repo, active);
+            _ = task.ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously);
+            jobs.Add((dbId, repo, task));
+        }
+        return jobs;
     }
 
     // Отдать данные видимому виду сетки — общий финал полной загрузки и точечной правки.
