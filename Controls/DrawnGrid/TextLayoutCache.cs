@@ -16,7 +16,7 @@ namespace SmartBase.Controls.DrawnGrid;
 /// </summary>
 internal sealed class TextLayoutCache
 {
-    private readonly record struct Key(string Text, int Width, TextAlignment Align, string Brush, int MaxLines, double LineHeight, bool Underline);
+    private readonly record struct Key(string Text, int Width, TextAlignment Align, string Brush, int MaxLines, double LineHeight, bool Underline, TextTrimming Trimming);
 
     private sealed class Entry(Key key, TextLayout layout)
     {
@@ -46,12 +46,14 @@ internal sealed class TextLayoutCache
     /// Раскладка текста в полосе шириной <paramref name="maxWidth"/>. Одна строка с многоточием
     /// при <paramref name="maxLines"/> = 1, иначе явные переводы строки не больше указанного
     /// числа строк (каждая режется многоточием). <paramref name="lineHeight"/> NaN — естественная.
+    /// <paramref name="trimming"/> null — многоточие (надпись); поле ввода режет без него.
     /// </summary>
     public TextLayout Get(string text, double maxWidth, TextAlignment align, IBrush brush, string brushId, int maxLines,
-                          double lineHeight = double.NaN, TextDecorationCollection? decorations = null)
+                          double lineHeight = double.NaN, TextDecorationCollection? decorations = null, TextTrimming? trimming = null)
     {
         var width = Math.Max(1, maxWidth);
-        var key   = new Key(text, (int)Math.Ceiling(width), align, brushId, maxLines, lineHeight, decorations is not null);
+        var trim  = trimming ?? TextTrimming.CharacterEllipsis;
+        var key   = new Key(text, (int)Math.Ceiling(width), align, brushId, maxLines, lineHeight, decorations is not null, trim);
 
         if (_map.TryGetValue(key, out var node))
         {
@@ -68,7 +70,7 @@ internal sealed class TextLayoutCache
         // Без переноса по словам — как у надписей нынешней таблицы (TextWrapping не задан):
         // несколько строк дают только явные переводы строки (Alt+Enter), каждая режется многоточием.
         var layout = new TextLayout(text, Typeface, FontSize, brush, align, TextWrapping.NoWrap,
-                                    TextTrimming.CharacterEllipsis, decorations, FlowDirection.LeftToRight,
+                                    trim, decorations, FlowDirection.LeftToRight,
                                     width, double.PositiveInfinity, lineHeight, 0, Math.Max(1, maxLines));
         var added = _lru.AddFirst(new Entry(key, layout));
         _map[key] = added;

@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Стенд этапа 7 плана drawn-grid.md: страница записи (RecordPageView) без экрана. Кадры панели на
+       коллекции из 20 свойств всех типов при масштабе 1 и 2 (сцены: базовая, наведение, выделение
+       текстового свойства с нижним блоком, набор по Shift, «Название», дата, ручка ширины названий,
+       ручка высоты свойств, просмотр, прокрутка) сравниваются с эталонами (~~ref; нет эталона — кадр
+       принимается за эталон: эталоны сняты с панели, где карточки были контролами). Поведение:
+       набор в карточке и в нижнем блоке с синхронизацией и записью в базу, набор по Shift, Delete,
+       галочка, число, перечитывание при фокусе, ручка ширины, «Добавить свойство», клик по карточке
+       после прокрутки, состояние карточки вне окна, редактор под указателем. Замер на 1000
+       свойствах: открытие холодное и повторное, объекты в дереве, шаг прокрутки, память; ключ gate —
+       пороги. Настоящий шрифт (Skia), не входит в автотесты. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>SmartBase.Tests.RecordPage</RootNamespace>
+    <AssemblyName>SmartBase.Tests.RecordPage</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Headless" Version="11.2.3" />
+    <ProjectReference Include="..\..\SmartBase.csproj" />
+    <!-- Кадры, сравнение и карта различий — общие со стендом служебных таблиц. -->
+    <Compile Include="..\ServiceGrids\Frames.cs" Link="Frames.cs" />
+  </ItemGroup>
+
+</Project>

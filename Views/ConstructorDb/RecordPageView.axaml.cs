@@ -1,7 +1,6 @@
 using System.Text.Json;
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Controls.Shapes;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
@@ -10,18 +9,29 @@ using Avalonia.VisualTree;
 using SmartBase.Controls.Components;
 using SmartBase.Controls.Behaviors;
 using SmartBase.Controls.Dialogs;
+using SmartBase.Controls.DrawnGrid;
 using SmartBase.Controls.Widgets;
 using SmartBase.Core.Models;
 using SmartBase.Database.Repositories;
 using SmartBase.Utils;
 using SmartBase.ViewModels.ConstructorDb;
-using Path = Avalonia.Controls.Shapes.Path;
 
 namespace SmartBase.Views.ConstructorDb;
 
 /// <summary>
 /// Правая панель «Страница записи» (Obsidian-стиль): свойства сверху + markdown снизу.
 /// Сохранение значений идет сразу в БД при изменении (как в TableView).
+///
+/// Список свойств — рисованный (этап 7 плана drawn-grid.md, <see cref="PropertyList"/>): карточки
+/// описываются моделью (<see cref="PropertyCard"/>: название, тип, значение из строки), рисуются
+/// поверхностью только в окне прокрутки, контролов у них нет. Настоящие редакторы — те же контролы
+/// значений, что стояли в карточках (<see cref="MakeInputForField"/>), — ставятся над карточкой под
+/// указателем и при фокусе и снимаются, когда указатель ушел и фокуса нет; все правила правки,
+/// автосохранения и синхронизации с нижним блоком остались у них. Состояние живет в модели: набор
+/// выделенных свойств (<see cref="_selectedFieldIds"/>) и выделение «Названия»
+/// (<see cref="_titleSelected"/>), общая ширина колонки названий (<see cref="_nameColWidth"/>), цели
+/// нижнего блока (<see cref="_fieldTargets"/>, заводятся при показе записи), значения — в
+/// <see cref="PropertyRowVm"/>. Открытие записи и прокрутка не зависят от числа свойств.
 /// </summary>
 public partial class RecordPageView : UserControl
 {
@@ -167,7 +177,7 @@ public partial class RecordPageView : UserControl
         public Func<string>    Read  = () => "";
         public Action<string>  Write = _ => { }; // сохранить значение (+ уведомить таблицу)
         public TextBox?        Inline;           // инлайн-поле в карточке (текстовые свойства) — для синхронизации
-        public Border?         Card;             // карточка цели — для подсветки
+        public int             Index = -1;       // индекс карточки цели в списке (−1 — нет)
     }
 
     private BottomTextTarget? _bottomTarget;
@@ -178,7 +188,13 @@ public partial class RecordPageView : UserControl
     private BottomTextTarget? _descTarget;      // цель по умолчанию — поле с ролью «Описание»
     private BottomTextTarget? _titleTarget;     // карточка «Название» (есть у каждой записи)
     private bool              _bottomIsTitle;   // снизу открыто «Название» — для восстановления
-    private Border?           _titleCard;
+    private int               _titleIndex = -1; // индекс карточки «Название» в списке
+    private bool              _titleSelected;   // «Название» выделено (одиночно, вне набора свойств)
+    // Строки свойств по id поля — побочные изменения (авто-файл) пишутся в модель: список рисует
+    // значение из строки при каждом кадре.
+    private readonly Dictionary<int, PropertyRowVm> _rowsByField = new();
+    // Текст связи по id поля — названия целей считаются один раз на сборку панели и после правки связи.
+    private readonly Dictionary<int, string> _relationText = new();
     private bool _focusBottomAfterReload;       // описание только что создано — поставить каретку в редактор
     private bool _suppressBottomSync;            // гасит обратную синхронизацию инлайн↔нижний при программной установке
 
@@ -190,6 +206,17 @@ public partial class RecordPageView : UserControl
     public RecordPageView()
     {
         InitializeComponent();
+
+        // Список свойств рисованный (PropertyList): карточки — описания из модели, редакторы —
+        // прежние контролы значений (MakeInputForField), которые ставятся над карточкой под
+        // указателем и снимаются, когда он ушел и фокуса нет; выделение — из модели (IsCardSelected).
+        PropertiesHost.EditorFactory          = BuildEditor;
+        PropertiesHost.EditorOpened          += (_, e) => OnEditorOpened(e.Index, e.Editor);
+        PropertiesHost.EditorClosed          += (_, e) => OnEditorClosed(e.Index, e.Editor);
+        PropertiesHost.CardPressed           += (_, e) => OnCardPressed(e);
+        PropertiesHost.NameColumnResizeEnded += (_, w) => OnNameColumnResized(w);
+        PropertiesHost.Surface.IsSelected     = IsCardSelected;
+        PropertiesHost.NameColumnWidth        = _nameColWidth;
 
         FooterBar.PreviewToggled += (_, _) => UpdatePreviewVisibility();
 
@@ -238,8 +265,8 @@ public partial class RecordPageView : UserControl
     /// <param name="dbId">База показываемой записи: 0 — активная, &gt;0 — открыта межбазовым переходом.</param>
     public void Show(ConstructorRepository repository, int recordId, int collectionId, int dbId = 0)
     {
-        // Порог медленности: страница записи строит все свойства без виртуализации —
-        // на широкой коллекции это и есть место, где открытие уходит за Diag.UiOpen.
+        // Порог медленности: список свойств рисованный, и открытие не зависит от числа свойств;
+        // сюда уходит только чтение записи и полей.
         using var slow = Logging.Diag.Measure("открытие страницы записи", Logging.Diag.UiOpen,
                                               $"{Utils.DbErrors.Display(repository.DbPath)}, коллекция {collectionId}, запись {recordId}");
 
@@ -309,17 +336,21 @@ public partial class RecordPageView : UserControl
         MarkdownEditor.Text  = "";
         MarkdownPreview.Markdown = "";
         BottomTitleHost.Children.Clear();
-        PropertiesHost.Children.Clear();
-        _nameCols.Clear();
-        _selectedCard = null;
-        _bottomTarget = null;
+        PropertiesHost.SetCards([]);
+        _cards         = [];
+        _titleIndex    = -1;
+        _titleSelected = false;
+        _bottomTarget  = null;
         _bottomFieldId = null;
         _bottomIsTitle = false;
-        _descTarget = null;
-        _titleTarget = null;
-        _titleCard = null;
+        _descTarget    = null;
+        _titleTarget   = null;
         _fieldTargets.Clear();
         _fileEditors.Clear();
+        _cardIndexByField.Clear();
+        _rowsByField.Clear();
+        _relationText.Clear();
+        _selectedFieldIds.Clear();
     }
 
     private void UpdatePreviewVisibility()
@@ -459,12 +490,12 @@ public partial class RecordPageView : UserControl
             AppSettings.SaveConstructorPropsHeight(h);
     }
 
-    // Общая ширина колонки названий (px) — делится всеми карточками; меняется
-    // перетаскиванием ручки-разделителя ⋮. Живет в пределах сессии (переносится между записями).
-    private readonly List<ColumnDefinition> _nameCols = new();
-    private const double NameColDefault = 150;
+    // Общая ширина колонки названий (px) — делится всеми карточками; меняется перетаскиванием
+    // ручки-разделителя ⋮ (ее тянет поверхность списка). Живет в пределах сессии (переносится
+    // между записями).
+    private const double NameColDefault = PropertySurface.NameColDefault;
     private double _nameColWidth = StoredNameColWidth();
-    private const double NameColMin = 70;
+    private const double NameColMin = PropertySurface.NameColMin;
 
     private static double StoredNameColWidth()
     {
@@ -473,13 +504,12 @@ public partial class RecordPageView : UserControl
         return w >= NameColMin ? w : NameColDefault;
     }
 
-    private Border? _selectedCard;
-
     // Выделенные свойства — набор, как выделение колонок в таблице: над ним работают
-    // «Дублировать», «Изменить цвет», «Удалить» и клавиши Delete/Backspace. Карточки
-    // держим по id поля, чтобы перекрашивать выделение, не обходя дерево.
+    // «Дублировать», «Изменить цвет», «Удалить» и клавиши Delete/Backspace. Карточки списка — в
+    // порядке панели, индекс карточки по id поля — для выделения и цели нижнего блока.
     private readonly List<int> _selectedFieldIds = [];
-    private readonly Dictionary<int, Border> _cardsByField = [];
+    private List<PropertyCard> _cards = [];
+    private readonly Dictionary<int, int> _cardIndexByField = [];
 
     // Допущенные пользователи базы — ОДИН запрос на сборку панели, а не на каждое поле типа
     // «пользователь»: список у всех таких полей одинаков и отличается только текущим значением
@@ -497,211 +527,153 @@ public partial class RecordPageView : UserControl
 
     private void BuildProperties()
     {
-        PropertiesHost.Children.Clear();
-        _nameCols.Clear();
+        PropertiesHost.SetCards([]);   // редактор снимается — его ссылки отпускаются (OnEditorClosed)
         _fieldTargets.Clear();
         _fileEditors.Clear();
-        _cardsByField.Clear();
+        _cardIndexByField.Clear();
+        _rowsByField.Clear();
+        _relationText.Clear();
         _selectedFieldIds.Clear();
-        _descTarget   = null;
-        _titleTarget  = null;
-        _titleCard    = null;
-        _bottomTarget = null;
-        _selectedCard = null;
-        _userOptions  = null;   // состав читаем заново на каждую сборку панели, но ОДИН раз
+        _cards         = [];
+        _descTarget    = null;
+        _titleTarget   = null;
+        _titleIndex    = -1;
+        _titleSelected = false;
+        _bottomTarget  = null;
+        _userOptions   = null;   // состав читаем заново на каждую сборку панели, но ОДИН раз
         if (_vm is null) return;
 
-        // Порядок строго как в таблице: VM уже отсортировала элементы по эффективной позиции
-        // колонки. «Описание» — обычное поле и идет в этом же списке, отдельной карточки у него
-        // нет; «Название» — системная колонка, у него своя карточка на ее месте.
-        foreach (var item in _vm.OrderedItems)
+        // Цели нижнего блока заводятся здесь, по модели: открыть свойство снизу и вернуть его после
+        // перечитывания нужно и без редактора на карточке. Инлайн-поле цели подставляется, пока над
+        // ее карточкой стоит редактор (OnEditorOpened).
+        foreach (var row in _vm.Properties)
         {
-            switch (item)
+            if (row.Field.Id is not int fid) continue;
+            _rowsByField[fid] = row;
+            if (row.Field.FieldType != "text") continue;
+            var captured = row;
+            _fieldTargets[fid] = new BottomTextTarget
             {
-                case FieldItem fi: PropertiesHost.Children.Add(BuildPropertyCard(fi.Row)); break;
-                case TitleItem:    PropertiesHost.Children.Add(BuildTitleCard());          break;
-            }
+                FieldId = fid,
+                Name    = row.Field.Name,
+                IconKey = IconKeyFor(row.Field),
+                Read    = () => captured.Value ?? "",
+                Write   = t => { captured.Value = t; PersistProperty(captured); },
+            };
         }
+        _titleTarget = new BottomTextTarget
+        {
+            IsTitle = true,
+            Name    = _vm.TitleLabel,
+            Read    = () => _vm?.EditableTitle ?? "",
+            Write   = t => ApplyTitleEdit(t, TitleSource.Bottom),
+        };
 
         // Цель нижнего блока по умолчанию — поле с ролью «Описание» (если оно есть и текстовое:
         // после смены типа цели у него нет, и блок остается пустым, пока не выберут другое свойство).
         _descTarget = _vm.DescriptionFieldId is int did && _fieldTargets.TryGetValue(did, out var dt)
             ? dt : null;
 
-        // «Добавить свойство» — единственная карточка с фиксированным местом (всегда внизу).
-        // Тоже входит в общий ресайз колонки названий (ручка ⋮).
-        PropertiesHost.Children.Add(BuildAddPropertyCard());
-    }
-
-    // Каркас карточки: [иконка + название] · [ручка ⋮] · [контент-значение]. Колонка названия
-    // регистрируется в общем ресайзе. selectableName=true → подпись с классом propname (синеет
-    // в выделенной карточке); cssClass — proprow/addprop.
-    //
-    // gripArea отдается наружу: ручка ширины — единственная зона карточки, которая на клик
-    // не отвечает ни выделением, ни правкой (она тянет ширину колонки названий).
-    private Border BuildCardShell(string cssClass, Control icon, string name, bool selectableName,
-                                  Control? valueContent, out Control gripArea)
-    {
-        var grid = new Grid
+        // Порядок строго как в таблице: VM уже отсортировала элементы по эффективной позиции
+        // колонки. «Описание» — обычное поле и идет в этом же списке, отдельной карточки у него
+        // нет; «Название» — системная колонка, у него своя карточка на ее месте. «Добавить
+        // свойство» — единственная карточка с фиксированным местом (всегда внизу); тоже входит в
+        // общий ресайз колонки названий (ручка ⋮). Карточки — описания для рисованного списка;
+        // контролы значений строятся только под указателем (BuildEditor).
+        var cards = new List<PropertyCard>(_vm.OrderedItems.Count + 1);
+        foreach (var item in _vm.OrderedItems)
         {
-            ColumnDefinitions = new ColumnDefinitions
+            switch (item)
             {
-                new ColumnDefinition(new GridLength(_nameColWidth, GridUnitType.Pixel)),
-                new ColumnDefinition(GridLength.Auto),
-                new ColumnDefinition(new GridLength(1, GridUnitType.Star)),
-            },
-        };
-        _nameCols.Add(grid.ColumnDefinitions[0]);
-
-        // Название: иконка (Auto) + подпись (*). Подпись в звездной колонке ограничена шириной
-        // колонки названий — при сужении ручкой ⋮ обрезается многоточием, не наезжая на значение.
-        var nameRow = new Grid
-        {
-            ColumnDefinitions = new ColumnDefinitions("Auto,*"),
-            VerticalAlignment = VerticalAlignment.Center,
-            ClipToBounds      = true,
-        };
-        Grid.SetColumn(icon, 0);
-        var nameLabel = new TextBlock
-        {
-            Text              = name,
-            VerticalAlignment = VerticalAlignment.Center,
-            TextTrimming      = TextTrimming.CharacterEllipsis,
-            Margin            = new Thickness(8, 0, 4, 0),
-            FontSize          = (double)this.FindResource("FontSizeBase")!,
-        };
-        if (selectableName) nameLabel.Classes.Add("propname");
-        else                nameLabel.Foreground = (IBrush)this.FindResource("BrushSecondaryText")!;
-        Grid.SetColumn(nameLabel, 1);
-        nameRow.Children.Add(icon);
-        nameRow.Children.Add(nameLabel);
-        Grid.SetColumn(nameRow, 0);
-        var grip = BuildColumnGrip();
-        gripArea = grip;
-        Grid.SetColumn(grip, 1);
-
-        grid.Children.Add(nameRow);
-        grid.Children.Add(grip);
-        if (valueContent is not null)
-        {
-            valueContent.VerticalAlignment = VerticalAlignment.Center;
-            // Отбиваем значение от ручки ⋮ на те же 10px, что иконка отбита от левого края
-            // карточки (Padding=10). Ручка 18px центрирует точки 3px → справа уже есть 7.5px,
-            // добавляем недостающие 2.5px.
-            valueContent.Margin = new Thickness(2.5, 0, 0, 0);
-            Grid.SetColumn(valueContent, 2);
-            grid.Children.Add(valueContent);
-        }
-
-        return new Border { Classes = { cssClass }, Child = grid };
-    }
-
-    // Карточка свойства: иконка типа + название · ручка ⋮ · значение. Клик выделяет карточку
-    // (стиль выбранной строки сайдбара). Для типа «текст» — еще и цель нижнего блока.
-    private Border BuildPropertyCard(PropertyRowVm row)
-    {
-        var input = MakeInputForField(row);
-        var card  = BuildCardShell("proprow", BuildTypeIcon(row.Field), row.Field.Name, selectableName: true,
-                                   input, out var gripArea);
-
-        // Текстовое свойство → цель нижнего блока: инлайн-поле и большой редактор синхронны.
-        BottomTextTarget? target = null;
-        if (row.Field.FieldType == "text" && input is TextBox tb)
-        {
-            target = new BottomTextTarget
-            {
-                FieldId = row.Field.Id,
-                Name    = row.Field.Name,
-                IconKey = IconKeyFor(row.Field),
-                Read    = () => row.Value ?? "",
-                Write   = t => { row.Value = t; PersistProperty(row); },
-                Inline  = tb,
-                Card    = card,
-            };
-            if (row.Field.Id is int fid) _fieldTargets[fid] = target;
-        }
-
-        // Туннелем (до детей) — выделяем карточку и (для текстовых) открываем нижний блок;
-        // поле ввода при этом все равно получает клик и фокус (событие не помечаем обработанным).
-        //
-        // Зоны карточки: ЗНАЧЕНИЕ справа — правка, она же сбрасывает набор до одного, как клик по
-        // ячейке снимает выделение колонок; РУЧКА ⋮ не отвечает вовсе (она тянет ширину); ВСЕ
-        // ОСТАЛЬНОЕ — название, иконка типа и пустое место карточки — жест ВЫДЕЛЕНИЯ, с Shift он
-        // набирает несколько свойств.
-        //
-        // Именно «все остальное», а не «попал в подпись»: подпись занимает лишь часть колонки
-        // названий, и клик правее текста приходил в саму карточку — набор сбрасывался, хотя
-        // человек целился в то же свойство. Так выделение не зависит от длины названия.
-        //
-        // Текстовое свойство открывается снизу обычным кликом В ЛЮБУЮ зону, кроме ручки: целятся
-        // в карточку, а не в ее значение. Клик мимо значения каретку в текст не ставит — фокус на
-        // карточке, и клавиши работают по выделению. Shift нижний блок не трогает: он собирает
-        // набор для общих действий, а снизу остается свойство, открытое последним обычным кликом.
-        card.AddHandler(InputElement.PointerPressedEvent, (_, e) =>
-        {
-            // Правый клик выделение НЕ трогает: он открывает меню, а меню работает по набору
-            // — иначе правый клик по одному из выделенных свойств сбрасывал бы набор ровно
-            // перед тем, как применить к нему операцию (в таблице то же самое).
-            if (!e.GetCurrentPoint(card).Properties.IsLeftButtonPressed) return;
-            if (IsInside(e.Source, gripArea)) return;
-
-            if (input is not null && IsInside(e.Source, input))
-            {
-                SelectCard(card, target);
-                return;
+                case FieldItem fi:
+                    if (fi.Row.Field.Id is int cardFid) _cardIndexByField[cardFid] = cards.Count;
+                    cards.Add(CardFor(fi.Row));
+                    break;
+                case TitleItem:
+                    _titleIndex = cards.Count;
+                    cards.Add(new PropertyCard
+                    {
+                        Name        = _vm.TitleLabel,
+                        IconKey     = "IconFieldText",
+                        Kind        = PropertyCardKind.Title,
+                        Value       = () => _vm?.EditableTitle ?? "",
+                        Placeholder = PlaceholderTitle,
+                    });
+                    break;
             }
-            if (row.Field.Id is not int fid) return;
-
-            var shift = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
-            SelectProperty(fid, shift);
-            if (!shift && target is not null) OpenBottom(target);
-        }, RoutingStrategies.Tunnel);
-
-        if (row.Field.Id is int id)
-        {
-            _cardsByField[id] = card;
-            // Меню — на правом НАЖАТИИ, а не на каждую карточку заранее: показывается оно на
-            // отпускании кнопки, так что к этому моменту уже на месте (тот же прием, что у
-            // шапки колонки и ячейки таблицы). Панель строит карточку на КАЖДОЕ свойство
-            // записи, а меню свойства — это полтора десятка составных пунктов; на коллекции
-            // с сотнями свойств они и составляли большую часть веса открытия карточки, при
-            // том что открывают меню от силы у одного свойства.
-            card.AddHandler(InputElement.PointerPressedEvent, (_, e) =>
-            {
-                if (e.GetCurrentPoint(card).Properties.IsRightButtonPressed)
-                    card.ContextMenu = BuildPropertyMenu(row);
-            }, RoutingStrategies.Tunnel);
         }
-        return card;
+        cards.Add(new PropertyCard { Name = "Добавить свойство", IconKey = "IconPlus", Kind = PropertyCardKind.Add });
+        _cards = cards;
+        _titleTarget.Index = _titleIndex;
+        foreach (var (fid, target) in _fieldTargets) target.Index = _cardIndexByField.GetValueOrDefault(fid, -1);
+        PropertiesHost.SetCards(cards);
     }
 
-    // Карточка системного «Название» — как у текстового свойства: в карточке первая строка, полный
-    // текст правится в нижнем блоке (длинное название в шапке править неудобно). Правка в любом из
-    // трех мест — шапке, карточке, нижнем блоке — сохраняется по символу и сразу видна в двух
-    // других и в строке таблицы (ApplyTitleEdit). Отличия от текстового свойства: одна строка
-    // (Enter в нижнем блоке не переносит), в «Просмотре» простой текст, меню — как у колонки
-    // «Название» в таблице, выделение одиночное (набор свойств для дубля и удаления ее не берет).
-    private Border BuildTitleCard()
+    // Описание карточки свойства для рисованного списка: что показывать без контрола. Значение
+    // читается из строки модели при каждом кадре; связь — названия целей (RelationText).
+    private PropertyCard CardFor(PropertyRowVm row)
     {
-        var label = _vm?.TitleLabel ?? PlaceholderTitle;
-        var tb    = FlatValueBox(watermark: PlaceholderTitle);
-        ApplyInlineText(tb, _vm?.EditableTitle ?? "");
-
-        var card = BuildCardShell("proprow", BuildStrokeIcon("IconFieldText", selectable: true), label,
-                                  selectableName: true, tb, out var gripArea);
-
-        var target = new BottomTextTarget
+        var f         = row.Field;
+        var computed  = FieldTypeInfo.IsComputed(f.FieldType);
+        var relCfg    = f.FieldType == "relation" ? RelationConfig.FromConfig(f.ConfigJson) : null;
+        var relBroken = f.FieldType == "relation" && (relCfg is null || _repo is null || f.Id is null);
+        Func<string>? display = null;
+        if (computed)       display = () => FieldTypeInfo.FormatComputedDisplay(row.Value, f.FieldType);
+        else if (relBroken) display = () => "Связь не настроена";
+        else if (relCfg is not null && f.Id is int relFid) display = () => RelationText(relFid, relCfg);
+        return new PropertyCard
         {
-            IsTitle = true,
-            Name    = label,
-            Read    = () => _vm?.EditableTitle ?? "",
-            Write   = t => ApplyTitleEdit(t, TitleSource.Bottom),
-            Inline  = tb,
-            Card    = card,
+            Name           = f.Name,
+            IconKey        = IconKeyFor(f),
+            FieldType      = f.FieldType,
+            Tag            = row,
+            Value          = () => row.Value ?? "",
+            Placeholder    = f.FieldType == "url" ? "https://" : "",
+            Muted          = computed || relBroken,
+            NumberFormat   = NumberFormatValue.FromConfig(f.ConfigJson),
+            Separator      = MultiSelectValue.SeparatorFromConfig(f.ConfigJson),
+            FileAutoFolder = FileAutoRule.FromConfig(f.ConfigJson)?.Folder ?? "",
+            Display        = display,
         };
-        _titleTarget = target;
-        _titleCard   = card;
+    }
 
+    private string RelationText(int fieldId, RelationConfig cfg)
+    {
+        if (_relationText.TryGetValue(fieldId, out var text)) return text;
+        text = _repo is not null && _vm is not null ? RelationSelectBox.DisplayText(_repo, fieldId, _vm.RecordId, cfg) : "";
+        _relationText[fieldId] = text;
+        return text;
+    }
+
+    // ── Редакторы под указателем ───────────────────────────────────────────────
+    //
+    // Контрол значения — тот же, что стоял в карточке (MakeInputForField), но строится только когда
+    // указатель вошел в полосу значения или карточку нажали, и снимается, когда ушел и фокуса нет
+    // (PropertyList). У карточки нет цены контрола, пока к ней не тянутся.
+
+    private Control? BuildEditor(int index)
+    {
+        if (index < 0 || index >= _cards.Count) return null;
+        var card = _cards[index];
+        Control? input = card.Kind switch
+        {
+            PropertyCardKind.Field when card.Tag is PropertyRowVm row => MakeInputForField(row),
+            PropertyCardKind.Title => MakeTitleInput(),
+            _ => null,
+        };
+        if (input is null) return null;
+        input.VerticalAlignment   = VerticalAlignment.Center;   // как в сетке карточки: по центру строки
+        input.HorizontalAlignment = HorizontalAlignment.Stretch;
+        return input;
+    }
+
+    // Поле карточки «Название» — как у текстового свойства: в карточке первая строка, полный текст
+    // правится в нижнем блоке. Правка в любом из трех мест — шапке, карточке, нижнем блоке —
+    // сохраняется по символу и сразу видна в двух других и в строке таблицы (ApplyTitleEdit).
+    private TextBox MakeTitleInput()
+    {
+        var tb = FlatValueBox(watermark: PlaceholderTitle);
+        ApplyInlineText(tb, _vm?.EditableTitle ?? "");
         tb.TextChanged += (_, _) =>
         {
             // Многострочное название в карточке усечено до первой строки и не правится (см.
@@ -709,34 +681,110 @@ public partial class RecordPageView : UserControl
             // сохраненным значением отличает ее от правки.
             if (_suppressBottomSync || tb.IsReadOnly) return;
             var text = tb.Text ?? "";
-            if (text == target.Read()) return;
+            if (text == (_vm?.EditableTitle ?? "")) return;
             ApplyTitleEdit(text, TitleSource.Inline);
         };
+        return tb;
+    }
 
-        // Зоны — как у карточки свойства: ручка ⋮ молчит, клик в любое другое место открывает
-        // название снизу; мимо значения — без каретки в тексте, фокус на карточке. Shift здесь
-        // работает как обычный клик: «Название» в набор не входит (его не удалить и не дублировать).
-        card.AddHandler(InputElement.PointerPressedEvent, (_, e) =>
+    // Редактор встал над карточкой: инлайн-поле текстовой цели нижнего блока — оно (синхронизация
+    // с большим редактором в обе стороны).
+    private void OnEditorOpened(int index, Control editor)
+    {
+        if (TargetAt(index) is { } target && editor is TextBox tb) target.Inline = tb;
+    }
+
+    // Редактор снят: ссылки на него отпускаются, карточка снова рисуется из модели.
+    private void OnEditorClosed(int index, Control editor)
+    {
+        if (TargetAt(index) is { } target && ReferenceEquals(target.Inline, editor)) target.Inline = null;
+        if (index >= 0 && index < _cards.Count && _cards[index].Tag is PropertyRowVm { Field.Id: int fid }
+            && _fileEditors.TryGetValue(fid, out var fe) && ReferenceEquals(fe, editor))
+            _fileEditors.Remove(fid);
+        PropertiesHost.RefreshValues();
+    }
+
+    private BottomTextTarget? TargetAt(int index)
+    {
+        if (index < 0 || index >= _cards.Count) return null;
+        var card = _cards[index];
+        if (card.Kind == PropertyCardKind.Title) return _titleTarget;
+        return card.Tag is PropertyRowVm { Field.Id: int fid } && _fieldTargets.TryGetValue(fid, out var t) ? t : null;
+    }
+
+    // Нажатие на карточке (или под ее редактором). Зоны — как у прежней карточки: ЗНАЧЕНИЕ — правка,
+    // она же сбрасывает набор до одного, как клик по ячейке снимает выделение колонок; РУЧКА ⋮ сюда
+    // не приходит (ее тянет поверхность); ВСЕ ОСТАЛЬНОЕ — название, иконка типа и пустое место
+    // карточки — жест ВЫДЕЛЕНИЯ, с Shift он набирает несколько свойств. Именно «все остальное», а
+    // не «попал в подпись»: клик правее текста тоже целится в это свойство.
+    //
+    // Текстовое свойство открывается снизу обычным кликом В ЛЮБУЮ зону, кроме ручки. Клик мимо
+    // значения каретку в текст не ставит — фокус на списке, и клавиши работают по выделению. Shift
+    // нижний блок не трогает. Правый клик выделение НЕ трогает: он ставит меню карточки на
+    // поверхность (откроется на отпускании) — иначе правый клик по одному из выделенных свойств
+    // сбрасывал бы набор ровно перед тем, как применить к нему операцию (в таблице то же самое).
+    private void OnCardPressed(PropertyPointerEventArgs e)
+    {
+        var index = e.Hit.Index;
+        if (index < 0 || index >= _cards.Count) return;
+        var card    = _cards[index];
+        var surface = PropertiesHost.Surface;
+        var props   = e.Pointer.GetCurrentPoint(surface).Properties;
+
+        if (props.IsRightButtonPressed)
         {
-            if (!e.GetCurrentPoint(card).Properties.IsLeftButtonPressed) return;
-            if (IsInside(e.Source, gripArea)) return;
-
-            if (IsInside(e.Source, tb))
+            // Меню — на правом НАЖАТИИ, а не заранее на каждую карточку: показывается оно на
+            // отпускании кнопки, так что к этому моменту уже на месте.
+            surface.ContextMenu = card.Kind switch
             {
-                SelectCard(card, target);
-                return;
-            }
-            SelectTitle();
-            OpenBottom(target);
-        }, RoutingStrategies.Tunnel);
+                PropertyCardKind.Field when card.Tag is PropertyRowVm row && row.Field.Id is not null => BuildPropertyMenu(row),
+                PropertyCardKind.Title => BuildTitleMenu(),
+                _ => null,
+            };
+            return;
+        }
+        if (!props.IsLeftButtonPressed) return;
 
-        card.AddHandler(InputElement.PointerPressedEvent, (_, e) =>
+        if (card.Kind == PropertyCardKind.Add)
         {
-            if (e.GetCurrentPoint(card).Properties.IsRightButtonPressed)
-                card.ContextMenu = BuildTitleMenu();
-        }, RoutingStrategies.Tunnel);
+            e.Pointer.Handled = true;
+            AddPropertyRequested?.Invoke(this, EventArgs.Empty);
+            return;
+        }
 
-        return card;
+        var target = TargetAt(index);
+        if (e.Hit.Zone == PropertyZone.Value)
+        {
+            SelectValue(index, target);
+            // Нажатие пришло на саму поверхность, без наведения (сенсорный ввод, клик после
+            // прокрутки колесом): редактора еще нет — ставим и отдаем ему нажатие; галочку
+            // переключаем сами.
+            if (PropertiesHost.EditingIndex != index)
+            {
+                if (card.FieldType == "checkbox" && card.Tag is PropertyRowVm cb)
+                {
+                    cb.Value = cb.Value is "1" or "true" or "True" ? "0" : "1";
+                    PersistProperty(cb);
+                }
+                else PropertiesHost.OpenEditorAt(index, e.Pointer.GetPosition(surface));
+                e.Pointer.Handled = true;
+            }
+            return;
+        }
+
+        var shift = e.Pointer.KeyModifiers.HasFlag(KeyModifiers.Shift);
+        if (card.Kind == PropertyCardKind.Title)
+        {
+            // Shift здесь работает как обычный клик: «Название» в набор не входит.
+            SelectTitle();
+            if (_titleTarget is not null) OpenBottom(_titleTarget);
+        }
+        else if (card.Tag is PropertyRowVm { Field.Id: int fid })
+        {
+            SelectProperty(fid, shift);
+            if (!shift && target is not null) OpenBottom(target);
+        }
+        e.Pointer.Handled = true;
     }
 
     private enum TitleSource { Header, Inline, Bottom }
@@ -753,6 +801,7 @@ public partial class RecordPageView : UserControl
         var shown = _vm.EditableTitle;
         if (source != TitleSource.Header) HeaderBar.SetTitle(shown);
         if (source != TitleSource.Inline && _titleTarget?.Inline is { } inline) ApplyInlineText(inline, shown);
+        PropertiesHost.RefreshValues();
         if (source != TitleSource.Bottom && _bottomTarget is { IsTitle: true } && !MarkdownEditor.IsFocused)
             SetBottomText(shown);
     }
@@ -767,21 +816,25 @@ public partial class RecordPageView : UserControl
         UpdatePreviewVisibility();
     }
 
-    // Клик по подписи «Названия»: выделить его карточку. Фокус — на карточку, как у свойства:
-    // иначе горячие клавиши меню (переименовать, создать свойство, сдвиг) ушли бы в поле ввода.
+    // Клик по подписи «Названия»: выделить его карточку (одиночно, вне набора свойств). Фокус — на
+    // список, как у свойства: иначе горячие клавиши меню ушли бы в поле ввода.
     private void SelectTitle()
     {
-        if (_titleCard is null) return;
-        HighlightCard(_titleCard);
-        _titleCard.Focusable = true;
-        _titleCard.Focus();
+        ClearPropertySelection();
+        _titleSelected = true;
+        PropertiesHost.RefreshValues();
+        PropertiesHost.Surface.Focus();
     }
 
-    private bool TitleSelected => _titleCard is not null && ReferenceEquals(_selectedCard, _titleCard);
+    private bool TitleSelected => _titleSelected;
 
-    /// <summary>Клик пришелся в этот элемент или внутрь него.</summary>
-    private static bool IsInside(object? source, Control area) =>
-        source is Visual v && (ReferenceEquals(v, area) || area.IsVisualAncestorOf(v));
+    // Выделена ли карточка — модель выделения для рисованного списка.
+    private bool IsCardSelected(int index)
+    {
+        if (index < 0 || index >= _cards.Count) return false;
+        if (index == _titleIndex) return _titleSelected;
+        return _cards[index].Tag is PropertyRowVm { Field.Id: int fid } && _selectedFieldIds.Contains(fid);
+    }
 
     // ── Выделение свойств (одиночное и набор по Shift) ──────────────────────────
     //
@@ -789,7 +842,7 @@ public partial class RecordPageView : UserControl
     // Shift+клик — добавить или убрать одно, не трогая остальные. Порядок держим по порядку
     // свойств в панели — он же порядок колонок, и в этом порядке уходит список на удаление.
 
-    private void SelectProperty(int fieldId, bool shift)
+    private void SelectProperty(int fieldId, bool shift, bool focus = true)
     {
         if (shift)
         {
@@ -801,15 +854,12 @@ public partial class RecordPageView : UserControl
             _selectedFieldIds.Add(fieldId);
         }
 
-        // Фокус уводим из поля значения на саму карточку: иначе Delete по выделенным
-        // свойствам не сработает — обработчик клавиши намеренно молчит, пока курсор в тексте
-        // (там Delete правит буквы). Так же ведет себя таблица: клик по заголовку колонки
-        // выводит фокус из ячейки.
-        if (_cardsByField.TryGetValue(fieldId, out var focusCard))
-        {
-            focusCard.Focusable = true;
-            focusCard.Focus();
-        }
+        // Фокус уводим из поля значения на список: иначе Delete по выделенным свойствам не
+        // сработает — обработчик клавиши намеренно молчит, пока курсор в тексте (там Delete правит
+        // буквы). Так же ведет себя таблица: клик по заголовку колонки выводит фокус из ячейки. При
+        // восстановлении после перечитывания (focus=false) фокус не трогаем — человек может
+        // печатать в нижнем блоке.
+        if (focus) PropertiesHost.Surface.Focus();
 
         if (_vm is not null)
         {
@@ -827,16 +877,14 @@ public partial class RecordPageView : UserControl
         ApplyPropertySelection();
     }
 
-    // Вид выделенной карточки — тот же класс «selected», что у карточки-цели нижнего блока:
-    // состояние одно («это свойство сейчас в работе»), два разных подсвета на одной карточке
-    // читались бы как поломка.
+    // Вид выделенной карточки — один и тот же у набора и у цели нижнего блока: состояние одно
+    // («это свойство сейчас в работе»), два разных подсвета на одной карточке читались бы как
+    // поломка. Список читает набор при кадре (IsCardSelected).
     private void ApplyPropertySelection()
     {
-        // Одиночная подсветка карточки без поля («Название») уступает набору свойств.
-        _selectedCard?.Classes.Remove("selected");
-        _selectedCard = null;
-        foreach (var (id, card) in _cardsByField)
-            card.Classes.Set("selected", _selectedFieldIds.Contains(id));
+        // Одиночная подсветка «Названия» уступает набору свойств.
+        _titleSelected = false;
+        PropertiesHost.RefreshValues();
     }
 
     /// <summary>Свойства, к которым применяется операция меню: весь набор, если поле в него
@@ -1152,31 +1200,39 @@ public partial class RecordPageView : UserControl
         menu.Items.Add(miDown);
     }
 
-    // Выделяем карточку всегда; нижний блок переключаем только на ТЕКСТОВУЮ цель —
+    // Выделяем карточку всегда (одиночно); нижний блок переключаем только на ТЕКСТОВУЮ цель —
     // не-текстовые свойства его не трогают (остается как было).
-    private void SelectCard(Border card, BottomTextTarget? target)
+    private void SelectValue(int index, BottomTextTarget? target)
     {
-        HighlightCard(card);
+        HighlightIndex(index, focus: true);
         if (target is not null) OpenBottom(target);
     }
 
-    // Подсветить карточку как единственную выделенную. Для карточки свойства это тот же
-    // набор выделения, что у меню и клавиш, — просто из одного элемента: иначе после клика
-    // по значению «Удалить» из меню унесло бы прежний набор, а подсвечено было бы другое.
-    private void HighlightCard(Border card)
+    // Подсветить карточку как единственную выделенную: у свойства это набор из одного элемента (тот
+    // же, что у меню и клавиш) — иначе после клика по значению «Удалить» из меню унесло бы прежний
+    // набор; у «Названия» — одиночная подсветка вне набора.
+    private void HighlightIndex(int index, bool focus)
     {
-        foreach (var (id, c) in _cardsByField)
-            if (ReferenceEquals(c, card))
+        if (index == _titleIndex)
+        {
+            if (!_titleSelected)
             {
-                SelectProperty(id, shift: false);
-                return;
+                ClearPropertySelection();
+                _titleSelected = true;
+                PropertiesHost.RefreshValues();
             }
+            if (focus) PropertiesHost.Surface.Focus();
+            return;
+        }
+        if (index >= 0 && index < _cards.Count && _cards[index].Tag is PropertyRowVm { Field.Id: int fid })
+            SelectProperty(fid, shift: false, focus);
+    }
 
-        if (ReferenceEquals(_selectedCard, card)) return;
-        ClearPropertySelection();
-        _selectedCard?.Classes.Remove("selected");
-        card.Classes.Add("selected");
-        _selectedCard = card;
+    // Выделить цель нижнего блока по модели — карточка может быть и не в окне.
+    private void HighlightTarget(BottomTextTarget target, bool focus)
+    {
+        if (target.IsTitle) { HighlightIndex(_titleIndex, focus); return; }
+        if (target.FieldId is int fid) SelectProperty(fid, shift: false, focus);
     }
 
     // Переключить нижний блок на цель: заголовок + текст в редактор (служебно, под guard'ом).
@@ -1280,7 +1336,9 @@ public partial class RecordPageView : UserControl
         }
         UpdatePreviewVisibility();
 
-        if (target.Card is { } card) HighlightCard(card);
+        // Подсветить цель, не трогая фокус, если человек печатает снизу: перечитывание не должно
+        // выдергивать каретку из редактора.
+        HighlightTarget(target, focus: !MarkdownEditor.IsFocused);
 
         // Описание только что создали ссылкой в крошке — сразу отдаем каретку редактору,
         // чтобы можно было писать, не кликая по блоку.
@@ -1321,113 +1379,13 @@ public partial class RecordPageView : UserControl
         _          => "IconFieldText",
     };
 
-    // Иконка типа свойства — обводочная, только из реестра Icons.axaml.
-    private Control BuildTypeIcon(DbField f) => BuildStrokeIcon(IconKeyFor(f), selectable: true);
-
-    // Обводочная иконка 16×16 из реестра Icons.axaml. selectable=true → класс propicon,
-    // чтобы стиль выделенной карточки перекрашивал ее в синий; иначе фиксированный серый.
-    private Control BuildStrokeIcon(string key, bool selectable)
+    // Ручка ⋮: общую ширину колонки названий тянет поверхность списка; здесь — запоминание в
+    // конце перетаскивания (как и высоты свойств: не на каждое движение мыши).
+    private void OnNameColumnResized(double width)
     {
-        var path = new Path
-        {
-            Data            = (Geometry)this.FindResource(key)!,
-            StrokeThickness = (double)this.FindResource("IconStrokeSmall")!,
-            StrokeLineCap   = PenLineCap.Round,
-            StrokeJoin      = PenLineJoin.Round,
-        };
-        if (selectable) path.Classes.Add("propicon");
-        else            path.Stroke = (IBrush)this.FindResource("BrushSecondaryText")!;
-
-        return new Viewbox
-        {
-            Width             = 16,
-            Height            = 16,
-            VerticalAlignment = VerticalAlignment.Center,
-            Child             = new Canvas { Width = 24, Height = 24, Children = { path } },
-        };
-    }
-
-    // Карточка «Добавить свойство»: [иконка «+» + подпись] · [ручка ⋮]. Та же 3-колоночная
-    // сетка, что и у свойств, поэтому ее колонка названия входит в общий ресайз и сужается
-    // вместе со всеми. Клик (не по ручке) открывает редактор свойства; нажатие на ручку ⋮
-    // OnColGripPressed помечает обработанным — до пузырькового OnAddPropertyClick, поэтому
-    // перетаскивание ручки не открывает диалог, а меняет ширину.
-    private Border BuildAddPropertyCard()
-    {
-        var card = BuildCardShell("addprop", BuildStrokeIcon("IconPlus", selectable: false),
-                                  "Добавить свойство", selectableName: false, valueContent: null, out _);
-        // Пузырьком: нажатие на ручку ⋮ OnColGripPressed помечает обработанным раньше, поэтому
-        // перетаскивание ручки не открывает диалог, а меняет ширину; клик мимо ручки — создает поле.
-        card.PointerPressed += OnAddPropertyClick;
-        return card;
-    }
-
-    private Border BuildColumnGrip()
-    {
-        // Размер точки и шаг — целые и равные: при layout-rounding (вкл. по умолчанию) дробные
-        // значения округляются по-разному и зазоры выходят неравномерными (нижние точки ближе).
-        var dots = new StackPanel
-        {
-            Orientation         = Orientation.Vertical,
-            Spacing             = 3,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment   = VerticalAlignment.Center,
-        };
-        for (var i = 0; i < 3; i++)
-            dots.Children.Add(new Ellipse
-            {
-                Width  = 3,
-                Height = 3,
-                Fill   = (IBrush)this.FindResource("BrushSecondaryText")!,
-            });
-
-        var grip = new Border { Classes = { "propgrip" }, Child = dots };
-        grip.PointerPressed  += OnColGripPressed;
-        grip.PointerMoved    += OnColGripMoved;
-        grip.PointerReleased += OnColGripReleased;
-        return grip;
-    }
-
-    // ── Перетаскивание ручки ⋮: общая ширина колонки названий у всех карточек ──────
-    private bool   _colGripDragging;
-    private double _colGripStartX;
-    private double _colGripStartWidth;
-
-    private void OnColGripPressed(object? sender, PointerPressedEventArgs e)
-    {
-        _colGripDragging   = true;
-        _colGripStartX     = e.GetPosition(this).X;
-        _colGripStartWidth = _nameColWidth;
-        e.Pointer.Capture((IInputElement?)sender);
-        e.Handled = true;
-    }
-
-    private void OnColGripMoved(object? sender, PointerEventArgs e)
-    {
-        if (!_colGripDragging) return;
-
-        var dx  = e.GetPosition(this).X - _colGripStartX;
-        // Названиям не даем съесть все значение: оставляем значению минимум места.
-        var max = Math.Max(NameColMin, PropertiesHost.Bounds.Width - 160);
-        _nameColWidth = Math.Clamp(_colGripStartWidth + dx, NameColMin, max);
-        foreach (var col in _nameCols)
-            col.Width = new GridLength(_nameColWidth, GridUnitType.Pixel);
-    }
-
-    private void OnColGripReleased(object? sender, PointerReleasedEventArgs e)
-    {
-        _colGripDragging = false;
-        e.Pointer.Capture(null);
-        e.Handled = true;
-        // Как и у высоты свойств: сохраняем в конце перетаскивания.
+        _nameColWidth = width;
         if (ConstructorSettings.RememberLayout)
-            AppSettings.SaveConstructorNameColWidth(_nameColWidth);
-    }
-
-    private void OnAddPropertyClick(object? sender, PointerPressedEventArgs e)
-    {
-        e.Handled = true;
-        AddPropertyRequested?.Invoke(this, EventArgs.Empty);
+            AppSettings.SaveConstructorNameColWidth(width);
     }
 
     // Сохранить значение свойства И сообщить наверх (RecordChanged) — чтобы таблица обновила ЭТУ
@@ -1436,6 +1394,7 @@ public partial class RecordPageView : UserControl
     {
         ApplyFileSideEffects(row.Persist());
         NotifyRecordChanged();
+        PropertiesHost.RefreshValues();
     }
 
     // Авто-привязка пересчитала файл-столбцы этой записи (правка столбца-источника, в т.ч.
@@ -1443,7 +1402,12 @@ public partial class RecordPageView : UserControl
     private void ApplyFileSideEffects(IReadOnlyList<(int FieldId, string Value)> changes)
     {
         foreach (var (fid, val) in changes)
+        {
+            // В модель — всегда: карточка файла могла быть не показана и построится позже.
+            if (_rowsByField.TryGetValue(fid, out var row)) row.Value = val;
             if (_fileEditors.TryGetValue(fid, out var ed)) ed.SyncStorage(val);
+        }
+        PropertiesHost.RefreshValues();
     }
 
     // Безбордерное текстовое поле значения внутри карточки. Класс propValue убирает рамку/фон
@@ -1655,7 +1619,7 @@ public partial class RecordPageView : UserControl
                     if (db > 0) CrossDbRelatedRecordRequested?.Invoke(this, (db, t.RecordId));
                     else RelatedRecordRequested?.Invoke(this, t.RecordId);            // панель в активной БД
                 };
-                rel.Changed  += (_, _) => NotifyRecordChanged();
+                rel.Changed  += (_, _) => { _relationText.Remove(relFid); NotifyRecordChanged(); PropertiesHost.RefreshValues(); };
                 input = rel;
                 break;
             }

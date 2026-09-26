@@ -4,6 +4,26 @@ using Avalonia.Media;
 
 namespace SmartBase.Controls.DrawnGrid;
 
+/// <summary>Поверхность, над которой стоит накладной редактор: таблица (<see cref="GridSurface"/>) или
+/// список свойств страницы записи (<see cref="PropertySurface"/>). Дает геометрию правящейся ячейки при
+/// текущей прокрутке и область, в которой редактор виден, и сообщает, когда все это сдвинулось.</summary>
+public interface IEditorSurface
+{
+    /// <summary>Сменилось что-то, от чего зависит положение ячеек: прокрутка, раскладки, размер, токены.</summary>
+    event EventHandler? ViewChanged;
+
+    /// <summary>Область содержимого правящейся ячейки в координатах поверхности; null — ячейки нет.</summary>
+    Rect? EditorRect(int row, string key);
+
+    /// <summary>Область, в которой редактор показывается (у таблицы — тело под шапкой).</summary>
+    Rect EditorClip { get; }
+
+    /// <summary>Ячейка правится: поверхность рисует ее без значения — его показывает редактор.</summary>
+    void SetEditingCell(int row, string key);
+
+    void ClearEditingCell();
+}
+
 /// <summary>
 /// Один накладной редактор на всю сетку (этап 4 плана drawn-grid.md). Лежит над поверхностью в той
 /// же клетке панели и держит редактор ячейки — настоящий контрол (поле, список, дата, мультисписок,
@@ -22,18 +42,20 @@ namespace SmartBase.Controls.DrawnGrid;
 /// </summary>
 public sealed class EditorHost : Canvas
 {
-    private readonly GridSurface _surface;
-    private readonly Border      _cell = new() { IsVisible = false };
+    private readonly IEditorSurface _surface;
+    private readonly Border         _cell = new() { IsVisible = false };
     private Rect _clip;
 
     // Стили ищут «Canvas.cellEditor»: селектор типа в Avalonia совпадает с точным типом, а не с
     // наследником, — без подмены ключа стилей ни один из них до редактора не дошел бы.
     protected override Type StyleKeyOverride => typeof(Canvas);
 
-    public EditorHost(GridSurface surface)
+    /// <param name="cellEditorStyle">Класс «cellEditor» для стилей редакторов ячейки таблицы; у списка
+    /// свойств редакторы несут свои классы (propValue), и класс не ставится.</param>
+    public EditorHost(IEditorSurface surface, bool cellEditorStyle = true)
     {
         _surface = surface;
-        Classes.Add("cellEditor");
+        if (cellEditorStyle) Classes.Add("cellEditor");
         Children.Add(_cell);
         surface.ViewChanged += (_, _) => Place();
     }
@@ -93,7 +115,7 @@ public sealed class EditorHost : Canvas
         _cell.Height    = r.Height;
         _cell.IsVisible = true;
 
-        var body = new Rect(0, _surface.HeaderHeight, _surface.ViewportWidth, _surface.ViewportHeight);
+        var body = _surface.EditorClip;
         if (body == _clip) return;
         _clip = body;
         Clip  = new RectangleGeometry(body);

@@ -233,6 +233,37 @@ public sealed class RelationSelectBox : Panel
             if (!gone.Contains((toId, dbId))) { _selected.Add(toId); _selectedDb[toId] = dbId; }
     }
 
+    /// <summary>
+    /// Текст закрытого вида связи для рисованного показа (список свойств страницы записи): названия
+    /// целей первой строкой через разделитель поля, по тем же правилам обрыва, что у контрола
+    /// (<see cref="LoadSelected"/>): база доступна, а записи нет — цель пропускается; база недоступна —
+    /// «(база недоступна)». Пусто — связей нет.
+    /// </summary>
+    public static string DisplayText(ConstructorRepository repo, int fieldId, int recordId, RelationConfig cfg)
+    {
+        if (recordId <= 0) return "";
+        var edges = repo.GetLinkEdges(fieldId, recordId);
+        if (edges.Count == 0) return "";
+        var titles = new Dictionary<int, string>();
+        var gone   = new HashSet<(int To, int Db)>();
+        foreach (var grp in edges.GroupBy(e => e.TargetDbId))
+        {
+            var target = grp.Key == 0 ? repo : RelationDbResolver.RepoFor(grp.Key);
+            var ids    = grp.Select(e => e.ToRecordId).Distinct().ToList();
+            var map    = target?.GetRecordTitles(ids);
+            foreach (var id in ids)
+            {
+                if (map is null)                         titles[id] = "(база недоступна)";
+                else if (map.TryGetValue(id, out var t)) titles[id] = t;
+                else                                     gone.Add((id, grp.Key));
+            }
+        }
+        var parts = new List<string>();
+        foreach (var (toId, dbId) in edges)
+            if (!gone.Contains((toId, dbId))) parts.Add(TitleText.FirstLine(titles.GetValueOrDefault(toId, "")));
+        return string.Join(cfg.SeparatorString, parts);
+    }
+
     private void OpenPopup()
     {
         if (_recordId <= 0 || _popup is null) return;

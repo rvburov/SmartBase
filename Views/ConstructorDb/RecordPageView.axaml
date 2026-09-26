@@ -2,69 +2,17 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:w="using:SmartBase.Controls.Widgets"
              xmlns:comp="using:SmartBase.Controls.Components"
+             xmlns:grid="using:SmartBase.Controls.DrawnGrid"
              x:Class="SmartBase.Views.ConstructorDb.RecordPageView"
              Background="{StaticResource BrushBg}">
 
     <UserControl.Styles>
-        <!-- Карточка свойства: иконка типа + название · ручка-разделитель · значение.
-             Карточка белая на серой подложке блока свойств (PropertiesScroll) — фон нужен
-             явный, прозрачный дал бы серый. Hover — чуть притемненный белый (на сером фоне
-             серая подложка hover'а слила бы карточку с подложкой блока); выделение (клик) —
-             голубой фон + синяя рамка, как выбранная строка сайдбара. -->
-        <Style Selector="Border.proprow">
-            <Setter Property="Background"      Value="{StaticResource BrushBg}" />
-            <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
-            <Setter Property="BorderThickness" Value="{DynamicResource BorderLine}" />
-            <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
-            <Setter Property="Padding"         Value="10,3" />
-            <Setter Property="MinHeight"       Value="40" />
-            <Setter Property="Cursor"          Value="Hand" />
-        </Style>
-        <Style Selector="Border.proprow:pointerover">
-            <Setter Property="Background" Value="{StaticResource BrushInactiveBg}" />
-        </Style>
-        <Style Selector="Border.proprow.selected, Border.proprow.selected:pointerover">
-            <Setter Property="Background"  Value="{StaticResource BrushAccentLight}" />
-            <Setter Property="BorderBrush" Value="{StaticResource BrushAccent}" />
-        </Style>
-
-        <!-- Иконка типа и подпись свойства: серые по умолчанию, синие в выделенной карточке. -->
-        <Style Selector="Border.proprow TextBlock.propname">
-            <Setter Property="Foreground" Value="{StaticResource BrushSecondaryText}" />
-        </Style>
-        <Style Selector="Border.proprow Path.propicon">
-            <Setter Property="Stroke" Value="{StaticResource BrushSecondaryText}" />
-        </Style>
-        <Style Selector="Border.proprow.selected TextBlock.propname">
-            <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
-        </Style>
-        <Style Selector="Border.proprow.selected Path.propicon">
-            <Setter Property="Stroke" Value="{StaticResource BrushAccent}" />
-        </Style>
-
-        <!-- Ручка-разделитель (три вертикальные точки ⋮) между названием и значением.
-             Тянем влево/вправо — меняем общую ширину колонки названий у всех свойств. -->
-        <Style Selector="Border.propgrip">
-            <Setter Property="Background"          Value="Transparent" />
-            <Setter Property="Width"               Value="18" />
-            <Setter Property="VerticalAlignment"   Value="Stretch" />
-            <Setter Property="Cursor"              Value="SizeWestEast" />
-        </Style>
-
-        <!-- Строка «Добавить свойство» — такая же карточка, как у свойств (белая на серой
-             подложке, рамка, скругление, высота, отступы), только с иконкой «+» и подписью. -->
-        <Style Selector="Border.addprop">
-            <Setter Property="Background"      Value="{StaticResource BrushBg}" />
-            <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
-            <Setter Property="BorderThickness" Value="{DynamicResource BorderLine}" />
-            <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
-            <Setter Property="Padding"         Value="10,3" />
-            <Setter Property="MinHeight"       Value="40" />
-            <Setter Property="Cursor"          Value="Hand" />
-        </Style>
-        <Style Selector="Border.addprop:pointerover">
-            <Setter Property="Background" Value="{StaticResource BrushInactiveBg}" />
-        </Style>
+        <!-- Карточки свойств рисует поверхность списка (Controls/DrawnGrid/PropertySurface): белая
+             плашка на серой подложке блока, hover — чуть притемненный белый, выделение — голубой
+             фон + синяя рамка, подпись и иконка синеют; те же токены, что у карточек панели деталей
+             (Border.detailRow в Controls.axaml). Стилей карточек здесь больше нет: контролов у
+             карточек нет, редакторы значений (TextBox.propValue и другие) ставятся над карточкой
+             под указателем. -->
 
         <!-- Нижний воздух редактора описания — ВНУТРИ его прокрутки, на самом тексте: он
              уезжает вместе со строками, поэтому в середине прокрутки текст доходит до линии
@@ -94,9 +42,12 @@
                       Background="{StaticResource BrushSecondaryBg}"
                       VerticalScrollBarVisibility="Auto"
                       HorizontalScrollBarVisibility="Disabled">
-            <!-- Карточки свойств и строка «Добавить свойство» строятся в code-behind
-                 (BuildProperties). Отступ снизу равен верхнему — блок не липнет к описанию. -->
-            <StackPanel x:Name="PropertiesHost" Margin="16,16,16,16" Spacing="6" />
+            <!-- Список свойств рисованный (этап 7 плана drawn-grid.md): карточки и строка
+                 «Добавить свойство» — описания из модели (BuildProperties), рисуются только в
+                 окне прокрутки; поля списка 16 сверху и по бокам, 10 снизу, зазор 6 — как у
+                 прежнего хоста карточек. Панель прокручивается логически внутри этого ScrollViewer:
+                 полоса, колесо и смещение — его. -->
+            <grid:PropertyList x:Name="PropertiesHost" />
         </ScrollViewer>
 
         <!-- Ручка перетаскивания: делит свойства (сверху) и описание (снизу).

@@ -281,6 +281,7 @@
     <InternalsVisibleTo Include="SmartBase.Tests.EditGeometry" />
     <InternalsVisibleTo Include="SmartBase.Tests.WideGui" />
     <InternalsVisibleTo Include="SmartBase.Tests.ServiceGrids" />
+    <InternalsVisibleTo Include="SmartBase.Tests.RecordPage" />
   </ItemGroup>
 
 </Project>
