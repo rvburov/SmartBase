@@ -1,34 +1,24 @@
 using Avalonia;
-using Avalonia.Collections;
 using Avalonia.Controls;
-using Avalonia.Controls.Primitives;
-using Avalonia.Controls.Shapes;
-using Avalonia.Controls.Templates;
-using Avalonia.Data;
-using Avalonia.Input;
-using Avalonia.Layout;
 using Avalonia.Media;
-using Avalonia.Styling;
-using Avalonia.Threading;
-using Avalonia.VisualTree;
 using SmartBase.Database;
 using SmartBase.Database.Repositories;
 using SmartBase.Utils;
-using SmartBase.Controls.Behaviors;
 using SmartBase.Controls.Components;
 using SmartBase.Controls.Dialogs;
+using SmartBase.Controls.DrawnGrid;
 using SmartBase.Core.Models;
+using SmartBase.ViewModels.ConstructorDb;
 using ChangeLogRow = SmartBase.Database.Repositories.ConstructorRepository.ChangeLogRow;
-using Path = Avalonia.Controls.Shapes.Path;
 
 namespace SmartBase.Views.Profile;
 
 /// <summary>
-/// «История изменений» — таблица журнала выбранной базы в стиле таблицы конструктора
-/// (TableView): те же линии/шапка и то же окно фильтра и сортировки в заголовке колонки
-/// (<see cref="ColumnFilterPanel"/>: каскад фильтров, автоотметка найденного, Enter). Выбор
-/// базы — в навбаре (NavbarProfile), только среди баз с допуском. Строки подгружаются
-/// keyset-страницами по 200 при прокрутке к концу (GetChangeLogPageAsync, отдельное
+/// «История изменений» — таблица журнала выбранной базы в стиле таблицы конструктора: та же
+/// рисованная сетка (<see cref="ServiceGrid"/>: те же линии и шапка) и то же окно фильтра и
+/// сортировки в заголовке колонки (<see cref="ColumnFilterPanel"/>: каскад фильтров, автоотметка
+/// найденного, Enter). Выбор базы — в навбаре (NavbarProfile), только среди баз с допуском. Строки
+/// подгружаются keyset-страницами по 200 при прокрутке к концу (GetChangeLogPageAsync, отдельное
 /// подключение) — миллионы строк не фризят UI. Фильтры и сортировка считаются в SQL.
 /// </summary>
 public partial class ProfileView
@@ -55,16 +45,13 @@ public partial class ProfileView
     private bool _historyEnd;
     // Поколение запроса: смена базы/фильтра во время чтения страницы обесценивает результат.
     private int _historyGen;
-    private readonly AvaloniaList<ChangeLogRow> _historyRows = [];
+    // Прочитанные строки в порядке показа: последняя — keyset-курсор следующей страницы.
+    private readonly List<ChangeLogRow> _historyRows = [];
 
     // key колонки → набор разрешенных СЫРЫХ значений; нет ключа = фильтра нет (как в TableView).
     private readonly Dictionary<string, HashSet<string>> _historyFilters = [];
     private string? _historySortKey;
     private bool _historySortAsc;
-
-    // Шевроны шапки: ключ колонки → Path, чтобы подсвечивать активный фильтр/сортировку.
-    private readonly Dictionary<string, Path> _historyChevrons = [];
-    private ScrollBar? _historyScroll;
 
     // ── Панель ────────────────────────────────────────────────────────────────
 
@@ -81,7 +68,8 @@ public partial class ProfileView
         if (HistoryGrid.Columns.Count == 0)
         {
             BuildHistoryColumns();
-            HistoryGrid.ItemsSource = _historyRows;
+            HistoryGrid.NearEnd         += (_, _) => _ = LoadMoreHistoryAsync();
+            HistoryGrid.FilterRequested += (_, e) => ShowHistoryFilterFlyout(e.Anchor, e.Key);
         }
         HookHistoryDetail();
         OnHistoryDbChanged();
@@ -117,7 +105,7 @@ public partial class ProfileView
             _historySortKey = null;
         }
         _historyDb = db;
-        UpdateHistoryChevrons();
+        HistoryGrid.RefreshHeader();
         ReloadHistoryRows();
     }
 
@@ -128,6 +116,7 @@ public partial class ProfileView
         CloseHistoryDetail();
         _historyGen++;
         _historyRows.Clear();
+        HistoryGrid.Clear();
         _historyEnd = _historyDb is null;
         HistoryEmptyText.IsVisible = false;
         if (_historyDb is null) { ShowHistoryEmptyText(); return; }
@@ -158,12 +147,11 @@ public partial class ProfileView
             // Пока читали страницу, могли переключить базу/фильтр — результат уже не наш.
             if (gen != _historyGen) return;
 
+            var first = _historyRows.Count;
             _historyRows.AddRange(page);
+            HistoryGrid.AppendRows(page.Select((row, i) => TableRowVm.Static(first + i + 1, key => HistoryCellText(key, row), row)));
             if (page.Count < HistoryPageSize) _historyEnd = true;
             ShowHistoryEmptyText();
-
-            // Подписка на вертикальный скролл — после того, как шаблон DataGrid построен.
-            Dispatcher.UIThread.Post(EnsureHistoryScrollHook, DispatcherPriority.Background);
         }
         catch (Exception ex)
         {
@@ -192,22 +180,6 @@ public partial class ProfileView
 
     private Dictionary<string, IReadOnlyCollection<string>> HistoryFiltersSnapshot() =>
         _historyFilters.ToDictionary(kv => kv.Key, kv => (IReadOnlyCollection<string>)kv.Value);
-
-    // Следующая страница — при прокрутке к концу (порог ~300px до низа).
-    private void EnsureHistoryScrollHook()
-    {
-        if (_historyScroll is not null) return;
-        _historyScroll = HistoryGrid.GetVisualDescendants().OfType<ScrollBar>()
-            .FirstOrDefault(s => s.Orientation == Orientation.Vertical);
-        if (_historyScroll is null) return;
-
-        _historyScroll.PropertyChanged += (_, e) =>
-        {
-            if (e.Property != RangeBase.ValueProperty) return;
-            if (_historyScroll.Maximum > 0 && _historyScroll.Value >= _historyScroll.Maximum - 300)
-                _ = LoadMoreHistoryAsync();
-        };
-    }
 
     // ── Выгрузка в CSV ────────────────────────────────────────────────────────
     //
@@ -279,161 +251,24 @@ public partial class ProfileView
         finally { _historyExporting = false; }
     }
 
-    // ── Колонки и шапка ───────────────────────────────────────────────────────
+    // ── Колонки ───────────────────────────────────────────────────────────────
 
+    // Колонки-текст поровну от ширины окна, не уже 110; в шапке — иконка поля и кнопка фильтра.
+    // «Объект» с «до → после» обрезается чаще других — полный текст в подсказке ячейки.
     private void BuildHistoryColumns()
     {
-        _historyChevrons.Clear();
-        foreach (var def in HistoryColumns)
+        HistoryGrid.SetColumns(HistoryColumns.Select(def => new TableColumnDef
         {
-            HistoryGrid.Columns.Add(new DataGridTemplateColumn
-            {
-                Header       = BuildHistoryHeader(def.Key, def.Header, def.IconKey),
-                Width        = new DataGridLength(1, DataGridLengthUnitType.Star),
-                MinWidth     = 110,
-                CellTemplate = BuildHistoryCellTemplate(def.Key),
-            });
-        }
-    }
-
-    // Шапка колонки: [иконка типа][название][шеврон фильтра] + правая линия — как
-    // MakeTextHeader в TableView и шапка «Диагностики».
-    private Control BuildHistoryHeader(string key, string header, string iconKey)
-    {
-        var text = new TextBlock
-        {
-            Text              = header,
-            FontSize          = (double)this.FindResource("FontSizeBase")!,
-            VerticalAlignment = VerticalAlignment.Center,
-            TextTrimming      = TextTrimming.CharacterEllipsis,
-            Foreground        = (IBrush)this.FindResource("BrushSecondaryText")!,
-        };
-
-        // Сетка [иконка типа][текст][шеврон] — 1-в-1 как шапка таблицы конструктора
-        // (TableView.MakeTextHeader): иконка IconSizeSmall с отступом 6px справа.
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
-
-        var icon = BuildHistoryHeaderIcon(iconKey);
-        Grid.SetColumn(icon, 0);
-        grid.Children.Add(icon);
-
-        Grid.SetColumn(text, 1);
-        grid.Children.Add(text);
-
-        var chevron = BuildHistoryChevron(key);
-        Grid.SetColumn(chevron, 2);
-        grid.Children.Add(chevron);
-
-        var border = new Border
-        {
-            Background          = Brushes.Transparent,
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment   = VerticalAlignment.Stretch,
-            Padding             = new Thickness(6, 0),
-            Child               = grid,
-        };
-        border.Classes.Add("colHeader");   // hover-фон через стиль (Assets/Styles/Controls.axaml)
-
-        // Правая линия шапки — Rectangle в тех же слотах Grid "*,Auto", что и в ячейках
-        // (см. WrapHeaderContent в TableView: одинаковое округление при любом зуме/DPI).
-        var host = new Grid
-        {
-            Background          = Brushes.Transparent,
-            ColumnDefinitions   = new ColumnDefinitions("*,Auto"),
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment   = VerticalAlignment.Stretch,
-        };
-        Grid.SetColumn(border, 0);
-        host.Children.Add(border);
-
-        var line = new Rectangle
-        {
-            Fill              = (IBrush)this.FindResource("BrushSeparator")!,
-            VerticalAlignment = VerticalAlignment.Stretch,
-        };
-        line.Bind(Rectangle.WidthProperty,              line.GetResourceObservable("SeparatorThickness"));
-        line.Bind(Layoutable.UseLayoutRoundingProperty, line.GetResourceObservable("LineUseLayoutRounding"));
-        RenderOptions.SetEdgeMode(line, EdgeMode.Aliased);
-        Grid.SetColumn(line, 1);
-        host.Children.Add(line);
-
-        return host;
-    }
-
-    // Иконка типа в шапке колонки — как в таблице конструктора (TableView.BuildTypeIcon):
-    // Viewbox IconSizeSmall, отступ 6px справа, обводка BrushSecondaryText / IconStrokeSmall.
-    private Control BuildHistoryHeaderIcon(string iconKey) => new Viewbox
-    {
-        Width             = HistoryIconSize("IconSizeSmall"),
-        Height            = HistoryIconSize("IconSizeSmall"),
-        VerticalAlignment = VerticalAlignment.Center,
-        Margin            = new Thickness(0, 0, 6, 0),
-        Child = new Canvas
-        {
-            Width  = 24,
-            Height = 24,
-            Children =
-            {
-                new Path
-                {
-                    Data            = HistoryIcon(iconKey),
-                    Stroke          = (IBrush)this.FindResource("BrushSecondaryText")!,
-                    StrokeThickness = HistoryIconSize("IconStrokeSmall"),
-                    StrokeLineCap   = PenLineCap.Round,
-                    StrokeJoin      = PenLineJoin.Round,
-                },
-            },
-        },
-    };
-
-    // Стрелка в шапке колонки — открывает окно фильтра/сортировки (как в TableView:
-    // спокойное состояние — серый шеврон, активный фильтр/сортировка — синяя воронка).
-    private Control BuildHistoryChevron(string key)
-    {
-        var path = new Path
-        {
-            StrokeThickness = 2,
-            StrokeLineCap   = PenLineCap.Round,
-            StrokeJoin      = PenLineJoin.Round,
-        };
-        _historyChevrons[key] = path;
-        ApplyHistoryChevronState(key, path);
-
-        var canvas = new Canvas { Width = 24, Height = 24 };
-        canvas.Children.Add(path);
-
-        var btn = new Button
-        {
-            Width             = 20,
-            Height            = 20,
-            VerticalAlignment = VerticalAlignment.Center,
-            Content           = new Viewbox
-            {
-                Width  = HistoryIconSize("IconSizeSmall"),
-                Height = HistoryIconSize("IconSizeSmall"),
-                Child  = canvas,
-            },
-        };
-        btn.Classes.Add("icon");
-        btn.Classes.Add("filterChevron");
-        ToolTip.SetTip(btn, "Фильтр и сортировка");
-        btn.Click += (_, _) => ShowHistoryFilterFlyout(btn, key);
-        return btn;
-    }
-
-    private void ApplyHistoryChevronState(string key, Path path)
-    {
-        var active  = _historyFilters.ContainsKey(key) || _historySortKey == key;
-        path.Data   = active ? HistoryIcon("IconFilter") : HistoryIcon("IconChevronDown");
-        path.Stroke = active
-            ? (IBrush)this.FindResource("BrushAccent")!
-            : (IBrush)this.FindResource("BrushSecondaryText")!;
-    }
-
-    private void UpdateHistoryChevrons()
-    {
-        foreach (var (key, path) in _historyChevrons)
-            ApplyHistoryChevronState(key, path);
+            Key           = def.Key,
+            Header        = def.Header,
+            FieldType     = "text",
+            IsStarWidth   = true,
+            MinWidth      = 110,
+            HeaderIconKey = def.IconKey,
+            CellTip       = def.Key == "object" ? vm => vm["object"] : null,
+        }));
+        // Активный фильтр или сортировка — синяя воронка вместо шеврона в шапке.
+        HistoryGrid.IsColumnFiltered = key => _historyFilters.ContainsKey(key) || _historySortKey == key;
     }
 
     private static Geometry HistoryIcon(string key) =>
@@ -445,22 +280,6 @@ public partial class ProfileView
         Application.Current!.TryFindResource(key, out var r) && r is double d ? d : 16;
 
     // ── Ячейки ────────────────────────────────────────────────────────────────
-
-    private IDataTemplate BuildHistoryCellTemplate(string key) =>
-        new FuncDataTemplate<ChangeLogRow>((row, _) =>
-        {
-            if (row is null) return new TextBlock();
-            var text = new TextBlock
-            {
-                Text              = HistoryCellText(key, row),
-                Margin            = new Thickness(8, 0),
-                VerticalAlignment = VerticalAlignment.Center,
-                TextTrimming      = TextTrimming.CharacterEllipsis,
-            };
-            // «Объект» с «до → после» обрезается чаще других — полный текст в тултипе.
-            if (key == "object") ToolTip.SetTip(text, text.Text);
-            return text;
-        });
 
     private static string HistoryCellText(string key, ChangeLogRow row) => key switch
     {
@@ -484,9 +303,6 @@ public partial class ProfileView
     // «10 000 записей», дубль/удаление коллекции с записями — «Имя (N записей)».
     private static string HistoryObjectText(ChangeLogRow row) =>
         ChangeLogLabels.ObjectText(row.TargetType, row.TargetName, row.Count, row.Detail);
-
-    // Русское склонение: 1 запись, 2 записи, 10 000 записей.
-
 
     // ISO UTC → локальное «дд.MM.гггг HH:mm».
     private static string FormatHistoryTs(string iso) => ChangeLogLabels.FormatTs(iso);
@@ -535,7 +351,7 @@ public partial class ProfileView
                 // значения чужого журнала в фильтр этой базы не кладем.
                 if (!ReferenceEquals(db, _historyDb)) return;
                 result.ApplyTo(_historyFilters, ref _historySortKey, ref _historySortAsc);
-                UpdateHistoryChevrons();
+                HistoryGrid.RefreshHeader();
                 ReloadHistoryRows();
             },
         });

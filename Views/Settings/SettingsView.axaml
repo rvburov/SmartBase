@@ -3,20 +3,12 @@
              xmlns:vm="using:SmartBase.Views.Settings"
              xmlns:comp="using:SmartBase.Controls.Components"
              xmlns:w="using:SmartBase.Controls.Widgets"
+             xmlns:grid="using:SmartBase.Controls.DrawnGrid"
              x:Class="SmartBase.Views.Settings.SettingsView"
              Background="{StaticResource BrushBg}">
 
     <UserControl.Resources>
         <ResourceDictionary>
-        <!-- Таблица «Диагностики» — тот же вид, что таблица конструктора (TableView):
-             локальные копии тем DataGrid и переопределение кистей линий на BrushSeparator.
-             Подробные комментарии по линиям/округлению — в TableView.axaml. -->
-        <ResourceDictionary.MergedDictionaries>
-            <ResourceInclude Source="avares://SmartBase/Assets/Styles/DataGridThemes.axaml" />
-        </ResourceDictionary.MergedDictionaries>
-        <SolidColorBrush x:Key="DataGridGridLinesBrush"             Color="{StaticResource ColorSeparator}" />
-        <SolidColorBrush x:Key="DataGridFillerColumnGridLinesBrush" Color="{StaticResource ColorSeparator}" />
-
         <!-- Ползунок-«таблетка»: белый прямоугольник со скруглением и мягкой тенью. -->
         <ControlTheme x:Key="SettingSliderThumb" TargetType="Thumb">
             <Setter Property="Cursor" Value="Hand" />
@@ -106,62 +98,6 @@
         </Style>
         <Style Selector="Border.tocrow.selected TextBlock">
             <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
-        </Style>
-
-        <!-- Стили DataGrid таблицы «Диагностики»: линии сетки динамической толщины и шапка без
-             своего фона — почему так, объяснено в паспорте копий тем (Assets/Styles/DataGridThemes.axaml). -->
-        <Style Selector="DataGridCell">
-            <Setter Property="Padding"         Value="0" />
-            <Setter Property="BorderThickness" Value="0" />
-            <Setter Property="FontSize"        Value="{DynamicResource FontSizeBase}" />
-            <Setter Property="Foreground"      Value="{StaticResource BrushPrimaryText}" />
-        </Style>
-        <Style Selector="DataGridCell:current /template/ Grid#FocusVisual">
-            <Setter Property="IsVisible" Value="False" />
-        </Style>
-        <Style Selector="DataGridCell /template/ Rectangle#PART_RightGridLine">
-            <Setter Property="Width"             Value="{DynamicResource SeparatorThickness}" />
-            <Setter Property="UseLayoutRounding" Value="{DynamicResource LineUseLayoutRounding}" />
-        </Style>
-        <Style Selector="DataGridRow /template/ Rectangle#PART_BottomGridLine">
-            <Setter Property="Height"            Value="{DynamicResource SeparatorThickness}" />
-            <Setter Property="UseLayoutRounding" Value="{DynamicResource LineUseLayoutRounding}" />
-        </Style>
-        <Style Selector="DataGrid /template/ Rectangle#PART_ColumnHeadersAndRowsSeparator">
-            <Setter Property="Height"            Value="{DynamicResource SeparatorThickness}" />
-            <Setter Property="UseLayoutRounding" Value="{DynamicResource LineUseLayoutRounding}" />
-        </Style>
-        <Style Selector="DataGridRow:pointerover /template/ Rectangle#BackgroundRectangle">
-            <Setter Property="Fill"    Value="{StaticResource BrushSecondaryBg}" />
-            <Setter Property="Opacity" Value="1" />
-        </Style>
-        <Style Selector="DataGridRow:selected /template/ Rectangle#BackgroundRectangle">
-            <Setter Property="Fill"    Value="{StaticResource BrushAccentLight}" />
-            <Setter Property="Opacity" Value="1" />
-        </Style>
-        <Style Selector="DataGridRow:selected:pointerover /template/ Rectangle#BackgroundRectangle">
-            <Setter Property="Fill"    Value="{StaticResource BrushAccentLight}" />
-            <Setter Property="Opacity" Value="1" />
-        </Style>
-        <Style Selector="DataGridRow:selected DataGridCell">
-            <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
-        </Style>
-        <Style Selector="DataGridColumnHeader">
-            <Setter Property="UseLayoutRounding"          Value="{DynamicResource LineUseLayoutRounding}" />
-            <Setter Property="Background"                 Value="Transparent" />
-            <Setter Property="Padding"                    Value="0" />
-            <Setter Property="Height"                     Value="{StaticResource RowHeightStandard}" />
-            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-            <Setter Property="VerticalContentAlignment"   Value="Stretch" />
-            <Setter Property="Template">
-                <ControlTemplate>
-                    <Border Background="{TemplateBinding Background}">
-                        <ContentPresenter Content="{TemplateBinding Content}"
-                                          HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
-                                          VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}" />
-                    </Border>
-                </ControlTemplate>
-            </Setter>
         </Style>
 
         <!-- Карточки полей панели деталей — общий стиль Border.detailRow
@@ -1657,25 +1593,11 @@
 
             <!-- ── Диагностика ───────────────────────────────────
                  Журнал logs.db (Serilog): единый файл на приложение, без выбора базы.
+                 Таблица — рисованная сетка служебных таблиц (Controls/DrawnGrid/ServiceGrid):
+                 колонки и строки задает code-behind (SettingsLogsTable.cs).
                  Деталь строки — отдельной панелью справа (Column 2 корневой сетки). -->
             <Panel x:Name="LogsPanel" IsVisible="False">
-                <DataGrid x:Name="LogsGrid"
-                          AutoGenerateColumns="False"
-                          RowHeight="{StaticResource RowHeightStandard}"
-                          CanUserResizeColumns="False"
-                          CanUserReorderColumns="False"
-                          CanUserSortColumns="False"
-                          GridLinesVisibility="All"
-                          HorizontalGridLinesBrush="{StaticResource BrushSeparator}"
-                          VerticalGridLinesBrush="{StaticResource BrushSeparator}"
-                          HeadersVisibility="Column"
-                          SelectionMode="Single"
-                          IsReadOnly="True"
-                          Background="Transparent"
-                          UseLayoutRounding="{DynamicResource LineUseLayoutRounding}"
-                          RowBackground="{StaticResource BrushBg}"
-                          HorizontalScrollBarVisibility="Auto"
-                          VerticalScrollBarVisibility="Auto" />
+                <grid:ServiceGrid x:Name="LogsGrid" />
                 <TextBlock x:Name="LogsEmptyText"
                            Text="Записей пока нет."
                            IsVisible="False"

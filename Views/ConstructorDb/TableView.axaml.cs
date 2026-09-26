@@ -23,6 +23,7 @@ using SmartBase.Database.Repositories;
 using SmartBase.Logging;
 using SmartBase.Utils;
 using SmartBase.ViewModels.ConstructorDb;
+using SmartBase.Controls.DrawnGrid;
 using SmartBase.Views.ConstructorDb.DrawnGrid;
 
 namespace SmartBase.Views.ConstructorDb;

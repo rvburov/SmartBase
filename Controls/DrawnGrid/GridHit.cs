@@ -2,7 +2,7 @@ using Avalonia;
 using Avalonia.Input;
 using SmartBase.ViewModels.ConstructorDb;
 
-namespace SmartBase.Views.ConstructorDb.DrawnGrid;
+namespace SmartBase.Controls.DrawnGrid;
 
 /// <summary>Что лежит под точкой на поверхности сетки.</summary>
 public enum GridHitKind

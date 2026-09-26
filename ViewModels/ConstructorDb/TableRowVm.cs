@@ -32,6 +32,14 @@ public class TableRowVm : INotifyPropertyChanged
     public int  RowNumber   { get; private set; }
     public bool IsAddRow    { get; }
 
+    // Строка служебной таблицы: значения по строковым ключам колонок читаются из источника при
+    // каждом обращении, в базу ничего не пишется (см. Static).
+    private readonly Func<string, string>? _named;
+
+    /// <summary>Исходная строка данных служебной таблицы (строка журнала, пользователь); у строк
+    /// таблицы коллекции null.</summary>
+    public object? Source { get; }
+
     /// <summary>Оформление отдельных ячеек строки: ключ колонки → стиль. У подавляющего
     /// большинства строк null — цветные ячейки редки, словарь заводим только когда они есть.</summary>
     public IReadOnlyDictionary<string, RowStyle>? CellStyles { get; private set; }
@@ -98,6 +106,29 @@ public class TableRowVm : INotifyPropertyChanged
     }
 
     public static TableRowVm AddRow() => new();
+
+    /// <summary>
+    /// Строка служебной таблицы (ServiceGrid): значения по строковым ключам колонок дает
+    /// <paramref name="valueOf"/> — живое чтение из источника, поэтому правка источника видна после
+    /// перерисовки без пересборки строки. Записи в базу нет, репозитория нет; номер строки служит и
+    /// ключом записи (выделение строки в сетке идет по нему).
+    /// </summary>
+    public static TableRowVm Static(int rowNumber, Func<string, string> valueOf, object? source = null) =>
+        new(rowNumber, valueOf, source);
+
+    private TableRowVm(int rowNumber, Func<string, string> valueOf, object? source)
+    {
+        RecordId     = rowNumber;
+        RowNumber    = rowNumber;
+        _named       = valueOf;
+        Source       = source;
+        _values      = [];
+        _title       = "";
+        _createdAt   = "";
+        _updatedAt   = "";
+        _createdBy   = "";
+        _updatedBy   = "";
+    }
 
     /// <summary>Строка-заглушка «Загрузка…» до прихода данных страницы (async-подгрузка).</summary>
     public static TableRowVm Loading(int rowNumber) => new(rowNumber);
@@ -184,20 +215,21 @@ public class TableRowVm : INotifyPropertyChanged
     }
 
     /// <summary>
-    /// Индексатор по строковому ключу field.Id — DataGrid биндится сюда как [123].
+    /// Индексатор по строковому ключу field.Id — сетка читает значение ячейки как [123].
     /// Запись прокидывается в БД, чекбоксы хранят "0"/"1".
     /// </summary>
     public string this[string key]
     {
         get
         {
+            if (_named is not null) return _named(key);
             if (IsLoading) return key == TitleKey ? "Загрузка…" : "";
             if (key == TitleKey) return _title;
             return int.TryParse(key, out var id) && _values.TryGetValue(id, out var v) ? v : "";
         }
         set
         {
-            if (IsAddRow || IsLoading) return;
+            if (IsAddRow || IsLoading || _named is not null) return;
             var newVal = value ?? "";
 
             // Запись в БД может не пройти в многопользовательском режиме (файл занят чужим

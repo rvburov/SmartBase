@@ -32,6 +32,7 @@ using SmartBase.Core.Models;
 using SmartBase.Database;
 using SmartBase.ViewModels.ConstructorDb;
 using SmartBase.Views.ConstructorDb;
+using SmartBase.Controls.DrawnGrid;
 using SmartBase.Views.ConstructorDb.DrawnGrid;
 
 var path = Arg("--db");

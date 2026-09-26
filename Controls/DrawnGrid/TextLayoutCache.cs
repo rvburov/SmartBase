@@ -1,7 +1,7 @@
 using Avalonia.Media;
 using Avalonia.Media.TextFormatting;
 
-namespace SmartBase.Views.ConstructorDb.DrawnGrid;
+namespace SmartBase.Controls.DrawnGrid;
 
 /// <summary>
 /// Кеш готовых раскладок текста для рисованной сетки. Раскладка (шейпинг глифов, перенос,

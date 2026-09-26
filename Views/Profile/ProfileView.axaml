@@ -1,94 +1,16 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:comp="using:SmartBase.Controls.Components"
+             xmlns:grid="using:SmartBase.Controls.DrawnGrid"
              x:Class="SmartBase.Views.Profile.ProfileView"
              Background="{StaticResource BrushBg}">
 
-    <!-- Таблица «Истории изменений» — тот же вид, что таблица конструктора (TableView):
-         локальные копии тем DataGrid и переопределение кистей линий на BrushSeparator.
-         Подробные комментарии по линиям/округлению — в TableView.axaml. -->
-    <UserControl.Resources>
-        <ResourceDictionary>
-            <ResourceDictionary.MergedDictionaries>
-                <ResourceInclude Source="avares://SmartBase/Assets/Styles/DataGridThemes.axaml" />
-            </ResourceDictionary.MergedDictionaries>
-            <SolidColorBrush x:Key="DataGridGridLinesBrush"             Color="{StaticResource ColorSeparator}" />
-            <SolidColorBrush x:Key="DataGridFillerColumnGridLinesBrush" Color="{StaticResource ColorSeparator}" />
-        </ResourceDictionary>
-    </UserControl.Resources>
+    <!-- Таблицы «Истории изменений», «Пользователей» и журнала безопасности — рисованная сетка
+         служебных таблиц (Controls/DrawnGrid/ServiceGrid): тот же вид, что у таблицы конструктора,
+         колонки и строки задает code-behind. Строка одного пункта, ячейка с данными и строка
+         таблицы — общие (Assets/Styles/SettingRows.axaml): панель администратора показывает те же
+         строки, что раздел «Интеграции», и вторая копия стилей разошлась бы с первой. -->
 
-    <UserControl.Styles>
-        <!-- Строка одного пункта, ячейка с данными и строка таблицы — общие
-             (Assets/Styles/SettingRows.axaml): панель администратора показывает те же
-             строки, что раздел «Интеграции», и вторая копия стилей разошлась бы с первой. -->
-
-        <!-- Стили DataGrid таблицы истории: линии сетки динамической толщины и шапка без своего
-             фона — почему так, объяснено в паспорте копий тем (Assets/Styles/DataGridThemes.axaml). -->
-        <Style Selector="DataGridCell">
-            <Setter Property="Padding"         Value="0" />
-            <Setter Property="BorderThickness" Value="0" />
-            <Setter Property="FontSize"        Value="{DynamicResource FontSizeBase}" />
-            <Setter Property="Foreground"      Value="{StaticResource BrushPrimaryText}" />
-        </Style>
-        <Style Selector="DataGridCell:current /template/ Grid#FocusVisual">
-            <Setter Property="IsVisible" Value="False" />
-        </Style>
-        <Style Selector="DataGridCell /template/ Rectangle#PART_RightGridLine">
-            <Setter Property="Width"             Value="{DynamicResource SeparatorThickness}" />
-            <Setter Property="UseLayoutRounding" Value="{DynamicResource LineUseLayoutRounding}" />
-        </Style>
-        <Style Selector="DataGridRow /template/ Rectangle#PART_BottomGridLine">
-            <Setter Property="Height"            Value="{DynamicResource SeparatorThickness}" />
-            <Setter Property="UseLayoutRounding" Value="{DynamicResource LineUseLayoutRounding}" />
-        </Style>
-        <Style Selector="DataGrid /template/ Rectangle#PART_ColumnHeadersAndRowsSeparator">
-            <Setter Property="Height"            Value="{DynamicResource SeparatorThickness}" />
-            <Setter Property="UseLayoutRounding" Value="{DynamicResource LineUseLayoutRounding}" />
-        </Style>
-        <Style Selector="DataGridRow:pointerover /template/ Rectangle#BackgroundRectangle">
-            <Setter Property="Fill"    Value="{StaticResource BrushSecondaryBg}" />
-            <Setter Property="Opacity" Value="1" />
-        </Style>
-        <Style Selector="DataGridRow:selected /template/ Rectangle#BackgroundRectangle">
-            <Setter Property="Fill"    Value="{StaticResource BrushAccentLight}" />
-            <Setter Property="Opacity" Value="1" />
-        </Style>
-        <Style Selector="DataGridRow:selected:pointerover /template/ Rectangle#BackgroundRectangle">
-            <Setter Property="Fill"    Value="{StaticResource BrushAccentLight}" />
-            <Setter Property="Opacity" Value="1" />
-        </Style>
-        <Style Selector="DataGridRow:selected DataGridCell">
-            <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
-        </Style>
-        <Style Selector="DataGridColumnHeader">
-            <Setter Property="UseLayoutRounding"          Value="{DynamicResource LineUseLayoutRounding}" />
-            <Setter Property="Background"                 Value="Transparent" />
-            <Setter Property="Padding"                    Value="0" />
-            <Setter Property="Height"                     Value="{StaticResource RowHeightStandard}" />
-            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-            <Setter Property="VerticalContentAlignment"   Value="Stretch" />
-            <Setter Property="Template">
-                <ControlTemplate>
-                    <Border Background="{TemplateBinding Background}">
-                        <ContentPresenter Content="{TemplateBinding Content}"
-                                          HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
-                                          VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}" />
-                    </Border>
-                </ControlTemplate>
-            </Setter>
-        </Style>
-
-        <!-- Горизонтальная полоса таблицы пользователей — во всю ширину. У таблицы
-             закреплена первая колонка, а DataGrid под закрепленными ставит распорку
-             (PART_FrozenColumnScrollBarSpacer) и полоса начинается только после них.
-             Распорку прячем: ее колонка Auto схлопывается в ноль, полоса идет от края
-             до края, как в остальных таблицах приложения. Ширину распорки DataGrid
-             задает из кода, поэтому гасим именно видимость, а не Width. -->
-        <Style Selector="DataGrid#UsersGrid /template/ Rectangle#PART_FrozenColumnScrollBarSpacer">
-            <Setter Property="IsVisible" Value="False" />
-        </Style>
-
-    </UserControl.Styles>
 
     <!-- В разделе «История изменений» строка раскрывается панелью «Детали» во всю высоту
          справа (Column 2) — как в «Настройки → Диагностика»: ее навбар встает вровень
@@ -459,29 +381,13 @@
             <Panel x:Name="SecretsPanel" IsVisible="False" />
 
             <!-- ── История изменений ─────────────────────────────────
-                 Таблица журнала как в конструкторе: колонки с фильтром/сортировкой
-                 в шапке (строятся в коде — ProfileHistoryTable.cs), страницы
+                 Таблица журнала как в конструкторе (рисованная сетка): колонки с фильтром и
+                 сортировкой в шапке (строятся в коде — ProfileHistoryTable.cs), страницы
                  подгружаются при прокрутке. Выбор базы — в навбаре (NavbarProfile).
                  Без боковых полей остальных панелей — таблица вплотную к краю,
                  как TableView в конструкторе. -->
             <Panel x:Name="HistoryPanel" IsVisible="False">
-                <DataGrid x:Name="HistoryGrid"
-                          AutoGenerateColumns="False"
-                          RowHeight="{StaticResource RowHeightStandard}"
-                          CanUserResizeColumns="False"
-                          CanUserReorderColumns="False"
-                          CanUserSortColumns="False"
-                          GridLinesVisibility="All"
-                          HorizontalGridLinesBrush="{StaticResource BrushSeparator}"
-                          VerticalGridLinesBrush="{StaticResource BrushSeparator}"
-                          HeadersVisibility="Column"
-                          SelectionMode="Single"
-                          IsReadOnly="True"
-                          Background="Transparent"
-                          UseLayoutRounding="{DynamicResource LineUseLayoutRounding}"
-                          RowBackground="{StaticResource BrushBg}"
-                          HorizontalScrollBarVisibility="Auto"
-                          VerticalScrollBarVisibility="Auto" />
+                <grid:ServiceGrid x:Name="HistoryGrid" />
                 <TextBlock x:Name="HistoryEmptyText"
                            Text="Записей в журнале пока нет."
                            IsVisible="False"
@@ -566,29 +472,11 @@
                 <!-- Матрица «пользователь × действия»: колонки строятся в коде
                      (ProfileAdminUsers.cs) — вид таблицы конструктора: иконка типа
                      в шапке, шеврон фильтра/сортировки, те же линии и высота строки.
-                     Первая колонка закреплена — имя видно при горизонтальной прокрутке
-                     (полосу под ней освобождает стиль на PART_FrozenColumnScrollBarSpacer
-                     выше). Под шапкой сразу таблица: никаких пояснительных полос над ней
+                     Первая колонка закреплена — имя видно при горизонтальной прокрутке.
+                     Под шапкой сразу таблица: никаких пояснительных полос над ней
                      нет — что настраивается, сказано списками в шапке. -->
                 <Panel Grid.Row="1">
-                    <DataGrid x:Name="UsersGrid"
-                              AutoGenerateColumns="False"
-                              RowHeight="{StaticResource RowHeightStandard}"
-                              FrozenColumnCount="1"
-                              CanUserResizeColumns="False"
-                              CanUserReorderColumns="False"
-                              CanUserSortColumns="False"
-                              GridLinesVisibility="All"
-                              HorizontalGridLinesBrush="{StaticResource BrushSeparator}"
-                              VerticalGridLinesBrush="{StaticResource BrushSeparator}"
-                              HeadersVisibility="Column"
-                              SelectionMode="Single"
-                              IsReadOnly="True"
-                              Background="Transparent"
-                              UseLayoutRounding="{DynamicResource LineUseLayoutRounding}"
-                              RowBackground="{StaticResource BrushBg}"
-                              HorizontalScrollBarVisibility="Auto"
-                              VerticalScrollBarVisibility="Auto" />
+                    <grid:ServiceGrid x:Name="UsersGrid" />
                 </Panel>
             </Grid>
 
@@ -603,23 +491,7 @@
                   Background="{StaticResource BrushBg}">
 
                 <Panel Grid.Row="0">
-                    <DataGrid x:Name="LogGrid"
-                              AutoGenerateColumns="False"
-                              RowHeight="{StaticResource RowHeightStandard}"
-                              CanUserResizeColumns="False"
-                              CanUserReorderColumns="False"
-                              CanUserSortColumns="False"
-                              GridLinesVisibility="All"
-                              HorizontalGridLinesBrush="{StaticResource BrushSeparator}"
-                              VerticalGridLinesBrush="{StaticResource BrushSeparator}"
-                              HeadersVisibility="Column"
-                              SelectionMode="Single"
-                              IsReadOnly="True"
-                              Background="Transparent"
-                              UseLayoutRounding="{DynamicResource LineUseLayoutRounding}"
-                              RowBackground="{StaticResource BrushBg}"
-                              HorizontalScrollBarVisibility="Auto"
-                              VerticalScrollBarVisibility="Auto" />
+                    <grid:ServiceGrid x:Name="LogGrid" />
                     <TextBlock x:Name="LogEmptyText"
                                Text="Событий безопасности еще не было."
                                IsVisible="False"

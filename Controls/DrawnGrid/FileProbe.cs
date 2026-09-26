@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 using Avalonia.Threading;
 
-namespace SmartBase.Views.ConstructorDb.DrawnGrid;
+namespace SmartBase.Controls.DrawnGrid;
 
 /// <summary>
 /// Есть ли файл по пути — для ячеек типа «файл»: имя рисуется ссылкой, когда файл на месте, и

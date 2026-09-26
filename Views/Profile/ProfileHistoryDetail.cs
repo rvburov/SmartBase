@@ -57,7 +57,7 @@ public partial class ProfileView
         _historySelectionHooked = true;
     }
 
-    private void OnHistorySelectionChanged(object? sender, SelectionChangedEventArgs e)
+    private void OnHistorySelectionChanged(object? sender, EventArgs e)
     {
         if (HistoryGrid.SelectedItem is ChangeLogRow row) OpenHistoryDetail(row);
     }
@@ -82,8 +82,7 @@ public partial class ProfileView
         _historyNameCols.Clear();
         _historyDetailSelectedCard = null;
         HistoryDetailFullText.Text = "";
-        // Снять выделение — иначе повторный клик по той же строке не даст SelectionChanged.
-        HistoryGrid.SelectedItem = null;
+        HistoryGrid.ClearSelection();
     }
 
     private void CopyHistoryDetailField()

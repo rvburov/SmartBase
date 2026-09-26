@@ -55,11 +55,11 @@
              публикует Scaling в Application.Resources при загрузке и смене зума). -->
         <ScaleTransform x:Key="AppZoomTransform" ScaleX="1" ScaleY="1" />
 
-        <!-- Базовая высота строки: DataGrid.RowHeight (ячейки), высота шапки колонок
-             (DataGridColumnHeader.Height) и блоки событий. ВНИМАНИЕ: у строки ДАННЫХ таблицы
-             DataGrid ПРИБАВЛЯЕТ 1px линию сетки к RowHeight → ее реальный шаг = 36 + 1 = 37, а у
-             шапки колонок разделитель сидит внутри → ее высота = 36. Поэтому сайдбар выравнивается
-             так: первая строка (на месте шапки) = 36, остальные (на месте строк данных) = 37 —
+        <!-- Базовая высота строки: ячейки служебных таблиц (рисованная сетка, Controls/DrawnGrid),
+             высота шапки колонок и блоки событий. ВНИМАНИЕ: у строки ДАННЫХ таблицы к высоте
+             ПРИБАВЛЯЕТСЯ 1px линия сетки → ее реальный шаг = 36 + 1 = 37, а у шапки колонок
+             разделитель сидит внутри → ее высота = 36. Поэтому сайдбар выравнивается так: первая
+             строка (на месте шапки) = 36, остальные (на месте строк данных) = 37 —
              см. SidebarRow.RowHeight. Белые линии сайдбара тогда садятся на линии сетки таблицы. -->
         <x:Double x:Key="RowHeightStandard">36</x:Double>
 
@@ -89,9 +89,9 @@
         <x:Double x:Key="PopupListHeight">232</x:Double>
         <x:Double x:Key="PopupListMinHeight">120</x:Double>
 
-        <!-- Палитра и толщина скроллбара — одним набором токенов: шаблон полосы (ниже)
-             и локальные копии тем DataGrid ссылаются только на них, литералов в разметке
-             быть не должно (общее правило — docs/developer/ui/theming.md). -->
+        <!-- Палитра и толщина скроллбара — одним набором токенов: шаблон полосы (ниже) и полосы
+             рисованных сеток ссылаются только на них, литералов в разметке быть не должно
+             (общее правило — docs/developer/ui/theming.md). -->
         <x:Double x:Key="ScrollBarThickness">14</x:Double>
         <Color x:Key="ColorScrollbarTrack">#EDEDF0</Color>
         <SolidColorBrush x:Key="BrushScrollbarTrack"         Color="{StaticResource ColorScrollbarTrack}" />
@@ -102,8 +102,8 @@
 
         <!-- Квадрат на пересечении двух полос у обычного ScrollViewer (в теме Fluent —
              Panel#PART_ScrollBarsSeparator). Белый по умолчанию, перекрашиваем в цвет
-             дорожки, чтобы угол не выбивался пятном. То же, что сделано для таблицы
-             ключом DataGridScrollBarsSeparatorBackground. -->
+             дорожки, чтобы угол не выбивался пятном. Рисованные сетки красят свой угол
+             тем же BrushScrollbarTrack. -->
         <SolidColorBrush x:Key="ScrollViewerScrollBarsSeparatorBackground"
                          Color="{StaticResource ColorScrollbarTrack}" />
 
@@ -268,11 +268,6 @@
     <Style Selector="Button.filterChevron:pointerover /template/ ContentPresenter">
         <Setter Property="Background"     Value="{StaticResource BrushHover}" />
         <Setter Property="CornerRadius"   Value="4" />
-    </Style>
-
-    <!-- Цвет текста таблицы — из общей палитры (единый источник, как у Button/ComboBox/TextBox). -->
-    <Style Selector="DataGrid">
-        <Setter Property="Foreground" Value="{StaticResource BrushPrimaryText}" />
     </Style>
 
     <!-- Заголовок колонки таблицы: серый фон при наведении -->

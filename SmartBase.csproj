@@ -134,7 +134,6 @@
     <PackageReference Include="Avalonia"                        Version="11.2.3" />
     <PackageReference Include="Avalonia.Desktop"               Version="11.2.3" />
     <PackageReference Include="Avalonia.Themes.Fluent"         Version="11.2.3" />
-    <PackageReference Include="Avalonia.Controls.DataGrid"     Version="11.2.3" />
     <PackageReference Include="Avalonia.Fonts.Inter"           Version="11.2.3" />
     <PackageReference Include="CommunityToolkit.Mvvm"          Version="8.3.2"  />
     <PackageReference Include="Microsoft.EntityFrameworkCore"  Version="9.0.1"  />
@@ -281,6 +280,7 @@
     <InternalsVisibleTo Include="SmartBase.Tests.GridProto" />
     <InternalsVisibleTo Include="SmartBase.Tests.EditGeometry" />
     <InternalsVisibleTo Include="SmartBase.Tests.WideGui" />
+    <InternalsVisibleTo Include="SmartBase.Tests.ServiceGrids" />
   </ItemGroup>
 
 </Project>

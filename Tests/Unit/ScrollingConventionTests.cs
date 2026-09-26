@@ -37,7 +37,7 @@ public sealed class ScrollingConventionTests
 
             foreach (var file in Directory.EnumerateFiles(path, "*.axaml", SearchOption.AllDirectories))
             {
-                // Копии тем (DataGrid, ComboBox, попапы) — чужие шаблоны целиком, свои правила.
+                // Копии тем (ComboBox, попапы) — чужие шаблоны целиком, свои правила.
                 if (Path.GetFileName(file).EndsWith("Themes.axaml", StringComparison.Ordinal)) continue;
 
                 yield return (Path.GetRelativePath(root, file), XDocument.Load(file));

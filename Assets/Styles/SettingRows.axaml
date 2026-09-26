@@ -91,7 +91,7 @@
     <Style Selector="Border.tableRow.open">
         <Setter Property="Background" Value="{StaticResource BrushAccentLight}" />
     </Style>
-    <!-- Шапка таблицы: та же высота, что у строки, и тот же вид, что у шапки DataGrid. -->
+    <!-- Шапка таблицы: та же высота, что у строки, и тот же вид, что у шапки рисованной сетки. -->
     <Style Selector="Border.tableHead">
         <Setter Property="MinHeight" Value="{StaticResource RowHeightStandard}" />
         <Setter Property="Padding"   Value="0,6" />

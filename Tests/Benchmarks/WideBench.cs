@@ -150,7 +150,7 @@ internal static class WideBench
             return rows;
         }, r => $"{r.Length} строк");
 
-        // Чтение ВСЕХ ячеек страницы через индексатор строки — как делают привязки DataGrid,
+        // Чтение ВСЕХ ячеек страницы через индексатор строки — как делали привязки прежней таблицы,
         // когда колонки видимы (200 строк × число колонок обращений).
         var vmRows = BuildRows(repo, page, valMap);
         var keys   = fields.Select(f => f.Id!.Value.ToString()).ToArray();

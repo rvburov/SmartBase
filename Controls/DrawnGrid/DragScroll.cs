@@ -1,6 +1,6 @@
 using Avalonia;
 
-namespace SmartBase.Views.ConstructorDb.DrawnGrid;
+namespace SmartBase.Controls.DrawnGrid;
 
 /// <summary>
 /// Автопрокрутка при протягивании выделения за край области строк — чистая арифметика: указатель

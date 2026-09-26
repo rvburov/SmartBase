@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Стенд этапа 6а плана drawn-grid.md: служебные таблицы («Диагностика», «История изменений»,
+       «Пользователи», журнал безопасности) в настоящих SettingsView и ProfileView на временных
+       данных. Снимает кадры каждой таблицы при масштабе 1 и 2 (сцены: базовая, наведение на
+       заголовок и на кнопку фильтра, наведение на строку, выбранная строка с панелью деталей,
+       у «Пользователей» — прокрутка вбок с закрепленной колонкой) и сравнивает их попиксельно с
+       эталонами (папка ~~ref; нет эталона — кадр принимается за эталон: так сняты кадры таблиц
+       на DataGrid до перевода). Затем проверяет поведение: подгрузка при прокрутке, окно фильтра
+       у кнопки заголовка, стрелки по строкам с панелью деталей, галочка права кликом.
+       Настоящий шрифт (Skia), не входит в автотесты. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>SmartBase.Tests.ServiceGrids</RootNamespace>
+    <AssemblyName>SmartBase.Tests.ServiceGrids</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Headless" Version="11.2.3" />
+    <ProjectReference Include="..\..\SmartBase.csproj" />
+  </ItemGroup>
+
+</Project>

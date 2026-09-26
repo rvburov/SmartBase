@@ -1,26 +1,16 @@
-using System.ComponentModel;
-using System.Runtime.CompilerServices;
 using Avalonia;
-using Avalonia.Collections;
 using Avalonia.Controls;
-using Avalonia.Controls.Presenters;
-using Avalonia.Controls.Primitives;
-using Avalonia.Controls.Shapes;
-using Avalonia.Controls.Templates;
-using Avalonia.Data;
-using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
-using Avalonia.Styling;
-using SmartBase.Controls.Behaviors;
 using SmartBase.Controls.Components;
 using SmartBase.Controls.Dialogs;
+using SmartBase.Controls.DrawnGrid;
 using SmartBase.Core.Models;
 using SmartBase.Database.Entities;
 using SmartBase.Database.Repositories;
 using SmartBase.Utils;
-using Path = Avalonia.Controls.Shapes.Path;
+using SmartBase.ViewModels.ConstructorDb;
 
 namespace SmartBase.Views.Profile;
 
@@ -28,21 +18,23 @@ namespace SmartBase.Views.Profile;
 /// Панель «Пользователи» панели администратора: таблица «пользователь × действия» во всю
 /// высоту справа (тот же прием, что панель «Детали» в «Настройки → Диагностика»).
 /// Строка — пользователь базы, колонки — роль, доступ, действия <see cref="PermAction"/>
-/// с чекбоксами, даты и удаление из базы. В шапке панели выбираются база и область действия
+/// с галочками, даты и удаление из базы. В шапке панели выбираются база и область действия
 /// прав: вся эта база или одна ее коллекция. Правка прав сразу в нескольких базах не делается —
 /// права лежат внутри файла каждой базы, и «сразу везде» значило бы «во всех, что открыты
 /// прямо сейчас»: обещание, которого экран сдержать не может.
 ///
-/// Вид таблицы — как у таблицы конструктора и журналов: иконка типа + подпись + шеврон
-/// фильтра в шапке, те же линии, высота строки RowHeightStandard. Фильтр и сортировка
-/// считаются в памяти (пользователей десятки), а окно — общее с «Диагностикой» и «Историей
-/// изменений» (<see cref="ColumnFilterPanel"/>) и ведет себя как в конструкторе: каскад
-/// фильтров, автоотметка найденного, Enter; даты — деревом «год → месяц → день».
+/// Вид таблицы — как у таблицы конструктора и журналов: рисованная сетка служебных таблиц
+/// (<see cref="ServiceGrid"/>) с иконкой типа, подписью и шевроном фильтра в шапке, теми же
+/// линиями и высотой строки RowHeightStandard; первая колонка закреплена. Списки роли и доступа
+/// рисуются сеткой как закрытые списки, по клику над ячейкой встает настоящий список; галочки и
+/// корзина — рисованные, действие по клику. Фильтр и сортировка считаются в памяти (пользователей
+/// десятки), а окно — общее с «Диагностикой» и «Историей изменений» (<see cref="ColumnFilterPanel"/>)
+/// и ведет себя как в конструкторе: каскад фильтров, автоотметка найденного, Enter; даты — деревом
+/// «год → месяц → день».
 ///
-/// Ячейки биндятся к строке-VM (<see cref="AdminUserRow"/>), а не выставляются императивно:
-/// DataGrid переиспользует контейнеры ячеек при прокрутке, и обработчик из замыкания шаблона
-/// записал бы галку в чужую строку. Каждая правка пишется в базу сразу, без кнопки
-/// «Сохранить» (как было в старом блоке прав).
+/// Значения ячеек сетка читает из строки-модели (<see cref="AdminUserRow"/>) при каждом кадре, а
+/// правка уходит в базу через ее колбэки; каждая правка пишется сразу, без кнопки «Сохранить»
+/// (как было в старом блоке прав).
 /// </summary>
 public partial class ProfileView
 {
@@ -77,11 +69,10 @@ public partial class ProfileView
     ];
 
     // Все прочитанные строки и то, что показано после фильтра и сортировки.
-    private readonly List<AdminUserRow>        _allUserRows = [];
-    private readonly AvaloniaList<AdminUserRow> _userRows   = [];
+    private readonly List<AdminUserRow> _allUserRows = [];
+    private readonly List<AdminUserRow> _userRows    = [];
 
-    private readonly Dictionary<string, HashSet<string>> _userFilters  = [];
-    private readonly Dictionary<string, Path>            _userChevrons = [];
+    private readonly Dictionary<string, HashSet<string>> _userFilters = [];
     private string? _userSortKey;
     private bool    _userSortAsc = true;
 
@@ -110,7 +101,11 @@ public partial class ProfileView
         if (!_usersHooked)
         {
             BuildUsersColumns();
-            UsersGrid.ItemsSource = _userRows;
+            UsersGrid.FrozenColumns    = 1;   // имя видно при прокрутке вбок
+            UsersGrid.FilterRequested += (_, ev) => ShowUsersFilterFlyout(ev.Anchor, ev.Key);
+            UsersGrid.CheckToggled    += OnUsersCheckToggled;
+            UsersGrid.ChoicePicked    += OnUsersChoicePicked;
+            UsersGrid.ButtonClicked   += OnUsersButtonClicked;
             _usersHooked = true;
         }
 
@@ -154,7 +149,7 @@ public partial class ProfileView
         // (так же ведет себя «История изменений» при смене базы).
         _userFilters.Clear();
         _userSortKey = null;
-        UpdateUsersChevrons();
+        UsersGrid.RefreshHeader();
 
         RebuildScopes();   // коллекции у каждой базы свои → область и строки пересобираются
     }
@@ -173,12 +168,13 @@ public partial class ProfileView
 
         _userRows.Clear();
         _allUserRows.Clear();
+        UsersGrid.Clear();
 
         // Панель открывается свежей: фильтры и сортировка не переезжают на другую базу
         // (так же ведет себя «История изменений» при смене базы).
         _userFilters.Clear();
         _userSortKey = null;
-        UpdateUsersChevrons();
+        UsersGrid.RefreshHeader();
     }
 
     /// <summary>Панель открыта (ее данные нужно перечитывать после правок).</summary>
@@ -249,7 +245,7 @@ public partial class ProfileView
     {
         _allUserRows.Clear();
         _userRows.Clear();
-        if (_adminDb is null) return;
+        if (_adminDb is null) { UsersGrid.Clear(); return; }
 
         LoadRowsOfDatabase();
         ApplyUserFilters();
@@ -289,9 +285,28 @@ public partial class ProfileView
 
         _userRows.Clear();
         _userRows.AddRange(rows);
+        // Строка сетки читает значения из модели при каждом кадре: правка прав видна перерисовкой.
+        UsersGrid.SetRows(_userRows.Select((row, i) => TableRowVm.Static(i + 1, key => UsersCellValue(key, row), row)));
     }
 
     private static bool IsUsersDateKey(string key) => key is UsersKeyCreated or UsersKeySeen;
+
+    // Значение ячейки по ключу колонки: имя с пометкой «(вы)», ключ, роль, допуск (пусто — ждет
+    // допуска, подсказку рисует сетка), галочки прав как «1»/«0», даты текстом.
+    private static string UsersCellValue(string key, AdminUserRow row) => key switch
+    {
+        UsersKeyName     => row.Title,
+        UsersKeyId       => row.UserKey,
+        UsersKeyRole     => row.Role,
+        UsersKeyApproved => row.Access ?? "",
+        UsersKeyCreated  => row.CreatedAtText,
+        UsersKeySeen     => row.LastSeenText,
+        _ when UsersActionBit(key) is int bit => row[bit] ? "1" : "0",
+        _                => "",
+    };
+
+    private static int? UsersActionBit(string key) =>
+        key.StartsWith("act", StringComparison.Ordinal) && int.TryParse(key.AsSpan(3), out var bit) ? bit : null;
 
     // Сырое значение колонки — общий источник для фильтра и окна значений. Даты — день
     // «yyyy-MM-dd» по местному времени (тот же день, что в ячейке): из него строится дерево
@@ -304,9 +319,7 @@ public partial class ProfileView
         UsersKeyApproved => row.Access ?? AdminUserRow.AccessPending,
         UsersKeyCreated  => LocalDay(row.CreatedAt),
         UsersKeySeen     => LocalDay(row.LastSeenAt),
-        _ when key.StartsWith("act", StringComparison.Ordinal) &&
-               int.TryParse(key.AsSpan(3), out var bit)
-                         => row[bit] ? "Разрешено" : "Запрещено",
+        _ when UsersActionBit(key) is int bit => row[bit] ? "Разрешено" : "Запрещено",
         _                => "",
     };
 
@@ -329,6 +342,28 @@ public partial class ProfileView
             ? dt.ToUniversalTime().ToString("o", System.Globalization.CultureInfo.InvariantCulture)
             : "";
 
+    // ── Действия в ячейках ────────────────────────────────────────────────────
+
+    // Галочка права: доступность проверила сетка (колонка знает, у кого права правятся).
+    private void OnUsersCheckToggled(object? sender, ServiceCellEventArgs e)
+    {
+        if (e.Source is not AdminUserRow row || UsersActionBit(e.Def.Key) is not int bit) return;
+        row[bit] = !row[bit];
+    }
+
+    // Список роли или доступа выбрал значение — сеттер модели зовет колбэк, тот пишет в базу.
+    private void OnUsersChoicePicked(object? sender, ServiceCellEventArgs e)
+    {
+        if (e.Source is not AdminUserRow row) return;
+        if (e.Def.Key == UsersKeyRole)          row.Role   = e.Value;
+        else if (e.Def.Key == UsersKeyApproved) row.Access = e.Value;
+    }
+
+    private void OnUsersButtonClicked(object? sender, ServiceCellEventArgs e)
+    {
+        if (e.Source is AdminUserRow row && e.Def.Key == UsersKeyRemove) OnUserRemove(row);
+    }
+
     // Правки пишутся сразу; после них строки перечитываются — роль и допуск меняют
     // доступность соседних ячеек, а сосед мог тем временем поправить свое.
     private void OnUserRightChanged(AdminUserRow row, PermAction action, bool allowed)
@@ -338,8 +373,10 @@ public partial class ProfileView
         if (!RunAdminAction(() => _adminDb.Permissions.SetMask(row.Id, CurrentScope.Collection, mask)))
             return;
         row.Mask = mask;
-        // Фильтр по этой же колонке мог перестать пропускать строку — пересобираем.
+        // Фильтр по этой же колонке мог перестать пропускать строку — пересобираем; без фильтра
+        // достаточно перерисовать: значение сетка читает из модели.
         if (_userFilters.Count > 0) ApplyUserFilters();
+        else UsersGrid.RefreshRows();
     }
 
     private void OnUserApprovalChanged(AdminUserRow row, bool approved)
@@ -407,73 +444,107 @@ public partial class ProfileView
 
     // ── Колонки ───────────────────────────────────────────────────────────────
 
+    // Колонки пиксельной ширины (лишнее уходит в прокрутку вбок); в шапке — иконка, подпись с
+    // подсказкой и кнопка фильтра. Что в ячейке, решает тип: текст, список, галочка, кнопка.
     private void BuildUsersColumns()
     {
-        _userChevrons.Clear();
-
-        AddUsersColumn(UsersKeyName, "Пользователь", "IconUser", 250, BuildUserNameCell(),
-                       tip: BuildUsersTip("Пользователь",
-                                          "Имя из профиля человека, открывавшего эту базу данных. " +
-                                          "Пометка «(вы)» — ваша строка: свои роль, допуск и права " +
-                                          "не меняет никто, кроме другого администратора."));
-        AddUsersColumn(UsersKeyId, "Идентификатор", "IconFieldText", 200,
-                       BuildUsersTextCell(nameof(AdminUserRow.UserKey), secondary: true),
-                       tip: BuildUsersTip("Идентификатор",
-                                          "Ключ «учетная запись@компьютер» — по нему база узнает человека " +
-                                          "при следующем открытии, даже если он сменит имя в профиле."));
-        AddUsersColumn(UsersKeyRole, "Роль", "IconShieldUser", 170, BuildUserRoleCell(),
-                       tip: BuildUsersTip("Роль",
-                                          "Администратор управляет доступом и не подчиняется галкам — " +
-                                          "ему разрешено все. Чтобы ограничить его, сначала переведите " +
-                                          "в «Пользователя». Свою роль изменить нельзя."));
-        AddUsersColumn(UsersKeyApproved, "Доступ", "IconLock", 170, BuildUserAccessCell(),
-                       tip: BuildUsersTip("Доступ",
-                                          "Разрешение работать с базой данных. «Выдан» — человек видит " +
-                                          "содержимое, и действуют галки прав. «Отозван» — база показана " +
-                                          "замком: содержимое скрыто, права не действуют. «Ждет допуска» — " +
-                                          "человек открыл базу, а решения по нему еще не принимали; " +
-                                          "вернуть это состояние нельзя. У администратора допуск не снимается."));
+        var defs = new List<TableColumnDef>
+        {
+            UsersColumn(UsersKeyName, "Пользователь", "IconUser", 250,
+                        tip: BuildUsersTip("Пользователь",
+                                           "Имя из профиля человека, открывавшего эту базу данных. " +
+                                           "Пометка «(вы)» — ваша строка: свои роль, допуск и права " +
+                                           "не меняет никто, кроме другого администратора.")),
+            UsersColumn(UsersKeyId, "Идентификатор", "IconFieldText", 200,
+                        tip: BuildUsersTip("Идентификатор",
+                                           "Ключ «учетная запись@компьютер» — по нему база узнает человека " +
+                                           "при следующем открытии, даже если он сменит имя в профиле."),
+                        tone: _ => CellTone.Secondary),
+            // Роль: «Пользователь» / «Администратор». Свою роль не меняет никто — у своей строки
+            // список недоступен (правит только другой администратор). У робота в списке одно
+            // значение — «Робот», и оно заблокировано: токен администратором не бывает.
+            UsersColumn(UsersKeyRole, "Роль", "IconShieldUser", 170,
+                        tip: BuildUsersTip("Роль",
+                                           "Администратор управляет доступом и не подчиняется галкам — " +
+                                           "ему разрешено все. Чтобы ограничить его, сначала переведите " +
+                                           "в «Пользователя». Свою роль изменить нельзя."),
+                        kind: "choice", enabled: r => r.RoleEnabled, options: r => r.RoleOptions),
+            // Допуск — список, а не галочка: состояний три, и «ждет допуска» надо назвать словом.
+            // Пока решения не было, значения нет, а на его месте стоит красная подсказка
+            // «Ждет допуска»: выбрать ее обратно нельзя — «еще не решали» не возвращают решением.
+            UsersColumn(UsersKeyApproved, "Доступ", "IconLock", 170,
+                        tip: BuildUsersTip("Доступ",
+                                           "Разрешение работать с базой данных. «Выдан» — человек видит " +
+                                           "содержимое, и действуют галки прав. «Отозван» — база показана " +
+                                           "замком: содержимое скрыто, права не действуют. «Ждет допуска» — " +
+                                           "человек открыл базу, а решения по нему еще не принимали; " +
+                                           "вернуть это состояние нельзя. У администратора допуск не снимается."),
+                        kind: "choice", enabled: r => r.ApprovalEnabled,
+                        options: _ => [AdminUserRow.AccessGranted, AdminUserRow.AccessRevoked],
+                        placeholder: AdminUserRow.AccessPending,
+                        tone: r => r.IsPending ? CellTone.Red : CellTone.Primary),
+        };
 
         foreach (var (action, group, iconKey) in UsersActionColumns)
         {
             // Часть прав имеет смысл только на уровне базы — у отдельной коллекции
             // переопределять их нечем (PermActionLabels.DatabaseOnly).
-            var enabledPath = PermActionLabels.DatabaseOnly(action)
-                ? nameof(AdminUserRow.DatabaseOnlyEnabled)
-                : nameof(AdminUserRow.RightsEnabled);
+            var databaseOnly = PermActionLabels.DatabaseOnly(action);
             // Ширина под самую длинную подпись («Дублирование коллекции») — колонки действий
             // одинаковые, иначе шапка выглядит рваной; лишнее уходит в прокрутку.
-            AddUsersColumn($"act{(int)action}", PermActionLabels.Title(action), iconKey, 210,
-                           BuildUsersCheckCell($"[{(int)action}]", enabledPath),
-                           tip: BuildUsersActionTip(group, action));
+            defs.Add(UsersColumn($"act{(int)action}", PermActionLabels.Title(action), iconKey, 210,
+                                 tip: BuildUsersActionTip(group, action),
+                                 kind: "checkbox",
+                                 enabled: databaseOnly ? r => r.DatabaseOnlyEnabled : r => r.RightsEnabled));
         }
 
-        AddUsersColumn(UsersKeyCreated, "Подключен", "IconClock", 150,
-                       BuildUsersTextCell(nameof(AdminUserRow.CreatedAtText), secondary: true),
-                       tip: BuildUsersTip("Подключен",
-                                          "Когда пользователь впервые открыл эту базу данных."));
-        AddUsersColumn(UsersKeySeen, "Последняя активность", "IconHistory", 190,
-                       BuildUsersTextCell(nameof(AdminUserRow.LastSeenText), secondary: true),
-                       tip: BuildUsersTip("Последняя активность",
-                                          "Когда пользователь в последний раз открывал эту базу данных."));
+        defs.Add(UsersColumn(UsersKeyCreated, "Подключен", "IconClock", 150,
+                             tip: BuildUsersTip("Подключен",
+                                                "Когда пользователь впервые открыл эту базу данных."),
+                             tone: _ => CellTone.Secondary));
+        defs.Add(UsersColumn(UsersKeySeen, "Последняя активность", "IconHistory", 190,
+                             tip: BuildUsersTip("Последняя активность",
+                                                "Когда пользователь в последний раз открывал эту базу данных."),
+                             tone: _ => CellTone.Secondary));
         // Колонка действия: фильтровать нечего — шеврона нет. Последняя колонка правой линии
-        // заголовка не рисует: ее край и так очерчен краем таблицы (как в диагностике).
-        AddUsersColumn(UsersKeyRemove, "Удаление пользователя", "IconTrash", 210, BuildUserRemoveCell(),
-                       tip: BuildUsersTip("Удаление пользователя",
-                                          "Убрать пользователя из базы данных вместе с выданными правами. " +
-                                          "При следующем открытии базы он вернется в список как ожидающий допуска."),
-                       filterable: false, addRightLine: false);
+        // заголовка не рисует: ее край и так очерчен краем таблицы (как в диагностике). Корзина
+        // красная; свою строку не убирают.
+        defs.Add(UsersColumn(UsersKeyRemove, "Удаление пользователя", "IconTrash", 210,
+                             tip: BuildUsersTip("Удаление пользователя",
+                                                "Убрать пользователя из базы данных вместе с выданными правами. " +
+                                                "При следующем открытии базы он вернется в список как ожидающий допуска."),
+                             kind: "button", filterable: false, headerLine: false, enabled: r => r.RemoveEnabled,
+                             tone: _ => CellTone.Red, iconKey: "IconTrash"));
+
+        UsersGrid.SetColumns(defs);
+        // Активная колонка помечается синей воронкой — как в таблицах конструктора и журналов.
+        UsersGrid.IsColumnFiltered = key => _userFilters.ContainsKey(key) || _userSortKey == key;
     }
 
-    private void AddUsersColumn(string key, string header, string iconKey, double width,
-                                IDataTemplate cell, object? tip = null,
-                                bool filterable = true, bool addRightLine = true) =>
-        UsersGrid.Columns.Add(new DataGridTemplateColumn
+    private static TableColumnDef UsersColumn(string key, string header, string headerIconKey, double width,
+                                              Control tip, string kind = "text", bool filterable = true,
+                                              bool headerLine = true,
+                                              Func<AdminUserRow, bool>? enabled = null,
+                                              Func<AdminUserRow, CellTone>? tone = null,
+                                              Func<AdminUserRow, IReadOnlyList<string>>? options = null,
+                                              string placeholder = "", string? iconKey = null) =>
+        new()
         {
-            Header       = BuildUsersHeader(key, header, iconKey, tip, filterable, addRightLine),
-            Width        = new DataGridLength(width, DataGridLengthUnitType.Pixel),
-            CellTemplate = cell,
-        });
+            Key           = key,
+            Header        = header,
+            FieldType     = kind,
+            IsStarWidth   = false,
+            FixedWidth    = width,
+            HeaderIconKey = headerIconKey,
+            HeaderTip       = tip,
+            Filterable      = filterable,
+            HeaderRightLine = headerLine,
+            CellEnabled     = enabled is null ? null : vm => vm.Source is AdminUserRow r && enabled(r),
+            CellTone      = tone    is null ? null : vm => vm.Source is AdminUserRow r ? tone(r) : CellTone.Primary,
+            CellOptions   = options is null ? null : vm => vm.Source is AdminUserRow r ? options(r) : [],
+            Placeholder   = placeholder,
+            CellIconKey   = iconKey,
+        };
 
     // Подсказка колонки: жирный заголовок + описание с переносом строк. Простая строка
     // здесь не годится — описания в два-три предложения вытянулись бы в одну линию
@@ -501,149 +572,6 @@ public partial class ProfileView
         BuildUsersTip($"{group} · {PermActionLabels.Title(action)}",
                       PermActionLabels.Description(action));
 
-    // Шапка колонки 1-в-1 как в таблице конструктора и журналов: [иконка типа][подпись]
-    // [шеврон фильтра] + правая линия-разделитель.
-    private Control BuildUsersHeader(string key, string header, string iconKey, object? tip,
-                                     bool filterable, bool addRightLine)
-    {
-        var text = new TextBlock
-        {
-            Text              = header,
-            FontSize          = FontSizeToken("FontSizeBase", 13),
-            VerticalAlignment = VerticalAlignment.Center,
-            TextTrimming      = TextTrimming.CharacterEllipsis,
-            Foreground        = Brush("BrushSecondaryText", "#8E8E93"),
-        };
-
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
-
-        var icon = BuildUsersHeaderIcon(iconKey);
-        Grid.SetColumn(icon, 0);
-        grid.Children.Add(icon);
-
-        Grid.SetColumn(text, 1);
-        grid.Children.Add(text);
-
-        if (filterable)
-        {
-            var chevron = BuildUsersChevron(key);
-            Grid.SetColumn(chevron, 2);
-            grid.Children.Add(chevron);
-        }
-
-        var border = new Border
-        {
-            Background          = Brushes.Transparent,
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment   = VerticalAlignment.Stretch,
-            Padding             = new Thickness(6, 0),
-            Child               = grid,
-        };
-        border.Classes.Add("colHeader");
-        ToolTip.SetTip(border, tip ?? header);
-
-        var host = new Grid
-        {
-            Background          = Brushes.Transparent,
-            ColumnDefinitions   = new ColumnDefinitions("*,Auto"),
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment   = VerticalAlignment.Stretch,
-            // Ключ колонки — по нему панель находит свою колонку среди прочих.
-            Tag                 = key,
-        };
-        Grid.SetColumn(border, 0);
-        host.Children.Add(border);
-
-        if (addRightLine)
-        {
-            var line = new Rectangle
-            {
-                Fill              = Brush("BrushSeparator", "#E5E5EA"),
-                VerticalAlignment = VerticalAlignment.Stretch,
-            };
-            line.Bind(Rectangle.WidthProperty,              line.GetResourceObservable("SeparatorThickness"));
-            line.Bind(Layoutable.UseLayoutRoundingProperty, line.GetResourceObservable("LineUseLayoutRounding"));
-            RenderOptions.SetEdgeMode(line, EdgeMode.Aliased);
-            Grid.SetColumn(line, 1);
-            host.Children.Add(line);
-        }
-        return host;
-    }
-
-    // Иконка типа колонки — как в таблице конструктора (Viewbox IconSizeSmall, отступ 6px).
-    private Control BuildUsersHeaderIcon(string iconKey) => new Viewbox
-    {
-        Width             = FontSizeToken("IconSizeSmall", 16),
-        Height            = FontSizeToken("IconSizeSmall", 16),
-        VerticalAlignment = VerticalAlignment.Center,
-        Margin            = new Thickness(0, 0, 6, 0),
-        Child = new Canvas
-        {
-            Width  = 24,
-            Height = 24,
-            Children =
-            {
-                new Path
-                {
-                    Data            = UsersIcon(iconKey),
-                    Stroke          = Brush("BrushSecondaryText", "#8E8E93"),
-                    StrokeThickness = FontSizeToken("IconStrokeSmall", 1.2),
-                    StrokeLineCap   = PenLineCap.Round,
-                    StrokeJoin      = PenLineJoin.Round,
-                },
-            },
-        },
-    };
-
-    private Control BuildUsersChevron(string key)
-    {
-        var path = new Path
-        {
-            StrokeThickness = 2,
-            StrokeLineCap   = PenLineCap.Round,
-            StrokeJoin      = PenLineJoin.Round,
-        };
-        _userChevrons[key] = path;
-        ApplyUsersChevronState(key, path);
-
-        var canvas = new Canvas { Width = 24, Height = 24 };
-        canvas.Children.Add(path);
-
-        var btn = new Button
-        {
-            Width             = 20,
-            Height            = 20,
-            VerticalAlignment = VerticalAlignment.Center,
-            Content           = new Viewbox
-            {
-                Width  = FontSizeToken("IconSizeSmall", 16),
-                Height = FontSizeToken("IconSizeSmall", 16),
-                Child  = canvas,
-            },
-        };
-        btn.Classes.Add("icon");
-        btn.Classes.Add("filterChevron");
-        ToolTip.SetTip(btn, "Фильтр и сортировка");
-        btn.Click += (_, _) => ShowUsersFilterFlyout(btn, key);
-        return btn;
-    }
-
-    // Активная колонка помечается синей воронкой — как в таблицах конструктора и журналов.
-    private void ApplyUsersChevronState(string key, Path path)
-    {
-        var active  = _userFilters.ContainsKey(key) || _userSortKey == key;
-        path.Data   = UsersIcon(active ? "IconFilter" : "IconChevronDown");
-        path.Stroke = active
-            ? Brush("BrushAccent", "#007AFF")
-            : Brush("BrushSecondaryText", "#8E8E93");
-    }
-
-    private void UpdateUsersChevrons()
-    {
-        foreach (var (key, path) in _userChevrons)
-            ApplyUsersChevronState(key, path);
-    }
-
     private static Geometry UsersIcon(string key) =>
         Application.Current!.TryFindResource(key, out var res) && res is Geometry g
             ? g
@@ -670,144 +598,11 @@ public partial class ProfileView
             Apply      = result =>
             {
                 result.ApplyTo(_userFilters, ref _userSortKey, ref _userSortAsc);
-                UpdateUsersChevrons();
+                UsersGrid.RefreshHeader();
                 ApplyUserFilters();
             },
         });
     }
-
-    // ── Ячейки (только биндинги: контейнеры переиспользуются) ──────────────────
-
-    private IDataTemplate BuildUsersTextCell(string path, bool secondary = false) =>
-        new FuncDataTemplate<AdminUserRow>((_, _) =>
-        {
-            var text = new TextBlock
-            {
-                Margin            = new Thickness(8, 0),
-                VerticalAlignment = VerticalAlignment.Center,
-                TextTrimming      = TextTrimming.CharacterEllipsis,
-            };
-            if (secondary) text.Foreground = Brush("BrushSecondaryText", "#8E8E93");
-            text.Bind(TextBlock.TextProperty, new Binding(path));
-            return text;
-        });
-
-    // Только имя: пометки «ждет допуска» здесь больше нет — она повторяла то, что теперь
-    // написано словом в колонке «Доступ».
-    private IDataTemplate BuildUserNameCell() =>
-        new FuncDataTemplate<AdminUserRow>((_, _) =>
-        {
-            var name = new TextBlock
-            {
-                Margin            = new Thickness(8, 0),
-                VerticalAlignment = VerticalAlignment.Center,
-                TextTrimming      = TextTrimming.CharacterEllipsis,
-            };
-            name.Bind(TextBlock.TextProperty, new Binding(nameof(AdminUserRow.Title)));
-            return name;
-        });
-
-    // Допуск — список, а не галочка: состояний три, и «ждет допуска» надо назвать словом.
-    // Пока решения не было, список пуст, а на месте значения стоит красная подсказка
-    // «Ждет допуска»: выбрать ее обратно нельзя — «еще не решали» не возвращают решением.
-    private IDataTemplate BuildUserAccessCell() =>
-        new FuncDataTemplate<AdminUserRow>((_, _) =>
-        {
-            var combo = new ComboBox
-            {
-                ItemsSource           = new[] { AdminUserRow.AccessGranted, AdminUserRow.AccessRevoked },
-                PlaceholderText       = AdminUserRow.AccessPending,
-                PlaceholderForeground = Brush("BrushRed", "#FF3B30"),
-                Margin                = new Thickness(6, 0),
-                HorizontalAlignment   = HorizontalAlignment.Stretch,
-                VerticalAlignment     = VerticalAlignment.Center,
-                Height                = 26,
-                MinHeight             = 26,
-            };
-            combo.Bind(SelectingItemsControl.SelectedItemProperty,
-                       new Binding(nameof(AdminUserRow.Access)) { Mode = BindingMode.TwoWay });
-            combo.Bind(InputElement.IsEnabledProperty, new Binding(nameof(AdminUserRow.ApprovalEnabled)));
-            return combo;
-        });
-
-    private IDataTemplate BuildUsersCheckCell(string valuePath, string enabledPath) =>
-        new FuncDataTemplate<AdminUserRow>((_, _) =>
-        {
-            var box = new CheckBox
-            {
-                Padding             = new Thickness(0),
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment   = VerticalAlignment.Center,
-            };
-            box.Bind(ToggleButton.IsCheckedProperty,
-                     new Binding(valuePath) { Mode = BindingMode.TwoWay });
-            box.Bind(InputElement.IsEnabledProperty, new Binding(enabledPath));
-            return box;
-        });
-
-    // Роль: «Пользователь» / «Администратор». Свою роль не меняет никто — у своей
-    // строки список выключен (правит только другой администратор). У робота в списке одно
-    // значение — «Робот», и оно заблокировано: токен администратором не бывает.
-    private IDataTemplate BuildUserRoleCell() =>
-        new FuncDataTemplate<AdminUserRow>((_, _) =>
-        {
-            var combo = new ComboBox
-            {
-                Margin              = new Thickness(6, 0),
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-                VerticalAlignment   = VerticalAlignment.Center,
-                Height              = 26,
-                MinHeight           = 26,
-            };
-            combo.Bind(ItemsControl.ItemsSourceProperty, new Binding(nameof(AdminUserRow.RoleOptions)));
-            combo.Bind(SelectingItemsControl.SelectedItemProperty,
-                       new Binding(nameof(AdminUserRow.Role)) { Mode = BindingMode.TwoWay });
-            combo.Bind(InputElement.IsEnabledProperty, new Binding(nameof(AdminUserRow.RoleEnabled)));
-            return combo;
-        });
-
-    private IDataTemplate BuildUserRemoveCell() =>
-        new FuncDataTemplate<AdminUserRow>((_, _) =>
-        {
-            var button = new Button
-            {
-                Width               = 28,
-                Height              = 28,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment   = VerticalAlignment.Center,
-                Content = new Viewbox
-                {
-                    Width  = FontSizeToken("IconSizeSmall", 16),
-                    Height = FontSizeToken("IconSizeSmall", 16),
-                    Child  = new Canvas
-                    {
-                        Width  = 24,
-                        Height = 24,
-                        Children =
-                        {
-                            new Path
-                            {
-                                Data            = UsersIcon("IconTrash"),
-                                Stroke          = Brush("BrushRed", "#FF3B30"),
-                                StrokeThickness = FontSizeToken("IconStrokeSmall", 1.2),
-                                StrokeLineCap   = PenLineCap.Round,
-                                StrokeJoin      = PenLineJoin.Round,
-                            },
-                        },
-                    },
-                },
-            };
-            button.Classes.Add("icon");
-            ToolTip.SetTip(button, "Убрать пользователя из базы данных");
-            button.Bind(InputElement.IsEnabledProperty, new Binding(nameof(AdminUserRow.RemoveEnabled)));
-            // DataContext ячейки — строка таблицы; берем его в момент клика, а не из
-            // замыкания шаблона: контейнер ячейки переиспользуется при прокрутке.
-            button.Click += (s, _) =>
-            {
-                if ((s as Control)?.DataContext is AdminUserRow row) OnUserRemove(row);
-            };
-            return button;
-        });
 }
 
 /// <summary>Область, в которой правятся права: вся выбранная база или одна ее коллекция.</summary>
@@ -822,21 +617,21 @@ public sealed record AdminScope(int? Collection)
 /// <summary>
 /// Строка таблицы пользователей: снапшот <see cref="DbUserEntity"/> + действующая маска прав
 /// в выбранной области. Правки уходят в базу через колбэки панели (RightChanged/ApprovalChanged/
-/// RoleChanged) прямо из сеттеров — как строка таблицы конструктора (TableRowVm).
+/// RoleChanged) прямо из сеттеров — как строка таблицы конструктора (TableRowVm); сетка читает
+/// значения при каждом кадре, поэтому уведомлений об изменении не нужно.
 ///
 /// Правила доступности (панель их только отображает, сервис проверяет еще раз):
 /// свою строку не правит никто; у администратора все действия разрешены и заблокированы
 /// (роль дает полный доступ — чтобы ограничить, другой администратор сначала меняет роль);
 /// у ожидающего допуска чекбоксы действий выключены, пока допуск не выдан.
 /// </summary>
-public sealed class AdminUserRow : INotifyPropertyChanged
+public sealed class AdminUserRow
 {
     /// <summary>Состояния допуска словами — общие для ячейки, отбора и подсказки колонки.</summary>
     public const string AccessGranted = "Выдан";
     public const string AccessRevoked = "Отозван";
     public const string AccessPending = "Ждет допуска";
 
-    private int  _mask;
     private readonly bool _isAdmin;
     private readonly bool _isApproved;
     private readonly bool _decided;
@@ -852,7 +647,7 @@ public sealed class AdminUserRow : INotifyPropertyChanged
         LastSeenAt  = user.LastSeenAt;
         CreatedAtText = FormatTs(CreatedAt);
         LastSeenText  = FormatTs(LastSeenAt);
-        _mask       = mask;
+        Mask        = mask;
         _isAdmin    = user.IsAdmin;
         _isApproved = user.IsApproved;
         _decided    = user.AccessDecided;
@@ -885,25 +680,15 @@ public sealed class AdminUserRow : INotifyPropertyChanged
     public bool IsPending => !_isAdmin && !_isApproved && !_decided;
 
     /// <summary>Действующая маска прав в выбранной области.</summary>
-    public int Mask
-    {
-        get => _mask;
-        set
-        {
-            if (_mask == value) return;
-            _mask = value;
-            Notify(nameof(Mask));
-            NotifyRights();
-        }
-    }
+    public int Mask { get; set; }
 
     /// <summary>
-    /// Галка действия. Ключ — бит <see cref="PermAction"/> (путь биндинга «[64]»).
+    /// Галка действия. Ключ — бит <see cref="PermAction"/>.
     /// У администратора разрешено все — галки стоят и не редактируются.
     /// </summary>
     public bool this[int bit]
     {
-        get => _isAdmin || (_mask & bit) == bit;
+        get => _isAdmin || (Mask & bit) == bit;
         set
         {
             if (this[bit] == value) return;
@@ -973,16 +758,6 @@ public sealed class AdminUserRow : INotifyPropertyChanged
     /// <summary>Права уровня базы («Создавать коллекции», оба права интеграций) — только
     /// при выбранной области «вся база».</summary>
     public bool DatabaseOnlyEnabled => RightsEnabled && _scopeIsDatabase;
-
-    // ── INotifyPropertyChanged ────────────────────────────────────────────────
-
-    public event PropertyChangedEventHandler? PropertyChanged;
-
-    private void Notify([CallerMemberName] string? name = null) =>
-        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
-
-    // Привязка индексатора обновляется по имени «Item» (не «Item[key]») — правило Avalonia.
-    private void NotifyRights() => Notify("Item");
 
     private static string FormatTs(string iso) =>
         DateTime.TryParse(iso, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt)

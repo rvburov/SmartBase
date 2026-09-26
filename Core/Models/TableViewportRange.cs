@@ -25,7 +25,7 @@ public readonly record struct TableViewportRange(int First, int Last, int Total)
     /// <summary>
     /// Диапазон с нормализацией: отрицательные значения, «последняя меньше первой» и
     /// номера за пределами общего числа приводятся к допустимым. Источник данных —
-    /// живая раскладка DataGrid, где в момент пересборки строк встречается и то, и другое.
+    /// живая раскладка сетки, где в момент пересборки строк встречается и то, и другое.
     /// </summary>
     public static TableViewportRange Of(int first, int last, int total)
     {
@@ -38,8 +38,8 @@ public readonly record struct TableViewportRange(int First, int Last, int Total)
     }
 
     /// <summary>
-    /// Диапазон из СЛОТОВ, которые показывает DataGrid (<c>DisplayData.FirstScrollingSlot</c>
-    /// и <c>LastScrollingSlot</c>) — так его и считает <c>TableView.VisibleRowRange</c>.
+    /// Диапазон из СЛОТОВ — индексов строк среза (так считала прежняя таблица, так же считает
+    /// <c>GridPanel.VisibleRowRange</c> по раскладке строк).
     /// Группировки у таблицы нет, поэтому слот = индекс строки, а ее номер = индекс + 1.
     ///
     /// Отрицательный первый слот — «ничего не разложено» (первый проход, пересборка строк):
@@ -83,7 +83,7 @@ public readonly record struct TableViewportRange(int First, int Last, int Total)
 
 /// <summary>
 /// Арифметика вертикальной прокрутки таблицы: куда встает полоса при нажатии кнопок
-/// нижней панели. Значения — пиксельные (у вертикальной полосы DataGrid
+/// нижней панели. Значения — пиксельные (у вертикальной полосы сетки
 /// <c>Value</c>/<c>Maximum</c>/<c>ViewportSize</c> именно в пикселях).
 /// </summary>
 public static class TableViewportScroll

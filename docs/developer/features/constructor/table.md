@@ -21,11 +21,13 @@
 - Буфер обмена и меню ячейки: [TableView.CellClipboard.cs](../../../../Views/ConstructorDb/TableView.CellClipboard.cs)
 - Отмена значений ячеек: [TableView.CellUndo.cs](../../../../Views/ConstructorDb/TableView.CellUndo.cs)
 - Пункты меню с клавиатуры: [TableView.MenuShortcuts.cs](../../../../Views/ConstructorDb/TableView.MenuShortcuts.cs)
-- Сетка: [Views/ConstructorDb/DrawnGrid/](../../../../Views/ConstructorDb/DrawnGrid/) —
-  `GridPanel` (модель таблицы: колонки, ширины, высоты, оформление, режимы, отбор и сортировка,
-  полосы, навигация), `GridSurface` (рисует кадр и отвечает на попадание), `ColumnLayout` /
-  `RowLayout` / `ColumnResize` (арифметика раскладок и жеста), `EditorHost` (накладной
-  редактор), `SelectionOverlay` (рамка над редактором), `FileProbe`, `TextLayoutCache`, `DragScroll`
+- Сетка: [Views/ConstructorDb/DrawnGrid/GridPanel.cs](../../../../Views/ConstructorDb/DrawnGrid/GridPanel.cs) —
+  модель таблицы коллекции (колонки, ширины, высоты, оформление, режимы, отбор и сортировка,
+  полосы, навигация); общие части в [Controls/DrawnGrid/](../../../../Controls/DrawnGrid/) —
+  `GridSurface` (рисует кадр и отвечает на попадание), `ColumnLayout` / `RowLayout` /
+  `ColumnResize` (арифметика раскладок и жеста), `EditorHost` (накладной редактор),
+  `SelectionOverlay` (рамка над редактором), `FileProbe`, `TextLayoutCache`, `DragScroll`;
+  там же `ServiceGrid` — панель служебных таблиц на той же поверхности
 - Данные: [VirtualRowList](../../../../ViewModels/ConstructorDb/VirtualRowList.cs) (страницы,
   окно колонок, счетчик), [RowSource](../../../../ViewModels/ConstructorDb/RowSource.cs)
   (`RowSourcePlanner` — источник строк для отбора и сортировки, считается в фоне)

@@ -45,7 +45,6 @@
 
     <Application.Styles>
         <FluentTheme />
-        <StyleInclude Source="avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml" />
 
         <!-- Иконка приложения для ВСЕХ окон (главное + все диалоги, в т.ч. будущие).
              На Windows/Linux это иконка в заголовке окна, таскбаре и Alt-Tab.

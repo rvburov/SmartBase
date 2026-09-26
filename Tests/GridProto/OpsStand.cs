@@ -23,6 +23,7 @@ using SmartBase.Database;
 using SmartBase.Utils;
 using SmartBase.ViewModels.ConstructorDb;
 using SmartBase.Views.ConstructorDb;
+using SmartBase.Controls.DrawnGrid;
 using SmartBase.Views.ConstructorDb.DrawnGrid;
 
 static class OpsStand

@@ -1,19 +1,12 @@
 using Avalonia;
-using Avalonia.Collections;
 using Avalonia.Controls;
-using Avalonia.Controls.Primitives;
-using Avalonia.Controls.Shapes;
-using Avalonia.Controls.Templates;
-using Avalonia.Layout;
 using Avalonia.Media;
-using Avalonia.Styling;
-using Avalonia.Threading;
-using Avalonia.VisualTree;
 using SmartBase.Controls.Components;
 using SmartBase.Controls.Dialogs;
+using SmartBase.Controls.DrawnGrid;
 using SmartBase.Database;
 using SmartBase.Utils;
-using Path = Avalonia.Controls.Shapes.Path;
+using SmartBase.ViewModels.ConstructorDb;
 
 namespace SmartBase.Views.Profile;
 
@@ -27,9 +20,10 @@ namespace SmartBase.Views.Profile;
 /// <b>Почему таблицей, а не блоками.</b> Прежний экран был статьей: проверка целости, отбор,
 /// выгрузка и сведения о файле шли блоками с пояснениями, а сами события ютились в узкой таблице
 /// внизу. Читают журнал не как статью: ищут строку. Поэтому теперь экран устроен как «История
-/// изменений» — та же шапка с воронками, те же линии, та же панель «Детали» справа, — а действия
-/// (проверка цепочки и выгрузка) ушли в навбар, итог проверки и путь к файлу — в строку состояния.
-/// Объяснения переехали в справку: экран — инструмент, а не рассказ о себе.
+/// изменений» — та же рисованная сетка с воронками в шапке (<see cref="ServiceGrid"/>), те же линии,
+/// та же панель «Детали» справа, — а действия (проверка цепочки и выгрузка) ушли в навбар, итог
+/// проверки и путь к файлу — в строку состояния. Объяснения переехали в справку: экран —
+/// инструмент, а не рассказ о себе.
 ///
 /// Отбор уходит в SQL (<see cref="SecurityFilter"/>), а не отсеивает показанную пачку: журнал
 /// никто не чистит, он копится годами, и одно заблокированное событие полугодовой давности иначе
@@ -61,16 +55,15 @@ public partial class ProfileView
     // воронке был бы длиннее самого журнала.
     private static bool SecurityLogFilterable(string key) => key != "Address";
 
-    private readonly AvaloniaList<SecurityEntry> _logRows = [];
+    // Прочитанные строки в порядке показа: последняя — keyset-курсор следующей страницы.
+    private readonly List<SecurityEntry> _logRows = [];
     private readonly Dictionary<string, HashSet<string>> _logFilters = [];
-    private readonly Dictionary<string, Path> _logChevrons = [];
 
     private bool _logNewestFirst = true;
     private bool _logLoading;
     private bool _logEnd;
     // Поколение запроса: смена отбора во время чтения страницы обесценивает результат.
     private int  _logGen;
-    private ScrollBar? _logScroll;
     private bool _logHooked;
 
     // Переход «В журнал» из контура безопасности просит показать сразу блокировки.
@@ -89,10 +82,11 @@ public partial class ProfileView
         if (!_logHooked)
         {
             BuildSecurityLogColumns();
-            LogGrid.ItemsSource     = _logRows;
             LogGrid.SelectionChanged += OnSecurityLogSelectionChanged;
-            LogDetailCloseBtn.Click += (_, _) => CloseLogDetail();
-            LogDetailCopyBtn.Click  += (_, _) => CopyLogRow();
+            LogGrid.NearEnd          += (_, _) => _ = LoadMoreSecurityLogAsync();
+            LogGrid.FilterRequested  += (_, e) => ShowSecurityLogFilterFlyout(e.Anchor, e.Key);
+            LogDetailCloseBtn.Click  += (_, _) => CloseLogDetail();
+            LogDetailCopyBtn.Click   += (_, _) => CopyLogRow();
             _logHooked = true;
         }
 
@@ -104,7 +98,7 @@ public partial class ProfileView
             _logFilters["Allowed"] = ["0"];
         }
 
-        UpdateSecurityLogChevrons();
+        LogGrid.RefreshHeader();
         RefreshSecurityLogStatus();
         ReloadSecurityLogRows();
     }
@@ -114,6 +108,7 @@ public partial class ProfileView
         CloseLogDetail();
         _logGen++;
         _logRows.Clear();
+        LogGrid.Clear();
         _logEnd = Journal is null;
         _ = LoadMoreSecurityLogAsync();
         ShowSecurityLogEmptyText();
@@ -140,12 +135,11 @@ public partial class ProfileView
             // Пока читали страницу, отбор успели сменить — эта страница уже не наша.
             if (gen != _logGen) return;
 
+            var first = _logRows.Count;
             _logRows.AddRange(page);
+            LogGrid.AppendRows(page.Select((entry, i) => TableRowVm.Static(first + i + 1, key => SecurityLogCellText(key, entry), entry)));
             if (page.Count < SecurityLogPageSize) _logEnd = true;
             ShowSecurityLogEmptyText();
-
-            // Подписка на вертикальный скролл — после того, как шаблон DataGrid построен.
-            Dispatcher.UIThread.Post(EnsureSecurityLogScrollHook, DispatcherPriority.Background);
         }
         finally
         {
@@ -185,21 +179,6 @@ public partial class ProfileView
     /// </summary>
     private IReadOnlyCollection<int> SecurityLogScope() =>
         (_workspace?.Mounted ?? []).Where(m => m.Permissions.IsAdmin).Select(m => m.DbId).ToList();
-
-    private void EnsureSecurityLogScrollHook()
-    {
-        if (_logScroll is not null) return;
-        _logScroll = LogGrid.GetVisualDescendants().OfType<ScrollBar>()
-            .FirstOrDefault(s => s.Orientation == Orientation.Vertical);
-        if (_logScroll is null) return;
-
-        _logScroll.PropertyChanged += (_, e) =>
-        {
-            if (e.Property != RangeBase.ValueProperty) return;
-            if (_logScroll.Maximum > 0 && _logScroll.Value >= _logScroll.Maximum - 300)
-                _ = LoadMoreSecurityLogAsync();
-        };
-    }
 
     // ── Строка состояния ──────────────────────────────────────────────────────
 
@@ -293,159 +272,36 @@ public partial class ProfileView
         finally { _logExporting = false; }
     }
 
-    // ── Колонки и шапка ───────────────────────────────────────────────────────
+    // ── Колонки ───────────────────────────────────────────────────────────────
 
+    // Колонки-текст поровну от ширины окна (адрес не уже 180, остальные — 130); в шапке — иконка
+    // и кнопка отбора (у адреса ее нет). Решение — цветом: заблокированное событие ищут глазами,
+    // а не вычитывают; время, пользователь и адрес — серые.
     private void BuildSecurityLogColumns()
     {
-        _logChevrons.Clear();
-
-        foreach (var (key, header, iconKey) in SecurityLogColumns)
-            LogGrid.Columns.Add(new DataGridTemplateColumn
+        LogGrid.SetColumns(SecurityLogColumns.Select(def => new TableColumnDef
+        {
+            Key           = def.Key,
+            Header        = def.Header,
+            FieldType     = "text",
+            IsStarWidth   = true,
+            MinWidth      = def.Key == "Address" ? 180 : 130,
+            HeaderIconKey = def.IconKey,
+            Filterable    = SecurityLogFilterable(def.Key),
+            FilterTip     = def.Key == "Day" ? "Отбор и сортировка" : "Отбор",
+            CellTone      = def.Key switch
             {
-                Header       = BuildSecurityLogHeader(key, header, iconKey),
-                Width        = new DataGridLength(1, DataGridLengthUnitType.Star),
-                MinWidth     = key == "Address" ? 180 : 130,
-                CellTemplate = BuildSecurityLogCell(key),
-            });
-    }
-
-    // Шапка колонки — как в «Истории изменений» и таблице конструктора: [иконка][подпись]
-    // [шеврон отбора] + правая линия-разделитель.
-    private Control BuildSecurityLogHeader(string key, string header, string iconKey)
-    {
-        var text = new TextBlock
-        {
-            Text              = header,
-            FontSize          = (double)this.FindResource("FontSizeBase")!,
-            VerticalAlignment = VerticalAlignment.Center,
-            TextTrimming      = TextTrimming.CharacterEllipsis,
-            Foreground        = (IBrush)this.FindResource("BrushSecondaryText")!,
-        };
-
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
-
-        var icon = BuildHistoryHeaderIcon(iconKey);
-        Grid.SetColumn(icon, 0);
-        grid.Children.Add(icon);
-
-        Grid.SetColumn(text, 1);
-        grid.Children.Add(text);
-
-        if (SecurityLogFilterable(key))
-        {
-            var chevron = BuildSecurityLogChevron(key);
-            Grid.SetColumn(chevron, 2);
-            grid.Children.Add(chevron);
-        }
-
-        var border = new Border
-        {
-            Background          = Brushes.Transparent,
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment   = VerticalAlignment.Stretch,
-            Padding             = new Thickness(6, 0),
-            Child               = grid,
-        };
-        border.Classes.Add("colHeader");
-
-        var host = new Grid
-        {
-            Background          = Brushes.Transparent,
-            ColumnDefinitions   = new ColumnDefinitions("*,Auto"),
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment   = VerticalAlignment.Stretch,
-        };
-        Grid.SetColumn(border, 0);
-        host.Children.Add(border);
-
-        var line = new Rectangle
-        {
-            Fill              = (IBrush)this.FindResource("BrushSeparator")!,
-            VerticalAlignment = VerticalAlignment.Stretch,
-        };
-        line.Bind(Rectangle.WidthProperty,              line.GetResourceObservable("SeparatorThickness"));
-        line.Bind(Layoutable.UseLayoutRoundingProperty, line.GetResourceObservable("LineUseLayoutRounding"));
-        RenderOptions.SetEdgeMode(line, EdgeMode.Aliased);
-        Grid.SetColumn(line, 1);
-        host.Children.Add(line);
-
-        return host;
-    }
-
-    private Control BuildSecurityLogChevron(string key)
-    {
-        var path = new Path
-        {
-            StrokeThickness = 2,
-            StrokeLineCap   = PenLineCap.Round,
-            StrokeJoin      = PenLineJoin.Round,
-        };
-        _logChevrons[key] = path;
-        ApplySecurityLogChevronState(key, path);
-
-        var canvas = new Canvas { Width = 24, Height = 24 };
-        canvas.Children.Add(path);
-
-        var btn = new Button
-        {
-            Width             = 20,
-            Height            = 20,
-            VerticalAlignment = VerticalAlignment.Center,
-            Content           = new Viewbox
-            {
-                Width  = HistoryIconSize("IconSizeSmall"),
-                Height = HistoryIconSize("IconSizeSmall"),
-                Child  = canvas,
+                "Allowed"                    => vm => vm.Source is SecurityEntry { Allowed: true } ? CellTone.Green : CellTone.Red,
+                "Day" or "Who" or "Address"  => _ => CellTone.Secondary,
+                _                            => null,
             },
-        };
-        btn.Classes.Add("icon");
-        btn.Classes.Add("filterChevron");
-        ToolTip.SetTip(btn, key == "Day" ? "Отбор и сортировка" : "Отбор");
-        btn.Click += (_, _) => ShowSecurityLogFilterFlyout(btn, key);
-        return btn;
-    }
-
-    private void ApplySecurityLogChevronState(string key, Path path)
-    {
+        }));
         // Порядок «сначала старые» — тоже след на колонке времени: без него человек не найдет,
         // чем перевернул таблицу.
-        var active  = _logFilters.ContainsKey(key) || (key == "Day" && !_logNewestFirst);
-        path.Data   = HistoryIcon(active ? "IconFilter" : "IconChevronDown");
-        path.Stroke = active
-            ? (IBrush)this.FindResource("BrushAccent")!
-            : (IBrush)this.FindResource("BrushSecondaryText")!;
-    }
-
-    private void UpdateSecurityLogChevrons()
-    {
-        foreach (var (key, path) in _logChevrons)
-            ApplySecurityLogChevronState(key, path);
+        LogGrid.IsColumnFiltered = key => _logFilters.ContainsKey(key) || (key == "Day" && !_logNewestFirst);
     }
 
     // ── Ячейки ────────────────────────────────────────────────────────────────
-
-    private IDataTemplate BuildSecurityLogCell(string key) =>
-        new FuncDataTemplate<SecurityEntry>((entry, _) =>
-        {
-            if (entry is null) return new TextBlock();
-
-            var text = new TextBlock
-            {
-                Text              = SecurityLogCellText(key, entry),
-                Margin            = new Thickness(8, 0),
-                VerticalAlignment = VerticalAlignment.Center,
-                TextTrimming      = TextTrimming.CharacterEllipsis,
-            };
-
-            // Решение — цветом: заблокированное событие ищут глазами, а не вычитывают.
-            if (key == "Allowed")
-                text.Foreground = Brush(entry.Allowed ? "BrushGreen" : "BrushRed",
-                                        entry.Allowed ? "#34C759" : "#FF3B30");
-            else if (key is "Day" or "Who" or "Address")
-                text.Foreground = (IBrush)this.FindResource("BrushSecondaryText")!;
-
-            return text;
-        });
 
     private string SecurityLogCellText(string key, SecurityEntry entry) => key switch
     {
@@ -532,7 +388,7 @@ public partial class ProfileView
                 // из итога окна берется только направление, и только у колонки времени.
                 if (byTime) _logNewestFirst = result.Sort != true;
 
-                UpdateSecurityLogChevrons();
+                LogGrid.RefreshHeader();
                 ReloadSecurityLogRows();
             },
         });
@@ -545,7 +401,7 @@ public partial class ProfileView
 
     // ── Детали строки ─────────────────────────────────────────────────────────
 
-    private void OnSecurityLogSelectionChanged(object? sender, SelectionChangedEventArgs e)
+    private void OnSecurityLogSelectionChanged(object? sender, EventArgs e)
     {
         if (LogGrid.SelectedItem is SecurityEntry entry) OpenLogDetail(entry);
     }
@@ -564,8 +420,7 @@ public partial class ProfileView
         LogDetailPanel.IsVisible = false;
         DetailDivider.IsVisible  = false;
         LogDetailCardsHost.Children.Clear();
-        // Снять выделение — иначе повторный клик по той же строке не даст SelectionChanged.
-        LogGrid.SelectedItem = null;
+        LogGrid.ClearSelection();
     }
 
     /// <summary>
@@ -645,7 +500,7 @@ public partial class ProfileView
     /// </summary>
     private void CopyLogRow()
     {
-        if (LogGrid.SelectedItem is not SecurityEntry entry) return;
+        if (LogGrid.SelectedItem is not SecurityEntry) return;
 
         var text = string.Join("\n", LogDetailCardsHost.Children
             .OfType<Border>()

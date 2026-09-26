@@ -2,7 +2,7 @@ using Avalonia.Controls;
 using Avalonia.Media;
 using SmartBase.Controls.Behaviors;
 
-namespace SmartBase.Views.ConstructorDb.DrawnGrid;
+namespace SmartBase.Controls.DrawnGrid;
 
 /// <summary>
 /// Рамка выделения ячеек над редактором ячейки: лежит поверх <see cref="EditorHost"/> в той же

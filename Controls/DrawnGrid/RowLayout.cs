@@ -1,4 +1,4 @@
-namespace SmartBase.Views.ConstructorDb.DrawnGrid;
+namespace SmartBase.Controls.DrawnGrid;
 
 /// <summary>
 /// Раскладка строк рисованной сетки: где у строки с данным индексом верхняя граница и какой у

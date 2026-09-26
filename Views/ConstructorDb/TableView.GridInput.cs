@@ -11,6 +11,7 @@ using SmartBase.Controls.Widgets;
 using SmartBase.Core.Models;
 using SmartBase.Utils;
 using SmartBase.ViewModels.ConstructorDb;
+using SmartBase.Controls.DrawnGrid;
 using SmartBase.Views.ConstructorDb.DrawnGrid;
 
 namespace SmartBase.Views.ConstructorDb;

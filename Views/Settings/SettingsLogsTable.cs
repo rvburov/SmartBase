@@ -1,22 +1,16 @@
 using Avalonia;
-using Avalonia.Collections;
 using Avalonia.Controls;
-using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Shapes;
-using Avalonia.Controls.Templates;
-using Avalonia.Data;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
-using Avalonia.Styling;
-using Avalonia.Threading;
-using Avalonia.VisualTree;
 using SmartBase.Core.Models;
 using SmartBase.Logging;
 using SmartBase.Utils;
-using SmartBase.Controls.Behaviors;
 using SmartBase.Controls.Components;
 using SmartBase.Controls.Dialogs;
+using SmartBase.Controls.DrawnGrid;
+using SmartBase.ViewModels.ConstructorDb;
 using LogRow = SmartBase.Logging.LogReader.LogRow;
 using Path = Avalonia.Controls.Shapes.Path;
 
@@ -25,22 +19,25 @@ namespace SmartBase.Views.Settings;
 /// <summary>
 /// «Диагностика» — таблица журнала logs.db (Serilog) с панелью деталей выбранной строки.
 /// Раздел «Настройки» (единый файл на приложение — системная, а не пользовательская вещь,
-/// поэтому здесь, а не в «Профиле»). Фильтр и сортировка в заголовке колонки — то же окно, что
-/// у таблицы конструктора (<see cref="ColumnFilterPanel"/>: каскад фильтров, автоотметка
-/// найденного, Enter); данные читаются через <see cref="LogReader"/> (raw SQL по logs.db).
-/// Строки подгружаются keyset-страницами по 200 при прокрутке к концу.
+/// поэтому здесь, а не в «Профиле»). Таблица — рисованная сетка служебных таблиц
+/// (<see cref="ServiceGrid"/>): колонки описаны определениями, строки — <see cref="TableRowVm.Static"/>
+/// над строкой журнала. Фильтр и сортировка в заголовке колонки — то же окно, что у таблицы
+/// конструктора (<see cref="ColumnFilterPanel"/>: каскад фильтров, автоотметка найденного, Enter);
+/// данные читаются через <see cref="LogReader"/> (raw SQL по logs.db). Строки подгружаются
+/// keyset-страницами по 200 при прокрутке к концу.
 /// </summary>
 public partial class SettingsView
 {
     private const int LogsPageSize = 200;
 
-    // Колонки лога: ключ (как в LogQuery) и заголовок. Ширина звездная — окно делится поровну.
-    private static readonly (string Key, string Header)[] LogsColumns =
+    // Колонки лога: ключ (как в LogQuery), заголовок и иконка. Ширина звездная — окно делится поровну.
+    // Иконка — та же, что у поля в панели деталей: колонка и карточка одного поля читаются как одно целое.
+    private static readonly (string Key, string Header, string IconKey)[] LogsColumns =
     [
-        ("date",      "Время"),
-        ("level",     "Уровень"),
-        ("message",   "Сообщение"),
-        ("exception", "Ошибка"),
+        ("date",      "Время",     "IconClock"),
+        ("level",     "Уровень",   "IconFieldStatus"),
+        ("message",   "Сообщение", "IconMessageWarning"),
+        ("exception", "Ошибка",    "IconTriangleAlert"),
     ];
 
     private readonly LogReader _logReader = new(AppSettings.LogsDbPath);
@@ -48,14 +45,12 @@ public partial class SettingsView
     private bool _logsEnd;
     // Поколение запроса: смена фильтра во время чтения страницы обесценивает результат.
     private int _logsGen;
-    private readonly AvaloniaList<LogRow> _logsRows = [];
+    // Прочитанные строки в порядке показа: последняя — keyset-курсор следующей страницы.
+    private readonly List<LogRow> _logsRows = [];
 
     private readonly Dictionary<string, HashSet<string>> _logsFilters = [];
     private string? _logsSortKey;
     private bool _logsSortAsc;
-
-    private readonly Dictionary<string, Path> _logsChevrons = [];
-    private ScrollBar? _logsScroll;
 
     // ── Панель деталей выбранной строки ─────────────────────────────────────────
     // Поля-карточки в панели деталей: ключ (как в LogsColumns), подпись, иконка типа.
@@ -86,14 +81,12 @@ public partial class SettingsView
 
     private void RebuildLogsPanel()
     {
-        if (LogsGrid.Columns.Count == 0)
-        {
-            BuildLogsColumns();
-            LogsGrid.ItemsSource = _logsRows;
-        }
+        if (LogsGrid.Columns.Count == 0) BuildLogsColumns();
         if (!_logsSelectionHooked)
         {
             LogsGrid.SelectionChanged += OnLogsSelectionChanged;
+            LogsGrid.NearEnd          += (_, _) => _ = LoadMoreLogsAsync();
+            LogsGrid.FilterRequested  += (_, e) => ShowLogsFilterFlyout(e.Anchor, e.Key);
             LogsDetailCloseBtn.Click  += (_, _) => CloseLogsDetail();
             LogsDetailCopyBtn.Click   += (_, _) => CopyLogsDetailField();
             LogsPropsResizeGrip.PointerPressed  += OnLogsGripPressed;
@@ -104,7 +97,7 @@ public partial class SettingsView
             LogsDetailResizeGrip.PointerReleased += OnLogsDetailGripReleased;
             _logsSelectionHooked = true;
         }
-        UpdateLogsChevrons();
+        LogsGrid.RefreshHeader();
         ReloadLogsRows();
     }
 
@@ -115,6 +108,7 @@ public partial class SettingsView
         CloseLogsDetail();
         _logsGen++;
         _logsRows.Clear();
+        LogsGrid.Clear();
         _logsEnd = false;
         LogsEmptyText.IsVisible = false;
         _ = LoadMoreLogsAsync();
@@ -144,13 +138,13 @@ public partial class SettingsView
             // Пока читали страницу, могли переключить фильтр — результат уже не наш.
             if (gen != _logsGen) return;
 
+            var first = _logsRows.Count;
             _logsRows.AddRange(page);
+            LogsGrid.AppendRows(page.Select((row, i) => TableRowVm.Static(first + i + 1, key => LogsCellText(key, row), row)));
             if (page.Count < LogsPageSize) _logsEnd = true;
             // Пустая таблица объясняет себя: фильтры ничего не пропустили или журнал пуст.
             LogsEmptyText.Text      = _logsFilters.Count > 0 ? "Нет записей, подходящих под фильтры." : "Записей пока нет.";
             LogsEmptyText.IsVisible = _logsRows.Count == 0;
-
-            Dispatcher.UIThread.Post(EnsureLogsScrollHook, DispatcherPriority.Background);
         }
         catch (Exception ex)
         {
@@ -166,22 +160,6 @@ public partial class SettingsView
             // запроса не стартовала — чтение было занято. Догоняем, иначе таблица осталась бы пустой.
             if (gen != _logsGen) _ = LoadMoreLogsAsync();
         }
-    }
-
-    // Следующая страница — при прокрутке к концу (порог ~300px до низа).
-    private void EnsureLogsScrollHook()
-    {
-        if (_logsScroll is not null) return;
-        _logsScroll = LogsGrid.GetVisualDescendants().OfType<ScrollBar>()
-            .FirstOrDefault(s => s.Orientation == Orientation.Vertical);
-        if (_logsScroll is null) return;
-
-        _logsScroll.PropertyChanged += (_, e) =>
-        {
-            if (e.Property != RangeBase.ValueProperty) return;
-            if (_logsScroll.Maximum > 0 && _logsScroll.Value >= _logsScroll.Maximum - 300)
-                _ = LoadMoreLogsAsync();
-        };
     }
 
     // ── Выгрузка в CSV ────────────────────────────────────────────────────────
@@ -240,166 +218,25 @@ public partial class SettingsView
         finally { _logsExporting = false; }
     }
 
-    // ── Колонки и шапка ───────────────────────────────────────────────────────
+    // ── Колонки ───────────────────────────────────────────────────────────────
 
+    // Колонки-текст поровну от ширины окна, не уже 110; в шапке — иконка поля и кнопка фильтра.
+    // Последняя колонка («Ошибка») не рисует правую линию заголовка: ее правый край и так очерчен
+    // краем таблицы или полосой, а вторая линия давала «двойную/толстую».
     private void BuildLogsColumns()
     {
-        _logsChevrons.Clear();
-        for (var i = 0; i < LogsColumns.Length; i++)
+        LogsGrid.SetColumns(LogsColumns.Select((def, i) => new TableColumnDef
         {
-            var def = LogsColumns[i];
-            // Последняя колонка («Ошибка») не рисует правую линию заголовка: ее правый край
-            // и так очерчен краем таблицы/скроллом, а вторая линия давала «двойную/толстую».
-            // Так же поступает таблица конструктора (WrapHeaderContent addRightLine=false
-            // для последней колонки «+»).
-            var addRightLine = i < LogsColumns.Length - 1;
-            // Иконка типа колонки — та же, что у поля в панели деталей (LogsDetailFields).
-            var iconKey = LogsDetailFields.First(f => f.Key == def.Key).IconKey;
-            LogsGrid.Columns.Add(new DataGridTemplateColumn
-            {
-                Header       = BuildLogsHeader(def.Key, def.Header, iconKey, addRightLine),
-                Width        = new DataGridLength(1, DataGridLengthUnitType.Star),
-                MinWidth     = 110,
-                CellTemplate = BuildLogsCellTemplate(def.Key),
-            });
-        }
-    }
-
-    private Control BuildLogsHeader(string key, string header, string iconKey, bool addRightLine)
-    {
-        var text = new TextBlock
-        {
-            Text              = header,
-            FontSize          = (double)this.FindResource("FontSizeBase")!,
-            VerticalAlignment = VerticalAlignment.Center,
-            TextTrimming      = TextTrimming.CharacterEllipsis,
-            Foreground        = (IBrush)this.FindResource("BrushSecondaryText")!,
-        };
-
-        // Сетка [иконка типа][текст][шеврон] — 1-в-1 как шапка таблицы конструктора
-        // (TableView.MakeTextHeader): иконка IconSizeSmall с отступом 6px справа.
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
-
-        var icon = BuildLogsHeaderIcon(iconKey);
-        Grid.SetColumn(icon, 0);
-        grid.Children.Add(icon);
-
-        Grid.SetColumn(text, 1);
-        grid.Children.Add(text);
-
-        var chevron = BuildLogsChevron(key);
-        Grid.SetColumn(chevron, 2);
-        grid.Children.Add(chevron);
-
-        var border = new Border
-        {
-            Background          = Brushes.Transparent,
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment   = VerticalAlignment.Stretch,
-            Padding             = new Thickness(6, 0),
-            Child               = grid,
-        };
-        border.Classes.Add("colHeader");
-
-        var host = new Grid
-        {
-            Background          = Brushes.Transparent,
-            ColumnDefinitions   = new ColumnDefinitions("*,Auto"),
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment   = VerticalAlignment.Stretch,
-        };
-        Grid.SetColumn(border, 0);
-        host.Children.Add(border);
-
-        if (addRightLine)
-        {
-            var line = new Rectangle
-            {
-                Fill              = (IBrush)this.FindResource("BrushSeparator")!,
-                VerticalAlignment = VerticalAlignment.Stretch,
-            };
-            line.Bind(Rectangle.WidthProperty,              line.GetResourceObservable("SeparatorThickness"));
-            line.Bind(Layoutable.UseLayoutRoundingProperty, line.GetResourceObservable("LineUseLayoutRounding"));
-            RenderOptions.SetEdgeMode(line, EdgeMode.Aliased);
-            Grid.SetColumn(line, 1);
-            host.Children.Add(line);
-        }
-
-        return host;
-    }
-
-    // Иконка типа в шапке колонки — как в таблице конструктора (TableView.BuildTypeIcon):
-    // Viewbox IconSizeSmall, отступ 6px справа, обводка BrushSecondaryText / IconStrokeSmall.
-    private Control BuildLogsHeaderIcon(string iconKey) => new Viewbox
-    {
-        Width             = LogsIconSize("IconSizeSmall"),
-        Height            = LogsIconSize("IconSizeSmall"),
-        VerticalAlignment = VerticalAlignment.Center,
-        Margin            = new Thickness(0, 0, 6, 0),
-        Child = new Canvas
-        {
-            Width  = 24,
-            Height = 24,
-            Children =
-            {
-                new Path
-                {
-                    Data            = LogsIcon(iconKey),
-                    Stroke          = (IBrush)this.FindResource("BrushSecondaryText")!,
-                    StrokeThickness = LogsIconSize("IconStrokeSmall"),
-                    StrokeLineCap   = PenLineCap.Round,
-                    StrokeJoin      = PenLineJoin.Round,
-                },
-            },
-        },
-    };
-
-    private Control BuildLogsChevron(string key)
-    {
-        var path = new Path
-        {
-            StrokeThickness = 2,
-            StrokeLineCap   = PenLineCap.Round,
-            StrokeJoin      = PenLineJoin.Round,
-        };
-        _logsChevrons[key] = path;
-        ApplyLogsChevronState(key, path);
-
-        var canvas = new Canvas { Width = 24, Height = 24 };
-        canvas.Children.Add(path);
-
-        var btn = new Button
-        {
-            Width             = 20,
-            Height            = 20,
-            VerticalAlignment = VerticalAlignment.Center,
-            Content           = new Viewbox
-            {
-                Width  = LogsIconSize("IconSizeSmall"),
-                Height = LogsIconSize("IconSizeSmall"),
-                Child  = canvas,
-            },
-        };
-        btn.Classes.Add("icon");
-        btn.Classes.Add("filterChevron");
-        ToolTip.SetTip(btn, "Фильтр и сортировка");
-        btn.Click += (_, _) => ShowLogsFilterFlyout(btn, key);
-        return btn;
-    }
-
-    private void ApplyLogsChevronState(string key, Path path)
-    {
-        var active  = _logsFilters.ContainsKey(key) || _logsSortKey == key;
-        path.Data   = active ? LogsIcon("IconFilter") : LogsIcon("IconChevronDown");
-        path.Stroke = active
-            ? (IBrush)this.FindResource("BrushAccent")!
-            : (IBrush)this.FindResource("BrushSecondaryText")!;
-    }
-
-    private void UpdateLogsChevrons()
-    {
-        foreach (var (key, path) in _logsChevrons)
-            ApplyLogsChevronState(key, path);
+            Key             = def.Key,
+            Header          = def.Header,
+            FieldType       = "text",
+            IsStarWidth     = true,
+            MinWidth        = 110,
+            HeaderIconKey   = def.IconKey,
+            HeaderRightLine = i < LogsColumns.Length - 1,
+        }));
+        // Активный фильтр или сортировка — синяя воронка вместо шеврона в шапке.
+        LogsGrid.IsColumnFiltered = key => _logsFilters.ContainsKey(key) || _logsSortKey == key;
     }
 
     private static Geometry LogsIcon(string key) =>
@@ -412,21 +249,8 @@ public partial class SettingsView
 
     // ── Ячейки ────────────────────────────────────────────────────────────────
 
-    private IDataTemplate BuildLogsCellTemplate(string key) =>
-        new FuncDataTemplate<LogRow>((row, _) =>
-        {
-            if (row is null) return new TextBlock();
-            // Полный текст сообщения/ошибки показывает панель деталей (клик по строке),
-            // поэтому тултипа с полным текстом в ячейке больше нет.
-            return new TextBlock
-            {
-                Text              = LogsCellText(key, row),
-                Margin            = new Thickness(8, 0),
-                VerticalAlignment = VerticalAlignment.Center,
-                TextTrimming      = TextTrimming.CharacterEllipsis,
-            };
-        });
-
+    // Полный текст сообщения/ошибки показывает панель деталей (клик по строке), поэтому
+    // подсказки с полным текстом у ячейки нет.
     private static string LogsCellText(string key, LogRow row) => key switch
     {
         "date"      => FormatLogsTs(row.Timestamp),
@@ -493,7 +317,7 @@ public partial class SettingsView
             Apply      = result =>
             {
                 result.ApplyTo(_logsFilters, ref _logsSortKey, ref _logsSortAsc);
-                UpdateLogsChevrons();
+                LogsGrid.RefreshHeader();
                 ReloadLogsRows();
             },
         });
@@ -505,7 +329,7 @@ public partial class SettingsView
     // свойств «Страницы записи»); клик по карточке раскрывает полный текст поля снизу.
     // Крестик в шапке закрывает панель. Оформление зеркалит RecordPageView.
 
-    private void OnLogsSelectionChanged(object? sender, SelectionChangedEventArgs e)
+    private void OnLogsSelectionChanged(object? sender, EventArgs e)
     {
         if (LogsGrid.SelectedItem is LogRow row) OpenLogsDetail(row);
     }
@@ -530,8 +354,7 @@ public partial class SettingsView
         _logsNameCols.Clear();
         _logsDetailSelectedCard = null;
         LogsDetailFullText.Text = "";
-        // Снять выделение — иначе повторный клик по той же строке не даст SelectionChanged.
-        LogsGrid.SelectedItem = null;
+        LogsGrid.ClearSelection();
     }
 
     private void CopyLogsDetailField()

@@ -4,7 +4,8 @@
              x:Class="SmartBase.Views.ConstructorDb.TableView"
              Background="{StaticResource BrushBg}">
 
-    <!-- Таблица коллекции — рисованная сетка (Views/ConstructorDb/DrawnGrid, план drawn-grid.md):
+    <!-- Таблица коллекции — рисованная сетка (GridPanel в Views/ConstructorDb/DrawnGrid, общие
+         части в Controls/DrawnGrid, план drawn-grid.md):
          шапку, ячейки, линии, цвета, выделение и наведение рисует GridSurface, контролов в кадре
          нет. Единственный контрол над ячейкой — накладной редактор (EditorHost, холст с классом
          cellEditor), и стили ниже — только про него. -->

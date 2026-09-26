@@ -1,6 +1,6 @@
 using SmartBase.ViewModels.ConstructorDb;
 
-namespace SmartBase.Views.ConstructorDb.DrawnGrid;
+namespace SmartBase.Controls.DrawnGrid;
 
 /// <summary>
 /// Раскладка колонок рисованной сетки: какие колонки показаны, где у каждой левая граница и
@@ -12,7 +12,8 @@ namespace SmartBase.Views.ConstructorDb.DrawnGrid;
 /// Прототип этапа 0 плана [drawn-grid.md]: ширины считаются по тем же правилам, что у нынешней
 /// таблицы (стандартная — поровну от ширины окна, не уже <c>standardWidth</c>; ручная — из модели,
 /// остаток раздается пропорционально), но без звездных весов и без прохода по колонкам на каждый
-/// кадр разметки.
+/// кадр разметки. Служебные таблицы (этап 6а) строят раскладку <see cref="BuildRounded"/> — по
+/// правилам прежних таблиц на DataGrid, до пикселя.
 /// </summary>
 public sealed class ColumnLayout
 {
@@ -20,17 +21,27 @@ public sealed class ColumnLayout
     public const double MinManualWidth = 48;
 
     private readonly TableColumnDef[] _defs;
+    private readonly double[]         _lefts;    // левая граница каждой колонки
     private readonly double[]         _widths;
-    private readonly double[]         _lefts;   // _lefts[i] — левая граница i-й колонки, _lefts[Count] — общая ширина
+    private readonly double           _total;    // протяженность прокрутки (у служебных таблиц — сумма дробных ширин до округления)
 
-    public static readonly ColumnLayout Empty = new([], []);
+    public static readonly ColumnLayout Empty = new([], [], [], 0);
 
-    private ColumnLayout(TableColumnDef[] defs, double[] widths)
+    private ColumnLayout(TableColumnDef[] defs, double[] lefts, double[] widths, double total)
     {
         _defs   = defs;
+        _lefts  = lefts;
         _widths = widths;
-        _lefts  = new double[defs.Length + 1];
-        for (var i = 0; i < defs.Length; i++) _lefts[i + 1] = _lefts[i] + widths[i];
+        _total  = total;
+    }
+
+    // Колонки встык: левая граница — сумма ширин предыдущих.
+    private static ColumnLayout Contiguous(TableColumnDef[] defs, double[] widths)
+    {
+        var lefts = new double[defs.Length];
+        var x = 0.0;
+        for (var i = 0; i < defs.Length; i++) { lefts[i] = x; x += widths[i]; }
+        return new ColumnLayout(defs, lefts, widths, x);
     }
 
     public int Count => _defs.Length;
@@ -38,17 +49,18 @@ public sealed class ColumnLayout
     public TableColumnDef this[int index] => _defs[index];
 
     public double Left(int index)  => _lefts[index];
-    public double Right(int index) => _lefts[index + 1];
+    public double Right(int index) => _lefts[index] + _widths[index];
     public double Width(int index) => _widths[index];
 
-    /// <summary>Общая ширина показанных колонок — протяженность горизонтальной прокрутки.</summary>
-    public double TotalWidth => _lefts[^1];
+    /// <summary>Протяженность горизонтальной прокрутки — сумма ширин показанных колонок.</summary>
+    public double TotalWidth => _total;
 
     /// <summary>Индекс колонки под координатой <paramref name="x"/> (в координатах содержимого,
-    /// без учета прокрутки); −1, если координата вне колонок.</summary>
+    /// без учета прокрутки); −1, если координата вне колонок. Из перекрывающихся на пиксель ячеек
+    /// служебной таблицы отвечает правая — она нарисована поверх.</summary>
     public int IndexAt(double x)
     {
-        if (Count == 0 || x < 0 || x >= TotalWidth) return -1;
+        if (Count == 0 || x < 0 || x >= Math.Max(_total, Right(Count - 1))) return -1;
         // Ищем последнюю левую границу, не превышающую x.
         var lo = 0;
         var hi = Count - 1;
@@ -113,7 +125,7 @@ public sealed class ColumnLayout
             widths[i] = Q(shown[i].FixedWidth);
             service  += widths[i];
         }
-        if (movable.Count == 0) return new ColumnLayout(shown, widths);
+        if (movable.Count == 0) return Contiguous(shown, widths);
 
         // Все в целых физических пикселях (квантах): сумма ширин обязана точно равняться ширине
         // окна, когда таблица помещается, — иначе справа от «+» остается полоса или на пиксель
@@ -179,6 +191,70 @@ public sealed class ColumnLayout
         }
 
         for (var k = 0; k < movable.Count; k++) widths[movable[k]] = units[k] * quant;
-        return new ColumnLayout(shown, widths);
+        return Contiguous(shown, widths);
+    }
+
+    /// <summary>
+    /// Раскладка служебных таблиц — как у прежних таблиц на DataGrid, до пикселя. Пиксельные колонки
+    /// берут свою ширину; звездные делят остаток окна поровну ДРОБНО, без квантования, не опускаясь
+    /// ниже своей минимальной ширины: кому равная доля мала, тот встает на минимум и выходит из
+    /// дележа, остальные делят остаток. Прямоугольники ячеек — по правилу раскладки Avalonia с
+    /// округлением: начало ячейки округляется к ближайшему физическому пикселю (половина — к четному),
+    /// ширина — вверх вместе с дробной частью начала (<c>ceil(x + w) − floor(x)</c>). Соседние ячейки
+    /// поэтому могут перекрываться на пиксель, а линия колонки стоит на <c>ceil(x + w) − 1</c>.
+    /// Протяженность прокрутки — сумма дробных ширин: последняя ячейка после округления вылезает за
+    /// окно на пиксель, как и у DataGrid, и это не повод показывать полосу.
+    /// </summary>
+    /// <param name="defs">Колонки в порядке показа.</param>
+    /// <param name="viewportWidth">Ширина окна таблицы в DIP (без вертикальной полосы).</param>
+    /// <param name="scale">Физических пикселей в DIP (масштаб экрана × зум).</param>
+    public static ColumnLayout BuildRounded(IReadOnlyList<TableColumnDef> defs, double viewportWidth, double scale)
+    {
+        if (scale <= 0) scale = 1;
+        var shown  = defs.ToArray();
+        var widths = new double[shown.Length];
+
+        var fixedSum = 0.0;
+        var stars    = new List<int>();
+        for (var i = 0; i < shown.Length; i++)
+        {
+            if (shown[i].IsStarWidth) { stars.Add(i); continue; }
+            widths[i] = shown[i].FixedWidth;
+            fixedSum += widths[i];
+        }
+        if (stars.Count > 0)
+        {
+            var sharing = new List<int>(stars);
+            var left    = Math.Max(0, viewportWidth - fixedSum);
+            while (true)
+            {
+                var share  = sharing.Count > 0 ? left / sharing.Count : 0;
+                var pinned = sharing.Where(k => shown[k].MinWidth > share).ToList();
+                if (pinned.Count == 0) break;
+                foreach (var k in pinned)
+                {
+                    widths[k] = shown[k].MinWidth;
+                    left     -= shown[k].MinWidth;
+                    sharing.Remove(k);
+                }
+            }
+            if (sharing.Count > 0)
+            {
+                var share = Math.Max(0, left) / sharing.Count;
+                foreach (var k in sharing) widths[k] = share;
+            }
+        }
+
+        const double eps = 1e-6;
+        var lefts   = new double[shown.Length];
+        var rounded = new double[shown.Length];
+        var x = 0.0;
+        for (var i = 0; i < shown.Length; i++)
+        {
+            lefts[i]   = Math.Round(x * scale, MidpointRounding.ToEven) / scale;
+            rounded[i] = (Math.Ceiling((x + widths[i]) * scale - eps) - Math.Floor(x * scale + eps)) / scale;
+            x += widths[i];
+        }
+        return new ColumnLayout(shown, lefts, rounded, x);
     }
 }

@@ -1,4 +1,4 @@
-namespace SmartBase.Views.ConstructorDb.DrawnGrid;
+namespace SmartBase.Controls.DrawnGrid;
 
 /// <summary>
 /// Арифметика жеста ручной ширины колонки — та же, что была у нынешней таблицы

@@ -108,7 +108,7 @@
                       HorizontalScrollBarVisibility="Auto"
                       Background="Transparent"
                       ContextRequested="OnEmptyContextRequested">
-            <!-- UseLayoutRounding отключается при зуме≠1 (тот же токен, что у DataGrid): иначе
+            <!-- UseLayoutRounding отключается при зуме≠1 (тот же токен, что у линий таблиц): иначе
                  округление раздувает толщину линии-разделителя и копит сдвиг строк вниз. -->
             <ItemsControl x:Name="RowsHost" Padding="0"
                           UseLayoutRounding="{DynamicResource LineUseLayoutRounding}">
@@ -119,7 +119,7 @@
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                     <DataTemplate x:DataType="comp:SidebarRow">
-                        <!-- Строка повторяет структуру строки DataGrid. Контент = высота ячейки
+                        <!-- Строка повторяет структуру строки таблицы. Контент = высота ячейки
                              (токен RowHeightTable, настройка «Плотность строк таблицы») в Row 0.
                              Линия-разделитель — компенсированный по
                              зуму SeparatorThickness (ровно 1 физ. пиксель, как линия сетки таблицы):

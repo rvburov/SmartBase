@@ -14,7 +14,7 @@ using SmartBase.Core.Models;
 using SmartBase.Utils;
 using SmartBase.ViewModels.ConstructorDb;
 
-namespace SmartBase.Views.ConstructorDb.DrawnGrid;
+namespace SmartBase.Controls.DrawnGrid;
 
 /// <summary>
 /// Рисованная поверхность таблицы: шапка, строки и ячейки видимого окна рисуются напрямую в
@@ -118,6 +118,26 @@ public sealed class GridSurface : Control
     private IBrush   _accentLight = Brushes.LightBlue;    // BrushAccentLight — выделенная запись и колонка
     private IBrush   _selectTint  = new SolidColorBrush(Colors.RoyalBlue, 0.08);   // тонировка диапазона ячеек
     private IBrush   _red         = Brushes.Red;
+    private IBrush   _green       = Brushes.Green;
+    // Ячейка-список служебных таблиц: закрытый ComboBox приложения и его недоступное состояние из темы.
+    private IBrush   _choiceBg             = Brushes.WhiteSmoke;
+    private IBrush   _choiceBorder         = Brushes.LightGray;
+    private IBrush   _choiceBgDisabled     = Brushes.LightGray;
+    private IBrush   _choiceBorderDisabled = Brushes.Gray;
+    private IBrush   _choiceGlyph          = Brushes.Gray;
+    private IBrush   _choiceGlyphDisabled  = Brushes.Gray;
+    private double   _choiceRadius         = 8;
+    // Стрелка списка — фигура из шаблона ComboBox темы Fluent (локальное значение шаблона, стили
+    // приложения ее не перебивают), вписанная в квадрат 12×12.
+    private static readonly Geometry ChoiceGlyph =
+        Geometry.Parse("M1939 486L2029 576L1024 1581L19 576L109 486L1024 1401L1939 486Z");
+    // Недоступная галочка: CheckBox:disabled — Opacity 0,5, и Avalonia умножает на нее каждый штрих
+    // отдельно: рамка поверх заливки того же цвета выходит темнее заливки. Повторяем кистями с той
+    // же прозрачностью, а не общим слоем.
+    private IBrush   _accentHalf  = Brushes.LightBlue;
+    private IBrush   _whiteHalf   = Brushes.White;
+    private Pen      _checkBorderHalf = new(Brushes.Gray, 1);
+    private bool     _choiceInside;   // указатель внутри рамки ячейки-списка (рамка красится акцентом)
     private Pen      _separator   = new(Brushes.LightGray, 1);
     private Pen      _checkBorder = new(Brushes.Black, 1);
     private double   _lineWidth   = 1;
@@ -187,6 +207,51 @@ public sealed class GridSurface : Control
     /// <summary>Полоски-захваты высоты строк активны (ручный режим высоты).</summary>
     public bool RowGripsEnabled { get; set; }
 
+    // ── Служебные таблицы (ServiceGrid): те же отрисовщики, другие правила строки ─────────────
+    // Все по умолчанию выключено — кадр таблицы коллекции не меняется.
+
+    /// <summary>Наведение красит всю строку, а не ячейку (как строка прежних служебных таблиц);
+    /// выделенная строка под указателем остается выделенной.</summary>
+    public bool HoverWholeRow { get; set; }
+
+    /// <summary>Токен высоты строки: у таблицы коллекции — высота из «Плотности строк», у служебных
+    /// таблиц — RowHeightStandard, плотность конструктора их не касается.</summary>
+    public string RowHeightResourceKey { get; set; } = ConstructorSettings.RowHeightResourceKey;
+
+    /// <summary>Отступ текста ячейки от границ: 6 у таблицы коллекции, 8 у служебных таблиц.</summary>
+    public double CellTextPad { get; set; } = CellPad;
+
+    /// <summary>Сколько первых колонок закреплено: стоят на месте при прокрутке вбок, прокручиваемые
+    /// рисуются правее них.</summary>
+    public int FrozenColumns { get; set; }
+
+    /// <summary>Галочка ровно по центру ячейки (CheckBox без отступа под подпись), а не со сдвигом на
+    /// половину отступа, как у галочки таблицы коллекции.</summary>
+    public bool CheckboxCentered { get; set; }
+
+    /// <summary>Наведение на заголовок красит его фон (таблица коллекции); у служебных таблиц
+    /// красится только кнопка фильтра.</summary>
+    public bool HeaderHoverFill { get; set; } = true;
+
+    /// <summary>Рисовать ли правую линию последней колонки в теле таблицы. Прежние служебные таблицы
+    /// ее не рисовали: край и так очерчен краем таблицы или полосой.</summary>
+    public bool LastColumnLine { get; set; } = true;
+
+    /// <summary>Тянуть ли вертикальные линии ниже последней строки (таблица коллекции — да, ее
+    /// строка «+» всегда последняя; служебные таблицы — нет, под строками чистое поле).</summary>
+    public bool LinesBelowRows { get; set; } = true;
+
+    /// <summary>Ширина закрепленных колонок — полоса прокрутки считает окно без них.</summary>
+    public double FrozenColumnsWidth => FrozenWidth;
+
+    /// <summary>Обрезать надписи по границам их прямоугольника (как надпись с многоточием прежних
+    /// служебных таблиц: выступ первой буквы за левый край не рисуется). У таблицы коллекции обрезка
+    /// только при переполнении.</summary>
+    public bool ClipText { get; set; }
+
+    /// <summary>Перечитать токены после смены опций (ключа высоты строки).</summary>
+    public void RefreshTokens() => OnMetricsChanged();
+
     /// <summary>Колонки с активным фильтром или сортировкой — в шапке у них воронка вместо шеврона.</summary>
     public Func<string, bool> IsColumnFiltered { get; set; } = _ => false;
 
@@ -242,8 +307,7 @@ public sealed class GridSurface : Control
         EnsureTokens();
         var c = _columns.IndexOf(key);
         if (c < 0 || row < 0 || row >= RowCount) return null;
-        var cell = CellRect(row, c);
-        return new Rect(cell.X, cell.Y, Math.Max(0, cell.Width - _lineWidth), Math.Max(0, cell.Height - _lineWidth));
+        return ContentRect(CellRect(row, c), c);
     }
 
     /// <summary>Квадрат галочки в ячейке (координаты поверхности) — по нему щелкают, как по квадрату
@@ -252,6 +316,13 @@ public sealed class GridSurface : Control
     {
         EnsureTokens();
         return CheckboxBox(ContentRect(cell), LineMetrics.EffectiveScale(this));
+    }
+
+    /// <summary>То же с учетом колонки (у последней без линии в теле квадрат считается от всей ячейки).</summary>
+    public Rect CheckboxRect(Rect cell, int column)
+    {
+        EnsureTokens();
+        return CheckboxBox(ContentRect(cell, column), LineMetrics.EffectiveScale(this));
     }
 
     /// <summary>Кнопка-скрепка ячейки «Файла» (координаты поверхности); у авто-привязки кнопки нет.</summary>
@@ -267,6 +338,13 @@ public sealed class GridSurface : Control
     // Область содержимого ячейки: без вертикальной линии справа и линии под строкой.
     private Rect ContentRect(Rect cell) =>
         new(cell.X, cell.Y, Math.Max(0, cell.Width - _lineWidth), Math.Max(0, cell.Height - _lineWidth));
+
+    // То же для колонки: у последней колонки без линии в теле (служебные таблицы) содержимое идет
+    // до самого края ячейки, как в ячейке прежней таблицы со спрятанной линией.
+    private bool CellHasLine(int column) => LastColumnLine || column < _columns.Count - 1;
+
+    private Rect ContentRect(Rect cell, int column) =>
+        CellHasLine(column) ? ContentRect(cell) : new Rect(cell.X, cell.Y, cell.Width, Math.Max(0, cell.Height - _lineWidth));
 
     /// <summary>Указатель над редактором ячейки (он лежит над поверхностью и забирает события): наведение
     /// ведется так же, как над самой поверхностью, — подсветка ячейки видна сквозь редактор.
@@ -306,7 +384,7 @@ public sealed class GridSurface : Control
         var c1 = _columns.IndexOf(sel.Last);
         if (c0 < 0 || c1 < 0) return null;
         if (c1 < c0) (c0, c1) = (c1, c0);
-        var x = _columns.Left(c0) - _offsetX;
+        var x = ScreenLeft(c0);
         var y = RowTop(sel.Top);
         // Ячейка — до вертикальной линии включительно и без линии под строкой: так же стояли
         // границы DataGridCell, по которым рисовалась рамка нынешней таблицы.
@@ -466,7 +544,7 @@ public sealed class GridSurface : Control
 
     /// <summary>Прямоугольник ячейки в координатах поверхности (без учета видимости).</summary>
     public Rect CellRect(int row, int column) =>
-        new(_columns.Left(column) - _offsetX, RowTop(row), _columns.Width(column), _rowLayout.Height(row));
+        new(ScreenLeft(column), RowTop(row), _columns.Width(column), _rowLayout.Height(row));
 
     // ── Попадание ─────────────────────────────────────────────────────────────
 
@@ -478,8 +556,7 @@ public sealed class GridSurface : Control
         var headH = HeaderHeight;
         var t     = _lineWidth;
 
-        var xContent = p.X + _offsetX;
-        var c = _columns.IndexAt(xContent);
+        var c = ColumnAtScreenX(p.X);
         if (c < 0) return GridHit.None;
 
         if (p.Y < headH)
@@ -487,17 +564,17 @@ public sealed class GridSurface : Control
             // Полоска ширины: правая граница колонки c или левая граница (= правая у c − 1).
             if (ColumnGripsEnabled)
             {
-                if (_columns[c].IsStarWidth && Math.Abs(p.X - (_columns.Right(c) - _offsetX)) <= GripHalf)
+                if (_columns[c].IsStarWidth && Math.Abs(p.X - ScreenRight(c)) <= GripHalf)
                     return new GridHit(GridHitKind.ColumnGrip, -1, c, _columns[c], HeaderRect(c));
-                if (c > 0 && _columns[c - 1].IsStarWidth && Math.Abs(p.X - (_columns.Left(c) - _offsetX)) <= GripHalf)
+                if (c > 0 && _columns[c - 1].IsStarWidth && Math.Abs(p.X - ScreenLeft(c)) <= GripHalf)
                     return new GridHit(GridHitKind.ColumnGrip, -1, c - 1, _columns[c - 1], HeaderRect(c - 1));
             }
             var def  = _columns[c];
             var rect = HeaderRect(c);
             if (def.Key == TableColumnDef.AddPropKey) return new GridHit(GridHitKind.HeaderAdd, -1, c, def, rect);
             if (def.Key == TableColumnDef.NumKey)     return new GridHit(GridHitKind.Header, -1, c, def, rect);
-            var btn = ChevronRect(rect, t);
-            if (btn.Contains(p)) return new GridHit(GridHitKind.HeaderFilter, -1, c, def, btn);
+            var btn = ChevronRect(rect, def.HeaderRightLine ? t : 0);
+            if (def.Filterable && btn.Contains(p)) return new GridHit(GridHitKind.HeaderFilter, -1, c, def, btn);
             return new GridHit(GridHitKind.Header, -1, c, def, rect);
         }
 
@@ -520,7 +597,31 @@ public sealed class GridSurface : Control
 
     private bool IsDataRow(int index) => _rows is not null && index >= 0 && index < _rows.Count && !_rows[index].IsAddRow;
 
-    private Rect HeaderRect(int c) => new(_columns.Left(c) - _offsetX, 0, _columns.Width(c), HeaderHeight);
+    private Rect HeaderRect(int c) => new(ScreenLeft(c), 0, _columns.Width(c), HeaderHeight);
+
+    // Закрепленные колонки стоят на месте, прокручиваемые сдвинуты на смещение. Экранная координата
+    // X → колонка: сначала закрепленные, потом прокручиваемые; уехавшая под закрепленные не считается.
+    private double FrozenWidth =>
+        FrozenColumns > 0 && _columns.Count > 0 ? _columns.Left(Math.Min(FrozenColumns, _columns.Count)) : 0;
+
+    private double ScreenLeft(int c)  => c < FrozenColumns ? _columns.Left(c)  : _columns.Left(c)  - _offsetX;
+    private double ScreenRight(int c) => c < FrozenColumns ? _columns.Right(c) : _columns.Right(c) - _offsetX;
+
+    private int ColumnAtScreenX(double px)
+    {
+        if (px < FrozenWidth) return _columns.IndexAt(px);
+        var c = _columns.IndexAt(px + _offsetX);
+        return c >= FrozenColumns ? c : -1;
+    }
+
+    // Прокручиваемые колонки в окне — правее закрепленных.
+    private (int First, int Last) ScrollingRange(double w)
+    {
+        var frozenW = FrozenWidth;
+        var (c0, c1) = _columns.VisibleRange(_offsetX + frozenW, w - frozenW);
+        if (c0 < FrozenColumns) c0 = FrozenColumns;
+        return (c0, c1);
+    }
 
     /// <summary>Кнопка фильтра в заголовке колонки (координаты поверхности при текущей прокрутке);
     /// null — колонки нет среди показанных или это «№» и «+».</summary>
@@ -528,8 +629,8 @@ public sealed class GridSurface : Control
     {
         EnsureTokens();
         var c = _columns.IndexOf(key);
-        if (c < 0 || key is TableColumnDef.NumKey or TableColumnDef.AddPropKey) return null;
-        return ChevronRect(HeaderRect(c), _lineWidth);
+        if (c < 0 || key is TableColumnDef.NumKey or TableColumnDef.AddPropKey || !_columns[c].Filterable) return null;
+        return ChevronRect(HeaderRect(c), _columns[c].HeaderRightLine ? _lineWidth : 0);
     }
 
     // Кнопка фильтра 20×20 у правого края заголовка за отступом (Border Padding 6 у нынешней шапки),
@@ -700,32 +801,46 @@ public sealed class GridSurface : Control
         var same = hit.Kind == _hover.Kind && hit.Row == _hover.Row && hit.Column == _hover.Column;
         if (same)
         {
-            // В ячейке «Файла» курсор и подсказка разные над именем и над скрепкой — внутри одной ячейки.
-            if (IsFileCell(hit)) { _hover = hit; ApplyPointerLook(hit); }
+            // В ячейке «Файла» курсор и подсказка разные над именем и над скрепкой — внутри одной ячейки;
+            // у ячейки-кнопки рука только над квадратом кнопки.
+            if (IsFileCell(hit) || IsButtonCell(hit)) { _hover = hit; ApplyPointerLook(hit); }
+            // Рамка ячейки-списка красится акцентом, пока указатель внутри нее.
+            if (IsChoiceCell(hit))
+            {
+                var inside = _lastPointer is { } lp && ChoiceBox(ContentRect(hit.Bounds, hit.Column)).Contains(lp);
+                if (inside != _choiceInside) { _choiceInside = inside; InvalidateVisual(); }
+            }
             return;
         }
 
         // Перерисовывается только то, что меняет вид: ячейка, заголовок и его кнопка.
         var visual = HoverVisible(hit) || HoverVisible(_hover);
         _hover = hit;
+        _choiceInside = IsChoiceCell(hit) && _lastPointer is { } cp && ChoiceBox(ContentRect(hit.Bounds, hit.Column)).Contains(cp);
         ApplyPointerLook(hit);
         if (visual) InvalidateVisual();
     }
 
+    private bool IsButtonCell(GridHit hit) => hit.Kind == GridHitKind.Cell && hit.Def is { FieldType: "button" };
+    private bool IsChoiceCell(GridHit hit) => hit.Kind == GridHitKind.Cell && hit.Def is { FieldType: "choice" };
+
     private void ApplyPointerLook(GridHit hit)
     {
-        var overClip = IsFileCell(hit) && _lastPointer is { } p && FileButtonRect(hit.Bounds, hit.Def!) is { } clip && clip.Contains(p);
+        var overClip   = IsFileCell(hit) && _lastPointer is { } p && FileButtonRect(hit.Bounds, hit.Def!) is { } clip && clip.Contains(p);
+        var overButton = IsButtonCell(hit) && _lastPointer is { } bp && ButtonBox(ContentRect(hit.Bounds, hit.Column)).Contains(bp) && CellEnabled(hit);
         Cursor = hit.Kind switch
         {
             GridHitKind.ColumnGrip   => ColResizeCursor,
             GridHitKind.RowGrip      => RowResizeCursor,
             GridHitKind.HeaderAdd    => HandCursor,
             GridHitKind.HeaderFilter => HandCursor,   // Button.icon несет курсор-руку
-            GridHitKind.Cell when overClip || FileLinkClickable(hit) => HandCursor,
+            GridHitKind.Cell when overClip || overButton || FileLinkClickable(hit) => HandCursor,
             _                        => null,
         };
-        ToolTip.SetTip(this, hit.Kind == GridHitKind.HeaderFilter ? "Фильтр и сортировка"
+        ToolTip.SetTip(this, hit.Kind == GridHitKind.HeaderFilter ? hit.Def?.FilterTip ?? "Фильтр и сортировка"
+                             : hit.Kind == GridHitKind.Header ? hit.Def?.HeaderTip
                              : overClip ? "Выбрать файл"
+                             : hit.Kind == GridHitKind.Cell && hit.Def?.CellTip is { } tipOf && RowAt(hit.Row) is { } tipRow ? tipOf(tipRow)
                              : null);
     }
 
@@ -836,10 +951,21 @@ public sealed class GridSurface : Control
         // Тонировка диапазона — акцент с прозрачностью 0,08, как Background рамки нынешнего слоя.
         _selectTint  = new SolidColorBrush(_accent is ISolidColorBrush sc ? sc.Color : Colors.RoyalBlue, 0.08);
         _red         = Brush("BrushRed",           Brushes.Red);
+        _green       = Brush("BrushGreen",         Brushes.Green);
+        _choiceBg             = Brush("BrushSecondaryBg", Brushes.WhiteSmoke);
+        _choiceBorder         = Brush("BrushSeparator",   Brushes.LightGray);
+        _choiceBgDisabled     = Brush("ComboBoxBackgroundDisabled",              Brushes.LightGray);
+        _choiceBorderDisabled = Brush("ComboBoxBorderBrushDisabled",             Brushes.Gray);
+        _choiceGlyph          = Brush("ComboBoxDropDownGlyphForeground", _secondary);
+        _choiceGlyphDisabled  = Brush("ComboBoxDropDownGlyphForegroundDisabled", _choiceGlyph);
+        _choiceRadius         = Res("RadiusMedium") is CornerRadius radius ? radius.TopLeft : 8;
+        _accentHalf           = new SolidColorBrush(_accent is ISolidColorBrush ac ? ac.Color : Colors.RoyalBlue, 0.5);
+        _whiteHalf            = new SolidColorBrush(Colors.White, 0.5);
+        _checkBorderHalf      = new Pen(new SolidColorBrush(_primary is ISolidColorBrush pc ? pc.Color : Colors.Black, 0.5), _lineWidth);
         _lineWidth   = Dbl("SeparatorThickness", 1);
         _separator   = new Pen(Brush("BrushSeparator", Brushes.LightGray), _lineWidth);
         _checkBorder = new Pen(_primary, _lineWidth);
-        _rowHeight   = Dbl(ConstructorSettings.RowHeightResourceKey, ConstructorSettings.RowHeight);
+        _rowHeight   = Dbl(RowHeightResourceKey, ConstructorSettings.RowHeight);
         _fontSize    = Dbl("FontSizeBase", 12);
         _typeface    = Res("FontFamilyBase") is FontFamily family ? new Typeface(family) : Typeface.Default;
         _iconStroke  = Dbl("IconStrokeSmall", 1.8);
@@ -879,8 +1005,11 @@ public sealed class GridSurface : Control
             var t     = _lineWidth;
             var headH = HeaderHeight;
 
-            var (c0, c1) = _columns.VisibleRange(_offsetX, w);
+            var (c0, c1) = ScrollingRange(w);
             var (r0, r1) = VisibleRows();
+            var frozen   = Math.Min(FrozenColumns, _columns.Count);
+            // Прокручиваемые колонки рисуются в области правее закрепленных, закрепленные — поверх.
+            var scrollArea = new Rect(FrozenWidth, 0, Math.Max(0, w - FrozenWidth), h);
 
             // Тело таблицы — под шапкой.
             var body = new Rect(0, headH, w, Math.Max(0, h - headH));
@@ -902,14 +1031,30 @@ public sealed class GridSurface : Control
 
                     // Выделенная запись — заливка всей строки под ячейками (BackgroundRectangle строки
                     // нынешней таблицы); «№» и «+» закроют ее своей серой заливкой.
-                    if (!row.IsAddRow && row.RecordId > 0 && IsRecordSelected(row.RecordId))
+                    var rowSelected = !row.IsAddRow && row.RecordId > 0 && IsRecordSelected(row.RecordId);
+                    if (rowSelected)
                         ctx.FillRectangle(_accentLight, new Rect(0, y, w, Math.Max(0, pitch - t)));
+                    // Служебные таблицы: наведение красит всю строку, выделенная остается голубой и под
+                    // указателем; ячейки тогда наведение не красят.
+                    if (HoverWholeRow)
+                    {
+                        if (hoverCol >= 0 && !rowSelected)
+                            ctx.FillRectangle(_hoverBg, new Rect(0, y, w, Math.Max(0, pitch - t)));
+                        hoverCol = -1;
+                    }
 
                     var tc = GridTimings.Start();
-                    for (var c = c0; c <= c1; c++)
+                    using (ctx.PushClip(scrollArea))
+                        for (var c = c0; c <= c1; c++)
+                        {
+                            var cell = new Rect(ScreenLeft(c), y, _columns.Width(c), pitch);
+                            DrawCell(ctx, row, _columns[c], cell, rowStyle, hoverCol == c, _columns[c].Key == editKey, scale, CellHasLine(c));
+                            cells++;
+                        }
+                    for (var c = 0; c < frozen; c++)
                     {
-                        var cell = new Rect(_columns.Left(c) - _offsetX, y, _columns.Width(c), pitch);
-                        DrawCell(ctx, row, _columns[c], cell, rowStyle, hoverCol == c, _columns[c].Key == editKey, scale);
+                        var cell = new Rect(ScreenLeft(c), y, _columns.Width(c), pitch);
+                        DrawCell(ctx, row, _columns[c], cell, rowStyle, hoverCol == c, _columns[c].Key == editKey, scale, CellHasLine(c));
                         cells++;
                     }
                     if (tc != 0) tRows += Stopwatch.GetElapsedTime(tc).TotalMilliseconds;
@@ -922,15 +1067,13 @@ public sealed class GridSurface : Control
             GridTimings.Record("рисование: ячейки тела", tRows, $"ячеек {cells}");
 
             var th = GridTimings.Start();
-            DrawHeader(ctx, c0, c1, w, headH, scale);
+            DrawHeader(ctx, c0, c1, frozen, scrollArea, w, headH, scale);
             GridTimings.Stop(th, "рисование: шапка");
 
             // Вертикальные линии — у правой границы каждой колонки, сквозь шапку и тело.
-            for (var c = c0; c <= c1; c++)
-            {
-                var lx = Snap(_columns.Right(c) - _offsetX - t, scale) + t / 2;
-                ctx.DrawLine(_separator, new Point(lx, 0), new Point(lx, h));
-            }
+            using (ctx.PushClip(scrollArea))
+                for (var c = c0; c <= c1; c++) DrawColumnLine(ctx, c, headH, h, scale);
+            for (var c = 0; c < frozen; c++) DrawColumnLine(ctx, c, headH, h, scale);
 
         }
 
@@ -943,6 +1086,20 @@ public sealed class GridSurface : Control
     }
 
     private static double Snap(double v, double scale) => Math.Round(v * scale) / scale;
+
+    // Линия у правой границы колонки: в шапке — если колонка ее рисует, в теле — у всех, кроме
+    // последней без права на линию (служебные таблицы), и не ниже последней строки, если так велено.
+    private void DrawColumnLine(DrawingContext ctx, int c, double headH, double h, double scale)
+    {
+        var t      = _lineWidth;
+        var lx     = Snap(ScreenRight(c) - t, scale) + t / 2;
+        var header = _columns[c].HeaderRightLine;
+        var body   = LastColumnLine || c < _columns.Count - 1;
+        var bottom = LinesBelowRows ? h : Math.Min(h, RowTop(RowCount));
+        if (header && body && bottom >= h) { ctx.DrawLine(_separator, new Point(lx, 0), new Point(lx, h)); return; }
+        if (header) ctx.DrawLine(_separator, new Point(lx, 0), new Point(lx, headH));
+        if (body && bottom > headH) ctx.DrawLine(_separator, new Point(lx, headH), new Point(lx, bottom));
+    }
 
     /// <summary>Рамка выделения ячеек — для слоя над редактором (<see cref="SelectionOverlay"/>, того же
     /// размера, что поверхность): поверх линий и редактора, обрезана по области строк (не ложится на
@@ -978,43 +1135,59 @@ public sealed class GridSurface : Control
         ctx.FillRectangle(_accent, new Rect(x1 - ft, y0 + ft, ft, y1 - y0 - 2 * ft)); // право
     }
 
-    private void DrawHeader(DrawingContext ctx, int c0, int c1, double w, double headH, double scale)
+    private void DrawHeader(DrawingContext ctx, int c0, int c1, int frozen, Rect scrollArea, double w, double headH, double scale)
     {
         var t = _lineWidth;
         // Фон строки заголовков одним прямоугольником на всю ширину — как в шаблоне нынешней таблицы.
         ctx.FillRectangle(_inactiveBg, new Rect(0, 0, w, headH));
 
-        for (var c = c0; c <= c1; c++)
+        using (ctx.PushClip(scrollArea))
+            for (var c = c0; c <= c1; c++) DrawHeaderColumn(ctx, c, headH, scale);
+        for (var c = 0; c < frozen; c++) DrawHeaderColumn(ctx, c, headH, scale);
+
+        // Линия под шапкой — как PART_ColumnHeadersAndRowsSeparator, прижатый к низу строки заголовков.
+        var ly = Snap(headH - t, scale) + t / 2;
+        ctx.DrawLine(_separator, new Point(0, ly), new Point(w, ly));
+    }
+
+    private void DrawHeaderColumn(DrawingContext ctx, int c, double headH, double scale)
+    {
+        var t    = _lineWidth;
+        var def  = _columns[c];
+        var x    = ScreenLeft(c);
+        var cw   = _columns.Width(c);
+        var rect = new Rect(x, 0, cw, headH);
+        // Область заголовка без вертикальной линии (Border в звездной колонке, линия в Auto);
+        // у колонки без линии шапки — во всю ширину.
+        var lineW = def.HeaderRightLine ? t : 0;
+        var inner = new Rect(x, 0, Math.Max(0, cw - lineW), headH);
+
+        if (def.Key is TableColumnDef.NumKey or TableColumnDef.AddPropKey)
         {
-            var def  = _columns[c];
-            var x    = _columns.Left(c) - _offsetX;
-            var cw   = _columns.Width(c);
-            var rect = new Rect(x, 0, cw, headH);
-            // Область заголовка без вертикальной линии (Border в звездной колонке, линия в Auto).
-            var inner = new Rect(x, 0, Math.Max(0, cw - t), headH);
+            // «№» и «+» без подсветки наведения — как центрованные заголовки нынешней шапки.
+            DrawText(ctx, def.Header, inner, _secondary, "s", TextAlignment.Center, 1, double.NaN, pad: 0);
+            return;
+        }
 
-            if (def.Key is TableColumnDef.NumKey or TableColumnDef.AddPropKey)
-            {
-                // «№» и «+» без подсветки наведения — как центрованные заголовки нынешней шапки.
-                DrawText(ctx, def.Header, inner, _secondary, "s", TextAlignment.Center, 1, double.NaN, pad: 0);
-                continue;
-            }
+        // Наведение на заголовок — как Border.colHeader:pointerover.
+        if (HeaderHoverFill && _hover.Kind is GridHitKind.Header or GridHitKind.HeaderFilter && _hover.Column == c)
+            ctx.FillRectangle(_hoverStrong, inner);
 
-            // Наведение на заголовок — как Border.colHeader:pointerover.
-            if (_hover.Kind is GridHitKind.Header or GridHitKind.HeaderFilter && _hover.Column == c)
-                ctx.FillRectangle(_hoverStrong, inner);
+        // [иконка типа][название][кнопка фильтра] в отступах CellPad — как MakeTextHeader.
+        var left = x + CellPad;
+        var icon = HeaderIcon(def);
+        if (icon is not null)
+        {
+            var stroke = def.Key == TableRowVm.TitleKey ? _red : _secondary;
+            DrawIcon(ctx, icon, left, Snap((headH - IconSize) / 2, scale), stroke);
+            left += IconSize + CellPad;
+        }
 
-            // [иконка типа][название][кнопка фильтра] в отступах CellPad — как MakeTextHeader.
-            var left = x + CellPad;
-            var icon = TypeIcon(def.FieldType);
-            if (icon is not null)
-            {
-                var stroke = def.Key == TableRowVm.TitleKey ? _red : _secondary;
-                DrawIcon(ctx, icon, left, Snap((headH - IconSize) / 2, scale), stroke);
-                left += IconSize + CellPad;
-            }
-
-            var btn = ChevronRect(rect, t);
+        // Кнопка фильтра; у колонки без нее (служебные таблицы) название идет до отступа у линии.
+        var btn = ChevronRect(rect, lineW);
+        var textRight = inner.Right - CellPad;
+        if (def.Filterable)
+        {
             if (_hover.Kind == GridHitKind.HeaderFilter && _hover.Column == c)
                 ctx.DrawRectangle(_hoverStrong, null, new RoundedRect(btn, 4));
             var filtered = IsColumnFiltered(def.Key);
@@ -1022,22 +1195,38 @@ public sealed class GridSurface : Control
             if (glyph is not null)
                 DrawIcon(ctx, glyph, btn.X + (ChevronButton - IconSize) / 2, Snap(btn.Y + (ChevronButton - IconSize) / 2, scale),
                          filtered ? _accent : _secondary, thickness: 2);
-
-            var textRect = new Rect(left, 0, Math.Max(1, btn.X - left), headH);
-            DrawText(ctx, def.Header, textRect, _secondary, "s", TextAlignment.Left, 1, double.NaN, pad: 0);
+            textRight = btn.X;
         }
 
-        // Линия под шапкой — как PART_ColumnHeadersAndRowsSeparator, прижатый к низу строки заголовков.
-        var ly = Snap(headH - t, scale) + t / 2;
-        ctx.DrawLine(_separator, new Point(0, ly), new Point(w, ly));
+        var textRect = new Rect(left, 0, Math.Max(1, textRight - left), headH);
+        DrawText(ctx, def.Header, textRect, _secondary, "s", TextAlignment.Left, 1, double.NaN, pad: 0);
+    }
+
+    // Иконка шапки: у служебных таблиц — по ключу из определения колонки, у таблицы коллекции — иконка
+    // типа поля.
+    private Geometry? HeaderIcon(TableColumnDef def)
+    {
+        if (def.HeaderIconKey is not { } key) return TypeIcon(def.FieldType);
+        return CachedIcon(key);
+    }
+
+    private Geometry? CachedIcon(string key)
+    {
+        var cacheKey = ":" + key;
+        if (!_typeIcons.TryGetValue(cacheKey, out var geo))
+        {
+            geo = Geo(key);
+            _typeIcons[cacheKey] = geo;
+        }
+        return geo;
     }
 
     private void DrawCell(DrawingContext ctx, TableRowVm row, TableColumnDef def, Rect cell, RowStyle rowStyle,
-                          bool hovered, bool editing, double scale)
+                          bool hovered, bool editing, double scale, bool hasLine = true)
     {
         if (DebugSkipCells) return;
-        // Область содержимого: без вертикальной линии справа и линии под строкой.
-        var inner = ContentRect(cell);
+        // Область содержимого: без вертикальной линии справа (если она у колонки есть) и линии под строкой.
+        var inner = hasLine ? ContentRect(cell) : new Rect(cell.X, cell.Y, cell.Width, Math.Max(0, cell.Height - _lineWidth));
 
         // «№» и «+»: непрозрачная серая заливка поверх подсветки наведения — как сегодня, где
         // прямоугольник заливки закрывает фон ячейки целиком.
@@ -1078,10 +1267,23 @@ public sealed class GridSurface : Control
             return;
         }
 
+        // Служебные таблицы: тон текста и доступность ячейки задает колонка.
+        var enabled = def.CellEnabled?.Invoke(row) ?? true;
+        if (def.CellTone is { } toneOf)
+            (fg, fgId) = ToneBrush(toneOf(row));
+
         switch (def.FieldType)
         {
             case "checkbox":
-                DrawCheckbox(ctx, inner, IsTruthy(row[def.Key]), scale);
+                DrawCheckbox(ctx, inner, IsTruthy(row[def.Key]), scale, enabled);
+                return;
+
+            case "choice":
+                DrawChoice(ctx, row, def, inner, enabled);
+                return;
+
+            case "button":
+                DrawButton(ctx, def, inner, fg ?? _primary);
                 return;
 
             case "relation":
@@ -1196,13 +1398,111 @@ public sealed class GridSurface : Control
 
     private static bool IsTruthy(string value) => value is "1" or "true" or "True";
 
+    private (IBrush Brush, string Id) ToneBrush(CellTone tone) => tone switch
+    {
+        CellTone.Secondary => (_secondary, "s"),
+        CellTone.Green     => (_green, "g"),
+        CellTone.Red       => (_red, "r"),
+        _                  => (_primary, "p"),
+    };
+
+    // ── Ячейка-список и ячейка-кнопка служебных таблиц ────────────────────────
+
+    // Закрытый ComboBox приложения (Controls.axaml, ComboBoxTheme.axaml): отступ 6 по бокам, высота 26
+    // по центру ячейки, серый фон, рамка в линию, скругление RadiusMedium, текст за отступом 10,
+    // стрелка темы в квадрате 12×12 столбца 32 за отступом 10 от правого края (кисть и фигура —
+    // локальные значения шаблона, стиль приложения их не перебивает). Наведение — рамка акцентом.
+    // Недоступный — фон, рамка и стрелка из темы (стиль состояния перебивает значение шаблона), текст
+    // прежний (цвет презентера до надписи не доходит — стиль надписи приоритетнее, см. theming.md).
+    private const double ChoiceHeight      = 26;
+    private const double ChoiceMargin      = 6;
+    private const double ChoicePadLeft     = 10;
+    private const double ChoicePadRight    = 8;
+    private const double ChoiceGlyphColumn = 32;
+    private const double ChoiceGlyphBox    = 12;   // PathIcon 12×12 шаблона (Stretch=Uniform внутри)
+    private const double ChoiceGlyphMargin = 10;
+
+    /// <summary>Рамка ячейки-списка (координаты поверхности) — по ней открывается настоящий список.</summary>
+    public Rect ChoiceRect(Rect cell, int column)
+    {
+        EnsureTokens();
+        return ChoiceBox(ContentRect(cell, column));
+    }
+
+    private Rect ChoiceBox(Rect inner) =>
+        new(inner.X + ChoiceMargin, Snap(inner.Y + (inner.Height - ChoiceHeight) / 2, _frameScale),
+            Math.Max(0, inner.Width - 2 * ChoiceMargin), ChoiceHeight);
+
+    private void DrawChoice(DrawingContext ctx, TableRowVm row, TableColumnDef def, Rect inner, bool enabled)
+    {
+        var box = ChoiceBox(inner);
+        if (box.Width <= 0) return;
+        var hover  = enabled && _lastPointer is { } p && box.Contains(p);
+        var bg     = enabled ? _choiceBg : _choiceBgDisabled;
+        var border = !enabled ? _choiceBorderDisabled : hover ? _accent : _choiceBorder;
+        // Как Border с равномерной рамкой: заливка и обводка одним прямоугольником, обводка по центру
+        // сдвинутого внутрь на полтолщины края.
+        ctx.DrawRectangle(bg, new Pen(border, _lineWidth), new RoundedRect(box.Deflate(_lineWidth / 2), _choiceRadius));
+
+        var value = row[def.Key];
+        var text  = value.Length > 0 ? value : def.Placeholder;
+        var (brush, id) = def.CellTone is { } toneOf ? ToneBrush(toneOf(row)) : (_primary, "p");
+        var textRect = new Rect(box.X + ChoicePadLeft, box.Y,
+                                Math.Max(1, box.Width - ChoiceGlyphColumn - ChoicePadLeft - ChoicePadRight), box.Height);
+        DrawText(ctx, text, textRect, brush, id, TextAlignment.Left, 1, double.NaN, pad: 0);
+
+        var glyphRect = new Rect(box.Right - ChoiceGlyphMargin - ChoiceGlyphBox, box.Y + (box.Height - ChoiceGlyphBox) / 2,
+                                 ChoiceGlyphBox, ChoiceGlyphBox);
+        DrawFilledGlyph(ctx, ChoiceGlyph, glyphRect, enabled ? _choiceGlyph : _choiceGlyphDisabled);
+    }
+
+    // Залитая фигура, вписанная в прямоугольник с сохранением пропорций (PathIcon: Stretch=Uniform).
+    private static void DrawFilledGlyph(DrawingContext ctx, Geometry geometry, Rect target, IBrush fill)
+    {
+        var b = geometry.Bounds;
+        if (b.Width <= 0 || b.Height <= 0) return;
+        var s  = Math.Min(target.Width / b.Width, target.Height / b.Height);
+        var dx = target.X + (target.Width  - b.Width  * s) / 2 - b.X * s;
+        var dy = target.Y + (target.Height - b.Height * s) / 2 - b.Y * s;
+        using (ctx.PushTransform(Matrix.CreateScale(s, s) * Matrix.CreateTranslation(dx, dy)))
+            ctx.DrawGeometry(fill, null, geometry);
+    }
+
+    // Ячейка-кнопка: Button.icon 28×28 по центру ячейки с иконкой 16 в обводку IconStrokeSmall; фон
+    // прозрачный и при наведении, курсор-рука над квадратом кнопки.
+    private const double ButtonSize = 28;
+
+    /// <summary>Квадрат кнопки ячейки-кнопки (координаты поверхности).</summary>
+    public Rect ButtonRect(Rect cell, int column)
+    {
+        EnsureTokens();
+        return ButtonBox(ContentRect(cell, column));
+    }
+
+    private Rect ButtonBox(Rect inner) =>
+        new(Snap(inner.X + (inner.Width - ButtonSize) / 2, _frameScale), Snap(inner.Y + (inner.Height - ButtonSize) / 2, _frameScale),
+            ButtonSize, ButtonSize);
+
+    private void DrawButton(DrawingContext ctx, TableColumnDef def, Rect inner, IBrush stroke)
+    {
+        if (def.CellIconKey is not { } key || CachedIcon(key) is not { } icon) return;
+        var btn = ButtonBox(inner);
+        DrawIcon(ctx, icon, btn.X + (ButtonSize - IconSize) / 2, btn.Y + (ButtonSize - IconSize) / 2, stroke);
+    }
+
+    private TableRowVm? RowAt(int index) => _rows is not null && index >= 0 && index < _rows.Count ? _rows[index] : null;
+
+    private bool CellEnabled(GridHit hit) =>
+        hit.Def?.CellEnabled is not { } enabledOf || RowAt(hit.Row) is not { } row || enabledOf(row);
+
     // Надпись в области ячейки: отступ pad с обеих сторон, по вертикали по центру на целом пикселе
     // (как TextBlock с VerticalAlignment=Center при округлении раскладки). lineHeight NaN —
     // естественная высота строки (заголовки), иначе целый токен LineHeightBase (ячейки).
     private void DrawText(DrawingContext ctx, string text, Rect area, IBrush brush, string brushId,
-                          TextAlignment align, int maxLines, double lineHeight, double pad = CellPad, bool underline = false)
+                          TextAlignment align, int maxLines, double lineHeight, double pad = double.NaN, bool underline = false)
     {
         if (string.IsNullOrEmpty(text) || _text is null || DebugSkipText) return;
+        if (double.IsNaN(pad)) pad = CellTextPad;   // отступ ячейки: 6 у таблицы коллекции, 8 у служебных
 
         var maxW   = Math.Max(1, area.Width - pad * 2);
         var scale  = _frameScale;   // масштаб кадра, посчитан один раз в Render
@@ -1219,6 +1519,16 @@ public sealed class GridSurface : Control
             : area.X + pad;
         var y      = Snap(area.Y + Math.Max(0, (area.Height - layout.Height) / 2), scale);
 
+        // Служебные таблицы: обрезка по прямоугольнику самой надписи, как у TextBlock с многоточием;
+        // высота — вверх до физического пикселя, как раскладка округляет размер надписи.
+        if (ClipText)
+        {
+            var clipH = Math.Ceiling(layout.Height * scale - 1e-6) / scale;
+            using (ctx.PushClip(new Rect(area.X + pad, y, maxW, clipH)))
+                layout.Draw(ctx, new Point(x, y));
+            return;
+        }
+
         if (layout.Height > area.Height || layout.Width > maxW + 0.5)
         {
             using (ctx.PushClip(area))
@@ -1234,25 +1544,31 @@ public sealed class GridSurface : Control
     // остается отступ Padding=8) — квадрат стоит на 4 px левее центра ячейки, как в нынешней таблице.
     private const double CheckControlWidth = CheckSize + 8;
 
-    private static Rect CheckboxBox(Rect inner, double scale) =>
-        new(Snap(inner.X + (inner.Width  - CheckControlWidth) / 2, scale),
+    private Rect CheckboxBox(Rect inner, double scale) =>
+        new(Snap(inner.X + (inner.Width  - (CheckboxCentered ? CheckSize : CheckControlWidth)) / 2, scale),
             Snap(inner.Y + (inner.Height - CheckSize) / 2, scale), CheckSize, CheckSize);
 
-    private void DrawCheckbox(DrawingContext ctx, Rect inner, bool isChecked, double scale)
+    private void DrawCheckbox(DrawingContext ctx, Rect inner, bool isChecked, double scale, bool enabled = true)
     {
         var square = CheckboxBox(inner, scale);
         var (x, y) = (square.X, square.Y);
-        var box = new RoundedRect(square, 2);
+        var half   = _lineWidth / 2;
+        var ring   = new RoundedRect(new Rect(x + half, y + half, CheckSize - _lineWidth, CheckSize - _lineWidth), 2);
         if (isChecked)
         {
-            ctx.DrawRectangle(_accent, null, box);
+            // Недоступная (CheckBox:disabled, Opacity 0,5): заливка и рамка полупрозрачные каждая, как
+            // рисует их Border, — рамка поверх заливки выходит темнее середины.
+            // Как Border с рамкой в линию: заливка и обводка одним прямоугольником по краю, сдвинутому
+            // внутрь на полтолщины, — углы скругляются так же, как у CheckBox.
+            if (enabled) ctx.DrawRectangle(_accent, new Pen(_accent, _lineWidth), ring);
+            else         ctx.DrawRectangle(_accentHalf, new Pen(_accentHalf, _lineWidth), ring);
             if (_check is not null)
-                DrawIcon(ctx, _check, x + (CheckSize - CheckGlyph) / 2, y + (CheckSize - CheckGlyph) / 2, Brushes.White, CheckGlyph, 2.5);
+                DrawIcon(ctx, _check, x + (CheckSize - CheckGlyph) / 2, y + (CheckSize - CheckGlyph) / 2,
+                         enabled ? Brushes.White : _whiteHalf, CheckGlyph, 2.5);
         }
         else
         {
-            var half = _lineWidth / 2;
-            ctx.DrawRectangle(null, _checkBorder, new RoundedRect(new Rect(x + half, y + half, CheckSize - _lineWidth, CheckSize - _lineWidth), 2));
+            ctx.DrawRectangle(null, enabled ? _checkBorder : _checkBorderHalf, ring);
         }
     }
 

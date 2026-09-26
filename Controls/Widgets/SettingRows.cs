@@ -339,7 +339,7 @@ public static class SettingRows
         grid.Children.Add(cell);
     }
 
-    /// <summary>Шапка таблицы: высота строки и линия под ней — как у шапки DataGrid.</summary>
+    /// <summary>Шапка таблицы: высота строки и линия под ней — как у шапки рисованной сетки.</summary>
     public static Control TableHead(Grid columns)
     {
         var block = new StackPanel { Spacing = 0 };

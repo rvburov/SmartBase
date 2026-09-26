@@ -1,5 +1,5 @@
 using SmartBase.ViewModels.ConstructorDb;
-using SmartBase.Views.ConstructorDb.DrawnGrid;
+using SmartBase.Controls.DrawnGrid;
 
 namespace SmartBase.Tests.Unit;
 
@@ -119,5 +119,72 @@ public sealed class ColumnLayoutTests
         Assert.Equal(l.IndexAt(799.9), last);
         Assert.Equal((0, -1), l.VisibleRange(0, 0));
         Assert.Equal(l.Count - 1, l.VisibleRange(0, 10_000).Last);
+    }
+
+    // ── Служебные таблицы: дробный дележ и округление ячеек, как у прежних таблиц на DataGrid ──
+    //
+    // Числа — из кадров прежних таблиц (стенд Tests/ServiceGrids): окно 1586 без полосы, начало
+    // ячейки округляется к четному, ширина — вверх вместе с дробной частью начала.
+
+    private static List<TableColumnDef> Stars(int n, double min = 110) =>
+        Enumerable.Range(1, n).Select(i => new TableColumnDef { Key = $"c{i}", Header = $"К {i}", MinWidth = min }).ToList();
+
+    private static string Cells(ColumnLayout l) =>
+        string.Join(" ", Enumerable.Range(0, l.Count).Select(i =>
+            "[" + l.Left(i).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)
+                + "+" + l.Width(i).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) + "]"));
+
+    [Fact]
+    public void Rounded_four_stars_match_former_table_at_scale_1_and_2()
+    {
+        Assert.Equal("[0+397] [396+397] [793+397] [1190+397]", Cells(ColumnLayout.BuildRounded(Stars(4), 1586, 1)));
+        Assert.Equal("[0+396.5] [396.5+396.5] [793+396.5] [1189.5+396.5]", Cells(ColumnLayout.BuildRounded(Stars(4), 1586, 2)));
+    }
+
+    [Fact]
+    public void Rounded_six_and_seven_stars_match_former_table()
+    {
+        Assert.Equal("[0+265] [264+265] [529+265] [793+265] [1057+265] [1322+265]", Cells(ColumnLayout.BuildRounded(Stars(6), 1586, 1)));
+        Assert.Equal("[0+227] [227+228] [453+227] [680+228] [906+227] [1133+228] [1359+227]", Cells(ColumnLayout.BuildRounded(Stars(7), 1586, 1)));
+        Assert.Equal("[0+227] [226.5+227] [453+227] [679.5+227] [906.5+227] [1133+227] [1359.5+227]", Cells(ColumnLayout.BuildRounded(Stars(7), 1586, 2)));
+    }
+
+    [Fact]
+    public void Rounded_extent_is_fractional_sum_not_rounded_cells()
+    {
+        // Последняя ячейка после округления вылезает на пиксель (1190 + 397 = 1587), а протяженность
+        // прокрутки — сумма дробных ширин: полосы не будет.
+        var l = ColumnLayout.BuildRounded(Stars(4), 1586, 1);
+        Assert.Equal(1586, l.TotalWidth);
+        Assert.Equal(1587, l.Right(3));
+        Assert.Equal(3, l.IndexAt(1586.5));   // правее протяженности, но внутри последней ячейки
+        Assert.Equal(-1, l.IndexAt(1587));
+    }
+
+    [Fact]
+    public void Rounded_pins_columns_at_their_minimum_and_shares_the_rest()
+    {
+        // Семь колонок в узком окне: адрес не уже 180, остальные делят остаток поровну.
+        var defs = Stars(7, min: 130);
+        defs[5] = new TableColumnDef { Key = "c6", Header = "Адрес", MinWidth = 180 };
+        var l = ColumnLayout.BuildRounded(defs, 1145, 1);
+        Assert.InRange(l.Width(5), 180, 181);   // 180 плюс дробная часть начала ячейки
+        var others = Enumerable.Range(0, 7).Where(i => i != 5).Select(l.Width).ToList();
+        Assert.All(others, w => Assert.InRange(w, 160, 162));   // (1145 − 180) / 6 = 160,83 → ячейки 161–162
+        Assert.Equal(1145, l.TotalWidth, 6);
+    }
+
+    [Fact]
+    public void Rounded_fixed_columns_stay_contiguous()
+    {
+        var defs = new List<TableColumnDef>
+        {
+            new() { Key = "a", Header = "А", IsStarWidth = false, FixedWidth = 250 },
+            new() { Key = "b", Header = "Б", IsStarWidth = false, FixedWidth = 200 },
+        };
+        var l = ColumnLayout.BuildRounded(defs, 1600, 1);
+        Assert.Equal("[0+250] [250+200]", Cells(l));
+        Assert.Equal(450, l.TotalWidth);
+        Assert.Equal(1, l.IndexAt(250));
     }
 }
