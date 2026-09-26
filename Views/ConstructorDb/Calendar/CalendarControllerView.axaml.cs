@@ -43,6 +43,15 @@ public partial class CalendarControllerView : UserControl
     // UI и не съедает память, ячейкам больше все равно не отрисовать; недоставленное показывает
     // честный «+N еще» по карте счетчиков дней. Поколение отменяет устаревшие загрузки.
     private const int GridDayCap = 2000;
+
+    // Месяцу timed-событий дня нужно не больше, чем влезает в ячейку (строк 13–14 даже на
+    // высоком окне), остальное считает «+N еще» по карте счетчиков. Читать по 2000 на день
+    // значило тянуть в окно месяца до 84 тысяч событий на днях-гигантах и строить по ним
+    // раскладку. Запас над ячейкой — ради многодневных timed-событий: они читаются вместе с
+    // событиями дня своего начала и в переполненном дне, начавшись поздно, отсекаются тем же
+    // cap (как и прежде, только прежний порог был 2000). Полосы «весь день» месяц читает с
+    // общим cap — они нужны все.
+    private const int MonthDayCap = 256;
     private long _gridGen;          // текущее поколение загрузки сетки
     private long _gridAppliedGen;   // последнее примененное поколение (для оверлея «Загрузка…»)
 
@@ -316,8 +325,39 @@ public partial class CalendarControllerView : UserControl
     /// перечитывает календарь по своим коммитам, только если они новее этой отметки.</summary>
     public long DataStamp { get; private set; }
 
+    // Раздел скрыт — окно не читается (см. RefreshCurrent): отметка «перечитать при показе» и
+    // накопленный запрос прокрутки к «сейчас».
+    private bool _refreshDeferred;
+    private bool _deferredScrollToNow;
+
+    // Показ раздела: отложенное чтение — сейчас. Постом, а не сразу: главное окно следом за
+    // IsVisible отдает разделу свежие галочки (SetActiveIds), и чтение пойдет одно и уже с
+    // ними, а пост найдет отметку снятой.
+    protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
+    {
+        base.OnPropertyChanged(change);
+        if (change.Property == IsVisibleProperty && IsVisible && _refreshDeferred)
+            Dispatcher.UIThread.Post(() => { if (_refreshDeferred && IsVisible) RefreshCurrent(); },
+                                     DispatcherPriority.Background);
+    }
+
     private void RefreshCurrent(bool scrollToNow = false)
     {
+        // Скрытый раздел окно не читает: его никто не увидит, а чтение по всем базам шло
+        // секундами — на старте (раздел по умолчанию — конструктор) по разу на каждую
+        // подключенную базу — и забирало диск у видимого раздела. Одноразовые якорь и дельта
+        // Журнала сбрасываются: при показе раздел перечитывается целиком.
+        if (!IsVisible)
+        {
+            _refreshDeferred      = true;
+            _deferredScrollToNow |= scrollToNow;
+            _journalAnchor = null; _journalDelta = null; _journalSelectAddedOnly = false;
+            return;
+        }
+        scrollToNow         |= _deferredScrollToNow;
+        _refreshDeferred     = false;
+        _deferredScrollToNow = false;
+
         DataStamp               = ChangeBus.Now();
         _renderedFontDelta      = FontScale.Delta;   // активный вид отрисован с текущим размером
         _renderedCalendarStamp  = CalendarSettings.Stamp;
@@ -473,9 +513,11 @@ public partial class CalendarControllerView : UserControl
         var spanningOnly = viewIdx == 5 && !hasSearch;
         string? loadingPath = null;   // путь читаемой БД — для сигнала монитору при сбое
         // Порог медленности: чтение окна календаря по всем базам дольше Diag.UiOpen — в журнал.
-        using var slow = Logging.Diag.Measure("загрузка календаря", Logging.Diag.UiOpen,
-                                              $"вид {viewIdx}, {startDt:yyyy-MM-dd} — {endDt:yyyy-MM-dd}, баз {_dbs.Count}" +
-                                              (hasSearch ? ", с поиском" : ""));
+        // Замер — до показа окна (фаза 1); уточнения фазы 2 меряются отдельно. Загрузку, которую
+        // обогнала новая (другой вид или дата), не пишем: ее результат выброшен.
+        var context = $"вид {viewIdx}, {startDt:yyyy-MM-dd} — {endDt:yyyy-MM-dd}, баз {_dbs.Count}" +
+                      (hasSearch ? ", с поиском" : "");
+        using var slow = Logging.Diag.Measure("загрузка календаря", Logging.Diag.UiOpen, context);
         try
         {
             foreach (var (dbId, _, repo) in _dbs.ToList())
@@ -489,8 +531,10 @@ public partial class CalendarControllerView : UserControl
                     ? await repo.LoadCalendarSpanningAsync(startDt, endDt, active, GridDayCap)
                     : viewIdx == 6
                         ? await repo.LoadDiagramWindowAsync(startDt, endDt, active, DiagramView.MaxRecordsPerCollection)
-                        : await repo.LoadCalendarGridRangeAsync(startDt, endDt, active, GridDayCap);
-                if (gen != _gridGen) return;           // вид/дата уже другие — не применяем
+                        : viewIdx == 4
+                            ? await repo.LoadCalendarGridRangeAsync(startDt, endDt, active, MonthDayCap, allDayCap: GridDayCap)
+                            : await repo.LoadCalendarGridRangeAsync(startDt, endDt, active, GridDayCap);
+                if (gen != _gridGen) { slow.Discard(); return; }   // вид/дата уже другие — не применяем
                 foreach (var r in part) r.DbId = dbId;
                 records.AddRange(part);
             }
@@ -531,6 +575,7 @@ public partial class CalendarControllerView : UserControl
         if (viewIdx == 6) _diagramCollections = LoadDiagramCollections();
 
         ApplyGridData(viewIdx, records, null, currentDate, scrollToNow);
+        slow.Dispose();
 
         // Фаза 2 Диаграммы: точные агрегаты групп (счетчик, «+N еще», охват суммарного
         // бара по ВСЕМ событиям окна, а не по обрезанным cap'ом) — индексные сканы,
@@ -539,6 +584,7 @@ public partial class CalendarControllerView : UserControl
         if (viewIdx == 6)
         {
             if (hasSearch) return;
+            using var statsSlow = Logging.Diag.Measure("агрегаты диаграммы", Logging.Diag.UiQuery, context);
             var stats = new Dictionary<(int DbId, int ColId), DiagramGroupStat>();
             try
             {
@@ -547,7 +593,7 @@ public partial class CalendarControllerView : UserControl
                     ISet<int>? active = _activeByDb is not null && _activeByDb.TryGetValue(dbId, out var s) ? s : null;
                     foreach (var (colId, stat) in await repo.LoadDiagramStatsAsync(startDt, endDt, active))
                         stats[(dbId, colId)] = stat;
-                    if (gen != _gridGen) return;
+                    if (gen != _gridGen) { statsSlow.Discard(); return; }
                 }
             }
             catch { return; }   // агрегаты не критичны — счетчики останутся от полученного
@@ -560,6 +606,9 @@ public partial class CalendarControllerView : UserControl
         // Фаза 2: карта счетчиков — только Месяц/Год и не при поиске. До ее прихода «+N еще»
         // считается от фактически полученного; по приходе — тихое повторное применение.
         if (hasSearch || viewIdx is not (4 or 5)) return;
+        // Карта уточняет уже показанную сетку, но у Года числа дней и есть содержимое — человек
+        // их ждет: порог фильтра, а не фоновый.
+        using var countsSlow = Logging.Diag.Measure("счетчики дней календаря", Logging.Diag.UiQuery, context);
         var totals = new Dictionary<DateOnly, int>();
         try
         {
@@ -569,7 +618,7 @@ public partial class CalendarControllerView : UserControl
                 foreach (var (dayStr, count) in await repo.LoadCalendarDayCountsAsync(startDt, endDt, active))
                     if (DateOnly.TryParseExact(dayStr, "yyyy-MM-dd", out var d))
                         totals[d] = totals.GetValueOrDefault(d) + count;
-                if (gen != _gridGen) return;
+                if (gen != _gridGen) { countsSlow.Discard(); return; }
             }
         }
         catch { return; }   // карта не критична — «+N еще» останется от полученного

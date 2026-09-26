@@ -12,9 +12,12 @@ namespace SmartBase.Logging;
 ///
 /// Правило: в журнал уходит не факт операции, а ее ОТКЛОНЕНИЕ — операция закончилась, но
 /// дольше порога. Штатно быстрые операции не пишутся вовсе, иначе журнал за день зарастает
-/// строками «страница загружена за 40 мс». Пороги — по виду работы: открытие раздела,
-/// коллекции, окна — <see cref="UiOpen"/>; фильтр, сортировка, поиск — <see cref="UiQuery"/>;
-/// страница при прокрутке — <see cref="UiPage"/>; монтирование базы — <see cref="Mount"/>.
+/// строками «страница загружена за 40 мс». Пороги — по виду работы и по тому, ждет ли ее
+/// человек: открытие раздела, коллекции, окна — <see cref="UiOpen"/>; фильтр, сортировка,
+/// поиск — <see cref="UiQuery"/>; страница при прокрутке — <see cref="UiPage"/>; фоновая
+/// работа, которую интерфейс не ждет, — <see cref="Background"/>; монтирование базы —
+/// <see cref="Mount"/>. Пороги человеческого ожидания — доли секунды (этап 8 плана
+/// drawn-grid.md): журнал сам показывает все, что не моментально.
 ///
 /// Использование: <c>using var _ = Diag.Measure("открытие коллекции", Diag.UiOpen, "«Свод», 650 000 записей");</c>
 /// В записи — операция, длительность, порог и контекст (база, коллекция, объем): по ней видно,
@@ -22,12 +25,17 @@ namespace SmartBase.Logging;
 /// </summary>
 public static class Diag
 {
-    /// <summary>Открытие раздела, коллекции, страницы записи, окна.</summary>
-    public static readonly TimeSpan UiOpen  = TimeSpan.FromSeconds(2);
-    /// <summary>Фильтр, сортировка, список значений фильтра, поиск.</summary>
-    public static readonly TimeSpan UiQuery = TimeSpan.FromSeconds(5);
-    /// <summary>Страница строк при прокрутке.</summary>
-    public static readonly TimeSpan UiPage  = TimeSpan.FromSeconds(1);
+    /// <summary>Открытие раздела, коллекции, страницы записи, окна; окно календаря и список
+    /// раздела — человек ждет содержимое.</summary>
+    public static readonly TimeSpan UiOpen  = TimeSpan.FromMilliseconds(300);
+    /// <summary>Фильтр, сортировка, список значений фильтра, поиск, вид раздела — человек ждет
+    /// результат.</summary>
+    public static readonly TimeSpan UiQuery = TimeSpan.FromMilliseconds(500);
+    /// <summary>Страница строк при прокрутке: до ее прихода на месте строк заглушки.</summary>
+    public static readonly TimeSpan UiPage  = TimeSpan.FromMilliseconds(200);
+    /// <summary>Фоновая работа, которую интерфейс не ждет: счет записей для «из N», индексы
+    /// строк с ручной высотой, пилюли фильтров. Пишется, только когда она непомерна.</summary>
+    public static readonly TimeSpan Background = TimeSpan.FromSeconds(5);
     /// <summary>Монтирование базы (миграции, сжатие, индексация).</summary>
     public static readonly TimeSpan Mount   = TimeSpan.FromSeconds(60);
 
@@ -37,6 +45,10 @@ public static class Diag
 
     /// <summary>Имена операций, которые идут прямо сейчас (через запятую; пусто — ни одной).</summary>
     public static string ActiveOperations => string.Join(", ", _active.Keys.OrderBy(k => k, StringComparer.Ordinal));
+
+    /// <summary>Наблюдатель завершенных замеров — для стендов (<c>Tests/Sections</c>): получает
+    /// каждую операцию с длительностью и контекстом, а не только медленные. В программе не задан.</summary>
+    internal static Action<string, TimeSpan, string?>? Observer;
 
     /// <summary>Начать замер операции: по <c>Dispose</c> запись в журнал, если длительность
     /// превысила <paramref name="threshold"/>. <paramref name="context"/> — что именно
@@ -65,12 +77,24 @@ public static class Diag
             _active.AddOrUpdate(operation, 1, (_, n) => n + 1);
         }
 
+        /// <summary>Операцию обогнала новая (другой вид, другие галочки) и ее результат выброшен:
+        /// замер снимается без записи — брошенная загрузка медленностью не считается.</summary>
+        public void Discard()
+        {
+            if (_done) return;
+            _done = true;
+            _watch.Stop();
+            Release(Operation);
+            Observer?.Invoke(Operation + " (брошена)", _watch.Elapsed, Context);
+        }
+
         public void Dispose()
         {
             if (_done) return;
             _done = true;
             _watch.Stop();
             Release(Operation);
+            Observer?.Invoke(Operation, _watch.Elapsed, Context);
             if (_watch.Elapsed <= _threshold) return;
             Log.Warning("Медленно: {Operation:l} — {Ms:N0} мс при пороге {ThresholdMs:N0} мс{Context:l}",
                         Operation, _watch.Elapsed.TotalMilliseconds, _threshold.TotalMilliseconds,

@@ -26,11 +26,27 @@ namespace SmartBase.Views.Settings;
 ///
 /// Порядок документов — <see cref="GuideRegistry"/>; подписи в оглавлении берутся из
 /// самих заголовков, руками не дублируются.
+///
+/// Текст секций ставится порциями (<see cref="RenderGuideChunk"/>): оглавление и пустые
+/// секции появляются сразу, первые секции получают текст синхронно, остальные — фоновыми
+/// заданиями диспетчера по бюджету времени. Вся инструкция разом держала UI-поток ~3 с при
+/// первом заходе в раздел (сборка ~1,2 с и столько же раскладка текста). Переход к секции,
+/// до которой фон еще не дошел, сначала дособирает текст до нее.
 /// </summary>
 public partial class SettingsView
 {
-    // Пункт оглавления: строка панели «Содержание» + секция текста, к которой она ведет.
-    private sealed record GuideAnchor(Border Row, Control Section);
+    // Пункт оглавления: строка панели «Содержание» + секция текста, к которой она ведет, и ее
+    // номер в очереди сборки (_guideQueue).
+    private sealed record GuideAnchor(Border Row, Control Section, int Order);
+
+    // Секции в порядке показа и их markdown: текст ставится порциями, _guideNext — первая
+    // еще не собранная.
+    private readonly List<(AppMarkdown View, string Markdown)> _guideQueue = [];
+    private int _guideNext;
+
+    // Бюджет порций: первая — пока человек ждет открытия раздела, фоновые — внутри кадра.
+    private static readonly TimeSpan GuideFirstBudget = TimeSpan.FromMilliseconds(60);
+    private static readonly TimeSpan GuideChunkBudget = TimeSpan.FromMilliseconds(12);
 
     private readonly List<GuideAnchor> _guideAnchors = [];
 
@@ -87,7 +103,7 @@ public partial class SettingsView
                 var number = first ? $"{docNo}." : $"{docNo}.{++sectionNo}.";
                 var body2  = NumberHeading(ResolveWikiLinks(body, titles), number);
 
-                var section = RenderMarkdown(body2);
+                var section = GuideSection(body2);
                 GuideHost.Children.Add(section);
 
                 // Первая секция документа — его заголовок в оглавлении, остальные — подпункты.
@@ -113,10 +129,44 @@ public partial class SettingsView
             if (e.Property == BoundsProperty) _guideOffsets = null;
         };
 
+        // Первая порция — сразу, остальное дособирается фоном.
+        RenderGuideChunk(GuideFirstBudget);
+
         // Пока раскладки нет, координаты секций не измерить — подсвечиваем первый пункт,
         // он и так соответствует началу текста; дальше подсветку ведет прокрутка.
         if (_guideAnchors.Count > 0) SelectGuideRow(_guideAnchors[0]);
         Dispatcher.UIThread.Post(UpdateGuideActive, DispatcherPriority.Loaded);
+    }
+
+    /// <summary>Поставить текст следующим секциям, пока не вышел <paramref name="budget"/> (хотя
+    /// бы одной), и запланировать следующую порцию фоном.</summary>
+    private void RenderGuideChunk(TimeSpan budget)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var first = true;
+        while (_guideNext < _guideQueue.Count && (first || sw.Elapsed < budget))
+        {
+            var (view, markdown) = _guideQueue[_guideNext++];
+            view.Markdown = markdown;
+            first = false;
+        }
+        _guideOffsets = null;
+        if (_guideNext < _guideQueue.Count)
+            Dispatcher.UIThread.Post(() => RenderGuideChunk(GuideChunkBudget), DispatcherPriority.Background);
+    }
+
+    /// <summary>Дособрать текст до секции <paramref name="order"/> включительно и разложить: без
+    /// этого переход к ней считал бы положение по пустым секциям выше.</summary>
+    private void RenderGuideUpTo(int order)
+    {
+        if (_guideNext > order) return;
+        while (_guideNext <= order && _guideNext < _guideQueue.Count)
+        {
+            var (view, markdown) = _guideQueue[_guideNext++];
+            view.Markdown = markdown;
+        }
+        _guideOffsets = null;
+        GuidePanel.UpdateLayout();
     }
 
     /// <summary>Текст документа из вшитого ресурса; null — файла нет или он не читается.</summary>
@@ -141,17 +191,18 @@ public partial class SettingsView
 
     private const double SectionGap = 18;
 
-    private Control RenderMarkdown(string markdown)
+    // Секция без текста: markdown встанет порцией (RenderGuideChunk).
+    private Control GuideSection(string markdown)
     {
         // Своей прокрутки у виджета нет и не нужно: внутри вертикального StackPanel высота
         // не ограничена, поэтому секция разворачивается на весь текст, а прокруткой заведует
         // общий ScrollViewer раздела.
         var view = new AppMarkdown
         {
-            Markdown         = markdown,
             SelectionEnabled = true,   // текст инструкции можно выделить и скопировать
         };
         view.LinkClicked += OnGuideLink;
+        _guideQueue.Add((view, markdown));
         return view;
     }
 
@@ -295,7 +346,7 @@ public partial class SettingsView
 
         row.Child = label;
 
-        var anchor = new GuideAnchor(row, section);
+        var anchor = new GuideAnchor(row, section, _guideQueue.Count - 1);
         row.PointerPressed += (_, e) =>
         {
             e.Handled = true;
@@ -310,6 +361,7 @@ public partial class SettingsView
 
     private void ScrollGuideTo(GuideAnchor anchor)
     {
+        RenderGuideUpTo(anchor.Order);
         if (OffsetOf(anchor.Section) is not double y) return;
         // Отматываем на отступ выше, чтобы линия блока осталась видна над заголовком.
         AnimateGuideScroll(Math.Max(0, y - SectionGap));

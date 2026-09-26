@@ -46,7 +46,7 @@ public partial class DayView : UserControl
     private TextBlock?        _dragGhostTimeBlock;
     private StackPanel?       _dragGhostContentStack;
     private double            _dragGhostOriginalHeight;
-    private Border?           _dragSourceBtn;
+    private Control?          _dragSourceBtn;
     private List<EventEntry>  _dragDimmedBtns = [];
     private Point             _dragStartPos;
     private double            _dragOffsetY;
@@ -78,12 +78,12 @@ public partial class DayView : UserControl
     // позиция последнего правого клика по сетке — для меню «Создать запись»
     private Point _gridContextPos;
 
-    private sealed class EventEntry(CalendarRecord ev, int startMin, int endMin, Border btn)
+    private sealed class EventEntry(CalendarRecord ev, int startMin, int endMin, Control btn)
     {
         public CalendarRecord Ev  = ev;
         public int     StartMin   = startMin;
         public int     EndMin     = endMin;
-        public Border  Btn        = btn;
+        public Control Btn        = btn;
         public int     SubCol     = 0;
         public int     SubColSpan = 1;
         public int     TotalCols  = 1;
@@ -231,7 +231,7 @@ public partial class DayView : UserControl
             .ThenBy(e => e.Title)
             .ToList();
 
-        var dayEntryLayouts = new List<(EventEntry Entry, Border TopHandle, Border BottomHandle)>();
+        var dayEntryLayouts = new List<EventEntry>();
 
         foreach (var group in GroupOverlapping(sortedDayEvents))
         {
@@ -253,145 +253,31 @@ public partial class DayView : UserControl
                     : (isStartDay ? rawStart : segS) < segE ? segE : 1440;
                 var evH        = Math.Max(22, effectiveEndMin - startMin);
                 var evHVisible = evH - 2;
-                var color      = Color.Parse(EventColors.Display(ev.Color));
-                var normalBg   = new SolidColorBrush(ColorTools.BlendWithWhite(color, 40));
-                var hoverBg    = new SolidColorBrush(ColorTools.BlendWithWhite(color, 90));
-                var colorBrush = new SolidColorBrush(color);
-                var darkBrush  = new SolidColorBrush(ColorTools.Darken(color));
+                // Событие — один рисованный контрол (CalendarEventBlock), как в «Неделе».
+                var block = new CalendarEventBlock(ev, evHVisible, FontSizeBase, WeightBold);
+                Canvas.SetTop(block, startMin + 2);
+                canvas.Children.Add(block);
 
-                const double lineH   = 16.0;
-                const double margins = 4.0;
-                const double timeH   = 15.0;
-
-                var maxTitleLines = (int)((evHVisible - margins - timeH) / lineH);
-                var showTime      = maxTitleLines >= 1;
-                var titleMaxLines = showTime
-                    ? maxTitleLines
-                    : Math.Max(1, (int)((evHVisible - margins) / lineH));
-
-                var titleBlock = new TextBlock
-                {
-                    Text         = ev.DisplayTitle,
-                    FontSize     = FontSizeBase,
-                    FontWeight   = WeightBold,
-                    Foreground   = darkBrush,
-                    TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis,
-                    TextWrapping = TextWrapping.Wrap,
-                    MaxLines     = titleMaxLines,
-                };
-
-                var contentStack = new StackPanel { Margin = new Thickness(4, 2, 3, 2) };
-                contentStack.Children.Add(titleBlock);
-
-                if (showTime)
-                {
-                    contentStack.Children.Add(new TextBlock
-                    {
-                        Text       = $"{ev.StartDt:HH:mm}–{ev.EndDt:HH:mm}",
-                        FontSize   = FontSizeBase,
-                        Foreground = darkBrush,
-                        Margin     = new Thickness(0, 1, 0, 0),
-                    });
-                }
-
-                Grid.SetColumn(contentStack, 1);
-
-                var strip = new Border
-                {
-                    Background        = colorBrush,
-                    CornerRadius      = new CornerRadius(2),
-                    Width             = 3,
-                    Margin            = new Thickness(2, 3, 0, 3),
-                    VerticalAlignment = VerticalAlignment.Stretch,
-                };
-
-                var selFrame = new Border
-                {
-                    CornerRadius     = new CornerRadius(3),
-                    BorderBrush      = Brushes.Transparent,
-                    IsHitTestVisible = false,
-                };
-                // Рамка выделения — акцент, ровно 2× стандартной линии (была 1.5).
-                selFrame.Bind(Border.BorderThicknessProperty, selFrame.GetResourceObservable("BorderLineFocus"));
-                Grid.SetColumnSpan(selFrame, 2);
-
-                var innerGrid = new Grid();
-                innerGrid.ColumnDefinitions.Add(new ColumnDefinition(4, GridUnitType.Pixel));
-                innerGrid.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star));
-                innerGrid.Children.Add(strip);
-                innerGrid.Children.Add(contentStack);
-                innerGrid.Children.Add(selFrame);
-
-                var btn = new Border
-                {
-                    Background   = normalBg,
-                    CornerRadius = new CornerRadius(3),
-                    Height       = evHVisible,
-                    Cursor       = new Cursor(StandardCursorType.Hand),
-                    ClipToBounds = true,
-                    Child        = innerGrid,
-                };
-
-                var isSelected = false;
-                btn.PointerEntered += (_, _) => { if (!isSelected) btn.Background = hoverBg; };
-                btn.PointerExited  += (_, _) => { if (!isSelected) btn.Background = normalBg; };
-
-                Canvas.SetTop(btn, startMin + 2);
-                canvas.Children.Add(btn);
-
-                var topHandle = new Border
-                {
-                    Height           = 6,
-                    Background       = Brushes.Transparent,
-                    Cursor           = new Cursor(StandardCursorType.SizeNorthSouth),
-                    IsHitTestVisible = true,
-                };
-                Canvas.SetTop(topHandle, startMin + 2);
-                canvas.Children.Add(topHandle);
-
-                var bottomHandle = new Border
-                {
-                    Height           = 6,
-                    Background       = Brushes.Transparent,
-                    Cursor           = new Cursor(StandardCursorType.SizeNorthSouth),
-                    IsHitTestVisible = true,
-                };
-                Canvas.SetTop(bottomHandle, startMin + 2 + evHVisible - 6);
-                canvas.Children.Add(bottomHandle);
-
-                var solidBrush = new SolidColorBrush(color);
-                var entry = new EventEntry(ev, startMin, startMin + evH, btn)
+                var entry = new EventEntry(ev, startMin, startMin + evH, block)
                 {
                     SubCol     = colIdx,
                     SubColSpan = rightLimit - colIdx,
                     TotalCols  = nCols,
-                    Select = () =>
-                    {
-                        isSelected = true;
-                        btn.Background = solidBrush;
-                        foreach (var tb in contentStack.Children.OfType<TextBlock>())
-                            tb.Foreground = Brushes.White;
-                    },
-                    Deselect = () =>
-                    {
-                        isSelected = false;
-                        btn.Background = normalBg;
-                        foreach (var tb in contentStack.Children.OfType<TextBlock>())
-                            tb.Foreground = darkBrush;
-                    },
-                    Dim   = () => btn.Opacity = 0.45,
-                    Undim = () => btn.Opacity = 1.0,
+                    Select     = () => block.Selected = true,
+                    Deselect   = () => block.Selected = false,
+                    Dim        = () => block.Opacity = 0.45,
+                    Undim      = () => block.Opacity = 1.0,
                 };
                 _eventEntries.Add(entry);
-                dayEntryLayouts.Add((entry, topHandle, bottomHandle));
+                dayEntryLayouts.Add(entry);
 
-                // Контекстное меню по правому клику. Перед открытием выделяем
+                // Контекстное меню по правому клику — по требованию. Перед открытием выделяем
                 // событие (если оно еще не в наборе) — как в режимах «Месяц»/«Неделя».
-                btn.ContextMenu = _BuildEventContextMenu(entry);
-                btn.AddHandler(PointerPressedEvent, (_, pe) =>
+                block.AddHandler(PointerPressedEvent, (_, pe) =>
                 {
-                    if (pe.GetCurrentPoint(btn).Properties.IsRightButtonPressed
-                        && !_selections.ContainsKey(entry.Ev))
+                    if (!pe.GetCurrentPoint(block).Properties.IsRightButtonPressed) return;
+                    block.ContextMenu ??= _BuildEventContextMenu(entry);
+                    if (!_selections.ContainsKey(entry.Ev))
                     {
                         _Deselect();
                         _ClearAllDaySelection();
@@ -403,17 +289,13 @@ public partial class DayView : UserControl
 
         void LayoutEntries(double canvasW)
         {
-            foreach (var (entry, topHandle, bottomHandle) in dayEntryLayouts)
+            foreach (var entry in dayEntryLayouts)
             {
                 var seg  = canvasW / entry.TotalCols;
                 var left = entry.SubCol * seg + 1.0;
                 var w    = Math.Max(1, entry.SubColSpan * seg - 3.0);
                 Canvas.SetLeft(entry.Btn, left);
                 entry.Btn.Width = w;
-                Canvas.SetLeft(topHandle, left);
-                topHandle.Width = w;
-                Canvas.SetLeft(bottomHandle, left);
-                bottomHandle.Width = w;
             }
         }
 

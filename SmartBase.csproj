@@ -33,6 +33,22 @@
     -->
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <!--
+      Частичная предкомпиляция (ReadyToRun) при публикации — только сборки, которые работают на
+      старте: сама программа, Avalonia, EF Core и SQLite, Serilog, Skia. Их код попадает в
+      дистрибутив уже машинным, и старт не ждет JIT-компиляции огромных методов разметки окна
+      (стенд Tests/Sections, этап 8 плана drawn-grid.md: построение главного окна 2,2 → 0,84 с,
+      реестр app.db 2,4 → 1,0–1,4 с, платформа и стили 1,0 → 0,3–0,8 с). Остальное — Excel, PDF,
+      PostgreSQL, обертки Windows SDK для уведомлений — компилируется, как и прежде, при первом
+      использовании: список исключений ниже.
+
+      Составной образ (PublishReadyToRunComposite) выключен явно: для single-file SDK включает его
+      сам, а он собирает в один файл все сборки ВМЕСТЕ с платформой .NET и не признает список
+      исключений — SmartBase.exe рос со 166 до 315 МБ. Без него — 197 МБ (+31 МБ).
+      Действует только в dotnet publish с RID (скрипты сборки); обычная сборка и тесты не меняются.
+    -->
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <PublishReadyToRunComposite>false</PublishReadyToRunComposite>
+    <!--
       AVLN3001 «XAML resource won't be reachable via runtime loader, as no public constructor
       was found» — 14 окон и диалогов. Предупреждение о том, что их нельзя создать
       рантайм-загрузчиком XAML по строке avares://.
@@ -282,6 +298,25 @@
     <InternalsVisibleTo Include="SmartBase.Tests.WideGui" />
     <InternalsVisibleTo Include="SmartBase.Tests.ServiceGrids" />
     <InternalsVisibleTo Include="SmartBase.Tests.RecordPage" />
+    <InternalsVisibleTo Include="SmartBase.Tests.Sections" />
+  </ItemGroup>
+
+  <!--
+    Сборки БЕЗ предкомпиляции (см. PublishReadyToRun выше): на старте не работают, а весят много —
+    Excel, PDF, PostgreSQL, редактор заметок, markdown; для Windows еще платформы других ОС и
+    обертки Windows SDK (29 МБ машинного кода ради уведомлений). Новая библиотека, которая
+    работает на старте, в этот список попадать не должна.
+  -->
+  <ItemGroup>
+    <PublishReadyToRunExclude Include="DocumentFormat.OpenXml.dll;DocumentFormat.OpenXml.Framework.dll;ClosedXML.dll;ClosedXML.Parser.dll;ExcelDataReader.dll;ExcelNumberFormat.dll" />
+    <PublishReadyToRunExclude Include="Npgsql.dll;Npgsql.EntityFrameworkCore.PostgreSQL.dll" />
+    <PublishReadyToRunExclude Include="PdfSharp.dll;PdfSharp.BarCodes.dll;PdfSharp.Charting.dll;PdfSharp.Cryptography.dll;PdfSharp.Quality.dll;PdfSharp.Shared.dll;PdfSharp.Snippets.dll;PdfSharp.System.dll;PdfSharp.WPFonts.dll" />
+    <PublishReadyToRunExclude Include="UglyToad.PdfPig.dll;UglyToad.PdfPig.Core.dll;UglyToad.PdfPig.DocumentLayoutAnalysis.dll;UglyToad.PdfPig.Fonts.dll;UglyToad.PdfPig.Package.dll;UglyToad.PdfPig.Tokenization.dll;UglyToad.PdfPig.Tokens.dll;Docnet.Core.dll;SixLabors.Fonts.dll;RBush.dll" />
+    <PublishReadyToRunExclude Include="AvaloniaEdit.dll;Markdig.dll;Avalonia.DesignerSupport.dll;Avalonia.Remote.Protocol.dll" />
+  </ItemGroup>
+  <ItemGroup Condition="$(RuntimeIdentifier.StartsWith('win'))">
+    <PublishReadyToRunExclude Include="Microsoft.Windows.SDK.NET.dll;Microsoft.Toolkit.Uwp.Notifications.dll" />
+    <PublishReadyToRunExclude Include="Avalonia.X11.dll;Avalonia.FreeDesktop.dll;Avalonia.Native.dll;Avalonia.Metal.dll;Avalonia.Vulkan.dll;Tmds.DBus.dll;Tmds.DBus.Protocol.dll;DesktopNotifications.FreeDesktop.dll" />
   </ItemGroup>
 
 </Project>

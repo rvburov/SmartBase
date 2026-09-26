@@ -1132,6 +1132,9 @@ public partial class SettingsView : UserControl
     // Переключение раздела: заголовок + видимость соответствующей панели.
     public void ShowCategory(string key)
     {
+        // Порог медленности: раздел настроек (списки, панели, инструкция) дольше Diag.UiOpen — в журнал.
+        using var slow = Logging.Diag.Measure($"открытие настроек «{(SettingsRegistry.FindByKey(key) ?? SettingsRegistry.All[0]).Label}»",
+                                              Logging.Diag.UiOpen);
         GeneralPanel.IsVisible    = key == "general";
         AppearancePanel.IsVisible = key == "appearance";
         DatabasePanel.IsVisible   = key == "database";

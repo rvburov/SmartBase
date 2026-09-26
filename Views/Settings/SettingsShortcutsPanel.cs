@@ -35,9 +35,16 @@ public partial class SettingsView
     // Подписка на изменения привязок — одна на жизнь экрана (иначе копилась бы на каждый заход).
     private bool _shortcutsSubscribed;
 
+    // Список собран и с тех пор не менялись ни привязки, ни строка отбора: повторный заход в
+    // раздел его не пересобирает (сотня строк с кнопками — десятки миллисекунд и раскладка).
+    private bool _shortcutsDirty = true;
+
     private void OnShortcutSearchChanged(string text)
     {
-        _shortcutSearch = text.Trim();
+        var search = text.Trim();
+        if (search == _shortcutSearch) return;
+        _shortcutSearch = search;
+        _shortcutsDirty = true;
         if (ShortcutsPanel.IsVisible) RebuildShortcutsPanel();
     }
 
@@ -49,10 +56,14 @@ public partial class SettingsView
             // должны меняться сразу, без повторного захода в раздел.
             ShortcutSettings.Changed += () =>
             {
+                _shortcutsDirty = true;
                 if (ShortcutsPanel.IsVisible) RebuildShortcutsPanel();
             };
             _shortcutsSubscribed = true;
         }
+
+        if (!_shortcutsDirty) return;
+        _shortcutsDirty = false;
 
         var rows = ShortcutsList.Children;
         rows.Clear();

@@ -311,9 +311,11 @@ public partial class JournalView : UserControl
             else
             {
                 var counts = new List<List<(string Day, int Count)>>(dbs.Count);
+                // Порог медленности: счетчики дней всей истории — до них ленты нет, человек ждет.
+                using var slow = Logging.Diag.Measure("счетчики журнала календаря", Logging.Diag.UiOpen, $"баз {dbs.Count}");
                 foreach (var (_, repo, active) in dbs)
                     counts.Add(await repo.LoadCalendarDayCountsAsync(rangeStart, rangeEnd, active));
-                if (gen != _loadGeneration) return;   // пока считали — сменили поиск/коллекции
+                if (gen != _loadGeneration) { slow.Discard(); return; }   // пока считали — сменили поиск/коллекции
                 // Кеш для мгновенных точечных обновлений (см. дельта-путь в LoadFrom).
                 _countsCache = counts.Select(l => l.ToDictionary(t => t.Day, t => t.Count)).ToList();
                 _countsKey   = key;

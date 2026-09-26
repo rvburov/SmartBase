@@ -98,6 +98,9 @@ public partial class ProfileView : UserControl
     /// <summary>Показать раздел профиля по ключу из ProfileRegistry.</summary>
     public void ShowCategory(string key)
     {
+        // Порог медленности: раздел профиля (история, пользователи, журнал) дольше Diag.UiOpen — в журнал.
+        using var slow = Logging.Diag.Measure($"открытие профиля «{(ProfileRegistry.FindByKey(key) ?? ProfileRegistry.All[0]).Label}»",
+                                              Logging.Diag.UiOpen);
         // Уход из «Общих данных» с полем в фокусе — тоже точка фиксации ФИО.
         if (GeneralPanel.IsVisible && key != "general") CommitProfile();
 

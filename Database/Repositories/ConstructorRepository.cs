@@ -3422,7 +3422,7 @@ public partial class ConstructorRepository(AppDbContext db)
     public Task<int> CountRecordsAsync(int collectionId, bool excludeHidden = false) =>
         Task.Run(() =>
         {
-            using var slow = Logging.Diag.Measure("счет записей коллекции", Logging.Diag.UiQuery,
+            using var slow = Logging.Diag.Measure("счет записей коллекции", Logging.Diag.Background,
                                                   $"{DbErrors.Display(db.DbPath)}, коллекция {collectionId}");
             using var ctx = new AppDbContext(db.DbPath);
             ctx.ApplyPerformancePragmas();
@@ -6232,57 +6232,162 @@ public partial class ConstructorRepository(AppDbContext db)
             .Select(g => g.Key)
             .ToHashSet();
 
-    /// <summary>Число событий, начинающихся в дне [dayStart, dayEnd) (для «показано N из total»).</summary>
-    public int CountCalendarDayEvents(DateTime dayStart, DateTime dayEnd, ISet<int>? activeIds)
-    {
-        var s = DateTime.SpecifyKind(dayStart, DateTimeKind.Unspecified).ToString("o");
-        var e = DateTime.SpecifyKind(dayEnd,   DateTimeKind.Unspecified).ToString("o");
-        var col = VisibilityFilter(activeIds);
-        var conn = db.Database.GetDbConnection();
-        var opened = conn.State != System.Data.ConnectionState.Open;
-        if (opened) conn.Open();
-        try
-        {
-            using var cmd = conn.CreateCommand();
-            cmd.CommandText = $"SELECT COUNT(*) FROM calendar_index WHERE StartIso >= @s AND StartIso < @e{col}";
-            AddParam(cmd, "@s").Value = s;
-            AddParam(cmd, "@e").Value = e;
-            var o = cmd.ExecuteScalar();
-            return o is null or DBNull ? 0 : Convert.ToInt32(o);
-        }
-        finally { if (opened) conn.Close(); }
-    }
+    /// <summary>Число событий, начинающихся в дне [dayStart, dayEnd) (для «показано N из total»):
+    /// те же счетчики дней, что у «Журнала» — полный день берется из сводки, а не счетом строк
+    /// (день-гигант на 5 млн событий — это 0,7 с счета на каждый показ дня).</summary>
+    public int CountCalendarDayEvents(DateTime dayStart, DateTime dayEnd, ISet<int>? activeIds) =>
+        GetCalendarDayCountsByRange(dayStart, dayEnd, activeIds).Sum(d => d.Count);
 
     /// <summary>
     /// Число событий ПО ДНЯМ в окне [start, end): "yyyy-MM-dd" → count, только дни с событиями,
-    /// по возрастанию. Для «Журнала»: полоса прокрутки на весь объем окна без материализации
-    /// событий (день с миллионами строк дает одну строку счетчика). Скан по покрывающему индексу.
+    /// по возрастанию. Для «Журнала», карты счетчиков Месяца и Года, счета дня «Расписания»:
+    /// полоса прокрутки на весь объем окна без материализации событий.
+    ///
+    /// Полные дни окна берутся из сводки <c>calendar_day_counts</c> (миграция
+    /// AddCalendarDayCounts, ее держат триггеры проекции): строка на коллекцию, день и поле —
+    /// счет не зависит от числа событий. Неполные крайние дни (окно не с полуночи или не до
+    /// полуночи) и база без сводки считаются по самой проекции (<see cref="CountDaysByIndex"/>).
     /// </summary>
     public List<(string Day, int Count)> GetCalendarDayCountsByRange(
         DateTime start, DateTime end, ISet<int>? activeIds)
     {
-        var s = DateTime.SpecifyKind(start, DateTimeKind.Unspecified).ToString("o");
-        var e = DateTime.SpecifyKind(end,   DateTimeKind.Unspecified).ToString("o");
-        var col = VisibilityFilter(activeIds);
-        var result = new List<(string, int)>();
+        // Те же коллекции и скрытые поля, что у фильтра видимости: коллекции с целиком скрытыми
+        // датами пропускаются, частично скрытые поля отсекает условие по FieldId.
+        var fullyHidden = FullyHiddenDateCollections();
+        var colIds = (activeIds is null
+            ? db.DbCollections.Select(c => c.Id).AsEnumerable()
+            : activeIds)
+            .Where(id => !fullyHidden.Contains(id)).ToList();
+        var hidden = HiddenFieldsClause();
+
+        var counts = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        if (colIds.Count == 0 || end <= start) return [];
+
         var conn = db.Database.GetDbConnection();
         var opened = conn.State != System.Data.ConnectionState.Open;
         if (opened) conn.Open();
         try
         {
-            using var cmd = conn.CreateCommand();
-            cmd.CommandText = $@"SELECT substr(StartIso, 1, 10) AS d, COUNT(*)
-                                 FROM calendar_index
-                                 WHERE StartIso >= @s AND StartIso < @e{col}
-                                 GROUP BY d ORDER BY d";
-            AddParam(cmd, "@s").Value = s;
-            AddParam(cmd, "@e").Value = e;
-            using var rdr = cmd.ExecuteReader();
-            while (rdr.Read())
-                result.Add((rdr.GetString(0), rdr.GetInt32(1)));
+            var firstFull = start.TimeOfDay == TimeSpan.Zero ? start.Date : SafeAddDays(start.Date, 1);
+            var endFull   = end.Date;
+            if (firstFull < endFull && HasCalendarDayCounts(conn))
+            {
+                CountDaysBySummary(conn, colIds, hidden, firstFull, endFull, counts);
+                if (start < firstFull) CountDaysByIndex(conn, colIds, hidden, start, firstFull, counts);
+                if (endFull < end)     CountDaysByIndex(conn, colIds, hidden, endFull, end, counts);
+            }
+            else CountDaysByIndex(conn, colIds, hidden, start, end, counts);
         }
         finally { if (opened) conn.Close(); }
-        return result;
+        return counts.Select(kv => (kv.Key, kv.Value)).ToList();
+    }
+
+    // Полные дни [from, to) из сводки: несколько строк на день (по коллекциям и полям).
+    private static void CountDaysBySummary(System.Data.Common.DbConnection conn, List<int> colIds, string hidden,
+                                           DateTime from, DateTime to, SortedDictionary<string, int> counts)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $@"SELECT StartDay, SUM(Events) FROM calendar_day_counts
+                             WHERE CollectionId IN ({string.Join(",", colIds)})
+                               AND StartDay >= @from AND StartDay < @to AND Events > 0{hidden}
+                             GROUP BY StartDay";
+        AddParam(cmd, "@from").Value = from.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+        AddParam(cmd, "@to").Value   = to.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+        using var rdr = cmd.ExecuteReader();
+        while (rdr.Read())
+        {
+            var n = Convert.ToInt32(rdr.GetValue(1));
+            if (n > 0) counts[rdr.GetString(0)] = counts.GetValueOrDefault(rdr.GetString(0)) + n;
+        }
+    }
+
+    // Счет по самой проекции — от дня с событиями к следующему по индексу (CollectionId, AllDay,
+    // StartIso, …), на коллекцию и признак «весь день»: первое начало не раньше курсора (сик),
+    // затем COUNT этого дня (диапазон индекса), курсор — на следующий день. Цена — число дней с
+    // событиями плюс число событий (прежний GROUP BY по substr(StartIso, 1, 10) гнал каждую строку
+    // через временное дерево и был в 6–7 раз медленнее). Нужен для неполных крайних дней окна и
+    // для базы без сводки.
+    private static void CountDaysByIndex(System.Data.Common.DbConnection conn, List<int> colIds, string hidden,
+                                         DateTime start, DateTime end, SortedDictionary<string, int> counts)
+    {
+        var s = DateTime.SpecifyKind(start, DateTimeKind.Unspecified).ToString("o");
+        var e = DateTime.SpecifyKind(end,   DateTimeKind.Unspecified).ToString("o");
+
+        using var next = conn.CreateCommand();
+        next.CommandText = $@"SELECT StartIso FROM calendar_index
+                              WHERE CollectionId = @c AND AllDay = @a
+                                AND StartIso >= @from AND StartIso < @to{hidden}
+                              ORDER BY StartIso LIMIT 1";
+        var nc = AddParam(next, "@c"); var na = AddParam(next, "@a");
+        var nf = AddParam(next, "@from"); AddParam(next, "@to").Value = e;
+
+        using var count = conn.CreateCommand();
+        count.CommandText = $@"SELECT COUNT(*) FROM calendar_index
+                               WHERE CollectionId = @c AND AllDay = @a
+                                 AND StartIso >= @from AND StartIso < @to{hidden}";
+        var cc = AddParam(count, "@c"); var ca = AddParam(count, "@a");
+        var cf = AddParam(count, "@from"); var ct = AddParam(count, "@to");
+
+        foreach (var colId in colIds)
+            foreach (var allDay in new[] { 0, 1 })
+            {
+                nc.Value = cc.Value = colId;
+                na.Value = ca.Value = allDay;
+                var cursor = s;
+                while (string.CompareOrdinal(cursor, e) < 0)
+                {
+                    nf.Value = cursor;
+                    if (next.ExecuteScalar() is not string first || first.Length < 10) break;
+
+                    // Граница дня — строкой даты: "2026-07-02" меньше любого "2026-07-02T…",
+                    // поэтому полночь следующего дня в этот день не попадает.
+                    var day     = first[..10];
+                    var nextDay = DateOnly.ParseExact(day, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture)
+                                          .AddDays(1).ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+                    var upTo    = string.CompareOrdinal(nextDay, e) < 0 ? nextDay : e;
+                    cf.Value = cursor;
+                    ct.Value = upTo;
+                    var n = Convert.ToInt32(count.ExecuteScalar() ?? 0);
+                    if (n > 0) counts[day] = counts.GetValueOrDefault(day) + n;
+                    cursor = upTo;
+                }
+            }
+    }
+
+    // Есть ли в базе сводка дней (миграция AddCalendarDayCounts): база, открытая этой версией,
+    // ее имеет всегда — проверка страхует чтение от базы, к которой миграция не прошла.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> DayCountsPresent = new();
+
+    private bool HasCalendarDayCounts(System.Data.Common.DbConnection conn)
+    {
+        if (DayCountsPresent.TryGetValue(db.DbPath, out var known)) return known;
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = db.IsPostgres
+            ? "SELECT to_regclass('calendar_day_counts') IS NOT NULL"
+            : "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'calendar_day_counts')";
+        var present = Convert.ToBoolean(cmd.ExecuteScalar());
+        if (present) DayCountsPresent[db.DbPath] = true;   // отсутствие не запоминаем: миграция может догнать
+        return present;
+    }
+
+    /// <summary>
+    /// Убрать из сводки дней нулевые строки. Триггер удаления строки проекции только уменьшает
+    /// счетчик (массовое удаление не платит вторым DELETE за каждую строку), поэтому пустые дни
+    /// копятся — их убирают здесь, при подключении базы. Чтение нули и так пропускает.
+    /// </summary>
+    public void TidyCalendarDayCounts()
+    {
+        var conn = db.Database.GetDbConnection();
+        var opened = conn.State != System.Data.ConnectionState.Open;
+        if (opened) conn.Open();
+        try
+        {
+            if (!HasCalendarDayCounts(conn)) return;
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "DELETE FROM calendar_day_counts WHERE Events <= 0";
+            cmd.ExecuteNonQuery();
+        }
+        finally { if (opened) conn.Close(); }
     }
 
     /// <summary>Фоновая (изолированное подключение) версия <see cref="GetCalendarDayCountsByRange"/> —
@@ -6723,9 +6828,12 @@ public partial class ConstructorRepository(AppDbContext db)
     /// индексный. Спилловеры (timed, начавшиеся ДО окна, но пересекающие его) — отдельным проходом
     /// по буферу CalendarTimedBufferDays, как в <see cref="ReadCalendarEvents"/>; all-day — тоже
     /// per-collection с cap (обычно их мало, но импорт дат «без времени» может дать миллионы).
+    /// <paramref name="allDayCap"/> — свой cap all-day прохода (он один на все окно, а не на
+    /// день): Месяц берет timed по нескольку десятков на день — больше ячейка не показывает, —
+    /// но полосы «весь день» ему нужны все, как и прежде.
     /// </summary>
     public List<CalendarRecord> GetCalendarRecordsByRangeCapped(
-        DateTime rangeStart, DateTime rangeEnd, ISet<int>? activeIds, int perDayCap)
+        DateTime rangeStart, DateTime rangeEnd, ISet<int>? activeIds, int perDayCap, int? allDayCap = null)
     {
         // Per-collection запросы — нужны явные id: null — все коллекции БД, ПУСТОЙ набор —
         // ни одной (циклы не выполняются). Коллекции, у которых ВСЕ поля-даты скрыты,
@@ -6786,7 +6894,7 @@ public partial class ConstructorRepository(AppDbContext db)
                 ReadCalendarRows(conn, result,
                     $"ci.CollectionId = {colId} AND ci.AllDay = 1{hidden}" +
                     " AND ci.EndIso >= @start AND ci.StartIso < @end",
-                    [("@start", startIso), ("@end", endIso)], perDayCap, "ci.EndIso");
+                    [("@start", startIso), ("@end", endIso)], allDayCap ?? perDayCap, "ci.EndIso");
         }
         finally { if (opened) conn.Close(); }
 
@@ -6800,13 +6908,13 @@ public partial class ConstructorRepository(AppDbContext db)
     /// поэтому контроллер грузит ее ВТОРОЙ фазой (<see cref="LoadCalendarDayCountsAsync"/>)
     /// и тихо уточняет уже показанную сетку.</summary>
     public Task<List<CalendarRecord>> LoadCalendarGridRangeAsync(
-        DateTime rangeStart, DateTime rangeEnd, ISet<int>? activeIds, int perDayCap) =>
+        DateTime rangeStart, DateTime rangeEnd, ISet<int>? activeIds, int perDayCap, int? allDayCap = null) =>
         Task.Run(() =>
         {
             using var ctx = new AppDbContext(db.DbPath);
             ctx.ApplyPerformancePragmas();
             return new ConstructorRepository(ctx)
-                .GetCalendarRecordsByRangeCapped(rangeStart, rangeEnd, activeIds, perDayCap);
+                .GetCalendarRecordsByRangeCapped(rangeStart, rangeEnd, activeIds, perDayCap, allDayCap);
         });
 
     /// <summary>

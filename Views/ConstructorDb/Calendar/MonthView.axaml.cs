@@ -174,10 +174,18 @@ public partial class MonthView : UserControl
                         IReadOnlyDictionary<DateOnly, int>? dayTotals = null)
     {
         _events      = events.ToList();
+        _spanning    = _events.Where(IsSpanning).ToList();
         _currentDate = currentDate;
         _dayTotals   = dayTotals;
         _BuildAll();
     }
+
+    // Многодневные и «весь день» события окна — бары. Их обычно единицы, а однодневных в
+    // окне десятки тысяч (день-гигант отдает сетке до GridDayCap строк): проходы «по барам»
+    // для каждой недели и каждого дня идут по этому списку, а не по всем событиям.
+    private List<CalendarRecord> _spanning = [];
+
+    private static bool IsSpanning(CalendarRecord e) => e.AllDay || e.EndDt.Date > e.StartDt.Date;
 
     // ── алгоритм раскладки многодневных событий по строкам ────────────────────
     // Жадный алгоритм: для каждого события берем первую строку, где ec < sc.
@@ -187,9 +195,8 @@ public partial class MonthView : UserControl
     private Dictionary<int, LayoutEntry> _ComputeWeekLayout(DateTime weekStart)
     {
         var weekEnd  = weekStart.AddDays(6).Date;
-        var spanning = _events
-            .Where(e => (e.AllDay || e.EndDt.Date > e.StartDt.Date)
-                     && e.StartDt.Date <= weekEnd
+        var spanning = _spanning
+            .Where(e => e.StartDt.Date <= weekEnd
                      && e.EndDt.Date   >= weekStart.Date
                      && e.Id.HasValue)
             .OrderBy(e => e.StartDt.Date)
@@ -232,9 +239,8 @@ public partial class MonthView : UserControl
         var rows = new HashSet<int>();
         // 5-дневка: в выходных ячейках баров нет — все строки свободны для чипов.
         if (CalendarSettings.FiveDayWeek && CalendarMath.IsWeekend(d)) return rows;
-        foreach (var e in _events)
+        foreach (var e in _spanning)
         {
-            if (!(e.AllDay || e.EndDt.Date > e.StartDt.Date)) continue;
             if (!e.Id.HasValue || !layout.TryGetValue(e.Id.Value, out var le)) continue;
             if (e.StartDt.Date <= d.Date && e.EndDt.Date >= d.Date)
                 rows.Add(le.RowIdx);
@@ -308,6 +314,13 @@ public partial class MonthView : UserControl
                 received[e.StartDt.Date] = received.GetValueOrDefault(e.StartDt.Date) + 1;
         }
 
+        // Однодневные события по дням — одним проходом, в порядке начала (сортировка устойчивая:
+        // равные по времени идут в порядке чтения, как раньше при выборке на каждый день).
+        var singlesByDay = _events
+            .Where(e => !e.AllDay && e.EndDt.Date == e.StartDt.Date)
+            .GroupBy(e => e.StartDt.Date)
+            .ToDictionary(g => g.Key, g => g.OrderBy(e => e.StartDt).ToList());
+
         var firstDay    = new DateTime(_currentDate.Year, _currentDate.Month, 1);
         var startOffset = ((int)firstDay.DayOfWeek + 6) % 7;
         var gridStart   = firstDay.AddDays(-startOffset).Date;
@@ -326,10 +339,9 @@ public partial class MonthView : UserControl
             var hiddenSpans = new int[7];
             var seen        = new HashSet<int>();
 
-            foreach (var ev in _events)
+            foreach (var ev in _spanning)
             {
                 if (!ev.Id.HasValue || !layout.ContainsKey(ev.Id.Value)) continue;
-                if (!(ev.AllDay || ev.EndDt.Date > ev.StartDt.Date))     continue;
                 if (ev.StartDt.Date > weekEnd || ev.EndDt.Date < weekStart) continue;
                 if (!seen.Add(ev.Id.Value)) continue;
 
@@ -376,12 +388,7 @@ public partial class MonthView : UserControl
                 // Однодневные события
                 var singles = hideWeekend
                     ? []
-                    : _events
-                        .Where(e => !e.AllDay
-                                 && e.EndDt.Date == e.StartDt.Date
-                                 && e.StartDt.Date == d.Date)
-                        .OrderBy(e => e.StartDt)
-                        .ToList();
+                    : singlesByDay.GetValueOrDefault(d.Date) ?? [];
 
                 // Последняя строка, помещающаяся по высоте: row*BarStep от DateH,
                 // снизу резерв под «+N еще» (MoreH) и нижний отступ (BPad).
@@ -390,16 +397,20 @@ public partial class MonthView : UserControl
                     : 4;
 
                 // Каждому single — первая свободная строка (заполняя верхние дыры).
-                // Строки, ушедшие за maxVisRow, считаются скрытыми.
+                // Строки, ушедшие за maxVisRow, считаются скрытыми. Строки занимаются по
+                // возрастанию, поэтому первая свободная ищется бегущим курсором, а не с нуля:
+                // на дне-гиганте (тысячи событий) поиск с нуля был квадратичным и держал
+                // UI-поток секундами.
                 var occupied = new HashSet<int>(spanRows);
                 var placed   = new List<(CalendarRecord Ev, int Row)>();
                 var hiddenSingles = 0;
+                var free = 0;
                 foreach (var ev in singles)
                 {
-                    var r = _FirstFreeRow(occupied);
-                    occupied.Add(r);
-                    if (r <= maxVisRow) placed.Add((ev, r));
-                    else                hiddenSingles++;
+                    while (occupied.Contains(free)) free++;
+                    occupied.Add(free);
+                    if (free <= maxVisRow) placed.Add((ev, free));
+                    else                   hiddenSingles++;
                 }
 
                 var hidden = hideWeekend ? 0 : hiddenSingles + hiddenSpans[col];

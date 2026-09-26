@@ -275,6 +275,9 @@ internal sealed class TaskVirtualList : IList<object>, IList, INotifyCollectionC
 
         foreach (var (dated, skip, n) in TaskStreams.Split(e.Dated, local, take))
         {
+            // Порог медленности: страница карточек при прокрутке — до нее видны заглушки.
+            using var slow = Logging.Diag.Measure("страница раздела «Задачи»", Logging.Diag.UiPage,
+                                                  $"коллекция {e.Group.ColId}, {e.View.Key}, с {skip}");
             var part = await e.Repo.LoadTaskPageAsync(e.Group.ColId, e.Stats, e.View, dated, skip, n);
             foreach (var t in part) t.DbId = e.Group.DbId;
             result.AddRange(part);

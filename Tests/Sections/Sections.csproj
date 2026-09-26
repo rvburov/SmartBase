@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Стенд этапа 8 плана drawn-grid.md: вся программа без экрана. Настоящее главное окно на наборе
+       баз, повторяющем рабочий (копии «Основной» и «Второй», test_database на 10 млн записей,
+       wide1000 на 1000 свойств): старт с фоновым подключением баз и обход разделов. UI-поток
+       опрашивается пробой; паузы дольше порога сводятся к методам программы по выборкам стеков
+       EventPipe. Плюс все замеры Diag с длительностью и записи журнала. Не входит в автотесты. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>SmartBase.Tests.Sections</RootNamespace>
+    <AssemblyName>SmartBase.Tests.Sections</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Headless" Version="11.2.3" />
+    <!-- Выборки стеков процесса самим стендом: сессия EventPipe и разбор трассы. -->
+    <PackageReference Include="Microsoft.Diagnostics.NETCore.Client" Version="0.2.745401" />
+    <PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" Version="3.2.6" />
+    <ProjectReference Include="..\..\SmartBase.csproj" />
+    <!-- Кадры, сравнение и карта различий — общие со стендом служебных таблиц. -->
+    <Compile Include="..\ServiceGrids\Frames.cs" Link="Frames.cs" />
+  </ItemGroup>
+
+</Project>

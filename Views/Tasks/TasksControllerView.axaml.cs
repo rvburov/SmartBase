@@ -226,7 +226,36 @@ public partial class TasksControllerView : UserControl
     /// волна «Загрузка…» на ее месте выглядит так, будто раздел открылся заново. То же правило
     /// в «Расписании» календаря: оно зовет это «пересборкой без свежести».
     /// </param>
-    private void RefreshCurrent(bool quiet = false) => _ = LoadAsync(quiet);
+    private void RefreshCurrent(bool quiet = false)
+    {
+        // Скрытый раздел не читает: на старте (раздел по умолчанию — конструктор) каждая
+        // подключенная база запускала полное чтение раздела по всем базам, и эти чтения шли
+        // параллельно секундами. Отметка остается, раздел перечитается при показе; громкое
+        // обновление среди отложенных побеждает тихое.
+        if (!IsVisible)
+        {
+            _loadDeferred   = true;
+            _deferredQuiet &= quiet;
+            return;
+        }
+        if (_loadDeferred) quiet &= _deferredQuiet;
+        _loadDeferred  = false;
+        _deferredQuiet = true;
+        _ = LoadAsync(quiet);
+    }
+
+    private bool _loadDeferred;
+    private bool _deferredQuiet = true;
+
+    // Показ раздела: отложенное чтение — сейчас. Постом: главное окно следом за IsVisible
+    // отдает свежие галочки (SetActiveIds), и тогда чтение пойдет одно и уже с ними.
+    protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
+    {
+        base.OnPropertyChanged(change);
+        if (change.Property == IsVisibleProperty && IsVisible && _loadDeferred)
+            Avalonia.Threading.Dispatcher.UIThread.Post(() => { if (_loadDeferred && IsVisible) RefreshCurrent(); },
+                                                        Avalonia.Threading.DispatcherPriority.Background);
+    }
 
     private async Task LoadAsync(bool quiet = false)
     {
@@ -237,7 +266,7 @@ public partial class TasksControllerView : UserControl
         var oldOffset = TaskList.ScrollOffset;
         // Порог медленности: чтение раздела по всем допущенным базам дольше Diag.UiOpen — в журнал.
         using var slow = Logging.Diag.Measure("загрузка раздела «Задачи»", Logging.Diag.UiOpen, $"баз {_dbs.Count}");
-        var work      = LoadAllAsync();
+        var work      = LoadAllAsync(gen);
 
         // Оверлей — только если загрузка дольше 400 мс (как сетка календаря) И показывать
         // нечего: при правке задачи на экране уже есть верный список.
@@ -248,6 +277,13 @@ public partial class TasksControllerView : UserControl
         Dictionary<(int DbId, int ColId), ConstructorRepository.TaskCollectionStats> stats;
         bool tasksRead;
         try { (list, stats, tasksRead) = await work; }
+        catch (OperationCanceledException) when (gen != _gen)
+        {
+            // Загрузку обогнала новая (подключилась еще база, сменились галочки): бросаем ее
+            // на границе базы, замер снимаем без записи.
+            slow.Discard();
+            return;
+        }
         catch (Exception ex)
         {
             // Фон: недоступная БД не валит UI. Но пустой раздел без записи в журнале
@@ -279,15 +315,21 @@ public partial class TasksControllerView : UserControl
     private async Task<(List<TaskRecord> Tasks,
                         Dictionary<(int DbId, int ColId), ConstructorRepository.TaskCollectionStats> Stats,
                         bool TasksRead)>
-        LoadAllAsync()
+        LoadAllAsync(long gen)
     {
+        // Размеры всех баз — параллельно: у каждой свое подключение, и ждать приходится самую
+        // медленную базу, а не сумму всех (на четырех базах это половина времени открытия).
         var stats = new Dictionary<(int DbId, int ColId), ConstructorRepository.TaskCollectionStats>();
-        foreach (var (dbId, _, repo) in _dbs.ToList())
+        var perDb = await Task.WhenAll(_dbs.ToList().Select(async d =>
         {
-            ISet<int>? active = _activeByDb is not null && _activeByDb.TryGetValue(dbId, out var s) ? s : null;
-            foreach (var (colId, one) in await repo.GetTaskCollectionStatsAsync(active))
+            ISet<int>? active = _activeByDb is not null && _activeByDb.TryGetValue(d.DbId, out var s) ? s : null;
+            return (d.DbId, Stats: await d.Repo.GetTaskCollectionStatsAsync(active));
+        }));
+        // Устаревшая загрузка дальше не идет: ее результат все равно не покажут.
+        if (gen != _gen) throw new OperationCanceledException();
+        foreach (var (dbId, part) in perDb)
+            foreach (var (colId, one) in part)
                 stats[(dbId, colId)] = one;
-        }
 
         var needTasks = TaskLoadPlan.NeedsTaskRead(stats.Values.Sum(s => s.Total), TaskLoadCap);
         if (!needTasks) return ([], stats, false);
@@ -297,6 +339,7 @@ public partial class TasksControllerView : UserControl
         {
             ISet<int>? active = _activeByDb is not null && _activeByDb.TryGetValue(dbId, out var s) ? s : null;
             var part = await repo.LoadTasksAsync(active, TaskLoadCap);
+            if (gen != _gen) throw new OperationCanceledException();
             foreach (var t in part) t.DbId = dbId;
             result.AddRange(part);
         }
@@ -432,6 +475,8 @@ public partial class TasksControllerView : UserControl
         // Считать точнее потолка пилюли незачем: на единицу больше — уже «999+».
         var cap     = Controls.Components.TaskFilterItem.CountCap + 1;
         var search  = (_searchQuery ?? "").Trim();
+        // Пилюли досчитываются фоном рядом с уже показанным списком — порог фоновый.
+        using var slow = Logging.Diag.Measure("счетчики фильтров «Задач»", Logging.Diag.Background, $"баз {_dbs.Count}");
 
         foreach (var (dbId, _, repo) in _dbs.ToList())
         {
@@ -444,7 +489,7 @@ public partial class TasksControllerView : UserControl
             try { part = await repo.CountTaskViewsAsync(byCol, views, cap); }
             catch { continue; }   // фон: недоступная БД не валит счетчики остальных
 
-            if (gen != _countGen) return;
+            if (gen != _countGen) { slow.Discard(); return; }
             foreach (var f in filters)
                 totals[f] += part.GetValueOrDefault(f.Key);
         }
@@ -502,6 +547,9 @@ public partial class TasksControllerView : UserControl
         var search  = (_searchQuery ?? "").Trim();
         var me      = CurrentUser.DisplayName;
         var entries = new List<(int Order, TaskVirtualList.Entry Entry)>();
+        // Порог медленности: размеры групп вида (фильтр, поиск) — человек ждет список.
+        using var slow = Logging.Diag.Measure("вид раздела «Задачи»", Logging.Diag.UiQuery,
+                                              $"{_filter.Key}{(search.Length > 0 ? ", с поиском" : "")}, баз {_dbs.Count}");
 
         foreach (var (dbId, _, repo) in _dbs.ToList())
         {
@@ -516,7 +564,7 @@ public partial class TasksControllerView : UserControl
             try { sizes = await repo.CountTaskViewAsync(byCol, view); }
             catch { continue; }   // фон: недоступная БД не валит остальные
 
-            if (gen != _viewGen) return;
+            if (gen != _viewGen) { slow.Discard(); return; }
 
             foreach (var (colId, size) in sizes)
             {

@@ -522,15 +522,22 @@ public partial class ConstructorRepository
     ///
     /// Задача = запись коллекции с включенным полем-исполнителем (исполнитель один, см.
     /// <see cref="TaskExecFieldId"/>), поэтому «всего» — это обычный COUNT по индексу
-    /// db_records(CollectionId, Position). Выполненные добираются JOIN'ом по PK
-    /// (RecordId, FieldId) к ОДНОМУ полю-статусу коллекции — тому же, что читает
-    /// <see cref="GetTaskRecords"/>: подзапрос повторяет <see cref="RoleOrder"/>, иначе на старой
-    /// базе с двумя статусами счетчик спорил бы с чипами карточек. Коррелирован он только по
-    /// коллекции (не по записи), поэтому это одна дешевая выборка на группу, а не на строку.
+    /// db_records(CollectionId, Position). Выполненные считаются от значений: индекс
+    /// db_field_values(FieldId, Value) сразу дает строки «Выполнено» полей-статусов, а соединение
+    /// с записью проверяет, что запись есть и что статус — тот ОДИН, который коллекция считает
+    /// своим (тот же, что читает <see cref="GetTaskRecords"/>: порядок <see cref="RoleOrder"/>,
+    /// иначе на старой базе с двумя статусами счетчик спорил бы с чипами карточек). Цена — число
+    /// выполненных задач, а не размер коллекции: прежнее соединение от КАЖДОЙ записи к ее статусу
+    /// стоило 3 с на коллекции в полмиллиона при каждом открытии раздела.
     /// </summary>
-    public Dictionary<int, (int Total, int Done)> CountTasksByCollection(ISet<int>? activeIds = null)
+    public Dictionary<int, (int Total, int Done)> CountTasksByCollection(ISet<int>? activeIds = null) =>
+        CountTasksWithFirstId(activeIds).ToDictionary(kv => kv.Key, kv => (kv.Value.Total, kv.Value.Done));
+
+    // То же плюс наименьший Id записи коллекции — нижняя граница прохода страниц «без срока»
+    // в порядке Id (см. TasksPaging.ViewParts). MIN берется тем же проходом по индексу, что COUNT.
+    private Dictionary<int, (int Total, int Done, int FirstId)> CountTasksWithFirstId(ISet<int>? activeIds)
     {
-        var result = new Dictionary<int, (int Total, int Done)>();
+        var result = new Dictionary<int, (int Total, int Done, int FirstId)>();
         if (activeIds is { Count: 0 }) return result;
 
         // Задачные коллекции и их поля-статусы — через EF: db_fields мала, а знать это заранее
@@ -552,33 +559,47 @@ public partial class ConstructorRepository
         if (activeIds is not null) taskCollections.RemoveAll(c => !activeIds.Contains(c));
         if (taskCollections.Count == 0) return result;
 
-        // Поле-статус подставляется прямо в условие соединения: CASE по коллекции строки. Это
-        // сик по PK (RecordId, FieldId), а не поиск поля. Коллекции без статуса достается −1 —
-        // совпадений нет, выполненных ноль.
-        var statusCase = string.Join(" ", taskCollections
-            .Where(statusByCollection.ContainsKey)
-            .Select(c => $"WHEN {c} THEN {statusByCollection[c]}"));
-        var statusExpr = statusCase.Length > 0 ? $"CASE r.CollectionId {statusCase} ELSE -1 END" : "-1";
+        // Поле-статус своей коллекции — CASE по коллекции записи: значение чужого или второго
+        // статуса не засчитывается. Коллекции без статуса в CASE нет — выполненных ноль.
+        var statusFields = taskCollections.Where(statusByCollection.ContainsKey)
+                                          .Select(c => (Collection: c, Field: statusByCollection[c]))
+                                          .ToList();
+        var statusExpr = $"CASE r.CollectionId {string.Join(" ", statusFields.Select(s => $"WHEN {s.Collection} THEN {s.Field}"))} ELSE -1 END";
 
         var conn = db.Database.GetDbConnection();
         var opened = conn.State != System.Data.ConnectionState.Open;
         if (opened) conn.Open();
         try
         {
-            using var cmd = conn.CreateCommand();
-            cmd.CommandText = $@"
-                SELECT r.CollectionId, COUNT(*),
-                       SUM(CASE WHEN vs.Value = @done THEN 1 ELSE 0 END)
-                FROM db_records r
-                LEFT JOIN db_field_values vs
-                       ON vs.RecordId = r.Id AND vs.FieldId = {statusExpr}
-                WHERE r.CollectionId IN ({string.Join(",", taskCollections)})
-                GROUP BY r.CollectionId";
-            AddParam(cmd, "@done").Value = TaskStatusDone;
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = $@"
+                    SELECT CollectionId, COUNT(*), MIN(Id)
+                    FROM db_records
+                    WHERE CollectionId IN ({string.Join(",", taskCollections)})
+                    GROUP BY CollectionId";
+                using var rdr = cmd.ExecuteReader();
+                while (rdr.Read())
+                    result[rdr.GetInt32(0)] = (rdr.GetInt32(1), 0, rdr.GetInt32(2));
+            }
 
-            using var rdr = cmd.ExecuteReader();
-            while (rdr.Read())
-                result[rdr.GetInt32(0)] = (rdr.GetInt32(1), rdr.IsDBNull(2) ? 0 : rdr.GetInt32(2));
+            if (statusFields.Count > 0)
+            {
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = $@"
+                    SELECT r.CollectionId, COUNT(*)
+                    FROM db_field_values vs
+                    JOIN db_records r ON r.Id = vs.RecordId
+                    WHERE vs.FieldId IN ({string.Join(",", statusFields.Select(s => s.Field).Distinct())})
+                      AND vs.Value = @done
+                      AND vs.FieldId = {statusExpr}
+                    GROUP BY r.CollectionId";
+                AddParam(cmd, "@done").Value = TaskStatusDone;
+                using var rdr = cmd.ExecuteReader();
+                while (rdr.Read())
+                    if (result.TryGetValue(rdr.GetInt32(0), out var counts))
+                        result[rdr.GetInt32(0)] = (counts.Total, rdr.GetInt32(1), counts.FirstId);
+            }
         }
         finally { if (opened) conn.Close(); }
         return result;

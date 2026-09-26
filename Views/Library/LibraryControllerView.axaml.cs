@@ -243,7 +243,35 @@ public partial class LibraryControllerView : UserControl
     /// «Загрузка…» не показывается. Так перечитываются данные ПОСЛЕ действия — человек смотрит
     /// на карточку, а не начинает все заново.
     /// </param>
-    private void RefreshCurrent(bool quiet = false) => _ = LoadAsync(quiet);
+    private void RefreshCurrent(bool quiet = false)
+    {
+        // Скрытый раздел не читает (то же правило, что у «Задач» и календаря): лента по всем
+        // базам на старте шла по разу на каждую подключенную базу. Отметка остается, раздел
+        // перечитается при показе; громкое обновление среди отложенных побеждает тихое.
+        if (!IsVisible)
+        {
+            _loadDeferred   = true;
+            _deferredQuiet &= quiet;
+            return;
+        }
+        if (_loadDeferred) quiet &= _deferredQuiet;
+        _loadDeferred  = false;
+        _deferredQuiet = true;
+        _ = LoadAsync(quiet);
+    }
+
+    private bool _loadDeferred;
+    private bool _deferredQuiet = true;
+
+    // Показ раздела: отложенное чтение — сейчас. Постом: главное окно следом за IsVisible
+    // отдает свежие галочки (SetActiveIds), и тогда чтение пойдет одно и уже с ними.
+    protected override void OnPropertyChanged(Avalonia.AvaloniaPropertyChangedEventArgs change)
+    {
+        base.OnPropertyChanged(change);
+        if (change.Property == IsVisibleProperty && IsVisible && _loadDeferred)
+            Dispatcher.UIThread.Post(() => { if (_loadDeferred && IsVisible) RefreshCurrent(); },
+                                     DispatcherPriority.Background);
+    }
 
     private async Task LoadAsync(bool quiet = false)
     {

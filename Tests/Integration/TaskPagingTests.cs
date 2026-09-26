@@ -77,6 +77,62 @@ public sealed class TaskPagingTests
 
     // ── Порядок ──────────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Каждый вид раздела (стандартные пункты и все стадии, со скрытыми выполненными и без)
+    /// страницами — ровно то, что дает фильтр в памяти с сортировкой раздела, на трех формах
+    /// коллекции: одно поле-срок, ни одного, два. Задач больше восьми на совпадение: редкие
+    /// стадии и «Назначено мне» читаются от индекса значений, плотные — проходом по Id, и оба
+    /// пути обязаны совпасть с памятью.
+    /// </summary>
+    [Theory]
+    [InlineData(1)]   // одно поле-срок
+    [InlineData(0)]   // срока нет — весь раздел в потоке «без срока»
+    [InlineData(2)]   // два поля-срока
+    public void Every_view_pages_like_the_in_memory_filter(int dueFields)
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+        var now  = new DateTime(2026, 8, 19, 12, 0, 0);
+        const string me = "Иванов Иван";
+
+        var col    = SampleData.AddCollection(repo, "Заявки").Id!.Value;
+        var exec   = EnableTasks(repo, col);
+        var due    = DueFieldOf(repo, col);
+        var second = SampleData.AddField(repo, col, "Срок 2", "date", position: 4000).Id!.Value;
+        if (dueFields == 2) repo.SetDateFieldVisible(second, true);
+        var status = repo.TaskRoleFields(col).StatusId!.Value;
+
+        for (var i = 0; i < 40; i++)
+        {
+            var id = SampleData.AddRecord(repo, col, $"Задача {i}").Id!.Value;
+            if (i % 13 == 0)     repo.SetFieldValue(id, exec, me);
+            else if (i % 3 == 0) repo.SetFieldValue(id, exec, "Петров");
+            var state = i % 17 == 0 ? ConstructorRepository.TaskStatusDone
+                      : i % 11 == 0 ? ConstructorRepository.TaskStatusActive
+                      : i % 2 == 0  ? ConstructorRepository.TaskStatusPlanned
+                      : "";
+            if (state.Length > 0) repo.SetFieldValue(id, status, state);
+            if (i % 5 == 0) SetDue(repo, id, due, now.AddDays(i - 20));
+            if (dueFields == 2 && i % 7 == 0) SetDue(repo, id, second, now.AddDays(10 - i));
+        }
+        if (dueFields == 0) repo.SetDateFieldVisible(due, false);
+
+        var tasks   = repo.GetTaskRecords(limit: 1_000_000).Where(t => t.CollectionId == col).ToList();
+        var filters = TaskFilters.WithStages(repo.GetTaskStages());
+        foreach (var rules in new[] { TaskRules.Default, new TaskRules(OverdueNextDay: false, ShowDone: false) })
+            foreach (var f in filters)
+            {
+                var expected = tasks.Where(t => TaskFilters.Matches(t, f, now, me, rules)).ToList();
+                expected.Sort(TaskGrouping.ByDueThenId);
+                var view = new ConstructorRepository.TaskView(f.Kind.ToString(), "", [me], now, f.StageName,
+                                                              HideDone: !rules.ShowDone,
+                                                              OverdueNextDay: rules.OverdueNextDay);
+                Assert.True(expected.Select(t => t.Id!.Value).SequenceEqual(PagedOrder(repo, col, pageSize: 3, view)),
+                            $"{f.Key} при {rules}: страницы расходятся с памятью");
+            }
+    }
+
+
     [Theory]
     [InlineData(1)]    // страница в одну строку — каждый шаг попадает на стык
     [InlineData(2)]

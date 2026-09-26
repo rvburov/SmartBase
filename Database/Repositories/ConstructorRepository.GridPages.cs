@@ -354,7 +354,7 @@ public sealed partial class ConstructorRepository
                                                        int? sortFieldId, bool sortAsc, CancellationToken ct = default) =>
         Task.Run(() =>
         {
-            using var slow = Diag.Measure("индексы строк с ручной высотой", Diag.UiQuery,
+            using var slow = Diag.Measure("индексы строк с ручной высотой", Diag.Background,
                                           $"{SmartBase.Utils.DbErrors.Display(db.DbPath)}, коллекция {collectionId}, записей {recordIds.Count}");
             using var ctx = new AppDbContext(db.DbPath);
             ctx.ApplyPerformancePragmas();

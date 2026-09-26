@@ -61,12 +61,17 @@ public sealed class TaskFilterCountsTests
         foreach (var rules in AllRules)
         {
             var inMemory = TaskFilters.Counts(tasks, filters, now, Me, rules);
+            // Пилюли считаются своим заходом (одна гистограмма статуса на все пункты) — под
+            // крышкой, которой здесь не достать, они обязаны сказать то же самое.
+            var pills = repo.CountTaskViews(stats, [.. filters.Select(f => ViewOf(f, search, now, rules))], cap: 1_000_000);
             foreach (var f in filters)
             {
                 var view = ViewOf(f, search, now, rules);
                 var sql  = stats.Sum(kv => repo.CountTaskView(kv.Key, kv.Value, view).Total);
                 Assert.True(inMemory[f] == sql,
                             $"{f.Key} при {rules}: в памяти {inMemory[f]}, в SQL {sql}");
+                Assert.True(inMemory[f] == pills[view.Key],
+                            $"{f.Key} при {rules}: в памяти {inMemory[f]}, в пилюле {pills[view.Key]}");
             }
         }
     }
@@ -122,6 +127,50 @@ public sealed class TaskFilterCountsTests
         SeedMixed(repo, col, now);
 
         AssertCountsAgree(repo, now);
+    }
+
+    /// <summary>
+    /// Коллекция без календарной даты: весь раздел — один поток «без срока», и «Все задачи»,
+    /// стадии и «Назначено мне» считаются от индекса значений (гистограмма статуса, исполнитель
+    /// по индексу), а не проходом по записям. Счет обязан совпасть с памятью во всех правилах.
+    /// </summary>
+    [Fact]
+    public void Sql_counts_match_without_calendar_dates()
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+        var now  = new DateTime(2026, 8, 19, 14, 0, 0);
+
+        var col = SampleData.AddCollection(repo, "Заявки").Id!.Value;
+        EnableTasks(repo, col);
+        var due = DueFieldOf(repo, col);
+        SeedMixed(repo, col, now);
+        repo.SetDateFieldVisible(due, false);
+
+        var stats = repo.GetTaskCollectionStats()[col];
+        Assert.Null(stats.DueFieldId);
+        Assert.False(stats.MultiDate);
+        AssertCountsAgree(repo, now);
+    }
+
+    /// <summary>Две календарные даты: поток один на всю коллекцию (общий путь чтения), и тот же
+    /// счет от индекса значений — для видов без условия на срок.</summary>
+    [Fact]
+    public void Sql_counts_match_with_two_calendar_dates()
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+        var now  = new DateTime(2026, 8, 19, 14, 0, 0);
+
+        var col = SampleData.AddCollection(repo, "Заявки").Id!.Value;
+        EnableTasks(repo, col);
+        SeedMixed(repo, col, now);
+        var second = SampleData.AddField(repo, col, "Срок 2", "date", position: 4000).Id!.Value;
+        repo.SetDateFieldVisible(second, true);
+
+        Assert.True(repo.GetTaskCollectionStats()[col].MultiDate);
+        AssertCountsAgree(repo, now);
+        AssertCountsAgree(repo, now, search: "срок");
     }
 
     /// <summary>Пустой раздел: все пункты нулевые и с обеих сторон одинаково.</summary>

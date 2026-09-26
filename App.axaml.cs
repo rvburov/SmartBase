@@ -49,174 +49,6 @@ public partial class App : Application
             // задерживать старт. См. docs/guides/auto-update.md.
             _ = Task.Run(Setup.InstallService.CleanStaleUpdateArtifacts);
 
-            // Системный реестр БД (app.db). Регистрирует текущую БД как дефолтную.
-            DatabaseRegistry registry;
-            try { registry = DatabaseRegistry.Open(AppSettings.DbPath); }
-            catch (Exception ex)
-            {
-                // Без app.db нет ни реестра баз, ни настроек — старт невозможен. След в журнале
-                // с путем: обычно это права на папку данных или поврежденный файл.
-                Log.Error(ex, "Системная база app.db не открылась: {Path:l}", AppSettings.SystemDbPath);
-                throw;
-            }
-
-            // Настройки приложения хранятся в app.db.
-            AppSettings.AttachStore(registry);
-
-            // Политика организации для обмена со сторонними программами — сразу после AttachStore
-            // и раньше всего остального: снимок последней известной политики лежит в app.db,
-            // а шлюз наружу обязан быть заряжен до появления первого желающего выйти. До
-            // этого вызова дверь закрыта (состояние EgressGate по умолчанию — самое строгое),
-            // поэтому сбой загрузки ничего не открывает.
-            // См. docs/developer/features/integrations/overview.md.
-            Integrations.EgressSetup.Init();
-
-            // Журнал запусков обмена — сразу за политикой: он же считает накопительные квоты
-            // (запусков в час, байт в сутки), и без него потолки политики не с чем сверять.
-            // Сбой открытия журнала обмен не останавливает: шлюз при отсутствии счетчика
-            // считает расход нулевым, а про сбой узнает «Диагностика».
-            try
-            {
-                var journal = new Database.RunJournal(AppSettings.RunJournalPath);
-                journal.Trim();   // уборка раз в запуск: расти файлу незачем
-                Database.RunJournal.Attach(journal);
-                Integrations.EgressGate.AttachUsage(journal.AsUsage());
-            }
-            catch (Exception ex)
-            {
-                Log.Warning(ex, "Журнал обмена не открылся: {Path:l}", AppSettings.RunJournalPath);
-            }
-
-            // Журнал безопасности — тот, который читает проверяющий. В отличие от рабочего, его
-            // сбой не «переживается»: правило «не записалось — не отправляем» опирается на то,
-            // что журнал есть. Не открылся — исходящего просто не будет, и сказать об этом надо
-            // громче, чем про рабочий.
-            try
-            {
-                Database.SecurityJournal.Attach(
-                    new Database.SecurityJournal(AppSettings.SecurityJournalPath));
-
-                // Уборка по сроку из политики — только ЗДЕСЬ, после того как журнал открыт.
-                // Политика читается раньше (строка выше), и звать уборку оттуда нельзя: журнала
-                // в тот момент еще нет. Срок при этом по-прежнему живет в одном месте — в файле
-                // политики, и программа лишь исполняет его.
-                Integrations.EgressSetup.TidyJournal();
-            }
-            catch (Exception ex)
-            {
-                Log.Error(ex, "Журнал безопасности НЕ открылся: {Path:l}. Исходящий обмен "
-                            + "работать не будет — отправка без следа не допускается",
-                          AppSettings.SecurityJournalPath);
-            }
-
-            // Память о повторах входящего канала — рядом с рабочим журналом, в том же файле.
-            // Ее сбой прием не останавливает: повтор в худшем случае обновит те же записи теми
-            // же значениями, а отказать из-за недоступной памяти значило бы остановить обмен.
-            try
-            {
-                var replies = new Database.IngressReplies(AppSettings.RunJournalPath);
-                replies.Forget(DateTimeOffset.Now);   // уборка раз в запуск, как у журнала
-                Database.IngressReplies.Attach(replies);
-            }
-            catch (Exception ex)
-            {
-                Log.Warning(ex, "Память о повторах приема не открылась: {Path:l}",
-                            AppSettings.RunJournalPath);
-            }
-
-            // Расширения: Id — ключ и строки сайдбара, и группы настроек «ext.<Id>.…»,
-            // поэтому тезки недопустимы (проверка падает с явным сообщением).
-            Extensions.ExtensionRegistry.EnsureUniqueIds();
-
-            // Автоматизации находятся по сборке, а их ключ хранится в шаге сценария: тезки
-            // означали бы шаг, выполняющий не то, что настроили.
-            Extensions.Automations.AutomationRegistry.EnsureUniqueKeys();
-
-            // Убрать настройки расширений, которых в сборке больше нет: удалили папку
-            // расширения и строку реестра — при первом же запуске уходят и его строки из
-            // app.db, лишнего не остается. См. docs/features/extensions.md.
-            var orphans = AppSettings.RemoveOrphanExtensionSettings(
-                Extensions.ExtensionRegistry.All.Select(e => e.Id));
-            if (orphans > 0)
-                Log.Information("Настройки удаленных расширений убраны из app.db: {Count}", orphans);
-
-            // Настройки резервного копирования отключенных баз: расписание и отметки базы,
-            // которой больше нет в реестре, не должны жить в app.db вечно.
-            var backupOrphans = AppSettings.RemoveOrphanBackupSettings(
-                registry.GetAll().Select(d => d.Id));
-            if (backupOrphans > 0)
-                Log.Information("Настройки резервного копирования отключенных баз убраны из app.db: {Count}",
-                                backupOrphans);
-
-            // Там же — галочки «Расширения → Отображение раздела расширений»: список пунктов
-            // динамический (Id реестра), поэтому Id удаленного расширения не должен остаться
-            // в «скрытых». Иначе вернувшееся расширение молча оказалось бы скрытым.
-            var hiddenOrphans = AppSettings.PruneHiddenViews(
-                Settings.ViewCatalog.ScopeExtensions,
-                Extensions.ExtensionRegistry.All.Select(e => e.Id));
-            if (hiddenOrphans > 0)
-                Log.Information("Скрытые расширения, которых больше нет, убраны из app.db: {Count}",
-                                hiddenOrphans);
-
-            // Привязки сочетаний клавиш: действие переименовали или удалили между версиями —
-            // его ключ «shortcut.<id>» не должен жить в app.db вечно.
-            var shortcutOrphans = AppSettings.RemoveOrphanShortcutSettings(
-                Core.Models.ShortcutActions.All.Where(a => a.Rebindable).Select(a => a.Id));
-            if (shortcutOrphans > 0)
-                Log.Information("Привязки исчезнувших сочетаний клавиш убраны из app.db: {Count}",
-                                shortcutOrphans);
-
-            // Автозапуск: сверяем запись в системе с настройкой — вернуть пропавшую (переустановка,
-            // чистилка автозагрузки), переписать устаревшую (сменилась папка установки; у версий до
-            // 1.0.5 в команде оставался --background), снять лишнюю. Именно здесь, а не в Program:
-            // настройка читается только после AttachStore.
-            Autostart.Sync(AppSettings.LoadAutostartEnabled());
-
-            // Профиль пользователя (ФИО для модуля «Профиль») — тоже в app.db.
-            CurrentUser.AttachStore(registry);
-
-            // Размер шрифта: применить сохраненную дельту до создания окна (потребители на
-            // DynamicResource подхватят актуальные размеры сразу при загрузке).
-            FontScale.Init();
-
-            // Настройки календаря: считать кэш до создания окна — календарь строится по ним.
-            CalendarSettings.Init();
-            // Настройки раздела «Задачи» — по той же причине (стартовый фильтр, правила показа).
-            TaskSettings.Init();
-            // Настройки библиотеки документов — до открытия ее кеша: порог размера файла для
-            // индексации служба читает уже готовым.
-            LibrarySettings.Init();
-            // Настройки конструктора: до создания окна, потому что по ним строится таблица
-            // (высота строк, ширина столбцов) и заводится поллер чужих правок.
-            ConstructorSettings.Init();
-            // Пользовательские привязки клавиш: до создания окна — обработчики спрашивают
-            // ShortcutSettings.Matches с первого нажатия.
-            ShortcutSettings.Init();
-
-            // Кеш текста документов для поиска по содержимому в библиотеке. Его сбой раздел не
-            // останавливает: лента и фильтр типов читаются из самой базы, а без кеша пропадает
-            // только поиск ВНУТРИ документов — об этом раздел говорит прямо в пустой выдаче.
-            // Уборка миниатюр — здесь же, раз в запуск: файлы стареют сами, следить за ними
-            // при каждой прокрутке было бы дороже, чем один обход папки при старте.
-            try
-            {
-                var docIndex = new Database.DocIndex.DocTextIndex(AppSettings.DocIndexPath);
-                Database.DocIndex.DocIndexService.Attach(
-                    new Database.DocIndex.DocIndexService(docIndex)
-                    {
-                        MaxFileMb = LibrarySettings.IndexMaxMb,
-                    });
-                Core.Documents.DocThumbnail.Tidy(AppSettings.DocThumbsDir);
-            }
-            catch (Exception ex)
-            {
-                Log.Warning(ex, "Кеш документов не открылся: {Path:l}", AppSettings.DocIndexPath);
-            }
-
-            // Уровень масштабирования: прочитать сохраненный масштаб до создания окна
-            // (MainWindow применит его к корню при инициализации).
-            Scaling.Load();
-
             // Сплэш открывает ТОЛЬКО дефолтную БД (после миграции — мгновенно), остальные
             // базы реестра монтирует фоновая очередь уже после показа главного окна (см.
             // MountQueue и статусы в сайдбаре) — старт всегда быстрый. Миграция самой
@@ -239,6 +71,25 @@ public partial class App : Application
 
             _ = Task.Run(() =>
             {
+                // Подготовка — при уже показанном сплэше (см. PrepareServices). Сбой app.db —
+                // причина на сплэше и штатное завершение, как у дефолтной базы ниже.
+                DatabaseRegistry registry;
+                try
+                {
+                    registry = PrepareServices();
+                    Dispatcher.UIThread.Invoke(() => PrepareUi(registry));
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "Подготовка запуска не удалась (app.db: {Path:l})", AppSettings.SystemDbPath);
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        splash.SetError($"Не удалось открыть настройки программы:\n{ex.Message}");
+                        DispatcherTimer.RunOnce(() => desktop.Shutdown(1), TimeSpan.FromSeconds(6));
+                    });
+                    return;
+                }
+
                 try
                 {
                     var workspace = Workspace.Open(registry, progress);
@@ -324,5 +175,196 @@ public partial class App : Application
         }
 
         base.OnFrameworkInitializationCompleted();
+    }
+
+    // ── Старт: фоновая и UI-часть подготовки ─────────────────────────────────────
+    //
+    // Раньше все это шло на UI-потоке ДО показа сплэша: реестр app.db (первое построение модели
+    // EF — секунды на холодном старте), политика обмена, журналы, автозапуск, кеш документов.
+    // Человек смотрел на пустой экран 1,5–3 с (этап 8 плана drawn-grid.md, стенд Tests/Sections).
+    // Теперь сплэш показывается первым, а подготовка идет в фоне; на UI-поток возвращается только
+    // то, что пишет в ресурсы приложения или трогает описатели расширений.
+
+    /// <summary>Фоновая часть подготовки: реестр баз и настройки, обмен, журналы, автозапуск,
+    /// профиль, настройки разделов без ресурсов, кеш документов. Сбой открытия app.db —
+    /// исключение наружу: без реестра старт невозможен.</summary>
+    private static DatabaseRegistry PrepareServices()
+    {
+        // Системный реестр БД (app.db). Регистрирует текущую БД как дефолтную.
+        DatabaseRegistry registry;
+        try { registry = DatabaseRegistry.Open(AppSettings.DbPath); }
+        catch (Exception ex)
+        {
+            // Без app.db нет ни реестра баз, ни настроек — старт невозможен. След в журнале
+            // с путем: обычно это права на папку данных или поврежденный файл.
+            Log.Error(ex, "Системная база app.db не открылась: {Path:l}", AppSettings.SystemDbPath);
+            throw;
+        }
+
+        // Настройки приложения хранятся в app.db.
+        AppSettings.AttachStore(registry);
+
+        // Политика организации для обмена со сторонними программами — сразу после AttachStore
+        // и раньше всего остального: снимок последней известной политики лежит в app.db,
+        // а шлюз наружу обязан быть заряжен до появления первого желающего выйти. До
+        // этого вызова дверь закрыта (состояние EgressGate по умолчанию — самое строгое),
+        // поэтому сбой загрузки ничего не открывает.
+        // См. docs/developer/features/integrations/overview.md.
+        Integrations.EgressSetup.Init();
+
+        // Журнал запусков обмена — сразу за политикой: он же считает накопительные квоты
+        // (запусков в час, байт в сутки), и без него потолки политики не с чем сверять.
+        // Сбой открытия журнала обмен не останавливает: шлюз при отсутствии счетчика
+        // считает расход нулевым, а про сбой узнает «Диагностика».
+        try
+        {
+            var journal = new Database.RunJournal(AppSettings.RunJournalPath);
+            journal.Trim();   // уборка раз в запуск: расти файлу незачем
+            Database.RunJournal.Attach(journal);
+            Integrations.EgressGate.AttachUsage(journal.AsUsage());
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Журнал обмена не открылся: {Path:l}", AppSettings.RunJournalPath);
+        }
+
+        // Журнал безопасности — тот, который читает проверяющий. В отличие от рабочего, его
+        // сбой не «переживается»: правило «не записалось — не отправляем» опирается на то,
+        // что журнал есть. Не открылся — исходящего просто не будет, и сказать об этом надо
+        // громче, чем про рабочий.
+        try
+        {
+            Database.SecurityJournal.Attach(
+                new Database.SecurityJournal(AppSettings.SecurityJournalPath));
+
+            // Уборка по сроку из политики — только ЗДЕСЬ, после того как журнал открыт.
+            // Политика читается раньше (строка выше), и звать уборку оттуда нельзя: журнала
+            // в тот момент еще нет. Срок при этом по-прежнему живет в одном месте — в файле
+            // политики, и программа лишь исполняет его.
+            Integrations.EgressSetup.TidyJournal();
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Журнал безопасности НЕ открылся: {Path:l}. Исходящий обмен "
+                        + "работать не будет — отправка без следа не допускается",
+                      AppSettings.SecurityJournalPath);
+        }
+
+        // Память о повторах входящего канала — рядом с рабочим журналом, в том же файле.
+        // Ее сбой прием не останавливает: повтор в худшем случае обновит те же записи теми
+        // же значениями, а отказать из-за недоступной памяти значило бы остановить обмен.
+        try
+        {
+            var replies = new Database.IngressReplies(AppSettings.RunJournalPath);
+            replies.Forget(DateTimeOffset.Now);   // уборка раз в запуск, как у журнала
+            Database.IngressReplies.Attach(replies);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Память о повторах приема не открылась: {Path:l}",
+                        AppSettings.RunJournalPath);
+        }
+
+        // Автозапуск: сверяем запись в системе с настройкой — вернуть пропавшую (переустановка,
+        // чистилка автозагрузки), переписать устаревшую (сменилась папка установки; у версий до
+        // 1.0.5 в команде оставался --background), снять лишнюю. Именно здесь, а не в Program:
+        // настройка читается только после AttachStore.
+        Autostart.Sync(AppSettings.LoadAutostartEnabled());
+
+        // Профиль пользователя (ФИО для модуля «Профиль») — тоже в app.db.
+        CurrentUser.AttachStore(registry);
+
+        // Настройки календаря: считать кэш до создания окна — календарь строится по ним.
+        CalendarSettings.Init();
+        // Настройки раздела «Задачи» — по той же причине (стартовый фильтр, правила показа).
+        TaskSettings.Init();
+        // Настройки библиотеки документов — до открытия ее кеша: порог размера файла для
+        // индексации служба читает уже готовым.
+        LibrarySettings.Init();
+        // Пользовательские привязки клавиш: до создания окна — обработчики спрашивают
+        // ShortcutSettings.Matches с первого нажатия.
+        ShortcutSettings.Init();
+
+        // Кеш текста документов для поиска по содержимому в библиотеке. Его сбой раздел не
+        // останавливает: лента и фильтр типов читаются из самой базы, а без кеша пропадает
+        // только поиск ВНУТРИ документов — об этом раздел говорит прямо в пустой выдаче.
+        // Уборка миниатюр — здесь же, раз в запуск: файлы стареют сами, следить за ними
+        // при каждой прокрутке было бы дороже, чем один обход папки при старте.
+        try
+        {
+            var docIndex = new Database.DocIndex.DocTextIndex(AppSettings.DocIndexPath);
+            Database.DocIndex.DocIndexService.Attach(
+                new Database.DocIndex.DocIndexService(docIndex)
+                {
+                    MaxFileMb = LibrarySettings.IndexMaxMb,
+                });
+            Core.Documents.DocThumbnail.Tidy(AppSettings.DocThumbsDir);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Кеш документов не открылся: {Path:l}", AppSettings.DocIndexPath);
+        }
+
+        return registry;
+    }
+
+    /// <summary>UI-часть подготовки: проверки описателей расширений и автоматизаций, уборка их
+    /// настроек, размер шрифта, высота строк конструктора и масштаб — все, что пишет в ресурсы
+    /// приложения, — на UI-потоке до построения окна.</summary>
+    private static void PrepareUi(DatabaseRegistry registry)
+    {
+        // Расширения: Id — ключ и строки сайдбара, и группы настроек «ext.<Id>.…»,
+        // поэтому тезки недопустимы (проверка падает с явным сообщением).
+        Extensions.ExtensionRegistry.EnsureUniqueIds();
+
+        // Автоматизации находятся по сборке, а их ключ хранится в шаге сценария: тезки
+        // означали бы шаг, выполняющий не то, что настроили.
+        Extensions.Automations.AutomationRegistry.EnsureUniqueKeys();
+
+        // Убрать настройки расширений, которых в сборке больше нет: удалили папку
+        // расширения и строку реестра — при первом же запуске уходят и его строки из
+        // app.db, лишнего не остается. См. docs/features/extensions.md.
+        var orphans = AppSettings.RemoveOrphanExtensionSettings(
+            Extensions.ExtensionRegistry.All.Select(e => e.Id));
+        if (orphans > 0)
+            Log.Information("Настройки удаленных расширений убраны из app.db: {Count}", orphans);
+
+        // Настройки резервного копирования отключенных баз: расписание и отметки базы,
+        // которой больше нет в реестре, не должны жить в app.db вечно.
+        var backupOrphans = AppSettings.RemoveOrphanBackupSettings(
+            registry.GetAll().Select(d => d.Id));
+        if (backupOrphans > 0)
+            Log.Information("Настройки резервного копирования отключенных баз убраны из app.db: {Count}",
+                            backupOrphans);
+
+        // Там же — галочки «Расширения → Отображение раздела расширений»: список пунктов
+        // динамический (Id реестра), поэтому Id удаленного расширения не должен остаться
+        // в «скрытых». Иначе вернувшееся расширение молча оказалось бы скрытым.
+        var hiddenOrphans = AppSettings.PruneHiddenViews(
+            Settings.ViewCatalog.ScopeExtensions,
+            Extensions.ExtensionRegistry.All.Select(e => e.Id));
+        if (hiddenOrphans > 0)
+            Log.Information("Скрытые расширения, которых больше нет, убраны из app.db: {Count}",
+                            hiddenOrphans);
+
+        // Привязки сочетаний клавиш: действие переименовали или удалили между версиями —
+        // его ключ «shortcut.<id>» не должен жить в app.db вечно.
+        var shortcutOrphans = AppSettings.RemoveOrphanShortcutSettings(
+            Core.Models.ShortcutActions.All.Where(a => a.Rebindable).Select(a => a.Id));
+        if (shortcutOrphans > 0)
+            Log.Information("Привязки исчезнувших сочетаний клавиш убраны из app.db: {Count}",
+                            shortcutOrphans);
+
+        // Размер шрифта: применить сохраненную дельту до создания окна (потребители на
+        // DynamicResource подхватят актуальные размеры сразу при загрузке).
+        FontScale.Init();
+
+        // Настройки конструктора: до создания окна, потому что по ним строится таблица
+        // (высота строк, ширина столбцов) и заводится поллер чужих правок.
+        ConstructorSettings.Init();
+        // Уровень масштабирования: прочитать сохраненный масштаб до создания окна
+        // (MainWindow применит его к корню при инициализации).
+        Scaling.Load();
+
     }
 }

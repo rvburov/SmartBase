@@ -29,10 +29,17 @@ namespace SmartBase.Database.Repositories;
 /// </list>
 /// Границу задает <see cref="TaskViewSize.Dated"/>: строки [0, Dated) берутся из первого потока.
 ///
-/// Коллекция с НЕСКОЛЬКИМИ календарными полями-датами читается общим путем (см.
-/// <see cref="TaskCollectionStats.MultiDate"/>): там срок — наименьшая из дат записи, двумя
-/// индексными потоками это не выражается. Такая коллекция сортируется запросом и на больших
-/// объемах листается медленнее, зато ни одна ее задача не становится недостижимой.
+/// Коллекция с НЕСКОЛЬКИМИ календарными полями-датами (см. <see cref="TaskCollectionStats.MultiDate"/>)
+/// делится так же: «со сроком» — записи, у которых есть хоть одна календарная дата (срок —
+/// наименьшая из них, порядок строит СУБД, но только на этих записях), «без срока» — остальные
+/// в порядке Id.
+///
+/// Поток «без срока» в SQLite читается проходом таблицы в порядке Id от первой записи коллекции
+/// (<see cref="TaskCollectionStats.FirstRecordId"/>) до набора страницы, а не выборкой всей
+/// коллекции по индексу с сортировкой: на коллекции в полмиллиона сортировка стоила секунды на
+/// КАЖДУЮ страницу. Редкая стадия и «Назначено мне» читаются от индекса значений — ими движут
+/// совпадения, а не записи. Счет потока «без срока» для видов без условия на срок — счет по
+/// всей коллекции от индекса значений минус счет потока «со сроком» (см. TryCountUndated).
 /// </summary>
 public partial class ConstructorRepository
 {
@@ -49,7 +56,10 @@ public partial class ConstructorRepository
     /// У коллекции НЕСКОЛЬКО календарных полей-дат: сроком служит наименьшая, и порядок
     /// перестает быть порядком индекса. Читается общим путем — медленнее, но полностью.
     /// </param>
-    public sealed record TaskCollectionStats(int Total, int Done, int? DueFieldId, bool MultiDate);
+    /// <param name="FirstRecordId">Наименьший Id записи коллекции: нижняя граница прохода
+    /// страниц «без срока» в порядке Id.</param>
+    public sealed record TaskCollectionStats(int Total, int Done, int? DueFieldId, bool MultiDate,
+                                             int FirstRecordId = 0);
 
     /// <summary>Размер группы в конкретном виде: сколько задач ему подходит и сколько из них
     /// со сроком (граница между потоками чтения).</summary>
@@ -97,7 +107,7 @@ public partial class ConstructorRepository
     /// </summary>
     public Dictionary<int, TaskCollectionStats> GetTaskCollectionStats(ISet<int>? activeIds = null)
     {
-        var counts = CountTasksByCollection(activeIds);
+        var counts = CountTasksWithFirstId(activeIds);
         if (counts.Count == 0) return [];
 
         // Календарные поля-даты по коллекциям. db_fields — маленькая таблица, читаем через EF:
@@ -114,10 +124,11 @@ public partial class ConstructorRepository
         {
             var ids = dateFields.GetValueOrDefault(colId) ?? [];
             result[colId] = new TaskCollectionStats(
-                Total:      c.Total,
-                Done:       c.Done,
-                DueFieldId: ids.Count == 1 ? ids[0] : null,
-                MultiDate:  ids.Count > 1);
+                Total:         c.Total,
+                Done:          c.Done,
+                DueFieldId:    ids.Count == 1 ? ids[0] : null,
+                MultiDate:     ids.Count > 1,
+                FirstRecordId: c.FirstId);
         }
         return result;
     }
@@ -247,11 +258,12 @@ public partial class ConstructorRepository
     public TaskViewSize CountTaskView(int collectionId, TaskCollectionStats stats, TaskView view)
     {
         // Вид без сужения: числа уже посчитаны общим счетом коллекций, спрашивать нечего.
-        if (view.IsAll && !stats.MultiDate)
+        if (view.IsAll)
             return new TaskViewSize(stats.Total, CountDated(collectionId, stats), stats.Done);
 
-        var dated   = CountStream(collectionId, stats, view, dated: true, cap: 0);
-        var undated = stats.MultiDate ? (0, 0) : CountStream(collectionId, stats, view, dated: false, cap: 0);
+        var cache   = new CountCache();
+        var dated   = CountStream(collectionId, stats, view, dated: true, cap: 0, cache);
+        var undated = CountStream(collectionId, stats, view, dated: false, cap: 0, cache);
         return new TaskViewSize(dated.Total + undated.Item1, dated.Total, dated.Done + undated.Item2);
     }
 
@@ -267,6 +279,9 @@ public partial class ConstructorRepository
                                                   IReadOnlyList<TaskView> views, int cap)
     {
         var result = new Dictionary<string, int>(views.Count);
+        // Гистограмма статуса и счет потока «со сроком» — одни на все пилюли: виды различаются
+        // условием, а не данными.
+        var cache = new CountCache();
         foreach (var view in views)
         {
             var sum = 0;
@@ -274,9 +289,9 @@ public partial class ConstructorRepository
             {
                 if (sum >= cap) break;                       // дальше считать незачем — уже «999+»
                 var left = cap - sum;
-                sum += CountStream(colId, s, view, dated: true, cap: left).Total;
-                if (sum >= cap || s.MultiDate) continue;
-                sum += CountStream(colId, s, view, dated: false, cap: cap - sum).Total;
+                sum += CountStream(colId, s, view, dated: true, cap: left, cache).Total;
+                if (sum >= cap) continue;
+                sum += CountStream(colId, s, view, dated: false, cap: cap - sum, cache).Total;
             }
             result[view.Key] = Math.Min(sum, cap);
         }
@@ -296,18 +311,56 @@ public partial class ConstructorRepository
     // Сколько записей коллекции имеют срок — граница потоков для вида «Все задачи».
     private int CountDated(int collectionId, TaskCollectionStats stats)
     {
+        if (stats.MultiDate)
+            return (int)Scalar($@"SELECT COUNT(*) FROM ({CalStartRecordsSql}) AS d", ("@c", collectionId));
         if (stats.DueFieldId is not int due) return 0;
         return (int)Scalar($@"SELECT COUNT(*) FROM calendar_index ci
                               WHERE ci.CollectionId = @c AND ci.FieldId = @due",
                            ("@c", collectionId), ("@due", due));
     }
 
+    // Записи коллекции с хоть одной календарной датой (поток «со сроком» при нескольких
+    // полях-датах): индекс calendar_index(CollectionId, …) — цена по числу датированных записей.
+    private const string CalStartRecordsSql =
+        "SELECT DISTINCT ci.RecordId FROM calendar_index ci JOIN db_fields fd ON fd.Id = ci.FieldId" +
+        " WHERE ci.CollectionId = @c AND fd.IsCalStart = 1 AND fd.FieldType = 'date'";
+
+    // У записи есть календарная дата (любое поле-дата с показом) — отрицание дает «без срока».
+    private const string HasCalStartSql =
+        "SELECT 1 FROM calendar_index ci JOIN db_fields fd ON fd.Id = ci.FieldId" +
+        " WHERE ci.RecordId = r.Id AND fd.IsCalStart = 1 AND fd.FieldType = 'date'";
+
+    // Счет одного захода (размеры групп вида или пилюли): гистограммы статуса и точные счета
+    // потока «со сроком» переиспользуются между видами и потоками — данные те же, различается
+    // только условие.
+    private sealed class CountCache
+    {
+        public Dictionary<int, Dictionary<string, int>> Histograms { get; } = [];
+        public Dictionary<string, (int Total, int Done)> Dated     { get; } = [];
+    }
+
     // cap > 0 — считаем не дальше него: `COUNT(*) FROM (… LIMIT cap)`. Цена такого счета не
     // зависит от размера коллекции, а «выполнено» под крышкой не нужно (это счет для пилюли).
     private (int Total, int Done) CountStream(int collectionId, TaskCollectionStats stats,
-                                              TaskView view, bool dated, int cap)
+                                              TaskView view, bool dated, int cap, CountCache? cache = null)
     {
         if (cap < 0) return (0, 0);
+        cache ??= new CountCache();
+        if (!dated && TryCountUndated(collectionId, stats, view, cache, out var fast))
+            return cap > 0 ? (Math.Min(fast.Total, cap), 0) : fast;
+
+        // Точный счет потока «со сроком» нужен и самому виду, и вычитанию из счета по всей
+        // коллекции (TryCountUndated) — второй раз его не считаем.
+        var key = $"{collectionId}|{view.Key}|{view.HideDone}|{view.Search}";
+        if (dated && cap == 0 && cache.Dated.TryGetValue(key, out var known)) return known;
+        var counted = CountStreamSql(collectionId, stats, view, dated, cap);
+        if (dated && cap == 0) cache.Dated[key] = counted;
+        return counted;
+    }
+
+    private (int Total, int Done) CountStreamSql(int collectionId, TaskCollectionStats stats,
+                                                 TaskView view, bool dated, int cap)
+    {
         var parts = ViewParts(collectionId, stats, view, dated);
         if (!parts.Ok) return (0, 0);
 
@@ -336,6 +389,130 @@ public partial class ConstructorRepository
         finally { if (opened) conn.Close(); }
     }
 
+    // ── Быстрый счет по индексу значений ─────────────────────────────────────
+    //
+    // Виды, чье условие — только статус и исполнитель («Все задачи», стадии, «Назначено мне»,
+    // «Без срока», со скрытыми выполненными и без), в потоке «без срока» считаются не проходом
+    // по записям с подзапросами на каждую, а вычитанием: счет по ВСЕЙ коллекции от индекса
+    // db_field_values(FieldId, Value) — гистограмма статуса (стадия → сколько задач), «без
+    // статуса» = всего − сумма гистограммы, исполнитель — сик по индексу — минус точный счет
+    // потока «со сроком» (он идет по проекции calendar_index и стоит по числу датированных
+    // задач). На коллекции в полмиллиона проход стоил 3–6 с на КАЖДЫЙ вид (восемь пилюль —
+    // восемь проходов), вычитание — десятки миллисекунд на все сразу. Значения без записи не
+    // живут: удаление записи уносит их явно или каскадом. Сумма гистограммы больше числа задач
+    // или отрицательная разность — признак обратного (или устаревшего общего счета), и тогда
+    // поток считается общим путем.
+    private bool TryCountUndated(int collectionId, TaskCollectionStats stats, TaskView view,
+                                 CountCache cache, out (int Total, int Done) result)
+    {
+        result = (0, 0);
+        if (view.Search.Length > 0 || view.Kind is not ("All" or "Stage" or "AssignedToMe" or "NoDue")) return false;
+
+        // «Без срока» в потоке без срока — это «Все задачи» того же потока.
+        var basis = view.Kind == "NoDue" ? view with { Kind = "All" } : view;
+        if (!TryCountWhole(collectionId, stats, basis, cache, out var whole)) return false;
+
+        var datedPart = stats.MultiDate || stats.DueFieldId is not null
+            ? CountStream(collectionId, stats, basis, dated: true, cap: 0, cache)
+            : (Total: 0, Done: 0);
+        var total = whole.Total - datedPart.Total;
+        var done  = whole.Done  - datedPart.Done;
+        if (total < 0 || done < 0) return false;
+        result = (total, done);
+        return true;
+    }
+
+    // Счет вида по всей коллекции — только от индекса значений (см. TryCountUndated).
+    private bool TryCountWhole(int collectionId, TaskCollectionStats stats, TaskView view,
+                               CountCache cache, out (int Total, int Done) result)
+    {
+        result = (0, 0);
+        var (execId, statusId) = TaskRoleIds(collectionId);
+        var total    = stats.Total;
+        var hideDone = view.HideDone && !view.IsDoneStage && statusId is not null;
+
+        var histogram = statusId is int sid ? StatusHistogram(sid, cache.Histograms) : [];
+        var counted   = histogram.Values.Sum();
+        if (counted > total) return false;
+        int Stage(string value) => histogram.GetValueOrDefault(value);
+        var doneCount = Stage(TaskStatusDone);
+
+        switch (view.Kind)
+        {
+            case "All":
+                result = hideDone ? (total - doneCount, 0) : (total, doneCount);
+                return true;
+
+            case "Stage":
+                // Пустой статус карточка показывает как «Запланировано» (ViewCondition): стадия
+                // берет и записи без значения, и пустые значения.
+                var planned = view.Stage == TaskStatusPlanned;
+                if (statusId is null)       result = (planned ? total : 0, 0);
+                else if (planned)           result = (total - counted + Stage("") + Stage(TaskStatusPlanned), 0);
+                else                        result = (Stage(view.Stage), view.Stage == TaskStatusDone ? Stage(view.Stage) : 0);
+                return true;
+
+            default:   // AssignedToMe
+                if (view.MeVariants.Count == 0 || execId is null) return true;   // (0, 0), как «1 = 0»
+                // Пустой вариант совпал бы с задачами БЕЗ исполнителя — это общий путь.
+                if (view.MeVariants.Any(string.IsNullOrEmpty)) return false;
+                var (mine, mineDone) = CountAssigned(execId.Value, statusId, view.MeVariants);
+                if (mine > total) return false;
+                result = hideDone ? (mine - mineDone, 0) : (mine, mineDone);
+                return true;
+        }
+    }
+
+    // Стадия → сколько значений поля-статуса ее несут: только индекс (FieldId, Value).
+    private Dictionary<string, int> StatusHistogram(int statusFieldId,
+                                                    Dictionary<int, Dictionary<string, int>>? cache)
+    {
+        if (cache is not null && cache.TryGetValue(statusFieldId, out var hit)) return hit;
+
+        var histogram = new Dictionary<string, int>(StringComparer.Ordinal);
+        var conn = db.Database.GetDbConnection();
+        var opened = conn.State != System.Data.ConnectionState.Open;
+        if (opened) conn.Open();
+        try
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT Value, COUNT(*) FROM db_field_values WHERE FieldId = @f GROUP BY Value";
+            AddParam(cmd, "@f").Value = statusFieldId;
+            using var rdr = cmd.ExecuteReader();
+            while (rdr.Read()) histogram[rdr.GetString(0)] = rdr.GetInt32(1);
+        }
+        finally { if (opened) conn.Close(); }
+
+        if (cache is not null) cache[statusFieldId] = histogram;
+        return histogram;
+    }
+
+    // Задачи, где исполнитель — один из вариантов текущего пользователя, и сколько из них
+    // выполнено: сик по индексу (FieldId, Value) и по PK статуса на каждое совпадение.
+    private (int Total, int Done) CountAssigned(int execFieldId, int? statusFieldId, IReadOnlyCollection<string> me)
+    {
+        var conn = db.Database.GetDbConnection();
+        var opened = conn.State != System.Data.ConnectionState.Open;
+        if (opened) conn.Open();
+        try
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = $@"
+                SELECT COUNT(*), SUM(CASE WHEN COALESCE(vs.Value, '') = @done THEN 1 ELSE 0 END)
+                FROM db_field_values ve
+                LEFT JOIN db_field_values vs ON vs.RecordId = ve.RecordId AND vs.FieldId = @status
+                WHERE ve.FieldId = @exec AND ve.Value IN ({string.Join(",", me.Select((_, i) => "@me" + i))})";
+            AddParam(cmd, "@exec").Value   = execFieldId;
+            AddParam(cmd, "@status").Value = statusFieldId ?? -1;
+            AddParam(cmd, "@done").Value   = TaskStatusDone;
+            var i = 0;
+            foreach (var v in me) AddParam(cmd, "@me" + i++).Value = v;
+            using var rdr = cmd.ExecuteReader();
+            return rdr.Read() ? (rdr.GetInt32(0), rdr.IsDBNull(1) ? 0 : rdr.GetInt32(1)) : (0, 0);
+        }
+        finally { if (opened) conn.Close(); }
+    }
+
     /// <summary>
     /// Id записей одной страницы группы, в порядке показа. <paramref name="skip"/> отсчитывается
     /// от начала ПОТОКА, а не группы: вызывающий сам решает по <see cref="TaskViewSize.Dated"/>,
@@ -350,7 +527,8 @@ public partial class ConstructorRepository
                                     bool dated, int skip, int take)
     {
         if (take <= 0) return [];
-        var parts = ViewParts(collectionId, stats, view, dated);
+        var parts = (!dated ? SparsePageParts(collectionId, stats, view) : null)
+                    ?? ViewParts(collectionId, stats, view, dated, page: true);
         if (!parts.Ok) return [];
         var sql = $"SELECT {parts.IdExpr} {parts.Body} ORDER BY {parts.Order} LIMIT @take OFFSET @skip";
 
@@ -390,26 +568,27 @@ public partial class ConstructorRepository
         "COALESCE((SELECT v2.Value FROM db_field_values v2" +
         " WHERE v2.RecordId = {0} AND v2.FieldId = @status), '')";
 
-    private ViewSql ViewParts(int collectionId, TaskCollectionStats stats, TaskView view, bool dated)
+    /// <param name="page">Части для страницы (а не для счета): поток «без срока» в SQLite тогда
+    /// идет проходом таблицы в порядке Id — страница останавливается на своем LIMIT.</param>
+    private ViewSql ViewParts(int collectionId, TaskCollectionStats stats, TaskView view, bool dated,
+                              bool page = false)
     {
         var (_, statusId) = TaskRoleIds(collectionId);
 
-        // Коллекция с несколькими полями-датами: индексных потоков нет, читаем общим путем —
-        // срок берется подзапросом (наименьшая из дат записи), а порядок строит сама СУБД.
-        // Медленнее, зато ни одна задача не становится недостижимой.
-        if (stats.MultiDate)
+        // Коллекция с несколькими полями-датами: срок — наименьшая из дат записи (подзапрос), и
+        // порядок строит СУБД, но только на записях, у которых дата есть (их мало); остальные —
+        // поток «без срока» в порядке Id, как у всех.
+        if (stats.MultiDate && dated)
         {
-            if (!dated) return NoStream;   // весь набор отдает первый «поток»
-            var where = ViewCondition(view, dated: true, (DueStartExpr, DueEndExpr), statusId)
-                        ?? ViewCondition(view, dated: false, null, statusId);
+            var where = ViewCondition(view, dated: true, (DueStartExpr, DueEndExpr), statusId);
             if (where is null) return NoStream;
 
             return new ViewSql(
                 IdExpr:   "r.Id",
                 Body:     $@"FROM db_records r
                              {Joins(view, "r.Id")}
-                             WHERE r.CollectionId = @c AND ({where})",
-                Order:    $"({DueStartExpr}) IS NULL, {DueStartExpr}, r.Id",
+                             WHERE r.Id IN ({CalStartRecordsSql}) AND ({where})",
+                Order:    $"{DueStartExpr}, r.Id",
                 DoneExpr: string.Format(DoneValueExpr, "r.Id"),
                 Ok:       true);
         }
@@ -436,15 +615,90 @@ public partial class ConstructorRepository
         var cond = ViewCondition(view, dated: false, null, statusId);
         if (cond is null) return NoStream;
 
-        var noDue = stats.DueFieldId is int d
-            ? $" AND NOT EXISTS (SELECT 1 FROM calendar_index ci WHERE ci.RecordId = r.Id AND ci.FieldId = {d})"
+        // Страница в SQLite — проход таблицы в порядке Id от первой записи коллекции: ORDER BY
+        // совпадает с порядком прохода, и чтение останавливается на LIMIT. Через индекс коллекции
+        // СУБД брала ВСЕ записи, считала условие на каждой и сортировала — секунды на странице
+        // коллекции в полмиллиона. Счет проходит всю коллекцию все равно — ему индекс лучше.
+        var records = page && !db.IsPostgres
+            ? $"db_records r NOT INDEXED"
+            : "db_records r";
+        var from = page && !db.IsPostgres && stats.FirstRecordId > 0
+            ? $"r.Id >= {stats.FirstRecordId} AND "
             : "";
 
         return new ViewSql(
             IdExpr:   "r.Id",
-            Body:     $@"FROM db_records r
+            Body:     $@"FROM {records}
                          {Joins(view, "r.Id")}
-                         WHERE r.CollectionId = @c{noDue} AND ({cond})",
+                         WHERE {from}r.CollectionId = @c{NoDueClause(stats)} AND ({cond})",
+            Order:    "r.Id",
+            DoneExpr: string.Format(DoneValueExpr, "r.Id"),
+            Ok:       true);
+    }
+
+    // Условие потока «без срока»: у записи нет строки проекции по полю-сроку (или ни одной
+    // календарной даты, если полей несколько).
+    private static string NoDueClause(TaskCollectionStats stats) =>
+        stats.MultiDate                 ? $" AND NOT EXISTS ({HasCalStartSql})"
+        : stats.DueFieldId is int d     ? $" AND NOT EXISTS (SELECT 1 FROM calendar_index ci WHERE ci.RecordId = r.Id AND ci.FieldId = {d})"
+        : "";
+
+    // Страница редкой стадии или «Назначено мне» в потоке «без срока»: совпадений мало, и
+    // проход записей в порядке Id искал бы их по всей коллекции. Тогда движут совпадения из
+    // индекса значений (FieldId, Value), а сортировка — только их. Редкость проверяется счетом
+    // под крышкой: плотный вид останется проходу по Id, где страница — первые же строки.
+    private ViewSql? SparsePageParts(int collectionId, TaskCollectionStats stats, TaskView view)
+    {
+        if (view.Search.Length > 0) return null;
+        var (execId, statusId) = TaskRoleIds(collectionId);
+
+        string driver, value;
+        if (view.Kind == "Stage" && view.Stage != TaskStatusPlanned && statusId is int sid)
+        {
+            driver = $"db_field_values vs";
+            value  = $"vs.FieldId = {sid} AND vs.Value = @stage";
+        }
+        else if (view.Kind == "AssignedToMe" && execId is int eid && view.MeVariants.Count > 0
+                 && !view.MeVariants.Any(string.IsNullOrEmpty))
+        {
+            driver = "db_field_values ve";
+            value  = $"ve.FieldId = {eid} AND ve.Value IN ({string.Join(",", view.MeVariants.Select((_, i) => "@me" + i))})";
+        }
+        else return null;
+
+        // Крышка редкости: совпадений меньше восьмой части коллекции (и не больше 20 тысяч
+        // сортируемых строк на страницу) — ведем от индекса.
+        var limit = Math.Min(20_000, Math.Max(1, stats.Total / 8));
+        var alias = driver[^2..];
+        var sample = $"SELECT COUNT(*) FROM (SELECT 1 FROM {driver} WHERE {value} LIMIT {limit}) AS capped";
+        var conn = db.Database.GetDbConnection();
+        var opened = conn.State != System.Data.ConnectionState.Open;
+        if (opened) conn.Open();
+        long matches;
+        try
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = sample;
+            BindView(cmd, view, collectionId);
+            matches = Convert.ToInt64(cmd.ExecuteScalar() ?? 0L);
+        }
+        finally { if (opened) conn.Close(); }
+        if (matches >= limit) return null;
+
+        var cond = ViewCondition(view, dated: false, null, statusId);
+        if (cond is null) return NoStream;
+        // Соединение со статусом нужно «Назначено мне» только ради скрытых выполненных; у стадии
+        // статус — сам ведущий набор.
+        var statusJoin = alias == "ve" && NeedsStatus(view)
+            ? "LEFT JOIN db_field_values vs ON vs.RecordId = r.Id AND vs.FieldId = @status"
+            : "";
+
+        return new ViewSql(
+            IdExpr:   "r.Id",
+            Body:     $@"FROM {driver}
+                         JOIN db_records r ON r.Id = {alias}.RecordId
+                         {statusJoin}
+                         WHERE {value} AND r.CollectionId = @c{NoDueClause(stats)} AND ({cond})",
             Order:    "r.Id",
             DoneExpr: string.Format(DoneValueExpr, "r.Id"),
             Ok:       true);

@@ -166,8 +166,10 @@ prepared INSERT, транзакции по 50 тыс. записей, индек
   посекундную карту — на 100 млн это дольше, чем на старом 10-млн стенде
   (см. [journal.md](../features/calendar/journal.md), [schedule.md](../features/calendar/schedule.md)).
 - Сетка (День/Неделя/Месяц/Год) на окне с гигантским днем получает только первые
-  `GridDayCap` (2000) событий дня + честный «+N еще» по карте счетчиков
-  (см. [performance.md](../architecture/performance/overview.md)).
+  `GridDayCap` (2000) событий дня (Месяц — `MonthDayCap`, 256) + честный «+N еще» по карте
+  счетчиков (см. [performance.md](../architecture/performance/overview.md)).
+- Сценарный прогон всей программы на этой базе вместе с копиями рабочих — стенд
+  `Tests/Sections` (этап 8 плана [drawn-grid.md](../architecture/performance/drawn-grid.md)).
 
 ## Связанные документы
 
