@@ -921,15 +921,19 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
         return RecordsQuery(skip, take, null, null)(_repo);
     }
 
-    /// <summary>Структурное обновление (создание/удаление/дубль записей): пересчитывает число строк и
+    /// <summary>Структурное обновление (создание/удаление/дубль записей): ставит число строк и
     /// СИНХРОННО перестраивает уже загруженные страницы реальными данными (+ страницу 0 — после Reset
     /// грид может прокрутиться в начало), затем шлет Reset. Кеш остается ТЕПЛЫМ, поэтому грид
     /// перерисовывается сразу из него, без заглушек «Загрузка…» — это и убирает мелькание. Применяется
-    /// только вне режима списка id (там список пересобирает полный ReloadRows).</summary>
-    public void RefreshStructural()
+    /// только вне режима списка id (там список пересобирает полный ReloadRows).
+    /// <paramref name="count"/> — число строк: точное (вызывающий знает, сколько записей добавилось
+    /// или ушло) или оценка (<paramref name="estimate"/>), которую уточнит фоновый счет через
+    /// <see cref="SetCount"/>. Считать здесь нельзя: COUNT на 10 млн записей — почти секунда UI-потока
+    /// после каждой правки.</summary>
+    public void RefreshStructural(int count, bool estimate)
     {
-        _dataCount       = _recordIds?.Count ?? _repo.CountRecords(_collectionId, _excludeHidden);
-        _countIsEstimate = false;
+        _dataCount       = _recordIds?.Count ?? Math.Max(0, count);
+        _countIsEstimate = estimate && _recordIds is null;
         _headCount       = null;   // состав записей сменился — длина головы сортировки тоже
         _headCountTask   = null;
 

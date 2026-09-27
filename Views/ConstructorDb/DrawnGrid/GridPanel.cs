@@ -529,8 +529,10 @@ public sealed class GridPanel : Avalonia.Controls.Grid
     }
 
     /// <summary>Структурное обновление строк (создание, удаление, дубль) без пересоздания списка —
-    /// теплый кеш, без заглушек; при отборе или сортировке — полная пересборка.</summary>
-    public void ReloadRowsStructural()
+    /// теплый кеш, без заглушек; при отборе или сортировке — полная пересборка.
+    /// <paramref name="countDelta"/> — на сколько изменилось число записей (известно вызывающему);
+    /// null — неизвестно (чужая правка): число остается прежним и уточняется фоновым счетом.</summary>
+    public void ReloadRowsStructural(int? countDelta = null)
     {
         if (_repo is null) return;
         // Отбор или сортировка (список пересчитывается целиком) либо новый список еще считается в фоне.
@@ -540,8 +542,10 @@ public sealed class GridPanel : Avalonia.Controls.Grid
             return;
         }
         _countGeneration++;             // счет в полете считал прежний состав
-        _rows.RefreshStructural();      // считает записи заново — число точное
-        _exactCount = _rows.DataCount;
+        var estimate = countDelta is null || _rows.CountIsEstimate;
+        _rows.RefreshStructural(_rows.DataCount + (countDelta ?? 0), estimate);
+        _exactCount = estimate ? null : _rows.DataCount;
+        if (estimate) RefineCount();
         UpdateNumWidth();
         ResolveRowIndexes();
     }

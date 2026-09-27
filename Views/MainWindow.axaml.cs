@@ -720,6 +720,12 @@ public partial class MainWindow : Window
         if (db is null || entry is null || entry.IsDefault || db.Provider != "sqlite") return;
 
         var stats = db.Storage;
+        // Места на диске не хватит — сказать сразу, а не отключать базу ради отказа.
+        if (stats is not null && DatabaseManager.CompactRoomProblem(entry.Path, stats.LiveBytes) is { } room)
+        {
+            Controls.Widgets.AppNotifications.Info($"Файл «{db.Name}» не сжать: {room}.");
+            return;
+        }
         var text  = $"Сжать файл базы данных «{db.Name}»?\n\n" +
                     (stats is null ? "" : $"Сейчас {Views.Settings.DatabaseRow.FormatStorage(stats)}.\n\n") +
                     "Файл будет переписан целиком, данные не меняются. На время сжатия база отключается" +

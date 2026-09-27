@@ -84,7 +84,7 @@ internal static class Program
                 if (File.Exists(dbPath + suffix)) File.Delete(dbPath + suffix);
         }
 
-        // Профиль стенда: календарный (по умолчанию, ниже) или широкий разреженный — WideProfile.
+        // Профиль стенда: календарный (по умолчанию, ниже) или широкий — WideProfile.
         var profile = ArgStr(args, "--profile") ?? "calendar";
         if (profile == "wide") return WideProfile.Run(args, dbPath, total);
         if (profile != "calendar") { Console.WriteLine($"Неизвестный профиль {profile}: calendar | wide."); return 1; }
@@ -149,8 +149,9 @@ internal static class Program
         // 4. Заливка.
         sw.Restart();
         var giant = huge > 0 ? new GiantCache() : null;
-        var batch = new Writer(con, Group, colId, fDate, fRem, fDl, fNote, fQty, fSt, fDone, fUrl);
-        var single = new Writer(con, 1, colId, fDate, fRem, fDl, fNote, fQty, fSt, fDone, fUrl);
+        var posStep = WideProfile.PositionStep(total);   // номера записей — как у программы
+        var batch = new Writer(con, Group, colId, posStep, fDate, fRem, fDl, fNote, fQty, fSt, fDone, fUrl);
+        var single = new Writer(con, 1, colId, posStep, fDate, fRem, fDl, fNote, fQty, fSt, fDone, fUrl);
         var row = new Row();
 
         long n = 1, nextReport = 1_000_000;
@@ -292,15 +293,17 @@ internal static class Program
     {
         private readonly SqliteCommand _rec, _val, _idx;
         private readonly SqliteParameter[][] _recP, _valP, _idxP; // [слот][параметры]
+        private readonly long _posStep;
 
         public SqliteTransaction? Transaction
         {
             set { _rec.Transaction = value; _val.Transaction = value; _idx.Transaction = value; }
         }
 
-        public Writer(SqliteConnection con, int group, long col,
+        public Writer(SqliteConnection con, int group, long col, long posStep,
                       long fDate, long fRem, long fDl, long fNote, long fQty, long fSt, long fDone, long fUrl)
         {
+            _posStep = posStep;
             var rec = new List<string>(); var val = new List<string>(); var idx = new List<string>();
             _recP = new SqliteParameter[group][];
             _valP = new SqliteParameter[group][];
@@ -311,7 +314,7 @@ internal static class Program
             {
                 // Аудит записи — как пишет приложение (UpdatedAt = CreatedAt, снимки имени); колонки
                 // Description у db_records больше нет (миграция DescriptionAsField).
-                rec.Add($"($id{g}, {col}, '{CreatedAt}', '{CreatedAt}', 'Стенд', 'Стенд', $id{g}, $s{g}, $e{g}, 0, $t{g})");
+                rec.Add($"($id{g}, {col}, '{CreatedAt}', '{CreatedAt}', 'Стенд', 'Стенд', $pos{g}, $s{g}, $e{g}, 0, $t{g})");
                 val.Add($"($id{g}, {fDate}, $v1_{g}), ($id{g}, {fRem}, $v2_{g}), ($id{g}, {fDl}, $v3_{g}), " +
                         $"($id{g}, {fNote}, $v4_{g}), ($id{g}, {fQty}, $v5_{g}), ($id{g}, {fSt}, $v6_{g}), " +
                         $"($id{g}, {fDone}, $v7_{g}), ($id{g}, {fUrl}, $v8_{g})");
@@ -319,7 +322,7 @@ internal static class Program
                         $"($id{g}, {fRem}, {col}, $rs{g}, $re{g}, 0), " +
                         $"($id{g}, {fDl}, {col}, $ds{g}, $de{g}, 0)");
 
-                _recP[g] = Params(_rec, $"$id{g}", $"$s{g}", $"$e{g}", $"$t{g}");
+                _recP[g] = Params(_rec, $"$id{g}", $"$s{g}", $"$e{g}", $"$t{g}", $"$pos{g}");
                 _valP[g] = Params(_val, $"$id{g}", $"$v1_{g}", $"$v2_{g}", $"$v3_{g}", $"$v4_{g}",
                                         $"$v5_{g}", $"$v6_{g}", $"$v7_{g}", $"$v8_{g}");
                 _idxP[g] = Params(_idx, $"$id{g}", $"$s{g}", $"$e{g}", $"$rs{g}", $"$re{g}", $"$ds{g}", $"$de{g}");
@@ -347,7 +350,7 @@ internal static class Program
         public void Set(int g, in Row r)
         {
             var p = _recP[g];
-            p[0].Value = r.Id; p[1].Value = r.S; p[2].Value = r.E; p[3].Value = r.Title;
+            p[0].Value = r.Id; p[1].Value = r.S; p[2].Value = r.E; p[3].Value = r.Title; p[4].Value = r.Id * _posStep;
 
             p = _valP[g];
             p[0].Value = r.Id;

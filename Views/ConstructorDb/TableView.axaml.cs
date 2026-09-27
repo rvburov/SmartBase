@@ -645,12 +645,14 @@ public partial class TableView : UserControl
     /// <summary>Структурное обновление строк (создание, удаление, дубль записей) без пересоздания
     /// списка: число строк и загруженные страницы обновляются на месте (теплый кеш, без заглушек
     /// «Загрузка…»). При отборе или сортировке список пересчитывается целиком.</summary>
-    public void ReloadRowsStructural()
+    /// <paramref name="countDelta"/> — на сколько изменилось число записей; null — неизвестно
+    /// (число уточнит фоновый счет).
+    public void ReloadRowsStructural(int? countDelta = null)
     {
         if (_repository is null) return;
         // Строки перезаполняются на месте, и в строке редактора может оказаться другая запись.
         ForgetCellEditing();
-        RecordsGrid.ReloadRowsStructural();
+        RecordsGrid.ReloadRowsStructural(countDelta);
     }
 
     /// <summary>Пересобрать колонки, СОХРАНЯЯ строки: сдвиг, «Отображение», создание, удаление,
@@ -1885,6 +1887,11 @@ public partial class TableView : UserControl
         // Наполняется по приходе данных (см. фоновую загрузку ниже).
         var checkedSet = new HashSet<string>();
         var selection  = new FilterSelection(checkedSet);
+        // Колонка с тысячами разных значений (ColumnValueList.Capped): список — первые
+        // FilterValueCap по алфавиту, поиск — запросом к базе, галочки — правилом «все, кроме
+        // снятых» (CappedFilterSelection). Null — обычный список всех значений.
+        CappedFilterSelection? capped = null;
+        CancellationTokenSource? cappedSearch = null;
         // Значения действующего фильтра колонки — при открытии они идут первыми (их видно сразу,
         // не листая весь список). Снимок на момент открытия: от щелчков по галочкам строки не прыгают.
         var initialChosen = _filters.TryGetValue(def.Key, out var f0) ? new HashSet<string>(f0) : null;
@@ -1964,7 +1971,14 @@ public partial class TableView : UserControl
         FilterValueVm Vm(string raw, int count) =>
             vmCache.TryGetValue(raw, out var v) ? v
                 : vmCache[raw] = new FilterValueVm(raw, DisplayValue(raw, def.FieldType, def.Separator, def.NumberFormat), count,
-                                                   checkedSet, () => SyncSelectAll());
+                                                   r => capped?.IsChecked(r) ?? checkedSet.Contains(r),
+                                                   (r, on) =>
+                                                   {
+                                                       if (capped is not null) capped.Set(r, on);
+                                                       else if (on) checkedSet.Add(r);
+                                                       else checkedSet.Remove(r);
+                                                   },
+                                                   () => SyncSelectAll());
 
         var valuesList = new ListBox
         {
@@ -2034,6 +2048,15 @@ public partial class TableView : UserControl
         // Карточка живет в контенте флайаута, обернутом в зум-трансформ — токен обычный.
         valuesHost.Bind(Border.BorderThicknessProperty, valuesHost.GetResourceObservable("BorderLine"));
         panel.Children.Add(valuesHost);
+        var cappedNote = new TextBlock
+        {
+            Foreground   = secondary,
+            FontSize     = fontBase,
+            TextWrapping = TextWrapping.Wrap,
+            Margin       = new Thickness(2, 4, 2, 0),
+            IsVisible    = false,
+        };
+        panel.Children.Add(cappedNote);
 
         // Колонка-дата показывает не плоский список значений, а дерево «Год → Месяц → День»
         // (DateFilterTreeBox): сырое значение даты нечитаемо, а по плоскому списку нельзя
@@ -2063,6 +2086,7 @@ public partial class TableView : UserControl
 
         List<(string Raw, int Count)> Matched()
         {
+            if (capped is not null) return counts;   // уже отобрано запросом к базе
             var q = search.Text?.Trim() ?? "";
             return q.Length == 0
                 ? counts
@@ -2104,9 +2128,10 @@ public partial class TableView : UserControl
         void SyncSelectAll()
         {
             syncingSelectAll    = true;
-            selectAll.Content   = selection.Searching ? "(Выделить все найденное)" : "(Выделить все)";
-            selectAll.IsChecked = tree is not null
-                ? tree.AllVisibleChecked
+            var searching       = capped?.Searching ?? selection.Searching;
+            selectAll.Content   = searching ? "(Выделить все найденное)" : "(Выделить все)";
+            selectAll.IsChecked = tree is not null ? tree.AllVisibleChecked
+                : capped is not null ? (capped.Searching ? shown.All(v => capped.IsChecked(v.Raw)) : capped.AllChecked)
                 : shown.All(v => checkedSet.Contains(v.Raw));
             syncingSelectAll    = false;
         }
@@ -2124,10 +2149,94 @@ public partial class TableView : UserControl
         // данных — на случай, если печатать начали раньше, чем они загрузились.
         void OnSearchChanged()
         {
+            if (capped is not null) { SearchCapped(); return; }
             RebuildList();
             selection.OnSearch(search.Text, MatchedRaws());
             RefreshChecks();
             SyncSelectAll();
+        }
+
+        // Поиск ограниченного списка — запросом к базе, с паузой на набор: найденное отмечается
+        // целиком на каждое изменение текста (CappedFilterSelection.OnSearch), очистка возвращает
+        // прежние галочки и первые значения по алфавиту.
+        void SearchCapped()
+        {
+            capped!.OnSearch(search.Text);
+            cappedSearch?.Cancel();
+            var cts  = cappedSearch = new CancellationTokenSource();
+            var text = search.Text;
+            RefreshChecks();
+            SyncSelectAll();
+            _ = LoadCappedAsync();
+
+            async Task LoadCappedAsync()
+            {
+                try
+                {
+                    await Task.Delay(250, cts.Token);
+                    var list = await _repository!.GetColumnValueListAsync(_collectionId, def.Key, _filters,
+                                   excludeHidden: AnyHiddenRecords, search: text, ct: cts.Token);
+                    if (cts.IsCancellationRequested) return;
+                    ShowCapped(list);
+                }
+                catch (OperationCanceledException) { }
+                catch (Exception ex)
+                {
+                    DbErrors.HandleRead(ex, _repository!.DbPath);
+                    Serilog.Log.Warning(ex, "Поиск значений фильтра не выполнен: {Db:l}, коллекция {Collection}, колонка {Column:l}",
+                                        DbErrors.Display(_repository.DbPath), _collectionId, def.Header);
+                }
+            }
+        }
+
+        // Ограниченный список пришел (при открытии или поиском): строки, галочки, подпись.
+        // «(Пусто)» и число значений досчитываются позже (LoadCappedTotalsAsync).
+        ConstructorRepository.ColumnValueList? cappedList = null;
+        long cappedDistinct = -1;
+        var  cappedEmpty    = 0;
+        void ShowCapped(ConstructorRepository.ColumnValueList list)
+        {
+            cappedList = list;
+            baseCounts.Clear();
+            baseCounts.AddRange(list.Values);
+            if (!capped!.Searching && cappedEmpty > 0) baseCounts.Add(("", cappedEmpty));
+            ReloadCounts();
+            RebuildList();
+            RefreshChecks();
+            SyncSelectAll();
+            UpdateCappedNote();
+        }
+
+        void UpdateCappedNote()
+        {
+            var cap = ConstructorRepository.FilterValueCap;
+            cappedNote.Text = capped!.Searching
+                ? (cappedList?.More == true ? $"Найдено больше {cap:N0} — уточните поиск" : "")
+                : cappedDistinct > 0
+                    ? $"Показаны первые {cap:N0} из {cappedDistinct:N0} значений — остальные ищите поиском"
+                    : $"Показаны первые {cap:N0} значений — остальные ищите поиском";
+            cappedNote.IsVisible = cappedNote.Text.Length > 0;
+        }
+
+        // Итоги ограниченного списка — после показа первых значений: число значений в подпись,
+        // «(Пусто)» в конец списка (на 10 млн записей это секунды, список нужен сразу).
+        async Task LoadCappedTotalsAsync()
+        {
+            try
+            {
+                var (distinct, empty) = await _repository!.GetColumnValueTotalsAsync(_collectionId, def.Key, _filters,
+                                                                                    excludeHidden: AnyHiddenRecords);
+                cappedDistinct = distinct;
+                cappedEmpty    = empty;
+                if (!capped!.Searching && cappedList is { } shownList) ShowCapped(shownList);
+                else UpdateCappedNote();
+            }
+            catch (Exception ex)
+            {
+                DbErrors.HandleRead(ex, _repository!.DbPath);
+                Serilog.Log.Warning(ex, "Итоги списка значений фильтра не посчитаны: {Db:l}, коллекция {Collection}, колонка {Column:l}",
+                                    DbErrors.Display(_repository.DbPath), _collectionId, def.Header);
+            }
         }
 
         search.TextChanged += (_, _) => OnSearchChanged();
@@ -2137,6 +2246,13 @@ public partial class TableView : UserControl
             // «Выделить все» действует на видимое (после поиска) подмножество.
             var on = selectAll.IsChecked == true;
             if (tree is not null) { tree.SetAllVisible(on); return; }
+            if (capped is not null)
+            {
+                capped.SetAll(on, shown.Select(v => v.Raw));
+                RefreshChecks();
+                SyncSelectAll();
+                return;
+            }
 
             foreach (var (raw, _) in Matched())
             {
@@ -2175,7 +2291,9 @@ public partial class TableView : UserControl
             // Режим «Заменить»: при поиске фильтр = отмеченные СРЕДИ найденного, остальное
             // отсекается; без поиска — все отмеченные. Отмечено все, что есть в колонке (с учетом
             // фильтров других колонок), — фильтр не нужен (FilterSelection.Effective).
-            var effective = selection.Effective(MatchedRaws(), domain);
+            var effective = capped is not null
+                ? capped.Effective(shown.Select(v => v.Raw))
+                : selection.Effective(MatchedRaws(), domain);
             if (effective is null) _filters.Remove(def.Key);
             else _filters[def.Key] = effective;
             ApplyFilters();
@@ -2193,8 +2311,8 @@ public partial class TableView : UserControl
         // уходят в запрос (каскад); свой фильтр колонки репозиторий отбрасывает сам.
         var countsSlow = Diag.Measure("список значений фильтра", Diag.UiQuery,
                                       $"{DbErrors.Display(_repository!.DbPath)}, коллекция {_collectionId}, колонка {def.Header}");
-        _repository!.GetColumnCountsAsync(_collectionId, def.Key, _filters,
-                                          excludeHidden: AnyHiddenRecords).ContinueWith(t =>
+        _repository!.GetColumnValueListAsync(_collectionId, def.Key, _filters,
+                                             excludeHidden: AnyHiddenRecords).ContinueWith(t =>
         {
             countsSlow.Dispose();
             if (t.IsFaulted)
@@ -2211,9 +2329,21 @@ public partial class TableView : UserControl
                 return;
             }
             if (t.IsCanceled) return;
-            var data = t.Result;
+            var list = t.Result;
+            var data = list.Values;
             Dispatcher.UIThread.Post(() =>
             {
+                if (list.Capped)
+                {
+                    capped = new CappedFilterSelection(_filters.TryGetValue(def.Key, out var cur) ? cur : null);
+                    valuesHost.Child = EmptyListHint.Wrap(valuesList, search, secondary, fontBase, content: valuesBox);
+                    if (FilterSelection.IsEmptyQuery(search.Text)) ShowCapped(list);
+                    else SearchCapped();   // печатать начали до загрузки — ищем по базе
+                    loaded = true;
+                    _ = LoadCappedTotalsAsync();
+                    return;
+                }
+
                 baseCounts.Clear();
                 baseCounts.AddRange(data);
                 domain.Clear();
@@ -2223,7 +2353,13 @@ public partial class TableView : UserControl
                 // сейчас нет в списке (их строки спрятал фильтр другой колонки), остаются
                 // отмеченными: снимут чужой фильтр — они снова в отборе.
                 checkedSet.Clear();
-                if (_filters.TryGetValue(def.Key, out var ff)) checkedSet.UnionWith(ff);
+                if (_filters.TryGetValue(def.Key, out var ff))
+                {
+                    // Отбор «кроме» (ставился, когда значений было больше, чем в списке) — полный
+                    // список знает все значения, и отбор становится обычным: все, кроме исключенных.
+                    if (FilterExclusion.IsExclude(ff)) checkedSet.UnionWith(domain.Except(FilterExclusion.Values(ff)));
+                    else checkedSet.UnionWith(ff);
+                }
                 else checkedSet.UnionWith(domain);
 
                 ReloadCounts();
@@ -2426,21 +2562,24 @@ public partial class TableView : UserControl
         public string Display   { get; }
         public string CountText { get; }
 
-        private readonly HashSet<string> _checked;
+        // Галочка — в общем наборе окна или по правилу «все, кроме снятых» (CappedFilterSelection).
+        private readonly Func<string, bool> _isChecked;
+        private readonly Action<string, bool> _setChecked;
         private readonly Action _onChanged;
 
-        public FilterValueVm(string raw, string display, int count, HashSet<string> checkedSet, Action onChanged)
+        public FilterValueVm(string raw, string display, int count, Func<string, bool> isChecked,
+                             Action<string, bool> setChecked, Action onChanged)
         {
             Raw = raw; Display = display; CountText = count.ToString();
-            _checked = checkedSet; _onChanged = onChanged;
+            _isChecked = isChecked; _setChecked = setChecked; _onChanged = onChanged;
         }
 
         public bool Checked
         {
-            get => _checked.Contains(Raw);
+            get => _isChecked(Raw);
             set
             {
-                if (value) _checked.Add(Raw); else _checked.Remove(Raw);
+                _setChecked(Raw, value);
                 PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(Checked)));
                 _onChanged();
             }

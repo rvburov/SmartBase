@@ -70,6 +70,10 @@ public sealed partial class ConstructorRepository
         var result = await Task.Run(() =>
         {
             using var ctx = new AppDbContext(path);
+            // Столбец целиком — правка страницы каждой записи; перенос журнала в файл — в фоне,
+            // после того как значения видны (WalCheckpointer).
+            ctx.ApplyBulkPerformancePragmas();
+            ctx.DeferCheckpoint();
             return new ConstructorRepository(ctx).SetCellsBulk(collectionId, cells, titles, operation);
         });
 
@@ -90,6 +94,8 @@ public sealed partial class ConstructorRepository
         var result = await Task.Run(() =>
         {
             using var ctx = new AppDbContext(path);
+            ctx.ApplyBulkPerformancePragmas();
+            ctx.DeferCheckpoint();   // перенос журнала — в фоне, см. SetCellsBulkIsolatedAsync
             return new ConstructorRepository(ctx).SetLinksBulk(collectionId, writes, operation);
         });
 

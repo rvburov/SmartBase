@@ -316,12 +316,25 @@ public sealed class GridPagesTests
         Assert.False(exact.CountIsEstimate);
         Assert.Equal(s.Recs.Count, exact.RecordCount);
 
-        // Пустая коллекция — ноль; мелкие позиции — хотя бы единица (край уточнят страницы).
+        // Пустая коллекция — ноль; шаг номеров — по первой записи: мелкий шаг больших коллекций
+        // (10 млн — 214) оценку не занижает.
         var empty = SampleData.AddCollection(repo, "Пустая").Id!.Value;
         Assert.Equal(0, repo.EstimateRecordCount(empty));
         var tiny = SampleData.AddCollection(repo, "Мелкие позиции").Id!.Value;
         SampleData.AddRecords(repo, tiny, count: 3, step: 10);
-        Assert.Equal(1, repo.EstimateRecordCount(tiny));
+        Assert.Equal(3, repo.EstimateRecordCount(tiny));
+        var big = SampleData.AddCollection(repo, "Шаг большой коллекции").Id!.Value;
+        SampleData.AddRecords(repo, big, count: 7, step: 214);
+        Assert.Equal(7, repo.EstimateRecordCount(big));
+
+        // Первые записи удалены — номер первой больше шага: делитель остается 1000, оценка
+        // завышена, как после любых удалений (край уточнят страницы).
+        var trimmed = SampleData.AddCollection(repo, "Без первых записей").Id!.Value;
+        foreach (var pos in new[] { 5000, 6000, 7000 }) SampleData.AddRecord(repo, trimmed, $"P{pos}", pos);
+        Assert.Equal(7, repo.EstimateRecordCount(trimmed));
+        var single = SampleData.AddCollection(repo, "Одна запись в нуле").Id!.Value;
+        SampleData.AddRecord(repo, single, "Z", 0);
+        Assert.Equal(1, repo.EstimateRecordCount(single));
     }
 
     [Fact]
@@ -552,7 +565,7 @@ public sealed class GridPagesTests
         var list = new VirtualRowList(repo, s.Col, repo.GetFields(s.Col), knownCount: 12);
 
         list.SetFieldWindow([s.Text]);
-        list.RefreshStructural();   // страница 0 строится синхронно — только с полем окна
+        list.RefreshStructural(12, estimate: false);   // страница 0 строится синхронно — только с полем окна
 
         var cached = list.TryGetCached(1)!;
         Assert.Equal(s.TextOf.GetValueOrDefault(cached.RecordId, ""), cached[s.Text.ToString()]);

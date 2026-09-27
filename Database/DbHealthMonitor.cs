@@ -69,6 +69,11 @@ public sealed class DbHealthMonitor : IDisposable
 
     private const int ProbePeriodMs   = 10_000;  // штатный тик
     private const int ProbeWaitMs     = 5_000;   // ожидание пробы (дальше поток бросаем)
+    // Локальный файл не «виснет», как сетевая папка: проба дольше ProbeWaitMs — это занятый диск,
+    // а не потеря. Замер: перенос гигабайтного журнала после удаления столбца на базе 31 ГБ держал
+    // чтение нового подключения 7 с, и две такие пробы подряд объявляли базу «потерянной» —
+    // она пропадала из боковой панели и монтировалась заново. Локальной базе дается минута.
+    private const int LocalProbeWaitMs = 60_000;
     private const int FailsToDeclare  = 2;       // подряд неудач до объявления потери
 
     public DbHealthMonitor(Workspace ws, MountQueue queue)
@@ -272,7 +277,8 @@ public sealed class DbHealthMonitor : IDisposable
         try
         {
             var probe = StartProbe(path);
-            var ok    = probe.Wait(ProbeWaitMs) && probe.Result.Ok;
+            var local = !PgConnectionInfo.IsPostgresConnectionString(path) && !NetworkPath.IsNetwork(path);
+            var ok    = probe.Wait(local ? LocalProbeWaitMs : ProbeWaitMs) && probe.Result.Ok;
             var gone  = probe.IsCompleted && !probe.Result.FileExists;
 
             lock (_gate)

@@ -1298,9 +1298,11 @@ public partial class DayView : UserControl
         return groups;
     }
 
-    // pinned — выделенные: они раскладываются первыми, в левые колонки. На переполненном дне
-    // (пересечений больше лимита колонок) перенесенное, созданное или скопированное событие иначе
-    // могло уйти за лимит и пропасть с экрана вместе с выделением.
+    // pinned — выделенные. Раскладка всегда естественная: выделенное стоит там же, где стояло бы
+    // без выделения, и сетка колонок не сбивается. Только если на переполненном дне (пересечений
+    // больше лимита колонок) перенесенное, созданное или скопированное событие ушло за лимит, оно
+    // встает в крайнюю правую рисуемую колонку вместо пересекающихся с ним событий — иначе оно
+    // пропало бы с экрана вместе с выделением.
     private static List<(CalendarRecord Ev, int ColIdx, int NCols, int RightLimit)> AssignColumns(
         List<CalendarRecord> group, IReadOnlySet<(int DbId, int Id, int FieldId)>? pinned = null)
     {
@@ -1309,24 +1311,17 @@ public partial class DayView : UserControl
         var evCol   = new Dictionary<CalendarRecord, int>(ReferenceEqualityComparer.Instance);
 
         bool IsPinned(CalendarRecord e) => pinned is { Count: > 0 } && e.Id is int id && pinned.Contains((e.DbId, id, e.FieldId));
-        void Place(CalendarRecord ev, int from)
+        foreach (var ev in evs)
         {
             var col = -1;
-            for (var i = from; i < colEnds.Count; i++)
+            for (var i = 0; i < colEnds.Count; i++)
                 if (ev.StartDt >= colEnds[i]) { col = i; break; }
             if (col == -1) { col = colEnds.Count; colEnds.Add(ev.EndDt); }
             else colEnds[col] = ev.EndDt;
             evCol[ev] = col;
         }
-        var firstFree = 0;
-        if (pinned is { Count: > 0 })
-        {
-            foreach (var ev in evs)
-                if (IsPinned(ev)) Place(ev, 0);
-            firstFree = colEnds.Count;
-        }
-        foreach (var ev in evs)
-            if (!evCol.ContainsKey(ev)) Place(ev, firstFree);
+        if (pinned is { Count: > 0 } && colEnds.Count > MaxEventColumns)
+            PinHidden(evs, evCol, MaxEventColumns, IsPinned);
 
         // Сверх лимита параллельных колонок события не рисуются. Правая граница рисуемого —
         // ближайшая правее колонка пересекающегося с ним рисуемого; сравниваются только
@@ -1346,6 +1341,26 @@ public partial class DayView : UserControl
             result.Add((ev, colIdx, nCols, rightLimit));
         }
         return result;
+    }
+
+    // Выделенное, ушедшее за лимит колонок, — в рисуемую колонку справа налево, где нет другого
+    // выделенного с пересечением; пересекающиеся с ним невыделенные этой колонки уходят за лимит.
+    private static void PinHidden(List<CalendarRecord> evs, Dictionary<CalendarRecord, int> evCol, int limit,
+                                  Func<CalendarRecord, bool> isPinned)
+    {
+        static bool Overlap(CalendarRecord a, CalendarRecord b) => a.StartDt < b.EndDt && a.EndDt > b.StartDt;
+        foreach (var ev in evs)
+        {
+            if (evCol[ev] < limit || !isPinned(ev)) continue;
+            for (var col = limit - 1; col >= 0; col--)
+            {
+                if (evs.Any(o => evCol[o] == col && isPinned(o) && Overlap(o, ev))) continue;
+                foreach (var o in evs)
+                    if (evCol[o] == col && Overlap(o, ev)) evCol[o] = int.MaxValue;
+                evCol[ev] = col;
+                break;
+            }
+        }
     }
 
     // Меню события: «Изменить»/«Удалить», либо при множественном

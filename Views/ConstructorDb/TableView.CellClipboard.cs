@@ -6,6 +6,7 @@ using SmartBase.Controls.Widgets;
 using SmartBase.Core.Models;
 using SmartBase.Database;
 using SmartBase.Database.Repositories;
+using SmartBase.Logging;
 using SmartBase.Utils;
 using SmartBase.ViewModels.ConstructorDb;
 
@@ -278,6 +279,9 @@ public partial class TableView
     {
         if (writes.Count == 0 || _repository is null) return default;
         var repository = _repository;
+        // Порог медленности: запись значений ячеек (очистка, вставка, вырезание) дольше Diag.UiQuery.
+        using var slow = Diag.Measure($"{operation.ToLowerInvariant()} ячеек", Diag.UiQuery,
+                                      $"{DbErrors.Display(repository.DbPath)}, коллекция {_collectionId}, ячеек {writes.Count}");
 
         var cells     = new List<ConstructorRepository.CellWrite>();
         var titles    = new List<ConstructorRepository.TitleWrite>();

@@ -34,6 +34,8 @@ public class AppDbContext : DbContext
     // Хранится на контексте, а не ставится разово: соединение закрывается и открывается заново
     // между операциями, и объемные прагмы обязаны восстановиться вместе с ним.
     private bool _bulkProfile;
+    // Перенос журнала этой правки — в фоне (DeferCheckpoint, WalCheckpointer).
+    private bool _deferCheckpoint;
 
     /// <summary>Путь к файлу БД — нужен, чтобы открыть параллельное read-only подключение
     /// (фоновые запросы, WAL допускает одновременное чтение) без общего контекста.
@@ -67,8 +69,14 @@ public class AppDbContext : DbContext
 
     private void OnConnectionStateChange(object? sender, System.Data.StateChangeEventArgs e)
     {
-        if (e.CurrentState == System.Data.ConnectionState.Open && sender is DbConnection conn)
-            ApplyConnectionPragmas(conn);
+        if (e.CurrentState != System.Data.ConnectionState.Open || sender is not DbConnection conn) return;
+        ApplyConnectionPragmas(conn);
+        // Поиск без учета регистра (SqlText.ContainsIgnoreCase): встроенные LIKE и lower() SQLite
+        // регистр различают только у латиницы. Функция — на подключение, как и прагмы.
+        if (conn is Microsoft.Data.Sqlite.SqliteConnection sqlite)
+            sqlite.CreateFunction(SqlText.ContainsName, (string? value, string? part) =>
+                value is not null && part is not null && value.Contains(part, StringComparison.OrdinalIgnoreCase),
+                isDeterministic: true);
     }
 
     // ── Аудит-метаданные записей (для типов свойств «Дата/Создание/Изменение …») ──
@@ -281,13 +289,11 @@ public class AppDbContext : DbContext
     public const long WalSizeLimitBytes = 64L * 1024 * 1024;
 
     /// <summary>
-    /// Закрытие контекста массового профиля переносит журнал в файл. Окно чекпоинта у такого
-    /// подключения широкое (см. <see cref="ApplyConnectionPragmas"/>) — это и есть смысл профиля:
-    /// одна и та же страница правится в журнале много раз и уезжает в файл единожды. Но тогда
-    /// кто-то обязан перенести хвост, иначе <c>-wal</c> остается на десятки мегабайт до
-    /// случайного чекпоинта чужого подключения. Делаем это здесь, а не в каждом массовом пути
-    /// (импорт, свод, дубль, перенос, удаление — их полтора десятка): контексты массового
-    /// профиля живут под <c>using</c>, так что закрытие гарантировано.
+    /// Закрытие контекста массовой правки ставит перенос ее журнала в файл — в фоне
+    /// (<see cref="WalCheckpointer"/>): правка к этому моменту закоммичена и видна, а перенос
+    /// (на широкой коллекции — 80 % времени правки) пользователь не ждет. Здесь, а не в каждом
+    /// массовом пути (импорт, свод, дубль, перенос, удаление — их полтора десятка): контексты
+    /// массового профиля живут под <c>using</c>, так что закрытие гарантировано.
     /// </summary>
     public override void Dispose()
     {
@@ -306,12 +312,12 @@ public class AppDbContext : DbContext
 
     private void CheckpointOnBulkClose()
     {
-        if (!_bulkProfile) return;
-        // Чекпоинт при закрытии не должен ронять операцию, которая уже успешно закончилась:
-        // не удалось — журнал перенесет ближайший чекпоинт, данные от этого не страдают.
-        try { CheckpointWal(); }
-        catch (Exception ex) { Log.Warning(ex, "Чекпоинт при закрытии не выполнен: {Path:l}", DisplayPath); }
+        if (_bulkProfile || _deferCheckpoint) WalCheckpointer.Schedule(_dbPath, BulkCheckpointDelay);
     }
+
+    // Сколько перенос журнала ждет после массовой правки: интерфейс успевает перечитать колонки и
+    // первые строки, пока диск свободен (см. WalCheckpointer.Schedule с отсрочкой).
+    private static readonly TimeSpan BulkCheckpointDelay = TimeSpan.FromSeconds(3);
 
     /// <summary>
     /// Чекпоинт WAL после массовой операции (импорт, свод, дубль, удаление) — best-effort, без
@@ -417,17 +423,17 @@ public class AppDbContext : DbContext
                 + (shared ? "PRAGMA busy_timeout=15000;" : "PRAGMA busy_timeout=10000;")
                 + (shared ? "PRAGMA synchronous=FULL;"   : "PRAGMA synchronous=NORMAL;")
                 + (shared ? "" : $"PRAGMA journal_size_limit={WalSizeLimitBytes};")
-                // Окно чекпоинта. По умолчанию SQLite переносит WAL в тело файла после КАЖДОГО
-                // коммита, у которого журнал перевалил за 1000 страниц (~4 МБ). На массовой
-                // операции это значит, что одна и та же индексная страница уезжает в файл
-                // столько раз, сколько было пакетов: замер удаления коллекции на 650 тыс.
-                // записей дал ~5-6 ГБ физической записи на 0,5 ГБ удаляемых данных. С окном
-                // во весь дозволенный размер журнала повторные правки одной страницы
-                // схлопываются в нем и переносятся один раз. Транзакционных гарантий это не
-                // меняет — только момент переноса; хвост журнала усекает CheckpointWal в конце
-                // операции. Окно равно journal_size_limit (страница SQLite по умолчанию 4 КиБ),
-                // чтобы журнал не рос дальше предела, до которого его все равно усекут.
-                + (shared || !_bulkProfile ? "" : $"PRAGMA wal_autocheckpoint={WalSizeLimitBytes / 4096};")
+                // Автоперенос журнала выключен: в тело файла его переносит фоновый WalCheckpointer —
+                // по размеру журнала (раз в секунду, порог journal_size_limit) и после массовых
+                // правок (закрытие их контекста). Автоперенос SQLite идет внутри коммита той
+                // правки, которой выпало перевалить порог: после дубля столбца на 100 тыс. записей
+                // (журнал 400 МБ) его сделала мелкая правка интерфейса — 17 с на UI-потоке. Порог
+                // во весь дозволенный размер журнала — прежнее окно массового профиля: повторные
+                // правки одной страницы схлопываются в журнале и переносятся один раз (перенос
+                // после каждого пакета давал на удалении коллекции в 650 тыс. записей ~5-6 ГБ
+                // физической записи на 0,5 ГБ данных). Транзакционных гарантий это не меняет —
+                // только момент и поток переноса.
+                + (shared ? "" : "PRAGMA wal_autocheckpoint=0;")
                 + "PRAGMA temp_store=MEMORY;"
                 // Объем — по профилю ЭТОГО контекста И по памяти машины (см. VolumeBudget).
                 // Без mmap чтения страниц индексов идут pread-syscall'ами (импорт 425k в БД
@@ -512,6 +518,18 @@ public class AppDbContext : DbContext
     /// </summary>
     public void ApplyBulkPerformancePragmas() => SetVolumeProfile(bulk: true);
 
+    /// <summary>
+    /// Поставить перенос журнала этой правки в фон при закрытии контекста
+    /// (<see cref="WalCheckpointer"/>) — как у массового профиля, но без его объемов памяти. Для
+    /// правок, которых ждут в окне прогресса (столбцы, диапазоны ячеек): на широкой коллекции
+    /// перенос журнала — 80 % их времени, а правка надежна уже после коммита.
+    /// </summary>
+    public void DeferCheckpoint()
+    {
+        if (IsPostgres || NetworkPath.IsNetwork(_dbPath)) return;
+        _deferCheckpoint = true;
+    }
+
     // Профиль запоминается на контексте: соединение может закрываться и открываться заново
     // между операциями, и объемные прагмы обязаны восстановиться вместе с ним. Если соединение
     // уже открыто — применяем немедленно, иначе профиль подхватит ближайшее открытие.
@@ -558,6 +576,9 @@ public class AppDbContext : DbContext
 
     protected override void OnModelCreating(ModelBuilder model)
     {
+        model.HasDbFunction(typeof(SqlText).GetMethod(nameof(SqlText.ContainsIgnoreCase))!)
+             .HasName(SqlText.ContainsName);
+
         model.Entity<CategoryEntity>(e =>
         {
             e.ToTable("categories");

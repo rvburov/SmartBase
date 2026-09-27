@@ -328,6 +328,9 @@ public partial class TableView
         if (TooManyRows(count)) return null;
         if (count <= SyncRangeRows) return source.MaterializeRange(top, count, fieldIds);
 
+        // Порог медленности: чтение большого выделения (копирование, очистка, вставка, цвет).
+        using var slow = SmartBase.Logging.Diag.Measure("чтение выделенных строк", SmartBase.Logging.Diag.UiQuery,
+                                                        $"коллекция {_collectionId}, строк {count}, свойств {fieldIds.Count}");
         return await WithProgressAsync<IReadOnlyList<TableRowVm>>("Чтение выделенных строк…",
             async (progress, ct) => await source.MaterializeRangeAsync(top, count, fieldIds, progress, ct));
     }

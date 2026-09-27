@@ -1,7 +1,7 @@
+using System.Collections;
+using System.Collections.Specialized;
 using System.ComponentModel;
-using System.Globalization;
 using Avalonia;
-using Avalonia.Collections;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Templates;
@@ -9,6 +9,7 @@ using Avalonia.Data;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Threading;
 using SmartBase.Controls.Components;
 using SmartBase.Core.Models;
 using SmartBase.Database.Repositories;
@@ -22,56 +23,64 @@ namespace SmartBase.Controls.Dialogs;
 /// уровень) · название (Title записи). Блок уровней справа сверху массово переключает
 /// чекбоксы: выбор уровня N включает видимость записей с уровнем ≤ N, остальные гасит.
 ///
-/// Список — виртуализирующий <see cref="ListBox"/>: физически рендерятся только видимые
-/// строки, поэтому окно открывается мгновенно даже на коллекциях в сотни тысяч записей
-/// (раньше строился контрол на КАЖДУЮ запись → зависание). Сохраняется в БД (record_display);
-/// скрытые записи отсекаются на уровне SQL при постраничной загрузке таблицы.
+/// Окно рассчитано на коллекции в миллионы записей: в памяти только id записей в порядке таблицы
+/// (<see cref="_order"/>), названия подгружаются порциями для видимых строк виртуализирующего
+/// <see cref="ListBox"/>, состояние хранится только у записей, отличных от умолчания («видима,
+/// уровень 1»), — так же, как в базе (record_display). Поиск — запросом к базе. «Сохранить» пишет
+/// только отличия и повторяет перестановки по одной (<c>MoveRecord</c>): прежнее окно на 10 млн
+/// записей создавало строку на каждую запись, открывалось полминуты и занимало гигабайт, а при
+/// сохранении переписывало состояние и порядок всех записей.
 /// </summary>
 public partial class RecordDisplayDialog : Window
 {
     private readonly ConstructorRepository _repository;
     private readonly int _collectionId;
 
-    // Все строки в порядке сверху-вниз (мастер-список). _shown — то, что показано
-    // (фильтр поиска); содержит ССЫЛКИ на те же RowVm, поэтому правки видимости/уровня
-    // через массовые операции отражаются в обоих.
-    private readonly List<RowVm> _all = [];
-    private readonly AvaloniaList<RowVm> _shown = [];
+    // Все записи коллекции в порядке таблицы (id). Перестановки окна меняют и его.
+    private readonly int[] _order;
+    // Найденные поиском — индексы в _order по возрастанию; null — поиска нет.
+    private int[]? _found;
+    private CancellationTokenSource? _searchCts;
 
-    private const int MaxLevels = 14;
+    // Состояние записей, отличных от умолчания (видима, уровень 1): из базы и правки окна.
+    private readonly Dictionary<int, (bool Visible, int Level)> _state;
+    // Перестановки по порядку (запись, вверх ли) — «Сохранить» повторяет их в базе.
+    private readonly List<(int RecordId, bool Up)> _moves = [];
+
+    // Названия видимых порций и строки списка, созданные для них (по id записи).
+    private readonly Dictionary<int, string> _titles = [];
+    private readonly Dictionary<int, RowVm> _vms = [];
+    private readonly RowList _rows;
+
+    private const int TitlePage   = 256;     // названий за один запрос
+    private const int TitleCache  = 20_000;  // сколько названий держать, дальше кеш сбрасывается
+    private const int SearchCap   = 100_000; // найденных поиском не больше
+    private const int MaxLevels   = 14;
     private int _maxLevel = 1;
     private int _activeLevel = 1;
 
-    // Порядок строк меняли (кнопки вверх/вниз) — только тогда переписываем позиции в БД.
-    private bool _orderChanged;
-
-    // Ширина названия — единая для всех строк, по самому длинному. Без нее экстент
-    // горизонтальной прокрутки виртуализирующая панель считала бы по видимым строкам, и
-    // полоса снизу дергалась бы при вертикальной прокрутке (см. FilterValueMetrics).
+    // Ширина названия — единая для всех строк, по самому длинному из подгруженных. Без нее экстент
+    // горизонтальной прокрутки виртуализирующая панель считала бы по видимым строкам, и полоса
+    // снизу дергалась бы при вертикальной прокрутке (см. FilterValueMetrics).
     private readonly FilterValueMetrics _metrics = new();
+    private string _widest = "";
 
-    public RecordDisplayDialog(ConstructorRepository repository, int collectionId,
-                               IReadOnlyList<(int RecordId, string Title)> records)
+    public RecordDisplayDialog(ConstructorRepository repository, int collectionId, int[] orderedRecordIds)
     {
         InitializeComponent();
 
         _repository   = repository;
         _collectionId = collectionId;
-
-        var saved = repository.GetRecordDisplay(collectionId);
-        for (var i = 0; i < records.Count; i++)
-        {
-            var (id, title) = records[i];
-            var (vis, lvl) = saved.TryGetValue(id, out var s) ? s : (true, 1);
-            _all.Add(new RowVm(id, title) { Number = i + 1, Visible = vis, Level = Math.Max(1, lvl) });
-        }
-        _maxLevel    = Math.Max(1, _all.Select(r => r.Level).DefaultIfEmpty(1).Max());
+        _order        = orderedRecordIds;
+        _state        = repository.GetRecordDisplay(collectionId)
+                                  .Where(kv => !kv.Value.Visible || kv.Value.Level > 1)
+                                  .ToDictionary(kv => kv.Key, kv => (kv.Value.Visible, Math.Max(1, kv.Value.Level)));
+        _maxLevel    = Math.Max(1, _state.Values.Select(s => s.Level).DefaultIfEmpty(1).Max());
         _activeLevel = 0;   // ни один уровень не выбран (видимость — из сохраненного состояния)
 
+        _rows = new RowList(this);
         ListHost.ItemTemplate = BuildRowTemplate();
-        ListHost.ItemsSource   = _shown;
-        _shown.AddRange(_all);
-        MeasureRows();
+        ListHost.ItemsSource  = _rows;
 
         ListHost.SelectionChanged += (_, _) => RenderMoveButtons();
         SearchBox.TextChanged += (_, _) => ApplySearch();
@@ -84,13 +93,72 @@ public partial class RecordDisplayDialog : Window
 
     private void Save()
     {
-        _repository.SaveRecordDisplay(_collectionId,
-            _all.Select(r => (r.RecordId, r.Visible, r.Level)));
-        // Порядок переписываем в БД только если его реально меняли — иначе на больших
-        // коллекциях лишний полный реордер (дорого), а при простом скрытии он не нужен.
-        if (_orderChanged)
-            _repository.SaveRecordOrder(_collectionId, _all.Select(r => r.RecordId).ToList());
+        // Отличия от умолчания — остальные записи SaveRecordDisplay сам возвращает к умолчанию.
+        _repository.SaveRecordDisplay(_collectionId, _state.Select(kv => (kv.Key, kv.Value.Visible, kv.Value.Level)));
+        foreach (var (recordId, up) in _moves) _repository.MoveRecord(_collectionId, recordId, up);
         Close(true);
+    }
+
+    // ── Строки ─────────────────────────────────────────────────────────────────
+
+    private int Count => _found?.Length ?? _order.Length;
+
+    // Индекс записи в _order по индексу строки списка.
+    private int OrderIndex(int row) => _found is { } f ? f[row] : row;
+
+    private (bool Visible, int Level) StateOf(int recordId) =>
+        _state.TryGetValue(recordId, out var s) ? s : (true, 1);
+
+    private void SetState(int recordId, bool visible, int level)
+    {
+        if (visible && level <= 1) _state.Remove(recordId);
+        else _state[recordId] = (visible, Math.Max(1, level));
+    }
+
+    private RowVm RowAt(int row)
+    {
+        var index = OrderIndex(row);
+        var id    = _order[index];
+        if (!_vms.TryGetValue(id, out var vm))
+        {
+            if (!_titles.ContainsKey(id)) LoadTitles(row);
+            var (vis, lvl) = StateOf(id);
+            vm = _vms[id] = new RowVm(id, _titles.GetValueOrDefault(id, ""), this);
+            vm.SyncState(vis, lvl);
+        }
+        vm.Index  = row;
+        vm.Number = index + 1;
+        return vm;
+    }
+
+    // Названия порции строк вокруг row одним запросом; кеш ограничен — при переполнении сбрасывается.
+    private void LoadTitles(int row)
+    {
+        if (_titles.Count > TitleCache) { _titles.Clear(); _vms.Clear(); }
+        var from = row / TitlePage * TitlePage;
+        var ids  = new List<int>(TitlePage);
+        for (var r = from; r < Math.Min(Count, from + TitlePage); r++) ids.Add(_order[OrderIndex(r)]);
+        foreach (var (id, title) in _repository.GetRecordTitles(ids))
+        {
+            _titles[id] = title;
+            var shown = TitleText.FirstLine(string.IsNullOrWhiteSpace(title) ? "Без названия" : title);
+            if (shown.Length > _widest.Length) _widest = shown;
+        }
+        foreach (var id in ids) _titles.TryAdd(id, "");
+        _metrics.Measure([_widest], (double)this.FindResource("FontSizeBase")!,
+                         this.TryFindResource("FontFamilyBase", out var f) ? f as FontFamily : null);
+    }
+
+    // Состояние поменяли массово (уровни) — перечитать созданные строки, в том числе показанные
+    // после сброса кеша названий.
+    private void RefreshRealized()
+    {
+        var shown = ListHost.GetRealizedContainers().Select(c => c.DataContext).OfType<RowVm>();
+        foreach (var vm in _vms.Values.Concat(shown).Distinct())
+        {
+            var (vis, lvl) = StateOf(vm.RecordId);
+            vm.SyncState(vis, lvl);
+        }
     }
 
     // ── Шаблон строки (рендерится только для видимых строк) ────────────────────
@@ -152,25 +220,47 @@ public partial class RecordDisplayDialog : Window
         });
     }
 
-    // ── Поиск ──────────────────────────────────────────────────────────────────
+    // ── Поиск — по названиям в базе, с паузой на набор ────────────────────────
     private void ApplySearch()
     {
+        _searchCts?.Cancel();
         var q = SearchBox.Text?.Trim() ?? "";
-        _shown.Clear();
-        _shown.AddRange(q.Length == 0
-            ? _all
-            : _all.Where(r => r.Title.Contains(q, StringComparison.OrdinalIgnoreCase)));
-        MeasureRows();
+        if (q.Length == 0)
+        {
+            ShowFound(null);
+            return;
+        }
+        var cts = _searchCts = new CancellationTokenSource();
+        _ = SearchAsync();
+
+        async Task SearchAsync()
+        {
+            try
+            {
+                await Task.Delay(250, cts.Token);
+                var ids  = await Task.Run(() => _repository.SearchRecordIdsIsolated(_collectionId, q, SearchCap, cts.Token), cts.Token);
+                var set  = ids.Take(SearchCap).ToHashSet();
+                var idx  = await Task.Run(() =>
+                {
+                    var list = new List<int>(set.Count);
+                    for (var i = 0; i < _order.Length; i++) if (set.Contains(_order[i])) list.Add(i);
+                    return list.ToArray();
+                }, cts.Token);
+                if (!cts.IsCancellationRequested) ShowFound(idx);
+            }
+            catch (OperationCanceledException) { }
+        }
+    }
+
+    private void ShowFound(int[]? found)
+    {
+        _found = found;
+        ListHost.SelectedItem = null;
+        _rows.Reset();
         RenderMoveButtons();
     }
 
-    // Ширина названия — по самому длинному в ТЕКУЩЕМ наборе (после поиска он другой).
-    private void MeasureRows() =>
-        _metrics.Measure(_shown.Select(r => r.DisplayTitle),
-                         (double)this.FindResource("FontSizeBase")!,
-                         this.TryFindResource("FontFamilyBase", out var f) ? f as FontFamily : null);
-
-    private bool IsSearching => !string.IsNullOrEmpty(SearchBox.Text?.Trim());
+    private bool IsSearching => _found is not null;
 
     // ── Перемещение выделенной записи ──────────────────────────────────────────
     // Иконки — из общего словаря Assets/Styles/Icons.axaml по ключу x:Key.
@@ -193,9 +283,9 @@ public partial class RecordDisplayDialog : Window
     private void RenderMoveButtons()
     {
         MoveButtons.Children.Clear();
-        var i = ListHost.SelectedItem is RowVm vm && !IsSearching ? _all.IndexOf(vm) : -1;
-        MoveButtons.Children.Add(MakeMoveButton(ArrowUp,   i > 0,                       () => MoveSelected(-1)));
-        MoveButtons.Children.Add(MakeMoveButton(ArrowDown, i >= 0 && i < _all.Count - 1, () => MoveSelected(+1)));
+        var i = ListHost.SelectedItem is RowVm vm && !IsSearching ? vm.Index : -1;
+        MoveButtons.Children.Add(MakeMoveButton(ArrowUp,   i > 0,                         () => MoveSelected(-1)));
+        MoveButtons.Children.Add(MakeMoveButton(ArrowDown, i >= 0 && i < _order.Length - 1, () => MoveSelected(+1)));
     }
 
     private Control MakeMoveButton(Geometry icon, bool enabled, Action onClick)
@@ -209,21 +299,20 @@ public partial class RecordDisplayDialog : Window
         return MakeLevelButton(box, br => path.Stroke = br, active: false, onClick, enabled);
     }
 
-    // Переставить выделенную запись на одну позицию вверх/вниз в мастер-списке и в показе.
+    // Переставить выделенную запись на одну позицию вверх/вниз: в списке сразу, в базе — по «Сохранить».
     private void MoveSelected(int dir)
     {
-        if (ListHost.SelectedItem is not RowVm vm) return;
-        var i = _all.IndexOf(vm);
+        if (ListHost.SelectedItem is not RowVm vm || IsSearching) return;
+        var i = vm.Index;
         var j = i + dir;
-        if (i < 0 || j < 0 || j >= _all.Count) return;
+        if (i < 0 || j < 0 || j >= _order.Length || _order[i] != vm.RecordId) return;
 
-        (_all[i], _all[j]) = (_all[j], _all[i]);
-        _all[i].Number = i + 1;
-        _all[j].Number = j + 1;
-        _shown.Move(i, j);          // без активного поиска _shown зеркалит _all
-        _orderChanged = true;
+        (_order[i], _order[j]) = (_order[j], _order[i]);
+        _moves.Add((vm.RecordId, dir < 0));
+        _rows.Replaced(i);
+        _rows.Replaced(j);
 
-        ListHost.SelectedItem = vm;
+        ListHost.SelectedItem = RowAt(j);
         RenderMoveButtons();
     }
 
@@ -277,6 +366,8 @@ public partial class RecordDisplayDialog : Window
             active: false, RemoveLevel, enabled: _maxLevel > 1));
     }
 
+    // Все уровни — первый (видимость не трогается). Записи без отличий в состоянии не хранятся,
+    // поэтому меняются только отличные от умолчания.
     private async Task ResetLevels()
     {
         var dlg = new ConfirmDialog(
@@ -284,15 +375,18 @@ public partial class RecordDisplayDialog : Window
             confirmText: "Сбросить");
         if (await dlg.ShowDialog<bool?>(this) != true) return;
 
-        foreach (var r in _all) r.Level = 1;
+        foreach (var (id, (vis, _)) in _state.ToList()) SetState(id, vis, 1);
+        RefreshRealized();
     }
 
     private void RemoveLevel()
     {
         if (_maxLevel <= 1) return;
         _maxLevel--;
-        foreach (var r in _all) if (r.Level > _maxLevel) r.Level = _maxLevel;
+        foreach (var (id, (vis, lvl)) in _state.ToList())
+            if (lvl > _maxLevel) SetState(id, vis, _maxLevel);
         if (_activeLevel > _maxLevel) _activeLevel = _maxLevel;
+        RefreshRealized();
         RenderLevels();
     }
 
@@ -332,29 +426,69 @@ public partial class RecordDisplayDialog : Window
         return b;
     }
 
-    // Применяет выбранный уровень: видимость = (уровень записи ≤ выбранного).
+    // Применяет выбранный уровень: видимость = (уровень записи ≤ выбранного). У записей по
+    // умолчанию уровень 1, и они видимы при любом уровне — меняются только отличные.
     private void ApplyLevel(int level)
     {
         _activeLevel = level;
-        foreach (var r in _all) r.Visible = r.Level <= level;
+        foreach (var (id, (_, lvl)) in _state.ToList()) SetState(id, lvl <= level, lvl);
+        RefreshRealized();
         RenderLevels();
     }
 
-    // ── Модель строки (привязки обновляют только реализованные виртуализацией строки) ──
-    private sealed class RowVm : INotifyPropertyChanged
+    // ── Виртуальный список строк для ListBox ───────────────────────────────────
+    // Счет — все записи (или найденные), строка создается, когда виртуализация ее запрашивает.
+    private sealed class RowList(RecordDisplayDialog owner) : IList, INotifyCollectionChanged
     {
-        public int    RecordId { get; }
-        /// <summary>Полное название — по нему идет поиск.</summary>
-        public string Title    { get; }
-        /// <summary>Первая строка названия — строка списка одна, показываем ее (см. TitleText).</summary>
-        public string DisplayTitle { get; }
+        public event NotifyCollectionChangedEventHandler? CollectionChanged;
 
-        public RowVm(int recordId, string title)
+        public int Count => owner.Count;
+        public object? this[int index]
         {
-            RecordId     = recordId;
-            Title        = string.IsNullOrWhiteSpace(title) ? "Без названия" : title;
-            DisplayTitle = TitleText.FirstLine(Title);
+            get => owner.RowAt(index);
+            set => throw new NotSupportedException();
         }
+        public int IndexOf(object? value) =>
+            value is RowVm vm && vm.Index >= 0 && vm.Index < Count && owner._order[owner.OrderIndex(vm.Index)] == vm.RecordId
+                ? vm.Index : -1;
+        public bool Contains(object? value) => IndexOf(value) >= 0;
+
+        public void Reset() =>
+            CollectionChanged?.Invoke(this, new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
+
+        // Строка index сменила запись (перестановка): старую строку списка — новой.
+        public void Replaced(int index)
+        {
+            var id = owner._order[owner.OrderIndex(index)];
+            var vm = owner.RowAt(index);
+            CollectionChanged?.Invoke(this, new NotifyCollectionChangedEventArgs(
+                NotifyCollectionChangedAction.Replace, vm, new RowVm(-id, "", owner), index));
+        }
+
+        public bool IsFixedSize => false;
+        public bool IsReadOnly => true;
+        public bool IsSynchronized => false;
+        public object SyncRoot => this;
+        public int Add(object? value) => throw new NotSupportedException();
+        public void Clear() => throw new NotSupportedException();
+        public void Insert(int index, object? value) => throw new NotSupportedException();
+        public void Remove(object? value) => throw new NotSupportedException();
+        public void RemoveAt(int index) => throw new NotSupportedException();
+        public void CopyTo(Array array, int index) => throw new NotSupportedException();
+        public IEnumerator GetEnumerator()
+        {
+            for (var i = 0; i < Count; i++) yield return owner.RowAt(i);
+        }
+    }
+
+    // ── Модель строки (привязки обновляют только реализованные виртуализацией строки) ──
+    private sealed class RowVm(int recordId, string title, RecordDisplayDialog owner) : INotifyPropertyChanged
+    {
+        public int    RecordId { get; } = recordId;
+        /// <summary>Первая строка названия — строка списка одна, показываем ее (см. TitleText).</summary>
+        public string DisplayTitle { get; } = TitleText.FirstLine(string.IsNullOrWhiteSpace(title) ? "Без названия" : title);
+        /// <summary>Строка списка, на которой запись показана сейчас.</summary>
+        public int Index { get; set; }
 
         private int _number;
         public int Number
@@ -368,18 +502,40 @@ public partial class RecordDisplayDialog : Window
         public bool Visible
         {
             get => _visible;
-            set { if (_visible != value) { _visible = value; Raise(nameof(Visible)); } }
+            set
+            {
+                if (_visible == value) return;
+                _visible = value;
+                owner.SetState(RecordId, _visible, _level);
+                Raise(nameof(Visible));
+            }
         }
 
         private int _level = 1;
         public int Level
         {
             get => _level;
-            set { if (_level != value) { _level = value; Raise(nameof(Level)); Raise(nameof(LevelText)); } }
+            set
+            {
+                if (_level == value) return;
+                _level = value;
+                owner.SetState(RecordId, _visible, _level);
+                Raise(nameof(Level)); Raise(nameof(LevelText));
+            }
         }
         public string LevelText => _level.ToString();
 
         public void CycleLevel(int max) => Level = Level % Math.Max(1, max) + 1;
+
+        // Состояние поменяли массово (уровни) — показать, не записывая обратно.
+        public void SyncState(bool visible, int level)
+        {
+            if (_visible != visible) { _visible = visible; Raise(nameof(Visible)); }
+            if (_level != level) { _level = level; Raise(nameof(Level)); Raise(nameof(LevelText)); }
+        }
+
+        public override bool Equals(object? obj) => obj is RowVm other && other.RecordId == RecordId;
+        public override int GetHashCode() => RecordId;
 
         public event PropertyChangedEventHandler? PropertyChanged;
         private void Raise(string n) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(n));

@@ -96,11 +96,11 @@ public sealed class StorageBloatTests
     }
 
     /// <summary>
-    /// Массовому профилю чекпоинт не надо звать руками: его делает ЗАКРЫТИЕ контекста
-    /// (<c>AppDbContext.Dispose</c>). Это обязательная пара к широкому окну
-    /// <c>wal_autocheckpoint</c> того же профиля — без переноса журнал оставался бы на
-    /// десятки мегабайт до случайного чекпоинта чужого подключения. Проверяем именно
-    /// закрытие: <c>CheckpointWal</c> здесь никто не вызывает.
+    /// Массовому профилю чекпоинт не надо звать руками: его ставит ЗАКРЫТИЕ контекста
+    /// (<c>AppDbContext.Dispose</c>) — фоновым переносом <c>WalCheckpointer</c>, который правку не
+    /// задерживает. Автоперенос на подключениях выключен, так что без этого журнал оставался бы на
+    /// десятки мегабайт до переноса по размеру. Проверяем именно закрытие: <c>CheckpointWal</c>
+    /// здесь никто не вызывает, тест только дожидается фонового переноса.
     ///
     /// Признак — РОСТ основного файла: в режиме WAL запись идет только в журнал, и тело
     /// файла прирастает ровно чекпоинтом. Спросить у базы «перенесен ли журнал» нельзя:
@@ -123,10 +123,35 @@ public sealed class StorageBloatTests
             mainBefore = new FileInfo(db.Path).Length;
         }
 
+        Assert.True(WalCheckpointer.WaitIdle(TimeSpan.FromSeconds(30)), "фоновый перенос журнала не закончился");
         var mainAfter = new FileInfo(db.Path).Length;
         Assert.True(mainAfter > mainBefore,
                     $"закрытие массового контекста должно перенести журнал в файл: было {mainBefore}, стало {mainAfter}");
         Assert.Equal(5000, db.Constructor.CountRecords(colId));
+    }
+
+    /// <summary>Перенос после массовой правки ждет отсрочку: сразу за правкой интерфейс
+    /// перечитывает колонки и строки, пока диск свободен. В первые мгновения тело файла не растет,
+    /// потом — растет.</summary>
+    [Fact]
+    public void Checkpoint_after_bulk_close_waits_for_delay()
+    {
+        using var db = new TempDatabase();
+        var (colId, fid) = Shell(db.Constructor, "WAL");
+
+        long mainBefore;
+        using (var ctx = new AppDbContext(db.Path))
+        {
+            ctx.ApplyBulkPerformancePragmas();
+            new ConstructorRepository(ctx).BulkAddRecords(colId, [fid], Rows(5000, 300), 5000,
+                                                          CancellationToken.None);
+            mainBefore = new FileInfo(db.Path).Length;
+        }
+
+        Thread.Sleep(500);
+        Assert.Equal(mainBefore, new FileInfo(db.Path).Length);
+        Assert.True(WalCheckpointer.WaitIdle(TimeSpan.FromSeconds(30)), "фоновый перенос журнала не закончился");
+        Assert.True(new FileInfo(db.Path).Length > mainBefore, "журнал не перенесен после отсрочки");
     }
 
     // ── 3. Политика свободного места ──────────────────────────────────────────
@@ -173,6 +198,43 @@ public sealed class StorageBloatTests
                         $"файл не усечен: было {fileBefore}, стало {new FileInfo(path).Length}");
         }
         finally { TempDatabase.Cleanup(path); }
+    }
+
+    /// <summary>Большая локальная база при монтировании сама не сжимается (живых данных больше
+    /// AutoCompactMaxLiveBytes): сжатие переписало бы ее целиком, а база все это время была бы
+    /// недоступна. Подсказка «стоит сжать» остается.</summary>
+    [Fact]
+    public void Large_local_database_is_not_compacted_at_mount()
+    {
+        var path  = TempDatabase.NewTempPath();
+        var saved = DatabaseManager.AutoCompactMaxLiveBytes;
+        try
+        {
+            Bloat(path, rows: 40_000, valueLength: 1500);
+            var before = FreeSpace(path);
+            DatabaseManager.AutoCompactMaxLiveBytes = 1;   // любая база — «большая»
+
+            using var m = DatabaseManager.Open(5, "big", path);
+            Assert.Equal(before.FreeBytes, FreeSpace(path).FreeBytes);
+            Assert.True(m.Storage!.NeedsCompaction);
+        }
+        finally
+        {
+            DatabaseManager.AutoCompactMaxLiveBytes = saved;
+            TempDatabase.Cleanup(path);
+        }
+    }
+
+    /// <summary>Места для сжатия нужно еще два объема живых данных (копия во временном файле и
+    /// журнал): маленькой базе хватает, заведомо огромной — нет, с объяснением для человека.</summary>
+    [Fact]
+    public void Compaction_room_check()
+    {
+        var path = TempDatabase.NewTempPath();
+        Assert.Null(DatabaseManager.CompactRoomProblem(path, 1024 * 1024));
+        var problem = DatabaseManager.CompactRoomProblem(path, long.MaxValue / 4);
+        Assert.NotNull(problem);
+        Assert.Contains("свободного места", problem);
     }
 
     /// <summary>Общая база (сетевой профиль) при монтировании НЕ сжимается, как бы раздута ни

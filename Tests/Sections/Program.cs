@@ -25,6 +25,11 @@
 //   --only calops — операции календаря на базах 10 млн и wide1000: дублирование, удаление, перенос,
 //   растяжение, создание в «Неделе», «Дне», «Месяце», Диаграмме и «Журнале»; ожидание результата,
 //   паузы UI, полные перезагрузки вида, прокрутка и выделение после операции.
+//   --only tableops [--table ПУТЬ] [--set columns,filter,records] — операции таблицы на широкой базе
+//   (по умолчанию ~/TestData/wide10m.db): столбцы, список значений фильтра и поиск, записи, окна
+//   «Расположение» и «Отображение»; время до результата, паузы UI, память.
+//   --only sidebarops — раскладка строк боковой панели после сворачивания баз, подключения базы,
+//   переноса коллекции в группу и обратно, удаления коллекции.
 
 using System.Diagnostics;
 using System.Reflection;
@@ -237,6 +242,10 @@ var srcDir  = Path.Combine(dataDir, "src");
 var runDir  = Path.Combine(dataDir, "run");
 var bigPath  = Arg("--big")  ?? Path.Combine(FindRoot(), "Tests", "test_database.db");
 var widePath = Arg("--wide") ?? Path.Combine(home, "TestData", "wide1000.db");
+// --only tableops: база операций таблицы — подключается как есть, по пути (не копией).
+var tablePath = Arg("--table") ?? Path.Combine(home, "TestData", "wide10m.db");
+var tableName = Path.GetFileNameWithoutExtension(tablePath);
+if (only == "tableops" && !File.Exists(tablePath)) { Console.WriteLine($"Нет базы стенда: {tablePath}"); return 1; }
 foreach (var need in new[] { Path.Combine(srcDir, "main.db"), Path.Combine(srcDir, "second.db"), bigPath })
     if (!File.Exists(need)) { Console.WriteLine($"Нет базы стенда: {need}"); return 1; }
 if (dbSet == "full" && !File.Exists(widePath)) { Console.WriteLine($"Нет базы стенда: {widePath}"); return 1; }
@@ -299,6 +308,7 @@ if (dbSet != "main")
     registry.Add("test_database", bigPath);
 }
 if (dbSet == "full") registry.Add("wide1000", widePath);
+if (only == "tableops") registry.Add(tableName, tablePath);
 registry.Set("tasksLastFilter", "Stage:Выполнено");
 registry.Set("notificationsEnabled", "False");
 registry.Set("autoUpdate", "False");
@@ -443,10 +453,28 @@ async Task Scenario()
     if (only == "start") return;
     if (only == "frames") { await CalendarFrames(); return; }
     if (only == "calops") { await CalendarOps(); return; }
+    if (only == "tableops") { await TableOps(); return; }
+    if (only == "sidebarops") { await SidebarOps(); return; }
     if (only == "sidebars")
     {
+        // Дерево после старта: базы подключались в фоне, строки заглушек переносились на
+        // подключенные базы (SidebarRow.Rebind) — без повторного чтения дерева.
+        foreach (var name in new[] { "ConstructorSidebar", "CalendarSidebar" })
+        {
+            var sidebar = main.FindControl<Control>(name)!;
+            sidebar.IsVisible = true;
+            main.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            var faults = SidebarLayoutFaults(sidebar);
+            Console.WriteLine(faults.Count == 0 ? $"  {name} после старта: строки разложены по своим данным"
+                                                : $"  {name} после старта: НЕ ПРОШЛО: {string.Join("; ", faults)}");
+            sidebar.IsVisible = false;
+            main.UpdateLayout();
+        }
+
         // Цена первого показа боковых панелей разделов: перечитать дерево, показать, разложить.
-        foreach (var name in new[] { "CalendarSidebar", "TasksSidebar", "LibrarySidebar" })
+        // После каждого показа — разложены ли строки по своим данным (слот стрелки, отступ).
+        foreach (var name in new[] { "ConstructorSidebar", "CalendarSidebar", "TasksSidebar", "LibrarySidebar" })
         {
             var sidebar = main.FindControl<Control>(name)!;
             for (var pass = 1; pass <= 3; pass++)
@@ -462,6 +490,9 @@ async Task Scenario()
                 var show = ssw.Elapsed.TotalMilliseconds - refresh;
                 var rows = sidebar.GetVisualDescendants().OfType<ContentPresenter>().Count(c => c.Content is SmartBase.Controls.Components.SidebarRow);
                 Console.WriteLine($"  {name}, показ {pass}: перечитать {refresh:N0} мс, показать и разложить {show:N0} мс, строк {rows}");
+                var faults = SidebarLayoutFaults(sidebar);
+                Console.WriteLine(faults.Count == 0 ? "    строки разложены по своим данным"
+                                                    : $"    НЕ ПРОШЛО: {string.Join("; ", faults)}");
                 sidebar.IsVisible = false;
                 main.UpdateLayout();
                 Dispatcher.UIThread.RunJobs();
@@ -1195,6 +1226,434 @@ async Task CalendarOps()
     }
 }
 
+// Операции таблицы на широкой базе (--table, по умолчанию ~/TestData/wide10m.db: 10 млн записей ×
+// 1000 свойств) — так, как их запускает меню: по каждой время до результата и самая длинная пауза
+// UI-потока. Окна подтверждения стенд подтверждает, окна «Отображение» и «Расположение» закрывает
+// без изменений (засекая время до их показа). Итог нулевой: копия столбца и записи удаляются,
+// сдвиги возвращаются.
+async Task TableOps()
+{
+    var db      = workspace.Mounted.First(d => d.Name == tableName);
+    var repo    = db.Constructor;
+    var colId   = repo.GetAllCollections().First().Id!.Value;
+    var module  = main!.FindControl<Control>("ConstructorModule")!;
+    var table   = module.FindControl<SmartBase.Views.ConstructorDb.TableView>("TableViewCtrl")!;
+    var surface = table.FindControl<SmartBase.Views.ConstructorDb.DrawnGrid.GridPanel>("RecordsGrid")!.Surface;
+    var windows = new List<(string Type, double AtMs)>();
+    var opClock = Stopwatch.StartNew();
+    var summary = new List<(string Name, bool Ok, double Ms, double Stall)>();
+    // Что делать в окне «Отображение записей» (null — закрыть без изменений).
+    Func<Window, Task>? displayScript = null;
+
+    Window.WindowOpenedEvent.AddClassHandler<Window>((w, _) =>
+    {
+        if (w is MainWindow) return;
+        windows.Add((w.GetType().Name, opClock.Elapsed.TotalMilliseconds));
+        Dispatcher.UIThread.Post(() => Answer(w), DispatcherPriority.Background);
+    });
+
+    ShowModule("constructor");
+    await Settle(1, 60);
+
+    bool Ready() => surface.Rows is { Count: > 1 } rows && !rows[0].IsLoading && !rows[0].IsAddRow;
+    await TOp("открытие коллекции", () => { OpenCollection(db, colId); return Task.CompletedTask; }, Ready);
+
+    var text      = repo.GetFields(colId).First(f => f.Name == "Текст").Id!.Value;
+    var listField = repo.GetFields(colId).First(f => f.Name == "Список").Id!.Value;
+    var idsBefore = repo.GetFields(colId).Select(f => f.Id!.Value).ToHashSet();
+    int copyId    = 0;
+    // --set columns,filter,records — какие группы операций (по умолчанию все).
+    var opSets = Arg("--set")?.Split(',');
+    bool Set(string name) => opSets is null || opSets.Contains(name);
+
+    // ── Уборка: копии «Текст (копия)…», оставшиеся от прерванных прогонов, — удалением столбца ──
+    if (Set("cleanup"))
+        foreach (var leftover in repo.GetFields(colId).Where(f => f.Name.StartsWith("Текст (копия)")).ToList())
+        {
+            var n = await ValuesAsync(leftover.Id!.Value);
+            await TOp($"удаление столбца «{leftover.Name}» ({n:N0} значений)",
+                      () => (Task)Call(module, "DeletePropertiesWithConfirm", new List<int> { leftover.Id!.Value })!,
+                      () => repo.GetFields(colId).All(f => f.Id != leftover.Id));
+            var wal = new FileInfo(db.Path + "-wal");
+            Console.WriteLine($"    журнал после удаления: {(wal.Exists ? wal.Length / 1048576 : 0):N0} МБ");
+        }
+
+    // ── Столбцы ──
+    if (Set("columns"))
+    await TOp("дублирование столбца «Текст»",
+              () => (Task)Call(module, "DuplicateProperties", new List<int> { text })!,
+              () => (copyId = repo.GetFields(colId).Select(f => f.Id!.Value).Where(id => !idsBefore.Contains(id))
+                                  .DefaultIfEmpty(0).Max()) > 0);
+    if (Set("columns") && copyId > 0)
+    {
+        var key = copyId.ToString();
+        var n   = await ValuesAsync(copyId);
+        // Столбец длиннее предела выделения (100 000 строк) программа не копирует, не чистит и не
+        // заполняет вставкой — говорит об этом уведомлением; стенд ждет именно отказа: быстро и
+        // без правок в базе.
+        var rowsTotal = surface.Rows!.Count - 1;
+        var refused   = rowsTotal > 100_000;
+        var why       = refused ? $" — {rowsTotal:N0} строк, ждем отказа по пределу выделения" : "";
+        await TOp($"копирование значений столбца ({n:N0}){why}",
+                  () => { Call(table, "SelectWholeColumn", key); return table.CopyCellsAsync(); }, () => true);
+        await TOpAsync($"очистка значений столбца{why}",
+                  () => { Call(table, "SelectWholeColumn", key); return table.ClearCellsAsync("Очистка"); },
+                  async () => refused ? await ValuesAsync(copyId) == n : await ValuesAsync(copyId) == 0);
+        await TOpAsync($"вставка значений в столбец{why}",
+                  () => { Call(table, "SelectWholeColumn", key); return table.PasteCellsAsync(); },
+                  async () => refused ? await ValuesAsync(copyId) == n : await ValuesAsync(copyId) > 0);
+        await TOp("сдвиг столбца вправо", () => { Call(table, "MoveColumn", key, false); return Task.CompletedTask; }, () => true);
+        await TOp("сдвиг столбца влево",  () => { Call(table, "MoveColumn", key, true);  return Task.CompletedTask; }, () => true);
+        await TOp("окно «Отображение» столбцов", () => (Task)Call(module, "OpenDisplayDialog")!, () => true);
+        await TOp("удаление копии столбца",
+                  () => (Task)Call(module, "DeletePropertiesWithConfirm", new List<int> { copyId })!,
+                  () => repo.GetFields(colId).All(f => f.Id != copyId));
+    }
+
+    // ── Фильтр: столбец, где все значения разные, столбец из четырех значений и «Название»;
+    //    поиск по базе — запросом, как его делает окно ──
+    if (Set("filter"))
+    {
+        foreach (var (key, label) in new[] { (text.ToString(), "Текст"), (listField.ToString(), "Список"), ("__title__", "Название") })
+        {
+            var def   = ((List<SmartBase.ViewModels.ConstructorDb.TableColumnDef>)Get(table, "_colDefs")!).First(d => d.Key == key);
+            var ready = OpsNamed("список значений фильтра");
+            await TOp($"список значений фильтра «{label}»",
+                      () => { Call(table, "ShowFilterFlyout", table, def); return Task.CompletedTask; },
+                      () => OpsNamed("список значений фильтра") > ready);
+            table.LastOpenedFilter?.Hide();
+        }
+        foreach (var (key, q) in new[] { (text.ToString(), "записи 777"), (text.ToString(), "нет такого"), ("__title__", "запись 4242") })
+        {
+            SmartBase.Database.Repositories.ConstructorRepository.ColumnValueList? found = null;
+            await TOp($"поиск значений фильтра «{q}»",
+                      async () => found = await repo.GetColumnValueListAsync(colId, key, search: q), () => true);
+            Console.WriteLine($"    найдено {found?.Values.Count ?? 0}{(found?.More == true ? "+" : "")}");
+        }
+    }
+
+    // ── Записи ──
+    if (!Set("records")) { Summary(); return; }
+    var first  = surface.Rows![0].RecordId;
+    var maxId  = MaxRecordId(db);
+    int dupId  = 0;
+    await TOp("дублирование записи",
+              () => (Task)Call(module, "DuplicateRecords", new List<int> { first })!,
+              () => (dupId = MaxRecordId(db)) > maxId);
+    if (dupId > maxId)
+    {
+        await TOp("сдвиг записи вниз",  () => { Call(table, "MoveRecord", dupId, false); return Task.CompletedTask; }, () => true);
+        await TOp("сдвиг записи вверх", () => { Call(table, "MoveRecord", dupId, true);  return Task.CompletedTask; }, () => true);
+        await TOp("окно «Расположение» записи", () => (Task)Call(module, "RelocateRecords", new List<int> { dupId })!, () => true);
+        await TOp("удаление записи",
+                  () => (Task)Call(module, "DeleteRecordsWithConfirm", new List<int> { dupId })!,
+                  () => !RecordExists(db, dupId));
+    }
+    await TOp("окно «Отображение» записей", () => (Task)Call(module, "OpenRecordDisplayDialog")!, () => true, capSec: 600);
+
+    // Работа в окне: снять галочку у первой записи, переставить ее вниз, найти запись поиском по
+    // базе, сохранить — и проверить базу; затем вернуть как было тем же окном.
+    {
+        var rec0 = surface.Rows![0].RecordId;
+        var rec1 = surface.Rows![1].RecordId;
+        double searchMs = 0;
+        displayScript = async w =>
+        {
+            await Task.Delay(300);
+            var row0 = Call(w, "RowAt", 0)!;
+            row0.GetType().GetProperty("Visible")!.SetValue(row0, false);
+            w.FindControl<ListBox>("ListHost")!.SelectedItem = row0;
+            Call(w, "MoveSelected", 1);
+            var ssw = Stopwatch.StartNew();
+            w.FindControl<TextBox>("SearchBox")!.Text = "Запись 4242";
+            while (Get(w, "_found") is null && ssw.Elapsed.TotalSeconds < 120) await Task.Delay(20);
+            searchMs = ssw.Elapsed.TotalMilliseconds;
+            var found = ((int[]?)Get(w, "_found"))?.Length ?? -1;
+            Console.WriteLine($"    поиск «Запись 4242» в окне: {searchMs:N0} мс, найдено {found}");
+            w.FindControl<TextBox>("SearchBox")!.Text = "";
+            w.FindControl<Button>("SaveBtn")!.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        };
+        await TOp("«Отображение» записей: скрыть, переставить, найти, сохранить",
+                  () => (Task)Call(module, "OpenRecordDisplayDialog")!,
+                  () => true, capSec: 600);
+        var hidden = Query(db, $"SELECT Visible FROM record_display WHERE RecordId = {rec0}");
+        var p0     = Convert.ToInt64(Query(db, $"SELECT Position FROM db_records WHERE Id = {rec0}")[0][0]);
+        var p1     = Convert.ToInt64(Query(db, $"SELECT Position FROM db_records WHERE Id = {rec1}")[0][0]);
+        Console.WriteLine(hidden.Count == 1 && Convert.ToInt64(hidden[0][0]) == 0 && p0 > p1
+            ? "    в базе: первая запись скрыта и стоит после второй"
+            : $"    НЕ ПРОШЛО: в базе видимость {(hidden.Count == 0 ? "по умолчанию" : hidden[0][0])}, позиции {p0} и {p1}");
+
+        displayScript = async w =>
+        {
+            await Task.Delay(300);
+            var row = Call(w, "RowAt", 1)!;
+            row.GetType().GetProperty("Visible")!.SetValue(row, true);
+            w.FindControl<ListBox>("ListHost")!.SelectedItem = row;
+            Call(w, "MoveSelected", -1);
+            w.FindControl<Button>("SaveBtn")!.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        };
+        await TOp("«Отображение» записей: вернуть как было",
+                  () => (Task)Call(module, "OpenRecordDisplayDialog")!, () => true, capSec: 600);
+        displayScript = null;
+        var back = Query(db, $"SELECT Visible FROM record_display WHERE RecordId = {rec0}").Count == 0
+                   && Convert.ToInt64(Query(db, $"SELECT Position FROM db_records WHERE Id = {rec0}")[0][0])
+                    < Convert.ToInt64(Query(db, $"SELECT Position FROM db_records WHERE Id = {rec1}")[0][0]);
+        Console.WriteLine(back ? "    в базе: как было" : "    НЕ ПРОШЛО: не вернулось");
+    }
+    Summary();
+
+    void Summary()
+    {
+        Console.WriteLine();
+        Console.WriteLine($"Операции таблицы на «{tableName}»:");
+        foreach (var s in summary)
+            Console.WriteLine($"  {(s.Ok ? "  " : "НЕ")} {s.Ms,9:N0} мс  пауза UI {s.Stall,7:N0} мс  {s.Name}");
+    }
+
+    // Одна операция: запуск, ожидание конца операции и результата в базе, отчет.
+    Task TOp(string name, Func<Task> act, Func<bool> done, double capSec = 3600) =>
+        TOpAsync(name, act, () => Task.FromResult(done()), capSec);
+
+    // done — проверка итога; тяжелая (счет значений столбца на 10 млн — секунды) передается
+    // асинхронной и считается в фоне. Размер журнала тоже опрашивается фоном: стенд не должен сам
+    // держать UI-поток, паузы которого меряет. Время операции — до начала проверки, которая
+    // подтвердила итог (сама проверка в него не входит).
+    async Task TOpAsync(string name, Func<Task> act, Func<Task<bool>> done, double capSec = 3600)
+    {
+        Step($"таблица: {name}");
+        var stepName = probe.Step;
+        windows.Clear();
+        opClock.Restart();
+        Task task;
+        try { task = act(); }
+        catch (Exception ex) { task = Task.FromException(ex); }
+        long walMax = 0;
+        using var walStop = new CancellationTokenSource();
+        var walPoll = Task.Run(async () =>
+        {
+            while (!walStop.IsCancellationRequested)
+            {
+                var walFile = new FileInfo(db.Path + "-wal");
+                if (walFile.Exists) Interlocked.Exchange(ref walMax, Math.Max(Interlocked.Read(ref walMax), walFile.Length));
+                try { await Task.Delay(20, walStop.Token); } catch (OperationCanceledException) { }
+            }
+        });
+        var ok = false;
+        var ms = 0.0;
+        while (opClock.Elapsed.TotalSeconds < capSec)
+        {
+            if (task.IsCompleted)
+            {
+                var at = opClock.Elapsed.TotalMilliseconds;
+                if (ok = task.IsCompletedSuccessfully && await done()) { ms = at; break; }
+                if (task.IsFaulted) break;
+            }
+            await Task.Delay(20);
+        }
+        if (!ok) ms = opClock.Elapsed.TotalMilliseconds;
+        walStop.Cancel();
+        await walPoll;
+        if (task.IsFaulted) Console.WriteLine($"    исключение: {task.Exception!.GetBaseException().GetType().Name}: {task.Exception.GetBaseException().Message}");
+        await Settle(0.5, 60);
+        var stall = probe.Stalls.ToList().Where(s => s.Step == stepName).Select(s => s.Ms).DefaultIfEmpty(0).Max();
+        var shown = windows.Count == 0 ? "" : "; окна: " + string.Join(", ", windows.Select(x => $"{x.Type} на {x.AtMs:N0} мс"));
+        Console.WriteLine($"  {name}: {(ok ? "готово" : "НЕ ВЫШЛО")} за {ms:N0} мс; пауза UI макс {stall:N0} мс{shown}; " +
+                          $"память {GC.GetTotalMemory(false) / 1048576:N0} МБ управляемой, {Environment.WorkingSet / 1048576:N0} МБ процесса " +
+                          $"({Process.GetCurrentProcess().PrivateMemorySize64 / 1048576:N0} МБ частной — без страниц файла базы); " +
+                          $"журнал базы до {walMax / 1048576:N0} МБ");
+        summary.Add((name, ok, ms, stall));
+    }
+
+    // Окна: подтверждение — «Да», прогресс закроется сам, остальные — закрыть без изменений,
+    // дав им разложиться (время их построения — в паузах UI).
+    void Answer(Window w)
+    {
+        switch (w)
+        {
+            case SmartBase.Controls.Dialogs.ConfirmDialog:
+                w.FindControl<Button>("ConfirmBtn")!.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+                break;
+            case SmartBase.Controls.Dialogs.ProgressDialog:
+                break;
+            case SmartBase.Controls.Dialogs.RecordDisplayDialog when displayScript is { } script:
+                _ = script(w);
+                break;
+            default:
+                _ = Task.Delay(300).ContinueWith(_ => Dispatcher.UIThread.Post(w.Close));
+                break;
+        }
+    }
+
+    int OpsNamed(string name) { lock (diagLog.Ops) return diagLog.Ops.Count(o => o.Name == name); }
+    // Счет значений столбца — в фоне: на 10 млн записей это секунды чтения индекса.
+    Task<long> ValuesAsync(int fid) =>
+        Task.Run(() => Convert.ToInt64(Query(db, $"SELECT COUNT(*) FROM db_field_values WHERE FieldId = {fid}")[0][0]));
+    int MaxRecordId(DatabaseManager d) => Convert.ToInt32(Query(d, "SELECT MAX(Id) FROM db_records")[0][0]);
+    bool RecordExists(DatabaseManager d, int id) => Query(d, $"SELECT 1 FROM db_records WHERE Id = {id}").Count > 0;
+    List<object[]> Query(DatabaseManager d, string sql)
+    {
+        using var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={d.Path};Mode=ReadOnly");
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+        using var rd = cmd.ExecuteReader();
+        var rows = new List<object[]>();
+        while (rd.Read()) { var r = new object[rd.FieldCount]; rd.GetValues(r); rows.Add(r); }
+        return rows;
+    }
+}
+
+// Боковая панель конструктора: после каждого действия строки разложены по своим данным (слот
+// стрелки, отступ уровня). Действия: свернуть и развернуть каждую базу и все разом, подключить базу
+// в работающую программу (заглушка «в очереди…», затем база), перенести коллекцию в группу и обратно
+// окном «Расположение», удалить коллекцию; переходы между разделами.
+async Task SidebarOps()
+{
+    ShowModule("constructor");
+    await Settle(1, 60);
+    var sidebar   = main!.FindControl<Control>("ConstructorSidebar")!;
+    var faults    = 0;
+    int? targetGroup = null;   // куда окно «Расположение» переносит коллекцию (null — корень базы)
+    var collapsed = (HashSet<int>)Get(sidebar, "_collapsedDbRoots")!;
+
+    Window.WindowOpenedEvent.AddClassHandler<Window>((w, _) =>
+    {
+        if (w is MainWindow) return;
+        Dispatcher.UIThread.Post(() => AnswerSidebar(w), DispatcherPriority.Background);
+    });
+
+    Check("после старта");
+    foreach (var n in Roots())
+    {
+        n.IsExpanded = false; collapsed.Add(n.DbId); Call(sidebar, "RebuildRows");
+        Check($"свернута «{n.Name}»");
+    }
+    foreach (var n in Roots())
+    {
+        n.IsExpanded = true; collapsed.Remove(n.DbId); Call(sidebar, "RebuildRows");
+        Check($"развернута «{n.Name}»");
+    }
+    Call(sidebar, "ToggleExpandAll", false); Check("свернуть все");
+    Call(sidebar, "ToggleExpandAll", true);  Check("развернуть все");
+
+    // То же, пока панель скрыта (открыт другой раздел): строки переносятся на новые узлы без
+    // раскладки, и после показа должны разложиться заново.
+    foreach (var n in Roots())
+    {
+        ShowModule("calendar"); await Settle(0.5, 30);
+        n.IsExpanded = false; collapsed.Add(n.DbId); Call(sidebar, "RebuildRows");
+        ShowModule("constructor"); await Settle(0.5, 30);
+        Check($"свернута «{n.Name}» при скрытой панели");
+        ShowModule("calendar"); await Settle(0.5, 30);
+        n.IsExpanded = true; collapsed.Remove(n.DbId); Call(sidebar, "RebuildRows");
+        ShowModule("constructor"); await Settle(0.5, 30);
+        Check($"развернута «{n.Name}» при скрытой панели");
+    }
+
+    // Подключение базы в работающую программу — как «Подключить базу данных» в настройках.
+    var extraPath = Path.Combine(runDir, "extra.db");
+    foreach (var suffix in new[] { "", "-wal", "-shm" })
+        if (File.Exists(extraPath + suffix)) File.Delete(extraPath + suffix);
+    File.Copy(Path.Combine(srcDir, "main.db"), extraPath);
+    var entry = registry.Add("Подключенная", extraPath);
+    Call(Get(main, "_mountQueue")!, "Enqueue", entry);
+    Call(main, "SyncMountedToUi");
+    Check("подключение: заглушка");
+    await Settle(1, 120);
+    Check("подключение: база подключена");
+    var first = Roots().First();
+    first.IsExpanded = false; collapsed.Add(first.DbId); Call(sidebar, "RebuildRows");
+    Check($"после подключения свернута «{first.Name}»");
+    first.IsExpanded = true; collapsed.Remove(first.DbId); Call(sidebar, "RebuildRows");
+    Check($"после подключения развернута «{first.Name}»");
+
+    // Переходы между разделами.
+    ShowModule("calendar"); await Settle(1, 30);
+    ShowModule("constructor"); await Settle(1, 30);
+    Check("после перехода в календарь и обратно");
+
+    // Перенос коллекции в группу и обратно — окном «Расположение», как из меню узла.
+    var extra = workspace.Mounted.First(d => d.Name == "Подключенная");
+    var repo  = extra.Constructor;
+    var group = repo.AddGroup(new SmartBase.Core.Models.DbGroup { Name = "Стенд: группа" });
+    var coll  = repo.GetAllCollections().First(c => c.GroupId is null);
+    Call(sidebar, "Refresh");
+    await Settle(0.5, 30);
+    targetGroup = group.Id;
+    await SOp($"перенос «{coll.Name}» в группу",
+              () => Call(sidebar, "RelocateSelectionOrNode", Node(extra.DbId, coll.Id!.Value)),
+              () => repo.GetAllCollections().First(c => c.Id == coll.Id).GroupId == group.Id);
+    targetGroup = null;
+    await SOp($"перенос «{coll.Name}» обратно",
+              () => Call(sidebar, "RelocateSelectionOrNode", Node(extra.DbId, coll.Id!.Value)),
+              () => repo.GetAllCollections().First(c => c.Id == coll.Id).GroupId is null);
+
+    // Удаление коллекции (пустой, созданной стендом).
+    var temp = repo.AddCollection(new SmartBase.Core.Models.DbCollection { Name = "Стенд: удаляемая" });
+    Call(sidebar, "Refresh");
+    await Settle(0.5, 30);
+    await SOp("удаление коллекции", () => Call(sidebar, "DeleteSelectionOrNode", Node(extra.DbId, temp.Id!.Value)),
+              () => repo.GetAllCollections().All(c => c.Id != temp.Id));
+
+    Console.WriteLine(faults == 0 ? "Боковая панель: все проверки прошли" : $"Боковая панель: НЕ ПРОШЛО {faults}");
+
+    List<SmartBase.Controls.Components.SidebarNode> Roots() =>
+        ((System.Collections.IEnumerable)Get(sidebar, "_roots")!).Cast<SmartBase.Controls.Components.SidebarNode>()
+            .Where(n => n.IsDatabase && !n.IsPending).ToList();
+
+    SmartBase.Controls.Components.SidebarNode Node(int dbId, int id)
+    {
+        IEnumerable<SmartBase.Controls.Components.SidebarNode> Walk(IEnumerable<SmartBase.Controls.Components.SidebarNode> ns) =>
+            ns.SelectMany(n => new[] { n }.Concat(Walk(n.Children)));
+        return Walk(((System.Collections.IEnumerable)Get(sidebar, "_roots")!).Cast<SmartBase.Controls.Components.SidebarNode>())
+            .First(n => n.DbId == dbId && n.Id == id && !n.IsGroup && !n.IsDatabase);
+    }
+
+    void Check(string when)
+    {
+        main.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        main.UpdateLayout();
+        var f = SidebarLayoutFaults(sidebar);
+        faults += f.Count;
+        Console.WriteLine(f.Count == 0 ? $"  {when}: строки разложены по своим данным" : $"  {when}: НЕ ПРОШЛО: {string.Join("; ", f)}");
+    }
+
+    async Task SOp(string name, Action act, Func<bool> done)
+    {
+        Step($"боковая панель: {name}");
+        var stepName = probe.Step;
+        var sw = Stopwatch.StartNew();
+        act();
+        while (!done() && sw.Elapsed.TotalSeconds < 30) await Task.Delay(20);
+        var ms = sw.Elapsed.TotalMilliseconds;
+        var ok = done();
+        await Settle(0.5, 30);
+        var stall = probe.Stalls.ToList().Where(s => s.Step == stepName).Select(s => s.Ms).DefaultIfEmpty(0).Max();
+        Console.WriteLine($"  {name}: {(ok ? "готово" : "НЕ ВЫШЛО")} за {ms:N0} мс; пауза UI макс {stall:N0} мс");
+        if (!ok) faults++;
+        Check($"после «{name}»");
+    }
+
+    void AnswerSidebar(Window w)
+    {
+        if (w is SmartBase.Controls.Dialogs.ConfirmDialog)
+        {
+            w.FindControl<Button>("ConfirmBtn")!.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            return;
+        }
+        if (w is SmartBase.Controls.Dialogs.LocationDialog)
+        {
+            var groups = (List<(string Label, int? Id)>)Get(w, "_groups")!;
+            var index  = groups.FindIndex(g => g.Id == targetGroup);
+            w.FindControl<ComboBox>("LocationCombo")!.SelectedIndex = Math.Max(0, index);
+            w.FindControl<Button>("ConfirmBtn")!.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            return;
+        }
+        Console.WriteLine($"    [окно без ответа стенда: {w.GetType().Name} «{w.Title}»]");
+    }
+}
+
 // Ширины всех блоков вида: ширина до округления и итоговая (правило округления рисованной колонки).
 void DumpAll(Control view)
 {
@@ -1272,7 +1731,17 @@ async Task Settle(double quietSec, double capSec)
         if (busy) quietSince = sw.Elapsed;
         else if ((sw.Elapsed - quietSince).TotalSeconds >= quietSec) return;
     }
-    Console.WriteLine($"  … не затихло за {capSec} с: идут «{Diag.ActiveOperations}», в очереди баз {MountsPending()}");
+    Console.WriteLine($"  … не затихло за {capSec} с: идут «{Diag.ActiveOperations}», в очереди баз {MountsPending()}{MountsText()}");
+}
+
+// Что с базами в очереди: «подключается…», «недоступна (причина)».
+string MountsText()
+{
+    if (main is null) return "";
+    var queue = Get(main, "_mountQueue");
+    if (queue?.GetType().GetMethod("Pending")?.Invoke(queue, null) is not System.Collections.IEnumerable items) return "";
+    var texts = items.Cast<object>().Select(i => $"{i.GetType().GetProperty("Name")?.GetValue(i)}: {i.GetType().GetProperty("Text")?.GetValue(i)}").ToList();
+    return texts.Count == 0 ? "" : " (" + string.Join("; ", texts) + ")";
 }
 
 int MountsPending()
@@ -1398,6 +1867,30 @@ void Report()
 
 // Вид календаря по имени свойства контроллера (виды строятся при первом обращении, в разметке
 // их нет — FindControl их не найдет).
+// Строки боковой панели, разложенные не по своим данным: у отрисованной строки ширина слота
+// стрелки и отступ уровня — ChevronSlot и IndentMargin ее SidebarRow, слот стрелки стоит в начале
+// строки, значок — сразу за слотами стрелки и галочки (его поле слева — 2).
+static List<string> SidebarLayoutFaults(Control sidebar)
+{
+    var faults = new List<string>();
+    foreach (var cp in sidebar.GetVisualDescendants().OfType<ContentPresenter>())
+    {
+        if (cp.Content is not SmartBase.Controls.Components.SidebarRow row) continue;
+        var grid    = cp.GetVisualDescendants().OfType<Border>().FirstOrDefault(b => b.Name == "RowRoot")?.Child as Grid;
+        var chevron = grid?.Children.OfType<Border>().FirstOrDefault(b => Grid.GetColumn(b) == 0);
+        if (grid is null || chevron is null) { faults.Add($"{row.Name}: нет разметки строки"); continue; }
+        var icon = grid.Children.OfType<Viewbox>().FirstOrDefault(v => Grid.GetColumn(v) == 2);
+        var iconX = icon is null ? double.NaN : icon.Bounds.X - 2;
+        if (Math.Abs(chevron.Bounds.Width - row.ChevronSlot) > 0.5 || Math.Abs(chevron.Bounds.X) > 0.5
+            || Math.Abs(grid.Margin.Left - row.IndentMargin.Left) > 0.5
+            || !(Math.Abs(iconX - row.ChevronSlot - row.CheckboxSlot) <= 0.5))
+            faults.Add($"«{row.Name}»: слот стрелки {chevron.Bounds.Width:0} в {chevron.Bounds.X:0} (нужно {row.ChevronSlot:0} в 0), " +
+                       $"значок в {iconX:0} (нужно {row.ChevronSlot + row.CheckboxSlot:0}), " +
+                       $"отступ {grid.Margin.Left:0} (нужно {row.IndentMargin.Left:0})");
+    }
+    return faults;
+}
+
 static T CalView<T>(Control calendar, string name) where T : Control =>
     (T)calendar.GetType().GetProperty(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(calendar)!;
 

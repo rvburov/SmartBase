@@ -125,10 +125,16 @@ public sealed partial class DatabaseManager : IDisposable
             // через сеть под эксклюзивным замком, и первый смонтировавший заставил бы остальных
             // двадцать человек минуты смотреть на «database is locked». Для нее — ручное
             // «Сжать файл» администратора (CompactFile) и резервная копия (BackupTo).
+            // Большой файл сам не сжимается (AutoCompactMaxLiveBytes): сжатие переписывает
+            // живые данные целиком, и база все это время недоступна.
             if (!IsShared)
                 CompactWithProgress(Context, path, name, stage,
                                     minFreeBytes: CompactMinFreeBytes, minFreeRatio: CompactMinFreeRatio,
-                                    alwaysAboveBytes: CompactAlwaysAboveBytes);
+                                    alwaysAboveBytes: CompactAlwaysAboveBytes, maxLiveBytes: AutoCompactMaxLiveBytes);
+
+            // Автоперенос журнала на подключениях выключен — журнал открытой базы переносит в
+            // файл фоновый WalCheckpointer (см. AppDbContext.ApplyConnectionPragmas).
+            WalCheckpointer.Watch(path);
         }
 
         // Пользователи/права этой базы: регистрируем текущего пользователя (первый
@@ -263,6 +269,8 @@ public sealed partial class DatabaseManager : IDisposable
     {
         WaitMaintenance();
         Context.Dispose();
+        // Фоновый перенос журнала (WalCheckpointer) не должен держать файл закрытой базы.
+        if (Provider == "sqlite") WalCheckpointer.Unwatch(Path);
         // Закрыли базу — закрываем и пул подключений к ее файлу. Иначе простаивающие
         // соединения пула держат файл открытым (в WAL — с общим замком: другой процесс не
         // сможет перевести журнал в DELETE, стенд --check-pragmas ловил здесь «database is
@@ -605,7 +613,8 @@ public sealed partial class DatabaseManager : IDisposable
         // повторится только сжатие. Порог только абсолютный (minFreeRatio: 0).
         if (NeedsCompact(db))
         {
-            CompactWithProgress(db, path, name, stage, minFreeBytes: 16L * 1024 * 1024, minFreeRatio: 0);
+            CompactWithProgress(db, path, name, stage, minFreeBytes: 16L * 1024 * 1024, minFreeRatio: 0,
+                                maxLiveBytes: AutoCompactMaxLiveBytes);
             ClearNeedsCompact(db);
         }
 
@@ -620,6 +629,42 @@ public sealed partial class DatabaseManager : IDisposable
     public const long   CompactMinFreeBytes     = 64L * 1024 * 1024;
     public const double CompactMinFreeRatio     = 0.25;
     public const long   CompactAlwaysAboveBytes = 512L * 1024 * 1024;
+
+    /// <summary>Сколько живых данных может быть у базы, которая сжимается сама при подключении.
+    /// Сжатие переписывает живые данные целиком, база все это время недоступна: 4 ГБ — около
+    /// минуты с прогрессом. Больше — только подсказка «стоит сжать» и ручное «Сжать файл». Замер:
+    /// база 31 ГБ после удаления столбца на 10 млн записей (свободно 0,7 ГБ, 2 %) сжималась при
+    /// подключении больше 10 минут — ради двух процентов файла. Свойство, а не константа, —
+    /// для тестов.</summary>
+    public static long AutoCompactMaxLiveBytes { get; set; } = 4L * 1024 * 1024 * 1024;
+
+    /// <summary>Хватит ли места на диске для сжатия: VACUUM строит копию живых данных во
+    /// временном файле и пишет ее же в журнал базы — на пике на диске нужно еще два объема живых
+    /// данных. null — хватит (или места не узнать: у сетевого пути проверяется только диск
+    /// временных файлов); иначе — объяснение для человека.</summary>
+    public static string? CompactRoomProblem(string path, long liveBytes)
+    {
+        var need     = (long)(liveBytes * 1.1);
+        var tempDir  = System.IO.Path.GetTempPath();
+        var tempRoot = System.IO.Path.GetPathRoot(tempDir);
+        var fileRoot = NetworkPath.IsNetwork(path) ? null : System.IO.Path.GetPathRoot(System.IO.Path.GetFullPath(path));
+        var same     = fileRoot is not null && string.Equals(fileRoot, tempRoot, StringComparison.OrdinalIgnoreCase);
+
+        string? Short(string? root, long bytes)
+        {
+            if (root is null || AvailableBytes(root) is not { } free || free >= bytes) return null;
+            return $"для сжатия нужно около {Diag.Size(bytes)} свободного места на диске {root.TrimEnd('\\', '/')}, " +
+                   $"а свободно {Diag.Size(free)}";
+        }
+        return same ? Short(fileRoot, 2 * need)
+                    : Short(tempRoot, need) ?? Short(fileRoot, need);
+    }
+
+    private static long? AvailableBytes(string root)
+    {
+        try { return new DriveInfo(root).AvailableFreeSpace; }
+        catch (Exception ex) when (ex is IOException or ArgumentException or UnauthorizedAccessException) { return null; }
+    }
 
     /// <summary>Файл стоит сжать: свободного места больше порога (см. константы выше).</summary>
     public static bool NeedsCompaction(long freeBytes, double freeRatio) =>
@@ -665,13 +710,32 @@ public sealed partial class DatabaseManager : IDisposable
     // не важна (гигабайт мертвых страниц в 5-гигабайтном файле — это все равно гигабайт).
     // VACUUM переписывает живые данные целиком — на гигабайтных базах это минуты, и без этапа
     // с процентами выглядело зависанием (наблюдалось вживую на базе 5,8 ГБ).
+    // maxLiveBytes — больше скольких живых данных не сжимать (при подключении —
+    // AutoCompactMaxLiveBytes); тогда и при нехватке места на диске — одна запись в журнал за сеанс.
     private static void CompactWithProgress(AppDbContext db, string path, string name,
         Action<string, double?>? stage, long minFreeBytes, double minFreeRatio,
-        long alwaysAboveBytes = long.MaxValue)
+        long alwaysAboveBytes = long.MaxValue, long maxLiveBytes = long.MaxValue)
     {
         var (freeBytes, freeRatio) = SqliteMaintenance.ReadFreeSpace(db);
         if (freeBytes <= minFreeBytes) return;
         if (freeRatio < minFreeRatio && freeBytes < alwaysAboveBytes) return;
+
+        var liveBytes = Math.Max(0, new FileInfo(path).Length - freeBytes);
+        if (liveBytes > maxLiveBytes)
+        {
+            if (Diag.Once("compact-big:" + path))
+                Log.Information("База «{Name:l}»: свободно {Free:l} ({Ratio:P0}), но сама не сжимается — живых данных {Live:l}, " +
+                                "сжатие переписало бы их целиком, а база все это время была бы недоступна. " +
+                                "Сжать вручную: «Управление базой данных» → «Сжать файл» ({Path:l})",
+                                name, Diag.Size(freeBytes), freeRatio, Diag.Size(liveBytes), path);
+            return;
+        }
+        if (CompactRoomProblem(path, liveBytes) is { } problem)
+        {
+            if (Diag.Once("compact-room:" + path))
+                Log.Warning("База «{Name:l}» не сжата при подключении: {Problem:l} ({Path:l})", name, problem, path);
+            return;
+        }
 
         Vacuum(db, path, name, stage);
     }
@@ -691,10 +755,16 @@ public sealed partial class DatabaseManager : IDisposable
         var before    = new FileInfo(path).Length;
         var watch     = Stopwatch.StartNew();
         var liveBytes = Math.Max(1, before - SqliteMaintenance.ReadFreeSpace(db).FreeBytes);
+        if (CompactRoomProblem(path, liveBytes) is { } problem) throw new IOException(problem);
         AppDbContext.ResetPool(path);
         db.Database.OpenConnection();
         try
         {
+            // Копию живых данных VACUUM строит там же, где временные таблицы соединения, а у нас
+            // они в памяти (temp_store=MEMORY на каждом подключении): сжатие базы в 31 ГБ держало
+            // бы в памяти всю ее копию — процесс рос на гигабайты. Сжатию — копия на диске.
+            // Следующее открытие соединения из пула вернет прагмы подключения.
+            db.Database.ExecuteSqlRaw("PRAGMA temp_store=FILE;");
             using (SqliteStageProgress.ForVacuum(db, path, name, liveBytes, stage))
                 db.Database.ExecuteSqlRaw("VACUUM;");
             // Усечение файла в WAL-режиме делает чекпоинт, а автоматический после коммита

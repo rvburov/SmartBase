@@ -327,14 +327,34 @@ public partial class SidebarTree : UserControl
         // Первая строка стоит на месте шапки колонок таблицы (высота ячейки), остальные — на месте
         // строк данных (высота ячейки + линия сетки). См. SidebarRow.RowHeight.
         var i = 0;
-        for (; i < fresh.Count && i < _rows.Count; i++) _rows[i].Rebind(fresh[i], isFirstRow: i == 0);
+        HashSet<SidebarRow>? relayout = null;
+        for (; i < fresh.Count && i < _rows.Count; i++)
+            if (_rows[i].Rebind(fresh[i], isFirstRow: i == 0)) (relayout ??= []).Add(_rows[i]);
         while (_rows.Count > fresh.Count) _rows.RemoveAt(_rows.Count - 1);
         for (; i < fresh.Count; i++)
         {
             fresh[i].IsFirstRow = i == 0;
             _rows.Add(fresh[i]);
         }
+        if (relayout is not null) RelayoutRows(relayout);
         MeasureRowWidth();
+    }
+
+    // Строки, у которых при переносе поменялась разметка, раскладываются заново целиком. Одной
+    // привязки мало: у базы, сменившей заглушку «в очереди…», меняется только ширина слота стрелки,
+    // и сетка строки свою колонку не пересчитывала — стрелка и значок рисовались на месте нулевого
+    // слота, съехав влево.
+    private void RelayoutRows(HashSet<SidebarRow> rows)
+    {
+        foreach (var container in RowsHost.GetRealizedContainers())
+            if (container.DataContext is SidebarRow row && rows.Contains(row))
+                InvalidateMeasureDeep(container);
+
+        static void InvalidateMeasureDeep(Visual v)
+        {
+            if (v is Avalonia.Layout.Layoutable l) l.InvalidateMeasure();
+            foreach (var child in v.GetVisualChildren()) InvalidateMeasureDeep(child);
+        }
     }
 
     // Мерить каждую строку нельзя — узлов бывают тысячи. Сначала отбираем кандидатов дешево
@@ -2960,9 +2980,14 @@ public partial class SidebarRow : ObservableObject
 
     /// <summary>Перенести строку на узел новой сборки дерева (см. SidebarTree.RebuildRows):
     /// строка остается в своем контейнере, и шаблон не строится заново — меняются только
-    /// значения привязок. Наведение остается: указатель стоит над той же строкой списка.</summary>
-    public void Rebind(SidebarRow fresh, bool isFirstRow)
+    /// значения привязок. Наведение остается: указатель стоит над той же строкой списка.
+    /// true — поменялась разметка строки (уровень, слоты стрелки и галочки, строка статуса):
+    /// ее надо разложить заново (см. SidebarTree.RelayoutRows).</summary>
+    public bool Rebind(SidebarRow fresh, bool isFirstRow)
     {
+        var layoutChanged = Depth != fresh.Depth || Expandable != fresh.Expandable
+                            || Checkable != fresh.Checkable || HasStatus != fresh.HasStatus
+                            || _isFirstRow != isFirstRow;
         Node          = fresh.Node;
         Depth         = fresh.Depth;
         Mode          = fresh.Mode;
@@ -2972,6 +2997,7 @@ public partial class SidebarRow : ObservableObject
         StatusFailed  = fresh.StatusFailed;
         _isFirstRow   = isFirstRow;
         OnPropertyChanged(string.Empty);   // все свойства разом — привязки строки перечитываются
+        return layoutChanged;
     }
 
     public void SetStatus(string status, bool failed)

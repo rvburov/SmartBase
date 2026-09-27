@@ -289,7 +289,8 @@ public partial class ConstructorControllerView : UserControl
     // structural=true — изменилось ЧИСЛО записей (создание/удаление/дубль): строки обновляем на месте
     // без пересоздания списка и мелькания «Загрузка…» (ReloadRowsStructural). false — изменилась
     // ВИДИМОСТЬ записей (окно «Отображение»): набор фильтра по скрытым другой → нужен полный ReloadRows.
-    private void RefreshRows(bool structural = false)
+    // countDelta — на сколько изменилось число записей (своя операция его знает); null — неизвестно.
+    private void RefreshRows(bool structural = false, int? countDelta = null)
     {
         if (_currentCollectionId is null || _repository is null) return;
         Touch();
@@ -298,7 +299,7 @@ public partial class ConstructorControllerView : UserControl
         // отсюда убран; индикатор диапазона таблица обновит сама, когда разложит строки.
         if (TableViewCtrl.IsVisible)
         {
-            if (structural) TableViewCtrl.ReloadRowsStructural();
+            if (structural) TableViewCtrl.ReloadRowsStructural(countDelta);
             else            TableViewCtrl.ReloadRows();
         }
         else
@@ -382,7 +383,7 @@ public partial class ConstructorControllerView : UserControl
         // (как у удаления/дубля нескольких) дает гриду чистый кадр → без мерцания.
         var rec = await Task.Run(() => _repository.AddRecordIsolated(newRecord, afterRecordId));
 
-        RefreshRows(structural: true);
+        RefreshRows(structural: true, countDelta: rec.Id.HasValue ? 1 : 0);
         // CollectionsChanged НЕ зовем: новая пустая запись не меняет ни список коллекций/групп в
         // сайдбарах, ни события календаря (даты еще нет). Прежний кросс-БД рефреш на каждое создание
         // давал заметную задержку (~1 с) на мультибазе. Появится дата — ее правка обновит календарь сама.
@@ -433,7 +434,7 @@ public partial class ConstructorControllerView : UserControl
         // Право могли отозвать, пока меню было открыто: DbErrors покажет причину окном.
         try { _repository.DeleteRecord(recordId); }
         catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { return; }
-        RefreshRows(structural: true);
+        RefreshRows(structural: true, countDelta: -1);
         TableViewCtrl.ClearRecordSelection();   // удаленная строка не должна оставаться «подсвеченной»
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
         RecordPageClosed?.Invoke(this, EventArgs.Empty);
@@ -480,7 +481,7 @@ public partial class ConstructorControllerView : UserControl
                 p.Report((ids.Count, ids.Count));   // финал → «Сохранение…»
             });
 
-        RefreshRows(structural: true);
+        RefreshRows(structural: true, countDelta: -ids.Count);
         TableViewCtrl.ClearRecordSelection();   // удаленные строки не должны оставаться «подсвеченными»
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
         RecordPageClosed?.Invoke(this, EventArgs.Empty);
@@ -521,7 +522,7 @@ public partial class ConstructorControllerView : UserControl
                 });
         }
 
-        RefreshRows(structural: true);
+        RefreshRows(structural: true, countDelta: newIds.Count);
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
 
         if (keepVertical is { } off && TableViewCtrl.IsVisible)
@@ -633,7 +634,7 @@ public partial class ConstructorControllerView : UserControl
 
         try { _repository.DuplicateRecord(recordId); }
         catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { return; }
-        RefreshRows(structural: true);
+        RefreshRows(structural: true, countDelta: 1);
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
 
         if (keepVertical is { } off && TableViewCtrl.IsVisible)
@@ -789,11 +790,11 @@ public partial class ConstructorControllerView : UserControl
         if (_currentCollectionId is null || _repository is null) return;
         if (VisualRoot is not Avalonia.Controls.Window win) return;
 
-        // Список записей (полный, в порядке позиций) на больших коллекциях — сотни тысяч строк;
-        // грузим его в ФОНЕ на отдельном подключении, чтобы открытие окна не подвешивало UI.
-        // Если загрузка дольше короткого мгновения — показываем индикатор «Загрузка записей…».
+        // Id записей в порядке позиций (на больших коллекциях — миллионы; названия окно подгружает
+        // само для видимых строк) грузим в ФОНЕ на отдельном подключении, чтобы открытие окна не
+        // подвешивало UI. Если загрузка дольше короткого мгновения — индикатор «Загрузка записей…».
         var colId = _currentCollectionId.Value;
-        var loadTask = Task.Run(() => _repository.GetRecordTitlesOrderedIsolated(colId));
+        var loadTask = Task.Run(() => _repository.GetRecordIdsOrderedIsolated(colId));
 
         ProgressDialog? busy = null;
         Task? busyClosed = null;
@@ -804,7 +805,7 @@ public partial class ConstructorControllerView : UserControl
             busyClosed = busy.ShowDialog(win);
         }
 
-        List<(int Id, string Title)> records;
+        int[] records;
         try { records = await loadTask; }
         finally { busy?.Done(); }
         if (busyClosed is not null) await busyClosed;
@@ -1046,6 +1047,11 @@ public partial class ConstructorControllerView : UserControl
     private async Task RunBulkOp(string windowTitle,
                                  Action<IProgress<(long Done, long Total)>, Action<string>> work)
     {
+        // Порог медленности: массовая правка столбцов или записей дольше Diag.UiQuery — в журнал
+        // (время самой правки: перенос журнала базы идет после нее, в фоне).
+        using var slow = SmartBase.Logging.Diag.Measure(char.ToLowerInvariant(windowTitle[0]) + windowTitle[1..],
+            SmartBase.Logging.Diag.UiQuery,
+            $"{DbErrors.Display(_repository?.DbPath ?? "")}, коллекция {_currentCollectionId}");
         ProgressDialog? dlg = null;
         var lastShown = -1;          // -1 еще не показывали %, -2 «Сохранение…», 0..100 — проценты
         var phase     = windowTitle;

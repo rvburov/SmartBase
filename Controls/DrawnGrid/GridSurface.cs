@@ -194,9 +194,10 @@ public sealed class GridSurface : Control, IEditorSurface
     /// ее не рисовали: край и так очерчен краем таблицы или полосой.</summary>
     public bool LastColumnLine { get; set; } = true;
 
-    /// <summary>Тянуть ли вертикальные линии ниже последней строки (таблица коллекции — да, ее
-    /// строка «+» всегда последняя; служебные таблицы — нет, под строками чистое поле).</summary>
-    public bool LinesBelowRows { get; set; } = true;
+    /// <summary>Тянуть ли вертикальные линии ниже последней строки. Под последней строкой (у таблицы
+    /// коллекции — строкой «+») поле чистое и у таблицы коллекции, и у служебных таблиц, как у
+    /// прежних таблиц на контролах.</summary>
+    public bool LinesBelowRows { get; set; }
 
     /// <summary>Ширина закрепленных колонок — полоса прокрутки считает окно без них.</summary>
     public double FrozenColumnsWidth => FrozenWidth;

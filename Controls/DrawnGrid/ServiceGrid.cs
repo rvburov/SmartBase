@@ -96,7 +96,6 @@ public sealed class ServiceGrid : Avalonia.Controls.Grid
         Surface.HoverWholeRow        = true;
         Surface.HeaderHoverFill      = false;
         Surface.LastColumnLine       = false;
-        Surface.LinesBelowRows       = false;
         Surface.RowHeightResourceKey = "RowHeightStandard";
         Surface.CellTextPad          = 8;
         Surface.CheckboxCentered     = true;

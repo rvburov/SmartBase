@@ -3168,7 +3168,10 @@ public partial class ConstructorRepository(AppDbContext db)
     public DbField DuplicateFieldIsolated(int fieldId, IProgress<int>? progress = null)
     {
         using var ctx = new AppDbContext(db.DbPath);
-        ctx.ApplyPerformancePragmas();
+        // Значения столбца лежат у каждой записи — правка трогает страницу каждой записи; журнал
+        // переносится в файл уже в фоне, после того как дубль виден (WalCheckpointer).
+        ctx.ApplyBulkPerformancePragmas();
+        ctx.DeferCheckpoint();
         var repo = new ConstructorRepository(ctx);
         // Владельца-коллекцию ищем через СВЕЖИЙ контекст: обертку зовут из фонового
         // потока, а общий контекст — только для UI-потока (сама Demand читает кеш).
@@ -3181,7 +3184,8 @@ public partial class ConstructorRepository(AppDbContext db)
     public void DeleteFieldIsolated(int fieldId, IProgress<int>? progress = null)
     {
         using var ctx = new AppDbContext(db.DbPath);
-        ctx.ApplyPerformancePragmas();
+        ctx.ApplyBulkPerformancePragmas();
+        ctx.DeferCheckpoint();   // перенос журнала — в фоне, см. DuplicateFieldIsolated
         var repo = new ConstructorRepository(ctx);
         // Лукап через свежий контекст — обертка работает в фоне (см. DuplicateFieldIsolated).
         Demand(PermAction.DeleteField, repo.CollectionOfField(fieldId));
@@ -3189,63 +3193,97 @@ public partial class ConstructorRepository(AppDbContext db)
     }
 
 
-    /// <summary>Дубль поля ПАКЕТАМИ: метаданные мгновенно, значения — порциями по списку RecordId.</summary>
-    public DbField DuplicateFieldData(int fieldId, IProgress<int>? progress = null, int batchSize = 10000)
-    {
-        var copy   = CreateFieldCopyEntity(fieldId);
-        var copyId = copy.Id;
+    // Столбец больше этого — коммит порциями: одна транзакция держала бы в журнале страницы всей
+    // таблицы до конца операции (значения столбца лежат у каждой записи; на 10 млн записей это
+    // десятки ГБ журнала рядом с базой). Между порциями операция сама переносит журнал в файл
+    // (CheckpointBetweenChunks): фоновый перенос за непрерывной записью не успевает, и журнал рос
+    // бы дальше порции (замер: 4,5 ГБ через несколько минут дубля столбца на 10 млн). Перенесенный
+    // целиком журнал следующая порция пишет с начала (до journal_size_limit). Столбец меньше —
+    // одной транзакцией, перенос — в фоне.
+    private const int FieldOpChunkValues = 500_000;
 
+    // Перенести журнал в файл между порциями огромной правки (см. FieldOpChunkValues) — PASSIVE:
+    // не ждет читателей и не держит их. TRUNCATE ждал читателей и не пускал новые — интерфейс,
+    // читавший страницу таблицы, стоял до 5,6 с.
+    private void CheckpointBetweenChunks()
+    {
+        if (db.IsPostgres || NetworkPath.IsNetwork(db.DbPath)) return;
+        try { db.Database.ExecuteSqlRaw("PRAGMA wal_checkpoint(PASSIVE);"); }
+        catch (SqliteException ex) when (DbHealthMonitor.IsBusyError(ex)) { }
+    }
+
+    /// <summary>Дубль поля ПАКЕТАМИ: значения порциями по списку RecordId. Копия поля создается в той
+    /// же транзакции, что и ее значения: прерванный дубль не оставляет пустого столбца (у огромного
+    /// столбца, который коммитится порциями, — остаются уже скопированные порции).</summary>
+    public DbField DuplicateFieldData(int fieldId, IProgress<int>? progress = null, int batchSize = 10000,
+                                      int chunkValues = FieldOpChunkValues)
+    {
         var ids = FieldValueRecordIdsSorted(fieldId);   // PK-порядок → последовательные обновления
-        using var tx = db.Database.BeginTransaction();
-        for (var i = 0; i < ids.Count; i += batchSize)
+        var tx  = db.Database.BeginTransaction();
+        try
         {
-            var inList = JoinIdRange(ids, i, batchSize);
-            // Копируем строго по PK (FieldId + RecordId IN …) — без скана значений чужих полей.
-            // ExecuteSqlRaw: в готовой строке нет фигурных скобок (числа и список «1,2,3»).
-            db.Database.ExecuteSqlRaw(
-                $"INSERT INTO db_field_values (RecordId, FieldId, Value) " +
-                $"SELECT RecordId, {copyId}, Value FROM db_field_values " +
-                $"WHERE FieldId = {fieldId} AND RecordId IN ({inList})");
-            progress?.Report(Math.Min(ids.Count, i + batchSize));
+            var copy   = CreateFieldCopyEntity(fieldId);
+            var copyId = copy.Id;
+            for (var i = 0; i < ids.Count; i += batchSize)
+            {
+                if (i > 0 && i % chunkValues < batchSize) { tx.Commit(); tx.Dispose(); CheckpointBetweenChunks(); tx = db.Database.BeginTransaction(); }
+                var inList = JoinIdRange(ids, i, batchSize);
+                // Копируем строго по PK (FieldId + RecordId IN …) — без скана значений чужих полей.
+                // ExecuteSqlRaw: в готовой строке нет фигурных скобок (числа и список «1,2,3»).
+                db.Database.ExecuteSqlRaw(
+                    $"INSERT INTO db_field_values (RecordId, FieldId, Value) " +
+                    $"SELECT RecordId, {copyId}, Value FROM db_field_values " +
+                    $"WHERE FieldId = {fieldId} AND RecordId IN ({inList})");
+                progress?.Report(Math.Min(ids.Count, i + batchSize));
+            }
+            tx.Commit();
+            LogNow("duplicate", "field", copy.Name, CollectionNameOf(copy.CollectionId));
+            return ToDbField(copy);
         }
-        tx.Commit();
-        LogNow("duplicate", "field", copy.Name, CollectionNameOf(copy.CollectionId));
-        return ToDbField(copy);
+        finally { tx.Dispose(); }
     }
 
     /// <summary>Удаление поля ПАКЕТАМИ: значения порциями по списку RecordId (прогресс), затем строка
     /// поля (каскад на calendar_index по FK) и чистка column_meta — как в DeleteField.</summary>
-    public void DeleteFieldData(int fieldId, IProgress<int>? progress = null, int batchSize = 10000)
+    public void DeleteFieldData(int fieldId, IProgress<int>? progress = null, int batchSize = 10000,
+                                int chunkValues = FieldOpChunkValues)
     {
         var field = db.DbFields.Find(fieldId);
         if (field is null) return;
         var colId = field.CollectionId;
 
         var ids = FieldValueRecordIdsSorted(fieldId);
-        using var tx = db.Database.BeginTransaction();
-        for (var i = 0; i < ids.Count; i += batchSize)
+        // Огромный столбец коммитится порциями (FieldOpChunkValues): прерванное удаление оставляет
+        // столбец с частью значений; строка поля уходит последней порцией.
+        var tx = db.Database.BeginTransaction();
+        try
         {
-            var inList = JoinIdRange(ids, i, batchSize);
-            // EF1002 «возможная SQL-инъекция»: в строку подставляются только целые идентификаторы
-            // и имена таблиц, заданные здесь же в коде. Значений от пользователя в ней нет — те
-            // уходят параметрами. Сырой SQL намеренно: пакетные DELETE и INSERT…SELECT на тысячах
-            // строк параметрами не выражаются.
-            #pragma warning disable EF1002
-            db.Database.ExecuteSqlRaw(
-                $"DELETE FROM db_field_values WHERE FieldId = {fieldId} AND RecordId IN ({inList})");
-            #pragma warning restore EF1002
-            progress?.Report(Math.Min(ids.Count, i + batchSize));
-        }
+            for (var i = 0; i < ids.Count; i += batchSize)
+            {
+                if (i > 0 && i % chunkValues < batchSize) { tx.Commit(); tx.Dispose(); CheckpointBetweenChunks(); tx = db.Database.BeginTransaction(); }
+                var inList = JoinIdRange(ids, i, batchSize);
+                // EF1002 «возможная SQL-инъекция»: в строку подставляются только целые идентификаторы
+                // и имена таблиц, заданные здесь же в коде. Значений от пользователя в ней нет — те
+                // уходят параметрами. Сырой SQL намеренно: пакетные DELETE и INSERT…SELECT на тысячах
+                // строк параметрами не выражаются.
+                #pragma warning disable EF1002
+                db.Database.ExecuteSqlRaw(
+                    $"DELETE FROM db_field_values WHERE FieldId = {fieldId} AND RecordId IN ({inList})");
+                #pragma warning restore EF1002
+                progress?.Report(Math.Min(ids.Count, i + batchSize));
+            }
 
-        // Строка поля (FK ON DELETE CASCADE уберет calendar_index) + чистка column_meta и
-        // оформления ее ячеек (FK нет — ключ строковый), как в синхронном DeleteField.
-        var key = fieldId.ToString();
-        db.Database.ExecuteSqlInterpolated($"DELETE FROM db_fields WHERE Id = {fieldId}");
-        db.Database.ExecuteSqlInterpolated(
-            $"DELETE FROM column_meta WHERE CollectionId = {colId} AND Key = {key}");
-        db.Database.ExecuteSqlInterpolated(
-            $"DELETE FROM cell_style WHERE CollectionId = {colId} AND Key = {key}");
-        tx.Commit();
+            // Строка поля (FK ON DELETE CASCADE уберет calendar_index) + чистка column_meta и
+            // оформления ее ячеек (FK нет — ключ строковый), как в синхронном DeleteField.
+            var key = fieldId.ToString();
+            db.Database.ExecuteSqlInterpolated($"DELETE FROM db_fields WHERE Id = {fieldId}");
+            db.Database.ExecuteSqlInterpolated(
+                $"DELETE FROM column_meta WHERE CollectionId = {colId} AND Key = {key}");
+            db.Database.ExecuteSqlInterpolated(
+                $"DELETE FROM cell_style WHERE CollectionId = {colId} AND Key = {key}");
+            tx.Commit();
+        }
+        finally { tx.Dispose(); }
         LogNow("delete", "field", field.Name, CollectionNameOf(colId));
     }
 
@@ -3407,13 +3445,55 @@ public partial class ConstructorRepository(AppDbContext db)
         return result;
     }
 
-    /// <summary>То же, но на ОТДЕЛЬНОМ подключении — чтобы окно «Отображение записей» грузило весь
-    /// список (на больших коллекциях это сотни тысяч строк) в фоновом потоке, не подвешивая UI.</summary>
-    public List<(int Id, string Title)> GetRecordTitlesOrderedIsolated(int collectionId)
+    /// <summary>Id записей коллекции в порядке таблицы (Position, Id) на ОТДЕЛЬНОМ подключении —
+    /// список окна «Отображение записей». Названия окно подгружает порциями для видимых строк:
+    /// весь список с названиями на 10 млн записей — гигабайт памяти и полминуты до показа.</summary>
+    public int[] GetRecordIdsOrderedIsolated(int collectionId)
     {
         using var ctx = new AppDbContext(db.DbPath);
         ctx.ApplyPerformancePragmas();
-        return new ConstructorRepository(ctx).GetRecordTitlesOrdered(collectionId);
+        // Сырой читатель: на 10 млн id материализация EF стоила секунды сверх самого чтения индекса.
+        var conn = ctx.Database.GetDbConnection();
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT Id FROM db_records WHERE CollectionId = @c ORDER BY Position, Id";
+        AddParam(cmd, "@c").Value = collectionId;
+        var ids = new List<int>();
+        using var rd = cmd.ExecuteReader();
+        while (rd.Read()) ids.Add(rd.GetInt32(0));
+        return [.. ids];
+    }
+
+    /// <summary>Id записей коллекции, чье название содержит <paramref name="query"/> без учета
+    /// регистра (у кириллицы тоже), — поиск окна «Отображение записей» по базе, на ОТДЕЛЬНОМ
+    /// подключении. Не больше <paramref name="cap"/> + 1: лишний означает «найдено больше».</summary>
+    public List<int> SearchRecordIdsIsolated(int collectionId, string query, int cap, CancellationToken ct)
+    {
+        using var ctx = new AppDbContext(db.DbPath);
+        ctx.ApplyPerformancePragmas();
+        var q = query.Trim();
+        var records = ctx.DbRecords.AsNoTracking().Where(r => r.CollectionId == collectionId);
+        if (ctx.IsPostgres)
+        {
+            var pattern = "%" + q.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
+            return records.Where(r => EF.Functions.ILike(r.Title, pattern, "\\")).Select(r => r.Id).Take(cap + 1).ToList();
+        }
+        // Отмена прерывает запрос из самой функции сравнения (как у поиска значений фильтра).
+        ctx.Database.OpenConnection();
+        ((SqliteConnection)ctx.Database.GetDbConnection()).CreateFunction(SqlText.ContainsName,
+            (string? value, string? part) =>
+            {
+                ct.ThrowIfCancellationRequested();
+                return value is not null && part is not null && value.Contains(part, StringComparison.OrdinalIgnoreCase);
+            }, isDeterministic: true);
+        try
+        {
+            return records.Where(r => SqlText.ContainsIgnoreCase(r.Title, q)).Select(r => r.Id).Take(cap + 1).ToList();
+        }
+        catch (Exception) when (ct.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(ct);
+        }
     }
 
     /// <summary>Асинхронная версия <see cref="CountRecords"/> на ОТДЕЛЬНОМ подключении — для
@@ -4766,6 +4846,22 @@ public partial class ConstructorRepository(AppDbContext db)
         // проба по нему (те же 10 млн × 1444 — 12 с). Ветка «(Пусто)» коррелирована, но без списка.
         foreach (var (key, allowed) in filters)
         {
+            // Отбор «кроме» (FilterExclusion): набор — исключаемые значения. Его дает окно фильтра колонки,
+            // у которой значений больше, чем оно показывает; у связей такого окна нет.
+            if (FilterExclusion.IsExclude(allowed))
+            {
+                var excl       = FilterExclusion.Values(allowed);
+                var exclEmpty  = excl.Contains("");
+                if (key == TitleKey)
+                    q = q.Where(r => !excl.Contains(r.Title ?? ""));
+                else if (int.TryParse(key, out var xf) && !relFieldIds.Contains(xf))
+                    q = q.Where(r =>
+                        !db.DbFieldValues.Where(fv => fv.FieldId == xf && excl.Contains(fv.Value))
+                                         .Select(fv => fv.RecordId).Contains(r.Id)
+                        && (!exclEmpty || db.DbFieldValues.Any(fv => fv.RecordId == r.Id && fv.FieldId == xf && fv.Value != "")));
+                continue;
+            }
+
             var allow = allowed.ToList();   // EF переведет Contains → SQL IN (...)
             if (key == TitleKey)
                 q = q.Where(r => allow.Contains(r.Title));
@@ -4897,7 +4993,44 @@ public partial class ConstructorRepository(AppDbContext db)
     /// значения учитываются в пустом значении "" — в UI оно показывается как «(Пусто)» и идет в конец.
     /// </summary>
     public List<(string Value, int Count)> GetFieldValueCounts(int collectionId, int fieldId) =>
-        FieldValueCounts(fieldId, Records(collectionId));
+        FieldValueCountsWhole(collectionId, fieldId);
+
+    // Сколько первых записей таблицы просматривается ради порядка значений (FieldValueCountsWhole).
+    private const int FirstAppearanceWalk = 20_000;
+
+    /// <summary>
+    /// Значения поля по всей коллекции — без обхода всех записей: счетчики по индексу
+    /// (FieldId, Value) (значения поля есть только у записей его коллекции), порядок таблицы — по
+    /// первому появлению в первых <see cref="FirstAppearanceWalk"/> записях. Прежний JOIN каждой
+    /// строки значения с записью ради MIN(Position) на 10 млн записей стоил 26 с даже у колонки из
+    /// четырех значений. Не встретившиеся в начале таблицы значения идут следом по алфавиту; у
+    /// коллекции не больше <see cref="FirstAppearanceWalk"/> записей начало — вся таблица, и порядок
+    /// тот же, что по MIN(Position).
+    /// </summary>
+    private List<(string Value, int Count)> FieldValueCountsWhole(int collectionId, int fieldId)
+    {
+        var counts = db.DbFieldValues.AsNoTracking().Where(v => v.FieldId == fieldId && v.Value != "")
+                       .GroupBy(v => v.Value).Select(g => new { g.Key, Cnt = g.Count() }).ToList()
+                       .ToDictionary(x => x.Key, x => x.Cnt);
+        var order = new List<string>(counts.Count);
+        var seen  = new HashSet<string>();
+        var head  = (from r in Records(collectionId)
+                     join fv in db.DbFieldValues.AsNoTracking() on r.Id equals fv.RecordId
+                     where fv.FieldId == fieldId && fv.Value != ""
+                     orderby r.Position, r.Id
+                     select fv.Value).Take(FirstAppearanceWalk);
+        foreach (var v in head)
+        {
+            if (seen.Add(v)) order.Add(v);
+            if (order.Count == counts.Count) break;
+        }
+        order.AddRange(counts.Keys.Where(k => !seen.Contains(k)).Order(StringComparer.Ordinal));
+
+        var result  = order.Select(v => (v, counts[v])).ToList();
+        var emptied = Records(collectionId).Count() - counts.Values.Sum();
+        if (emptied > 0) result.Add(("", emptied));
+        return result;
+    }
 
     private List<(string Value, int Count)> FieldValueCounts(int fieldId, IQueryable<DbRecordEntity> scope)
     {
@@ -5065,10 +5198,157 @@ public partial class ConstructorRepository(AppDbContext db)
         var scope  = FilteredRecords(collectionId, others, excludeHidden, resolveForeign);
         return key == TitleKey ? TitleCounts(scope)
             : int.TryParse(key, out var fid)
-                ? (IsRelationField(fid)
-                    ? RelationValueCounts(collectionId, fid, resolveForeign, scope)
-                    : FieldValueCounts(fid, scope))
+                ? (IsRelationField(fid) ? RelationValueCounts(collectionId, fid, resolveForeign, scope)
+                   : others.Count == 0 && !excludeHidden ? FieldValueCountsWhole(collectionId, fid)
+                   : FieldValueCounts(fid, scope))
                 : [];
+    }
+
+    /// <summary>Сколько значений показывает окно фильтра колонки, у которой разных значений больше:
+    /// первые по алфавиту, остальные — поиском по базе (<see cref="GetColumnValueListAsync"/>).</summary>
+    public const int FilterValueCap = 1000;
+
+    /// <summary>Значения колонки для окна фильтра. <paramref name="Capped"/> — разных значений больше
+    /// <see cref="FilterValueCap"/>: в <paramref name="Values"/> первые по алфавиту или найденные поиском
+    /// (не больше <see cref="FilterValueCap"/>), «(Пусто)» последним (без поиска);
+    /// <paramref name="DistinctTotal"/> — сколько разных значений всего (без поиска; −1 — не считалось),
+    /// <paramref name="More"/> — найдено больше показанного.</summary>
+    public sealed record ColumnValueList(List<(string Value, int Count)> Values, bool Capped, long DistinctTotal, bool More);
+
+    /// <summary>
+    /// Значения колонки для окна фильтра — как <see cref="GetColumnCountsAsync"/> (Excel-каскад,
+    /// фон, отдельное подключение), но на колонке с тысячами разных значений не все: на 10 млн
+    /// разных значений полный список строился 105 с и занимал гигабайты. Такой колонке окно
+    /// показывает первые <see cref="FilterValueCap"/> по алфавиту (<see cref="ColumnValueList.Capped"/>),
+    /// остальное ищется <paramref name="search"/> по базе. Связи и даты — всегда полным списком
+    /// (у дат — дерево «год → месяц → день» по всем значениям).
+    /// </summary>
+    public Task<ColumnValueList> GetColumnValueListAsync(int collectionId, string key,
+        IReadOnlyDictionary<string, HashSet<string>>? filters = null, bool excludeHidden = false,
+        string? search = null, CancellationToken ct = default)
+    {
+        var others     = OtherFilters(filters, key);
+        var crossPaths = CrossDbPathsForKeys(collectionId, others.Keys.Append(key));
+        return Task.Run(() =>
+        {
+            using var ctx = new AppDbContext(db.DbPath);
+            ctx.ApplyPerformancePragmas();
+            var repo = new ConstructorRepository(ctx);
+            return repo.ColumnValues(collectionId, key, others, excludeHidden, ForeignResolver(crossPaths), search, ct);
+        }, ct);
+    }
+
+    private ColumnValueList ColumnValues(int collectionId, string key, Dictionary<string, HashSet<string>> others,
+        bool excludeHidden, Func<int, IReadOnlyList<int>, Dictionary<int, string>?>? resolveForeign,
+        string? search, CancellationToken ct)
+    {
+        int? fid = int.TryParse(key, out var parsed) ? parsed : null;
+        var cappable = key == TitleKey || (fid is { } id && db.DbFields.AsNoTracking()
+                           .Any(f => f.Id == id && f.FieldType != "relation" && f.FieldType != "date"));
+        // Больше ли разных непустых значений, чем показывает окно: DISTINCT с LIMIT идет по индексу
+        // (FieldId, Value) и останавливается на первом лишнем.
+        var many = cappable && (fid is { } f0
+            ? db.DbFieldValues.AsNoTracking().Where(v => v.FieldId == f0 && v.Value != "")
+                .Select(v => v.Value).Distinct().Take(FilterValueCap + 1).Count() > FilterValueCap
+            : Records(collectionId).Where(r => r.Title != "")
+                .Select(r => r.Title).Distinct().Take(FilterValueCap + 1).Count() > FilterValueCap);
+        if (!many)
+        {
+            var all = GetColumnCounts(collectionId, key, others, excludeHidden, resolveForeign);
+            return new(all, false, all.Count, false);
+        }
+        ct.ThrowIfCancellationRequested();
+
+        var narrowed = others.Count > 0 || excludeHidden;
+        var scope    = FilteredRecords(collectionId, others, excludeHidden, resolveForeign);
+        var query    = FilterSelection.IsEmptyQuery(search) ? null : search!.Trim();
+        var pattern  = query is null ? null : "%" + query.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
+
+        // Поиск без учета регистра — функцией на каждой строке (SqlText): отмена прерывает запрос
+        // из нее же, иначе прежний поиск по 10 млн значений доживал бы свои секунды после каждой
+        // новой буквы. Функция регистрируется на открытом соединении этого фонового контекста.
+        if (pattern is not null && !db.IsPostgres && db.Database.GetDbConnection() is SqliteConnection sqlite)
+        {
+            db.Database.OpenConnection();
+            sqlite.CreateFunction(SqlText.ContainsName, (string? value, string? part) =>
+            {
+                ct.ThrowIfCancellationRequested();
+                return value is not null && part is not null && value.Contains(part, StringComparison.OrdinalIgnoreCase);
+            }, isDeterministic: true);
+        }
+
+        List<(string Value, int Count)> page;
+        try
+        {
+            if (fid is { } fieldId)
+            {
+                var values = CappedValues(fieldId, scope, narrowed);
+                if (pattern is not null)
+                    values = db.IsPostgres
+                        ? values.Where(v => EF.Functions.ILike(v.Value, pattern, "\\"))
+                        : values.Where(v => SqlText.ContainsIgnoreCase(v.Value, query!));
+                page = values.GroupBy(v => v.Value).OrderBy(g => g.Key).Take(FilterValueCap + 1)
+                             .Select(g => new { g.Key, Count = g.Count() }).ToList()
+                             .Select(x => (x.Key, x.Count)).ToList();
+            }
+            else
+            {
+                var titles = scope.Where(r => r.Title != "");
+                if (pattern is not null)
+                    titles = db.IsPostgres
+                        ? titles.Where(r => EF.Functions.ILike(r.Title, pattern, "\\"))
+                        : titles.Where(r => SqlText.ContainsIgnoreCase(r.Title, query!));
+                page = titles.GroupBy(r => r.Title).OrderBy(g => g.Key).Take(FilterValueCap + 1)
+                             .Select(g => new { g.Key, Count = g.Count() }).ToList()
+                             .Select(x => (x.Key ?? "", x.Count)).ToList();
+            }
+        }
+        catch (Exception) when (ct.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(ct);
+        }
+
+        var more = page.Count > FilterValueCap;
+        if (more) page.RemoveAt(page.Count - 1);
+        return new(page, true, -1, more);
+    }
+
+    // Непустые значения поля ограниченного списка — по срезу, если его сузили фильтры других
+    // колонок или скрытые записи (иначе значения поля и есть значения записей коллекции).
+    private IQueryable<DbFieldValueEntity> CappedValues(int fieldId, IQueryable<DbRecordEntity> scope, bool narrowed)
+    {
+        var values = db.DbFieldValues.AsNoTracking().Where(v => v.FieldId == fieldId && v.Value != "");
+        return narrowed ? values.Where(v => scope.Select(r => r.Id).Contains(v.RecordId)) : values;
+    }
+
+    /// <summary>
+    /// Итоги ограниченного списка окна фильтра (<see cref="ColumnValueList.Capped"/>): сколько разных
+    /// непустых значений у колонки в срезе и сколько записей среза без значения («(Пусто)»). Окно
+    /// досчитывает их после показа первых значений: на 10 млн записей это секунды, а список нужен сразу.
+    /// </summary>
+    public Task<(long Distinct, int Empty)> GetColumnValueTotalsAsync(int collectionId, string key,
+        IReadOnlyDictionary<string, HashSet<string>>? filters = null, bool excludeHidden = false,
+        CancellationToken ct = default)
+    {
+        var others     = OtherFilters(filters, key);
+        var crossPaths = CrossDbPathsForKeys(collectionId, others.Keys.Append(key));
+        return Task.Run(() =>
+        {
+            using var ctx = new AppDbContext(db.DbPath);
+            ctx.ApplyPerformancePragmas();
+            var repo  = new ConstructorRepository(ctx);
+            var scope = repo.FilteredRecords(collectionId, others, excludeHidden, ForeignResolver(crossPaths));
+            if (int.TryParse(key, out var fid))
+            {
+                var values = repo.CappedValues(fid, scope, others.Count > 0 || excludeHidden);
+                var distinct = values.Select(v => v.Value).Distinct().LongCount();
+                ct.ThrowIfCancellationRequested();
+                return (distinct, scope.Count() - values.Count());
+            }
+            var titles = scope.Where(r => r.Title != "").Select(r => r.Title).Distinct().LongCount();
+            ct.ThrowIfCancellationRequested();
+            return (titles, scope.Count(r => r.Title == "" || r.Title == null));
+        }, ct);
     }
 
     // Фильтры остальных колонок — снимок (копия наборов): фон читает его, пока UI может

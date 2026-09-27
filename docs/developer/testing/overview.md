@@ -23,7 +23,7 @@
 | **Integration** | xUnit (медленнее) | Репозитории на temp SQLite + PostgreSQL: CRUD, keyset, календарь, cross-move, импорт/экспорт, гонки | `dotnet test Tests/Integration` |
 | **Extensions/&lt;Имя&gt;** | xUnit (по проекту на расширение) | Логика и сквозные прогоны расширений; отдельные сборки, от тестов ядра не зависят | `./Tests/run-extensions.sh` |
 | **Benchmarks** | консоль (замеры) | Производительность: сайдбар, импорт/экспорт больших объемов, нагрузка PG | `dotnet run -c Release --project Tests/Benchmarks -- <команда>` |
-| **DbGenerator** | консоль (инструмент) | Генерация большого стенда (по умолчанию 20 млн записей) | `dotnet run -c Release --project Tests/DbGenerator` |
+| **DbGenerator** | консоль (инструмент) | Генерация большого стенда: календарного (по умолчанию 20 млн записей) и широкого (`--profile wide`: все типы свойств, тысячи колонок, варианты настроек) | `dotnet run -c Release --project Tests/DbGenerator` |
 | **MultiProcess** | консоль (многопроцесс) | Ручные многопроцессные сценарии (два процесса, сетевые прагмы, живая синхронизация) | `dotnet run -c Release --project Tests/MultiProcess -- <режим>` |
 
 ## Быстрый старт

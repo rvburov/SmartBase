@@ -396,18 +396,26 @@ public sealed partial class ConstructorRepository
     // ── Счетчик записей без ожидания ─────────────────────────────────────────
 
     /// <summary>
-    /// Оценка числа записей за O(1): позиция последней записи, деленная на шаг позиций
-    /// (записи получают <c>(число + 1) × 1000</c>, перестановка переписывает тем же шагом).
-    /// Завышена после удалений и не учитывает скрытые — годится только протяженности полосы
-    /// прокрутки до прихода точного <see cref="CountRecordsAsync"/>: точный COUNT на 9 млн строк —
-    /// 0,7–1,3 с, а со скрытыми записями — 3 с, и первый кадр таблицы его не ждет.
+    /// Оценка числа записей за O(1): номер последней записи, деленный на шаг номеров. Записи
+    /// получают номера <c>(i + 1) × шаг</c> (<see cref="AllocatePositions"/>, миграция
+    /// RepairRecordPositions): шаг 1000, на коллекции больше 2,1 млн записей мельче, чтобы
+    /// уложиться в int (10 млн — 214). Шаг — номер первой записи, но не больше 1000: при
+    /// постоянном делителе 1000 коллекция в 10 млн оценивалась в 2,1 млн, и прыжок в конец до
+    /// точного счета попадал в ее пятую часть; после удаления первых записей номер первой
+    /// растет, и делитель остается 1000. Завышена после удалений и не учитывает скрытые —
+    /// годится только протяженности полосы прокрутки до прихода точного
+    /// <see cref="CountRecordsAsync"/>: точный COUNT на 9 млн строк — 0,7–1,3 с, а со скрытыми
+    /// записями — 3 с, и первый кадр таблицы его не ждет.
     /// </summary>
     public int EstimateRecordCount(int collectionId)
     {
         var last = ScalarSql("SELECT COALESCE((SELECT r.Position FROM db_records r WHERE r.CollectionId = @c " +
                              "ORDER BY r.Position DESC, r.Id DESC LIMIT 1), -1)", ("@c", collectionId));
         if (last < 0) return 0;
-        return (int)Math.Max(1, last / 1000);
+        var first = ScalarSql("SELECT r.Position FROM db_records r WHERE r.CollectionId = @c " +
+                              "ORDER BY r.Position, r.Id LIMIT 1", ("@c", collectionId));
+        var step = first is > 0 and < PositionStep ? first : PositionStep;
+        return (int)Math.Clamp(last / step, 1, int.MaxValue);
     }
 
     // Скаляр raw SQL на подключении этого контекста.
