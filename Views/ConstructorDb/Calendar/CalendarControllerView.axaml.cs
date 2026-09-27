@@ -101,6 +101,46 @@ public partial class CalendarControllerView : UserControl
         catch (Exception ex) when (SmartBase.Utils.DbErrors.Handle(ex, repo.DbPath)) { return false; }
     }
 
+    // Виды строятся при первом переходе в них: раздел показывает один вид, а семь сразу стоили
+    // первому показу календаря около 0,1 с на построение, стили и привязки невидимых («День»,
+    // «Год», «Диаграмма» — по 30–40 мс). Подписки вида — при его построении (Wire).
+    private ListView?    _listView;
+    private JournalView? _journalView;
+    private DayView?     _dayView;
+    private WeekView?    _weekView;
+    private MonthView?   _monthView;
+    private YearView?    _yearView;
+    private DiagramView? _diagramView;
+
+    private ListView    ListViewCtrl    => _listView    ?? (_listView    = AddView(new ListView(),    nameof(ListViewCtrl),    Wire));
+    private JournalView JournalViewCtrl => _journalView ?? (_journalView = AddView(new JournalView(), nameof(JournalViewCtrl), Wire));
+    private DayView     DayViewCtrl     => _dayView     ?? (_dayView     = AddView(new DayView(),     nameof(DayViewCtrl),     Wire));
+    private WeekView    WeekViewCtrl    => _weekView    ?? (_weekView    = AddView(new WeekView(),    nameof(WeekViewCtrl),    Wire));
+    private MonthView   MonthViewCtrl   => _monthView   ?? (_monthView   = AddView(new MonthView(),   nameof(MonthViewCtrl),   Wire));
+    private YearView    YearViewCtrl    => _yearView    ?? (_yearView    = AddView(new YearView(),    nameof(YearViewCtrl),    Wire));
+    private DiagramView DiagramViewCtrl => _diagramView ?? (_diagramView = AddView(new DiagramView(), nameof(DiagramViewCtrl), Wire));
+
+    private T AddView<T>(T view, string name, Action<T> wire) where T : Control
+    {
+        view.Name      = name;
+        view.IsVisible = false;
+        ViewsHost.Children.Add(view);
+        wire(view);
+        return view;
+    }
+
+    // Вид по индексу навбара (строит его при первом обращении).
+    private Control ViewAt(int idx) => idx switch
+    {
+        0 => ListViewCtrl,
+        1 => JournalViewCtrl,
+        2 => DayViewCtrl,
+        3 => WeekViewCtrl,
+        5 => YearViewCtrl,
+        6 => DiagramViewCtrl,
+        _ => MonthViewCtrl,
+    };
+
     public CalendarControllerView() { InitializeComponent(); }
 
     // Размер шрифта меняется живьем: C#-виды строят ячейки с размером из ресурса, поэтому
@@ -167,53 +207,64 @@ public partial class CalendarControllerView : UserControl
         NavbarControl.ViewChanged   += (_, idx) => SwitchView(idx);
         NavbarControl.SearchChanged += (_, q) => { _searchQuery = q; RefreshCurrent(); };
 
-        MonthViewCtrl.DaySelected   += (_, d)  => { _currentDate = d; SwitchView(2); };
-        MonthViewCtrl.DayAddClicked += (_, d)  => _ = OpenAddDialog(d);
-        YearViewCtrl.MonthSelected += (_, d)  => { _currentDate = d; SwitchView(4); };
-        // Поиск в попапе дня Года — фоновый SQL LIKE по ВСЕМУ дню (как в «Расписании»):
-        // попап показывает лишь первые записи дня-гиганта, локальный фильтр по ним неполон.
-        YearViewCtrl.DaySearchProvider = async (day, q) =>
-        {
-            var found = new List<CalendarRecord>();
-            foreach (var (dbId, _, repo) in _dbs.ToList())
-            {
-                ISet<int>? active = _activeByDb is not null && _activeByDb.TryGetValue(dbId, out var s) ? s : null;
-                var part = await repo.SearchCalendarEventsAsync(day, day.AddDays(1), active, q, 200);
-                foreach (var ev in part) ev.DbId = dbId;
-                found.AddRange(part);
-            }
-            return found;
-        };
-        // Список дня для попапа Года — ПО ТРЕБОВАНИЮ (Год события окна не читает, см.
-        // LoadGridAsync): per-day capped-чтение сиками — миллисекунды даже на дне-гиганте.
-        YearViewCtrl.DayEventsProvider = async day =>
-        {
-            var found = new List<CalendarRecord>();
-            foreach (var (dbId, _, repo) in _dbs.ToList())
-            {
-                ISet<int>? active = _activeByDb is not null && _activeByDb.TryGetValue(dbId, out var s) ? s : null;
-                var part = await repo.LoadCalendarGridRangeAsync(day, day.AddDays(1), active, 200);
-                foreach (var ev in part) ev.DbId = dbId;
-                found.AddRange(part);
-            }
-            return found;
-        };
+        SwitchView(AppSettings.LoadCalendarView());   // стартовый вид из настроек (стандарт — Месяц)
+    }
 
-        ListViewCtrl.RecordClicked          += (_, r) => _ = OpenEditDialog(r);
-        ListViewCtrl.CreateRequested        += (_, d) => _ = OpenAddDialog(d);
+    private void Wire(ListView v)
+    {
+        v.RecordClicked          += (_, r) => _ = OpenEditDialog(r);
+        v.CreateRequested        += (_, d) => _ = OpenAddDialog(d);
         // Удаление ОДНОЙ записи идет через то же подтверждение, что и удаление нескольких.
-        ListViewCtrl.RecordDeleteRequested  += (_, r) => _ = DeleteRecordsWithConfirm([r]);
-        ListViewCtrl.RecordsDeleteRequested += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
-        ListViewCtrl.RecordsDuplicateRequested += (_, rs) => _ = DuplicateRecordsWithConfirm(rs);
-        JournalViewCtrl.RecordClicked          += (_, r) => _ = OpenEditDialog(r);
-        JournalViewCtrl.CreateRequested        += (_, d) => _ = OpenAddDialog(d);
-        JournalViewCtrl.RecordDeleteRequested  += (_, r) => _ = DeleteRecordsWithConfirm([r]);
-        JournalViewCtrl.RecordsDeleteRequested += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
-        JournalViewCtrl.RecordsDuplicateRequested += (_, rs) => _ = DuplicateRecordsWithConfirm(rs);
-        MonthViewCtrl.RecordClicked          += (_, r) => _ = OpenEditDialog(r);
+        v.RecordDeleteRequested  += (_, r) => _ = DeleteRecordsWithConfirm([r]);
+        v.RecordsDeleteRequested += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
+        v.RecordsDuplicateRequested += (_, rs) => _ = DuplicateRecordsWithConfirm(rs);
+    }
+
+    private void Wire(JournalView v)
+    {
+        v.RecordClicked          += (_, r) => _ = OpenEditDialog(r);
+        v.CreateRequested        += (_, d) => _ = OpenAddDialog(d);
+        v.RecordDeleteRequested  += (_, r) => _ = DeleteRecordsWithConfirm([r]);
+        v.RecordsDeleteRequested += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
+        v.RecordsDuplicateRequested += (_, rs) => _ = DuplicateRecordsWithConfirm(rs);
+    }
+
+    private void Wire(DayView v)
+    {
+        v.RecordClicked              += (_, r) => _ = OpenEditDialog(r);
+        // Перенос/растяжение времени в Дне/Неделе — дельтой (запись та же, ключ (DbId,Id,FieldId)
+        // не меняется): сетка правится НА МЕСТЕ без чтения окна. Месяц — полной загрузкой:
+        // при переносе между днями старый день записи уже неизвестен (r мутирован drag'ом),
+        // карту счетчиков «+N еще» точно не поправить.
+        v.RecordMoved                += (_, r) => { if (!TryWrite(RepoOf(r), () => RepoOf(r).UpdateCalendarRecord(r))) { RefreshCurrent(); return; } _journalDelta = [(r, -1), (r, +1)]; _selectAfter = [r]; NotifyChangedAndRefresh(structural: false); };
+        v.RecordDeleteRequested      += (_, r) => _ = DeleteRecordsWithConfirm([r]);
+        v.RecordsDeleteRequested     += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
+        v.RecordDuplicateRequested   += (_, r) => _ = DuplicateRecordsWithConfirm([r]);
+        v.RecordsDuplicateRequested  += (_, rs) => _ = DuplicateRecordsWithConfirm(rs);
+        v.AllDayCreationRequested    += (_, d)  => _ = OpenAddAllDayDialog(d);
+        v.TimeSlotCreationRequested  += (_, dt) => _ = OpenAddDialog(dt.Date, dt.TimeOfDay);
+    }
+
+    private void Wire(WeekView v)
+    {
+        v.RecordClicked             += (_, r) => _ = OpenEditDialog(r);
+        v.RecordMoved               += (_, r) => { if (!TryWrite(RepoOf(r), () => RepoOf(r).UpdateCalendarRecord(r))) { RefreshCurrent(); return; } _journalDelta = [(r, -1), (r, +1)]; _selectAfter = [r]; NotifyChangedAndRefresh(structural: false); };
+        v.RecordDeleteRequested     += (_, r) => _ = DeleteRecordsWithConfirm([r]);
+        v.RecordsDeleteRequested    += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
+        v.RecordDuplicateRequested  += (_, r) => _ = DuplicateRecordsWithConfirm([r]);
+        v.RecordsDuplicateRequested += (_, rs) => _ = DuplicateRecordsWithConfirm(rs);
+        v.AllDayCreationRequested   += (_, d)  => _ = OpenAddAllDayDialog(d);
+        v.TimeSlotCreationRequested += (_, dt) => _ = OpenAddDialog(dt.Date, dt.TimeOfDay);
+    }
+
+    private void Wire(MonthView v)
+    {
+        v.DaySelected   += (_, d)  => { _currentDate = d; SwitchView(2); };
+        v.DayAddClicked += (_, d)  => _ = OpenAddDialog(d);
+        v.RecordClicked          += (_, r) => _ = OpenEditDialog(r);
         // Перенос в Месяце — дельтой с ИСХОДНЫМИ датами (само событие уже мутировано drag'ом):
         // −1 старому дню, +1 новому — сетка и карта «+N еще» правятся на месте, без перезагрузки.
-        MonthViewCtrl.RecordMoved            += (_, m) =>
+        v.RecordMoved            += (_, m) =>
         {
             // Не записалось (база занята/пропала) — перечитываем вид, событие «отпрыгивает».
             if (!TryWrite(RepoOf(m.Rec), () => RepoOf(m.Rec).UpdateCalendarRecord(m.Rec)))
@@ -231,41 +282,56 @@ public partial class CalendarControllerView : UserControl
         };
         // Дублирование ВЕЗДЕ идет через подтверждение «Вы дублируете N записей» — единый путь
         // DuplicateRecordsWithConfirm, как в Расписании/Журнале (и для одной записи тоже).
-        MonthViewCtrl.RecordDeleteRequested    += (_, r) => _ = DeleteRecordsWithConfirm([r]);
-        MonthViewCtrl.RecordsDeleteRequested   += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
-        MonthViewCtrl.RecordDuplicateRequested += (_, r) => _ = DuplicateRecordsWithConfirm([r]);
-        MonthViewCtrl.RecordsDuplicateRequested += (_, rs) => _ = DuplicateRecordsWithConfirm(rs);
-        DayViewCtrl.RecordClicked              += (_, r) => _ = OpenEditDialog(r);
-        // Перенос/растяжение времени в Дне/Неделе — дельтой (запись та же, ключ (DbId,Id,FieldId)
-        // не меняется): сетка правится НА МЕСТЕ без чтения окна. Месяц — полной загрузкой:
-        // при переносе между днями старый день записи уже неизвестен (r мутирован drag'ом),
-        // карту счетчиков «+N еще» точно не поправить.
-        DayViewCtrl.RecordMoved                += (_, r) => { if (!TryWrite(RepoOf(r), () => RepoOf(r).UpdateCalendarRecord(r))) { RefreshCurrent(); return; } _journalDelta = [(r, -1), (r, +1)]; _selectAfter = [r]; NotifyChangedAndRefresh(structural: false); };
-        DayViewCtrl.RecordDeleteRequested      += (_, r) => _ = DeleteRecordsWithConfirm([r]);
-        DayViewCtrl.RecordsDeleteRequested     += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
-        DayViewCtrl.RecordDuplicateRequested   += (_, r) => _ = DuplicateRecordsWithConfirm([r]);
-        DayViewCtrl.RecordsDuplicateRequested  += (_, rs) => _ = DuplicateRecordsWithConfirm(rs);
-        DayViewCtrl.AllDayCreationRequested    += (_, d)  => _ = OpenAddAllDayDialog(d);
-        DayViewCtrl.TimeSlotCreationRequested  += (_, dt) => _ = OpenAddDialog(dt.Date, dt.TimeOfDay);
-        WeekViewCtrl.RecordClicked             += (_, r) => _ = OpenEditDialog(r);
-        WeekViewCtrl.RecordMoved               += (_, r) => { if (!TryWrite(RepoOf(r), () => RepoOf(r).UpdateCalendarRecord(r))) { RefreshCurrent(); return; } _journalDelta = [(r, -1), (r, +1)]; _selectAfter = [r]; NotifyChangedAndRefresh(structural: false); };
-        WeekViewCtrl.RecordDeleteRequested     += (_, r) => _ = DeleteRecordsWithConfirm([r]);
-        WeekViewCtrl.RecordsDeleteRequested    += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
-        WeekViewCtrl.RecordDuplicateRequested  += (_, r) => _ = DuplicateRecordsWithConfirm([r]);
-        WeekViewCtrl.RecordsDuplicateRequested += (_, rs) => _ = DuplicateRecordsWithConfirm(rs);
-        WeekViewCtrl.AllDayCreationRequested   += (_, d)  => _ = OpenAddAllDayDialog(d);
-        WeekViewCtrl.TimeSlotCreationRequested += (_, dt) => _ = OpenAddDialog(dt.Date, dt.TimeOfDay);
-        DiagramViewCtrl.RecordClicked          += (_, r) => _ = OpenEditDialog(r);
-        // Перенос/растяжение дат в Диаграмме — дельтой, как в Дне/Неделе (ключ не меняется).
-        DiagramViewCtrl.RecordMoved            += (_, r) => { if (!TryWrite(RepoOf(r), () => RepoOf(r).UpdateCalendarRecord(r))) { RefreshCurrent(); return; } _journalDelta = [(r, -1), (r, +1)]; _selectAfter = [r]; NotifyChangedAndRefresh(structural: false); };
-        DiagramViewCtrl.RecordDeleteRequested     += (_, r)  => _ = DeleteRecordsWithConfirm([r]);
-        DiagramViewCtrl.RecordsDeleteRequested    += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
-        DiagramViewCtrl.RecordDuplicateRequested  += (_, r)  => _ = DuplicateRecordsWithConfirm([r]);
-        DiagramViewCtrl.RecordsDuplicateRequested += (_, rs) => _ = DuplicateRecordsWithConfirm(rs);
-        // Смена масштаба Диаграммы (месяц…10 лет) меняет окно данных — полная перезагрузка.
-        DiagramViewCtrl.ScaleChanged              += (_, _) => RefreshCurrent();
+        v.RecordDeleteRequested    += (_, r) => _ = DeleteRecordsWithConfirm([r]);
+        v.RecordsDeleteRequested   += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
+        v.RecordDuplicateRequested += (_, r) => _ = DuplicateRecordsWithConfirm([r]);
+        v.RecordsDuplicateRequested += (_, rs) => _ = DuplicateRecordsWithConfirm(rs);
+    }
 
-        SwitchView(AppSettings.LoadCalendarView());   // стартовый вид из настроек (стандарт — Месяц)
+    private void Wire(YearView v)
+    {
+        v.MonthSelected += (_, d)  => { _currentDate = d; SwitchView(4); };
+        // Поиск в попапе дня Года — фоновый SQL LIKE по ВСЕМУ дню (как в «Расписании»):
+        // попап показывает лишь первые записи дня-гиганта, локальный фильтр по ним неполон.
+        v.DaySearchProvider = async (day, q) =>
+        {
+            var found = new List<CalendarRecord>();
+            foreach (var (dbId, _, repo) in _dbs.ToList())
+            {
+                ISet<int>? active = _activeByDb is not null && _activeByDb.TryGetValue(dbId, out var s) ? s : null;
+                var part = await repo.SearchCalendarEventsAsync(day, day.AddDays(1), active, q, 200);
+                foreach (var ev in part) ev.DbId = dbId;
+                found.AddRange(part);
+            }
+            return found;
+        };
+        // Список дня для попапа Года — ПО ТРЕБОВАНИЮ (Год события окна не читает, см.
+        // LoadGridAsync): per-day capped-чтение сиками — миллисекунды даже на дне-гиганте.
+        v.DayEventsProvider = async day =>
+        {
+            var found = new List<CalendarRecord>();
+            foreach (var (dbId, _, repo) in _dbs.ToList())
+            {
+                ISet<int>? active = _activeByDb is not null && _activeByDb.TryGetValue(dbId, out var s) ? s : null;
+                var part = await repo.LoadCalendarGridRangeAsync(day, day.AddDays(1), active, 200);
+                foreach (var ev in part) ev.DbId = dbId;
+                found.AddRange(part);
+            }
+            return found;
+        };
+    }
+
+    private void Wire(DiagramView v)
+    {
+        v.RecordClicked          += (_, r) => _ = OpenEditDialog(r);
+        // Перенос/растяжение дат в Диаграмме — дельтой, как в Дне/Неделе (ключ не меняется).
+        v.RecordMoved            += (_, r) => { if (!TryWrite(RepoOf(r), () => RepoOf(r).UpdateCalendarRecord(r))) { RefreshCurrent(); return; } _journalDelta = [(r, -1), (r, +1)]; _selectAfter = [r]; NotifyChangedAndRefresh(structural: false); };
+        v.RecordDeleteRequested     += (_, r)  => _ = DeleteRecordsWithConfirm([r]);
+        v.RecordsDeleteRequested    += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
+        v.RecordDuplicateRequested  += (_, r)  => _ = DuplicateRecordsWithConfirm([r]);
+        v.RecordsDuplicateRequested += (_, rs) => _ = DuplicateRecordsWithConfirm(rs);
+        // Смена масштаба Диаграммы (месяц…10 лет) меняет окно данных — полная перезагрузка.
+        v.ScaleChanged              += (_, _) => RefreshCurrent();
     }
 
     public void SetActiveIds(Dictionary<int, HashSet<int>> activeByDb)
@@ -290,13 +356,8 @@ public partial class CalendarControllerView : UserControl
     private void SwitchView(int idx)
     {
         _currentViewIndex = idx;
-        ListViewCtrl.IsVisible    = idx == 0;
-        JournalViewCtrl.IsVisible = idx == 1;
-        DayViewCtrl.IsVisible     = idx == 2;
-        WeekViewCtrl.IsVisible    = idx == 3;
-        MonthViewCtrl.IsVisible   = idx == 4;
-        YearViewCtrl.IsVisible    = idx == 5;
-        DiagramViewCtrl.IsVisible = idx == 6;
+        var shown = ViewAt(idx);
+        foreach (var view in ViewsHost.Children) view.IsVisible = view == shown;
 
         NavbarControl.SetView(idx);
         RefreshCurrent(scrollToNow: true);
@@ -533,6 +594,7 @@ public partial class CalendarControllerView : UserControl
         var context = $"вид {viewIdx}, {startDt:yyyy-MM-dd} — {endDt:yyyy-MM-dd}, баз {_dbs.Count}" +
                       (hasSearch ? ", с поиском" : "");
         using var slow = Logging.Diag.Measure("загрузка календаря", Logging.Diag.UiOpen, context);
+        var clock = new ReadClock();
         try
         {
             // Диаграмма — свой загрузчик «по коллекциям» (cap на коллекцию, а не на день): ее
@@ -545,7 +607,7 @@ public partial class CalendarControllerView : UserControl
                     : viewIdx == 4
                         ? repo.LoadCalendarGridRangeAsync(startDt, endDt, active, MonthDayCap,
                                                           allDayCap: GridDayCap, multiDayPerDay: MonthDayCap)
-                        : repo.LoadCalendarGridRangeAsync(startDt, endDt, active, GridDayCap));
+                        : repo.LoadCalendarGridRangeAsync(startDt, endDt, active, GridDayCap), clock);
             foreach (var (dbId, repo, task) in jobs)
             {
                 loadingPath = repo.DbPath;
@@ -591,7 +653,7 @@ public partial class CalendarControllerView : UserControl
         if (viewIdx == 6) _diagramCollections = LoadDiagramCollections();
 
         // В записи о медленной загрузке — и доля чтения: медленно ли база или построение вида.
-        slow.Context = $"{context}, чтение {slow.Elapsed.TotalMilliseconds:N0} мс";
+        slow.Context = $"{context}, чтение {slow.Elapsed.TotalMilliseconds:N0} мс (базы {clock.Ms:N0} мс)";
         ApplyGridData(viewIdx, records, null, currentDate, scrollToNow, selectAfter);
         slow.Dispose();
 
@@ -652,7 +714,7 @@ public partial class CalendarControllerView : UserControl
     // базу). Брошенные ожидающим (устаревшее поколение, сбой другой базы) задания досчитываются
     // впустую; их исключения наблюдаются, чтобы не всплыть необработанными.
     private List<(int DbId, ConstructorRepository Repo, Task<T> Task)> StartForAllDbs<T>(
-        Func<ConstructorRepository, ISet<int>?, Task<T>> load)
+        Func<ConstructorRepository, ISet<int>?, Task<T>> load, ReadClock? clock = null)
     {
         var jobs = new List<(int, ConstructorRepository, Task<T>)>();
         foreach (var (dbId, _, repo) in _dbs.ToList())
@@ -660,9 +722,31 @@ public partial class CalendarControllerView : UserControl
             ISet<int>? active = _activeByDb is not null && _activeByDb.TryGetValue(dbId, out var s) ? s : null;
             var task = load(repo, active);
             _ = task.ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously);
+            clock?.Track(task);
             jobs.Add((dbId, repo, task));
         }
         return jobs;
+    }
+
+    // Когда закончила последняя база — в фоне, без ожидания UI-потока. В записи о медленной
+    // загрузке «чтение» считается до применения на UI-потоке, и без этой доли не понять, долго ли
+    // читали базы или UI-поток был занят (построение раздела, раскладка).
+    private sealed class ReadClock
+    {
+        private readonly long _start = System.Diagnostics.Stopwatch.GetTimestamp();
+        private long _last;
+
+        public void Track(Task task) =>
+            task.ContinueWith(_ =>
+            {
+                var now = System.Diagnostics.Stopwatch.GetTimestamp();
+                for (var seen = Interlocked.Read(ref _last); now > seen; seen = Interlocked.Read(ref _last))
+                    if (Interlocked.CompareExchange(ref _last, now, seen) == seen) break;
+            }, TaskContinuationOptions.ExecuteSynchronously);
+
+        public double Ms => Interlocked.Read(ref _last) is var last and > 0
+            ? System.Diagnostics.Stopwatch.GetElapsedTime(_start, last).TotalMilliseconds
+            : 0;
     }
 
     // Отдать данные видимому виду сетки — общий финал полной загрузки и точечной правки. select —

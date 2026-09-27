@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using SmartBase.Core.Models;
 using SmartBase.Database.Entities;
 using SmartBase.Utils;
@@ -45,6 +46,53 @@ public partial class ConstructorRepository
 
     private static IEnumerable<DbFieldEntity> RoleOrder(IEnumerable<DbFieldEntity> fields) =>
         fields.OrderBy(f => f.Position).ThenBy(f => f.Id);
+
+    // Поля с ролями задач (исполнитель, статус) и календарные даты — прямым запросом, в порядке
+    // RoleOrder. Их читают размеры раздела, стадии и условия видов при каждом открытии «Задач»:
+    // db_fields крошечная, а запросы EF на ее месте при первом открытии раздела в процессе
+    // собирались заново — 0,2 с на все базы разом (фоновые чтения баз ждали друг друга на общем
+    // кеше запросов EF) и еще 0,05 с на UI-потоке у стадий.
+    private sealed record TaskRoleField(int Id, int CollectionId, string FieldType, bool IsTaskExec,
+                                        bool IsTaskStatus, bool IsCalStart, string? ConfigJson);
+
+    private List<TaskRoleField> ReadTaskRoleFields(int? collectionId = null)
+    {
+        var result = new List<TaskRoleField>();
+        var conn = db.Database.GetDbConnection();
+        var opened = conn.State != System.Data.ConnectionState.Open;
+        if (opened) conn.Open();
+        try
+        {
+            using var cmd = conn.CreateCommand();
+            if (db.Database.CurrentTransaction is { } t) cmd.Transaction = t.GetDbTransaction();
+            cmd.CommandText = "SELECT Id, CollectionId, FieldType, IsTaskExec, IsTaskStatus, IsCalStart, ConfigJson " +
+                              "FROM db_fields WHERE (IsTaskExec = 1 OR IsTaskStatus = 1 OR IsCalStart = 1)" +
+                              (collectionId is null ? "" : " AND CollectionId = @c") +
+                              " ORDER BY Position, Id";
+            if (collectionId is { } c) AddParam(cmd, "@c").Value = c;
+            using var rdr = cmd.ExecuteReader();
+            while (rdr.Read())
+                result.Add(new TaskRoleField(
+                    Id:           Convert.ToInt32(rdr.GetValue(0)),
+                    CollectionId: Convert.ToInt32(rdr.GetValue(1)),
+                    FieldType:    rdr.GetString(2),
+                    IsTaskExec:   Convert.ToInt32(rdr.GetValue(3)) != 0,
+                    IsTaskStatus: Convert.ToInt32(rdr.GetValue(4)) != 0,
+                    IsCalStart:   Convert.ToInt32(rdr.GetValue(5)) != 0,
+                    ConfigJson:   rdr.IsDBNull(6) ? null : rdr.GetString(6)));
+        }
+        finally { if (opened) conn.Close(); }
+        return result;
+    }
+
+    // Коллекции с включенным исполнителем — по прочитанным полям ролей (как GetTaskCollectionIds).
+    private static HashSet<int> TaskExecCollections(List<TaskRoleField> roles)
+    {
+        var result = new HashSet<int>();
+        foreach (var f in roles)
+            if (f.FieldType == "user" && f.IsTaskExec) result.Add(f.CollectionId);
+        return result;
+    }
 
     // ── Включение задач ───────────────────────────────────────────────────────
 
@@ -140,24 +188,19 @@ public partial class ConstructorRepository
     {
         if (activeIds is { Count: 0 }) return [];
 
-        var withExec = db.DbFields.AsNoTracking()
-            .Where(f => f.FieldType == "user" && f.IsTaskExec)
-            .Select(f => f.CollectionId)
-            .Distinct()
-            .ToHashSet();
-
-        var statusFields = RoleOrder(db.DbFields.AsNoTracking()
-                .Where(f => f.IsTaskStatus && (f.FieldType == "status" || f.FieldType == "select")))
-            .Select(f => new { f.CollectionId, f.ConfigJson })
-            .ToList();
+        var roles    = ReadTaskRoleFields();
+        var withExec = TaskExecCollections(roles);
 
         var result = new List<string>();
         var seen   = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var group in statusFields.GroupBy(f => f.CollectionId))
+        var done   = new HashSet<int>();   // коллекции, чей статус уже взят (первый по RoleOrder)
+        foreach (var f in roles)
         {
-            if (!withExec.Contains(group.Key)) continue;
-            if (activeIds is not null && !activeIds.Contains(group.Key)) continue;
-            foreach (var option in ReadOptions(group.First().ConfigJson))
+            if (!f.IsTaskStatus || f.FieldType is not ("status" or "select")) continue;
+            if (!done.Add(f.CollectionId)) continue;
+            if (!withExec.Contains(f.CollectionId)) continue;
+            if (activeIds is not null && !activeIds.Contains(f.CollectionId)) continue;
+            foreach (var option in ReadOptions(f.ConfigJson))
                 if (seen.Add(option)) result.Add(option);
         }
         return result;
@@ -531,31 +574,27 @@ public partial class ConstructorRepository
     /// стоило 3 с на коллекции в полмиллиона при каждом открытии раздела.
     /// </summary>
     public Dictionary<int, (int Total, int Done)> CountTasksByCollection(ISet<int>? activeIds = null) =>
-        CountTasksWithFirstId(activeIds).ToDictionary(kv => kv.Key, kv => (kv.Value.Total, kv.Value.Done));
+        CountTasksWithFirstId(activeIds, ReadTaskRoleFields())
+            .ToDictionary(kv => kv.Key, kv => (kv.Value.Total, kv.Value.Done));
 
     // То же плюс наименьший Id записи коллекции — нижняя граница прохода страниц «без срока»
     // в порядке Id (см. TasksPaging.ViewParts). MIN берется тем же проходом по индексу, что COUNT.
-    private Dictionary<int, (int Total, int Done, int FirstId)> CountTasksWithFirstId(ISet<int>? activeIds)
+    private Dictionary<int, (int Total, int Done, int FirstId)> CountTasksWithFirstId(ISet<int>? activeIds,
+                                                                                    List<TaskRoleField> roles)
     {
         var result = new Dictionary<int, (int Total, int Done, int FirstId)>();
         if (activeIds is { Count: 0 }) return result;
 
-        // Задачные коллекции и их поля-статусы — через EF: db_fields мала, а знать это заранее
-        // важно. Раньше поле-статус искал коррелированный подзапрос ВНУТРИ счета, и SQLite
-        // выполнял его на КАЖДУЮ запись — на базе в полмиллиона это полмиллиона лишних выборок
-        // по db_fields, то есть секунды на ровном месте при каждом открытии раздела и каждой
-        // правке задачи. Теперь связь «коллекция → ее статус» приезжает готовой картой.
-        var statusByCollection = RoleOrder(db.DbFields.Where(f => f.IsTaskStatus))
-            .Select(f => new { f.CollectionId, f.Id })
-            .ToList()
-            .GroupBy(x => x.CollectionId)
-            .ToDictionary(g => g.Key, g => g.First().Id);
+        // Задачные коллекции и их поля-статусы — заранее, из полей ролей. Раньше поле-статус
+        // искал коррелированный подзапрос ВНУТРИ счета, и SQLite выполнял его на КАЖДУЮ запись —
+        // на базе в полмиллиона это полмиллиона лишних выборок по db_fields, то есть секунды на
+        // ровном месте при каждом открытии раздела и каждой правке задачи. Теперь связь
+        // «коллекция → ее статус» (первый по RoleOrder) приезжает готовой картой.
+        var statusByCollection = new Dictionary<int, int>();
+        foreach (var f in roles)
+            if (f.IsTaskStatus) statusByCollection.TryAdd(f.CollectionId, f.Id);
 
-        var taskCollections = db.DbFields
-            .Where(f => f.FieldType == "user" && f.IsTaskExec)
-            .Select(f => f.CollectionId)
-            .Distinct()
-            .ToList();
+        var taskCollections = TaskExecCollections(roles).ToList();
         if (activeIds is not null) taskCollections.RemoveAll(c => !activeIds.Contains(c));
         if (taskCollections.Count == 0) return result;
 

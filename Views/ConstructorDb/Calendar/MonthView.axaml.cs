@@ -100,6 +100,9 @@ public partial class MonthView : UserControl
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
+        // Слой линий — уже при входе в окно: раздел календаря окно строит заранее скрытым (в
+        // простое), и 42 рамки со стилями не ложатся на первый показ «Месяца».
+        _BuildGridLines();
         if (e.Root is Avalonia.Controls.Window win)
         {
             _windowClickHandler = (_, e) =>
@@ -288,11 +291,17 @@ public partial class MonthView : UserControl
     // она граничит с разделителем сайдбара) и верхнюю линии; низ/право не рисуются —
     // линию в одном месте рисует ровно один элемент, без визуального удвоения.
     // Толщина — на момент пересборки: месяц перестраивается при каждом
-    // Refresh/навигации/SizeChanged (зум меняет размер → пересборка).
+    // Refresh/навигации/SizeChanged (зум меняет размер → пересборка). Слой от данных не зависит,
+    // поэтому собирается заново, только когда толщина другая: 42 рамки со стилями и привязкой на
+    // каждой пересборке (правка, приход счетчиков, навигация) стоили 10–15 мс UI-потока.
+    private double _gridLinesT = double.NaN;
+
     private void _BuildGridLines()
     {
+        var lineT = LineMetrics.ThicknessFor(this);
+        if (GridLines.Children.Count == 42 && lineT == _gridLinesT) return;
+        _gridLinesT = lineT;
         GridLines.Children.Clear();
-        var lineT     = LineMetrics.ThicknessFor(this);
         var lineBrush = new SolidColorBrush(Color.Parse("#E8E8E8"));
         for (var i = 0; i < 42; i++)
         {

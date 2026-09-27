@@ -2,9 +2,6 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:comp="using:SmartBase.Controls.Components"
         xmlns:con="using:SmartBase.Views.ConstructorDb"
-        xmlns:ext="using:SmartBase.Views.Extensions"
-        xmlns:profile="using:SmartBase.Views.Profile"
-        xmlns:tasks="using:SmartBase.Views.Tasks"
         xmlns:lib="using:SmartBase.Views.Library"
         xmlns:b="using:SmartBase.Controls.Behaviors"
         x:Class="SmartBase.Views.MainWindow"
@@ -65,13 +62,10 @@
                 HorizontalAlignment="Right" />
 
         <!-- Основная область контента -->
-        <!-- Календарь, настройки и заметки добавляет сюда первый показ (MainWindow.Sections.cs). -->
+        <!-- Остальные разделы (календарь, задачи, библиотеку, заметки, профиль, расширения,
+             настройки) добавляет сюда первый показ (MainWindow.Sections.cs). -->
         <Grid Grid.Column="3" x:Name="ModulesHost">
-            <tasks:TasksControllerView x:Name="TasksModule" IsVisible="False" />
             <con:ConstructorControllerView x:Name="ConstructorModule" IsVisible="False" />
-            <ext:ExtensionsView x:Name="ExtensionsModule" IsVisible="False" />
-            <profile:ProfileView x:Name="ProfileModule" IsVisible="False" />
-            <lib:LibraryControllerView x:Name="LibraryModule" IsVisible="False" />
         </Grid>
 
         <!-- Вертикальный разделитель слева от правой панели (записи или чтения документа) -->

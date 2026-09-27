@@ -318,11 +318,22 @@ public partial class SidebarTree : UserControl
 
     private void RebuildRows()
     {
-        _rows.Clear();
-        Flatten(_roots, 0);
+        var fresh = new List<SidebarRow>();
+        Flatten(_roots, 0, fresh);
+        // Строки переносятся на новые узлы на месте (Rebind), а не заменяются: новая строка в
+        // контейнере списка заново строит шаблон и входит в дерево со стилями — 4–5 мс на строку,
+        // и перестройка дерева при каждом переходе в раздел стоила 55–100 мс UI-потока, хотя
+        // строки почти всегда те же. Добавляется и убирается только хвост.
         // Первая строка стоит на месте шапки колонок таблицы (высота ячейки), остальные — на месте
         // строк данных (высота ячейки + линия сетки). См. SidebarRow.RowHeight.
-        if (_rows.Count > 0) _rows[0].IsFirstRow = true;
+        var i = 0;
+        for (; i < fresh.Count && i < _rows.Count; i++) _rows[i].Rebind(fresh[i], isFirstRow: i == 0);
+        while (_rows.Count > fresh.Count) _rows.RemoveAt(_rows.Count - 1);
+        for (; i < fresh.Count; i++)
+        {
+            fresh[i].IsFirstRow = i == 0;
+            _rows.Add(fresh[i]);
+        }
         MeasureRowWidth();
     }
 
@@ -376,16 +387,16 @@ public partial class SidebarTree : UserControl
         return probe.DesiredSize.Width;
     }
 
-    private void Flatten(IEnumerable<SidebarNode> nodes, int depth)
+    private void Flatten(IEnumerable<SidebarNode> nodes, int depth, List<SidebarRow> into)
     {
         foreach (var n in nodes)
         {
             var row = new SidebarRow(n, depth, _mode, IsChecked(n), _selectedNodes.Contains(n));
             if (n.IsDatabase && !n.IsPending && _dbStatus.TryGetValue(n.DbId, out var status))
                 row.SetStatus(status, false);
-            _rows.Add(row);
+            into.Add(row);
             if ((n.IsGroup || n.IsDatabase) && n.IsExpanded)
-                Flatten(n.Children, depth + 1);
+                Flatten(n.Children, depth + 1, into);
         }
     }
 
@@ -2911,9 +2922,9 @@ public partial class SidebarRow : ObservableObject
             ? b
             : new SolidColorBrush(Color.Parse(fallbackHex));
 
-    public SidebarNode Node { get; }
-    public int         Depth { get; }
-    public SidebarMode Mode { get; }
+    public SidebarNode Node { get; private set; }
+    public int         Depth { get; private set; }
+    public SidebarMode Mode { get; private set; }
     // Строка дерева — одна строка: показываем первую строку имени (TitleText). Полное имя
     // живет в Node.Name — по нему идут поиск, сортировка и переименование.
     public string      Name => TitleText.FirstLine(Node.Name);
@@ -2946,6 +2957,22 @@ public partial class SidebarRow : ObservableObject
     }
 
     public void SetHovered(bool v) => Hovered = v;
+
+    /// <summary>Перенести строку на узел новой сборки дерева (см. SidebarTree.RebuildRows):
+    /// строка остается в своем контейнере, и шаблон не строится заново — меняются только
+    /// значения привязок. Наведение остается: указатель стоит над той же строкой списка.</summary>
+    public void Rebind(SidebarRow fresh, bool isFirstRow)
+    {
+        Node          = fresh.Node;
+        Depth         = fresh.Depth;
+        Mode          = fresh.Mode;
+        Checked       = fresh.Checked;
+        Selected      = fresh.Selected;
+        Status        = fresh.Status;
+        StatusFailed  = fresh.StatusFailed;
+        _isFirstRow   = isFirstRow;
+        OnPropertyChanged(string.Empty);   // все свойства разом — привязки строки перечитываются
+    }
 
     public void SetStatus(string status, bool failed)
     {

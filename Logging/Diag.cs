@@ -46,6 +46,9 @@ public static class Diag
     /// <summary>Имена операций, которые идут прямо сейчас (через запятую; пусто — ни одной).</summary>
     public static string ActiveOperations => string.Join(", ", _active.Keys.OrderBy(k => k, StringComparer.Ordinal));
 
+    /// <summary>Идет ли сейчас хоть одна замеряемая операция (для работы «в простое»).</summary>
+    public static bool Busy => !_active.IsEmpty;
+
     /// <summary>Наблюдатель завершенных замеров — для стендов (<c>Tests/Sections</c>): получает
     /// каждую операцию с длительностью и контекстом, а не только медленные. В программе не задан.</summary>
     internal static Action<string, TimeSpan, string?>? Observer;

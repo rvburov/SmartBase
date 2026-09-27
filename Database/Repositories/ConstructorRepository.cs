@@ -5295,7 +5295,7 @@ public partial class ConstructorRepository(AppDbContext db)
     /// <summary>
     /// Включает/выключает показ поля-даты в календаре (флаг <c>IsCalStart</c>). Несколько
     /// полей-дат коллекции могут быть включены одновременно — каждое дает свои события.
-    /// Видимость — ЧИСТЫЙ ФИЛЬТР ЧТЕНИЯ (HiddenFieldsClause во всех читателях calendar_index),
+    /// Видимость — ЧИСТЫЙ ФИЛЬТР ЧТЕНИЯ (CalendarFields.HiddenClause во всех читателях calendar_index),
     /// БЕЗ пересборки проекции: прежний RebuildCalendarIndexForField удалял/заливал строки поля
     /// синхронно на UI-потоке — на 10 млн записей клик чекбокса вешал приложение на минуты.
     /// Проекция всегда полная (SyncCalendarIndexValue/FillCalendarIndex пишут ВСЕ date-поля).
@@ -6230,21 +6230,15 @@ public partial class ConstructorRepository(AppDbContext db)
         // фильтр по FieldId — residual (не ложится на индекс), и «галка включена, но поля
         // скрыты» платила бы полные сканы диапазона (день-гигант — секунды «Загрузки…»)
         // ради заведомо пустого результата.
-        var dateFields = db.DbFields.Where(f => f.FieldType == "date")
-            .Select(f => new { f.Id, f.CollectionId, f.IsCalStart }).ToList();
-        var fullyHidden = dateFields.GroupBy(f => f.CollectionId)
-            .Where(g => g.All(x => !x.IsCalStart)).Select(g => g.Key).ToHashSet();
+        var fields = ReadCalendarFields(withCollections: activeIds is null);
+        var fullyHidden = fields.FullyHidden;
 
         List<int> cols;
         if (activeIds is null)
         {
             // Без фильтра коллекций; если полностью скрытых нет — хватает residual по полям.
-            if (fullyHidden.Count == 0)
-            {
-                var allHidden = dateFields.Where(x => !x.IsCalStart).Select(x => x.Id).ToList();
-                return allHidden.Count == 0 ? "" : $" AND {prefix}FieldId NOT IN ({string.Join(",", allHidden)})";
-            }
-            cols = db.DbCollections.Select(c => c.Id).Where(id => !fullyHidden.Contains(id)).ToList();
+            if (fullyHidden.Count == 0) return fields.HiddenClause(prefix);
+            cols = fields.Collections!.Where(id => !fullyHidden.Contains(id)).ToList();
         }
         else
             cols = activeIds.Where(id => !fullyHidden.Contains(id)).ToList();
@@ -6253,31 +6247,109 @@ public partial class ConstructorRepository(AppDbContext db)
         if (cols.Count == 0) return " AND 1=0";
 
         var f = $" AND {prefix}CollectionId IN ({string.Join(",", cols)})";
-        var restHidden = dateFields
-            .Where(x => !x.IsCalStart && !fullyHidden.Contains(x.CollectionId))
-            .Select(x => x.Id).ToList();
+        var restHidden = new List<int>();
+        foreach (var (id, col) in fields.HiddenDateFields)
+            if (!fullyHidden.Contains(col)) restHidden.Add(id);
         if (restHidden.Count > 0) f += $" AND {prefix}FieldId NOT IN ({string.Join(",", restHidden)})";
         return f;
     }
 
-    // Часть фильтра по скрытым полям-датам — для запросов, где коллекция уже зафиксирована
-    // (per-collection проходы GetCalendarRecordsByRangeCapped).
-    private string HiddenFieldsClause(string prefix = "")
+    // Поля, от которых зависят чтения календаря: поля-даты с видимостью и поля с ролью
+    // «Описание», плюс (по запросу) все коллекции базы. Читаются прямым запросом: db_fields
+    // крошечная, а прежние четыре запроса EF (скрытые поля, целиком скрытые коллекции, список
+    // коллекций, описания) при первом показе календаря в процессе собирались заново — 0,3 с на
+    // все базы разом, причем фоновые чтения баз ждали друг друга на общем кеше запросов EF.
+    // Хранится в обычных словарях и множествах целых, без кортежей: коллекции над кортежами
+    // компилируются на лету при первом обращении (в предкомпилированном коде их нет), и это
+    // тоже ложилось на первый показ календаря.
+    private sealed class CalendarFields
     {
-        var hidden = db.DbFields
-            .Where(f => f.FieldType == "date" && !f.IsCalStart)
-            .Select(f => f.Id)
-            .ToList();
-        return hidden.Count == 0 ? "" : $" AND {prefix}FieldId NOT IN ({string.Join(",", hidden)})";
+        public readonly Dictionary<int, int> HiddenDateFields = [];        // поле → коллекция
+        public readonly HashSet<int> DateCollections = [];                 // есть поля-даты
+        public readonly HashSet<int> VisibleDateCollections = [];          // есть видимое поле-дата
+        public readonly Dictionary<int, List<int>> DescriptionFields = []; // коллекция → поля по номеру
+        public List<int>? Collections;
+
+        // Коллекции, у которых ВСЕ поля-даты скрыты, — per-collection проходы пропускают их целиком.
+        public HashSet<int> FullyHidden
+        {
+            get
+            {
+                var result = new HashSet<int>(DateCollections);
+                result.ExceptWith(VisibleDateCollections);
+                return result;
+            }
+        }
+
+        // Часть фильтра по скрытым полям-датам — для запросов, где коллекция уже зафиксирована
+        // (per-collection проходы GetCalendarRecordsByRangeCapped).
+        public string HiddenClause(string prefix = "") =>
+            HiddenDateFields.Count == 0 ? "" : $" AND {prefix}FieldId NOT IN ({string.Join(",", HiddenDateFields.Keys)})";
+
+        // Коллекции чтения: активные (null — все) без целиком скрытых.
+        public List<int> Readable(ISet<int>? activeIds)
+        {
+            var fullyHidden = FullyHidden;
+            return (activeIds ?? (IEnumerable<int>)Collections!).Where(id => !fullyHidden.Contains(id)).ToList();
+        }
+
+        // Описание для карточек ОДНОЙ коллекции: ее поля с ролью «Описание» известны заранее, и
+        // значение берется сиком по ключу (RecordId, FieldId), а не перебором всех значений записи
+        // с соединением полей на каждое событие (DescExpr). Порядок тот же — первое по номеру поле
+        // со значением. Нет таких полей — NULL без подзапроса. Для чтений, где коллекция
+        // зафиксирована условием.
+        public string Description(int collectionId) =>
+            DescriptionFields.TryGetValue(collectionId, out var ids)
+                ? "(SELECT fv.Value FROM db_field_values fv WHERE fv.RecordId = r.Id" +
+                  $" AND fv.FieldId IN ({string.Join(",", ids)}) LIMIT 1)"
+                : "NULL";
     }
 
-    // Коллекции, у которых ВСЕ поля-даты скрыты, — per-collection проходы пропускают их целиком.
-    private HashSet<int> FullyHiddenDateCollections() =>
-        db.DbFields.Where(f => f.FieldType == "date")
-            .GroupBy(f => f.CollectionId)
-            .Where(g => g.All(x => !x.IsCalStart))
-            .Select(g => g.Key)
-            .ToHashSet();
+    private CalendarFields ReadCalendarFields(bool withCollections)
+    {
+        var fields = new CalendarFields();
+        var conn = db.Database.GetDbConnection();
+        var opened = conn.State != System.Data.ConnectionState.Open;
+        if (opened) conn.Open();
+        try
+        {
+            using (var cmd = conn.CreateCommand())
+            {
+                if (db.Database.CurrentTransaction is { } t) cmd.Transaction = t.GetDbTransaction();
+                cmd.CommandText = "SELECT Id, CollectionId, FieldType, IsCalStart, IsDescription FROM db_fields " +
+                                  "WHERE FieldType = 'date' OR IsDescription = 1 ORDER BY Id";
+                using var rdr = cmd.ExecuteReader();
+                while (rdr.Read())
+                {
+                    var id  = Convert.ToInt32(rdr.GetValue(0));
+                    var col = Convert.ToInt32(rdr.GetValue(1));
+                    if (rdr.GetString(2) == "date")
+                    {
+                        fields.DateCollections.Add(col);
+                        if (Convert.ToInt32(rdr.GetValue(3)) != 0) fields.VisibleDateCollections.Add(col);
+                        else fields.HiddenDateFields[id] = col;
+                    }
+                    if (Convert.ToInt32(rdr.GetValue(4)) != 0)
+                    {
+                        if (!fields.DescriptionFields.TryGetValue(col, out var ids))
+                            fields.DescriptionFields[col] = ids = [];
+                        ids.Add(id);
+                    }
+                }
+            }
+            if (withCollections)
+            {
+                using var cmd = conn.CreateCommand();
+                if (db.Database.CurrentTransaction is { } t) cmd.Transaction = t.GetDbTransaction();
+                cmd.CommandText = "SELECT Id FROM db_collections";
+                using var rdr = cmd.ExecuteReader();
+                fields.Collections = [];
+                while (rdr.Read()) fields.Collections.Add(Convert.ToInt32(rdr.GetValue(0)));
+            }
+        }
+        finally { if (opened) conn.Close(); }
+        return fields;
+    }
 
     /// <summary>Число событий, начинающихся в дне [dayStart, dayEnd) (для «показано N из total»):
     /// те же счетчики дней, что у «Журнала» — полный день берется из сводки, а не счетом строк
@@ -6300,12 +6372,9 @@ public partial class ConstructorRepository(AppDbContext db)
     {
         // Те же коллекции и скрытые поля, что у фильтра видимости: коллекции с целиком скрытыми
         // датами пропускаются, частично скрытые поля отсекает условие по FieldId.
-        var fullyHidden = FullyHiddenDateCollections();
-        var colIds = (activeIds is null
-            ? db.DbCollections.Select(c => c.Id).AsEnumerable()
-            : activeIds)
-            .Where(id => !fullyHidden.Contains(id)).ToList();
-        var hidden = HiddenFieldsClause();
+        var fields = ReadCalendarFields(withCollections: activeIds is null);
+        var colIds = fields.Readable(activeIds);
+        var hidden = fields.HiddenClause();
 
         var counts = new SortedDictionary<string, int>(StringComparer.Ordinal);
         if (colIds.Count == 0 || end <= start) return [];
@@ -6438,24 +6507,32 @@ public partial class ConstructorRepository(AppDbContext db)
     // Длительность, которую триггер ставит неразобранной дате: границы нет.
     private const long CalendarSpanUnbounded = 99_999_999_999;
 
-    private sealed class CalendarSpans(Dictionary<(int CollectionId, int AllDay), long>? seconds)
+    // Коллекция → длительности по виду: [0] — со временем, [1] — «весь день»; -1 — событий этого
+    // вида нет. Массив, а не ключ-кортеж: словарь над кортежем компилировался бы на лету при
+    // первом показе календаря (см. CalendarFields).
+    private sealed class CalendarSpans(Dictionary<int, long[]>? seconds)
     {
         /// <summary>Сводка есть в базе; без нее чтения идут как до нее.</summary>
         public bool Known => seconds is not null;
 
         /// <summary>Есть ли у коллекции события этого вида (без сводки неизвестно — считаем, что есть).</summary>
         public bool Has(int collectionId, bool allDay) =>
-            seconds is null || seconds.ContainsKey((collectionId, allDay ? 1 : 0));
+            seconds is null || (seconds.TryGetValue(collectionId, out var s) && s[allDay ? 1 : 0] >= 0);
 
         /// <summary>Верхняя граница длительности события этого вида в коллекции; null — границы
         /// нет (сводки нет, дата не разобрана или событий этого вида нет — тогда см. <see cref="Has"/>).</summary>
         public TimeSpan? Max(int collectionId, bool allDay) =>
-            seconds is not null && seconds.TryGetValue((collectionId, allDay ? 1 : 0), out var s) ? Bound(s) : null;
+            seconds is not null && seconds.TryGetValue(collectionId, out var s) && s[allDay ? 1 : 0] is var v and >= 0
+                ? Bound(v) : null;
 
         /// <summary>То же по всем коллекциям базы (для чтений с фильтром по нескольким коллекциям).</summary>
-        public TimeSpan? MaxAll(bool allDay) =>
-            seconds is null ? null
-                : Bound(seconds.Where(kv => kv.Key.AllDay == (allDay ? 1 : 0)).Select(kv => kv.Value).DefaultIfEmpty(0).Max());
+        public TimeSpan? MaxAll(bool allDay)
+        {
+            if (seconds is null) return null;
+            long max = 0;
+            foreach (var s in seconds.Values) max = Math.Max(max, s[allDay ? 1 : 0]);
+            return Bound(max);
+        }
 
         private static TimeSpan? Bound(long s) => s >= CalendarSpanUnbounded ? null : TimeSpan.FromSeconds(s);
     }
@@ -6463,12 +6540,16 @@ public partial class ConstructorRepository(AppDbContext db)
     private CalendarSpans ReadCalendarSpans(System.Data.Common.DbConnection conn)
     {
         if (!HasCalendarTable(conn, "calendar_spans")) return new CalendarSpans(null);
-        var map = new Dictionary<(int, int), long>();
+        var map = new Dictionary<int, long[]>();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT CollectionId, AllDay, MaxSeconds FROM calendar_spans";
         using var rdr = cmd.ExecuteReader();
         while (rdr.Read())
-            map[(Convert.ToInt32(rdr.GetValue(0)), Convert.ToInt32(rdr.GetValue(1)))] = Convert.ToInt64(rdr.GetValue(2));
+        {
+            var col = Convert.ToInt32(rdr.GetValue(0));
+            if (!map.TryGetValue(col, out var s)) map[col] = s = [-1, -1];
+            s[Convert.ToInt32(rdr.GetValue(1)) != 0 ? 1 : 0] = Convert.ToInt64(rdr.GetValue(2));
+        }
         return new CalendarSpans(map);
     }
 
@@ -6953,12 +7034,10 @@ public partial class ConstructorRepository(AppDbContext db)
         // Per-collection запросы — нужны явные id: null — все коллекции БД, ПУСТОЙ набор —
         // ни одной (циклы не выполняются). Коллекции, у которых ВСЕ поля-даты скрыты,
         // пропускаются целиком; частично скрытые поля отсекает residual-фильтр чтения.
-        var fullyHidden = FullyHiddenDateCollections();
-        var colIds = (activeIds is null
-            ? db.DbCollections.Select(c => c.Id).AsEnumerable()
-            : activeIds)
-            .Where(id => !fullyHidden.Contains(id)).ToList();
-        var hidden = HiddenFieldsClause("ci.");
+        var fields = ReadCalendarFields(withCollections: activeIds is null);
+        var colIds = fields.Readable(activeIds);
+        var hidden = fields.HiddenClause("ci.");
+        var desc   = fields.Description;
 
         string Iso(DateTime dt) => DateTime.SpecifyKind(dt, DateTimeKind.Unspecified).ToString("o");
         var startIso = Iso(rangeStart);
@@ -6970,8 +7049,10 @@ public partial class ConstructorRepository(AppDbContext db)
         if (opened) conn.Open();
         try
         {
+            // Дни окна отличаются только значениями параметров: команда каждой коллекции и прохода
+            // готовится один раз, а не на каждый день (у «Месяца» 42 дня × коллекции × 2 прохода).
+            using var rows = new CalendarRowReader(conn);
             var spans = ReadCalendarSpans(conn);
-            var desc  = DescriptionExprs();
 
             // Timed по дням окна (окна сеток выровнены по дням — см. GetDateRange контроллера).
             // Коллекции без timed (по сводке длительностей) не спрашиваются вовсе.
@@ -6981,7 +7062,7 @@ public partial class ConstructorRepository(AppDbContext db)
                 var dayIso  = Iso(day);
                 var nextIso = Iso(day.AddDays(1));
                 foreach (var colId in timedCols)
-                    ReadCalendarRows(conn, result,
+                    rows.Read(result,
                         $"ci.CollectionId = {colId} AND ci.AllDay = 0{hidden}" +
                         " AND ci.StartIso >= @d AND ci.StartIso < @d2",
                         [("@d", dayIso), ("@d2", nextIso)], perDayCap, desc: desc(colId));
@@ -6995,7 +7076,10 @@ public partial class ConstructorRepository(AppDbContext db)
             // (начало в том же дне) — повторы отбрасываются.
             if (multiDayPerDay is { } multiCap)
             {
-                var seen = result.Where(r => !r.AllDay).Select(r => (r.Id, r.FieldId)).ToHashSet();
+                // Ключ «запись, поле» числом, а не кортежем (см. CalendarFields).
+                static long Key(CalendarRecord r) => ((long)(r.Id ?? 0) << 32) | (uint)r.FieldId;
+                var seen = new HashSet<long>();
+                foreach (var r in result) if (!r.AllDay) seen.Add(Key(r));
                 var multi = new List<CalendarRecord>();
                 for (var day = rangeStart.Date; day < rangeEnd; day = day.AddDays(1))
                 {
@@ -7004,13 +7088,13 @@ public partial class ConstructorRepository(AppDbContext db)
                     foreach (var colId in timedCols)
                     {
                         var (band, args) = NearEdge(spans.Max(colId, false), day, day.AddDays(1));
-                        ReadCalendarRows(conn, multi,
+                        rows.Read(multi,
                             $"ci.CollectionId = {colId} AND ci.AllDay = 0{hidden}" +
                             " AND ci.EndIso >= @d2 AND ci.StartIso >= @d AND ci.StartIso < @d2" + band,
                             [("@d", dayIso), ("@d2", nextIso), .. args], multiCap, "ci.EndIso", desc(colId));
                     }
                 }
-                result.AddRange(multi.Where(r => seen.Add((r.Id, r.FieldId))));
+                foreach (var r in multi) if (seen.Add(Key(r))) result.Add(r);
             }
 
             // Timed-спилловеры (начались ДО окна, но пересекают его) — сик по EndIso-индексу:
@@ -7080,12 +7164,10 @@ public partial class ConstructorRepository(AppDbContext db)
     public List<CalendarRecord> GetCalendarSpanningRecords(
         DateTime rangeStart, DateTime rangeEnd, ISet<int>? activeIds, int perCollectionCap)
     {
-        var fullyHidden = FullyHiddenDateCollections();
-        var colIds = (activeIds is null
-            ? db.DbCollections.Select(c => c.Id).AsEnumerable()
-            : activeIds)
-            .Where(id => !fullyHidden.Contains(id)).ToList();
-        var hidden = HiddenFieldsClause("ci.");
+        var fields = ReadCalendarFields(withCollections: activeIds is null);
+        var colIds = fields.Readable(activeIds);
+        var hidden = fields.HiddenClause("ci.");
+        var desc   = fields.Description;
 
         string Iso(DateTime dt) => DateTime.SpecifyKind(dt, DateTimeKind.Unspecified).ToString("o");
         var startIso = Iso(rangeStart);
@@ -7101,7 +7183,6 @@ public partial class ConstructorRepository(AppDbContext db)
             // Полоса у окна шириной наибольшей длительности вида (сводка длительностей): конец
             // многодневного — не позже конца окна + M, без сводки — все будущее коллекции.
             var bounds = ReadCalendarSpans(conn);
-            var desc   = DescriptionExprs();
             foreach (var colId in colIds)
                 foreach (var allDay in new[] { false, true })
                 {
@@ -7169,12 +7250,10 @@ public partial class ConstructorRepository(AppDbContext db)
     public List<CalendarRecord> GetDiagramRecordsCapped(
         DateTime rangeStart, DateTime rangeEnd, ISet<int>? activeIds, int perCollectionCap)
     {
-        var fullyHidden = FullyHiddenDateCollections();
-        var colIds = (activeIds is null
-            ? db.DbCollections.Select(c => c.Id).AsEnumerable()
-            : activeIds)
-            .Where(id => !fullyHidden.Contains(id)).ToList();
-        var hidden = HiddenFieldsClause("ci.");
+        var fields = ReadCalendarFields(withCollections: activeIds is null);
+        var colIds = fields.Readable(activeIds);
+        var hidden = fields.HiddenClause("ci.");
+        var desc   = fields.Description;
 
         string Iso(DateTime dt) => DateTime.SpecifyKind(dt, DateTimeKind.Unspecified).ToString("o");
         var startIso = Iso(rangeStart);
@@ -7187,7 +7266,6 @@ public partial class ConstructorRepository(AppDbContext db)
         try
         {
             var spans = ReadCalendarSpans(conn);
-            var desc  = DescriptionExprs();
             foreach (var colId in colIds)
             {
                 if (spans.Has(colId, false))
@@ -7244,12 +7322,9 @@ public partial class ConstructorRepository(AppDbContext db)
     public Dictionary<int, DiagramGroupStat> GetDiagramStats(
         DateTime rangeStart, DateTime rangeEnd, ISet<int>? activeIds)
     {
-        var fullyHidden = FullyHiddenDateCollections();
-        var colIds = (activeIds is null
-            ? db.DbCollections.Select(c => c.Id).AsEnumerable()
-            : activeIds)
-            .Where(id => !fullyHidden.Contains(id)).ToList();
-        var hidden = HiddenFieldsClause();
+        var fields = ReadCalendarFields(withCollections: activeIds is null);
+        var colIds = fields.Readable(activeIds);
+        var hidden = fields.HiddenClause();
 
         string Iso(DateTime dt) => DateTime.SpecifyKind(dt, DateTimeKind.Unspecified).ToString("o");
         var startIso = Iso(rangeStart);
@@ -7358,21 +7433,6 @@ public partial class ConstructorRepository(AppDbContext db)
                 [("@spanHi", Iso(SafeAdd(edge, m))), ("@spanLo", Iso(SafeAdd(from, -m)))]);
     }
 
-    // Описание для карточек ОДНОЙ коллекции: ее поля с ролью «Описание» известны заранее, и значение
-    // берется сиком по ключу (RecordId, FieldId), а не перебором всех значений записи с соединением
-    // полей на каждое событие (DescExpr). Порядок тот же — первое по номеру поле со значением. Нет
-    // таких полей — NULL без подзапроса. Для чтений, где коллекция зафиксирована условием.
-    private Func<int, string> DescriptionExprs()
-    {
-        var map = db.DbFields.AsNoTracking().Where(f => f.IsDescription)
-                    .Select(f => new { f.CollectionId, f.Id }).ToList()
-                    .GroupBy(f => f.CollectionId)
-                    .ToDictionary(g => g.Key, g =>
-                        "(SELECT fv.Value FROM db_field_values fv WHERE fv.RecordId = r.Id" +
-                        $" AND fv.FieldId IN ({string.Join(",", g.Select(x => x.Id).Order())}) LIMIT 1)");
-        return colId => map.GetValueOrDefault(colId, "NULL");
-    }
-
     // Дата строки проекции: пишется форматом «o» без зоны (2026-09-21T00:31:12.0000000), и точный
     // разбор этого формата в разы дешевле общего (на неделе в девять тысяч событий общий разбор
     // стоил десятки мс); иной вид строки — общим разбором, как раньше.
@@ -7391,15 +7451,50 @@ public partial class ConstructorRepository(AppDbContext db)
                                          int limit = 0, string orderBy = "ci.StartIso", string? desc = null)
     {
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = $@"SELECT ci.RecordId, ci.FieldId, ci.CollectionId, ci.StartIso, ci.EndIso, ci.AllDay,
-                                    r.Title, {desc ?? DescExpr}, c.Name, c.Color
-                             FROM calendar_index ci
-                             JOIN db_records r ON r.Id = ci.RecordId
-                             JOIN db_collections c ON c.Id = r.CollectionId
-                             WHERE {where}"
-                          + (limit > 0 ? $" ORDER BY {orderBy} LIMIT {limit}" : "");
+        cmd.CommandText = CalendarRowsSql(where, limit, orderBy, desc);
         foreach (var (name, value) in args)
             AddParam(cmd, name).Value = value;
+        ReadCalendarRows(cmd, into);
+    }
+
+    private static string CalendarRowsSql(string where, int limit, string orderBy, string? desc) =>
+        $@"SELECT ci.RecordId, ci.FieldId, ci.CollectionId, ci.StartIso, ci.EndIso, ci.AllDay,
+                  r.Title, {desc ?? DescExpr}, c.Name, c.Color
+           FROM calendar_index ci
+           JOIN db_records r ON r.Id = ci.RecordId
+           JOIN db_collections c ON c.Id = r.CollectionId
+           WHERE {where}"
+        + (limit > 0 ? $" ORDER BY {orderBy} LIMIT {limit}" : "");
+
+    // Тот же читатель для серии запросов, различающихся только значениями параметров (дни окна):
+    // команда на каждый текст запроса создается и готовится один раз, дальше меняются значения.
+    private sealed class CalendarRowReader(System.Data.Common.DbConnection conn) : IDisposable
+    {
+        private readonly Dictionary<string, System.Data.Common.DbCommand> _commands = new(StringComparer.Ordinal);
+
+        public void Read(List<CalendarRecord> into, string where, IReadOnlyList<(string Name, string Value)> args,
+                         int limit = 0, string orderBy = "ci.StartIso", string? desc = null)
+        {
+            var sql = CalendarRowsSql(where, limit, orderBy, desc);
+            if (!_commands.TryGetValue(sql, out var cmd))
+            {
+                cmd = conn.CreateCommand();
+                cmd.CommandText = sql;
+                foreach (var (name, _) in args) AddParam(cmd, name);
+                _commands[sql] = cmd;
+            }
+            foreach (var (name, value) in args) cmd.Parameters[name].Value = value;
+            ReadCalendarRows(cmd, into);
+        }
+
+        public void Dispose()
+        {
+            foreach (var cmd in _commands.Values) cmd.Dispose();
+        }
+    }
+
+    private static void ReadCalendarRows(System.Data.Common.DbCommand cmd, List<CalendarRecord> into)
+    {
         using var rdr = cmd.ExecuteReader();
         while (rdr.Read())
         {

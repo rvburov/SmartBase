@@ -21,9 +21,8 @@ public partial class ExtensionsView : UserControl
     {
         InitializeComponent();
         HeaderBar.RunClicked += OnRunClick;
-        // Описание расширения здесь не рисуется: окно строит все разделы сразу, а markdown
-        // описания — заметная доля построения. Раздел показывает расширение при заходе
-        // (MainWindow.ShowModule → ShowExtension).
+        // Описание расширения здесь не рисуется: markdown описания — заметная доля построения.
+        // Раздел показывает расширение при заходе (MainWindow.ShowModule → ShowExtension).
     }
 
     /// <summary>Показать расширение по Id (из выбора в сайдбаре). Пустой, неизвестный или

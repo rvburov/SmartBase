@@ -107,17 +107,18 @@ public partial class ConstructorRepository
     /// </summary>
     public Dictionary<int, TaskCollectionStats> GetTaskCollectionStats(ISet<int>? activeIds = null)
     {
-        var counts = CountTasksWithFirstId(activeIds);
+        var roles  = ReadTaskRoleFields();
+        var counts = CountTasksWithFirstId(activeIds, roles);
         if (counts.Count == 0) return [];
 
-        // Календарные поля-даты по коллекциям. db_fields — маленькая таблица, читаем через EF:
-        // так же поступает вся ролевая разметка раздела.
-        var dateFields = db.DbFields
-            .Where(f => f.FieldType == "date" && f.IsCalStart)
-            .Select(f => new { f.CollectionId, f.Id })
-            .ToList()
-            .GroupBy(x => x.CollectionId)
-            .ToDictionary(g => g.Key, g => g.Select(x => x.Id).ToList());
+        // Календарные поля-даты по коллекциям — из тех же полей ролей.
+        var dateFields = new Dictionary<int, List<int>>();
+        foreach (var f in roles)
+            if (f.FieldType == "date" && f.IsCalStart)
+            {
+                if (!dateFields.TryGetValue(f.CollectionId, out var list)) dateFields[f.CollectionId] = list = [];
+                list.Add(f.Id);
+            }
 
         var result = new Dictionary<int, TaskCollectionStats>(counts.Count);
         foreach (var (colId, c) in counts)
@@ -147,10 +148,16 @@ public partial class ConstructorRepository
     // Роли коллекции, нужные условиям: исполнитель и статус. Снимаются ОДИН раз на коллекцию и
     // передаются в запросы готовыми id — искать поле подзапросом на каждую строку нельзя,
     // на большой коллекции это столько же лишних выборок по db_fields, сколько в ней записей.
-    private (int? Exec, int? Status) TaskRoleIds(int collectionId) =>
-        (TaskExecFieldId(collectionId),
-         RoleOrder(db.DbFields.Where(f => f.CollectionId == collectionId && f.IsTaskStatus))
-             .Select(f => (int?)f.Id).FirstOrDefault());
+    private (int? Exec, int? Status) TaskRoleIds(int collectionId)
+    {
+        int? exec = null, status = null;
+        foreach (var f in ReadTaskRoleFields(collectionId))
+        {
+            if (exec is null && f.FieldType == "user" && f.IsTaskExec) exec = f.Id;
+            if (status is null && f.IsTaskStatus) status = f.Id;
+        }
+        return (exec, status);
+    }
 
     // Регистровые варианты подстроки поиска: SQLite сравнивает без учета регистра только
     // латиницу, поэтому кириллицу перебираем вариантами — тот же прием, что в поиске календаря.
@@ -379,9 +386,9 @@ public partial class ConstructorRepository
             cmd.CommandText = sql;
             BindView(cmd, view, collectionId);
             if (stats.DueFieldId is int due) AddParam(cmd, "@due").Value = due;
-            var (_, statusId) = TaskRoleIds(collectionId);
+            var (execId, statusId) = TaskRoleIds(collectionId);
             AddParam(cmd, "@status").Value = statusId ?? -1;
-            AddParam(cmd, "@exec").Value   = TaskExecFieldId(collectionId) ?? -1;
+            AddParam(cmd, "@exec").Value   = execId ?? -1;
 
             using var rdr = cmd.ExecuteReader();
             return rdr.Read() ? (rdr.GetInt32(0), rdr.IsDBNull(1) ? 0 : rdr.GetInt32(1)) : (0, 0);
@@ -544,9 +551,9 @@ public partial class ConstructorRepository
             AddParam(cmd, "@take").Value = take;
             AddParam(cmd, "@skip").Value = skip;
             if (stats.DueFieldId is int due) AddParam(cmd, "@due").Value = due;
-            var (_, statusId) = TaskRoleIds(collectionId);
+            var (execId, statusId) = TaskRoleIds(collectionId);
             AddParam(cmd, "@status").Value = statusId ?? -1;
-            AddParam(cmd, "@exec").Value   = TaskExecFieldId(collectionId) ?? -1;
+            AddParam(cmd, "@exec").Value   = execId ?? -1;
 
             using var rdr = cmd.ExecuteReader();
             while (rdr.Read()) result.Add(rdr.GetInt32(0));

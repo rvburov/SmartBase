@@ -74,6 +74,10 @@ static class Frames
             }
         }
         System.Runtime.InteropServices.Marshal.Copy(bufD, 0, fd.Address, bufD.Length);
+        // Растры живут, пока открыты их буферы: вызывающий передает временные объекты, и без этого
+        // сборщик мог освободить растр посреди сравнения (падение в чтении RowBytes под нагрузкой).
+        GC.KeepAlive(a);
+        GC.KeepAlive(b);
         return (strict, loose, diff, bands.Select(kv => (kv.Key, kv.Value)).ToList());
     }
 
@@ -99,6 +103,7 @@ static class Frames
                 bufD[d] = bufS[s]; bufD[d + 1] = bufS[s + 1]; bufD[d + 2] = bufS[s + 2]; bufD[d + 3] = 255;
             }
         System.Runtime.InteropServices.Marshal.Copy(bufD, 0, fd.Address, bufD.Length);
+        GC.KeepAlive(src);   // см. Compare
         using var f = File.Create(file);
         dst.Save(f);
     }

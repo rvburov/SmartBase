@@ -35,6 +35,8 @@ using Avalonia.Headless;
 using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
+using Avalonia.Controls.Presenters;
 using Serilog;
 using SmartBase.Database;
 using SmartBase.Database.DocIndex;
@@ -57,6 +59,7 @@ var fresh    = args.Contains("--fresh");
 var echoInfo = args.Contains("--info");
 var scale    = double.Parse(Arg("--scale") ?? "1", System.Globalization.CultureInfo.InvariantCulture);
 var repeat   = int.Parse(Arg("--repeat") ?? "1");
+var detailMs = double.Parse(Arg("--detail") ?? "1000");   // пауза не короче — разбор по методам и всем кадрам
 Console.OutputEncoding = System.Text.Encoding.UTF8;
 
 // Настоящий старт App (сплэш, фоновая подготовка, окно) без экрана — --only app. Папку данных
@@ -119,6 +122,93 @@ if (only == "readbench")
     using var benchCtx = new SmartBase.Database.AppDbContext(benchPath);
     benchCtx.ApplyPerformancePragmas();
     var benchRepo = new SmartBase.Database.Repositories.ConstructorRepository(benchCtx);
+
+    // Чтение «Месяца» всеми базами стенда сразу, как при первом показе календаря (у каждой базы
+    // свое подключение, фоном): первый проход в процессе платит разовые цены (сборка запросов,
+    // подготовка команд), следующие — только чтение.
+    var monthDbs = new[] { Path.Combine(dataDir, "run", "main.db"), Path.Combine(dataDir, "run", "second.db"), benchPath,
+                           Arg("--wide") ?? Path.Combine(home, "TestData", "wide1000.db") }
+                   .Where(File.Exists)
+                   .Select(p =>
+                   {
+                       var ctx = new SmartBase.Database.AppDbContext(p);
+                       var repo = new SmartBase.Database.Repositories.ConstructorRepository(ctx);
+                       // Как в программе к показу раздела: база подключена (уборка сводки дней) и
+                       // дерево коллекций прочитано — EF и статика репозитория уже прогреты.
+                       repo.TidyCalendarDayCounts();
+                       repo.GetAllCollections();
+                       return (Name: Path.GetFileName(p), Repo: repo);
+                   })
+                   .ToList();
+    if (args.Contains("--steps"))
+    {
+        // Первое чтение одной базой по шагам: подключение, прагмы, чтение окна.
+        var probePath = Path.Combine(dataDir, "run", "main.db");
+        for (var pass = 1; pass <= 2; pass++)
+        {
+            var sw = Stopwatch.StartNew();
+            using var pctx = new SmartBase.Database.AppDbContext(probePath);
+            var tCtx = sw.Elapsed.TotalMilliseconds;
+            pctx.ApplyPerformancePragmas();
+            Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.OpenConnection(pctx.Database);
+            var tOpen = sw.Elapsed.TotalMilliseconds;
+            using (var c = Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.GetDbConnection(pctx.Database).CreateCommand())
+            {
+                c.CommandText = "SELECT COUNT(*) FROM db_fields";
+                c.ExecuteScalar();
+            }
+            var tSql = sw.Elapsed.TotalMilliseconds;
+            var tPragmas = sw.Elapsed.TotalMilliseconds;
+            var prepo = new SmartBase.Database.Repositories.ConstructorRepository(pctx);
+            if (pass == 1) new List<JitMarkBegin>().Add(default);
+            prepo.GetCalendarRecordsByRangeCapped(new DateTime(2026, 8, 31), new DateTime(2026, 10, 12), null, 24, 2000, 24);
+            if (pass == 1) new List<JitMarkEnd>().Add(default);
+            var tRead = sw.Elapsed.TotalMilliseconds;
+            prepo.GetCalendarRecordsByRangeCapped(new DateTime(2026, 8, 31), new DateTime(2026, 10, 12), null, 24, 2000, 24);
+            Console.WriteLine($"  шаги, проход {pass}: контекст {tCtx:0}, открытие {tOpen - tCtx:0}, первый SQL {tSql - tOpen:0}, чтение {tRead - tPragmas:0}, " +
+                              $"повтор {sw.Elapsed.TotalMilliseconds - tRead:0} мс");
+        }
+    }
+    for (var pass = 1; pass <= 4; pass++)
+    {
+        var wall = Stopwatch.StartNew();
+        var jobs = monthDbs.Select(d =>
+        {
+            var sw = Stopwatch.StartNew();
+            return (d.Name, Task: d.Repo.LoadCalendarGridRangeAsync(new DateTime(2026, 8, 31), new DateTime(2026, 10, 12), null, 24,
+                                                                    allDayCap: 2000, multiDayPerDay: 24)
+                                        .ContinueWith(t => (Rows: t.Result.Count, Ms: sw.Elapsed.TotalMilliseconds)));
+        }).ToList();
+        Task.WaitAll(jobs.Select(j => (Task)j.Task).ToArray());
+        Console.WriteLine($"  месяц всеми базами, проход {pass}: {wall.Elapsed.TotalMilliseconds:0} мс  (" +
+                          string.Join(", ", jobs.Select(j => $"{j.Name} {j.Task.Result.Ms:0} мс / {j.Task.Result.Rows}")) + ")");
+    }
+
+    // То же для раздела «Задачи»: размеры коллекций всеми базами (фон) и заголовок раздела
+    // (стадии, коллекции, пользователи — на общем контексте, как UpdateChrome на UI-потоке).
+    for (var pass = 1; pass <= 3; pass++)
+    {
+        var wall = Stopwatch.StartNew();
+        var jobs = monthDbs.Select(d =>
+        {
+            var sw = Stopwatch.StartNew();
+            return (d.Name, Task: d.Repo.GetTaskCollectionStatsAsync(null)
+                                        .ContinueWith(t => (Rows: t.Result.Count, Ms: sw.Elapsed.TotalMilliseconds)));
+        }).ToList();
+        Task.WaitAll(jobs.Select(j => (Task)j.Task).ToArray());
+        var statsMs = wall.Elapsed.TotalMilliseconds;
+        var chrome = Stopwatch.StartNew();
+        foreach (var d in monthDbs)
+        {
+            d.Repo.GetAllCollections();
+            d.Repo.GetTaskStages(null);
+            d.Repo.GetUserOptions();
+        }
+        Console.WriteLine($"  задачи всеми базами, проход {pass}: размеры {statsMs:0} мс (" +
+                          string.Join(", ", jobs.Select(j => $"{j.Name} {j.Task.Result.Ms:0}")) +
+                          $"), заголовок {chrome.Elapsed.TotalMilliseconds:0} мс");
+    }
+
     var benchCases = new (string Name, Func<int> Run)[]
     {
         ("неделя 21–28.09.2026, 2000 на день", () => benchRepo.GetCalendarRecordsByRangeCapped(new DateTime(2026, 9, 21), new DateTime(2026, 9, 28), null, 2000).Count),
@@ -298,6 +388,47 @@ async Task Scenario()
         }
     }
 
+    // --views-cost — цена видов календаря при первом показе раздела: построение, вход в окно
+    // скрытым (стили и привязки — как у шести невидимых видов раздела) и видимым с раскладкой.
+    if (args.Contains("--views-cost"))
+    {
+        var probeWin = new Window { Width = 1600, Height = 900 };
+        var host = new Grid();
+        probeWin.Content = host;
+        probeWin.Show();
+        Dispatcher.UIThread.RunJobs();
+        foreach (var (name, make) in new (string, Func<Control>)[]
+                 {
+                     ("список",    () => new SmartBase.Views.ConstructorDb.Calendar.ListView()),
+                     ("журнал",    () => new SmartBase.Views.ConstructorDb.Calendar.JournalView()),
+                     ("день",      () => new SmartBase.Views.ConstructorDb.Calendar.DayView()),
+                     ("неделя",    () => new SmartBase.Views.ConstructorDb.Calendar.WeekView()),
+                     ("месяц",     () => new SmartBase.Views.ConstructorDb.Calendar.MonthView()),
+                     ("год",       () => new SmartBase.Views.ConstructorDb.Calendar.YearView()),
+                     ("диаграмма", () => new SmartBase.Views.ConstructorDb.Calendar.DiagramView()),
+                     ("раздел",    () => new SmartBase.Views.ConstructorDb.Calendar.CalendarControllerView()),
+                 })
+        {
+            var vsw = Stopwatch.StartNew();
+            var hidden = make();
+            var build = vsw.Elapsed.TotalMilliseconds;
+            hidden.IsVisible = false;
+            vsw.Restart();
+            host.Children.Add(hidden);
+            probeWin.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            var attachHidden = vsw.Elapsed.TotalMilliseconds;
+            vsw.Restart();
+            hidden.IsVisible = true;
+            probeWin.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            var show = vsw.Elapsed.TotalMilliseconds;
+            host.Children.Remove(hidden);
+            Console.WriteLine($"  вид {name}: построение {build:N0} мс, вход скрытым {attachHidden:N0} мс, показ {show:N0} мс");
+        }
+        probeWin.Close();
+    }
+
     Step("старт: построение окна");
     var sw = Stopwatch.StartNew();
     main = new MainWindow(workspace) { Width = 1600, Height = 900 };
@@ -312,6 +443,32 @@ async Task Scenario()
     if (only == "start") return;
     if (only == "frames") { await CalendarFrames(); return; }
     if (only == "calops") { await CalendarOps(); return; }
+    if (only == "sidebars")
+    {
+        // Цена первого показа боковых панелей разделов: перечитать дерево, показать, разложить.
+        foreach (var name in new[] { "CalendarSidebar", "TasksSidebar", "LibrarySidebar" })
+        {
+            var sidebar = main.FindControl<Control>(name)!;
+            for (var pass = 1; pass <= 3; pass++)
+            {
+                Step($"боковая панель: {name}, показ {pass}");
+                await Task.Delay(300);
+                var ssw = Stopwatch.StartNew();
+                sidebar.GetType().GetMethod("Refresh", Type.EmptyTypes)!.Invoke(sidebar, null);
+                var refresh = ssw.Elapsed.TotalMilliseconds;
+                sidebar.IsVisible = true;
+                main.UpdateLayout();
+                Dispatcher.UIThread.RunJobs();
+                var show = ssw.Elapsed.TotalMilliseconds - refresh;
+                var rows = sidebar.GetVisualDescendants().OfType<ContentPresenter>().Count(c => c.Content is SmartBase.Controls.Components.SidebarRow);
+                Console.WriteLine($"  {name}, показ {pass}: перечитать {refresh:N0} мс, показать и разложить {show:N0} мс, строк {rows}");
+                sidebar.IsVisible = false;
+                main.UpdateLayout();
+                Dispatcher.UIThread.RunJobs();
+            }
+        }
+        return;
+    }
 
     if (Want("modules"))
     foreach (var module in new[] { "calendar", "tasks", "library", "notes", "profile", "settings", "extensions", "constructor" })
@@ -337,7 +494,7 @@ async Task Scenario()
 
     // Задачи: пункты фильтра навбара по очереди — как выбор пункта человеком.
     if (Want("tasks")) { Step("раздел «tasks»"); ShowModule("tasks"); await Settle(quietSec: 1.5, capSec: 90); }
-    var taskFilters = main.FindControl<Control>("TasksModule")!.FindControl<Control>("NavbarControl")!
+    var taskFilters = Module("TasksModule").FindControl<Control>("NavbarControl")!
                           .FindControl<Avalonia.Controls.Primitives.SelectingItemsControl>("FilterSelector")!;
     if (Want("tasks"))
     for (var i = 0; i < taskFilters.ItemCount; i++)
@@ -407,7 +564,7 @@ async Task CalendarFrames()
         Step($"кадры: {name}");
         Call(calendar, "SwitchView", view);
         await Settle(quietSec: 1, capSec: 30);
-        var viewCtrl = calendar.FindControl<Control>(ctrl)!;
+        var viewCtrl = CalView<Control>(calendar, ctrl);
         viewCtrl.FindControl<ScrollViewer>("TimeScroll")!.Offset = new Vector(0, 8 * 60);
         await Frame($"cal-{name}-{tag}");
 
@@ -441,7 +598,7 @@ async Task CalendarFrames()
     SetField(calendar, "_currentDate", new DateTime(2026, 7, 8));
     Call(calendar, "SwitchView", 4);
     await Settle(quietSec: 1, capSec: 30);
-    var month = calendar.FindControl<MonthView>("MonthViewCtrl")!;
+    var month = CalView<MonthView>(calendar, "MonthViewCtrl");
     await Frame($"cal-month-{tag}");
     main.MouseMove(month.TranslatePoint(month.EventCenter("Итоги недели")!.Value, main)!.Value);
     await Frame($"cal-month-hover-{tag}");
@@ -461,7 +618,7 @@ async Task CalendarFrames()
     SetField(calendar, "_currentDate", new DateTime(2026, 7, 8));
     Call(calendar, "SwitchView", 6);
     await Settle(quietSec: 1, capSec: 30);
-    var diagram = calendar.FindControl<Control>("DiagramViewCtrl")!;
+    var diagram = CalView<Control>(calendar, "DiagramViewCtrl");
     await Frame($"cal-diagram-{tag}");
     var seededCol = def.Constructor.GetAllCollections()
                        .First(c => def.Constructor.GetFields(c.Id!.Value).Any(f => f.FieldType == "date" && f.IsCalStart)).Id!.Value;
@@ -499,7 +656,7 @@ async Task CalendarFrames()
     // Поведение «Года»: нажатие по числу — список событий дня под ячейкой, двойное — «Месяц».
     // 10 февраля 2027 (12 событий): февраль начинается с понедельника — третья колонка, вторая
     // строка чисел.
-    var yearView = calendar.FindControl<Control>("YearViewCtrl")!;
+    var yearView = CalView<Control>(calendar, "YearViewCtrl");
     var feb = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(yearView)
                   .OfType<SmartBase.Views.ConstructorDb.Calendar.YearMonthCard>().First(c => c.Month == 2);
     var cellCenter = new Point(Math.Round((YearMonthCard.CardW - YearMonthCard.GridW) / 2) + 2.5 * YearMonthCard.CellW,
@@ -544,14 +701,14 @@ async Task CalendarFrames()
     SetField(calendar, "_currentDate", new DateTime(2026, 7, 8));
     Call(calendar, "SwitchView", 4);
     await Settle(quietSec: 1, capSec: 30);
-    var monthView = calendar.FindControl<MonthView>("MonthViewCtrl")!;
+    var monthView = CalView<MonthView>(calendar, "MonthViewCtrl");
     var before = StartOf("Итоги недели");
     await DragBy(monthView.TranslatePoint(monthView.EventCenter("Итоги недели")!.Value, main)!.Value, -monthView.Bounds.Width / 7);
     Console.WriteLine($"  проверка «Месяц»: перенос «Итоги недели» {before:dd.MM HH:mm} → {StartOf("Итоги недели"):dd.MM HH:mm} (ждали 09.07 16:00)");
 
     Call(calendar, "SwitchView", 3);
     await Settle(quietSec: 1, capSec: 30);
-    var weekView = calendar.FindControl<Control>("WeekViewCtrl")!;
+    var weekView = CalView<Control>(calendar, "WeekViewCtrl");
     weekView.FindControl<ScrollViewer>("TimeScroll")!.Offset = new Vector(0, 8 * 60);
     await Settle(quietSec: 0.5, capSec: 10);
     var colWidth = weekView.FindControl<Control>("WeekColumns")!.Bounds.Width / 7;
@@ -616,7 +773,7 @@ async Task CalendarOps()
     SetField(calendar, "_weekCentered", false);
     Call(calendar, "SwitchView", 3);
     await Settle(1, 60);
-    var week = calendar.FindControl<Control>("WeekViewCtrl")!;
+    var week = CalView<Control>(calendar, "WeekViewCtrl");
     week.FindControl<ScrollViewer>("TimeScroll")!.Offset = new Vector(0, 10 * 60);
     await Settle(0.5, 10);
     await HourGridOps("неделя", week, big);
@@ -625,7 +782,7 @@ async Task CalendarOps()
     // ── «День» 24.09.2026 ──
     Call(calendar, "SwitchView", 2);
     await Settle(1, 60);
-    var dayView = calendar.FindControl<Control>("DayViewCtrl")!;
+    var dayView = CalView<Control>(calendar, "DayViewCtrl");
     dayView.FindControl<ScrollViewer>("TimeScroll")!.Offset = new Vector(0, 10 * 60);
     await Settle(0.5, 10);
     await HourGridOps("день", dayView, big);
@@ -633,7 +790,7 @@ async Task CalendarOps()
     // ── «Месяц» сентябрь 2026: плашка базы 10 млн ──
     Call(calendar, "SwitchView", 4);
     await Settle(1, 60);
-    var month = calendar.FindControl<MonthView>("MonthViewCtrl")!;
+    var month = CalView<MonthView>(calendar, "MonthViewCtrl");
     {
         // Видимая плашка или полоса однодневного события (в переполненном дне часть уходит в
         // «+N еще»; на wide1000 полосы «весь день» занимают все строки ячеек), база 10 млн — первой.
@@ -665,7 +822,7 @@ async Task CalendarOps()
     });
     Call(calendar, "SwitchView", 6);
     await Settle(1, 60);
-    var diagram = calendar.FindControl<Control>("DiagramViewCtrl")!;
+    var diagram = CalView<Control>(calendar, "DiagramViewCtrl");
     foreach (var db in wide is null ? [big] : new[] { big, wide })
     {
         var colId  = db.Constructor.GetAllCollections().First(c => db.Constructor.GetFields(c.Id!.Value).Any(f => f.IsCalStart)).Id!.Value;
@@ -701,7 +858,7 @@ async Task CalendarOps()
     // ── «Журнал»: переход в вид — к сегодня; дублирование и удаление строки базы 10 млн ──
     Call(calendar, "SwitchView", 1);
     await Settle(1, 60);
-    var journal = calendar.FindControl<Control>("JournalViewCtrl")!;
+    var journal = CalView<Control>(calendar, "JournalViewCtrl");
     var jScroll = journal.FindControl<ScrollViewer>("JournalScroll")!;
     jScroll.Offset = new Vector(0, Math.Max(0, jScroll.Offset.Y - 20000));
     await Settle(0.5, 10);
@@ -1064,10 +1221,11 @@ Point EntryCenter(Control view, string title)
     throw new InvalidOperationException($"Нет события «{title}» в виде");
 }
 
-// Раздел календаря: окно строит его при первом показе, поэтому по имени в разметке его нет —
+// Разделы окна (кроме конструктора) строит первый показ, поэтому по имени в разметке их нет —
 // берем свойством окна (построит, если еще не построен).
-Control CalendarModule() =>
-    (Control)typeof(MainWindow).GetProperty("CalendarModule", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(main)!;
+Control Module(string name) =>
+    (Control)typeof(MainWindow).GetProperty(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(main)!;
+Control CalendarModule() => Module("CalendarModule");
 
 // Как клик по коллекции в дереве конструктора (обработчик CollectionSelected главного окна).
 void OpenCollection(DatabaseManager db, int collectionId)
@@ -1180,7 +1338,7 @@ void Report()
         foreach (var (share, key) in Sampler.Top(span))
             Console.WriteLine($"        {share,5:0}%  {key}");
         // Длинная пауза — еще и по методам: из чего она сложена (включающие доли).
-        if (span.EndUtc - span.StartUtc >= TimeSpan.FromSeconds(1) && span.Samples.Count > 0)
+        if (span.EndUtc - span.StartUtc >= TimeSpan.FromMilliseconds(detailMs) && span.Samples.Count > 0)
         {
             foreach (var (n, m) in Sampler.Inclusive([span], top: 14))
                 Console.WriteLine($"          · {100.0 * n / span.Samples.Count,5:0}%  {m}");
@@ -1237,6 +1395,11 @@ void Report()
 }
 
 // ── Отражение ────────────────────────────────────────────────────────────────
+
+// Вид календаря по имени свойства контроллера (виды строятся при первом обращении, в разметке
+// их нет — FindControl их не найдет).
+static T CalView<T>(Control calendar, string name) where T : Control =>
+    (T)calendar.GetType().GetProperty(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(calendar)!;
 
 static object? Get(object target, string name)
 {
@@ -1338,3 +1501,8 @@ static class Native
     [DllImport("kernel32.dll")]
     public static extern uint GetCurrentThreadId();
 }
+
+// Метки в журнале компиляции на лету (DOTNET_JitStdOutFile): список над своей структурой
+// компилируется при первом обращении, между ними — то, что компилировалось в замеряемом шаге.
+struct JitMarkBegin;
+struct JitMarkEnd;

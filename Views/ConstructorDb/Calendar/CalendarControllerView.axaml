@@ -1,7 +1,6 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:comp="using:SmartBase.Controls.Components"
-             xmlns:cal="using:SmartBase.Views.ConstructorDb.Calendar"
              x:Class="SmartBase.Views.ConstructorDb.Calendar.CalendarControllerView">
 
     <Grid RowDefinitions="Auto,*">
@@ -11,15 +10,10 @@
              месте давала визуальное удвоение толщины. -->
         <comp:NavbarCalendar Grid.Row="0" x:Name="NavbarControl" />
 
-        <!-- Стек вьюх: 0-Расписание, 1-Журнал, 2-День, 3-Неделя, 4-Месяц, 5-Год, 6-Диаграмма -->
+        <!-- Стек вьюх: 0-Расписание, 1-Журнал, 2-День, 3-Неделя, 4-Месяц, 5-Год, 6-Диаграмма.
+             Вид строится при первом переходе в него (см. ViewAt в коде) и ложится в ViewsHost. -->
         <Grid Grid.Row="1">
-            <cal:ListView    x:Name="ListViewCtrl"    IsVisible="False" />
-            <cal:JournalView x:Name="JournalViewCtrl" IsVisible="False" />
-            <cal:DayView     x:Name="DayViewCtrl"     IsVisible="False" />
-            <cal:WeekView    x:Name="WeekViewCtrl"    IsVisible="False" />
-            <cal:MonthView   x:Name="MonthViewCtrl"   IsVisible="True"  />
-            <cal:YearView    x:Name="YearViewCtrl"    IsVisible="False" />
-            <cal:DiagramView x:Name="DiagramViewCtrl" IsVisible="False" />
+            <Grid x:Name="ViewsHost" />
 
             <!-- Оверлей сетки (День/Неделя/Месяц/Год/Диаграмма): окно читается в фоне, оверлей появляется,
                  только если загрузка дольше 400 мс (холодный день-гигант — секунды). -->
