@@ -137,11 +137,11 @@ public static class StreamEvents
     /// <summary>
     /// Строки таблицы из одного события.
     ///
-    /// Записи лежат по пути <paramref name="itemsPath"/>: список дает строку на элемент, объект —
-    /// одну строку. <b>Поля самого события дописываются к каждой записи</b> — те, что лежат рядом
-    /// с записями, а не внутри них: вид события, его время. Без этого отбор «вид события равно …»
-    /// было бы не на чем строить — вид лежит снаружи записи. Поле записи с тем же именем старше:
-    /// запись знает о себе лучше, чем конверт.
+    /// Записи лежат по пути <paramref name="itemsPath"/>: список дает строку на элемент (список в
+    /// списке разворачивается), объект — одну строку. <b>Поля самого события дописываются к каждой
+    /// записи</b> — те, что лежат рядом с записями, а не внутри них: вид события, его время. Без
+    /// этого отбор «вид события равно …» было бы не на чем строить — вид лежит снаружи записи.
+    /// Поле записи с тем же именем старше: запись знает о себе лучше, чем конверт.
     ///
     /// Путь пуст — записью считается само событие, и дописывать к нему нечего.
     /// </summary>
@@ -196,8 +196,7 @@ public static class StreamEvents
             switch (node.ValueKind)
             {
                 case JsonValueKind.Array:
-                    foreach (var item in node.EnumerateArray())
-                        if (item.ValueKind == JsonValueKind.Object) rows.Add(Row(item, envelope));
+                    Collect(node, envelope, rows, depth: 0);
                     break;
 
                 case JsonValueKind.Object:
@@ -213,6 +212,28 @@ public static class StreamEvents
             }
 
             return rows;
+        }
+    }
+
+    /// <summary>Глубже этого списки в списках не разворачиваются: событие приходит извне.</summary>
+    private const int MaxListDepth = 8;
+
+    /// <summary>
+    /// Записи из списка. <b>Список, вложенный в список, разворачивается</b>: пачку записей
+    /// нередко кладут одним элементом внешнего списка, и для того, кто настраивает поток, это те
+    /// же записи по тому же пути. Назвать такой путь словами он не может — у элемента списка нет
+    /// имени, — поэтому разворачивает программа. Пустой вложенный список — записей нет, и это не
+    /// ошибка.
+    /// </summary>
+    private static void Collect(JsonElement list, List<(string Name, string Text)> envelope,
+                                List<IReadOnlyDictionary<string, string>> rows, int depth)
+    {
+        foreach (var item in list.EnumerateArray())
+        {
+            if (item.ValueKind == JsonValueKind.Object)
+                rows.Add(Row(item, envelope));
+            else if (item.ValueKind == JsonValueKind.Array && depth < MaxListDepth)
+                Collect(item, envelope, rows, depth + 1);
         }
     }
 

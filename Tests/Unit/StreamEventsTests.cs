@@ -130,6 +130,32 @@ public sealed class StreamEventsTests
         Assert.Equal("created", rows[1]["kind"]);
     }
 
+    /// <summary>
+    /// Список в списке разворачивается: пачку записей кладут и одним элементом внешнего списка,
+    /// а назвать такой путь словами нельзя — у элемента списка нет имени.
+    /// </summary>
+    [Fact]
+    public void A_list_inside_a_list_unfolds_into_records()
+    {
+        var rows = StreamEvents.Rows(
+            """{"kind":"created","data":[[{"id":7},{"id":8}],[{"id":9}]]}""",
+            "data", out var trouble);
+
+        Assert.Equal("", trouble);
+        Assert.Equal(["7", "8", "9"], rows.Select(r => r["id"]));
+        Assert.All(rows, r => Assert.Equal("created", r["kind"]));
+    }
+
+    /// <summary>Пустой вложенный список — записей в событии нет, и это не ошибка.</summary>
+    [Fact]
+    public void An_empty_list_inside_a_list_gives_no_rows()
+    {
+        var rows = StreamEvents.Rows("""{"kind":"created","data":[[]]}""", "data", out var trouble);
+
+        Assert.Empty(rows);
+        Assert.Equal("", trouble);
+    }
+
     /// <summary>Поле записи старше одноименного поля конверта: запись знает о себе лучше.</summary>
     [Fact]
     public void A_record_field_wins_over_the_envelope()
