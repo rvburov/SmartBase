@@ -45,6 +45,9 @@ public sealed class RegisterMessageAction : IExtensionAction
     /// <summary>Поле: идентификатор отправителя — как его называет программа, приславшая текст.</summary>
     public const string SenderField = "sender";
 
+    /// <summary>Первая строка ответа об удаче.</summary>
+    public const string RegisteredWord = "Зарегистрировано";
+
     /// <summary>Отказ тому, кого нет в списке. Без подробностей: чужому они ни к чему.</summary>
     public const string NotListed = "Вы не в списке регистрирующих. Обратитесь к администратору";
 
@@ -159,8 +162,11 @@ public sealed class RegisterMessageAction : IExtensionAction
                     Number:    request.Number),
                 context.Now.LocalDateTime);
 
-            return ActionResult.Done(
-                $"Зарегистрировано {done.Designation} {request.Project} {request.Fio}");
+            // В журнал — одной строкой, отправителю — строками: ответ читается тем же взглядом,
+            // что и сообщение, и сверяется с ним построчно.
+            return new ActionResult(true,
+                $"{RegisteredWord} {done.Designation} {request.Project} {request.Fio}",
+                Rows: 1, Reply: Registered(done.Designation, request));
         }
         catch (DocRegistryException failure)
         {
@@ -169,6 +175,18 @@ public sealed class RegisterMessageAction : IExtensionAction
             return ActionResult.Refused($"{MessageRegistration.NumberKey}: {failure.Message}");
         }
     }
+
+    /// <summary>
+    /// Ответ об удаче: что зарегистрировано — теми же строками и в том же порядке, что в
+    /// сообщении. На месте метки стоит выданный номер, остальное — как записано в журнал.
+    /// </summary>
+    private static string Registered(string designation, RegistrationRequest request) =>
+        string.Join("\n",
+            RegisteredWord,
+            $"{MessageRegistration.NumberKey}: {designation}",
+            $"{MessageRegistration.NameKey}: {request.Name}",
+            $"{MessageRegistration.ProjectKey}: {request.Project}",
+            $"{MessageRegistration.FioKey}: {request.Fio}");
 
     /// <summary>Пометка для журнала: что действие получило вместо сообщения.</summary>
     private static string NothingRead(string text) => text.Length == 0

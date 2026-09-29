@@ -45,8 +45,8 @@ public sealed class RegisterMessageActionTests
     // ── Регистрация ───────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Сообщение становится строкой журнала, а ответ — ровно та строка, которую ждет отправитель:
-    /// обозначение, проект, ФИО.
+    /// Сообщение становится строкой журнала, а ответ — что зарегистрировано: теми же строками,
+    /// что в сообщении, с выданным номером на месте метки. В журнал запусков идет одна строка.
     /// </summary>
     [Fact]
     public void A_message_becomes_a_registered_document()
@@ -57,7 +57,15 @@ public sealed class RegisterMessageActionTests
         var result = Action.Run(Context(db, journal), Input(Message()));
 
         Assert.True(result.Ok, result.Explanation);
-        Assert.Equal("Зарегистрировано АБВГ.301121.001 Машина Иванов Иван Иванович", result.Answer);
+        Assert.Equal(
+            "Зарегистрировано\n"
+            + "Номер: АБВГ.301121.001\n"
+            + "Наименование: Кронштейн\n"
+            + "Проект: Машина\n"
+            + "ФИО: Иванов Иван Иванович",
+            result.Answer);
+        Assert.Equal("Зарегистрировано АБВГ.301121.001 Машина Иванов Иван Иванович", result.Explanation);
+        Assert.Equal(1, result.Rows);
 
         var record = Assert.Single(db.Constructor.GetRecords(journal));
         Assert.Equal("Кронштейн", record.Title);
@@ -95,8 +103,8 @@ public sealed class RegisterMessageActionTests
         var first  = Action.Run(context, Input(Message("АБВГ.301121.001-ХХ")));
         var second = Action.Run(context, Input(Message("АБВГ.301121.001-ХХ")));
 
-        Assert.Contains("АБВГ.301121.001-01", first.Answer,  StringComparison.Ordinal);
-        Assert.Contains("АБВГ.301121.001-02", second.Answer, StringComparison.Ordinal);
+        Assert.Contains("Номер: АБВГ.301121.001-01\n", first.Answer,  StringComparison.Ordinal);
+        Assert.Contains("Номер: АБВГ.301121.001-02\n", second.Answer, StringComparison.Ordinal);
 
         // Три строки, и номер 001 без исполнения среди них один.
         var titles = db.Constructor.GetRecords(journal);
@@ -411,6 +419,10 @@ public sealed class MessageScenarioTests : IDisposable
         "Действие: Регистрация\nНомер: АБВГ.301121.ХХХ\nНаименование: Кронштейн\n"
         + "Проект: Машина\nФИО: Иванов Иван Иванович";
 
+    private const string Registered =
+        "Зарегистрировано\nНомер: АБВГ.301121.001\nНаименование: Кронштейн\n"
+        + "Проект: Машина\nФИО: Иванов Иван Иванович";
+
     /// <summary>
     /// Текст события пришел разметкой — так программы переписки присылают сообщение в несколько
     /// строк. Документ регистрируется, как если бы текст пришел строками.
@@ -424,7 +436,7 @@ public sealed class MessageScenarioTests : IDisposable
                                 Event("<span>" + Message.Replace("\n", "<br>") + "</span>"));
 
         Assert.True(outcome.Ok, outcome.Problem);
-        Assert.Equal("Зарегистрировано АБВГ.301121.001 Машина Иванов Иван Иванович", outcome.Reply);
+        Assert.Equal(Registered, outcome.Reply);
         Assert.Single(_db.Constructor.GetRecords(journal));
     }
 
@@ -436,8 +448,12 @@ public sealed class MessageScenarioTests : IDisposable
         var outcome = await Run(Scenario(journal), Event(Message));
 
         Assert.True(outcome.Ok, outcome.Problem);
-        Assert.Equal("Зарегистрировано АБВГ.301121.001 Машина Иванов Иван Иванович", outcome.Reply);
+        Assert.Equal(Registered, outcome.Reply);
         Assert.Single(_db.Constructor.GetRecords(journal));
+
+        // В отчете шагов — одна строка: отчет читает тот, кто настраивал обмен.
+        Assert.Contains(outcome.Lines, line => line.Contains(
+            "Зарегистрировано АБВГ.301121.001 Машина Иванов Иван Иванович", StringComparison.Ordinal));
     }
 
     /// <summary>Ошибки сообщения доезжают до ответа словами действия, без приставок оболочки.</summary>
