@@ -39,8 +39,15 @@ public sealed partial class IntegrationsRegistry
     /// SQLite значило бы завести зависимость от формата хранения ради десятка строк.
     /// </summary>
     public IReadOnlyList<Scenario> ScenariosUsing(int requestId) =>
-        [.. Scenarios().Where(s => s.Steps.Any(
-            step => step.Kind == ScenarioStepKind.Request && step.RequestId == requestId))];
+        [.. Scenarios().Where(s =>
+            s.Steps.Any(step => step.Kind == ScenarioStepKind.Request && step.RequestId == requestId)
+            // Карточка ответа на событие — такая же ссылка, как шаг: без нее сценарий примет
+            // событие и промолчит, а отправитель будет ждать ответа, которого не будет.
+            || (s.Trigger.Replies && s.Trigger.RequestId == requestId))];
+
+    /// <summary>Сценарии, которые заводятся событиями этого потока.</summary>
+    public IReadOnlyList<Scenario> ScenariosOfStream(int streamId) =>
+        [.. Scenarios().Where(s => s.Trigger.WatchesStream && s.Trigger.StreamId == streamId)];
 
     /// <summary>
     /// Создать или обновить сценарий. Возвращает сохраненный — с ключом, если он новый.
@@ -63,6 +70,14 @@ public sealed partial class IntegrationsRegistry
             if (step.Kind == ScenarioStepKind.Request
                 && !db.IntegrationRequests.Any(r => r.Id == step.RequestId))
                 throw new InvalidOperationException("Сценарий не сохранен: запрос шага не найден");
+
+        if (scenario.Trigger.WatchesStream
+            && !db.IntegrationStreams.Any(s => s.Id == scenario.Trigger.StreamId))
+            throw new InvalidOperationException("Сценарий не сохранен: поток событий не найден");
+
+        if (scenario.Trigger.Replies
+            && !db.IntegrationRequests.Any(r => r.Id == scenario.Trigger.RequestId))
+            throw new InvalidOperationException("Сценарий не сохранен: запрос ответа не найден");
 
         var entity = scenario.Id > 0
             ? db.IntegrationScenarios.FirstOrDefault(s => s.Id == scenario.Id)

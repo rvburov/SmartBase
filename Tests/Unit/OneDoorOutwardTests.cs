@@ -29,6 +29,10 @@ public sealed class OneDoorOutwardTests
     [
         "HttpClient", "HttpRequestMessage", "HttpWebRequest",
         "WebRequest", "WebClient", "SmtpClient", "System.Net.Http",
+
+        // Поток событий сторонней программы — такое же обращение наружу, как запрос:
+        // соединение открываем мы.
+        "ClientWebSocket",
     ];
 
     /// <summary>Сырые сокеты — уровнем ниже; отдельный список, потому что и исключения другие.</summary>

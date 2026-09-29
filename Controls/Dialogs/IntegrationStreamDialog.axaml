@@ -1,0 +1,142 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:w="clr-namespace:SmartBase.Controls.Widgets"
+        x:Class="SmartBase.Controls.Dialogs.IntegrationStreamDialog"
+        Title="Поток событий"
+        Width="{StaticResource DialogWidthBase}"
+        MinWidth="{StaticResource DialogWidthBase}"
+        MaxWidth="{StaticResource DialogWidthBase}"
+        MinHeight="0"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="{StaticResource BrushBg}">
+
+    <StackPanel Spacing="0" Margin="{StaticResource DialogPadding}">
+
+        <TextBlock Text="Название"
+                   Margin="0,0,0,6"
+                   FontWeight="{StaticResource FontWeightBold}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+        <TextBox x:Name="NameBox"
+                 Watermark="События учетной системы"
+                 Height="34" Margin="0,0,0,12"
+                 VerticalContentAlignment="Center"
+                 CornerRadius="{StaticResource RadiusMedium}" />
+
+        <TextBlock Text="Соединение"
+                   Margin="0,0,0,6"
+                   FontWeight="{StaticResource FontWeightBold}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+        <ComboBox x:Name="ConnectionCombo"
+                  Height="34" Margin="0,0,0,12"
+                  HorizontalAlignment="Stretch" />
+
+        <TextBlock Text="Путь"
+                   Margin="0,0,0,6"
+                   FontWeight="{StaticResource FontWeightBold}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+        <TextBox x:Name="PathBox"
+                 Watermark="/events"
+                 Height="34" Margin="0,0,0,6"
+                 VerticalContentAlignment="Center"
+                 CornerRadius="{StaticResource RadiusMedium}" />
+
+        <!-- Итоговый адрес и вердикт политики: путь относительный, и человеку нужно видеть, что
+             из него и адреса соединения получается и можно ли туда вообще. -->
+        <TextBlock x:Name="FullAddressText"
+                   Margin="0,0,0,12"
+                   TextWrapping="Wrap"
+                   FontSize="{DynamicResource FontSizeSmall}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <TextBlock Text="Подписка"
+                   Margin="0,0,0,6"
+                   FontWeight="{StaticResource FontWeightBold}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+        <ComboBox x:Name="ProtocolCombo"
+                  Height="34" Margin="0,0,0,12"
+                  HorizontalAlignment="Stretch"
+                  SelectedIndex="0">
+            <ComboBoxItem Tag="plain" Content="Без подписки: события идут сразу (WebSocket)" />
+            <ComboBoxItem Tag="stomp" Content="Подписка на темы (STOMP поверх WebSocket)" />
+        </ComboBox>
+
+        <StackPanel x:Name="TopicsBlock" IsVisible="False">
+            <TextBlock Text="Темы"
+                       Margin="0,0,0,6"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+            <TextBox x:Name="TopicsBox"
+                     AcceptsReturn="True"
+                     Watermark="/topic/orders"
+                     Height="60" Margin="0,0,0,6"
+                     TextWrapping="NoWrap"
+                     CornerRadius="{StaticResource RadiusMedium}" />
+            <TextBlock Text="По строке на тему — так, как они названы в документации сторонней программы."
+                       Margin="0,0,0,12"
+                       TextWrapping="Wrap"
+                       FontSize="{DynamicResource FontSizeSmall}"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+        </StackPanel>
+
+        <Grid ColumnDefinitions="*,12,*" Margin="0,0,0,6">
+            <StackPanel Grid.Column="0">
+                <TextBlock Text="Записи в событии"
+                           Margin="0,0,0,6"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <TextBox x:Name="ItemsPathBox"
+                         Watermark="data"
+                         Height="34"
+                         VerticalContentAlignment="Center"
+                         CornerRadius="{StaticResource RadiusMedium}" />
+            </StackPanel>
+            <StackPanel Grid.Column="2">
+                <TextBlock Text="Колонка-ключ"
+                           Margin="0,0,0,6"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <TextBox x:Name="KeyFieldBox"
+                         Watermark="id"
+                         Height="34"
+                         VerticalContentAlignment="Center"
+                         CornerRadius="{StaticResource RadiusMedium}" />
+            </StackPanel>
+        </Grid>
+        <TextBlock Text="Записи — путь к ним внутри события; пусто, если запись — само событие. Поля события, лежащие рядом с записями, дописываются к каждой записи колонками. Ключ — колонка, по которой отсекается повторно пришедшее событие; пусто — повторы не отсекаются."
+                   Margin="0,0,0,12"
+                   TextWrapping="Wrap"
+                   FontSize="{DynamicResource FontSizeSmall}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <w:NoticeBanner x:Name="NoticeBanner" Margin="0,0,0,12" />
+
+        <TextBlock x:Name="StatusText"
+                   IsVisible="False"
+                   Margin="0,0,0,6"
+                   TextWrapping="Wrap"
+                   FontSize="{DynamicResource FontSizeSmall}" />
+
+        <!-- Сырые события: без них чужой поток не настроить — угадывать, как называются поля
+             события и где в нем лежат записи, невозможно. Только чтение. -->
+        <TextBox x:Name="AnswerBox"
+                 IsVisible="False"
+                 IsReadOnly="True"
+                 AcceptsReturn="True"
+                 Height="160" Margin="0,0,0,12"
+                 TextWrapping="NoWrap"
+                 CornerRadius="{StaticResource RadiusMedium}" />
+
+        <Grid ColumnDefinitions="Auto,*,Auto,8,Auto" Margin="0,4,0,0">
+            <Button Grid.Column="0" x:Name="TestBtn" Classes="dialog" Width="130"
+                    Content="Проверить" />
+            <Button Grid.Column="2" x:Name="CancelBtn" Classes="dialog"
+                    Content="Отмена" />
+            <Button Grid.Column="4" x:Name="ConfirmBtn" Classes="dialog"
+                    Content="Сохранить" />
+        </Grid>
+
+    </StackPanel>
+
+</Window>

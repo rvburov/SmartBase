@@ -260,7 +260,10 @@ public partial class MainWindow
             ingress: _ingress,
             // «Запустить» у сценария ведет ту же службу, что ходит по расписанию: проверка,
             // идущая другой дорогой, не отвечает на вопрос «а что будет само».
-            scenarioRun: (scenario, ct) => _scenarios.RunNowAsync(scenario, ct));
+            scenarioRun: (scenario, ct) => _scenarios.RunNowAsync(scenario, ct),
+            // Служба потоков событий: экран показывает, слушается ли поток, и зовет сверку
+            // после правки карточек.
+            streams: _streams);
 
         // Live mount/unmount: добавление/удаление БД в настройках сразу отражается в
         // сайдбаре конструктора без перезапуска. Новая база встает в хвост очереди —

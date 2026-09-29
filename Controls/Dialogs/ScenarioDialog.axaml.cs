@@ -82,6 +82,9 @@ public partial class ScenarioDialog : Window
         (1440, "за сутки"),
     ];
 
+    /// <summary>Первая строка списка ответов: сценарий на событие не отвечает.</summary>
+    private const string NoReply = "не отвечать";
+
     /// <summary>Строка списка шагов: сам шаг и то, чем его правят.</summary>
     private sealed class StepRow
     {
@@ -110,16 +113,25 @@ public partial class ScenarioDialog : Window
     private readonly IReadOnlyList<ActionChoice>     _actions;
     private readonly IReadOnlyList<CollectionChoice> _places;
 
+    // Потоки событий, которые могут заводить сценарий, и запросы, которыми можно ответить.
+    private readonly IReadOnlyList<(int Id, string Name)> _streams;
+    private readonly IReadOnlyList<(int Id, string Name)> _replies;
+
     private readonly List<StepRow> _steps = [];
 
     /// <param name="card">Что правим; <see cref="Scenario.New"/> — новый сценарий.</param>
     /// <param name="requests">Карточки запросов с пометкой «привязка настроена».</param>
     /// <param name="actions">Действия расширений, которые можно поставить шагом.</param>
     /// <param name="places">Коллекции открытых баз — куда действие может писать.</param>
+    /// <param name="streams">Потоки событий — чем можно заводить сценарий.</param>
+    /// <param name="replies">Исходящие запросы — чем сценарий может ответить на событие.
+    /// Читающих здесь нет: ответ — это отправка, и идти ей через замок направлений.</param>
     public ScenarioDialog(Scenario                                        card,
                           IReadOnlyList<(int Id, string Name, bool Bound)> requests,
                           IReadOnlyList<ActionChoice>                     actions,
-                          IReadOnlyList<CollectionChoice>                 places)
+                          IReadOnlyList<CollectionChoice>                 places,
+                          IReadOnlyList<(int Id, string Name)>?           streams = null,
+                          IReadOnlyList<(int Id, string Name)>?           replies = null)
     {
         InitializeComponent();
 
@@ -127,6 +139,8 @@ public partial class ScenarioDialog : Window
         _requests = requests;
         _actions  = actions;
         _places   = places;
+        _streams  = streams ?? [];
+        _replies  = replies ?? [];
 
         Title        = card.Id > 0 ? "Сценарий" : "Новый сценарий";
         NameBox.Text = card.Name;
@@ -156,6 +170,19 @@ public partial class ScenarioDialog : Window
             ? Math.Max(0, Array.FindIndex(Leads, l => l.Minutes == card.Trigger.Minutes))
             : Array.FindIndex(Leads, l => l.Minutes == 30);   // осмысленный дефолт: за полчаса
 
+        StreamCombo.ItemsSource = _streams.Select(s => s.Name).ToList();
+        StreamCombo.SelectedIndex = _streams.Count == 0 ? -1 : Math.Max(0, _streams.ToList().FindIndex(
+            s => s.Id == card.Trigger.StreamId));
+
+        // Первой строкой — «не отвечать»: поток бывает и односторонним, когда событие просто
+        // укладывается в коллекцию.
+        ReplyCombo.ItemsSource = new[] { NoReply }.Concat(_replies.Select(r => r.Name)).ToList();
+        ReplyCombo.SelectedIndex = 1 + _replies.ToList().FindIndex(r => r.Id == card.Trigger.RequestId);
+
+        FailBox.MaxLength = ScenarioTrigger.MaxFailTextLength;
+        FailBox.Text      = card.Trigger.FailText;
+
+        StreamRadio.IsChecked   = card.Trigger.Kind == ScenarioTriggerKind.Stream;
         ManualRadio.IsChecked   = card.Trigger.Kind == ScenarioTriggerKind.Manual;
         StartupRadio.IsChecked  = card.Trigger.Kind == ScenarioTriggerKind.Startup;
         EveryRadio.IsChecked    = card.Trigger.Kind == ScenarioTriggerKind.Every;
@@ -167,6 +194,7 @@ public partial class ScenarioDialog : Window
         // пустого списка — он говорит «сейчас нельзя», а не «выбирайте из ничего».
         ChangedRadio.IsEnabled  = _places.Count > 0;
         CalendarRadio.IsEnabled = _places.Count > 0;
+        StreamRadio.IsEnabled   = _streams.Count > 0;
 
         EnabledSwitch.IsChecked = card.Enabled;
 
@@ -180,6 +208,8 @@ public partial class ScenarioDialog : Window
         DailyRadio.IsCheckedChanged     += (_, _) => ShowHint();
         ChangedRadio.IsCheckedChanged   += (_, _) => ShowHint();
         CalendarRadio.IsCheckedChanged  += (_, _) => ShowHint();
+        StreamRadio.IsCheckedChanged    += (_, _) => ShowHint();
+        ReplyCombo.SelectionChanged     += (_, _) => ShowHint();
         EnabledSwitch.IsCheckedChanged  += (_, _) => ShowHint();
 
         AddRequestBtn.Click += (_, _) => AddStep(ScenarioStep.OfRequest(0));
@@ -595,6 +625,17 @@ public partial class ScenarioDialog : Window
         var changed  = ChangedRadio.IsChecked  == true;
         var calendar = CalendarRadio.IsChecked == true;
         var startup  = StartupRadio.IsChecked  == true;
+        var stream   = StreamRadio.IsChecked   == true;
+
+        // Ответ и текст при сбое — уточнения к потоку, и без него на экране им делать нечего.
+        // Текст при сбое нужен только тому, кто отвечает вообще.
+        var replies = stream && ReplyCombo.SelectedIndex > 0;
+
+        StreamCombo.IsEnabled = stream;
+        ReplyLabel.IsVisible  = stream;
+        ReplyCombo.IsVisible  = stream;
+        FailLabel.IsVisible   = replies;
+        FailBox.IsVisible     = replies;
 
         // Уточнение к правкам показывается только вместе с ними: строка «через 5 минут тишины»
         // под выбранным «ежедневно в 07:00» читается как часть расписания.
@@ -609,6 +650,16 @@ public partial class ScenarioDialog : Window
         EnabledHint.Text = manual
             ? "Сценарий без расписания запускается только кнопкой, и включать его незачем — "
               + "выберите периодичность или оставьте тумблер выключенным."
+            : stream
+                ? "Сценарий пойдет на каждую запись события, пока программа открыта. Запись "
+                  + "приходит первому шагу строкой: колонки — поля события, в шагах они "
+                  + "пишутся как {{имя поля}}. Событие, не прошедшее шаг «Отбор», следа не "
+                  + "оставляет и ответа не получает."
+                  + (replies
+                      ? " Ответ уходит после последнего шага: в запросе ответа {{ответ.текст}} — "
+                        + "слова действия, {{поле.имя}} — колонка события. Текст «при сбое» "
+                        + "уходит, когда сценарий не отработал по причине не в самом событии."
+                      : "")
             : changed
                 ? "Сценарий пойдет, когда правки УТИХНУТ на выбранное время: правка десяти строк "
                   + "подряд даст один запуск, а не десять. Считаются правки только на этом "
@@ -687,6 +738,22 @@ public partial class ScenarioDialog : Window
 
         if (ManualRadio.IsChecked  == true) return ScenarioTrigger.Manual;
         if (StartupRadio.IsChecked == true) return ScenarioTrigger.OnStartup;
+
+        if (StreamRadio.IsChecked == true)
+        {
+            if (StreamCombo.SelectedIndex < 0 || StreamCombo.SelectedIndex >= _streams.Count)
+            {
+                problem = "Выберите поток, события которого заводят сценарий";
+                return null;
+            }
+
+            var reply = ReplyCombo.SelectedIndex > 0 && ReplyCombo.SelectedIndex <= _replies.Count
+                ? _replies[ReplyCombo.SelectedIndex - 1].Id
+                : 0;
+
+            return ScenarioTrigger.OnStream(_streams[StreamCombo.SelectedIndex].Id, reply,
+                                            reply > 0 ? FailBox.Text ?? "" : "");
+        }
 
         if (EveryRadio.IsChecked == true)
         {

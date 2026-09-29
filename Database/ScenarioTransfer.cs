@@ -65,21 +65,52 @@ public static class ScenarioTransfer
             if (registry.FindRequest(step.RequestId) is { } request) requests.Add(request);
         }
 
+        // Запрос ответа на событие — такая же часть сценария, как шаг, и потоки, которые эти
+        // сценарии заводят, тоже: без них на той стороне приедет сценарий, которому не с чего
+        // начаться и нечем ответить.
+        foreach (var scenario in scenarios.Where(s => s.Trigger.Replies))
+        {
+            if (requests.Any(r => r.Id == scenario.Trigger.RequestId)) continue;
+            if (registry.FindRequest(scenario.Trigger.RequestId) is { } reply) requests.Add(reply);
+        }
+
+        var streams = scenarios
+            .Where(s => s.Trigger.WatchesStream)
+            .Select(s => s.Trigger.StreamId)
+            .Distinct()
+            .Select(registry.FindStream)
+            .OfType<IntegrationStream>()
+            .ToList();
+
         var connections = requests
             .Select(r => r.ConnectionId)
+            .Concat(streams.Select(s => s.ConnectionId))
             .Distinct()
             .Select(registry.Find)
             .OfType<IntegrationConnection>()
             .ToList();
 
+        var packed = streams.Select(s => Pack(s, connections)).ToList();
+
         return new ScenarioBundle(
-            ScenarioBundle.SupportedVersion,
+            ScenarioBundle.VersionFor(packed),
             now.ToString("o", System.Globalization.CultureInfo.InvariantCulture),
             machine,
             [.. connections.Select(Pack)],
             [.. requests.Select(r => Pack(r, connections))],
-            [.. scenarios.Select(s => Pack(s, requests, databases))]);
+            [.. scenarios.Select(s => Pack(s, requests, streams, databases))],
+            packed.Count > 0 ? packed : null);
     }
+
+    private static BundleStream Pack(IntegrationStream stream,
+                                     IReadOnlyList<IntegrationConnection> connections) =>
+        new(stream.Name,
+            connections.FirstOrDefault(c => c.Id == stream.ConnectionId)?.Name ?? "",
+            stream.Path,
+            stream.Protocol.ToString().ToLowerInvariant(),
+            stream.Subscriptions,
+            stream.ItemsPath,
+            stream.KeyField);
 
     private static BundleConnection Pack(IntegrationConnection connection) =>
         new(connection.Name,
@@ -103,6 +134,7 @@ public static class ScenarioTransfer
             request.ItemsPath);
 
     private static BundleScenario Pack(Scenario scenario, IReadOnlyList<IntegrationRequest> requests,
+                                       IReadOnlyList<IntegrationStream> streams,
                                        IReadOnlyList<DatabaseManager> databases) =>
         new(scenario.Name,
             new BundleTrigger(
@@ -110,7 +142,12 @@ public static class ScenarioTransfer
                 scenario.Trigger.Minutes,
                 scenario.Trigger.Time.ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture),
                 NameOfDatabase(databases, scenario.Trigger.DbId),
-                NameOfCollection(databases, scenario.Trigger.DbId, scenario.Trigger.CollectionId)),
+                NameOfCollection(databases, scenario.Trigger.DbId, scenario.Trigger.CollectionId),
+                streams.FirstOrDefault(s => s.Id == scenario.Trigger.StreamId)?.Name ?? "",
+                scenario.Trigger.Replies
+                    ? requests.FirstOrDefault(r => r.Id == scenario.Trigger.RequestId)?.Name ?? ""
+                    : "",
+                scenario.Trigger.FailText),
             [.. scenario.Steps.Select(step => new BundleStep(
                 step.Kind.ToString().ToLowerInvariant(),
                 requests.FirstOrDefault(r => r.Id == step.RequestId)?.Name ?? "",
@@ -151,9 +188,67 @@ public static class ScenarioTransfer
 
         var connections = MergeConnections(bundle, registry, notes, out var madeConnections);
         var requests    = MergeRequests(bundle, registry, connections, notes, out var madeRequests);
-        var scenarios   = MergeScenarios(bundle, registry, requests, databases, notes);
+        var streams     = MergeStreams(bundle, registry, connections, notes);
+        var scenarios   = MergeScenarios(bundle, registry, requests, streams, databases, notes);
 
         return new ImportReport(madeConnections, madeRequests, scenarios, notes);
+    }
+
+    /// <summary>
+    /// Имя потока → ключ на этой машине. Заведенные потоки названы в заметках отчета, а не
+    /// своей цифрой: отчет считает то, что человек видит на трех прежних вкладках, и четвертая
+    /// цифра ради редкого случая изменила бы его вид для всех.
+    /// </summary>
+    private static Dictionary<string, int> MergeStreams(
+        ScenarioBundle bundle, IntegrationsRegistry registry,
+        Dictionary<string, int> connections, List<string> notes)
+    {
+        var byName = registry.Streams()
+            .GroupBy(s => s.Name.Trim(), StringComparer.CurrentCultureIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First().Id, StringComparer.CurrentCultureIgnoreCase);
+
+        foreach (var incoming in bundle.StreamList)
+        {
+            var name = (incoming.Name ?? "").Trim();
+            if (name.Length == 0) continue;
+
+            if (byName.ContainsKey(name))
+            {
+                notes.Add($"Поток событий «{name}» уже заведен — оставлен как был.");
+                continue;
+            }
+
+            if (!connections.TryGetValue((incoming.Connection ?? "").Trim(), out var connectionId))
+            {
+                notes.Add($"Поток событий «{name}» не заведен: не нашлось соединения "
+                        + $"«{incoming.Connection}».");
+                continue;
+            }
+
+            var stream = IntegrationStream.New() with
+            {
+                Name         = name,
+                ConnectionId = connectionId,
+                Path         = string.IsNullOrWhiteSpace(incoming.Path) ? "/" : incoming.Path,
+                Protocol     = (incoming.Protocol ?? "").Trim().ToLowerInvariant() == "stomp"
+                    ? StreamProtocol.Stomp
+                    : StreamProtocol.Plain,
+                Topics       = [.. incoming.Topics ?? []],
+                ItemsPath    = incoming.ItemsPath ?? "",
+                KeyField     = incoming.KeyField ?? "",
+            };
+
+            if (stream.Problems().Count > 0)
+            {
+                notes.Add($"Поток событий «{name}» не заведен: в файле не хватает обязательного.");
+                continue;
+            }
+
+            byName[name] = registry.SaveStream(stream).Id;
+            notes.Add($"Заведен поток событий «{name}».");
+        }
+
+        return byName;
     }
 
     /// <summary>Имя соединения → ключ на этой машине.</summary>
@@ -267,6 +362,7 @@ public static class ScenarioTransfer
 
     private static int MergeScenarios(ScenarioBundle bundle, IntegrationsRegistry registry,
                                       Dictionary<string, int> requests,
+                                      Dictionary<string, int> streams,
                                       IReadOnlyList<DatabaseManager> databases,
                                       List<string> notes)
     {
@@ -290,7 +386,9 @@ public static class ScenarioTransfer
                     steps.Add(made_step);
 
             var scenario = new Scenario(0, name, false,
-                                        Unpack(incoming.Trigger, databases, name, notes), steps);
+                                        Unpack(incoming.Trigger, requests, streams, databases,
+                                               name, notes),
+                                        steps);
 
             if (scenario.Problems().Count > 0)
             {
@@ -353,6 +451,8 @@ public static class ScenarioTransfer
     }
 
     private static ScenarioTrigger Unpack(BundleTrigger? trigger,
+                                          Dictionary<string, int> requests,
+                                          Dictionary<string, int> streams,
                                           IReadOnlyList<DatabaseManager> databases,
                                           string scenario, List<string> notes)
     {
@@ -360,6 +460,27 @@ public static class ScenarioTransfer
 
         switch ((trigger.Kind ?? "").Trim().ToLowerInvariant())
         {
+            case "stream":
+                if (!streams.TryGetValue((trigger.Stream ?? "").Trim(), out var streamId))
+                {
+                    notes.Add($"Сценарий «{scenario}»: поток событий «{trigger.Stream}» не "
+                            + "нашелся — он приехал ручным.");
+                    return ScenarioTrigger.Manual;
+                }
+
+                var reply = (trigger.Reply ?? "").Trim();
+
+                if (reply.Length == 0) return ScenarioTrigger.OnStream(streamId);
+
+                if (requests.TryGetValue(reply, out var replyId))
+                    return ScenarioTrigger.OnStream(streamId, replyId, trigger.FailText ?? "");
+
+                // Без запроса ответа сценарий примет событие и промолчит. Привезти его таким
+                // можно, но сказать об этом надо: на той машине он отвечал.
+                notes.Add($"Сценарий «{scenario}»: запрос ответа «{trigger.Reply}» не нашелся — "
+                        + "сценарий приехал без ответа на событие.");
+                return ScenarioTrigger.OnStream(streamId);
+
             case "every":
                 return ScenarioTrigger.EveryMinutes(
                     Math.Clamp(trigger.Minutes, ScenarioTrigger.MinMinutes, ScenarioTrigger.MaxMinutes));

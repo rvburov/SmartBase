@@ -48,6 +48,22 @@ public enum ScenarioTriggerKind
     /// Сказано об этом в разделе 13 роадмапа.
     /// </summary>
     Startup,
+
+    /// <summary>
+    /// По событию потока (<see cref="IntegrationStream"/>): сторонняя программа сама сообщила о
+    /// случившемся. Каждая запись события приходит первому шагу СТРОКОЙ — как будто ее принес
+    /// нулевой шаг, — и сценарий идет на каждую запись отдельно: у каждой свой отправитель и
+    /// свой ответ.
+    ///
+    /// Расписания у этого вида нет: он заводится событием, а не часами, и служба сценариев его не
+    /// трогает — поток слушает своя служба (<c>StreamService</c>).
+    ///
+    /// <b>Ответ — по итогу всего сценария</b>, как квитанция у файла из папки: карточка запроса
+    /// <see cref="ScenarioTrigger.RequestId"/> уходит после последнего шага и несет слова,
+    /// сказанные действием, либо <see cref="ScenarioTrigger.FailText"/>, когда сценарий не
+    /// отработал по причине, которая не в самом событии.
+    /// </summary>
+    Stream,
 }
 
 /// <summary>
@@ -67,13 +83,26 @@ public enum ScenarioTriggerKind
 /// <param name="Time">Время суток (только <see cref="ScenarioTriggerKind.Daily"/>).</param>
 /// <param name="DbId">База, за коллекцией которой следим (правки и календарь).</param>
 /// <param name="CollectionId">Коллекция, правки или события которой заводят сценарий.</param>
+/// <param name="StreamId">Поток, события которого заводят сценарий (только
+/// <see cref="ScenarioTriggerKind.Stream"/>).</param>
+/// <param name="RequestId">Карточка запроса, которой уходит ответ на событие; 0 — сценарий
+/// отвечать не должен (только <see cref="ScenarioTriggerKind.Stream"/>).</param>
+/// <param name="FailText">Что ответить, когда сценарий не отработал по причине не в самом
+/// событии — база недоступна, шаг не сложился; пусто — в этом случае не отвечать вовсе. Текст
+/// вводит человек: что именно сказать той стороне, программа за него не решает.</param>
 public sealed record ScenarioTrigger(
     ScenarioTriggerKind Kind,
     int                 Minutes,
     TimeOnly            Time,
     int                 DbId         = 0,
-    int                 CollectionId = 0)
+    int                 CollectionId = 0,
+    int                 StreamId     = 0,
+    int                 RequestId    = 0,
+    string              FailText     = "")
 {
+    /// <summary>Сколько знаков в тексте ответа при сбое — как у сообщения человеку.</summary>
+    public const int MaxFailTextLength = 200;
+
     /// <summary>
     /// Чаще пяти минут — это уже опрос, а не расписание. Каждый запуск стоит места в часовом
     /// потолке политики, и обмен раз в минуту выбрал бы его до обеда, ничего не успев.
@@ -104,6 +133,20 @@ public sealed record ScenarioTrigger(
 
     /// <summary>Один раз при запуске программы.</summary>
     public static ScenarioTrigger OnStartup => new(ScenarioTriggerKind.Startup, 0, default);
+
+    /// <summary>
+    /// По событию потока. <paramref name="replyRequestId"/> — чем отвечать (0 — не отвечать),
+    /// <paramref name="failText"/> — что ответить при сбое.
+    /// </summary>
+    public static ScenarioTrigger OnStream(int streamId, int replyRequestId = 0, string failText = "") =>
+        new(ScenarioTriggerKind.Stream, 0, default, StreamId: streamId,
+            RequestId: Math.Max(0, replyRequestId), FailText: OneLine(failText));
+
+    /// <summary>Заводится ли триггер событием потока.</summary>
+    public bool WatchesStream => Kind == ScenarioTriggerKind.Stream;
+
+    /// <summary>Отвечает ли сценарий на событие.</summary>
+    public bool Replies => WatchesStream && RequestId > 0;
 
     /// <summary>Следит ли триггер за правками в коллекции.</summary>
     public bool WatchesData => Kind == ScenarioTriggerKind.Changed;
@@ -145,6 +188,19 @@ public sealed record ScenarioTrigger(
             // Ноль минут — «к началу события» — годится: это не частота опроса, а упреждение.
             if (Minutes < 0 || Minutes > MaxMinutes)
                 problems.Add("Упреждение — от нуля минут до суток");
+        }
+
+        if (Kind == ScenarioTriggerKind.Stream)
+        {
+            if (StreamId <= 0)
+                problems.Add("Не выбран поток, события которого заводят сценарий");
+
+            if (FailText.Length > MaxFailTextLength)
+                problems.Add($"Текст ответа при сбое длиннее {MaxFailTextLength} знаков");
+
+            // Текст без карточки ответа не уйдет никуда, а человек считал бы, что ответ настроен.
+            if (FailText.Length > 0 && RequestId <= 0)
+                problems.Add("Текст ответа при сбое задан, а запрос ответа не выбран");
         }
 
         return problems;
@@ -189,10 +245,15 @@ public sealed record ScenarioTrigger(
 
     /// <summary>
     /// Одной строкой для экрана и списка. Имя коллекции приходит извне: триггер знает только
-    /// ключ, а таскать ради подписи целую базу в модель незачем.
+    /// ключ, а таскать ради подписи целую базу в модель незачем. У триггера потока на этом месте
+    /// приходит имя потока.
     /// </summary>
     public string Describe(string collection = "") => Kind switch
     {
+        ScenarioTriggerKind.Stream =>
+            $"по событию потока «{(collection.Length > 0 ? collection : "№" + StreamId)}»"
+            + (Replies ? ", с ответом" : ""),
+
         ScenarioTriggerKind.Every => Minutes % 60 == 0 && Minutes >= 60
             ? $"каждые {Minutes / 60} ч"
             : $"каждые {Minutes} мин",
@@ -233,6 +294,13 @@ public sealed record ScenarioTrigger(
 
         ScenarioTriggerKind.Startup => "startup",
 
+        // Текст ответа стоит ПОСЛЕДНИМ и занимает хвост строки целиком: в нем бывают пробелы, а
+        // остальные части — числа.
+        ScenarioTriggerKind.Stream =>
+            ($"stream {StreamId.ToString(CultureInfo.InvariantCulture)} "
+             + $"{RequestId.ToString(CultureInfo.InvariantCulture)} "
+             + OneLine(FailText)).TrimEnd(),
+
         _ => "manual",
     };
 
@@ -244,6 +312,8 @@ public sealed record ScenarioTrigger(
     /// </summary>
     public static ScenarioTrigger Parse(string? text)
     {
+        if (ParseStream(text) is { } stream) return stream;
+
         var tokens = (text ?? "").Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
 
         return tokens switch
@@ -276,6 +346,30 @@ public sealed record ScenarioTrigger(
             _ => Manual,
         };
     }
+
+    /// <summary>
+    /// Триггер потока из строки хранения; <c>null</c> — строка не про поток. Разбирается
+    /// отдельно от остальных: у него хвост строки — текст с пробелами, и делить его на слова
+    /// нельзя.
+    /// </summary>
+    private static ScenarioTrigger? ParseStream(string? text)
+    {
+        var parts = (text ?? "").Trim().Split(' ', 4, StringSplitOptions.RemoveEmptyEntries);
+
+        if (parts.Length < 3 || parts[0] != "stream") return null;
+
+        if (!int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var stream)
+            || stream <= 0) return null;
+
+        if (!int.TryParse(parts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out var reply)
+            || reply < 0) return null;
+
+        return OnStream(stream, reply, parts.Length > 3 ? parts[3] : "");
+    }
+
+    /// <summary>Текст одной строкой: переводы строк в хранении развалили бы разбор.</summary>
+    private static string OneLine(string? text) =>
+        string.Join(" ", (text ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
 }
 
 /// <summary>

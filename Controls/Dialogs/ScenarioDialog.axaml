@@ -125,6 +125,45 @@
                           CornerRadius="{StaticResource RadiusBase}" />
             </Grid>
 
+            <!-- «По событию потока» — сторонняя программа сама сообщила о случившемся. Поток
+                 заводят на вкладке «Потоки»; здесь только выбор из заведенных. -->
+            <Grid ColumnDefinitions="Auto,8,*">
+                <RadioButton Grid.Column="0" x:Name="StreamRadio" GroupName="trigger"
+                             Content="По событию потока" VerticalAlignment="Center" />
+                <ComboBox Grid.Column="2" x:Name="StreamCombo"
+                          Height="30"
+                          HorizontalAlignment="Stretch"
+                          VerticalContentAlignment="Center"
+                          Background="{StaticResource BrushSecondaryBg}"
+                          CornerRadius="{StaticResource RadiusBase}" />
+            </Grid>
+
+            <!-- Ответ на событие — уточнения к потоку, тем же приемом, что время тишины. Ответ
+                 уходит по итогу ВСЕГО сценария, поэтому он здесь, а не шагом в списке: шаг после
+                 неудавшегося не выполнился бы, а ответить надо как раз тогда. -->
+            <Grid ColumnDefinitions="Auto,8,*" Margin="24,0,0,0">
+                <TextBlock Grid.Column="0" x:Name="ReplyLabel"
+                           Text="ответить запросом" VerticalAlignment="Center"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <ComboBox Grid.Column="2" x:Name="ReplyCombo"
+                          Height="30"
+                          HorizontalAlignment="Stretch"
+                          VerticalContentAlignment="Center"
+                          Background="{StaticResource BrushSecondaryBg}"
+                          CornerRadius="{StaticResource RadiusBase}" />
+            </Grid>
+
+            <Grid ColumnDefinitions="Auto,8,*" Margin="24,0,0,0">
+                <TextBlock Grid.Column="0" x:Name="FailLabel"
+                           Text="при сбое ответить" VerticalAlignment="Center"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <TextBox Grid.Column="2" x:Name="FailBox"
+                         Height="30"
+                         VerticalContentAlignment="Center"
+                         Watermark="пусто — при сбое не отвечать"
+                         CornerRadius="{StaticResource RadiusBase}" />
+            </Grid>
+
         </StackPanel>
 
         <!-- ── Что делать ───────────────────────────────────────────────────── -->

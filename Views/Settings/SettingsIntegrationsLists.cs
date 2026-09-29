@@ -58,11 +58,13 @@ public partial class SettingsView
 
     private Border ConnectionRow(Database.IntegrationsRegistry registry, IntegrationConnection connection)
     {
-        var used = registry.RequestsOf(connection.Id).Count;
+        var used    = registry.RequestsOf(connection.Id).Count;
+        var streams = registry.StreamsOf(connection.Id).Count;
 
         var description = $"{connection.Address} · {AuthText(connection.Auth)}"
                         + (registry.HasSecret(connection.Id) ? " · секрет сохранен" : "")
-                        + (used > 0 ? $" · запросов: {used}" : "");
+                        + (used > 0 ? $" · запросов: {used}" : "")
+                        + (streams > 0 ? $" · потоков: {streams}" : "");
 
         var decision = connection.BaseAddress is null
             ? EgressDecision.Deny(EgressDenyReason.BadAddress, "адрес не разобрался")
@@ -150,6 +152,10 @@ public partial class SettingsView
         if (result is null) return;
 
         registry.Save(result.Connection, result.Secret);
+
+        // Адрес или секрет могли смениться — потоки этого соединения пора переоткрыть.
+        _streams?.Sync();
+
         BuildIntegrationsConnections();
     }
 
@@ -167,6 +173,19 @@ public partial class SettingsView
             await ConfirmDialog.Info(
                     $"Соединение «{connection.Name}» используют запросы ({used.Count}): "
                     + string.Join(", ", used.Select(r => r.Name))
+                    + ".\n\nУдалите их или переключите на другое соединение.")
+                .ShowDialog(win);
+            return;
+        }
+
+        var streams = registry.StreamsOf(connection.Id);
+
+        // То же правило для потоков: они открываются через это соединение.
+        if (streams.Count > 0)
+        {
+            await ConfirmDialog.Info(
+                    $"Через соединение «{connection.Name}» открываются потоки событий "
+                    + $"({streams.Count}): " + string.Join(", ", streams.Select(s => s.Name))
                     + ".\n\nУдалите их или переключите на другое соединение.")
                 .ShowDialog(win);
             return;

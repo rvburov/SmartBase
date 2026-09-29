@@ -113,6 +113,12 @@ public sealed partial class IntegrationsRegistry(SystemDbContext db)
                 $"Соединение не удалено: на него ссылаются запросы ({used}). "
                 + "Удалите их или переключите на другое соединение.");
 
+        var streams = db.IntegrationStreams.Count(s => s.ConnectionId == id);
+        if (streams > 0)
+            throw new InvalidOperationException(
+                $"Соединение не удалено: через него открываются потоки событий ({streams}). "
+                + "Удалите их или переключите на другое соединение.");
+
         if (!string.IsNullOrEmpty(entity.Secret))
             SecretProtector.Delete(entity.Secret, SecretProtector.IntegrationsService);
 

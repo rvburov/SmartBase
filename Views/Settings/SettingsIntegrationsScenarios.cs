@@ -191,6 +191,10 @@ public partial class SettingsView
     /// </summary>
     private string WatchedName(Scenario scenario)
     {
+        // У триггера потока на месте коллекции стоит имя потока.
+        if (scenario.Trigger.WatchesStream)
+            return Integrations?.FindStream(scenario.Trigger.StreamId)?.Name ?? "";
+
         if (!scenario.Trigger.WatchesCollection) return "";
 
         var databases = _databases?.Invoke() ?? [];
@@ -215,7 +219,18 @@ public partial class SettingsView
         // человек считал настройку общей и ждал ночного обмена от выключенного ноутбука.
         facts.Add(scenario.Automatic
             ? "Работает на этом компьютере, пока программа открыта"
-            : "Запускается только вручную");
+            : scenario.Trigger.WatchesStream
+                ? "Выключен: события потока его не заводят"
+                : "Запускается только вручную");
+
+        // Чем и что сценарий отвечает — в строке: это половина его настройки, и искать ее в
+        // окне правки ради ответа «а отвечает ли он вообще» незачем.
+        if (scenario.Trigger.Replies)
+            facts.Add("отвечает запросом «"
+                    + (registry.FindRequest(scenario.Trigger.RequestId)?.Name ?? "не найден") + "»"
+                    + (scenario.Trigger.FailText.Length > 0
+                        ? $", при сбое — «{scenario.Trigger.FailText}»"
+                        : ""));
 
         if (registry.ScenarioLastRun(scenario.Id) is { } last)
             facts.Add("последний запуск " + last.ToLocalTime().ToString("dd.MM.yyyy HH:mm"));
@@ -253,6 +268,10 @@ public partial class SettingsView
             // Включение ставит ЯКОРЬ — момент, от которого считается первый запуск. Без него
             // «ежедневно в 07:00», включенное вечером, сработало бы немедленно.
             registry.EnableScenario(scenario.Id, toggle.IsChecked == true, DateTimeOffset.Now);
+
+            // Сценарий потока включили или выключили — поток пора открыть или закрыть сразу.
+            _streams?.Sync();
+
             BuildIntegrationsScenarios();
         };
 
@@ -269,10 +288,16 @@ public partial class SettingsView
         if (Outgoing(registry, scenario) is { } step)
             more.Add(("Показать, что уйдет", () => _ = PreviewScenarioAsync(registry, step)));
 
+        // Сценарий потока кнопкой не запускается: строку ему приносит событие, а события нет.
+        // Кнопка, которая на любое нажатие отвечает отказом, читается как поломка.
+        (string, Action)? run = scenario.Trigger.WatchesStream
+            ? null
+            : ("Запустить", () => _ = RunScenarioAsync(scenario));
+
         return CardRow(scenario.Name, description, extra,
             edit:   () => _ = EditScenarioAsync(scenario),
             delete: () => _ = DeleteScenarioAsync(scenario),
-            first:  ("Запустить", () => _ = RunScenarioAsync(scenario)),
+            first:  run,
             more:   more,
             lead:   toggle);
     }
@@ -357,7 +382,16 @@ public partial class SettingsView
             .Select(r => (r.Id, r.Name, Bound: registry.Binding(r.Id) is not null))
             .ToList();
 
-        var result = await new ScenarioDialog(card, requests, Actions(), Places())
+        // Отвечать можно только исходящим запросом: ответ — это отправка, и идти ей через замок
+        // направлений.
+        var replies = registry.Requests()
+            .Where(r => r.Outward)
+            .Select(r => (r.Id, r.Name))
+            .ToList();
+
+        var streams = registry.Streams().Select(s => (s.Id, s.Name)).ToList();
+
+        var result = await new ScenarioDialog(card, requests, Actions(), Places(), streams, replies)
             .ShowDialog<Scenario?>(win);
 
         if (result is null) return;
@@ -374,6 +408,8 @@ public partial class SettingsView
             await ConfirmDialog.Info(error.Message).ShowDialog(win);
             return;
         }
+
+        _streams?.Sync();
 
         BuildIntegrationsScenarios();
     }
@@ -417,6 +453,8 @@ public partial class SettingsView
         if (confirmed != true) return;
 
         Integrations.DeleteScenario(scenario.Id);
+        _streams?.Sync();
+
         BuildIntegrationsScenarios();
     }
 

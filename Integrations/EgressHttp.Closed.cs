@@ -42,6 +42,26 @@ public static class EgressHttp
         return Task.FromResult(Refusal());
     }
 
+    /// <summary>Потолок сообщения потока. Здесь только ради одинакового вида обеих сборок.</summary>
+    public const int MaxStreamMessageBytes = 1024 * 1024;
+
+    /// <summary>
+    /// Поток событий сторонней программы. В этой сборке его нет: соединяться нечем, и служба
+    /// потоков получает тот же отказ, что и запрос.
+    /// </summary>
+    public static Task<EgressResponse> ListenAsync(
+        IntegrationConnection connection,
+        string                secret,
+        string                path,
+        IReadOnlyList<string> greeting,
+        Action                opened,
+        Func<string, bool>    received,
+        CancellationToken     ct = default)
+    {
+        _ = connection; _ = secret; _ = path; _ = greeting; _ = opened; _ = received; _ = ct;
+        return Task.FromResult(Refusal());
+    }
+
     /// <summary>
     /// Отказ вместо отправки. Тот же отказ дает и сам шлюз в этой сборке — так что порядок
     /// проверок для вызывающего кода не меняется, меняется только то, что за отказом ничего нет.

@@ -153,7 +153,8 @@ public static class RequestRunner
 
         if (unknown.Count > 0)
             return RunPreview.Blocked(
-                "неизвестные подстановки: " + string.Join(", ", unknown.Select(u => "{{" + u + "}}")),
+                "неизвестные подстановки: " + string.Join(", ", unknown.Select(u => "{{" + u + "}}"))
+                + RequestVariables.ReplyOnlyNote(unknown),
                 outward);
 
         // Объем отправляемого известен и здесь — ровно тот же вопрос и в том же месте, что и в
@@ -254,7 +255,8 @@ public static class RequestRunner
 
             if (unknown.Count > 0)
                 return new RunOutcome(false,
-                    "неизвестные подстановки: " + string.Join(", ", unknown.Select(u => "{{" + u + "}}")),
+                    "неизвестные подстановки: " + string.Join(", ", unknown.Select(u => "{{" + u + "}}"))
+                    + RequestVariables.ReplyOnlyNote(unknown),
                     "[]", items.Count, pages, bytes, elapsed, "", 0, false);
 
             // Сколько эта порция унесет наружу. Меряется тело: записи уходят только им — путь
@@ -395,7 +397,8 @@ public static class RequestRunner
         int                offset,
         out IReadOnlyList<string> unknown)
     {
-        var path = RequestVariables.Apply(request.Path, context, out var pathUnknown);
+        var path = RequestVariables.Apply(request.Path, context, out var pathUnknown,
+                                          VariablePlace.Path);
 
         string                body;
         IReadOnlyList<string> bodyUnknown;
@@ -410,7 +413,8 @@ public static class RequestRunner
         }
         else
         {
-            body = RequestVariables.Apply(request.Body, context, out bodyUnknown);
+            body = RequestVariables.Apply(request.Body, context, out bodyUnknown,
+                                          VariablePlace.Body);
         }
 
         unknown = [.. pathUnknown.Concat(bodyUnknown).Distinct()];

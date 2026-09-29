@@ -103,6 +103,12 @@ public partial class MainWindow : Window
         _scenarios   = new ScenarioService(workspace.Registry.Integrations, GrantedDbs,
                                            SmartBase.Extensions.ExtensionRegistry.All,
                                            Controls.Widgets.AppNotifications.Info);
+        // Потоки событий («Настройки → Интеграции → Потоки»): слушаются те, чьи события
+        // заводят включенные сценарии. Сценарий на событие запускает тот же исполнитель, что и
+        // по расписанию.
+        _streams     = new StreamService(workspace.Registry.Integrations, GrantedDbs,
+                                         SmartBase.Extensions.ExtensionRegistry.All,
+                                         Controls.Widgets.AppNotifications.Info);
         // Резолвер чужих баз для межбазовых связей (тип «relation» с TargetDbId>0).
         RelationDbResolver.Configure(workspace);
 
@@ -220,6 +226,8 @@ public partial class MainWindow : Window
         _inbox.Swept += run => _settingsView?.OnInboxSwept(run);
         _ingress.Changed += () => Dispatcher.UIThread.Post(() => _settingsView?.OnIngressChanged());
         _scenarios.Ran += (_, _) => _settingsView?.OnScenarioRan();
+        _streams.Ran     += (_, _) => _settingsView?.OnScenarioRan();
+        _streams.Changed += () => _settingsView?.OnStreamChanged();
         _mountQueue.MaintenanceFinished += (dbId, error) => Dispatcher.UIThread.Post(() =>
         {
             var name = _workspace.Registry.GetAll().FirstOrDefault(d => d.Id == dbId)?.Name ?? "";
@@ -523,6 +531,9 @@ public partial class MainWindow : Window
             // Сценарии: таймер расписаний. Выключенный сценарий не трогается, а тот, кому что-то
             // мешает, пропускает тик молча и догонит пропущенное, когда помеха уйдет.
             _scenarios.Start();
+            // Потоки событий: открыть те, чьи события заводят включенные сценарии. Нет таких —
+            // здесь не происходит ничего.
+            _streams.Start();
             // Календарь и «Задачи» — построить скрытыми в простое (MainWindow.Sections.cs).
             _ = PrebuildSectionsWhenIdleAsync();
 
@@ -597,6 +608,7 @@ public partial class MainWindow : Window
             _inbox.Dispose();
             _ingress.Dispose();
             _scenarios.Dispose();
+            _streams.Dispose();
             _watchdog.Dispose();
         };
     }
@@ -606,6 +618,7 @@ public partial class MainWindow : Window
     private readonly InboxService  _inbox;
     private readonly IngressService _ingress;
     private readonly ScenarioService _scenarios;
+    private readonly StreamService   _streams;
 
     // Человеческое имя раздела для записей о медленном открытии.
     private static string ModuleTitle(string module) => module switch

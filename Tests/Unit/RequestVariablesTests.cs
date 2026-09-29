@@ -17,8 +17,9 @@ public sealed class RequestVariablesTests
     private static readonly DateOnly Day = new(2026, 9, 9);
 
     private static VariableContext Context(DateTimeOffset? lastRun = null, string address = "",
-                                           IReadOnlyDictionary<string, string>? record = null) =>
-        new(Day, lastRun, address, record);
+                                           IReadOnlyDictionary<string, string>? record = null,
+                                           string? reply = null) =>
+        new(Day, lastRun, address, record, reply);
 
     /// <summary>Единственная уходящая запись — то, чем живет подстановка «поле.Имя».</summary>
     private static IReadOnlyDictionary<string, string> One =>
@@ -134,7 +135,8 @@ public sealed class RequestVariablesTests
     /// подсказку, но не разбираемая, — прямой путь к отчету «неизвестная подстановка».
     ///
     /// Контекст здесь с записью: подстановка поля в подсказке названа образцом «поле.Имя», и
-    /// без записи она честно ответила бы «не знаю такого поля».
+    /// без записи она честно ответила бы «не знаю такого поля». И с текстом ответа — по той же
+    /// причине: вне ответа такой подстановки нет.
     /// </summary>
     [Fact]
     public void Every_listed_substitution_actually_works()
@@ -143,11 +145,87 @@ public sealed class RequestVariablesTests
 
         foreach (var (name, meaning) in RequestVariables.All)
         {
-            RequestVariables.Apply("{{" + name + "}}", Context(record: record), out var unknown);
+            RequestVariables.Apply("{{" + name + "}}", Context(record: record, reply: "Готово"),
+                                   out var unknown);
 
             Assert.Empty(unknown);
             Assert.False(string.IsNullOrWhiteSpace(meaning));
         }
+    }
+
+    // ── Текст ответа на событие ───────────────────────────────────────────────
+
+    /// <summary>
+    /// В теле вида JSON текст ответа ложится содержимым строки: перевод строки и кавычки
+    /// экранируются, иначе тело стало бы негодным и та сторона отвергла бы ответ. Кириллица
+    /// остается кириллицей — журнал и сухой прогон читаются глазами.
+    /// </summary>
+    [Fact]
+    public void The_reply_text_is_escaped_inside_a_json_body()
+    {
+        const string said = "Номер: неправильный\nПроект: «не указан» \"совсем\"";
+
+        var result = Apply("""{"message": "{{ответ.текст}}"}""", Context(reply: said));
+
+        Assert.DoesNotContain('\n', result);
+        Assert.Contains("Номер: неправильный", result, StringComparison.Ordinal);
+
+        // И главное — получившееся тело разбирается, а текст в нем тот же, что был.
+        using var parsed = System.Text.Json.JsonDocument.Parse(result);
+        Assert.Equal(said, parsed.RootElement.GetProperty("message").GetString());
+    }
+
+    /// <summary>В пути и в теле-форме текст ответа идет параметром адреса.</summary>
+    [Fact]
+    public void The_reply_text_is_url_escaped_outside_json()
+    {
+        var context = Context(reply: "Готово: 1 & 2");
+
+        RequestVariables.Apply("/reply?text={{ответ.текст}}", context, out var inPath,
+                               VariablePlace.Path);
+        var form = RequestVariables.Apply("text={{ответ.текст}}", context, out var inForm,
+                                          VariablePlace.Body);
+
+        Assert.Empty(inPath);
+        Assert.Empty(inForm);
+        Assert.Equal("text=" + Uri.EscapeDataString("Готово: 1 & 2"), form);
+    }
+
+    /// <summary>
+    /// Вне ответа подстановки нет вовсе — ни пустоты, ни образца: запрос ответа, запущенный
+    /// кнопкой, ушел бы той стороне с пустым текстом.
+    /// </summary>
+    [Fact]
+    public void Outside_a_reply_the_reply_text_is_unknown()
+    {
+        RequestVariables.Apply("""{"message": "{{ответ.текст}}"}""", Context(), out var unknown);
+
+        Assert.Equal([RequestVariables.ReplyText], unknown);
+        Assert.Contains("событие потока", RequestVariables.ReplyOnlyNote(unknown),
+                        StringComparison.Ordinal);
+    }
+
+    /// <summary>Отказ по другой подстановке добавки про ответ не получает.</summary>
+    [Fact]
+    public void The_reply_note_is_silent_about_other_names() =>
+        Assert.Equal("", RequestVariables.ReplyOnlyNote(["опечатка"]));
+
+    /// <summary>
+    /// В запросе ответа запись — строка события: <c>{{поле.имя}}</c> берет ее колонку. Так ответ
+    /// находит получателя, не зная заранее, как та сторона его называет.
+    /// </summary>
+    [Fact]
+    public void A_reply_takes_the_recipient_from_the_event_row()
+    {
+        var row = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["senderId"] = "1001",
+        };
+
+        var result = Apply("""{"to": {{поле.senderId}}, "message": "{{ответ.текст}}"}""",
+                           Context(record: row, reply: "Готово"));
+
+        Assert.Equal("""{"to": 1001, "message": "Готово"}""", result);
     }
 
     // ── Поле уходящей записи ──────────────────────────────────────────────────

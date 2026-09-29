@@ -92,12 +92,16 @@ public enum StepFlow
 /// <param name="Text">Текст, который шаг передает следующему, — файл, взятый из папки. Его ждет
 /// преобразователь формата.</param>
 /// <param name="Flow">Идти ли дальше по списку шагов.</param>
+/// <param name="Reply">Что шаг говорит ОТПРАВИТЕЛЮ — слова действия расширения
+/// (<see cref="ActionResult.Answer"/>), без приставок оболочки. Пусто — шаг отправителю ничего не
+/// говорит.</param>
 public sealed record StepOutcome(bool       Ok,
                                  string     Line,
                                  int        Rows  = 0,
                                  StepTable? Table = null,
                                  string     Text  = "",
-                                 StepFlow   Flow  = StepFlow.Continue)
+                                 StepFlow   Flow  = StepFlow.Continue,
+                                 string     Reply = "")
 {
     public static StepOutcome Bad(string reason) => new(false, reason);
 
@@ -124,6 +128,8 @@ public sealed record StepOutcome(bool       Ok,
 /// сам обмен, — и человек по этим двум случаям идет в разные места.</param>
 /// <param name="Idle">Работы не нашлось: папка обмена пуста или в ней лежал уже принятый повтор.
 /// Такой запуск в журнал не пишется вовсе.</param>
+/// <param name="Reply">Что сказать отправителю — последние слова, которые ему адресовало
+/// действие (<see cref="StepOutcome.Reply"/>); пусто — ни одно действие ему ничего не сказало.</param>
 public sealed record ScenarioOutcome(
     bool                  Ok,
     string                Problem,
@@ -133,7 +139,8 @@ public sealed record ScenarioOutcome(
     TimeSpan              Elapsed,
     IReadOnlyList<string> Lines,
     bool                  Started = true,
-    bool                  Idle    = false)
+    bool                  Idle    = false,
+    string                Reply   = "")
 {
     /// <summary>Сценарий не запускался вовсе — не сложилось до первого шага.</summary>
     public static ScenarioOutcome Blocked(string problem, int total) =>
@@ -198,8 +205,13 @@ public static partial class ScenarioRunner
         // строки приносят запрос и преобразователь, и нужны они отбору. Поставленный первым,
         // такой шаг разбирать и отбирать будет нечего. Календарный триггер строки ПРИНОСИТ
         // САМ — наступившие события, как будто их принес нулевой шаг.
+        // Триггер потока — так же: каждая запись события приходит первому шагу строкой.
         var text = false;
-        var rows = scenario.Trigger.WatchesCalendar || initial is { Rows.Count: > 0 };
+        var rows = scenario.Trigger.WatchesCalendar || scenario.Trigger.WatchesStream
+                || initial is { Rows.Count: > 0 };
+
+        if (scenario.Trigger.WatchesStream && StreamTrouble(scenario, registry) is { } stream)
+            return stream;
 
         foreach (var step in scenario.Steps)
         {
@@ -352,6 +364,14 @@ public static partial class ScenarioRunner
         var clock = Stopwatch.StartNew();
         var total = scenario.Steps.Count;
 
+        // Сценарий потока, запущенный кнопкой: строки ему приносит событие, а события нет.
+        // Сказать об этом надо здесь и словами — иначе первый же шаг ответил бы «колонки нет», и
+        // человек искал бы опечатку в имени колонки.
+        if (scenario.Trigger.WatchesStream && initial is not { Rows.Count: > 0 })
+            return ScenarioOutcome.Blocked(
+                "сценарий заводится событием потока: строку ему приносит событие, и кнопкой "
+                + "его не запустить", total);
+
         if (Blocker(scenario, registry, databases, extensions, initial) is { } blocker)
         {
             Journal(scenario, ok: false, blocker, rows: 0, clock.Elapsed, DbOf(scenario, registry),
@@ -375,6 +395,7 @@ public static partial class ScenarioRunner
 
         StepTable? table = initial;
         var        text  = "";
+        var        reply = "";
         Intake?    taken = null;
 
         try
@@ -405,6 +426,15 @@ public static partial class ScenarioRunner
                     _                        => NoticeStep(step, notice),
                 };
 
+                // Событие потока, не прошедшее отбор, — не запуск: по одному потоку ходят
+                // события разного вида, и сценарию нужны не все. Строка журнала на каждое чужое
+                // событие похоронила бы под собой настоящие, а ответ на него ушел бы тому, кто
+                // ничего не спрашивал.
+                if (scenario.Trigger.WatchesStream
+                    && step.Kind == ScenarioStepKind.Filter
+                    && outcome is { Ok: true, Flow: StepFlow.Stop })
+                    outcome = StepOutcome.Nothing;
+
                 // Делать нечего — расходимся молча, не оставляя следа ни в журнале, ни в отчете.
                 if (outcome.Flow == StepFlow.Silent) { idle = true; break; }
 
@@ -413,6 +443,7 @@ public static partial class ScenarioRunner
 
                 if (outcome.Table is not null)  table = outcome.Table;
                 if (outcome.Text.Length  > 0)   text  = outcome.Text;
+                if (outcome.Reply.Length > 0)   reply = outcome.Reply;
 
                 // Первый неудавшийся шаг останавливает цепочку: следующий работал бы с данными,
                 // которых не пришло.
@@ -449,7 +480,7 @@ public static partial class ScenarioRunner
         }
 
         var result = new ScenarioOutcome(ok, problem, done, total, rows, clock.Elapsed, lines,
-                                         Started: true, Idle: idle);
+                                         Started: true, Idle: idle, Reply: reply);
 
         // Тихий запуск в журнал не идет: пустая папка, проверяемая каждые пять минут, иначе
         // оставила бы к утру три сотни строк «делать было нечего».
@@ -615,8 +646,13 @@ public static partial class ScenarioRunner
         if (ActionOf(step, extensions, out var trouble) is not { } action)
             return StepOutcome.Bad(trouble);
 
+        // Настройки расширения читаются ЗДЕСЬ, на UI-потоке, до ухода в фон: хранилище настроек
+        // живет на общем контексте app.db, и действие, прочитавшее их само из фона, однажды
+        // уронило бы его.
+        var settings = SettingsOf(step, extensions);
+
         if (action.Kind == ExtensionActionKind.Transformer)
-            return await TransformStepAsync(action, text, now, ct);
+            return await TransformStepAsync(action, text, now, settings, ct);
 
         if (action.Kind == ExtensionActionKind.Rows)
             return await AutomationStepAsync(step, action, incoming, scenario, now, ct);
@@ -648,12 +684,13 @@ public static partial class ScenarioRunner
         var rows    = 0;
         var failure = "";
         var said    = "";   // что сказало действие в последний раз
+        var answer  = "";   // что оно сказало ОТПРАВИТЕЛЮ
 
         try
         {
             await Task.Run(() => target.Constructor.UseIsolated(step.CollectionId, repo =>
             {
-                var context = new ActionContext(repo, step.DbId, step.CollectionId, now);
+                var context = new ActionContext(repo, step.DbId, step.CollectionId, now, settings);
 
                 foreach (var input in inputs)
                 {
@@ -667,12 +704,14 @@ public static partial class ScenarioRunner
                             ? $"строка {ran + 1} из {inputs.Count}: {result.Explanation}"
                             : result.Explanation;
 
+                        answer = result.Answer;
                         return false;
                     }
 
                     ran++;
-                    rows += result.Rows;
-                    said  = result.Explanation;
+                    rows  += result.Rows;
+                    said   = result.Explanation;
+                    answer = result.Answer;
                 }
 
                 return true;
@@ -692,7 +731,11 @@ public static partial class ScenarioRunner
         if (failure.Length > 0)
         {
             var made = ran > 0 ? $" (до этого выполнено {ran})" : "";
-            return StepOutcome.Bad($"действие «{action.Name}»: {failure}{made}");
+
+            // Отправителю — только то, что действие адресовало ему само: причину, которую он
+            // может исправить. Остальные отказы для него — сбой, и отвечает на них оболочка.
+            return new StepOutcome(false, $"действие «{action.Name}»: {failure}{made}",
+                                   Reply: answer);
         }
 
         // Одна строка — говорит само действие: «зарегистрировано АБВГ.301121.001» и есть тот
@@ -702,7 +745,7 @@ public static partial class ScenarioRunner
             ? $"Действие «{action.Name}»: {said}"
             : $"Действие «{action.Name}»: выполнено {ran}, записей {rows}";
 
-        return new StepOutcome(true, line, rows);
+        return new StepOutcome(true, line, rows, Reply: ran == 1 ? answer : "");
     }
 
     /// <summary>
@@ -716,6 +759,7 @@ public static partial class ScenarioRunner
     private static async Task<StepOutcome> TransformStepAsync(IExtensionAction  action,
                                                               string            text,
                                                               DateTimeOffset    now,
+                                                              IReadOnlyDictionary<string, string> settings,
                                                               CancellationToken ct)
     {
         if (text.Length == 0)
@@ -725,7 +769,8 @@ public static partial class ScenarioRunner
         try
         {
             result = await Task.Run(
-                () => action.Run(new ActionContext(null, 0, 0, now), new ActionInput(NoValues, text)), ct);
+                () => action.Run(new ActionContext(null, 0, 0, now, settings),
+                                 new ActionInput(NoValues, text)), ct);
         }
         catch (OperationCanceledException)
         {
@@ -736,7 +781,9 @@ public static partial class ScenarioRunner
             return StepOutcome.Bad($"«{action.Name}» сорвался: {error.Message}");
         }
 
-        if (!result.Ok) return StepOutcome.Bad($"«{action.Name}»: {result.Explanation}");
+        if (!result.Ok)
+            return new StepOutcome(false, $"«{action.Name}»: {result.Explanation}",
+                                   Reply: result.Answer);
 
         var source = new JsonTextSource(result.Json);
 
@@ -1029,6 +1076,54 @@ public static partial class ScenarioRunner
         return action;
     }
 
+    /// <summary>
+    /// Значения настроек расширения шага — по ключам, которые расширение объявило. Читаются на
+    /// UI-потоке; расширения нет — пустой набор (отказ скажет сам шаг).
+    /// </summary>
+    private static IReadOnlyDictionary<string, string> SettingsOf(ScenarioStep              step,
+                                                                  IReadOnlyList<IExtension> extensions)
+    {
+        var values = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        if (extensions.FirstOrDefault(e => e.Id == step.Extension) is not { } extension) return values;
+
+        foreach (var setting in extension.Settings)
+            values[setting.Key] = Utils.AppSettings.LoadExtensionSetting(extension.Id, setting.Key);
+
+        return values;
+    }
+
+    /// <summary>
+    /// Что не так с потоком и карточкой ответа у сценария потока; <c>null</c> — все на месте.
+    ///
+    /// Ответ — это ОТПРАВКА: текст уходит той стороне, то есть наружу. Поэтому карточка ответа
+    /// обязана быть исходящей (не <c>GET</c>): только такой запрос проходит замок направлений,
+    /// подтверждение и журнал безопасности. Читающий запрос на этом месте означал бы ответы,
+    /// ушедшие мимо замка.
+    /// </summary>
+    public static string? StreamTrouble(Scenario scenario, IntegrationsRegistry registry)
+    {
+        if (registry.FindStream(scenario.Trigger.StreamId) is not { } stream)
+            return $"поток событий не найден (№{scenario.Trigger.StreamId})";
+
+        if (registry.Find(stream.ConnectionId) is null)
+            return $"у потока «{stream.Name}» не найдено соединение";
+
+        if (!scenario.Trigger.Replies) return null;
+
+        if (registry.FindRequest(scenario.Trigger.RequestId) is not { } request)
+            return $"запрос ответа не найден (№{scenario.Trigger.RequestId})";
+
+        if (registry.Find(request.ConnectionId) is null)
+            return $"у запроса ответа «{request.Name}» не найдено соединение";
+
+        if (!request.Outward)
+            return $"запрос ответа «{request.Name}» только читает (GET), а ответ надо отправить: "
+                 + "выберите запрос, который отправляет данные";
+
+        return null;
+    }
+
     /// <summary>Преобразователю нечего разбирать — текст в сценарий приносит папка обмена.</summary>
     private static string NoInput(IExtensionAction action) =>
         $"«{action.Name}» разбирает то, что пришло текстом, а текста нет: поставьте перед ним "
@@ -1107,6 +1202,9 @@ public static partial class ScenarioRunner
             ScenarioStepKind.Compute      => "преобразование",
             _                             => kind.ToString(),
         };
+
+    /// <summary>Отметка ответа на событие — на месте номера шага: ответ идет после последнего.</summary>
+    public const string ReplyMark = "ответ на событие";
 
     /// <summary>
     /// Итоговая строка сценария в журнале. Пишется ВСЕГДА, даже когда до первого шага не дошло:

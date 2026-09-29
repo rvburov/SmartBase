@@ -1099,7 +1099,8 @@ public partial class SettingsView : UserControl
                            Func<IReadOnlyList<DatabaseManager>>? databases = null,
                            Func<CancellationToken, Task<InboxRun>>? inboxSweep = null,
                            Func<Scenario, CancellationToken, Task<ScenarioOutcome>>? scenarioRun = null,
-                           IngressService? ingress = null)
+                           IngressService? ingress = null,
+                           StreamService? streams = null)
     {
         _registry    = registry;
         _isMounted   = isMounted;
@@ -1111,6 +1112,7 @@ public partial class SettingsView : UserControl
         _inboxSweep  = inboxSweep;
         _scenarioRun = scenarioRun;
         _ingress     = ingress;
+        _streams     = streams;
         RefreshDatabaseList();
     }
 
@@ -1121,6 +1123,9 @@ public partial class SettingsView : UserControl
     private Func<Scenario, CancellationToken, Task<ScenarioOutcome>>? _scenarioRun;
     // Служба приема по сети: экран ее включает, а она отвечает, слушает или нет и почему.
     private IngressService? _ingress;
+    // Служба потоков событий: экран спрашивает у нее, слушается ли поток, и зовет сверку после
+    // правки карточек — чтобы слушание перезапустилось сразу, а не через полминуты.
+    private StreamService? _streams;
 
     // Перестроить список (статус монтирования мог измениться). Вызывается из MainWindow.
     public void RefreshDatabases() => RefreshDatabaseList();

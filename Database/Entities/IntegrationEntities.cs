@@ -157,6 +157,43 @@ public class IntegrationScenarioEntity
 }
 
 /// <summary>
+/// Поток событий сторонней программы (системная БД app.db, таблица «integration_streams»).
+///
+/// Живет рядом с соединением и запросами и по тем же причинам — локально: поток слушает одна
+/// машина, та, где включен сценарий. Лежи карточка в файле базы данных, поток открыла бы каждая
+/// копия программы, и одно событие обработалось бы пять раз.
+///
+/// Секрета здесь нет: он принадлежит соединению.
+///
+/// Таблица заводится аддитивно (<c>DatabaseRegistry.EnsureIntegrationTables</c>).
+/// </summary>
+public class IntegrationStreamEntity
+{
+    [Key] public int Id { get; set; }
+
+    /// <summary>Имя для человека.</summary>
+    [Required] public string Name { get; set; } = "";
+
+    /// <summary>Соединение, через которое открывается поток.</summary>
+    public int ConnectionId { get; set; }
+
+    /// <summary>Путь относительно адреса соединения.</summary>
+    [Required] public string Path { get; set; } = "/";
+
+    /// <summary>Способ подписки: plain, stomp.</summary>
+    [Required] public string Protocol { get; set; } = "plain";
+
+    /// <summary>Темы подписки — JSON-массив строк.</summary>
+    public string? TopicsJson { get; set; }
+
+    /// <summary>Путь к записям внутри события: <c>data</c>.</summary>
+    public string? ItemsPath { get; set; }
+
+    /// <summary>Колонка, по которой отсекаются повторы события.</summary>
+    public string? KeyField { get; set; }
+}
+
+/// <summary>
 /// Подтвержденное исходящее направление (<see cref="SmartBase.Integrations.OutgoingDirection"/>).
 ///
 /// Ключ — сам запрос: направление у него одно, и отдельный счетчик строк тут только повод

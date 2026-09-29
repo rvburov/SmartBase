@@ -19,6 +19,7 @@ T:System.Net.Http.HttpRequestMessage;запрос наружу собирает 
 T:System.Net.WebClient;устаревший клиент; наружу ходит только Integrations/EgressHttp.Open.cs
 T:System.Net.WebRequest;устаревший клиент; наружу ходит только Integrations/EgressHttp.Open.cs
 T:System.Net.HttpWebRequest;устаревший клиент; наружу ходит только Integrations/EgressHttp.Open.cs
+T:System.Net.WebSockets.ClientWebSocket;поток событий открывает только Integrations/EgressHttp.Open.cs
 # ── Прием входящих по сети: слушает одна дверь ────────────────────────────────
 # Слушатель у программы один — Integrations/IngressHttp.Open.cs, петлевой адрес по умолчанию
 # и выключенный прием в состоянии по умолчанию (10.12). Второй слушатель где угодно еще — это

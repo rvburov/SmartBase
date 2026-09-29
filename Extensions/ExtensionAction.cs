@@ -64,11 +64,23 @@ public sealed record ExtensionActionField(
 /// не расширению: одно расширение можно повесить на несколько каналов и коллекций.</param>
 /// <param name="Now">Момент запуска. Приходит параметром, чтобы действие можно было проверить,
 /// не подводя системные часы.</param>
+/// <param name="Settings">Значения настроек расширения (<see cref="IExtension.Settings"/>) по их
+/// ключам. Читает их ОБОЛОЧКА — на UI-потоке, до того как увести действие в фон: хранилище
+/// настроек живет на общем контексте app.db, и чтение из фона однажды уронило бы его так же, как
+/// чужое подключение к базе. <c>null</c> — настроек не передали, и действие читает их пустыми.</param>
 public sealed record ActionContext(
-    ConstructorRepository? Repo,
-    int                    DbId,
-    int                    CollectionId,
-    DateTimeOffset         Now);
+    ConstructorRepository?               Repo,
+    int                                  DbId,
+    int                                  CollectionId,
+    DateTimeOffset                       Now,
+    IReadOnlyDictionary<string, string>? Settings = null)
+{
+    /// <summary>Значение настройки расширения; не задано — пустая строка.</summary>
+    public string Setting(string key) =>
+        Settings is { } settings && settings.TryGetValue(key, out var value)
+            ? (value ?? "").Trim()
+            : "";
+}
 
 /// <summary>
 /// Что пришло действию. У операции заполнены <see cref="Values"/> — одна запись; у
@@ -116,15 +128,36 @@ public sealed record ActionInput(
 /// <param name="FileName">Как назвать файл — имя с расширением и без пути («Строки.xlsx»).
 /// Момент к нему добавит оболочка: выгрузка повторяется по расписанию, и вчерашний файл не
 /// должен молча пропадать под сегодняшним.</param>
+/// <param name="Reply">Слова действия, обращенные к ОТПРАВИТЕЛЮ, — тому, чье сообщение или
+/// событие завело сценарий. Пусто — отправителю действие ничего не говорит.
+///
+/// Отдельно от <see cref="Explanation"/>, потому что читателей двое. Объяснение читает тот, кто
+/// настраивал обмен: «коллекция не подходит под журнал» ему понятно и нужно. Отправителю оно не
+/// скажет ничего — исправить это он не может; ему нужны слова о том, что зависит от него. Отказ
+/// без слов отправителю оболочка понимает как сбой и отвечает тем, что на этот случай велел
+/// отвечать человек.</param>
 public sealed record ActionResult(
     bool    Ok,
     string  Explanation,
     int     Rows     = 0,
     string  Json     = "",
     byte[]? File     = null,
-    string  FileName = "")
+    string  FileName = "",
+    string  Reply    = "")
 {
     public static ActionResult Failed(string reason) => new(false, reason);
+
+    /// <summary>
+    /// Отказ, причина которого — в самом сообщении отправителя: он может исправить ее сам, и
+    /// слова отказа обращены к нему.
+    /// </summary>
+    public static ActionResult Refused(string reply) => new(false, reply, Reply: reply);
+
+    /// <summary>
+    /// Что сказать отправителю: его слова, а при удаче без особых слов — объяснение («что
+    /// сделано» отправителю и есть ответ).
+    /// </summary>
+    public string Answer => Reply.Length > 0 ? Reply : Ok ? Explanation : "";
 
     /// <summary>Операция сделана.</summary>
     public static ActionResult Done(string explanation, int rows = 1) => new(true, explanation, rows);

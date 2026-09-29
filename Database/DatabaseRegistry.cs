@@ -152,6 +152,17 @@ public sealed class DatabaseRegistry : IDisposable, ISettingsDatabase
         AddColumns(db, "integration_directions", [("Second", "TEXT"), ("SecondAt", "TEXT")]);
 
         db.Database.ExecuteSqlRaw(
+            "CREATE TABLE IF NOT EXISTS \"integration_streams\" (" +
+            "\"Id\" INTEGER NOT NULL CONSTRAINT \"PK_integration_streams\" PRIMARY KEY AUTOINCREMENT, " +
+            "\"Name\" TEXT NOT NULL, " +
+            "\"ConnectionId\" INTEGER NOT NULL, " +
+            "\"Path\" TEXT NOT NULL, " +
+            "\"Protocol\" TEXT NOT NULL, " +
+            "\"TopicsJson\" TEXT NULL, " +
+            "\"ItemsPath\" TEXT NULL, " +
+            "\"KeyField\" TEXT NULL);");
+
+        db.Database.ExecuteSqlRaw(
             "CREATE TABLE IF NOT EXISTS \"integration_tokens\" (" +
             "\"Id\" INTEGER NOT NULL CONSTRAINT \"PK_integration_tokens\" PRIMARY KEY AUTOINCREMENT, " +
             "\"Name\" TEXT NOT NULL, " +

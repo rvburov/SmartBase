@@ -32,6 +32,12 @@ public static class RequestLauncher
     /// <param name="scenario">Имя сценария; пусто — кнопку нажал человек.</param>
     /// <param name="step">Отметка шага («шаг 2 из 5 · запрос»); пусто — запуск не из сценария.</param>
     /// <param name="ct">Отмена.</param>
+    /// <param name="record">Строка события, на которое отвечает запрос, — ей живут подстановки
+    /// <c>{{поле.Имя}}</c>; <c>null</c> — запрос не ответ, и запись берется у тела из
+    /// коллекции.</param>
+    /// <param name="reply">Текст ответа — подстановка <c>{{ответ.текст}}</c>; <c>null</c> —
+    /// запрос не ответ. Ответ идет через ту же цепочку, что любая отправка: замок направления,
+    /// оба журнала, зеркало.</param>
     public static async Task<RunOutcome> SendAsync(
         IntegrationsRegistry  registry,
         IntegrationConnection connection,
@@ -42,14 +48,16 @@ public static class RequestLauncher
         DateTimeOffset        now,
         string                scenario = "",
         string                step     = "",
-        CancellationToken     ct       = default)
+        CancellationToken     ct       = default,
+        IReadOnlyDictionary<string, string>? record = null,
+        string?               reply    = null)
     {
         // Значения единственной уходящей записи — для подстановки {{поле.Имя}} В ПУТИ запроса.
         // Записей не одна — подстановки нет, и запуск остановится с понятным отказом: путь
         // собирается один раз, и подставить в него запись из трех значило бы отправить две
         // оставшиеся по чужому адресу.
         var context = VariableContext.Now(registry.LastRun(request.Id), connection.Address,
-                                          payload?.Single);
+                                          payload?.Single ?? record, reply);
 
         // Замок на исходящем: подтверждено ли направление и лег ли след. Читающий запрос сюда не
         // попадает — ему подтверждать нечего.

@@ -197,10 +197,11 @@ public static class IntegrationsPassport
                           + $" · повторов {connection.Retries}");
 
             var requests = registry.RequestsOf(connection.Id);
+            var streams  = registry.StreamsOf(connection.Id);
 
-            if (requests.Count == 0)
+            if (requests.Count == 0 && streams.Count == 0)
             {
-                text.AppendLine("    запросов нет");
+                text.AppendLine("    запросов и потоков событий нет");
                 continue;
             }
 
@@ -208,6 +209,15 @@ public static class IntegrationsPassport
                 text.AppendLine($"    {request.Method.ToString().ToUpperInvariant(),-6} {request.Path}"
                               + $"   «{request.Name}»"
                               + (request.Outward ? "  [уносит данные]" : "  [только читает]"));
+
+            // Поток — соединение, открытое постоянно, и проверяющему о нем надо знать отдельно
+            // от запросов: запрос живет мгновение, а поток слушается, пока включен сценарий.
+            foreach (var stream in streams)
+                text.AppendLine($"    ПОТОК  {stream.Path}   «{stream.Name}»"
+                              + "  [только принимает события"
+                              + (registry.ScenariosOfStream(stream.Id).Any(s => s.Enabled)
+                                  ? ", слушается, пока программа открыта]"
+                                  : ", сейчас не слушается: нет включенного сценария]"));
         }
 
         text.AppendLine();

@@ -33,17 +33,30 @@ public sealed record BundleRequest(
     [property: JsonPropertyName("pagingField")] string PagingField,
     [property: JsonPropertyName("itemsPath")]   string ItemsPath);
 
+/// <summary>Поток событий в переносимом виде. Соединение названо ИМЕНЕМ, как у запроса.</summary>
+public sealed record BundleStream(
+    [property: JsonPropertyName("name")]       string Name,
+    [property: JsonPropertyName("connection")] string Connection,
+    [property: JsonPropertyName("path")]       string Path,
+    [property: JsonPropertyName("protocol")]   string Protocol,
+    [property: JsonPropertyName("topics")]     IReadOnlyList<string> Topics,
+    [property: JsonPropertyName("itemsPath")]  string ItemsPath,
+    [property: JsonPropertyName("keyField")]   string KeyField);
+
 /// <summary>
-/// Триггер в переносимом виде. База и коллекция названы ИМЕНАМИ, потому что номера у каждой
-/// машины свои; не нашлись на той стороне — сценарий приедет с триггером «вручную», и об этом
-/// будет сказано в отчете.
+/// Триггер в переносимом виде. База и коллекция, поток и запрос ответа названы ИМЕНАМИ, потому
+/// что номера у каждой машины свои; не нашлись на той стороне — сценарий приедет с триггером
+/// «вручную», и об этом будет сказано в отчете.
 /// </summary>
 public sealed record BundleTrigger(
     [property: JsonPropertyName("kind")]       string Kind,
     [property: JsonPropertyName("minutes")]    int    Minutes,
     [property: JsonPropertyName("time")]       string Time,
     [property: JsonPropertyName("database")]   string Database,
-    [property: JsonPropertyName("collection")] string Collection);
+    [property: JsonPropertyName("collection")] string Collection,
+    [property: JsonPropertyName("stream")]     string Stream = "",
+    [property: JsonPropertyName("reply")]      string Reply  = "",
+    [property: JsonPropertyName("failText")]   string FailText = "");
 
 /// <summary>Шаг в переносимом виде: запрос, база и коллекция — именами.</summary>
 public sealed record BundleStep(
@@ -94,14 +107,33 @@ public sealed record ScenarioBundle(
     [property: JsonPropertyName("machine")]     string Machine,
     [property: JsonPropertyName("connections")] IReadOnlyList<BundleConnection> Connections,
     [property: JsonPropertyName("requests")]    IReadOnlyList<BundleRequest>    Requests,
-    [property: JsonPropertyName("scenarios")]   IReadOnlyList<BundleScenario>   Scenarios)
+    [property: JsonPropertyName("scenarios")]   IReadOnlyList<BundleScenario>   Scenarios,
+    [property: JsonPropertyName("streams")]     IReadOnlyList<BundleStream>?    Streams = null)
 {
     /// <summary>
     /// Версия формата, которую понимает эта сборка. Файл с большим номером — от более новой
     /// программы: разбирать его наугад нельзя, смысл полей мог смениться. Правило то же, что у
     /// политики организации.
     /// </summary>
-    public const int SupportedVersion = 1;
+    public const int SupportedVersion = 2;
+
+    /// <summary>
+    /// Версия файла без потоков событий. Такой файл пишется ею и дальше: его поймет и выпуск
+    /// программы, который о потоках еще не знает.
+    /// </summary>
+    public const int PlainVersion = 1;
+
+    /// <summary>
+    /// Версия, которой пишется набор. Вторая ставится, только когда в наборе есть потоки:
+    /// прежний выпуск программы прочитал бы такой файл, молча превратив сценарий потока в
+    /// ручной, — а отказ «версия новее поддерживаемой» говорит правду.
+    /// </summary>
+    public static int VersionFor(IReadOnlyList<BundleStream> streams) =>
+        streams.Count > 0 ? SupportedVersion : PlainVersion;
+
+    /// <summary>Потоки набора; в файле прежней версии их нет.</summary>
+    [JsonIgnore]
+    public IReadOnlyList<BundleStream> StreamList => Streams ?? [];
 
     private static readonly JsonSerializerOptions Format = new()
     {
@@ -116,7 +148,8 @@ public sealed record ScenarioBundle(
 
     /// <summary>Сколько всего в наборе — для заголовка окна и отчета.</summary>
     public string Summary() =>
-        $"сценариев {Scenarios.Count}, запросов {Requests.Count}, соединений {Connections.Count}";
+        $"сценариев {Scenarios.Count}, запросов {Requests.Count}, соединений {Connections.Count}"
+        + (StreamList.Count > 0 ? $", потоков событий {StreamList.Count}" : "");
 
     /// <summary>
     /// Разобрать файл. <c>null</c> — не принят; причина в <paramref name="error"/> и

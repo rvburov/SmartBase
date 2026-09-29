@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.Sockets;
+using System.Net.WebSockets;
 using System.Text;
 
 namespace SmartBase.Integrations;
@@ -145,6 +146,219 @@ public static class EgressHttp
 
         return EgressResponse.Failed(failure, plan.SafeAddress, attempts, watch.Elapsed);
     }
+
+    // ── Поток событий ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Сколько байт может занять одно сообщение потока. Событие — сотни байт, редко килобайты;
+    /// мегабайт означает, что по адресу отвечает что-то не то, и держать это в памяти незачем.
+    /// </summary>
+    public const int MaxStreamMessageBytes = 1024 * 1024;
+
+    /// <summary>
+    /// Как часто спрашивать ту сторону «ты здесь?» и сколько ждать ответа. Без этого соединение,
+    /// у которого пропала вторая сторона, висело бы открытым часами, а события за это время шли
+    /// бы мимо.
+    /// </summary>
+    private static readonly TimeSpan KeepAlive = TimeSpan.FromSeconds(20);
+
+    /// <summary>
+    /// Слушать поток событий сторонней программы по WebSocket.
+    ///
+    /// Дверь та же, что у запросов, и обещания те же: адрес проверяется дважды — по имени и по
+    /// фактическому адресу, — соединение идет ровно с проверенным, прокси только тот, что
+    /// назвала политика. Наружу по потоку уходят лишь кадры <paramref name="greeting"/> —
+    /// представиться и подписаться; данных базы в них нет, и подтверждать там нечего. Все, что
+    /// уносит данные, уходит отдельной отправкой через замок исходящих направлений.
+    ///
+    /// Возвращается, когда поток кончился: та сторона закрыла его, связь пропала, человек
+    /// остановил или <paramref name="received"/> сказал «хватит». <see cref="EgressResponse.Sent"/>
+    /// означает, что соединение состоялось. Переподключается вызывающий — он знает, как часто
+    /// это уместно.
+    /// </summary>
+    /// <param name="path">Путь потока относительно адреса соединения.</param>
+    /// <param name="greeting">Текстовые кадры, отправляемые сразу после соединения.</param>
+    /// <param name="opened">Соединение установлено и приветствие ушло — с этого момента события
+    /// не теряются.</param>
+    /// <param name="received">Пришло текстовое сообщение; <c>false</c> — слушать дальше незачем.</param>
+    public static async Task<EgressResponse> ListenAsync(
+        IntegrationConnection connection,
+        string                secret,
+        string                path,
+        IReadOnlyList<string> greeting,
+        Action                opened,
+        Func<string, bool>    received,
+        CancellationToken     ct = default)
+    {
+        var plan = EgressPlan.Build(connection,
+                                    IntegrationRequest.New() with { Name = "Поток событий", Path = path },
+                                    secret, out var error);
+
+        if (plan is null) return EgressResponse.Denied(EgressDenyReason.BadAddress, error);
+
+        // Обе проверки — ДО сокета, как у запроса: сначала имя, потом фактический адрес.
+        var byName = EgressGate.Check(plan.Address);
+        if (!byName.Allowed)
+            return EgressResponse.Denied(byName.Reason, byName.Explanation, plan.SafeAddress);
+
+        var viaProxy = EgressGate.CheckProxy(out var proxy);
+        if (!viaProxy.Allowed)
+            return EgressResponse.Denied(viaProxy.Reason, viaProxy.Explanation, plan.SafeAddress);
+
+        var target = proxy ?? plan.Address;
+        var pinned = await ResolveAndCheckAsync(target, ct);
+        if (pinned.Address is null)
+            return EgressResponse.Denied(pinned.Reason, pinned.Explanation, plan.SafeAddress);
+
+        return await StreamAsync(plan, pinned.Address, target.Port, proxy, greeting,
+                                 opened, received, ct);
+    }
+
+    private static async Task<EgressResponse> StreamAsync(
+        EgressPlan plan, IPAddress pinned, int port, Uri? proxy, IReadOnlyList<string> greeting,
+        Action opened, Func<string, bool> received, CancellationToken ct)
+    {
+        var watch = Stopwatch.StartNew();
+        var bytes = 0L;
+
+        using var handler = HandlerFor(plan, pinned, port, proxy);
+        using var invoker = new HttpMessageInvoker(handler, disposeHandler: false);
+        using var socket  = new ClientWebSocket();
+
+        socket.Options.KeepAliveInterval = KeepAlive;
+        socket.Options.KeepAliveTimeout  = KeepAlive;
+
+        foreach (var header in plan.Headers)
+            socket.Options.SetRequestHeader(header.Name, header.Value);
+
+        var address = new UriBuilder(plan.Address)
+        {
+            Scheme = plan.Address.Scheme == Uri.UriSchemeHttps ? "wss" : "ws",
+            Port   = plan.Address.Port,
+        }.Uri;
+
+        try
+        {
+            using var connecting = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            connecting.CancelAfter(TimeSpan.FromSeconds(plan.TimeoutSeconds));
+
+            await socket.ConnectAsync(address, invoker, connecting.Token);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            return EgressResponse.Failed("отменено", plan.SafeAddress, 1, watch.Elapsed);
+        }
+        catch (Exception error) when (error is WebSocketException or HttpRequestException
+                                            or SocketException or IOException
+                                            or OperationCanceledException)
+        {
+            return EgressResponse.Failed(ExplainStream(error, plan.TimeoutSeconds), plan.SafeAddress,
+                                         1, watch.Elapsed);
+        }
+
+        string ending;
+
+        try
+        {
+            foreach (var frame in greeting)
+            {
+                var data = Encoding.UTF8.GetBytes(frame);
+                bytes += data.Length;
+                await socket.SendAsync(data, WebSocketMessageType.Text, endOfMessage: true, ct);
+            }
+
+            opened();
+            ending = await ReceiveAsync(socket, received, count => bytes += count, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            ending = "остановлено";
+        }
+        catch (Exception error) when (error is WebSocketException or SocketException or IOException)
+        {
+            ending = "связь потеряна: " + error.Message;
+        }
+
+        if (socket.State == WebSocketState.Open)
+        {
+            try
+            {
+                using var closing = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "", closing.Token);
+            }
+            catch (Exception error) when (error is WebSocketException or IOException
+                                                or OperationCanceledException)
+            {
+                // Закрыть вежливо не вышло — соединение уйдет вместе с сокетом.
+            }
+        }
+
+        return new EgressResponse(
+            Sent:        true,
+            Reason:      EgressDenyReason.None,
+            Explanation: ending,
+            StatusCode:  (int)HttpStatusCode.SwitchingProtocols,
+            Body:        "",
+            Bytes:       bytes,
+            Truncated:   false,
+            Elapsed:     watch.Elapsed,
+            Headers:     [],
+            SafeAddress: plan.SafeAddress,
+            Attempts:    1);
+    }
+
+    /// <summary>
+    /// Читать сообщения потока до конца. Возвращает, почему кончилось. Сообщение длиннее
+    /// потолка обрывает поток: по адресу отвечает что-то не то, и дочитывать его незачем.
+    /// </summary>
+    private static async Task<string> ReceiveAsync(ClientWebSocket socket, Func<string, bool> received,
+                                                   Action<int> counted, CancellationToken ct)
+    {
+        var buffer  = new byte[16 * 1024];
+        var message = new MemoryStream();
+
+        while (true)
+        {
+            var chunk = await socket.ReceiveAsync(buffer, ct);
+
+            if (chunk.MessageType == WebSocketMessageType.Close)
+                return "та сторона закрыла поток"
+                     + (string.IsNullOrWhiteSpace(socket.CloseStatusDescription)
+                         ? ""
+                         : ": " + socket.CloseStatusDescription);
+
+            counted(chunk.Count);
+
+            if (message.Length + chunk.Count > MaxStreamMessageBytes)
+                return $"сообщение потока длиннее {MaxStreamMessageBytes:N0} байт — поток оборван";
+
+            message.Write(buffer, 0, chunk.Count);
+
+            if (!chunk.EndOfMessage) continue;
+
+            // Двоичные сообщения не разбираются: события приходят текстом, а гадать о формате
+            // чужих байт программа не берется.
+            var binary = chunk.MessageType == WebSocketMessageType.Binary;
+            var text   = binary ? "" : Encoding.UTF8.GetString(message.GetBuffer(), 0, (int)message.Length);
+
+            message.SetLength(0);
+
+            if (!binary && !received(text)) return "слушать дальше незачем";
+        }
+    }
+
+    /// <summary>
+    /// Почему поток не открылся — словами. Отказ на рукопожатии чаще всего означает, что по
+    /// этому пути потока нет, и сказать это надо прямо: «связи нет» отправило бы человека
+    /// проверять сеть, которая в порядке.
+    /// </summary>
+    private static string ExplainStream(Exception error, int timeoutSeconds) => error switch
+    {
+        WebSocketException { InnerException: { } inner } when inner is HttpRequestException or SocketException
+                           => Explain(inner, timeoutSeconds),
+        WebSocketException => "та сторона не открыла поток по этому пути: " + error.Message,
+        _                  => Explain(error, timeoutSeconds),
+    };
 
     // ── Разрешение имени и вторая проверка ────────────────────────────────────
 

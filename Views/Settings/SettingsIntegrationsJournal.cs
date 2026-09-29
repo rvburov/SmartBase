@@ -199,13 +199,15 @@ public partial class SettingsView
     private Border FilterRow()
     {
         var channel = Picker(
-            ["Все каналы", "Запросы по сети", "Файлы из папки", "Сценарии", "Обращения к нам"],
+            ["Все каналы", "Запросы по сети", "Файлы из папки", "Сценарии", "Обращения к нам",
+             "Потоки событий"],
             _journalChannel switch
             {
                 null               => 0,
                 RunChannel.Request => 1,
                 RunChannel.Inbox   => 2,
                 RunChannel.Ingress => 4,
+                RunChannel.Stream  => 5,
                 _                  => 3,
             });
 
@@ -219,6 +221,7 @@ public partial class SettingsView
                 2 => RunChannel.Inbox,
                 3 => RunChannel.Scenario,
                 4 => RunChannel.Ingress,
+                5 => RunChannel.Stream,
                 _ => null,
             };
 
@@ -465,6 +468,7 @@ public partial class SettingsView
                 (run.Channel switch
                 {
                     RunChannel.Request => "Адрес: ",
+                    RunChannel.Stream  => "Адрес: ",
                     RunChannel.Ingress => "Откуда: ",
                     _                  => "Папка: ",
                 }) + run.Address));
@@ -690,6 +694,7 @@ public partial class SettingsView
         RunChannel.Request => "запрос по сети",
         RunChannel.Inbox   => "файл из папки",
         RunChannel.Ingress => "обращение к нам",
+        RunChannel.Stream  => "поток событий",
         _                  => "сценарий",
     };
 
@@ -713,6 +718,10 @@ public partial class SettingsView
         RunChannel.Scenario =>
             "В расход не идет: его уже заняли строки шагов, а посчитать одно и то же дважды "
             + "значит вдвое занизить потолок.",
+
+        RunChannel.Stream =>
+            "В расход не идет: события приходят внутрь, а потолки ограничивают то, что уходит "
+            + "наружу. Ответ на событие — отдельная отправка со своей строкой и своим счетом.",
 
         _ =>
             "В расход не идет: запуск остановлен до сети — отказом политики, выбранной квотой "
