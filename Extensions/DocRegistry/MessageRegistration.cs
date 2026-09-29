@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace SmartBase.Extensions.DocRegistry;
 
 /// <summary>
@@ -44,6 +46,10 @@ public sealed record RegistrationRequest(string Org, string Eskd, int? Number,
 /// набирают то в одной раскладке, то в другой, а на экране они неразличимы. Для программы же
 /// <c>ABBG</c> латиницей и <c>АБВГ</c> — разные серии, и номера в них пошли бы по второму кругу.
 /// Поэтому похожие латинские буквы переводятся в русские до всякой проверки.
+///
+/// <b>Разметка снимается.</b> Программы переписки нередко присылают набранное не строками, а
+/// разметкой: перенос строки — тегом, текст — в обертке. Человек видит те же пять строк и об
+/// обертке не знает, поэтому снимает ее разбор (<see cref="Plain"/>).
 ///
 /// Здесь нет базы: только текст и списки из настроек. Занятость номеров проверяет действие —
 /// у него журнал под рукой.
@@ -230,7 +236,59 @@ public static class MessageRegistration
     private static string Collapse(string text) =>
         string.Join(" ", text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
 
+    // ── Разметка ──────────────────────────────────────────────────────────────
+
+    private const RegexOptions MarkupOptions =
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.NonBacktracking;
+
+    /// <summary>Тег: слово латиницей в угловых скобках. «&lt;левый&gt;» в наименовании — не тег.</summary>
+    private static readonly Regex Tag =
+        new(@"</?[a-z][a-z0-9]*(?:\s[^<>]*)?/?>", MarkupOptions);
+
+    /// <summary>Теги, за которыми человек видит новую строку: перенос и границы абзаца.</summary>
+    private static readonly Regex BreakTag =
+        new(@"<br(?:\s[^<>]*)?/?>|</?(?:p|div|li|tr|h[1-6]|blockquote|pre)(?:\s[^<>]*)?>", MarkupOptions);
+
+    /// <summary>
+    /// Текст без разметки — таким, каким его видит тот, кто его набирал.
+    ///
+    /// Разметкой текст считается, только если в нем есть хоть один тег. Иначе он остается как
+    /// есть: «&amp;amp;» в обычном тексте — то, что человек и написал.
+    ///
+    /// Порядок важен: сначала теги, потом сущности. Наоборот «&amp;lt;br&amp;gt;», набранное
+    /// буквами, стало бы переносом строки, которого человек не ставил.
+    /// </summary>
+    public static string Plain(string? text)
+    {
+        if (string.IsNullOrEmpty(text) || !Tag.IsMatch(text)) return text ?? "";
+
+        var lines = BreakTag.Replace(text, "\n");
+        var bare  = Tag.Replace(lines, "");
+
+        // Неразрывный пробел — частый гость разметки; в журнале он ни к чему.
+        return System.Net.WebUtility.HtmlDecode(bare).Replace('\u00A0', ' ');
+    }
+
     // ── Строки сообщения ──────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Чем программы, из которых приходит текст, отделяют строку от строки. Перевод строки у
+    /// каждой свой, а человек на экране видит одно и то же — пять строк.
+    /// </summary>
+    private static readonly char[] LineBreaks = ['\n', '\r', '\u2028', '\u2029', '\u0085', '\v', '\f'];
+
+    /// <summary>
+    /// Сколько строк сообщения узнано — из пяти, которые оно должно содержать. Ноль на непустом
+    /// тексте значит, что действию дали не сообщение: это видно тому, кто настраивал шаг, а не
+    /// отправителю.
+    /// </summary>
+    public static int KnownLines(string? text)
+    {
+        var values = Lines(text);
+
+        return new[] { ActionKey, NumberKey, NameKey, ProjectKey, FioKey }
+            .Count(key => values.Any(v => RegistrySchema.SameName(v.Key, key)));
+    }
 
     /// <summary>
     /// Строки «Ключ: значение». Первое упоминание побеждает — по тому же правилу, что у разбора
@@ -240,7 +298,7 @@ public static class MessageRegistration
     {
         var values = new List<(string Key, string Value)>();
 
-        foreach (var line in (text ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries).Take(MaxLines))
+        foreach (var line in Plain(text).Split(LineBreaks, StringSplitOptions.RemoveEmptyEntries).Take(MaxLines))
         {
             var colon = line.IndexOf(':');
             if (colon <= 0) continue;

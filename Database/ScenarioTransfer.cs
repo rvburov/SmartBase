@@ -147,7 +147,8 @@ public static class ScenarioTransfer
                 scenario.Trigger.Replies
                     ? requests.FirstOrDefault(r => r.Id == scenario.Trigger.RequestId)?.Name ?? ""
                     : "",
-                scenario.Trigger.FailText),
+                scenario.Trigger.FailText,
+                scenario.Trigger.ReplyBreak),
             [.. scenario.Steps.Select(step => new BundleStep(
                 step.Kind.ToString().ToLowerInvariant(),
                 requests.FirstOrDefault(r => r.Id == step.RequestId)?.Name ?? "",
@@ -473,7 +474,8 @@ public static class ScenarioTransfer
                 if (reply.Length == 0) return ScenarioTrigger.OnStream(streamId);
 
                 if (requests.TryGetValue(reply, out var replyId))
-                    return ScenarioTrigger.OnStream(streamId, replyId, trigger.FailText ?? "");
+                    return ScenarioTrigger.OnStream(streamId, replyId, trigger.FailText ?? "",
+                                                    trigger.ReplyBreak ?? "");
 
                 // Без запроса ответа сценарий примет событие и промолчит. Привезти его таким
                 // можно, но сказать об этом надо: на той машине он отвечал.

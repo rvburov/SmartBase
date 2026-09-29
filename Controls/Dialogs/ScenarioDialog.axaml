@@ -164,6 +164,20 @@
                          CornerRadius="{StaticResource RadiusBase}" />
             </Grid>
 
+            <!-- Чем та сторона отделяет строку от строки. Программа, которая показывает текст
+                 разметкой, обычного перевода строки не видит, и ответ в несколько строк у нее
+                 сливается в одну. Какой у нее перенос, знает только ее документация. -->
+            <Grid ColumnDefinitions="Auto,8,*" Margin="24,0,0,0">
+                <TextBlock Grid.Column="0" x:Name="BreakLabel"
+                           Text="перенос строки в ответе" VerticalAlignment="Center"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <TextBox Grid.Column="2" x:Name="BreakBox"
+                         Height="30"
+                         VerticalContentAlignment="Center"
+                         Watermark="пусто — обычный перевод строки"
+                         CornerRadius="{StaticResource RadiusBase}" />
+            </Grid>
+
         </StackPanel>
 
         <!-- ── Что делать ───────────────────────────────────────────────────── -->

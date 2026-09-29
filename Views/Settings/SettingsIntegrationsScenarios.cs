@@ -230,6 +230,9 @@ public partial class SettingsView
                     + (registry.FindRequest(scenario.Trigger.RequestId)?.Name ?? "не найден") + "»"
                     + (scenario.Trigger.FailText.Length > 0
                         ? $", при сбое — «{scenario.Trigger.FailText}»"
+                        : "")
+                    + (scenario.Trigger.ReplyBreak.Length > 0
+                        ? $", перенос строки — «{scenario.Trigger.ReplyBreak}»"
                         : ""));
 
         if (registry.ScenarioLastRun(scenario.Id) is { } last)

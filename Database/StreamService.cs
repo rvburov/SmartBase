@@ -473,7 +473,9 @@ public sealed class StreamService : IDisposable
     {
         if (!scenario.Trigger.Replies) return;
 
-        var text = Answer(outcome, scenario.Trigger.FailText);
+        // Перенос строки — в последнюю очередь и для любого ответа: слова действия, отчет шагов
+        // и текст при сбое та сторона показывает одинаково.
+        var text = scenario.Trigger.WithBreaks(Answer(outcome, scenario.Trigger.FailText));
         if (text.Length == 0) return;
 
         if (_cards.FindRequest(scenario.Trigger.RequestId) is not { } request

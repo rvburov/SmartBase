@@ -170,12 +170,13 @@ public sealed class StreamServiceTests : IDisposable
 
     private Scenario Save(IntegrationStream stream, IntegrationRequest? reply, int collection,
                           string failText = "Сервер не работает", bool enabled = true,
-                          int dbId = 0) =>
+                          int dbId = 0, string replyBreak = "") =>
         Cards.SaveScenario(Scenario.New() with
         {
             Name    = "Заявки по событию",
             Enabled = enabled,
-            Trigger = ScenarioTrigger.OnStream(stream.Id, reply?.Id ?? 0, reply is null ? "" : failText),
+            Trigger = ScenarioTrigger.OnStream(stream.Id, reply?.Id ?? 0, reply is null ? "" : failText,
+                                               reply is null ? "" : replyBreak),
             Steps   =
             [
                 ScenarioStep.OfFilter(new ScenarioCondition("kind", ScenarioTest.Equals, "request")),
@@ -315,6 +316,34 @@ public sealed class StreamServiceTests : IDisposable
 
         // Разговор с отправителем — не поломка: человеку за этим компьютером о нем не говорят.
         lock (_notices) Assert.Empty(_notices);
+    }
+
+    /// <summary>
+    /// Та сторона показывает текст разметкой и перевода строки не видит: строки ответа
+    /// отделяются тем, что на этот случай ввел человек.
+    /// </summary>
+    [Fact]
+    public async Task The_reply_lines_are_separated_by_the_break_of_the_other_side()
+    {
+        using var stand = new StreamStand();
+        var (stream, reply) = Cabling(stand);
+        var collection = Collection();
+        Save(stream, reply, collection, replyBreak: "<br>");
+
+        var clerk = new Clerk { Answer = _ => ActionResult.Refused("Номер: не указан\nПроект: не указан") };
+        using var service = Service(clerk);
+
+        service.Begin();
+        await stand.WaitConnectedAsync(Patience);
+        await stand.SendAsync(Event(1, "что-то не то"));
+
+        await Until(() => stand.Requests.Count == 1, "ответ на событие");
+        await service.SettleAsync(Patience);
+
+        using var body = System.Text.Json.JsonDocument.Parse(stand.Requests[0].Body);
+
+        Assert.Equal("Номер: не указан<br>Проект: не указан",
+                     body.RootElement.GetProperty("message").GetString());
     }
 
     /// <summary>

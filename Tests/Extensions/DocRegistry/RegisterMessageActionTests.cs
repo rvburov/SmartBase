@@ -187,6 +187,79 @@ public sealed class RegisterMessageActionTests
         Assert.Contains("Отправитель", result.Explanation, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Поле «Текст сообщения» не заполнено в шаге — ошибка настройки: отправитель написал все
+    /// верно, и перечень «не указано…» отправил бы его искать ошибку, которой у него нет.
+    /// </summary>
+    [Fact]
+    public void A_step_without_the_text_field_is_a_setup_failure()
+    {
+        using var db = new TempDatabase();
+        var journal = JournalStand.Create(db.Constructor);
+
+        var input = new ActionInput(new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [RegisterMessageAction.SenderField] = "1001",
+        });
+
+        var result = Action.Run(Context(db, journal), input);
+
+        Assert.False(result.Ok);
+        Assert.Equal("", result.Answer);
+        Assert.Contains("Текст сообщения", result.Explanation, StringComparison.Ordinal);
+        Assert.Empty(db.Constructor.GetRecords(journal));
+    }
+
+    /// <summary>
+    /// Колонка с текстом пришла пустой: отправителю — перечень того, чего не хватает, а в журнале
+    /// рядом сказано, что пустым был сам текст.
+    /// </summary>
+    [Fact]
+    public void An_empty_text_is_answered_and_noted_in_the_journal()
+    {
+        using var db = new TempDatabase();
+        var journal = JournalStand.Create(db.Constructor);
+
+        var result = Action.Run(Context(db, journal), Input(""));
+
+        Assert.False(result.Ok);
+        Assert.StartsWith("Действие: не указано действие", result.Answer, StringComparison.Ordinal);
+        Assert.DoesNotContain("пустым", result.Answer, StringComparison.Ordinal);
+        Assert.Contains("пришел пустым", result.Explanation, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// В поле шага названа не колонка, а постоянный текст: действие получает его вместо
+    /// сообщения. Журнал называет длину полученного — по ней это и видно; сам текст в журнал не
+    /// идет.
+    /// </summary>
+    [Fact]
+    public void A_text_without_message_lines_is_noted_by_its_length()
+    {
+        using var db = new TempDatabase();
+        var journal = JournalStand.Create(db.Constructor);
+
+        var result = Action.Run(Context(db, journal), Input("{text}"));
+
+        Assert.False(result.Ok);
+        Assert.StartsWith("Действие: не указано действие", result.Answer, StringComparison.Ordinal);
+        Assert.Contains("знаков: 6", result.Explanation, StringComparison.Ordinal);
+        Assert.DoesNotContain("{text}", result.Explanation, StringComparison.Ordinal);
+    }
+
+    /// <summary>Узнана хоть одна строка — это сообщение с ошибками, и пометки в журнале нет.</summary>
+    [Fact]
+    public void A_message_with_problems_carries_no_note()
+    {
+        using var db = new TempDatabase();
+        var journal = JournalStand.Create(db.Constructor);
+
+        var result = Action.Run(Context(db, journal), Input("Проект: Машина"));
+
+        Assert.False(result.Ok);
+        Assert.Equal(result.Answer, result.Explanation);
+    }
+
     // ── Два вида отказа ───────────────────────────────────────────────────────
 
     /// <summary>Ошибки сообщения — отправителю, все сразу и по строке на поле.</summary>
@@ -337,6 +410,23 @@ public sealed class MessageScenarioTests : IDisposable
     private const string Message =
         "Действие: Регистрация\nНомер: АБВГ.301121.ХХХ\nНаименование: Кронштейн\n"
         + "Проект: Машина\nФИО: Иванов Иван Иванович";
+
+    /// <summary>
+    /// Текст события пришел разметкой — так программы переписки присылают сообщение в несколько
+    /// строк. Документ регистрируется, как если бы текст пришел строками.
+    /// </summary>
+    [Fact]
+    public async Task A_message_in_markup_is_registered_too()
+    {
+        var journal = JournalStand.Create(_db.Constructor);
+
+        var outcome = await Run(Scenario(journal),
+                                Event("<span>" + Message.Replace("\n", "<br>") + "</span>"));
+
+        Assert.True(outcome.Ok, outcome.Problem);
+        Assert.Equal("Зарегистрировано АБВГ.301121.001 Машина Иванов Иван Иванович", outcome.Reply);
+        Assert.Single(_db.Constructor.GetRecords(journal));
+    }
 
     [Fact]
     public async Task An_event_row_becomes_a_registered_document_and_a_reply()

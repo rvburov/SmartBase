@@ -182,6 +182,9 @@ public partial class ScenarioDialog : Window
         FailBox.MaxLength = ScenarioTrigger.MaxFailTextLength;
         FailBox.Text      = card.Trigger.FailText;
 
+        BreakBox.MaxLength = ScenarioTrigger.MaxReplyBreakLength;
+        BreakBox.Text      = card.Trigger.ReplyBreak;
+
         StreamRadio.IsChecked   = card.Trigger.Kind == ScenarioTriggerKind.Stream;
         ManualRadio.IsChecked   = card.Trigger.Kind == ScenarioTriggerKind.Manual;
         StartupRadio.IsChecked  = card.Trigger.Kind == ScenarioTriggerKind.Startup;
@@ -636,6 +639,8 @@ public partial class ScenarioDialog : Window
         ReplyCombo.IsVisible  = stream;
         FailLabel.IsVisible   = replies;
         FailBox.IsVisible     = replies;
+        BreakLabel.IsVisible  = replies;
+        BreakBox.IsVisible    = replies;
 
         // Уточнение к правкам показывается только вместе с ними: строка «через 5 минут тишины»
         // под выбранным «ежедневно в 07:00» читается как часть расписания.
@@ -658,7 +663,9 @@ public partial class ScenarioDialog : Window
                   + (replies
                       ? " Ответ уходит после последнего шага: в запросе ответа {{ответ.текст}} — "
                         + "слова действия, {{поле.имя}} — колонка события. Текст «при сбое» "
-                        + "уходит, когда сценарий не отработал по причине не в самом событии."
+                        + "уходит, когда сценарий не отработал по причине не в самом событии. "
+                        + "Перенос строки нужен, если та сторона показывает ответ в несколько "
+                        + "строк одной строкой: впишите знак или тег из ее документации."
                       : "")
             : changed
                 ? "Сценарий пойдет, когда правки УТИХНУТ на выбранное время: правка десяти строк "
@@ -752,7 +759,8 @@ public partial class ScenarioDialog : Window
                 : 0;
 
             return ScenarioTrigger.OnStream(_streams[StreamCombo.SelectedIndex].Id, reply,
-                                            reply > 0 ? FailBox.Text ?? "" : "");
+                                            reply > 0 ? FailBox.Text  ?? "" : "",
+                                            reply > 0 ? BreakBox.Text ?? "" : "");
         }
 
         if (EveryRadio.IsChecked == true)

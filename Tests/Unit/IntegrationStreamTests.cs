@@ -82,6 +82,9 @@ public sealed class IntegrationStreamTests
     [InlineData("stream 3 0")]
     [InlineData("stream 3 7")]
     [InlineData("stream 3 7 Сервер не работает")]
+    [InlineData("stream 3 7 break=%3Cbr%3E Сервер не работает")]
+    [InlineData("stream 3 7 break=%3Cbr%3E")]
+    [InlineData("stream 3 7 break= break=это текст ответа")]
     public void The_trigger_survives_a_round_trip(string stored) =>
         Assert.Equal(stored, ScenarioTrigger.Parse(stored).ToString());
 
@@ -96,6 +99,81 @@ public sealed class IntegrationStreamTests
         Assert.Equal(7, trigger.RequestId);
         Assert.Equal("Сервер не работает, обратитесь позже", trigger.FailText);
         Assert.True(trigger.Replies);
+    }
+
+    // ── Перенос строки в ответе ───────────────────────────────────────────────
+
+    /// <summary>
+    /// Перенос хранится одним словом перед текстом ответа: в нем бывают и угловые скобки, и
+    /// пробелы, а строка хранения делится пробелами.
+    /// </summary>
+    [Theory]
+    [InlineData("<br>")]
+    [InlineData("<br />")]
+    [InlineData(" | ")]
+    [InlineData("%0A")]
+    public void The_reply_break_survives_storage(string mark)
+    {
+        var trigger = ScenarioTrigger.OnStream(3, 7, "Сервер не работает", mark);
+        var back    = ScenarioTrigger.Parse(trigger.ToString());
+
+        Assert.Equal(mark, back.ReplyBreak);
+        Assert.Equal("Сервер не работает", back.FailText);
+        Assert.Equal(trigger, back);
+    }
+
+    /// <summary>Строка, записанная до появления переноса, читается как прежде — без него.</summary>
+    [Fact]
+    public void A_trigger_stored_without_a_break_has_none()
+    {
+        var trigger = ScenarioTrigger.Parse("stream 3 7 Сервер не работает");
+
+        Assert.Equal("", trigger.ReplyBreak);
+        Assert.Equal("Сервер не работает", trigger.FailText);
+    }
+
+    /// <summary>Текст ответа, начинающийся с тех же букв, что и метка, переносом не становится.</summary>
+    [Fact]
+    public void A_fail_text_that_looks_like_the_mark_stays_text()
+    {
+        var trigger = ScenarioTrigger.OnStream(3, 7, "break=это текст ответа");
+        var back    = ScenarioTrigger.Parse(trigger.ToString());
+
+        Assert.Equal("", back.ReplyBreak);
+        Assert.Equal("break=это текст ответа", back.FailText);
+    }
+
+    /// <summary>Строки ответа отделяются тем, что ввел человек; перевод строки — любой.</summary>
+    [Theory]
+    [InlineData("одна\nдве\nтри")]
+    [InlineData("одна\r\nдве\r\nтри")]
+    [InlineData("одна\rдве\rтри")]
+    public void The_reply_lines_are_joined_by_the_break(string text) =>
+        Assert.Equal("одна<br>две<br>три",
+                     ScenarioTrigger.OnStream(3, 7, "", "<br>").WithBreaks(text));
+
+    /// <summary>Перенос не задан — ответ уходит как есть.</summary>
+    [Fact]
+    public void Without_a_break_the_reply_is_left_alone() =>
+        Assert.Equal("одна\nдве", ScenarioTrigger.OnStream(3, 7).WithBreaks("одна\nдве"));
+
+    [Fact]
+    public void A_long_reply_break_is_refused()
+    {
+        var trigger = ScenarioTrigger.OnStream(
+            3, 7, "", new string('-', ScenarioTrigger.MaxReplyBreakLength + 1));
+
+        Assert.Contains(trigger.Problems(), p => p.Contains("Перенос строки", StringComparison.Ordinal));
+    }
+
+    /// <summary>Перенос без запроса ответа не нужен ничему, а человек считал бы, что ответ настроен.</summary>
+    [Fact]
+    public void A_reply_break_without_a_reply_request_is_refused()
+    {
+        var trigger = new ScenarioTrigger(ScenarioTriggerKind.Stream, 0, default,
+                                          StreamId: 3, ReplyBreak: "<br>");
+
+        Assert.Contains(trigger.Problems(), p => p.Contains("запрос ответа", StringComparison.Ordinal));
     }
 
     /// <summary>Мусор читается как «вручную» — самое безобидное из прочтений.</summary>

@@ -56,7 +56,8 @@ public sealed record BundleTrigger(
     [property: JsonPropertyName("collection")] string Collection,
     [property: JsonPropertyName("stream")]     string Stream = "",
     [property: JsonPropertyName("reply")]      string Reply  = "",
-    [property: JsonPropertyName("failText")]   string FailText = "");
+    [property: JsonPropertyName("failText")]   string FailText = "",
+    [property: JsonPropertyName("replyBreak")] string ReplyBreak = "");
 
 /// <summary>Шаг в переносимом виде: запрос, база и коллекция — именами.</summary>
 public sealed record BundleStep(

@@ -57,7 +57,8 @@ public sealed class StreamsRegistryTests : IDisposable
 
     private static Scenario Scenario(IntegrationsRegistry cards, int streamId, int replyId = 0) =>
         cards.SaveScenario(new Scenario(0, "По событию", false,
-            ScenarioTrigger.OnStream(streamId, replyId, replyId > 0 ? "Сервер не работает" : ""),
+            ScenarioTrigger.OnStream(streamId, replyId, replyId > 0 ? "Сервер не работает" : "",
+                                     replyId > 0 ? "<br>" : ""),
             [ScenarioStep.OfNotice("Пришло событие")]));
 
     // ── Хранение ──────────────────────────────────────────────────────────────
@@ -227,6 +228,7 @@ public sealed class StreamsRegistryTests : IDisposable
         Assert.False(arrived.Enabled);
         Assert.Equal(ScenarioTriggerKind.Stream, arrived.Trigger.Kind);
         Assert.Equal("Сервер не работает", arrived.Trigger.FailText);
+        Assert.Equal("<br>", arrived.Trigger.ReplyBreak);
 
         var stream = target.Integrations.FindStream(arrived.Trigger.StreamId);
         var reply  = target.Integrations.FindRequest(arrived.Trigger.RequestId);

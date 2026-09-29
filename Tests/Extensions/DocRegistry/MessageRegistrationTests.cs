@@ -46,6 +46,109 @@ public sealed class MessageRegistrationTests
     }
 
     /// <summary>Номер с меткой исполнения — просьба о следующем исполнении названного документа.</summary>
+    /// <summary>
+    /// Строку от строки программы отделяют по-разному, а человек видит те же пять строк:
+    /// сообщение читается при любом разделителе.
+    /// </summary>
+    [Theory]
+    [InlineData("\r\n")]
+    [InlineData("\r")]
+    [InlineData("\u2028")]
+    [InlineData("\u2029")]
+    public void Any_line_break_separates_the_lines(string lineBreak)
+    {
+        var (request, problems) = MessageRegistration.Read(Message().Replace("\n", lineBreak), Orgs);
+
+        Assert.Empty(problems);
+        Assert.Equal("Машина", request!.Project);
+        Assert.Equal("Иванов Иван Иванович", request.Fio);
+    }
+
+    // ── Разметка ──────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Программа переписки прислала набранное разметкой: текст в обертке, перенос строки — тегом.
+    /// Человек набирал те же пять строк, и читаются они так же.
+    /// </summary>
+    [Theory]
+    [InlineData("<span>", "<br>", "</span>")]
+    [InlineData("<span style=\"color: black\">", "<br/>", "</span>")]
+    [InlineData("", "<br />", "")]
+    [InlineData("", "<BR>", "")]
+    [InlineData("<p>", "</p><p>", "</p>")]
+    [InlineData("<div>", "</div><div>", "</div>")]
+    [InlineData("<div><b>", "</b><br>\n<b>", "</b></div>")]
+    public void Markup_is_read_as_the_lines_a_person_sees(string open, string lineBreak, string close)
+    {
+        var text = open + Message().Replace("\n", lineBreak) + close;
+
+        var (request, problems) = MessageRegistration.Read(text, Orgs);
+
+        Assert.Empty(problems);
+        Assert.Equal("АБВГ",                 request!.Org);
+        Assert.Null(request.Number);
+        Assert.Equal("Кронштейн",            request.Name);
+        Assert.Equal("Машина",               request.Project);
+        Assert.Equal("Иванов Иван Иванович", request.Fio);
+    }
+
+    /// <summary>Знаки, которые разметка записывает сущностями, возвращаются знаками.</summary>
+    [Fact]
+    public void Entities_of_a_markup_become_characters()
+    {
+        var text = "<span>" + Message(name: "Вал &amp; втулка &lt;левые&gt;",
+                                      fio: "Иванов&nbsp;Иван Иванович").Replace("\n", "<br>") + "</span>";
+
+        var (request, problems) = MessageRegistration.Read(text, Orgs);
+
+        Assert.Empty(problems);
+        Assert.Equal("Вал & втулка <левые>",  request!.Name);
+        Assert.Equal("Иванов Иван Иванович", request.Fio);
+    }
+
+    /// <summary>
+    /// Текст без тегов остается как есть: угловые скобки вокруг русского слова — не тег, а
+    /// «&amp;amp;» без разметки — то, что человек и написал.
+    /// </summary>
+    [Theory]
+    [InlineData("Вал <левый>")]
+    [InlineData("Вал &amp; втулка")]
+    [InlineData("Вал < 5 мм > 3 мм")]
+    public void Text_without_tags_is_left_alone(string name)
+    {
+        var (request, problems) = MessageRegistration.Read(Message(name: name), Orgs);
+
+        Assert.Empty(problems);
+        Assert.Equal(name, request!.Name);
+    }
+
+    /// <summary>Перенос, набранный буквами-сущностями, переносом не становится.</summary>
+    [Fact]
+    public void An_escaped_tag_stays_text()
+    {
+        Assert.Equal("строка<br>та же строка",
+                     MessageRegistration.Plain("<span>строка&lt;br&gt;та же строка</span>"));
+    }
+
+    [Theory]
+    [InlineData(null, "")]
+    [InlineData("", "")]
+    [InlineData("обычный текст", "обычный текст")]
+    [InlineData("<span>одна<br>две</span>", "одна\nдве")]
+    public void Plain_text_is_what_a_person_sees(string? text, string plain) =>
+        Assert.Equal(plain, MessageRegistration.Plain(text));
+
+    /// <summary>Сколько строк сообщения узнано: по нулю видно, что пришло не сообщение.</summary>
+    [Theory]
+    [InlineData("", 0)]
+    [InlineData("{text}", 0)]
+    [InlineData("Добрый день: нужен номер", 0)]
+    [InlineData("Проект: Машина", 1)]
+    [InlineData("проект: Машина\nФИО: Иванов", 2)]
+    [InlineData("<span>Проект: Машина<br>ФИО: Иванов</span>", 2)]
+    public void Known_lines_are_counted(string text, int known) =>
+        Assert.Equal(known, MessageRegistration.KnownLines(text));
+
     [Fact]
     public void A_numbered_mask_asks_for_an_execution()
     {

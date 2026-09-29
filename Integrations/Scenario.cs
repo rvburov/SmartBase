@@ -90,6 +90,9 @@ public enum ScenarioTriggerKind
 /// <param name="FailText">Что ответить, когда сценарий не отработал по причине не в самом
 /// событии — база недоступна, шаг не сложился; пусто — в этом случае не отвечать вовсе. Текст
 /// вводит человек: что именно сказать той стороне, программа за него не решает.</param>
+/// <param name="ReplyBreak">Чем в ответе отделять строку от строки; пусто — обычным переводом
+/// строки. Нужен, когда та сторона показывает текст разметкой и перевода строки не видит: какой
+/// у нее перенос, знает только человек, читавший ее документацию.</param>
 public sealed record ScenarioTrigger(
     ScenarioTriggerKind Kind,
     int                 Minutes,
@@ -98,10 +101,17 @@ public sealed record ScenarioTrigger(
     int                 CollectionId = 0,
     int                 StreamId     = 0,
     int                 RequestId    = 0,
-    string              FailText     = "")
+    string              FailText     = "",
+    string              ReplyBreak   = "")
 {
     /// <summary>Сколько знаков в тексте ответа при сбое — как у сообщения человеку.</summary>
     public const int MaxFailTextLength = 200;
+
+    /// <summary>Сколько знаков в переносе строки ответа: это знак или тег, а не текст.</summary>
+    public const int MaxReplyBreakLength = 20;
+
+    /// <summary>Метка переноса строки в строке хранения.</summary>
+    private const string BreakMark = "break=";
 
     /// <summary>
     /// Чаще пяти минут — это уже опрос, а не расписание. Каждый запуск стоит места в часовом
@@ -136,11 +146,25 @@ public sealed record ScenarioTrigger(
 
     /// <summary>
     /// По событию потока. <paramref name="replyRequestId"/> — чем отвечать (0 — не отвечать),
-    /// <paramref name="failText"/> — что ответить при сбое.
+    /// <paramref name="failText"/> — что ответить при сбое, <paramref name="replyBreak"/> — чем
+    /// в ответе отделять строку от строки.
     /// </summary>
-    public static ScenarioTrigger OnStream(int streamId, int replyRequestId = 0, string failText = "") =>
+    public static ScenarioTrigger OnStream(int streamId, int replyRequestId = 0, string failText = "",
+                                           string replyBreak = "") =>
         new(ScenarioTriggerKind.Stream, 0, default, StreamId: streamId,
-            RequestId: Math.Max(0, replyRequestId), FailText: OneLine(failText));
+            RequestId: Math.Max(0, replyRequestId), FailText: OneLine(failText),
+            ReplyBreak: NoLineBreaks(replyBreak));
+
+    /// <summary>
+    /// Текст ответа с тем переносом строки, который понимает та сторона. Перенос не задан —
+    /// текст уходит как есть.
+    /// </summary>
+    public string WithBreaks(string? text)
+    {
+        if (ReplyBreak.Length == 0) return text ?? "";
+
+        return (text ?? "").Replace("\r\n", "\n").Replace('\r', '\n').Replace("\n", ReplyBreak);
+    }
 
     /// <summary>Заводится ли триггер событием потока.</summary>
     public bool WatchesStream => Kind == ScenarioTriggerKind.Stream;
@@ -201,6 +225,12 @@ public sealed record ScenarioTrigger(
             // Текст без карточки ответа не уйдет никуда, а человек считал бы, что ответ настроен.
             if (FailText.Length > 0 && RequestId <= 0)
                 problems.Add("Текст ответа при сбое задан, а запрос ответа не выбран");
+
+            if (ReplyBreak.Length > MaxReplyBreakLength)
+                problems.Add($"Перенос строки в ответе длиннее {MaxReplyBreakLength} знаков");
+
+            if (ReplyBreak.Length > 0 && RequestId <= 0)
+                problems.Add("Перенос строки в ответе задан, а запрос ответа не выбран");
         }
 
         return problems;
@@ -295,10 +325,11 @@ public sealed record ScenarioTrigger(
         ScenarioTriggerKind.Startup => "startup",
 
         // Текст ответа стоит ПОСЛЕДНИМ и занимает хвост строки целиком: в нем бывают пробелы, а
-        // остальные части — числа.
+        // остальные части — числа. Перенос строки — одним словом перед ним.
         ScenarioTriggerKind.Stream =>
             ($"stream {StreamId.ToString(CultureInfo.InvariantCulture)} "
              + $"{RequestId.ToString(CultureInfo.InvariantCulture)} "
+             + BreakWord()
              + OneLine(FailText)).TrimEnd(),
 
         _ => "manual",
@@ -364,12 +395,42 @@ public sealed record ScenarioTrigger(
         if (!int.TryParse(parts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out var reply)
             || reply < 0) return null;
 
-        return OnStream(stream, reply, parts.Length > 3 ? parts[3] : "");
+        var tail = parts.Length > 3 ? parts[3] : "";
+        var mark = "";
+
+        if (tail.StartsWith(BreakMark, StringComparison.Ordinal))
+        {
+            var end  = tail.IndexOf(' ');
+            var word = end < 0 ? tail : tail[..end];
+
+            mark = Uri.UnescapeDataString(word[BreakMark.Length..]);
+            tail = end < 0 ? "" : tail[(end + 1)..];
+        }
+
+        return OnStream(stream, reply, tail, mark);
     }
+
+    /// <summary>
+    /// Перенос строки в строке хранения — одним словом без пробелов: <c>break=%3Cbr%3E</c>.
+    /// Пишется, только когда перенос задан, — строки без него остаются прежними. Пустая метка
+    /// ставится, когда с этих же букв начинается сам текст ответа: иначе при чтении его начало
+    /// сошло бы за перенос.
+    /// </summary>
+    private string BreakWord() =>
+        ReplyBreak.Length > 0 || OneLine(FailText).StartsWith(BreakMark, StringComparison.Ordinal)
+            ? BreakMark + Uri.EscapeDataString(ReplyBreak) + " "
+            : "";
 
     /// <summary>Текст одной строкой: переводы строк в хранении развалили бы разбор.</summary>
     private static string OneLine(string? text) =>
         string.Join(" ", (text ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+
+    /// <summary>
+    /// Перенос как его ввели, но без переводов строк. Пробелы остаются: строки ответа можно
+    /// отделять и ими.
+    /// </summary>
+    private static string NoLineBreaks(string? text) =>
+        (text ?? "").Replace("\r", "").Replace("\n", "");
 }
 
 /// <summary>

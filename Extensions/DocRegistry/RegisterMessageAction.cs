@@ -76,6 +76,14 @@ public sealed class RegisterMessageAction : IExtensionAction
                 "отправитель не назван: в шаге не заполнено поле «Отправитель» либо в событии "
                 + "нет такой колонки");
 
+        // Поле не заполнено В ШАГЕ — это настройка, а не сообщение: отправитель написал все как
+        // надо, а текст до действия не доехал. Перечень «не указано…» в ответ на правильное
+        // сообщение отправил бы его искать ошибку, которой у него нет.
+        if (!input.Values.ContainsKey(TextField))
+            return ActionResult.Failed(
+                "текст сообщения действию не передан: в шаге не заполнено поле «Текст сообщения» — "
+                + "в нем называют колонку события с текстом, в двойных фигурных скобках");
+
         // Объяснение и ответ здесь разные: отправителю — что его нет в списке, настраивавшему —
         // что список пуст, иначе он искал бы этого отправителя в списке, которого нет.
         if (senders.Count == 0)
@@ -89,9 +97,21 @@ public sealed class RegisterMessageAction : IExtensionAction
 
         var orgs = DocRegistryExtension.ParseOrgCodes(context.Setting(DocRegistryExtension.OrgCodesKey));
 
-        var (request, problems) = MessageRegistration.Read(input.Value(TextField), orgs);
+        var text = input.Value(TextField);
 
-        if (request is null) return ActionResult.Refused(string.Join("\n", problems));
+        var (request, problems) = MessageRegistration.Read(text, orgs);
+
+        if (request is null)
+        {
+            var reply = string.Join("\n", problems);
+
+            // Не узнано ни одной строки — отправителю перечень тот же, а тому, кто настраивал
+            // обмен, надо знать, что действие получило: пустую колонку или текст не того вида.
+            // Сам текст в объяснение не идет: оно ложится в журнал.
+            return MessageRegistration.KnownLines(text) > 0
+                ? ActionResult.Refused(reply)
+                : new ActionResult(false, reply + "\n" + NothingRead(text), Reply: reply);
+        }
 
         if (context.Repo is not { } repo)
             return ActionResult.Failed("действию не дали подключения к базе данных");
@@ -149,4 +169,10 @@ public sealed class RegisterMessageAction : IExtensionAction
             return ActionResult.Refused($"{MessageRegistration.NumberKey}: {failure.Message}");
         }
     }
+
+    /// <summary>Пометка для журнала: что действие получило вместо сообщения.</summary>
+    private static string NothingRead(string text) => text.Length == 0
+        ? "(текст сообщения пришел пустым: проверьте колонку, названную в поле «Текст сообщения»)"
+        : $"(в полученном тексте — знаков: {text.Length} — нет ни одной строки сообщения: "
+          + "проверьте, что названо в поле «Текст сообщения»)";
 }
