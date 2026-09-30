@@ -64,6 +64,10 @@ public sealed class DocIndexService
     private int _total;
     private long _startedTicks;
 
+    // Уборка сирот сделана за этот запуск программы. Обход всех папок кеша стоит дорого, а
+    // сироты появляются не быстрее, чем человек переименовывает документы.
+    private int _swept;
+
     public DocIndexService(DocTextIndex index) => _index = index;
 
     /// <summary>Кеш, в который пишет очередь — им же пользуется поиск.</summary>
@@ -181,6 +185,38 @@ public sealed class DocIndexService
         return Wait();
     }
 
+    /// <summary>
+    /// Убрать из кеша сирот — один раз за запуск программы и в фоне.
+    ///
+    /// Зовется разделом, когда перепись закончилась удачей: к этой минуте диск уже ответил про
+    /// папки библиотеки, а значит уборке есть на что опереться. При старте программы этого
+    /// сказать нельзя — общая папка сервера поднимается позже него.
+    ///
+    /// Пока идет чтение, уборка ждет следующего раза: оба ходят на один и тот же диск, и
+    /// отбирать у чтения его скорость ради уборки незачем.
+    /// </summary>
+    public Task SweepOnceAsync()
+    {
+        if (_swept != 0 || Running) return Task.CompletedTask;
+        if (Interlocked.Exchange(ref _swept, 1) != 0) return Task.CompletedTask;
+
+        return Task.Run(() =>
+        {
+            try
+            {
+                var gone = _index.Sweep();
+                if (gone == 0) return;
+
+                Serilog.Log.Information("Кеш документов: убрано сирот — {Count}", gone);
+                _index.Maintain();
+            }
+            catch (Exception ex)
+            {
+                Serilog.Log.Warning(ex, "Кеш документов: уборка не выполнена");
+            }
+        });
+    }
+
     /// <summary>Дожидается конца прогона — для очистки кеша, тестов и закрытия приложения.</summary>
     public Task Wait() => Task.Run(() => _idle.Wait());
 
@@ -196,6 +232,17 @@ public sealed class DocIndexService
         }
         finally
         {
+            // Обслуживание FTS по следам прогона: каждый документ — это DELETE и INSERT в
+            // индексе, а прогон дает их десятки тысяч. Идет тем же фоновым потоком и только
+            // после НОРМАЛЬНОГО конца: после «Остановить» человек ждет — очистка кеша стоит
+            // за этим ожиданием, и слияние сегментов ее задержало бы.
+            if (_done > 0 && !ct.IsCancellationRequested)
+                try { _index.Maintain(); }
+                catch (Exception ex)
+                {
+                    Serilog.Log.Warning(ex, "Кеш документов: обслуживание индекса не выполнено");
+                }
+
             bool again;
             lock (_lock)
             {

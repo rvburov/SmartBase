@@ -217,18 +217,91 @@ public sealed class DocTextIndexTests : IDisposable
 
     // ── Уборка ───────────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Уборка выбрасывает строки документов, которых на диске больше нет. Ключ кеша — путь,
+    /// поэтому удаление и переименование документа иначе оставляли бы текст в кеше навсегда:
+    /// про исчезнувший путь больше никто не спросит.
+    /// </summary>
     [Fact]
-    public void Forget_keeps_only_the_listed_paths()
+    public void Sweep_removes_rows_whose_files_are_gone()
     {
-        var keep = Write("keep.txt", "остается в кеше");
-        var drop = Write("drop.txt", "удаляется из кеша");
+        var keep  = Write("keep.txt", "остается в кеше");
+        var gone  = Write("gone.txt", "удаленный документ");
         Put(keep, "остается в кеше");
-        Put(drop, "удаляется из кеша");
+        Put(gone, "удаленный документ");
+        File.Delete(gone);
 
-        _index.Forget([keep]);
+        Assert.Equal(1, _index.Sweep());
 
-        Assert.Single(_index.Search("кеше"));
-        Assert.Empty(_index.Search("удаляется"));
+        Assert.Single(_index.Search("остается"));
+        Assert.Empty(_index.Search("удаленный"));
+        Assert.Equal(1, _index.Stats().Indexed);
+    }
+
+    /// <summary>
+    /// Папку, которой нет, уборка не трогает. Так выглядит выключенный сервер с общей папкой:
+    /// спроси мы у диска про каждый файл — «нет» ответили бы ВСЕ документы, и уборка снесла бы
+    /// часы чтения. Тот же ответ спасает от снятой галочки коллекции и отключенной базы.
+    /// </summary>
+    [Fact]
+    public void Sweep_keeps_the_cache_when_a_whole_folder_is_missing()
+    {
+        var away = Path.Combine(_dir, "отключенная-папка", "смета.txt");
+        _index.Put(away, new DocText(DocTextStatus.Ok, "документ с недоступного диска"));
+
+        Assert.Equal(0, _index.Sweep());
+        Assert.Single(_index.Search("недоступного"));
+    }
+
+    /// <summary>
+    /// Обслуживание действительно сливает сегменты, а не просто выполняется без ошибки. Каждый
+    /// разобранный документ пишется своей транзакцией, то есть своим сегментом, и поиск без
+    /// слияния идет по лестнице из них. Замер на сорока документах: 12 блоков индекса до, 3 после.
+    ///
+    /// Заодно это страховка от неверной команды: у FTS5 аргумент подается через колонку
+    /// <c>rank</c>, а строка вида <c>'merge=64'</c> (так было в FTS4) роняет запрос «SQL logic
+    /// error» — то есть обслуживание молча не работало бы, если бы тест только искал слова.
+    /// </summary>
+    [Fact]
+    public void Maintain_merges_the_segments_a_run_left_behind()
+    {
+        for (var i = 0; i < 40; i++)
+        {
+            var path = Write($"d{i:D2}.txt", $"документ номер {i} про обследование");
+            Put(path, $"документ номер {i} про обследование");
+        }
+
+        var before = FtsBlocks();
+        _index.Maintain();
+
+        Assert.True(FtsBlocks() < before, $"слияния не было: блоков было {before}, осталось столько же");
+        Assert.Equal(40, _index.Search("обследование").Count);
+    }
+
+    // Служебные блоки индекса FTS5: их число и падает при слиянии сегментов.
+    private int FtsBlocks()
+    {
+        using var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={_index.Path}");
+        connection.Open();
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT count(*) FROM doc_fts_data";
+        return Convert.ToInt32(cmd.ExecuteScalar());
+    }
+
+    /// <summary>Обслуживание индекса не теряет ни одной находки — оно только сливает сегменты.</summary>
+    [Fact]
+    public void Maintain_keeps_every_document_findable()
+    {
+        var first  = Write("first.txt",  "первый документ про обследование");
+        var second = Write("second.txt", "второй документ про обследование");
+        Put(first,  "первый документ про обследование");
+        Put(second, "второй документ про обследование");
+
+        _index.Maintain();
+
+        Assert.Equal(2, _index.Search("обследование").Count);
+        Assert.Single(_index.Search("первый"));
+        Assert.Equal(2, _index.Stats().Indexed);
     }
 
     [Fact]

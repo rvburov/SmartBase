@@ -419,41 +419,124 @@ public sealed class DocTextIndex
         }
     }
 
-    /// <summary>Убирает из кеша все, кроме перечисленных путей — уборка после удаления коллекций.</summary>
-    public int Forget(IReadOnlyCollection<string> keep)
+    /// <summary>
+    /// Уборка сирот: строки кеша, чьих файлов на диске больше нет. Возвращает, сколько убрано.
+    ///
+    /// Ключ кеша — путь, поэтому удаление и переименование документа оставляют строку с текстом
+    /// навсегда: <see cref="Survey"/> спрашивает только про пути ЖИВЫХ коллекций, и про
+    /// исчезнувший файл никто больше не заговорит. На папке, которую год перекладывают, такие сироты и есть
+    /// основной вес кеша.
+    ///
+    /// <b>Папку, которой нет, уборка не трогает.</b> Библиотека обычно живет на общей папке
+    /// сервера, а он выключается: спроси мы у диска «есть ли файл» при отвалившейся папке —
+    /// «нет» ответили бы ВСЕ документы, и уборка снесла бы часы чтения. Поэтому сначала
+    /// проверяется папка, и живой она считается, только если диск прямо сказал «есть». Тот же
+    /// ответ спасает от снятой галочки коллекции и от отключенной базы: пока файлы лежат на
+    /// месте, их текст в кеше остается.
+    ///
+    /// Убирать по СПИСКУ ЖИВЫХ документов (было бы естественно: «оставить только эти») нельзя
+    /// по той же причине — снятая галочка коллекции или отключенная база означала бы часы
+    /// перечитывания при возврате.
+    /// </summary>
+    public int Sweep()
+    {
+        var keys = AllKeys();
+        if (keys.Count == 0) return 0;
+
+        // Только пути из папок, которые диск подтвердил. Все остальное — не наше дело: папки
+        // может не быть вовсе, а может не быть только сейчас, и различить это нельзя.
+        var live = keys
+            .GroupBy(FolderOf, StringComparer.Ordinal)
+            .Where(g => g.Key.Length > 0 && DirectoryAlive(g.Key))
+            .SelectMany(g => g)
+            .ToList();
+        if (live.Count == 0) return 0;
+
+        var stamps = DocStamps.Of(live);
+        var gone   = live.Where(k => stamps[k].Size < 0).ToList();
+        return gone.Count == 0 ? 0 : Drop(gone);
+    }
+
+    /// <summary>
+    /// Обслуживание FTS-индекса: слить сегменты, накопленные массовыми вставками и удалениями.
+    ///
+    /// Каждый разобранный документ — это <c>DELETE</c> и <c>INSERT</c> в индексе, а прогон их
+    /// дает десятки тысяч. FTS5 сливает сегменты сам, но лениво, и без слияния поиск идет по
+    /// длинной лестнице мелких сегментов. Работа ограничена страницами: полный <c>optimize</c>
+    /// на индексе в гигабайты — это минуты, а зовется это в фоне, между делом.
+    /// </summary>
+    public void Maintain(int pages = 64)
+    {
+        lock (_lock)
+        {
+            using var connection = Open();
+            using var cmd = connection.CreateCommand();
+            // Команды FTS5 подаются вставкой в одноименную колонку, а их аргумент — в rank
+            // (у FTS4 это было 'merge=N,M' одной строкой, и такая строка здесь дает «SQL logic
+            // error»).
+            cmd.CommandText = "INSERT INTO doc_fts(doc_fts, rank) VALUES('merge', @n)";
+            cmd.Parameters.AddWithValue("@n", Math.Max(1, pages));
+            cmd.ExecuteNonQuery();
+        }
+    }
+
+    // Все ключи кеша. Для уборки нужны именно ВСЕ: выбери мы первые N, уборка каждый раз
+    // ходила бы по одному и тому же началу, а хвост копил бы сирот вечно.
+    private List<string> AllKeys()
+    {
+        var keys = new List<string>();
+        lock (_lock)
+        {
+            using var connection = Open();
+            using var cmd = connection.CreateCommand();
+            cmd.CommandText = "SELECT PathKey FROM doc_files";
+            using var rdr = cmd.ExecuteReader();
+            while (rdr.Read()) keys.Add(rdr.GetString(0));
+        }
+        return keys;
+    }
+
+    // Выбросить перечисленные пути вместе с их текстом.
+    private int Drop(IReadOnlyCollection<string> keys)
     {
         lock (_lock)
         {
             using var connection = Open();
             using var tx = connection.BeginTransaction();
+            var removed = 0;
 
-            using var temp = connection.CreateCommand();
-            temp.Transaction = tx;
-            temp.CommandText = "CREATE TEMP TABLE IF NOT EXISTS _keep(PathKey TEXT PRIMARY KEY)";
-            temp.ExecuteNonQuery();
-
-            foreach (var chunk in Chunks([.. keep.Select(KeyOf)], 400))
+            foreach (var chunk in Chunks(keys, 400))
             {
-                using var ins = connection.CreateCommand();
-                ins.Transaction = tx;
-                ins.CommandText = "INSERT OR IGNORE INTO _keep(PathKey) VALUES " +
-                                  string.Join(",", chunk.Select((_, i) => $"(@p{i})"));
-                for (var i = 0; i < chunk.Count; i++) ins.Parameters.AddWithValue("@p" + i, chunk[i]);
-                ins.ExecuteNonQuery();
+                var holes = string.Join(",", chunk.Select((_, i) => "@p" + i));
+                using var del = connection.CreateCommand();
+                del.Transaction = tx;
+                del.CommandText = $"""
+                    DELETE FROM doc_fts WHERE rowid IN
+                        (SELECT Id FROM doc_files WHERE PathKey IN ({holes}));
+                    DELETE FROM doc_files WHERE PathKey IN ({holes});
+                    """;
+                for (var i = 0; i < chunk.Count; i++) del.Parameters.AddWithValue("@p" + i, chunk[i]);
+                del.ExecuteNonQuery();
+                removed += chunk.Count;
             }
 
-            using var del = connection.CreateCommand();
-            del.Transaction = tx;
-            del.CommandText = """
-                DELETE FROM doc_fts WHERE rowid IN
-                    (SELECT Id FROM doc_files WHERE PathKey NOT IN (SELECT PathKey FROM _keep));
-                DELETE FROM doc_files WHERE PathKey NOT IN (SELECT PathKey FROM _keep);
-                DROP TABLE IF EXISTS _keep;
-                """;
-            var removed = del.ExecuteNonQuery();
             tx.Commit();
             return removed;
         }
+    }
+
+    private static string FolderOf(string key)
+    {
+        try { return System.IO.Path.GetDirectoryName(key) ?? ""; }
+        catch { return ""; }
+    }
+
+    // Папка, про которую диск сказал «есть». Отказ любого рода — «не знаю»: уборка тогда эту
+    // папку не трогает.
+    private static bool DirectoryAlive(string folder)
+    {
+        try { return Directory.Exists(folder); }
+        catch { return false; }
     }
 
     /// <summary>
