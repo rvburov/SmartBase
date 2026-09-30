@@ -702,6 +702,10 @@ public partial class LibraryControllerView : UserControl
     /// диску на каждый файл, и платить им за каждое нажатие «Найти» нельзя. Перепись еще не
     /// готова или читать нечего — просто выходим; предложение прочитать в этом случае никуда
     /// не девается, оно стоит кнопкой в подвале.
+    ///
+    /// Идущий прогон поиск не трогает вовсе, хотя очередь добавление на ходу умеет: он и так
+    /// прочитает все непрочитанное, а каждое «Найти» платило бы за проверку полным обходом
+    /// кеша и диска.
     /// </summary>
     private Task ReadOnSearchAsync()
     {
@@ -731,7 +735,6 @@ public partial class LibraryControllerView : UserControl
     private async Task ReadDocumentsAsync(Func<Task<List<string>>>? source = null)
     {
         if (DocIndexService.Current is not { } service) return;
-        if (service.Running) return;
 
         service.MaxFileMb = LibrarySettings.IndexMaxMb;
 
@@ -771,19 +774,34 @@ public partial class LibraryControllerView : UserControl
         if (LibrarySettings.NeedsReadConfirmation(pending.Count) && !await ConfirmRead(pending.Count))
             return;
 
-        _readDone  = 0;
-        _readTotal = pending.Count;
-        _readLeft  = null;
-        Core.BackgroundJobs.Report(ReadJobId, "Чтение документов", $"0 из {pending.Count}",
-                                   0, pending.Count, () => DocIndexService.Current?.Stop());
-        service.StartPending(pending);
+        // Прогон уже идет — пути просто добавляются к нему: очередь это умеет, а раньше просьба
+        // молча пропадала. Прочитать документы во время чтения просят из меню коллекции: в
+        // подвале на это время стоит «Остановить».
+        //
+        // Счетчики при добавлении НЕ обнуляются: разобранное в этом прогоне так и осталось
+        // разобранным, а новый размер очереди приедет со следующим событием хода.
+        var running = service.Running;
+        if (!running)
+        {
+            _readDone  = 0;
+            _readTotal = pending.Count;
+            _readLeft  = null;
+            Core.BackgroundJobs.Report(ReadJobId, "Чтение документов", $"0 из {pending.Count}",
+                                       0, pending.Count, () => DocIndexService.Current?.Stop());
+        }
+        var added = service.StartPending(pending);
         RefreshStatus();
 
         // Карточка-событие про запуск: человек нажал «Прочитать» и тут же может уйти в другой
         // раздел — он должен знать, где за этим следить.
         Controls.Widgets.AppNotifications.Info(
-            $"Читаю {Plural.Count(pending.Count, "документ", "документа", "документов")}. " +
-            "Можно работать дальше — ход виден в панели разделов слева.");
+            !running
+                ? $"Читаю {Plural.Count(pending.Count, "документ", "документа", "документов")}. " +
+                  "Можно работать дальше — ход виден в панели разделов слева."
+                : added > 0
+                    ? $"Добавлено к чтению: {Plural.Count(added, "документ", "документа", "документов")}. " +
+                      "Читаю их тем же прогоном."
+                    : "Эти документы уже стоят в очереди чтения.");
     }
 
     // Окно подтверждения — общий ConfirmDialog (Compact по стандарту размеров окон), а не свое.

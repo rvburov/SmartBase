@@ -42,6 +42,13 @@ public readonly record struct DocIndexProgress(int Done, int Total, string File,
 /// <b>Прогон не перезапускается сам.</b> Пришли новые пути, пока очередь идет, — они просто
 /// добавляются; повторный <see cref="Start"/> на идущем прогоне ничего не ломает и ничего не
 /// начинает заново.
+///
+/// <b>Остановка — не мгновенная.</b> <see cref="Stop"/> отменяет токен и чистит очередь, но
+/// поток выходит сам, дочитав отмену: он может стоять внутри разбора тяжелого файла. Поэтому
+/// «остановлен» и «поток еще жив» — два разных состояния, и между ними служба ведет себя
+/// определенно: разобранное после отмены в кеш НЕ пишется (иначе документ лег бы туда уже
+/// после очистки), а поставленное в очередь в этот промежуток начинает новый прогон, как только
+/// прежний поток вышел. Кто должен дождаться конца — зовет <see cref="StopAsync"/>.
 /// </summary>
 public sealed class DocIndexService
 {
@@ -110,33 +117,50 @@ public sealed class DocIndexService
                 if (_queued.Add(DocTextIndex.KeyOf(p))) { _queue.Enqueue(p); added++; }
             if (added == 0) return 0;
 
+            // Прогон идет — очередь добавление на ходу поддерживает. Если он к этому времени
+            // остановлен и его поток еще выходит, пути просто лежат в очереди: новый прогон
+            // начнет сам уходящий поток, увидев ее непустой (см. конец Drain). Иначе
+            // поставленное между «Остановить» и «Прочитать» пролежало бы до перезапуска
+            // программы, а кнопка выглядела бы неисправной.
             if (Running) { _total += added; return added; }
 
-            Running       = true;
-            _done         = 0;
-            _total        = _queue.Count;
-            _startedTicks = System.Diagnostics.Stopwatch.GetTimestamp();
-            _cts          = new CancellationTokenSource();
-            _idle.Reset();
-
-            var ct = _cts.Token;
-            _thread = new Thread(() => Drain(ct))
-            {
-                // Фоновый — иначе приложение не закроется, пока очередь не дочитает все.
-                IsBackground = true,
-                // Ниже обычного — чтобы разбор PDF уступал процессор интерфейсу.
-                Priority     = ThreadPriority.BelowNormal,
-                Name         = "doc-index",
-            };
-            _thread.Start();
+            StartRunLocked();
             return added;
         }
+    }
+
+    // Новый прогон: счетчики с нуля, свой токен, свой поток. Зовется под замком — из
+    // StartPending и из конца прежнего прогона.
+    private void StartRunLocked()
+    {
+        Running       = true;
+        _done         = 0;
+        _total        = _queue.Count;
+        _startedTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+        _cts          = new CancellationTokenSource();
+        _idle.Reset();
+
+        var ct = _cts.Token;
+        _thread = new Thread(() => Drain(ct))
+        {
+            // Фоновый — иначе приложение не закроется, пока очередь не дочитает все.
+            IsBackground = true,
+            // Ниже обычного — чтобы разбор PDF уступал процессор интерфейсу.
+            Priority     = ThreadPriority.BelowNormal,
+            Name         = "doc-index",
+        };
+        _thread.Start();
     }
 
     /// <summary>Отбор и запуск целиком в фоне — отбор ходит на диск, на UI-потоке ему не место.</summary>
     public Task<int> StartAsync(IReadOnlyCollection<string> paths) => Task.Run(() => Start(paths));
 
-    /// <summary>Останавливает прогон. Разобранное остается в кеше — начинать заново не придется.</summary>
+    /// <summary>
+    /// Останавливает прогон. Разобранное остается в кеше — начинать заново не придется.
+    ///
+    /// Возвращает управление СРАЗУ: поток выходит сам, когда дочитает отмену. Кому важно, что
+    /// очередь в кеш больше не пишет (очистке кеша — важно), тот зовет <see cref="StopAsync"/>.
+    /// </summary>
     public void Stop()
     {
         lock (_lock)
@@ -147,8 +171,21 @@ public sealed class DocIndexService
         }
     }
 
-    /// <summary>Дожидается конца прогона — для тестов и для закрытия приложения.</summary>
+    /// <summary>
+    /// Остановить и дождаться, пока поток выйдет. Ждет в фоне: вызов идет из обработчика
+    /// кнопки, а поток может стоять внутри разбора тяжелого файла.
+    /// </summary>
+    public Task StopAsync()
+    {
+        Stop();
+        return Wait();
+    }
+
+    /// <summary>Дожидается конца прогона — для очистки кеша, тестов и закрытия приложения.</summary>
     public Task Wait() => Task.Run(() => _idle.Wait());
+
+    /// <summary>То же с потолком ожидания; <c>false</c> — не дождались.</summary>
+    public Task<bool> Wait(TimeSpan timeout) => Task.Run(() => _idle.Wait(timeout));
 
     private void Drain(CancellationToken ct)
     {
@@ -159,6 +196,7 @@ public sealed class DocIndexService
         }
         finally
         {
+            bool again;
             lock (_lock)
             {
                 // Замер по тому, что успели: остановленный прогон тоже мерит честно — сколько
@@ -168,13 +206,30 @@ public sealed class DocIndexService
                     LastSecondsPerDocument =
                         System.Diagnostics.Stopwatch.GetElapsedTime(_startedTicks).TotalSeconds / done;
 
-                Running = false;
                 _cts?.Dispose();
                 _cts    = null;
                 _thread = null;
+
+                // Пока этот прогон умирал, в очередь могли поставить новое — нажать «Прочитать»
+                // сразу после «Остановить» человеку никто не мешает. Тогда прогон продолжается
+                // новым потоком, и строка прогресса не гаснет: работа-то идет.
+                again = _queue.Count > 0;
+                if (again)
+                {
+                    StartRunLocked();
+                }
+                else
+                {
+                    Running = false;
+                    // Под тем же замком, что и Reset нового прогона: иначе между «прогон
+                    // кончился» и этой строкой успел бы начаться следующий, и ожидающий
+                    // очистку кеша отпустило бы при живом потоке, который еще пишет в кеш.
+                    _idle.Set();
+                }
             }
-            _idle.Set();
-            Finished?.Invoke(this, EventArgs.Empty);
+
+            // Работа продолжается новым потоком — ни ожидание, ни строка прогресса не гаснут.
+            if (!again) Finished?.Invoke(this, EventArgs.Empty);
         }
     }
 
@@ -204,8 +259,18 @@ public sealed class DocIndexService
                 text = DocText.Of(DocTextStatus.Failed);
             }
 
+            // После отмены в кеш не пишем. Разбор шел своим ходом, пока человек нажимал
+            // «Остановить» и вслед за этим «Очистить»: без проверки этот документ лег бы в
+            // кеш уже ПОСЛЕ очистки — один невидимый жилец в только что очищенном файле.
+            if (ct.IsCancellationRequested) return;
+
             try { _index.Put(path, text); }
             catch { /* кеш занят или недоступен — документ разберется в следующий раз */ }
+
+            // Ключ держался до этой минуты, чтобы повторное «Прочитать» не поставило в очередь
+            // то, что разбирается прямо сейчас. Теперь путь свободен: файл могут изменить, и
+            // следующий прогон обязан взять его снова.
+            lock (_lock) _queued.Remove(DocTextIndex.KeyOf(path));
 
             var done = Interlocked.Increment(ref _done);
             Progress?.Invoke(this, new DocIndexProgress(done, total, FileNameOf(path), Left(done, total)));
@@ -246,4 +311,26 @@ public sealed class DocIndexService
     public static DocIndexService? Current => _current;
 
     public static void Attach(DocIndexService service) => _current = service;
+
+    /// <summary>
+    /// Открыть кеш по пути и стать общей очередью; <c>false</c> — не удалось, раздел останется
+    /// без поиска по содержимому.
+    ///
+    /// Зовется при старте и повторно — кнопкой «Очистить» на экране настроек: кеш мог не
+    /// открыться из-за занятого файла или прав на папку, и такое лечится без перезапуска
+    /// программы. Поврежденный файл пересоздает сам <see cref="DocTextIndex"/>.
+    /// </summary>
+    public static bool Attach(string path, int maxFileMb)
+    {
+        try
+        {
+            _current = new DocIndexService(new DocTextIndex(path)) { MaxFileMb = maxFileMb };
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Кеш документов не открылся: {Path:l}", path);
+            return false;
+        }
+    }
 }

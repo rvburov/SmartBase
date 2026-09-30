@@ -290,19 +290,12 @@ public partial class App : Application
         // только поиск ВНУТРИ документов — об этом раздел говорит прямо в пустой выдаче.
         // Уборка миниатюр — здесь же, раз в запуск: файлы стареют сами, следить за ними
         // при каждой прокрутке было бы дороже, чем один обход папки при старте.
-        try
-        {
-            var docIndex = new Database.DocIndex.DocTextIndex(AppSettings.DocIndexPath);
-            Database.DocIndex.DocIndexService.Attach(
-                new Database.DocIndex.DocIndexService(docIndex)
-                {
-                    MaxFileMb = LibrarySettings.IndexMaxMb,
-                });
-            Core.Documents.DocThumbnail.Tidy(AppSettings.DocThumbsDir);
-        }
+        // Сбой открытия пишет в журнал сам Attach; поврежденный файл он пересоздает.
+        Database.DocIndex.DocIndexService.Attach(AppSettings.DocIndexPath, LibrarySettings.IndexMaxMb);
+        try { Core.Documents.DocThumbnail.Tidy(AppSettings.DocThumbsDir); }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Кеш документов не открылся: {Path:l}", AppSettings.DocIndexPath);
+            Log.Warning(ex, "Миниатюры документов не убраны: {Path:l}", AppSettings.DocThumbsDir);
         }
 
         return registry;

@@ -107,7 +107,16 @@ public sealed class DocTextIndex
     public DocTextIndex(string path)
     {
         _path = path;
-        Ensure();
+        try { Ensure(); }
+        catch (Exception ex)
+        {
+            // Файл кеша поврежден (обрыв питания на записи, недокачанная копия) — сносим и
+            // начинаем заново. Кеш пересобираемый: единственная плата — прочитать документы
+            // еще раз, а без этого поиск по содержимому пропал бы до переустановки программы.
+            // Не вышло и так — исключение уходит наружу: значит дело не в файле, а в папке.
+            Serilog.Log.Warning(ex, "Кеш документов поврежден — файл пересоздан: {Path:l}", _path);
+            Recreate();
+        }
     }
 
     /// <summary>Путь к файлу кеша — для экрана настроек и для тестов.</summary>
@@ -150,18 +159,57 @@ public sealed class DocTextIndex
         catch (SqliteException) { /* колонка уже есть */ }
     }
 
+    // Снести файл кеша и создать пустой. Зовется на поврежденном файле — из конструктора и из
+    // <see cref="Clear"/>.
+    private void Recreate()
+    {
+        // Пул держит файловый дескриптор и после Dispose соединения — без сброса удалить файл
+        // не дала бы сама же программа. Сбрасываем только СВОЙ пул (он привязан к строке
+        // подключения): общий ClearAllPools задел бы и app.db, и журналы.
+        try
+        {
+            using var probe = new SqliteConnection(ConnectionString);
+            SqliteConnection.ClearPool(probe);
+        }
+        catch { /* пула нет — тем лучше */ }
+
+        // Вместе с файлом уходят WAL и разделяемая память: оставшийся WAL от прежнего файла
+        // SQLite посчитал бы своим и восстановил бы из него ту же поломку.
+        foreach (var suffix in new[] { "", "-wal", "-shm" })
+            try { File.Delete(_path + suffix); }
+            catch (Exception ex)
+            {
+                Serilog.Log.Warning(ex, "Кеш документов: файл не удален: {Path:l}", _path + suffix);
+            }
+
+        Ensure();
+    }
+
+    private string ConnectionString => $"Data Source={_path}";
+
     private SqliteConnection Open()
     {
-        var connection = new SqliteConnection($"Data Source={_path}");
-        connection.Open();
+        var connection = new SqliteConnection(ConnectionString);
+        try
+        {
+            connection.Open();
 
-        using var pragma = connection.CreateCommand();
-        // WAL — по той же причине, что у остальных файлов: кеш пишется фоновой очередью, а
-        // читается поиском, и блокировать одно другим незачем.
-        pragma.CommandText = "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;";
-        pragma.ExecuteNonQuery();
+            using var pragma = connection.CreateCommand();
+            // WAL — по той же причине, что у остальных файлов: кеш пишется фоновой очередью, а
+            // читается поиском, и блокировать одно другим незачем.
+            pragma.CommandText = "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;";
+            pragma.ExecuteNonQuery();
 
-        return connection;
+            return connection;
+        }
+        catch
+        {
+            // Сам файл открылся, а споткнулась уже PRAGMA — так ведет себя поврежденный кеш.
+            // Без этого открытое соединение утекало бы: дескриптор висит, и файл потом нечем
+            // ни удалить, ни пересоздать.
+            connection.Dispose();
+            throw;
+        }
     }
 
     /// <summary>
@@ -408,15 +456,35 @@ public sealed class DocTextIndex
         }
     }
 
-    /// <summary>Полностью очищает кеш — кнопка «Очистить индекс» на экране настроек.</summary>
+    /// <summary>
+    /// Полностью очищает кеш — кнопка «Очистить» на экране настроек.
+    ///
+    /// Ходит на диск и сжимает файл (<c>VACUUM</c> на кеше в гигабайты — это секунды), поэтому
+    /// зовется из фона, а не из обработчика кнопки. Очередь к этому времени должна быть
+    /// остановлена и дождана (<c>DocIndexService.StopAsync</c>): иначе разобранный до остановки
+    /// документ лег бы в кеш уже после очистки.
+    /// </summary>
     public void Clear()
     {
         lock (_lock)
         {
-            using var connection = Open();
-            using var cmd = connection.CreateCommand();
-            cmd.CommandText = "DELETE FROM doc_fts; DELETE FROM doc_files; VACUUM;";
-            cmd.ExecuteNonQuery();
+            try
+            {
+                using var connection = Open();
+                using var cmd = connection.CreateCommand();
+                cmd.CommandText = "DELETE FROM doc_fts; DELETE FROM doc_files; VACUUM;";
+                cmd.ExecuteNonQuery();
+                return;
+            }
+            catch (Exception ex)
+            {
+                // Битый файл запросом не очистить — и DELETE, и VACUUM спотыкаются о ту же
+                // поломку. Итог человеку нужен один и тот же: пустой кеш, — поэтому файл
+                // пересоздается. Именно «Очистить» и есть то место, где человек просит починить.
+                Serilog.Log.Warning(ex, "Кеш документов не очистился запросом — файл пересоздан: {Path:l}", _path);
+            }
+
+            Recreate();
         }
     }
 

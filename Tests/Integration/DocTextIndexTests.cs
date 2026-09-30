@@ -453,4 +453,61 @@ public sealed class DocTextIndexTests : IDisposable
 
         Assert.Equal(0, entry.Pages);
     }
+
+    // ── Поврежденный файл кеша ───────────────────────────────────────────────
+    //
+    // Кеш — пересобираемый файл, и поломка в нем не должна стоить человеку поиска по
+    // содержимому до переустановки программы. Оба входа в кеш (открытие при старте и «Очистить»
+    // на экране настроек) обязаны привести к одному и тому же: рабочему пустому кешу.
+
+    // Файл, который SQLite базой не считает: заголовок чужой. Так выглядит обрыв питания на
+    // записи или недокачанная копия папки данных.
+    private string Garbage(string name)
+    {
+        var path = Path.Combine(_dir, name);
+        File.WriteAllBytes(path, [.. Enumerable.Repeat((byte)0x7F, 4096)]);
+        return path;
+    }
+
+    [Fact]
+    public void A_broken_cache_file_is_recreated_on_open()
+    {
+        var path = Garbage("broken.db");
+
+        // Раньше это исключение уходило наружу: кеш не открывался, поиск по содержимому
+        // пропадал, а DocIndexService.Current оставался пустым до перезапуска программы —
+        // и починить было нечем, «Очистить» в этом состоянии тоже не открывала файл.
+        var index = new DocTextIndex(path);
+
+        var doc = Write("gost.txt", "Стандарт на пересозданном кеше");
+        index.Put(doc, new DocText(DocTextStatus.Ok, "Стандарт на пересозданном кеше"));
+        Assert.Single(index.Search("пересозданном"));
+    }
+
+    /// <summary>
+    /// «Очистить» на поврежденном файле делает то, о чем просил человек: пустой рабочий кеш.
+    /// Запросом такой файл не очистить — и <c>DELETE</c>, и <c>VACUUM</c> спотыкаются о ту же
+    /// поломку, — поэтому файл пересоздается.
+    /// </summary>
+    [Fact]
+    public void Clear_recreates_a_file_that_broke_after_opening()
+    {
+        var path  = Path.Combine(_dir, "later-broken.db");
+        var index = new DocTextIndex(path);
+        var doc   = Write("note.txt", "заметка до поломки");
+        index.Put(doc, new DocText(DocTextStatus.Ok, "заметка до поломки"));
+
+        // Портим файл под работающим кешем: пул держит дескриптор, но не запрещает записывать
+        // в файл со стороны — именно так и выглядит поломка в жизни.
+        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        File.WriteAllBytes(path, [.. Enumerable.Repeat((byte)0x7F, 4096)]);
+        foreach (var suffix in new[] { "-wal", "-shm" })
+            try { File.Delete(path + suffix); } catch { /* нет файла — тем лучше */ }
+
+        index.Clear();
+
+        Assert.Equal(0, index.Stats().Indexed);
+        index.Put(doc, new DocText(DocTextStatus.Ok, "заметка после починки"));
+        Assert.Single(index.Search("починки"));
+    }
 }

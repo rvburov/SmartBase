@@ -63,8 +63,10 @@ public partial class SettingsView
         {
             LibraryCacheDesc.Text =
                 "Кеш документов не открылся — поиск по содержимому недоступен. " +
-                "Подробности в разделе «Диагностика».";
-            LibraryClearCacheBtn.IsEnabled = thumbs > 0;
+                "«Очистить» создаст файл кеша заново; подробности сбоя — в разделе «Диагностика».";
+            // Кнопка нужна именно в этом состоянии: она пробует открыть кеш заново, и это
+            // единственный способ починить его без перезапуска программы.
+            LibraryClearCacheBtn.IsEnabled = true;
             return;
         }
 
@@ -131,19 +133,34 @@ public partial class SettingsView
         var owner = VisualRoot as Window;
         if (owner is null) return;
 
+        // Автозапуска чтения нет по решению: при заходе в раздел считается только перепись, а
+        // разбор начинает человек кнопкой. Поэтому здесь говорится про кнопку, а не про заход.
         var ok = await new Controls.Dialogs.ConfirmDialog(
             "Очистить кеш документов и миниатюр?\n\n" +
-            "Сами документы и записи не изменятся. Текст разберется заново при следующем " +
-            "заходе в раздел — на большой папке это займет время.",
+            "Сами документы и записи не изменятся. Прочитать документы заново можно кнопкой " +
+            "в разделе — на большой папке это займет время.",
             "Очистить").ShowDialog<bool>(owner);
         if (!ok) return;
 
-        // Очередь могла идти прямо сейчас — иначе она дописала бы в кеш уже после очистки.
-        DocIndexService.Current?.Stop();
+        // Кеш не открылся при старте — пробуем еще раз: файл мог быть занят другой копией
+        // программы или поврежден, и то и другое лечится без перезапуска.
+        if (DocIndexService.Current is null)
+            DocIndexService.Attach(AppSettings.DocIndexPath, LibrarySettings.IndexMaxMb);
+
+        LibraryClearCacheBtn.IsEnabled = false;
+        LibraryCacheDesc.Text          = "Очищаю кеш…";
         try
         {
-            DocIndexService.Current?.Index.Clear();
-            DocThumbnail.Clear(AppSettings.DocThumbsDir);
+            // Очередь могла идти прямо сейчас: останавливаем и ДОЖИДАЕМСЯ конца прогона —
+            // иначе документ, разобранный до остановки, лег бы в кеш уже после очистки.
+            // Ожидание и сама очистка (DELETE + VACUUM на файле в гигабайты) идут в фоне: в
+            // UI-потоке это был бы замерший экран на секунды.
+            if (DocIndexService.Current is { } service)
+            {
+                await service.StopAsync();
+                await Task.Run(service.Index.Clear);
+            }
+            await Task.Run(() => DocThumbnail.Clear(AppSettings.DocThumbsDir));
         }
         catch (Exception ex)
         {
