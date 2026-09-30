@@ -83,7 +83,6 @@ public partial class DocListView : UserControl
         {
             SearchBox.Text = "";
             SearchBox.Focus();
-            _executed = "";
             SyncCommandRow();
             SearchCleared?.Invoke(this, EventArgs.Empty);
         };
@@ -138,28 +137,26 @@ public partial class DocListView : UserControl
 
     // ── Блок поиска ──────────────────────────────────────────────────────────
 
-    /// <summary>Запрос, по которому сейчас построена лента; пусто — показана обычная лента.</summary>
-    private string _executed = "";
-
     /// <summary>Что делает ссылка справа в подвале; null — ссылки нет.</summary>
     private Action? _statusAction;
 
+    // Тот же запрос можно нажать еще раз: повтор — это «обновить выдачу», и он нужен после
+    // чтения документов или правок в базе. Раньше повтор молча глотался, а кнопка гасла на
+    // выполненном запросе, и обновить выдачу руками было нечем. Двойное нажатие безопасно:
+    // загрузки, начатые раньше, гасятся поколением контроллера.
     private void Find()
     {
         var query = SearchText.Trim();
-        if (query.Length == 0 || query == _executed) return;
-        _executed = query;
-        SyncCommandRow();
+        if (query.Length == 0) return;
         SearchRequested?.Invoke(this, query);
     }
 
     // Крестик, кнопка и цвет якоря — одной функцией: три состояния одного ряда не должны
-    // выставляться порознь, иначе кнопка однажды останется включенной на выполненном запросе.
+    // выставляться порознь.
     private void SyncCommandRow()
     {
-        var query = SearchText.Trim();
         ClearBtn.IsVisible = SearchText.Length > 0;
-        FindBtn.IsEnabled  = query.Length > 0 && query != _executed;
+        FindBtn.IsEnabled  = SearchText.Trim().Length > 0;
         SearchIcon.Stroke  = SearchText.Length > 0
             ? Res("BrushAccent",        "#007AFF")
             : Res("BrushSecondaryText", "#8E8E93");

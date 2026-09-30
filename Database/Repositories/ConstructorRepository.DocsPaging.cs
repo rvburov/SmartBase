@@ -93,7 +93,8 @@ public partial class ConstructorRepository
 
     // Условие вида и его параметры. Типы подставляются плейсхолдерами (@t0, @t1, …), а не
     // текстом: имена типов приходят от пользователя и в SQL попадать не должны.
-    private static (string Where, List<string> Types) TypeFilterSql(DocView view)
+    private static (string Where, List<string> Types) TypeFilterSql(DocView view,
+                                                                    string typeExpr = DocTypeValueExpr)
     {
         if (view.Types is null) return ("1 = 1", []);
         if (view.Types.Count == 0) return ("1 = 0", []);
@@ -103,7 +104,7 @@ public partial class ConstructorRepository
         // COALESCE: у документа без проставленного типа значения в db_field_values нет вовсе,
         // и подзапрос вернет NULL — в IN он не попадет ни при каком наборе. Пустой тип должен
         // сравниваться как пустая строка, иначе галочка «(Пусто)» ничего не находила бы.
-        return ($"COALESCE({DocTypeValueExpr}, '') IN ({holes})", types);
+        return ($"COALESCE({typeExpr}, '') IN ({holes})", types);
     }
 
     // Значение «Типа документа» записи. Скалярный подзапрос, а не соединение: соединение
@@ -111,6 +112,16 @@ public partial class ConstructorRepository
     // кластерному PK (RecordId, FieldId) таблицы db_field_values.
     private const string DocTypeValueExpr =
         "(SELECT vt.Value FROM db_field_values vt WHERE vt.RecordId = r.Id AND vt.FieldId = @type)";
+
+    // То же, когда коллекция заранее не известна (поиск идет по всем отмеченным разом): поле
+    // роли находится по коллекции файлового столбца f. Один и тот же текст стоит и в списке
+    // колонок, и в условии вида — иначе тип, по которому фильтруют, и тип, который показывают,
+    // однажды разошлись бы.
+    private const string DocTypeAnyExpr = @"(SELECT vt.Value FROM db_field_values vt
+                          JOIN db_fields ft ON ft.Id = vt.FieldId
+                         WHERE vt.RecordId = r.Id AND ft.CollectionId = f.CollectionId
+                           AND ft.IsDocType = 1
+                         ORDER BY ft.Position, ft.Id LIMIT 1)";
 
     // Тело запроса ленты одной коллекции: ведет db_records по индексу (CollectionId, Position),
     // путь приезжает соединением сиком по PK, тип — подзапросом.
@@ -331,7 +342,13 @@ public partial class ConstructorRepository
     /// <summary>
     /// Поиск документов: по названию записи и имени файла (SQL <c>LIKE</c>) плюс по путям,
     /// найденным в текстовом кеше (<paramref name="paths"/>). Выдача ограничена
-    /// <paramref name="limit"/> — см. пояснение в заголовке файла.
+    /// <paramref name="limit"/> — см. пояснение в заголовке файла; потолок на раздел делит
+    /// между базами зовущий (<c>Views/Library/DocSearchBudget.cs</c>).
+    ///
+    /// Фильтр типов (<paramref name="view"/>) стоит ВНУТРИ запроса, а не поверх выдачи: иначе
+    /// база возвращала бы ровно потолок строк, фильтр отсеивал половину, и признак обрезки
+    /// молчал бы там, где выдача обрезана, — а находки нужного типа за потолком не доезжали бы
+    /// вовсе.
     ///
     /// SQLite сравнивает без учета регистра только латиницу, поэтому кириллица перебирается
     /// регистровыми вариантами — тот же прием, что в поиске календаря. Набор путей уходит в
@@ -347,10 +364,12 @@ public partial class ConstructorRepository
     /// 500 000 документов (2,5 млн значений) 2,9 с против 0,65 с.
     /// </summary>
     public List<DocRecord> SearchDocs(ISet<int>? activeIds, string query,
-                                      IReadOnlyCollection<string> paths, int limit = 500)
+                                      IReadOnlyCollection<string> paths, DocView? view = null,
+                                      int limit = 500)
     {
         var result = new List<DocRecord>();
         if (activeIds is { Count: 0 }) return result;
+        if (view is { Types.Count: 0 }) return result;   // ни одного типа — искать негде
 
         query = (query ?? "").Trim();
         if (query.Length == 0 && paths.Count == 0) return result;
@@ -380,6 +399,7 @@ public partial class ConstructorRepository
         if (likes.Count > 0)      conditions.Add("(" + string.Join(" OR ", likes) + ")");
         if (byPath.Length > 0)    conditions.Add(byPath);
         var where = string.Join(" OR ", conditions);
+        var (typeWhere, types) = TypeFilterSql(view ?? DocView.All, DocTypeAnyExpr);
 
         var conn = db.Database.GetDbConnection();
         var opened = conn.State != System.Data.ConnectionState.Open;
@@ -389,16 +409,13 @@ public partial class ConstructorRepository
             using var cmd = conn.CreateCommand();
             cmd.CommandText = $@"
                 SELECT r.Id, f.Id, f.Name, f.CollectionId, c.Name, c.Color, r.Title, v.Value,
-                       (SELECT vt.Value FROM db_field_values vt
-                          JOIN db_fields ft ON ft.Id = vt.FieldId
-                         WHERE vt.RecordId = r.Id AND ft.CollectionId = f.CollectionId
-                           AND ft.IsDocType = 1
-                         ORDER BY ft.Position, ft.Id LIMIT 1)
+                       {DocTypeAnyExpr}
                 FROM db_field_values v
                 JOIN db_fields f      ON f.Id = v.FieldId
                 JOIN db_collections c ON c.Id = f.CollectionId
                 JOIN db_records r     ON r.Id = v.RecordId AND r.CollectionId = f.CollectionId
                 WHERE v.FieldId IN ({string.Join(",", docFields)}) AND v.Value <> '' AND ({where})
+                  AND {typeWhere}
                 ORDER BY f.CollectionId, r.Position, r.Id, f.Position, f.Id
                 LIMIT {Math.Max(1, limit)}";
 
@@ -406,6 +423,8 @@ public partial class ConstructorRepository
                 AddParam(cmd, "@q" + i).Value = "%" + EscapeLike(variants[i]) + "%";
             for (var i = 0; i < pathList.Count; i++)
                 AddParam(cmd, "@p" + i).Value = pathList[i];
+            for (var i = 0; i < types.Count; i++)
+                AddParam(cmd, "@t" + i).Value = types[i];
 
             using var rdr = cmd.ExecuteReader();
             while (rdr.Read()) result.Add(ReadDocRow(rdr));
@@ -416,12 +435,13 @@ public partial class ConstructorRepository
 
     /// <summary>Фоновый поиск на ОТДЕЛЬНОМ подключении.</summary>
     public Task<List<DocRecord>> SearchDocsAsync(ISet<int>? activeIds, string query,
-                                                 IReadOnlyCollection<string> paths, int limit = 500) =>
+                                                 IReadOnlyCollection<string> paths,
+                                                 DocView? view = null, int limit = 500) =>
         Task.Run(() =>
         {
             using var ctx = new AppDbContext(db.DbPath);
             ctx.ApplyPerformancePragmas();
-            return new ConstructorRepository(ctx).SearchDocs(activeIds, query, paths, limit);
+            return new ConstructorRepository(ctx).SearchDocs(activeIds, query, paths, view, limit);
         });
 
     /// <summary>

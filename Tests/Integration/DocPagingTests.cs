@@ -590,4 +590,49 @@ public sealed class DocPagingTests
 
         Assert.Equal([written], found.Select(d => d.Path).ToArray());
     }
+
+    /// <summary>
+    /// Фильтр типов действует внутри запроса поиска, а не поверх выдачи. Иначе база возвращала
+    /// бы ровно потолок строк, фильтр отсеивал половину, и признак обрезки молчал бы там, где
+    /// выдача обрезана, — а находки нужного типа за потолком не доезжали бы вовсе.
+    /// </summary>
+    [Fact]
+    public void Search_applies_the_type_filter_inside_the_query()
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+
+        var shell = Library(repo);
+        AddDoc(repo, shell, "Регламент А", "/a.pdf", type: "ГОСТ", position: 1000);
+        AddDoc(repo, shell, "Регламент Б", "/b.pdf", type: "СТО",  position: 2000);
+        AddDoc(repo, shell, "Регламент В", "/c.pdf", position: 3000);   // без типа
+
+        Assert.Equal(3, repo.SearchDocs(null, "Регламент", []).Count);
+        Assert.Equal(["/a.pdf"],           Paths(repo.SearchDocs(null, "Регламент", [], Types("ГОСТ"))));
+        Assert.Equal(["/b.pdf", "/c.pdf"], Paths(repo.SearchDocs(null, "Регламент", [], Types("СТО", ""))));
+        Assert.Empty(repo.SearchDocs(null, "Регламент", [], Types()));
+        // Совпадение по содержимому фильтруется так же, как по названию.
+        Assert.Empty(repo.SearchDocs(null, "нет-в-названии", ["/a.pdf"], Types("СТО")));
+        Assert.Single(repo.SearchDocs(null, "нет-в-названии", ["/a.pdf"], Types("ГОСТ")));
+    }
+
+    /// <summary>
+    /// Потолок режет выдачу в порядке ленты, и ровно на столько, сколько просили: контроллер
+    /// просит на одну строку больше остатка, и по этой лишней строке узнает про хвост.
+    /// </summary>
+    [Fact]
+    public void Search_returns_no_more_than_the_limit_in_feed_order()
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+
+        var shell = Library(repo);
+        AddDoc(repo, shell, "Регламент А", "/a.pdf", position: 1000);
+        AddDoc(repo, shell, "Регламент Б", "/b.pdf", position: 2000);
+        AddDoc(repo, shell, "Регламент В", "/c.pdf", position: 3000);
+
+        Assert.Equal(["/a.pdf", "/b.pdf"], Paths(repo.SearchDocs(null, "Регламент", [], limit: 2)));
+        Assert.Equal(3, repo.SearchDocs(null, "Регламент", [], limit: 3).Count);
+        Assert.Equal(3, repo.SearchDocs(null, "Регламент", [], limit: 4).Count);
+    }
 }

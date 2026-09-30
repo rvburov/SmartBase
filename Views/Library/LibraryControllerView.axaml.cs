@@ -403,34 +403,52 @@ public partial class LibraryControllerView : UserControl
         DocList.Show(list);
     }
 
-    // Поиск: сначала кеш текста (он отдает пути и сниппеты), потом база — она сшивает пути с
-    // записями и заодно ищет по названию. Выдача ограничена: см. пояснение в DocsPaging.
+    // Поиск: сначала кеш текста (он отдает пути и сниппеты), потом базы — они сшивают пути с
+    // записями и заодно ищут по названию. Выдача ограничена (см. пояснение в DocsPaging), и
+    // потолок один на раздел: остаток идет по базам по очереди, а признак обрезки — не догадка
+    // по круглому числу, а лишняя строка сверх остатка (DocSearchBudget).
     private async Task LoadSearchAsync(int gen)
     {
-        var query = _searchQuery.Trim();
+        var query  = _searchQuery.Trim();
+        var view   = new ConstructorRepository.DocView(_types);
+        var budget = new DocSearchBudget(SearchLimit);
         // Длину цитаты берем от размера карточки: на шесть строк четырнадцати слов не хватает,
         // а на одну — наоборот, подсветка уехала бы за многоточие.
         var words = DocTiles.Of(LibrarySettings.CardSize).SnippetWords;
+        // Кеш спрашивается на одну находку больше потолка: лишняя и есть признак, что по
+        // содержимому нашлось больше, чем можно показать, — и подвал скажет про хвост.
         var hits  = DocIndexService.Current is { } service
-            ? await service.Index.SearchAsync(query, SearchLimit, words)
+            ? await service.Index.SearchAsync(query, budget.Ask, words)
             : [];
         if (gen != _gen) return;
+        if (hits.Count > budget.Limit)
+        {
+            budget.MarkCapped();
+            hits.RemoveRange(budget.Limit, hits.Count - budget.Limit);
+        }
 
         var snippets = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var h in hits) snippets.TryAdd(h.Path, h.Snippet);
         var paths = snippets.Keys.ToList();
 
         var found   = new List<object>();
-        var shown   = 0;
         var inText  = 0;
         var byTitle = 0;
         foreach (var (dbId, dbName, repo) in _dbs)
         {
+            // Потолок исчерпан — остальные базы не спрашиваются: показать их находки негде.
+            if (budget.Ask == 0) break;
             var active = ActiveFor(dbId);
             if (active is { Count: 0 }) continue;
 
-            var part = await repo.SearchDocsAsync(active, query, paths, SearchLimit);
+            // Фильтр типов стоит в самом запросе, чтобы потолок считался ПОСЛЕ него. Снятые
+            // галочки при этом работают и в поиске — иначе они молча переставали бы
+            // действовать, как только человек что-то набрал.
+            var part = await repo.SearchDocsAsync(active, query, paths, view, budget.Ask);
             if (gen != _gen) return;
+            var take = budget.Accept(part.Count);
+            if (take < part.Count) part.RemoveRange(take, part.Count - take);
+
             await Task.Run(() => DocStamps.Probe(part));
             if (gen != _gen) return;
 
@@ -443,15 +461,10 @@ public partial class LibraryControllerView : UserControl
                 var hitInText = snippets.TryGetValue(DocTextIndex.KeyOf(d.Path), out var snip);
                 if (hitInText) d.Snippet = snip ?? "";
 
-                // Фильтр типов действует и в поиске: иначе снятые галочки молча переставали бы
-                // работать, как только человек что-то набрал.
-                if (_types is not null && !_types.Contains(d.DocType)) continue;
-
                 ApplyTextState(d);
                 var card = new DocCardVm(d);
                 found.Add(card);
                 RequestThumbnail(card);
-                shown++;
                 // Разбивка «внутри текста против по названию» — главное число раздела, и оно
                 // бесплатно: сниппет есть ровно у попаданий из содержимого.
                 if (hitInText) inText++; else byTitle++;
@@ -461,7 +474,7 @@ public partial class LibraryControllerView : UserControl
 
         _foundInText  = inText;
         _foundByTitle = byTitle;
-        _foundCapped  = shown >= SearchLimit;
+        _foundCapped  = budget.Capped;
 
         DocList.Show(found, EmptySearchText());
         // Про потолок выдачи говорит подвал блока — общий баннер ошибок для этого не нужен:

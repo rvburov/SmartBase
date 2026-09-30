@@ -1859,6 +1859,9 @@ void Report()
     Console.WriteLine();
     var warnings = sink.Entries.Where(e => e.Level >= Serilog.Events.LogEventLevel.Warning).ToList();
     Console.WriteLine($"== Журнал: предупреждений и ошибок {warnings.Count}");
+    // Сами записи — сразу за числом: число без текста не говорит, что именно сломалось.
+    foreach (var e in warnings)
+        Console.WriteLine($"  {e.AtSec,6:0.0} с  {MemorySink.Trim(e.Text, 240)}");
     foreach (var e in sink.Entries.Where(e => e.Text.Contains("открыта за", StringComparison.Ordinal)))
         Console.WriteLine($"  {e.AtSec,6:0.0} с  {MemorySink.Trim(e.Text, 160)}");
 }
