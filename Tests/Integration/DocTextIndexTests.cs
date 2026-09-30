@@ -69,6 +69,34 @@ public sealed class DocTextIndexTests : IDisposable
         Assert.Equal(DocTextIndex.KeyOf(path), hit.Path);
     }
 
+    /// <summary>
+    /// Главный договор подсветки: что нашел поиск, то панель чтения подсветит. Проверяется на
+    /// словах с пунктуацией внутри и вокруг — индекс режет их на части по своим правилам, и
+    /// подсветка обязана резать так же. Раньше «21.501» находилось, а подсвечивалось ничего.
+    /// </summary>
+    [Fact]
+    public void Whatever_the_search_finds_the_highlight_finds_too()
+    {
+        var texts = new Dictionary<string, string>
+        {
+            ["a.txt"] = "ГОСТ 21.501 лист",
+            ["b.txt"] = "компилятор C++ и cat",
+            ["c.txt"] = "просто гост без номера",
+        };
+        foreach (var (name, text) in texts) Put(Write(name, text), text);
+
+        foreach (var query in new[] { "21.501", "21.5", "C++", "гост ++", "гост 21", "\"21 501\"" })
+        {
+            var found = _index.Search(query);
+            Assert.NotEmpty(found);
+            foreach (var hit in found)
+            {
+                var text = texts[Path.GetFileName(hit.Path)];
+                Assert.NotEmpty(DocHighlight.Find(text, DocHighlight.Tokens(query)));
+            }
+        }
+    }
+
     /// <summary>Последнее слово запроса ищется по префиксу: «безопасн» находит «безопасности».</summary>
     [Fact]
     public void The_last_word_matches_by_prefix()

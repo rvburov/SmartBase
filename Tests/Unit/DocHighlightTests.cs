@@ -109,6 +109,67 @@ public sealed class DocHighlightTests
         Assert.Equal(["21"], Words("ГОСТ 21.501 лист 3", "21"));
     }
 
+    // ── Слово с пунктуацией внутри — фраза ───────────────────────────────────
+    //
+    // Индекс режет «21.501» на «21» и «501» и ищет их подряд (BuildMatch берет слово в
+    // кавычки — это фраза). Пока подсветка сравнивала «21.501» с целыми словами текста, такой
+    // документ находился поиском, а в панели не подсвечивалось ничего — ровно тот исход,
+    // который заголовок DocHighlight объявляет недопустимым.
+
+    [Fact]
+    public void A_word_with_punctuation_inside_is_a_phrase_of_its_parts()
+    {
+        Assert.Equal(["21.501"], Words("ГОСТ 21.501 лист 3", "21.501"));
+        // Части подряд — а чем они разделены в тексте, индексу все равно.
+        Assert.Equal(["21 501"], Words("ГОСТ 21 501 лист", "21.501"));
+        Assert.Equal(["кв.м"],   Words("площадь 40 кв.м", "кв.м"));
+    }
+
+    [Fact]
+    public void The_parts_of_a_phrase_must_stand_together()
+    {
+        Assert.Empty(Words("21 лист 501", "21.501"));
+        Assert.Empty(Words("501.21", "21.501"));
+    }
+
+    /// <summary>«*» последнего слова запроса достается последней части фразы — как в MATCH.</summary>
+    [Fact]
+    public void The_prefix_goes_to_the_last_part_of_the_last_word()
+    {
+        Assert.Equal(["21.501"], Words("ГОСТ 21.501", "21.5"));
+        // То же слово не последнее — совпадает только целиком.
+        Assert.Equal(["ГОСТ"], Words("ГОСТ 21.501", "21.5 гост"));
+    }
+
+    /// <summary>
+    /// «C++» для индекса — одно слово «c» с «*»: находится и «C++», и «cat». Подсветка честно
+    /// показывает то же самое, и желтой становится буква, а не плюсы, — их индекс не видит.
+    /// </summary>
+    [Fact]
+    public void Punctuation_around_a_word_is_not_part_of_it()
+    {
+        Assert.Equal(["C", "cat"], Words("компилятор C++ и cat", "C++"));
+    }
+
+    /// <summary>
+    /// Слово из одной пунктуации индекс не учитывает: «гост ++» находит все, где есть «гост».
+    /// Подсветке — то же, иначе найденное осталось бы без единого желтого слова.
+    /// </summary>
+    [Fact]
+    public void Punctuation_only_words_are_ignored()
+    {
+        Assert.Equal(["гост"], Words("просто гост без номера", "гост ++"));
+        Assert.Empty(Words("просто гост", "++"));
+        Assert.Empty(DocHighlight.Parts("++"));
+    }
+
+    /// <summary>На одном месте побеждает самая длинная фраза — «21.501» целиком, а не «21».</summary>
+    [Fact]
+    public void The_longest_phrase_wins_at_one_spot()
+    {
+        Assert.Equal(["21.501"], Words("ГОСТ 21.501", "21 21.501"));
+    }
+
     [Fact]
     public void Nothing_to_search_gives_nothing()
     {

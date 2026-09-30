@@ -61,6 +61,7 @@ internal sealed class DocVirtualList : IList<object>, IList, INotifyCollectionCh
     private readonly LinkedList<int> _lru = new();
     private readonly HashSet<int> _needLoad = new();
     private readonly HashSet<int> _pending  = new();
+    private readonly DocPageRetry _retry    = new();
     private readonly SemaphoreSlim _loadGate = new(4);
     private DispatcherTimer? _loadTimer;
     private int _generation;
@@ -207,6 +208,7 @@ internal sealed class DocVirtualList : IList<object>, IList, INotifyCollectionCh
     private async Task LoadPageBackgroundAsync(int gen, int page)
     {
         await _loadGate.WaitAsync();
+        var failed = false;
         try
         {
             if (gen != _generation) return;
@@ -246,16 +248,46 @@ internal sealed class DocVirtualList : IList<object>, IList, INotifyCollectionCh
                 });
             }
             _pending.Remove(page);
+            _retry.Done(page);
         }
-        catch
+        catch (Exception ex)
         {
-            // Фоновая ошибка (база занята, пропали права) — строки останутся «Загрузка…» до
-            // следующего запроса той же страницы. Валить раздел из-за одной страницы нельзя.
+            // Фоновая ошибка (база занята, пропали права). Валить раздел из-за одной страницы
+            // нельзя, но и оставлять ее «Загрузка…» навсегда тоже: страница уйдет на повтор.
+            failed = true;
+            if (Logging.Diag.Throttle("library-page-fail", TimeSpan.FromMinutes(1)))
+                Serilog.Log.Warning(ex, "Библиотека: страница ленты {Page} не прочитана", page);
         }
         finally
         {
             _loadGate.Release();
         }
+        if (failed) await RetryLaterAsync(gen, page);
+    }
+
+    // Упавшая страница идет на повторную попытку с растущей паузой (DocPageRetry), а не
+    // остается «Загрузка…» до конца жизни списка: раньше она числилась и среди ожидающих, и
+    // среди загруженных, и индексатор ее больше не запрашивал. Попытки кончились — страница
+    // снимается с учета, и следующая прокрутка запросит ее заново, как новую.
+    private async Task RetryLaterAsync(int gen, int page)
+    {
+        _pending.Remove(page);
+        if (_retry.Fail(page) is not { } delay) { Forget(page); return; }
+
+        await Task.Delay(delay);
+        if (gen != _generation || !_pages.ContainsKey(page) || _pending.Contains(page)) return;
+        _needLoad.Add(page);
+        ScheduleLoad();
+    }
+
+    // Снять страницу с учета целиком: ее заглушки остаются у панели, пока та не спросит эти
+    // строки снова, — тогда индексатор создаст страницу заново и закажет загрузку.
+    private void Forget(int page)
+    {
+        _pages.Remove(page);
+        _lru.Remove(page);
+        _pending.Remove(page);
+        _needLoad.Remove(page);
     }
 
     // Разбор страницы на куски по потокам: (поток, номер первой карточки в нем, сколько, слот).
