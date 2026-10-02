@@ -163,9 +163,7 @@ public partial class MainWindow : Window
             if (_mountQueue.StatusOf(dbId) is { } st)
             {
                 var failed = st.State == MountQueue.ItemState.Failed;
-                ConstructorSidebar.UpdatePendingStatus(dbId, st.Text, failed);
-                CalendarSidebar.UpdatePendingStatus(dbId, st.Text, failed);
-                TasksSidebar.UpdatePendingStatus(dbId, st.Text, failed);
+                foreach (var sidebar in DatabaseSidebars) sidebar.UpdatePendingStatus(dbId, st.Text, failed);
                 // Список БД в настройках живет теми же процентами/временем, что и сайдбар.
                 _settingsView?.UpdateQueueStatus(dbId, st.Text, failed);
             }
@@ -281,9 +279,8 @@ public partial class MainWindow : Window
                 .ShowDialog(this);
 
         // Клик по заглушке немонтированной базы — подсказка с текущим статусом.
-        ConstructorSidebar.PendingDatabaseTapped += async (_, dbId) => await ShowPendingDatabaseInfo(dbId);
-        CalendarSidebar.PendingDatabaseTapped    += async (_, dbId) => await ShowPendingDatabaseInfo(dbId);
-        TasksSidebar.PendingDatabaseTapped       += async (_, dbId) => await ShowPendingDatabaseInfo(dbId);
+        foreach (var sidebar in DatabaseSidebars)
+            sidebar.PendingDatabaseTapped += async (_, dbId) => await ShowPendingDatabaseInfo(dbId);
 
         // Живой состав пользователей уже смонтированных баз (дальше — из SyncMountedToUi).
         HookPermissionEvents();
@@ -827,7 +824,7 @@ public partial class MainWindow : Window
         }, DispatcherPriority.Background);
     }
 
-    // Надпись «снова доступна» под именем вернувшейся базы — во всех трех сайдбарах и в
+    // Надпись «снова доступна» под именем вернувшейся базы — во всех сайдбарах баз и в
     // «Управление базой данных», на несколько секунд; затем строка статуса убирается.
     private void ShowReturnedDbStatus(int dbId)
     {
@@ -839,9 +836,7 @@ public partial class MainWindow : Window
 
     private void SetDbStatus(int dbId, string? text)
     {
-        ConstructorSidebar.SetDatabaseStatus(dbId, text);
-        CalendarSidebar.SetDatabaseStatus(dbId, text);
-        TasksSidebar.SetDatabaseStatus(dbId, text);
+        foreach (var sidebar in DatabaseSidebars) sidebar.SetDatabaseStatus(dbId, text);
         // Настройкам — если построены; построенные получат накопленные статусы (CreateSettingsModule).
         if (text is null) _dbStatuses.Remove(dbId); else _dbStatuses[dbId] = text;
         _settingsView?.SetDatabaseStatus(dbId, text);
@@ -891,11 +886,7 @@ public partial class MainWindow : Window
         // Структурные изменения (группы/коллекции/поля) перестраивают деревья сайдбаров.
         var structural = changes.Any(c => c.TargetType is "collection" or "group" or "field");
         if (structural)
-        {
-            CalendarSidebar.Refresh();
-            TasksSidebar.Refresh();
-            ConstructorSidebar.Refresh();
-        }
+            foreach (var sidebar in DatabaseSidebars) sidebar.Refresh();
 
         // Открытая коллекция конструктора из этой БД: структура → полная пересборка,
         // только записи → строки на месте (без пересборки колонок и мелькания).
@@ -1276,9 +1267,19 @@ public partial class MainWindow : Window
         SyncMountedToUi();
     }
 
+    // Боковые панели-деревья баз. Заглушки немонтированных баз, надпись о состоянии базы и
+    // перестройка по чужой правке структуры у них общие и раздаются ОДНИМ обходом. Пока
+    // панели перечислялись по именам, библиотеку забывали: клик по ее заглушке ничего не
+    // делал, проценты подключения в ней стояли на месте, «снова доступна» не появлялась, а
+    // чужая новая коллекция приходила в ее дерево только с перезаходом в раздел.
+    // Наборы баз у панелей разные (конструктору — все смонтированные, остальным —
+    // допущенные), поэтому InitializeWorkspace по-прежнему зовется у каждой своей строкой.
+    private Controls.Components.SidebarTree[] DatabaseSidebars =>
+        [ConstructorSidebar, CalendarSidebar, TasksSidebar, LibrarySidebar];
+
     // Пересобрать боковые панели и обновить набор БД календаря после монтирования/
     // размонтирования/получения допуска. Немонтированные БД очереди показываются
-    // заглушками со статусом во всех трех сайдбарах.
+    // заглушками со статусом во всех сайдбарах баз.
     private void SyncMountedToUi()
     {
         HookPermissionEvents();

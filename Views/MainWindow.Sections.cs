@@ -330,6 +330,14 @@ public partial class MainWindow
             _notesView?.SetVault(path);
         };
 
+        // «Оформление → Отображение раздела навигации»: панель разделов видна и из настроек,
+        // поэтому скрытый раздел уходит с нее сразу.
+        view.ViewVisibilityChanged += (_, scope) =>
+        {
+            if (scope == SmartBase.Settings.ViewCatalog.ScopeNavigation)
+                ActivityBarControl.ApplyModuleVisibility();
+        };
+
         foreach (var (dbId, text) in _dbStatuses) view.SetDatabaseStatus(dbId, text);
         return view;
     }

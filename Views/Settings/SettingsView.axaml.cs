@@ -52,6 +52,10 @@ public partial class SettingsView : UserControl
     public event EventHandler<bool>?              BackgroundEnabledChanged;
     // Выбрана (или очищена) папка хранилища заметок — MainWindow передает путь дереву и разделу.
     public event EventHandler<string>?            NotesVaultChanged;
+    // «Оформление → Отображение …»: набор скрытых в области (ViewCatalog.Scope*) сменился и уже
+    // сохранен. MainWindow раздает его тем, кто показывает эту область: без события панель
+    // разделов узнавала о скрытом разделе только при следующем запуске.
+    public event EventHandler<string>?            ViewVisibilityChanged;
 
     // Тумблеры раздела «Общее» инициализированы — до этого IsCheckedChanged не обрабатываем
     // (иначе присвоение IsChecked на старте записало бы автозапуск в ОС на каждом запуске).
@@ -235,6 +239,7 @@ public partial class SettingsView : UserControl
             scope.SaveKey(first.Key);
 
         RebuildAppearanceScope(scope);
+        ViewVisibilityChanged?.Invoke(this, scope.Scope);
     }
 
     // ── Общее ────────────────────────────────────────────────────────────────

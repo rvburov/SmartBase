@@ -564,6 +564,7 @@ async Task Scenario()
         Call(settingsSidebar, "Select", c.Key);
         await Settle(quietSec: 1.5, capSec: 60);
     }
+    if (Want("settings")) await NavigationVisibility();
     if (Want("profile")) ShowModule("profile");
     var profileSidebar = main.FindControl<Control>("ProfileSidebar")!;
     if (Want("profile"))
@@ -574,6 +575,37 @@ async Task Scenario()
         await Settle(quietSec: 1.5, capSec: 60);
     }
     Step("конец");
+}
+
+// «Оформление → Отображение раздела навигации»: скрытый раздел пропадает с панели слева СРАЗУ,
+// а не после перезапуска, и сразу же возвращается. Набор меняется тем же обработчиком, что у
+// галочек экрана настроек, и возвращается к прежнему.
+async Task NavigationVisibility()
+{
+    var view   = Get(main!, "_settingsView")!;
+    var scope  = ((System.Collections.IEnumerable)Get(view, "_appearance")!).Cast<object>()
+                 .First(s => (string)s.GetType().GetProperty("Scope")!.GetValue(s)! ==
+                             SmartBase.Settings.ViewCatalog.ScopeNavigation);
+    var before = SmartBase.Utils.AppSettings.LoadHiddenViews(SmartBase.Settings.ViewCatalog.ScopeNavigation).ToList();
+    var bar    = main!.FindControl<Control>("ActivityBarControl")!;
+
+    // Прячем раздел, который сейчас виден: задачи, а если их уже спрятали — календарь.
+    var (key, button) = before.Contains("tasks") ? ("calendar", "CalendarBtn") : ("tasks", "TasksBtn");
+    var btn = bar.FindControl<Control>(button)!;
+
+    Step("оформление: скрыть раздел");
+    Call(view, "OnAppearanceVisibilityChanged", scope, (IReadOnlyList<string>)[.. before, key]);
+    await Settle(quietSec: 0.3, capSec: 10);
+    var gone = !btn.IsVisible;
+
+    Call(view, "OnAppearanceVisibilityChanged", scope, (IReadOnlyList<string>)before);
+    await Settle(quietSec: 0.3, capSec: 10);
+    var back = btn.IsVisible;
+
+    Console.WriteLine(gone && back
+        ? $"Оформление: раздел «{key}» пропадает с панели и возвращается сразу"
+        : $"Оформление: НЕ ПРОШЛО — скрытый раздел «{key}» {(gone ? "пропал" : "остался на панели")}, " +
+          $"возвращенный {(back ? "вернулся" : "не вернулся")}");
 }
 
 // Кадры календаря: неделя и день на заведенной неделе (6–12 июля 2026), прокрутка к 8:00.
@@ -1505,8 +1537,9 @@ async Task TableOps()
 
 // Боковая панель конструктора: после каждого действия строки разложены по своим данным (слот
 // стрелки, отступ уровня). Действия: свернуть и развернуть каждую базу и все разом, подключить базу
-// в работающую программу (заглушка «в очереди…», затем база), перенести коллекцию в группу и обратно
-// окном «Расположение», удалить коллекцию; переходы между разделами.
+// в работающую программу (заглушка «в очереди…», затем база), заглушка недоступной базы во всех
+// четырех панелях баз, перенести коллекцию в группу и обратно окном «Расположение», удалить
+// коллекцию; переходы между разделами.
 async Task SidebarOps()
 {
     ShowModule("constructor");
@@ -1516,9 +1549,11 @@ async Task SidebarOps()
     int? targetGroup = null;   // куда окно «Расположение» переносит коллекцию (null — корень базы)
     var collapsed = (HashSet<int>)Get(sidebar, "_collapsedDbRoots")!;
 
+    var dialogs = 0;   // окна, открытые за сценарий: по ним видно, что клик по заглушке объяснен
     Window.WindowOpenedEvent.AddClassHandler<Window>((w, _) =>
     {
         if (w is MainWindow) return;
+        dialogs++;
         Dispatcher.UIThread.Post(() => AnswerSidebar(w), DispatcherPriority.Background);
     });
 
@@ -1566,6 +1601,73 @@ async Task SidebarOps()
     Check($"после подключения свернута «{first.Name}»");
     first.IsExpanded = true; collapsed.Remove(first.DbId); Call(sidebar, "RebuildRows");
     Check($"после подключения развернута «{first.Name}»");
+
+    // Заглушка недоступной базы — во ВСЕХ четырех боковых панелях баз. Пока панели
+    // перечислялись по именам, библиотеку забывали: клик по ее заглушке молчал, а живая надпись
+    // ретрая и надпись о состоянии базы до нее не доходили. MarkFailed ставит заглушку без
+    // очереди подключения — она не исчезнет посреди проверки.
+    var lost  = registry.Add("Недоступная", Path.Combine(runDir, "нет-такой-папки", "недоступная.db"));
+    var queue = Get(main, "_mountQueue")!;
+    Call(queue, "MarkFailed", lost.Id, "Недоступная", "недоступна: файл не найден", null!);
+    Call(main, "SyncMountedToUi");
+    // Settle здесь не годится: недоступная база числится в очереди до уборки, и он прождал бы
+    // каждый раз до упора. Хватает паузы, за которую окно разберет свою очередь работ.
+    await Task.Delay(500);
+    Check("заглушка недоступной базы");
+
+    const string retry = "недоступна: повтор через ≈ 1 мин";
+    Call(queue, "UpdateFailedText", lost.Id, retry);
+    var back = workspace.Mounted.First().DbId;
+    Call(main, "SetDbStatus", back, "снова доступна");
+    await Task.Delay(500);
+
+    foreach (var name in new[] { "ConstructorSidebar", "CalendarSidebar", "TasksSidebar", "LibrarySidebar" })
+    {
+        var tree   = main!.FindControl<Control>(name)!;
+        var before = dialogs;
+        ((EventHandler<int>?)Get(tree, "PendingDatabaseTapped"))?.Invoke(tree, lost.Id);
+        await Task.Delay(500);
+
+        // Надпись заглушки сверяется по СТРОКЕ панели, а не по ее записи: записи заглушек у
+        // панелей общие, и обновленная через одну панель запись выглядела бы обновленной у всех,
+        // хотя строка на экране оставалась прежней.
+        var stub = ((System.Collections.IEnumerable)Get(tree, "_rows")!)
+                   .Cast<SmartBase.Controls.Components.SidebarRow>()
+                   .FirstOrDefault(r => r.Node.IsPending && r.Node.DbId == lost.Id);
+        var note = ((Dictionary<int, string>)Get(tree, "_dbStatus")!).GetValueOrDefault(back);
+
+        var problems = new List<string>();
+        if (dialogs == before)            problems.Add("клик по заглушке молчит");
+        if (stub?.Status != retry)        problems.Add($"надпись заглушки «{stub?.Status}»");
+        if (note != "снова доступна")     problems.Add($"надпись о базе «{note}»");
+        faults += problems.Count;
+        Console.WriteLine(problems.Count == 0 ? $"  {name}: заглушка и надписи на месте"
+                                              : $"  {name}: НЕ ПРОШЛО: {string.Join("; ", problems)}");
+    }
+
+    Call(main, "SetDbStatus", back, null!);
+    Call(queue, "Forget", lost.Id);
+    registry.Remove(lost.Id);
+    Call(main, "SyncMountedToUi");
+    await Settle(0.5, 30);
+    Check("недоступная база убрана");
+
+    // Чужая правка структуры (сосед по общей базе завел коллекцию) перестраивает деревья ВСЕХ
+    // панелей баз. Библиотека раньше ее не получала и ждала перезахода в раздел.
+    var trees = new[] { "ConstructorSidebar", "CalendarSidebar", "TasksSidebar", "LibrarySidebar" }
+        .Select(n => (Name: n, Tree: (SmartBase.Controls.Components.SidebarTree)main!.FindControl<Control>(n)!))
+        .ToList();
+    var stamps = trees.ToDictionary(t => t.Name, t => t.Tree.DataStamp);
+    Call(main, "OnRemoteChanges", back,
+         new List<SmartBase.Database.ChangePoller.RemoteChange> { new("insert", "collection", "Стенд: чужая") });
+    await Settle(0.5, 30);
+    foreach (var (name, tree) in trees)
+    {
+        var rebuilt = tree.DataStamp > stamps[name];
+        if (!rebuilt) faults++;
+        Console.WriteLine(rebuilt ? $"  {name}: чужая правка структуры перестроила дерево"
+                                  : $"  {name}: НЕ ПРОШЛО: чужая правка структуры не дошла");
+    }
 
     // Переходы между разделами.
     ShowModule("calendar"); await Settle(1, 30);
