@@ -160,7 +160,82 @@ void Run()
     Check(state.Contains("скан", StringComparison.OrdinalIgnoreCase),
           "про скан без текстового слоя ничего не сказано");
 
+    // Почему кнопка режима погашена, говорит подсказка, и она ВИДНА: у погашенной кнопки
+    // подсказку включает ShowOnDisabled — без него все объяснения молчали.
+    Check(ToolTip.GetShowOnDisabled(pagesBtn!), "у погашенной кнопки режима подсказка не показывается");
+    var txtHint = ToolTip.GetTip(pagesBtn!) as string ?? "";
+    Console.WriteLine("Подсказка у текстового файла: " + txtHint);
+    Check(txtHint.Contains("текстового файла", StringComparison.Ordinal),
+          $"у текстового файла подсказка «{txtHint}»");
+
+    ModeHints(reader);
+    ScanModes(reader);
     Pages(reader, window);
+}
+
+// ── Подсказки кнопки режима ─────────────────────────────────────────────────────
+
+void ModeHints(DocReaderView reader)
+{
+    Console.WriteLine();
+    Console.WriteLine("Подсказки кнопки режима:");
+    var btn = Find<ToggleButton>(reader, "DocModeBtn")!;
+
+    // Старая книга XLS таблицей не показывается, и подсказка называет ее формат. Раньше она
+    // говорила «страницами пока показывается только PDF» — для книги это неправда.
+    var xls = Path.Combine(dir, "смета.xls");
+    File.WriteAllBytes(xls, [0xD0, 0xCF, 0x11, 0xE0]);
+    reader.Show(new DocRecord { Title = "Смета", Path = xls }, "");
+    var hint = ToolTip.GetTip(btn) as string ?? "";
+    Console.WriteLine("У книги XLS: " + hint);
+    Check(hint.Contains("XLS — нет", StringComparison.Ordinal), $"у книги XLS подсказка «{hint}»");
+
+    // Книга, которая не открылась, — не пустая книга: прежде подсказка говорила «в книге нет
+    // листов с данными».
+    var broken = Path.Combine(dir, "битая.xlsx");
+    File.WriteAllText(broken, "это не книга");
+    reader.Show(new DocRecord { Title = "Битая", Path = broken }, "");
+    if (!Wait(() => ToolTip.GetTip(btn) as string == DocModeHint.BookFailed,
+              "у книги, которая не открылась, подсказка не говорит об этом"))
+        return;
+    Console.WriteLine("У битой книги: " + ToolTip.GetTip(btn));
+}
+
+// ── Скан PDF в двух режимах ─────────────────────────────────────────────────────
+
+void ScanModes(DocReaderView reader)
+{
+    Console.WriteLine();
+    Console.WriteLine("Скан PDF в двух режимах:");
+
+    // Страница без текстового слоя: у текста — объяснение, у страниц — сама страница.
+    var scan = Path.Combine(dir, "скан.pdf");
+    using (var builder = new PdfDocumentBuilder())
+    {
+        builder.AddPage(595, 842);
+        File.WriteAllBytes(scan, builder.Build());
+    }
+    reader.Show(new DocRecord { Title = "Скан", Path = scan }, "договор");
+
+    var btn   = Find<ToggleButton>(reader, "DocModeBtn")!;
+    var label = Find<TextBlock>(reader, "StateLabel")!;
+    if (!Wait(() => btn.IsEnabled && (label.Text ?? "").Contains("скан", StringComparison.OrdinalIgnoreCase),
+              "скан PDF не объяснен или его страницы не открылись"))
+        return;
+
+    btn.IsChecked = true;
+    Pump();
+    Check(!label.IsVisible, "в режиме страниц надпись о скане закрыла страницы");
+    Check(Find<ListBox>(reader, "PagesList") is { IsVisible: true }, "страницы скана не показаны");
+
+    // Возврат в «Текст»: объяснение на месте. Раньше режим страниц затирал надпись, и текст
+    // скана показывался пустым списком.
+    Find<ToggleButton>(reader, "TextModeBtn")!.IsChecked = true;
+    Pump();
+    var state = label.Text ?? "";
+    Console.WriteLine("После возврата в «Текст»: " + state);
+    Check(label.IsVisible && state.Contains("скан", StringComparison.OrdinalIgnoreCase),
+          "после возврата в «Текст» объяснение про скан пропало");
 }
 
 // ── Режим «как в документе» ─────────────────────────────────────────────────────
@@ -240,6 +315,15 @@ void Pages(DocReaderView reader, Window window)
     Check(counter.StartsWith("2 из 4", StringComparison.Ordinal),
           $"после перехода счетчик показывает «{counter}» вместо «2 из 4»");
 
+    // Позиция обязана устоять и через паузу пересчета (200 мс). Show вписывает запрос в строку
+    // сам, а событие о правке строки приходит отложенно — и прежде запускало второй пересчет,
+    // который через паузу отбрасывал к первому совпадению. Ждем втрое дольше паузы.
+    var settle = DateTime.UtcNow.AddMilliseconds(600);
+    while (DateTime.UtcNow < settle) { Pump(); Thread.Sleep(10); }
+    counter = Find<TextBlock>(reader, "CounterLabel")?.Text ?? "";
+    Check(counter.StartsWith("2 из 4", StringComparison.Ordinal),
+          $"через паузу пересчета счетчик откатился к «{counter}»");
+
     // Сумму набирают подряд, без разрядов. Индекс находит по «30772» документ, где она стоит
     // как «30 772,48», и страница обязана подсветить совпадение: пока слова страницы сверялись
     // поодиночке, ни «30», ни «772,48» с запросом не совпадали, и счетчик говорил «нет».
@@ -255,7 +339,75 @@ void Pages(DocReaderView reader, Window window)
     Pump();
     Check(Find<ListBox>(reader, "LinesList") is { IsVisible: true }, "по возврату не показан текст");
 
+    LateText(reader);
     Sheets(reader);
+}
+
+// ── Текст дочитывается позже страниц ────────────────────────────────────────────
+
+// Том на триста страниц (потолок панели): страницы открываются сразу, а текст дочитывается заметно позже. Человек
+// успевает перейти к страницам и шагнуть по совпадениям — и дочитавшийся текст раньше отбрасывал
+// его к первому совпадению, перезапуская обход страниц.
+void LateText(DocReaderView reader)
+{
+    Console.WriteLine();
+    Console.WriteLine("Текст дочитывается позже страниц:");
+
+    var tome = Path.Combine(dir, "том.pdf");
+    using (var builder = new PdfDocumentBuilder())
+    {
+        var font = builder.AddStandard14Font(Standard14Font.Helvetica);
+        for (var p = 1; p <= 300; p++)
+        {
+            var page = builder.AddPage(595, 842);
+            page.AddText($"Dogovor, stranica {p}", 12, new PdfPoint(40, 780), font);
+            for (var line = 0; line < 60; line++)
+                page.AddText($"Punkt {p}.{line}: tekst toma dlya chteniya", 10, new PdfPoint(40, 740 - line * 12), font);
+        }
+        File.WriteAllBytes(tome, builder.Build());
+    }
+
+    reader.Show(new DocRecord { Title = "Том", Path = tome }, "dogovor");
+
+    var btn   = Find<ToggleButton>(reader, "DocModeBtn")!;
+    var lines = Find<ListBox>(reader, "LinesList")!;
+    string Counter() => Find<TextBlock>(reader, "CounterLabel")?.Text ?? "";
+    // Текст дочитан — у списка строк есть источник. ItemCount для этого не годится: после
+    // сброса источника он держит число строк прошлого документа.
+    bool TextLoaded() => lines.ItemsSource is System.Collections.ICollection { Count: > 0 };
+
+    if (!Wait(() => btn.IsEnabled, "страницы тома не открылись")) return;
+    btn.IsChecked = true;
+    Pump();
+
+    // Два совпадения на страницах — и шаг ко второму.
+    if (!Wait(() => HitsAtLeast(Counter(), 2), "на страницах тома не нашлось и двух совпадений")) return;
+    Find<Button>(reader, "NextBtn")?.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+    Pump();
+
+    Console.WriteLine($"Шаг по страницам: {Counter()}, текст к этой минуте {(TextLoaded() ? "дочитан" : "еще читается")}");
+    if (TextLoaded())
+    {
+        // Текст успел раньше — проверять нечего, и выдавать это за пройденную проверку нельзя.
+        Console.WriteLine("Сценарий не сложился: текст дочитался раньше шага по страницам.");
+        return;
+    }
+
+    if (!Wait(TextLoaded, "текст тома так и не дочитался", attempts: 1500)) return;
+    var settle = DateTime.UtcNow.AddMilliseconds(300);
+    while (DateTime.UtcNow < settle) { Pump(); Thread.Sleep(10); }
+
+    var counter = Counter();
+    Console.WriteLine("Когда текст дочитался: " + counter);
+    Check(counter.StartsWith("2 из", StringComparison.Ordinal),
+          $"дочитавшийся текст отбросил к «{counter}» вместо второго совпадения");
+}
+
+// «2 из 37» — совпадений на страницах уже не меньше двух.
+static bool HitsAtLeast(string counter, int count)
+{
+    var at = counter.IndexOf(" из ", StringComparison.Ordinal);
+    return at > 0 && int.TryParse(counter[(at + 4)..].Split(' ')[0], out var total) && total >= count;
 }
 
 // ── Лист книги таблицей ─────────────────────────────────────────────────────────

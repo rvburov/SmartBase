@@ -18,10 +18,11 @@ public enum DocFormatFamily
 /// docx, «ТЕКСТ» для txt, md и csv. Семейство же выбирает цвет, поэтому правило сведено в одно
 /// место: иначе подпись и цвет разъехались бы при первом добавлении расширения.
 ///
-/// Разбиение намеренно совпадает с <see cref="DocTextExtractor.SupportedExtensions"/> там, где
-/// это возможно: человек видит на плитке «ТЕКСТ» ровно у тех файлов, внутри которых поиск
-/// умеет читать. Исключение одно — старый бинарный <c>.doc</c>: лента у него «WORD», потому что
-/// это правда про формат, а про невозможность прочитать текст говорит чип «текст не прочитан».
+/// «ТЕКСТ» на плитке стоит ровно у тех файлов, внутри которых поиск умеет читать: список
+/// текстовых расширений один на двоих с разбором (<see cref="DocTextExtractor.PlainTextExtensions"/>).
+/// Раньше списков было два, и у INI, JSON, XML, YML и YAML лента «ТЕКСТ» обещала то, чего поиск не
+/// делал. У «WORD» и «EXCEL» иначе: лента говорит правду про формат, а не про чтение, — старые
+/// <c>.doc</c> и <c>.xls</c> не читаются, и об этом говорит чип «текст не прочитан».
 /// </summary>
 public static class DocFormats
 {
@@ -30,7 +31,6 @@ public static class DocFormats
 
     private static readonly string[] WordExtensions  = ["doc", "docx", "dot", "dotx", "docm"];
     private static readonly string[] ExcelExtensions = ["xls", "xlsx", "xlsm", "xlsb", "xlt", "xltx"];
-    private static readonly string[] TextExtensions  = ["txt", "md", "csv", "log", "ini", "json", "xml", "yml", "yaml"];
 
     /// <summary>Семейство по расширению без точки (регистр не важен).</summary>
     public static DocFormatFamily FamilyOf(string extension)
@@ -40,7 +40,7 @@ public static class DocFormats
         if (ext == "pdf")                                       return DocFormatFamily.Pdf;
         if (Array.IndexOf(WordExtensions, ext)  >= 0)           return DocFormatFamily.Word;
         if (Array.IndexOf(ExcelExtensions, ext) >= 0)           return DocFormatFamily.Excel;
-        if (Array.IndexOf(TextExtensions, ext)  >= 0)           return DocFormatFamily.Text;
+        if (Array.IndexOf(DocTextExtractor.PlainTextExtensions, ext) >= 0) return DocFormatFamily.Text;
         return DocFormatFamily.Other;
     }
 

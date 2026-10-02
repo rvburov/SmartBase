@@ -60,12 +60,25 @@ public static class DocTextExtractor
     /// <summary>Порог размера файла по умолчанию, МБ: тяжелее — не разбираем вовсе.</summary>
     public const int DefaultMaxFileMb = 64;
 
+    /// <summary>
+    /// Текстовые форматы: читаются как есть, без разборщика. Этот же список дает на плитке
+    /// ленту «ТЕКСТ» (<see cref="DocFormats"/>): лента обещает, что внутри ищется, и обещание
+    /// держится ровно потому, что список один. Раньше их было два, и у INI, JSON, XML, YML и
+    /// YAML лента «ТЕКСТ» стояла, а текст не читался.
+    /// </summary>
+    public static readonly string[] PlainTextExtensions =
+        ["txt", "md", "csv", "log", "ini", "json", "xml", "yml", "yaml"];
+
     /// <summary>Расширения (без точки, в нижнем регистре), текст которых умеем читать.</summary>
     public static readonly string[] SupportedExtensions =
-        ["pdf", "docx", "xlsx", "xlsm", "txt", "md", "csv", "log"];
+        ["pdf", "docx", "xlsx", "xlsm", .. PlainTextExtensions];
 
-    /// <summary>Понятная человеку строка поддержанных форматов — для подсказок интерфейса.</summary>
-    public static string SupportedText => "PDF, DOCX, XLSX, TXT, MD, CSV";
+    /// <summary>
+    /// Понятная человеку строка поддержанных форматов — для подсказок интерфейса. Собирается из
+    /// <see cref="SupportedExtensions"/>, а не пишется руками: написанная руками, она отстала от
+    /// списка на XLSM и LOG, и человек читал, что их текст не ищется.
+    /// </summary>
+    public static string SupportedText => string.Join(", ", SupportedExtensions.Select(e => e.ToUpperInvariant()));
 
     /// <summary>Расширение файла без точки в нижнем регистре; «» — расширения нет.</summary>
     public static string ExtensionOf(string path)
@@ -91,13 +104,16 @@ public static class DocTextExtractor
     /// подъем стоит перечитывания всех документов формата.
     /// <list type="bullet">
     /// <item>книга, 1 — числа и даты так, как их показывает панель («05.03.2024», а не 45356),
-    ///       логические значения словами; раньше — как они лежат в файле.</item>
+    ///       логические значения словами; раньше — как они лежат в файле;</item>
+    /// <item>INI, JSON, XML, YML, YAML, 1 — читаются как текст; раньше формат считался
+    ///       нечитаемым, и такой файл в кеше помечен «формат не читается».</item>
     /// </list>
     /// </summary>
     public static int RevisionOf(string path) => ExtensionOf(path) switch
     {
-        "xlsx" or "xlsm" => 1,
-        _                => 0,
+        "xlsx" or "xlsm"                           => 1,
+        "ini" or "json" or "xml" or "yml" or "yaml" => 1,
+        _                                          => 0,
     };
 
     /// <summary>

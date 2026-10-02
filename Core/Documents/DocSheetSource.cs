@@ -100,9 +100,14 @@ public readonly record struct DocSheetCut(bool Rows = false, int RowsShown = 0, 
 /// содержимому ищет и в них, и найденное там слово в панели не подсветится — об этом надо
 /// сказать.
 /// </summary>
-public sealed record DocBookView(IReadOnlyList<DocSheet> Sheets, int HiddenSheets)
+/// <param name="Broken">Книга не открылась: файл битый, занят или пропал. Это не то же, что
+/// книга без листов с данными, — и человеку это говорится по-разному.</param>
+public sealed record DocBookView(IReadOnlyList<DocSheet> Sheets, int HiddenSheets, bool Broken = false)
 {
     public static DocBookView Empty { get; } = new([], 0);
+
+    /// <summary>Книга не открылась.</summary>
+    public static DocBookView Failed { get; } = new([], 0, Broken: true);
 }
 
 /// <summary>Лист книги: имя, строки и ширины колонок в знаках.</summary>
@@ -208,17 +213,22 @@ public static class DocSheetSource
 
     /// <summary>
     /// Разобрать книгу. Пустой список — файл не XLSX, не открылся или в нем нет ни одного
-    /// листа с данными; для панели это не сбой, а повод остаться в режиме текста.
+    /// листа с данными; для панели это не сбой, а повод остаться в режиме текста. Почему именно
+    /// пусто, говорит <see cref="OpenBook"/>.
     /// </summary>
     public static IReadOnlyList<DocSheet> Open(string path, CancellationToken ct = default) =>
         OpenBook(path, ct).Sheets;
 
-    /// <summary>То же вместе с числом скрытых листов — его панель показывает строкой над листом.</summary>
+    /// <summary>
+    /// То же вместе с числом скрытых листов — его панель показывает строкой над листом — и с
+    /// признаком «не открылась» (<see cref="DocBookView.Broken"/>): битую книгу панель не
+    /// называет пустой.
+    /// </summary>
     public static DocBookView OpenBook(string path, CancellationToken ct = default)
     {
         try { return Read(path, ct); }
         catch (OperationCanceledException) { throw; }
-        catch { return DocBookView.Empty; }
+        catch { return DocBookView.Failed; }
     }
 
     /// <summary>Фоновый разбор: книга на тысячи строк не должна держать UI-поток.</summary>
@@ -241,8 +251,9 @@ public static class DocSheetSource
     /// </summary>
     internal static DocBookView Read(string path, CancellationToken ct)
     {
+        // Пропавший файл — сбой, а не пустая книга: исключение открытия уходит зовущему.
         var ext = DocTextExtractor.ExtensionOf(path);
-        if (ext is not ("xlsx" or "xlsm") || !File.Exists(path)) return DocBookView.Empty;
+        if (ext is not ("xlsx" or "xlsm")) return DocBookView.Empty;
 
         using var doc = SpreadsheetDocument.Open(path, false);
         var book = doc.WorkbookPart;

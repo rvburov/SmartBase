@@ -169,6 +169,28 @@ public sealed class DocTextExtractorTests : IDisposable
         Assert.Contains("Регламент", result.Text);
     }
 
+    /// <summary>
+    /// INI, JSON, XML, YML и YAML читаются как текст — и для поиска, и для панели. На плитке у них
+    /// лента «ТЕКСТ», и она обещает, что внутри ищется; раньше поиск в них не заглядывал.
+    /// </summary>
+    [Theory]
+    [InlineData("настройки.ini", "[Смета]\nВалюта=рубль")]
+    [InlineData("выгрузка.json", "{\"смета\": \"рубль\"}")]
+    [InlineData("смета.xml",     "<?xml version=\"1.0\" encoding=\"utf-8\"?><Смета Валюта=\"рубль\"/>")]
+    [InlineData("сборка.yml",    "смета:\n  валюта: рубль")]
+    [InlineData("сборка.yaml",   "смета:\n  валюта: рубль")]
+    public void Config_and_data_files_are_read_as_text(string name, string text)
+    {
+        var path = WriteText(name, text);
+
+        var result = DocTextExtractor.Extract(path);
+        Assert.Equal(DocTextStatus.Ok, result.Status);
+        Assert.Contains("рубль", result.Text, StringComparison.Ordinal);
+
+        Assert.Equal(DocTextStatus.Ok, DocReadText.Read(path).Status);
+        Assert.Equal(1, DocTextExtractor.RevisionOf(path));
+    }
+
     [Fact]
     public void Markdown_and_csv_are_read_as_plain_text()
     {

@@ -69,6 +69,23 @@ public partial class DocReaderView : UserControl
     /// <summary>Разбор для чтения — по нему строка «показано не все» говорит про режим «Текст».</summary>
     private DocReadResult _read;
 
+    /// <summary>
+    /// Состояние ТЕКСТА: «Читаю документ…», «скан без текстового слоя», «файла нет»; пусто —
+    /// текст есть. Живет отдельно от надписи: в режиме «как в документе» надпись прячется, а
+    /// состояние текста остается. Раньше режим страниц затирал саму надпись, и «Текст» после
+    /// возврата показывал у скана пустой список вместо объяснения.
+    /// </summary>
+    private string _textState = "";
+
+    /// <summary>
+    /// Запрос, по которому посчитаны совпадения. TextChanged у Avalonia приходит ОТЛОЖЕННО — уже
+    /// после того, как Show или SetQuery сами вписали запрос, — и погасить его флагом нельзя:
+    /// обработчик сверяет текст с этим значением и свое же вписанное узнает. Раньше он запускал
+    /// по нему второй пересчет, и тот через паузу отбрасывал человека, уже шагавшего по
+    /// совпадениям, к первому.
+    /// </summary>
+    private string _query = "";
+
     /// <summary>Скрытых листов в книге: их не показывает и Excel, но строка о них говорит.</summary>
     private int _hiddenSheets;
 
@@ -240,7 +257,12 @@ public partial class DocReaderView : UserControl
         SheetPrevBtn.Click += (_, _) => StepSheet(-1);
         SheetNextBtn.Click += (_, _) => StepSheet(+1);
 
-        FindBox.TextChanged += (_, _) => { _findDebounce.Stop(); _findDebounce.Start(); };
+        FindBox.TextChanged += (_, _) =>
+        {
+            _findDebounce.Stop();
+            // Свое же вписанное (Show, SetQuery) второй раз не пересчитываем — см. _query.
+            if ((FindBox.Text ?? "") != _query) _findDebounce.Start();
+        };
         FindBox.KeyDown     += (_, e) =>
         {
             if (e.Key != Key.Enter) return;
@@ -265,10 +287,14 @@ public partial class DocReaderView : UserControl
         TitleLabel.Text    = doc.DisplayTitle;
         SubtitleLabel.Text = Subtitle(doc);
         FindBox.Text       = query ?? "";
+        _query             = FindBox.Text ?? "";
         _findDebounce.Stop();
         _widthDebounce.Stop();
 
         Reset();
+        // Почему у документа нет настоящего вида, видно сразу по формату; у PDF и книги это
+        // решит итог открытия — страницы и таблица могут и не открыться.
+        ToolTip.SetTip(DocModeBtn, DocModeHint.ForFormat(doc.Path));
         // Каждый документ открывается ТЕКСТОМ, даже если прошлый читали страницами: человек
         // нажал «Прочитать» после поиска, и ему нужно найденное слово, а не обложка.
         SetMode(ReadMode.Text, force: true);
@@ -316,6 +342,7 @@ public partial class DocReaderView : UserControl
         _sheetHits.Clear();
         _sheetIndex = 0;
         _read         = default;
+        _textState    = "";
         _hiddenSheets = 0;
         CutLabel.Text      = "";
         CutLabel.IsVisible = false;
@@ -382,7 +409,7 @@ public partial class DocReaderView : UserControl
         BuildLines(result);
         ShowState("");
         LinesList.ItemsSource = _lines;
-        Rehighlight();
+        HighlightLoadedText();
     }
 
     /// <summary>
@@ -405,8 +432,20 @@ public partial class DocReaderView : UserControl
             : "Файла нет на диске — возможно, его переместили или удалили.",
     };
 
+    /// <summary>Запомнить состояние текста и показать его, если открыт «Текст».</summary>
     private void ShowState(string text)
     {
+        _textState = text;
+        ShowCurrentState();
+    }
+
+    /// <summary>
+    /// Показать то, что положено текущему режиму. Состояние («скан», «файла нет») относится к
+    /// ТЕКСТУ: у скана страницы есть и показывать их можно — на них просто нечего подсвечивать.
+    /// </summary>
+    private void ShowCurrentState()
+    {
+        var text  = _mode == ReadMode.Text ? _textState : "";
         var empty = text.Length > 0;
         StateLabel.Text      = text;
         StateLabel.IsVisible = empty;
@@ -452,17 +491,14 @@ public partial class DocReaderView : UserControl
     /// </summary>
     private async Task OpenPagesAsync(DocRecord doc, int gen)
     {
-        if (DocTextExtractor.ExtensionOf(doc.Path) != "pdf")
-        {
-            ToolTip.SetTip(DocModeBtn, "Страницами пока показывается только PDF");
-            return;
-        }
+        // Почему у прочих форматов страниц нет, подсказка уже сказала (DocModeHint.ForFormat).
+        if (DocTextExtractor.ExtensionOf(doc.Path) != "pdf") return;
 
         var source = await Task.Run(() => DocPageSource.Open(doc.Path));
         if (gen != _gen || source is null)
         {
             source?.Dispose();
-            if (gen == _gen) ToolTip.SetTip(DocModeBtn, "Страницы этого документа не открылись");
+            if (gen == _gen) ToolTip.SetTip(DocModeBtn, DocModeHint.PagesFailed);
             return;
         }
 
@@ -497,13 +533,14 @@ public partial class DocReaderView : UserControl
         catch (Exception ex)
         {
             Serilog.Log.Warning(ex, "Библиотека: книга не разобралась: {Path:l}", doc.Path);
-            return;
+            book = DocBookView.Failed;
         }
 
         if (gen != _gen) return;
-        if (book.Sheets.Count == 0)
+        // Битая книга, пустая и книга, где все листы с данными скрыты, — три разных ответа.
+        if (DocModeHint.ForBook(book) is { } hint)
         {
-            ToolTip.SetTip(DocModeBtn, "В книге нет листов с данными");
+            ToolTip.SetTip(DocModeBtn, hint);
             return;
         }
 
@@ -908,9 +945,8 @@ public partial class DocReaderView : UserControl
         TextModeBtn.IsChecked  = mode == ReadMode.Text;
         DocModeBtn.IsChecked = mode == ReadMode.Document;
 
-        // Состояние («скан», «файла нет») относится к ТЕКСТУ. У скана страницы есть и
-        // показывать их можно — на них просто нечего подсвечивать.
-        ShowState(mode == ReadMode.Document ? "" : StateLabel.Text ?? "");
+        // Состояние текста не затирается: режим страниц его только прячет.
+        ShowCurrentState();
 
         _current = HitCount > 0 ? 0 : -1;
         if (mode == ReadMode.Document && !ShowsSheet) ReflowPages();
@@ -1087,10 +1123,45 @@ public partial class DocReaderView : UserControl
     // ── Подсветка и переходы ──────────────────────────────────────────────────
 
     /// <summary>
-    /// Пересчитать совпадения по всему документу. Правила ровно те же, по которым ищет раздел
-    /// (<see cref="DocHighlight"/>), — иначе получилось бы «поиск нашел, а панель не подсветила».
+    /// Пересчитать совпадения по всему документу — запрос сменился. Правила ровно те же, по
+    /// которым ищет раздел (<see cref="DocHighlight"/>), — иначе получилось бы «поиск нашел, а
+    /// панель не подсветила».
     /// </summary>
     private void Rehighlight()
+    {
+        _query = FindBox.Text ?? "";
+        HighlightLines();
+
+        // Текущее совпадение — первое в ОТКРЫТОМ режиме. У страниц и листа его назначит их
+        // обход: совпадения по новому запросу там еще не сосчитаны, а номер из строк текста
+        // указывал бы в чужой список.
+        _current = _mode == ReadMode.Text && _hits.Count > 0 ? 0 : -1;
+        ApplyCurrent(scroll: true);
+
+        // Страницы и листы ищут свое: у страниц совпадения считаются по словам с их местами,
+        // у книги — по ячейкам, и списка строк для этого недостаточно.
+        if (_source is not null) _ = ScanPagesAsync(_gen);
+        if (ShowsSheet) ScanSheets();
+    }
+
+    /// <summary>
+    /// Текст дочитался: совпадения считаются только в его строках. Страницы и лист ищут свое с
+    /// той минуты, как открылись, а у большого документа они открываются раньше, чем дочитается
+    /// текст. Раньше дочитавшийся текст перезапускал их обход, и человека, уже шагавшего по
+    /// совпадениям на страницах, отбрасывало к первому. Текущее совпадение трогается, только
+    /// если открыт сам «Текст».
+    /// </summary>
+    private void HighlightLoadedText()
+    {
+        HighlightLines();
+        if (_mode != ReadMode.Text) return;
+
+        _current = _hits.Count > 0 ? 0 : -1;
+        ApplyCurrent(scroll: true);
+    }
+
+    /// <summary>Совпадения в строках текста: подсветка строк и список для стрелок.</summary>
+    private void HighlightLines()
     {
         _hits.Clear();
         var tokens = DocHighlight.Tokens(FindBox.Text);
@@ -1111,14 +1182,6 @@ public partial class DocReaderView : UserControl
             // Перерисовываем только те строки, где подсветка была или появилась.
             if (was > 0 || line.Hits.Count > 0) line.Refresh();
         }
-
-        _current = _hits.Count > 0 ? 0 : -1;
-        ApplyCurrent(scroll: true);
-
-        // Страницы и листы ищут свое: у страниц совпадения считаются по словам с их местами,
-        // у книги — по ячейкам, и списка строк для этого недостаточно.
-        if (_source is not null) _ = ScanPagesAsync(_gen);
-        if (ShowsSheet) ScanSheets();
     }
 
     /// <summary>Сколько совпадений в ТЕКУЩЕМ режиме — по ним ходят стрелки и счетчик.</summary>

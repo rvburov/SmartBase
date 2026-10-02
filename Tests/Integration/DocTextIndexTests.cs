@@ -330,6 +330,25 @@ public sealed class DocTextIndexTests : IDisposable
     }
 
     /// <summary>
+    /// Формат стал читаемым — файл, который кеш помнит как «формат не читается», перечитывается:
+    /// так JSON и XML, встреченные прежней версией программы, попадают в поиск без правки на
+    /// диске. До перечитывания перепись считает его непрочитанным, а не «без чтения текста».
+    /// </summary>
+    [Fact]
+    public void A_format_that_became_readable_is_read_again()
+    {
+        var json = Write("выгрузка.json", "{\"смета\": 1}");
+        _index.Put(json, DocText.Of(DocTextStatus.Unsupported));
+        SetRevision(0);
+
+        var survey = _index.Survey([json]);
+
+        Assert.Equal([json], survey.Pending);
+        Assert.Equal(0, survey.Census.Unsupported);
+        Assert.Equal(1, survey.Census.NotRead);
+    }
+
+    /// <summary>
     /// Кеш прежней версии программы — без колонки редакции. Он открывается, колонка
     /// добавляется, прочитанные книги идут на перечитывание, а остальное остается прочитанным.
     /// Так обновление программы и доводит новые числа до уже прочитанных книг.

@@ -592,6 +592,22 @@ public sealed class DocSheetSourceTests : IDisposable
     }
 
     /// <summary>
+    /// Книга, которая не открылась, — не пустая книга: панель говорит об этом по-разному. Пропавший
+    /// файл — тоже «не открылась». А не-книга и книга с данными сбоем не считаются.
+    /// </summary>
+    [Fact]
+    public void A_broken_book_is_told_apart_from_an_empty_one()
+    {
+        var broken = Path.Combine(_dir, "битая.xlsx");
+        File.WriteAllText(broken, "это не книга");
+
+        Assert.True(DocSheetSource.OpenBook(broken).Broken);
+        Assert.True(DocSheetSource.OpenBook(Path.Combine(_dir, "нет-такой.xlsx")).Broken);
+        Assert.False(DocSheetSource.OpenBook(WriteBook()).Broken);
+        Assert.False(DocSheetSource.OpenBook(Path.Combine(_dir, "заметки.txt")).Broken);
+    }
+
+    /// <summary>
     /// Книга со счетом дней от 1904 года: без ее признака та же дата уехала бы на четыре года и
     /// день назад — 04.03.2020 вместо 05.03.2024.
     /// </summary>

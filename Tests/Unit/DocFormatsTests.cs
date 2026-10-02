@@ -71,4 +71,45 @@ public sealed class DocFormatsTests
         Assert.Equal(strokes.Count, strokes.Distinct().Count());
         Assert.Equal(fills.Count,   fills.Distinct().Count());
     }
+
+    // ── Лента и чтение ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// «ТЕКСТ» на плитке обещает, что внутри ищется, — и обещание держится: файл с такой лентой
+    /// читается. Раньше у INI, JSON, XML, YML и YAML лента стояла, а поиск в них не заглядывал.
+    /// </summary>
+    [Theory]
+    [InlineData("ini")]
+    [InlineData("json")]
+    [InlineData("xml")]
+    [InlineData("yml")]
+    [InlineData("yaml")]
+    [InlineData("log")]
+    public void A_text_ribbon_promises_text_that_is_read(string ext)
+    {
+        Assert.Equal("ТЕКСТ", DocFormats.LabelOf(ext));
+        Assert.True(DocTextExtractor.IsSupported("файл." + ext));
+    }
+
+    /// <summary>У всякого читаемого формата своя лента, а не безликое «прочее».</summary>
+    [Fact]
+    public void Every_readable_format_has_a_family_of_its_own()
+    {
+        foreach (var ext in DocTextExtractor.SupportedExtensions)
+            Assert.NotEqual(DocFormatFamily.Other, DocFormats.FamilyOf(ext));
+    }
+
+    /// <summary>
+    /// Строка форматов, которую человек видит в трех местах, называет КАЖДЫЙ читаемый формат.
+    /// Написанная руками, она отстала от списка на XLSM и LOG, и выходило, что их текст не ищется.
+    /// </summary>
+    [Fact]
+    public void The_shown_list_of_formats_names_every_readable_one()
+    {
+        var shown = DocTextExtractor.SupportedText.Split(", ");
+
+        Assert.Equal(DocTextExtractor.SupportedExtensions.Length, shown.Length);
+        foreach (var ext in DocTextExtractor.SupportedExtensions)
+            Assert.Contains(ext.ToUpperInvariant(), shown);
+    }
 }

@@ -86,13 +86,18 @@
              у PDF (страницы) и у книг Excel (таблица листа). У Word и текстовых файлов кнопка
              видна, но погашена: верстку Word нам нечем воспроизвести, а у текстового файла
              «настоящего вида» и не бывает. Спрятать кнопку значило бы менять ширину полосы от
-             документа к документу. -->
+             документа к документу.
+
+             Почему кнопка погашена, говорит подсказка (DocModeHint). ShowOnDisabled — не
+             украшение: у погашенной кнопки подсказка по умолчанию не показывается, и все
+             объяснения молчали. -->
         <Border Grid.Row="2" Classes="modeseg"
                 HorizontalAlignment="Left"
                 Margin="16,12,16,0">
             <StackPanel Orientation="Horizontal" Spacing="2">
                 <ToggleButton x:Name="TextModeBtn"  Classes="modeseg" Content="Текст" IsChecked="True" />
-                <ToggleButton x:Name="DocModeBtn" Classes="modeseg" Content="Как в документе" />
+                <ToggleButton x:Name="DocModeBtn" Classes="modeseg" Content="Как в документе"
+                              ToolTip.ShowOnDisabled="True" />
             </StackPanel>
         </Border>
 
