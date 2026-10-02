@@ -82,6 +82,25 @@ public static class DocTextExtractor
         Array.IndexOf(SupportedExtensions, ExtensionOf(path)) >= 0;
 
     /// <summary>
+    /// Редакция разбора формата. Кеш помнит, какой редакцией прочитан документ, и перепись
+    /// считает прочитанное прежней редакцией ИЗМЕНЕННЫМ — следующее чтение его перечитает. Без
+    /// этого улучшенный разбор доходил бы только до документов, которые с тех пор правили, а
+    /// остальные так и искались бы по старому тексту.
+    ///
+    /// Поднимать — когда разбор начинает давать ДРУГОЙ текст, а не когда он просто стал быстрее:
+    /// подъем стоит перечитывания всех документов формата.
+    /// <list type="bullet">
+    /// <item>книга, 1 — числа и даты так, как их показывает панель («05.03.2024», а не 45356),
+    ///       логические значения словами; раньше — как они лежат в файле.</item>
+    /// </list>
+    /// </summary>
+    public static int RevisionOf(string path) => ExtensionOf(path) switch
+    {
+        "xlsx" or "xlsm" => 1,
+        _                => 0,
+    };
+
+    /// <summary>
     /// Разобрать документ. Исключений не бросает НИКОГДА: очередь индексации обходит тысячи
     /// чужих файлов, и любой из них может оказаться битым — это рядовой исход, а не сбой.
     /// </summary>
@@ -175,8 +194,23 @@ public static class DocTextExtractor
             }
         }
 
-        // Плюс то, что лежит в листах напрямую (числа и inline-строки).
-        foreach (var sheet in book.WorksheetParts)
+        // Плюс то, что лежит в ячейках напрямую: числа, даты, логические значения, строки внутри
+        // ячеек. Значение пишется ТАК, КАК ЕГО ПОКАЗЫВАЕТ ПАНЕЛЬ (DocSheetSource.Text): дата —
+        // «05.03.2024», а не 45356, деньги — «30 772,48», а не 30772.48. Пока индекс хранил
+        // числа как они лежат в файле, по тому, что человек видит, книга не находилась, а
+        // найденное по сырому числу панели было нечем подсветить.
+        //
+        // Листы — в порядке корешков, и скрытые тоже: поиск ищет и в них сознательно, чтобы не
+        // терять находки в свернутых группах и служебных листах.
+        //
+        // Сломанная таблица оформления — не повод терять числа: они запишутся без форматов.
+        string[] formats;
+        try { formats = DocSheetSource.NumberFormats(book); }
+        catch (OperationCanceledException) { throw; }
+        catch { formats = []; }
+
+        var date1904 = DocSheetSource.Date1904(book);
+        foreach (var (_, sheet) in DocSheetSource.Worksheets(book))
         {
             ct.ThrowIfCancellationRequested();
             if (sb.Length >= MaxChars) break;
@@ -187,7 +221,8 @@ public static class DocTextExtractor
                 if (sb.Length >= MaxChars) break;
                 // Ссылки в общую таблицу уже добавлены выше — второй раз не пишем.
                 if (cell.DataType?.Value == DocumentFormat.OpenXml.Spreadsheet.CellValues.SharedString) continue;
-                var value = cell.CellValue?.InnerText ?? cell.InnerText;
+                var format = cell.StyleIndex?.Value is { } id && id < formats.Length ? formats[id] : null;
+                var value  = DocSheetSource.Text(cell, [], format, date1904).Text;
                 if (value.Length > 0) sb.Append(value).Append(' ');
             }
             sb.Append('\n');

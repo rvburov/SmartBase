@@ -591,6 +591,32 @@ public sealed class DocSheetSourceTests : IDisposable
         Assert.Equal("05.03.2024", row.Cells.First(c => c.Column == 2).Text);
     }
 
+    /// <summary>
+    /// Книга со счетом дней от 1904 года: без ее признака та же дата уехала бы на четыре года и
+    /// день назад — 04.03.2020 вместо 05.03.2024.
+    /// </summary>
+    [Fact]
+    public void A_1904_book_shows_its_dates_where_they_are()
+    {
+        var sheet = DocSheetSource.Open(DocNumbersBook.Write(_dir, date1904: true))[0];
+        var date  = sheet.Rows.Single(r => r.Index == 1).Cells.Single(c => c.Column == 2);
+
+        Assert.Equal("05.03.2024", date.Text);
+    }
+
+    /// <summary>
+    /// Строка, которую вернула формула, — текст: «00123» показывается с нулями, а не числом 123
+    /// по записи формата ячейки.
+    /// </summary>
+    [Fact]
+    public void A_string_from_a_formula_stays_text()
+    {
+        var sheet = DocSheetSource.Open(DocNumbersBook.Write(_dir))[0];
+        var cell  = sheet.Rows.Single(r => r.Index == 2).Cells.Single(c => c.Column == 1);
+
+        Assert.Equal("00123", cell.Text);
+    }
+
     [Fact]
     public void Numbers_lose_their_tail_of_zeros()
     {

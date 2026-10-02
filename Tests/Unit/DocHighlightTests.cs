@@ -177,4 +177,92 @@ public sealed class DocHighlightTests
         Assert.Empty(DocHighlight.Find("", DocHighlight.Tokens("договор")));
         Assert.Empty(DocHighlight.Find(null, DocHighlight.Tokens("договор")));
     }
+
+    // ── Числа с разрядами ─────────────────────────────────────────────────────
+
+    // Варианты слова строками: части через пробел.
+    private static string[] Variants(string token) =>
+        [.. DocHighlight.Variants(token).Select(v => string.Join(' ', v))];
+
+    // Сумма так, как ее показывает книга по записи «#,##0.00», — с разрядами языка системы.
+    private static string Money(double value) =>
+        value.ToString("#,##0.00", System.Globalization.CultureInfo.CurrentCulture);
+
+    /// <summary>
+    /// Число из четырех и больше цифр ищется и с разрядами: книга показывает «30 772,48», а
+    /// набирают «30772». Дробная часть остается при числе.
+    /// </summary>
+    [Fact]
+    public void A_long_number_is_also_searched_with_its_groups()
+    {
+        Assert.Equal(["30772", "30 772"],          Variants("30772"));
+        Assert.Equal(["30772 48", "30 772 48"],    Variants("30772.48"));
+        Assert.Equal(["1234567", "1 234 567"],     Variants("-1234567"));
+    }
+
+    /// <summary>
+    /// Вариант — только у слова, которое ЦЕЛИКОМ число. Код, номер с приставкой, число с ведущим
+    /// нулем и короткое число разрядами не делятся.
+    /// </summary>
+    [Theory]
+    [InlineData("12345-2019")]
+    [InlineData("№12345")]
+    [InlineData("01234")]
+    [InlineData("123")]
+    [InlineData("05.03.2024")]
+    [InlineData("2024г")]
+    [InlineData("1234.")]
+    public void Codes_and_short_numbers_have_one_variant(string token)
+    {
+        Assert.Single(DocHighlight.Variants(token));
+    }
+
+    [Fact]
+    public void Punctuation_only_words_have_no_variants()
+    {
+        Assert.Empty(DocHighlight.Variants("++"));
+        Assert.Empty(DocHighlight.Variants(""));
+    }
+
+    /// <summary>
+    /// Сумма, найденная поиском по «30772», подсвечивается в панели целиком — одним куском от
+    /// первой группы цифр до последней.
+    /// </summary>
+    [Fact]
+    public void A_number_typed_without_groups_highlights_the_grouped_one()
+    {
+        var text = $"Итого {Money(30772.48)} руб.";
+        var head = Money(30772.48)[..^3];                    // «30 772» без копеек
+
+        Assert.Equal([head], Words(text, "30772"));
+        Assert.Equal([Money(30772.48)], Words(text, "30772.48"));
+        Assert.Equal(["30772"], Words("сырое 30772.48", "30772"));
+    }
+
+    // ── Слова страницы ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// На странице PDF текст — это слова с местами. Фраза запроса переходит через границу слов,
+    /// как ее находит индекс: «30772» обязан подсветить оба слова суммы «30 772,48», иначе поиск
+    /// нашел документ, а страница сказала «нет совпадений».
+    /// </summary>
+    [Fact]
+    public void A_phrase_spans_the_words_of_a_page()
+    {
+        string[] words = ["Итого", "30", "772,48", "руб.", "ГОСТ", "21.", "501"];
+        var tokens = DocHighlight.Tokens("30772");
+
+        Assert.Equal([(1, 2)], DocHighlight.FindInWords(words, tokens));
+        Assert.Equal([(5, 6)], DocHighlight.FindInWords(words, DocHighlight.Tokens("21.501")));
+        Assert.Equal([(0, 0), (3, 3)], DocHighlight.FindInWords(words, DocHighlight.Tokens("итого руб")));
+    }
+
+    /// <summary>Два совпадения в одном слове — одно совпадение: подсвечивается слово, и считать его дважды незачем.</summary>
+    [Fact]
+    public void Two_hits_inside_one_word_count_once()
+    {
+        Assert.Equal([(0, 0)], DocHighlight.FindInWords(["21.501-21"], DocHighlight.Tokens("21")));
+        Assert.Empty(DocHighlight.FindInWords([], DocHighlight.Tokens("21")));
+        Assert.Empty(DocHighlight.FindInWords(["21"], DocHighlight.Tokens("")));
+    }
 }

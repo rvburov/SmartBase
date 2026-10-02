@@ -50,6 +50,76 @@ public sealed class DocTextExtractorTests : IDisposable
         return path;
     }
 
+    // ── Книга: числа так, как их показывает панель ───────────────────────────
+
+    /// <summary>
+    /// Числа книги индекс пишет так, как их показывает панель: дата — «05.03.2024», а не номер
+    /// дня, деньги — с разрядами, проценты — процентами, логическое значение — словом. Пока индекс
+    /// хранил числа как они лежат в файле, по тому, что человек видит, книга не находилась.
+    /// </summary>
+    [Fact]
+    public void Book_numbers_are_written_the_way_the_panel_shows_them()
+    {
+        var text = DocTextExtractor.Extract(DocNumbersBook.Write(_dir)).Text;
+
+        Assert.Contains("05.03.2024", text, StringComparison.Ordinal);
+        Assert.DoesNotContain(((int)DocNumbersBook.Day.ToOADate()).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                              text, StringComparison.Ordinal);
+        Assert.Contains(DocTextExtractor.Normalize(DocNumbersBook.Shown(DocNumbersBook.Money)), text, StringComparison.Ordinal);
+        Assert.Contains("15%",    text, StringComparison.Ordinal);
+        Assert.Contains("ИСТИНА", text, StringComparison.Ordinal);
+        // Строка из формулы — текст: нули впереди остаются, хотя у ячейки запись «0.00».
+        Assert.Contains("00123",  text, StringComparison.Ordinal);
+    }
+
+    /// <summary>Книга со счетом дней от 1904 года: дата в индексе та же, что в книге.</summary>
+    [Fact]
+    public void A_1904_book_keeps_its_dates_in_the_index()
+    {
+        var text = DocTextExtractor.Extract(DocNumbersBook.Write(_dir, date1904: true)).Text;
+
+        Assert.Contains("05.03.2024", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Скрытый лист поиск читает — сознательно: находки в служебных листах и свернутых группах не
+    /// теряются. Число там записано так же, как записала бы его панель.
+    /// </summary>
+    [Fact]
+    public void Hidden_sheets_are_still_searched()
+    {
+        var text = DocTextExtractor.Extract(DocNumbersBook.Write(_dir)).Text;
+
+        Assert.Contains(DocTextExtractor.Normalize(DocNumbersBook.Shown(DocNumbersBook.HiddenMoney)),
+                        text, StringComparison.Ordinal);
+    }
+
+    /// <summary>Главный договор: всякое значение, которое показывает панель, есть в тексте индекса.</summary>
+    [Fact]
+    public void Every_value_the_panel_shows_is_in_the_index()
+    {
+        var path  = DocNumbersBook.Write(_dir);
+        var text  = DocTextExtractor.Extract(path).Text;
+        var shown = DocSheetSource.Open(path).SelectMany(s => s.Rows).SelectMany(r => r.Cells).ToList();
+
+        Assert.True(shown.Count >= 8, $"панель показала {shown.Count} ячеек");
+        foreach (var cell in shown)
+            Assert.Contains(DocTextExtractor.Normalize(cell.Text), text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// У разбора книги своя редакция: подняв ее, программа перечитывает прочитанные книги, а
+    /// документы прочих форматов не трогает.
+    /// </summary>
+    [Fact]
+    public void Books_have_their_own_revision_of_the_reader()
+    {
+        Assert.Equal(1, DocTextExtractor.RevisionOf("смета.xlsx"));
+        Assert.Equal(1, DocTextExtractor.RevisionOf(@"C:папкасмета.XLSM"));
+        Assert.Equal(0, DocTextExtractor.RevisionOf("договор.pdf"));
+        Assert.Equal(0, DocTextExtractor.RevisionOf("заметки.txt"));
+    }
+
     // ── Расширения ───────────────────────────────────────────────────────────
 
     [Theory]

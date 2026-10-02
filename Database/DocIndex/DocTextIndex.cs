@@ -15,14 +15,17 @@ namespace SmartBase.Database.DocIndex;
 public readonly record struct DocHit(string Path, string Snippet);
 
 /// <summary>Что кеш знает про файл, не открывая его.</summary>
-public readonly record struct DocIndexEntry(long Mtime, long Size, DocTextStatus Status, int Pages);
+/// <param name="Revision">Какой редакцией разбора прочитан (<c>DocTextExtractor.RevisionOf</c>).</param>
+public readonly record struct DocIndexEntry(long Mtime, long Size, DocTextStatus Status, int Pages,
+                                            int Revision = 0);
 
 /// <summary>
 /// Перепись документов по состоянию текста — из нее собираются все числа подвала блока поиска.
 /// </summary>
 /// <param name="Total">Сколько документов в охвате (файлов, существующих на диске).</param>
 /// <param name="Read">Текст прочитан — поиск по содержимому работает.</param>
-/// <param name="NotRead">Не разобраны или изменились с прошлого разбора.</param>
+/// <param name="NotRead">Не разобраны, изменились с прошлого разбора или прочитаны прежней
+/// редакцией разбора.</param>
 /// <param name="NoText">Сканы без текстового слоя — перечитывание не поможет.</param>
 /// <param name="Unsupported">Форматы без извлечения текста — ищутся только по названию.</param>
 /// <param name="Failed">Не удалось прочитать: битый, занят или тяжелее порога.</param>
@@ -147,16 +150,20 @@ public sealed class DocTextIndex
             """;
         command.ExecuteNonQuery();
 
-        // Колонка Pages добавлена позже. EF-миграций у кеша нет и быть не должно — он
+        // Колонки Pages и Revision добавлены позже. EF-миграций у кеша нет и быть не должно — он
         // пересобираемый файл, — поэтому догоняем старые кеши руками. Ошибку глотаем: у свежего
         // файла колонка уже есть, и SQLite на это честно ругается «duplicate column name».
-        try
-        {
-            using var add = connection.CreateCommand();
-            add.CommandText = "ALTER TABLE doc_files ADD COLUMN Pages INTEGER NOT NULL DEFAULT 0";
-            add.ExecuteNonQuery();
-        }
-        catch (SqliteException) { /* колонка уже есть */ }
+        //
+        // Revision старых строк — 0: прочитаны первой редакцией разбора. Формат, разбор которого
+        // с тех пор поднял редакцию, перепись перечитает (<see cref="Survey"/>).
+        foreach (var column in new[] { "Pages", "Revision" })
+            try
+            {
+                using var add = connection.CreateCommand();
+                add.CommandText = $"ALTER TABLE doc_files ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0";
+                add.ExecuteNonQuery();
+            }
+            catch (SqliteException) { /* колонка уже есть */ }
     }
 
     // Снести файл кеша и создать пустой. Зовется на поврежденном файле — из конструктора и из
@@ -263,13 +270,14 @@ public sealed class DocTextIndex
             {
                 using var cmd = connection.CreateCommand();
                 var holes = string.Join(",", chunk.Select((_, i) => "@p" + i));
-                cmd.CommandText = $"SELECT PathKey, Mtime, Size, Status, Pages FROM doc_files WHERE PathKey IN ({holes})";
+                cmd.CommandText = $"SELECT PathKey, Mtime, Size, Status, Pages, Revision FROM doc_files WHERE PathKey IN ({holes})";
                 for (var i = 0; i < chunk.Count; i++) cmd.Parameters.AddWithValue("@p" + i, chunk[i]);
 
                 using var rdr = cmd.ExecuteReader();
                 while (rdr.Read())
                     result[rdr.GetString(0)] = new DocIndexEntry(
-                        rdr.GetInt64(1), rdr.GetInt64(2), (DocTextStatus)rdr.GetInt32(3), rdr.GetInt32(4));
+                        rdr.GetInt64(1), rdr.GetInt64(2), (DocTextStatus)rdr.GetInt32(3), rdr.GetInt32(4),
+                        rdr.GetInt32(5));
             }
         }
         return result;
@@ -296,6 +304,10 @@ public sealed class DocTextIndex
     ///
     /// Файл, признанный неподдержанным или битым, в <c>Pending</c> не попадает, пока сам не
     /// изменится: иначе очередь каждый раз перемалывала бы одни и те же сканы.
+    ///
+    /// Прочитанный прежней редакцией разбора (<c>DocTextExtractor.RevisionOf</c>) считается
+    /// измененным: файл тот же, а текст, который из него извлекается, — уже другой. Поиск до
+    /// перечитывания находит такой документ по прежнему тексту — слова в нем те же.
     /// </summary>
     public DocSurvey Survey(IReadOnlyCollection<string> paths)
     {
@@ -317,7 +329,8 @@ public sealed class DocTextIndex
             // если прошлый разбор удался: в кеше лежит текст прежней редакции. У файла, которого
             // нет на диске, сверять нечего — ему остается то, что помнит кеш.
             var has     = known.TryGetValue(key, out var e);
-            var changed = !has || (size >= 0 && (e.Mtime != mtime || e.Size != size));
+            var changed = !has || (size >= 0 && (e.Mtime != mtime || e.Size != size ||
+                                                 e.Revision < DocTextExtractor.RevisionOf(key)));
 
             files[key] = changed
                 ? new DocFileState(DocTextState.NotRead, 0)
@@ -391,8 +404,8 @@ public sealed class DocTextIndex
             {
                 ins.Transaction = tx;
                 ins.CommandText = """
-                    INSERT INTO doc_files (PathKey, Mtime, Size, Status, Chars, Pages, IndexedAt)
-                    VALUES (@k, @m, @s, @st, @c, @p, @at);
+                    INSERT INTO doc_files (PathKey, Mtime, Size, Status, Chars, Pages, Revision, IndexedAt)
+                    VALUES (@k, @m, @s, @st, @c, @p, @r, @at);
                     SELECT last_insert_rowid();
                     """;
                 ins.Parameters.AddWithValue("@k",  key);
@@ -401,6 +414,7 @@ public sealed class DocTextIndex
                 ins.Parameters.AddWithValue("@st", (int)text.Status);
                 ins.Parameters.AddWithValue("@c",  text.Text.Length);
                 ins.Parameters.AddWithValue("@p",  text.Pages);
+                ins.Parameters.AddWithValue("@r",  DocTextExtractor.RevisionOf(key));
                 ins.Parameters.AddWithValue("@at", DateTime.UtcNow.ToString("O"));
                 id = Convert.ToInt64(ins.ExecuteScalar() ?? 0L);
             }
@@ -659,7 +673,14 @@ public sealed class DocTextIndex
     ///
     /// Запрос режется на слова НЕ здесь, а в <see cref="DocHighlight.Tokens"/>: по этим же
     /// словам панель чтения подсвечивает найденное в документе, и второй разбор запроса
-    /// означал бы «нашлось, но не подсвечено» при первом же расхождении.
+    /// означал бы «нашлось, но не подсвечено» при первом же расхождении. Оттуда же варианты
+    /// слова (<see cref="DocHighlight.Variants"/>): число «30772» ищется и как «30 772» — так
+    /// его показывает книга, — и варианты идут скобкой через OR.
+    ///
+    /// Слова соединяются ЯВНЫМ AND: у FTS5 неявное «и» связывает только фразы, а скобку с
+    /// вариантами — нет. Слово из одной пунктуации («++») в выражение не идет вовсе: частей у
+    /// него нет, неявное «и» такую пустую фразу пропускало, а явный AND с ней не находит
+    /// ничего — «гост ++» перестал бы находить «гост». Подсветка его тоже пропускает.
     /// </summary>
     public static string BuildMatch(string? query)
     {
@@ -669,11 +690,21 @@ public sealed class DocTextIndex
         var parts = new List<string>(tokens.Count);
         for (var i = 0; i < tokens.Count; i++)
         {
-            var quoted = "\"" + tokens[i].Replace("\"", "\"\"") + "\"";
-            parts.Add(i == tokens.Count - 1 ? quoted + "*" : quoted);
+            var variants = DocHighlight.Variants(tokens[i]);
+            if (variants.Count == 0) continue;
+
+            var star   = i == tokens.Count - 1 ? "*" : "";
+            var quoted = Quote(tokens[i]) + star;
+
+            parts.Add(variants.Count < 2
+                ? quoted
+                : "(" + string.Join(" OR ", [quoted, .. variants.Skip(1).Select(v => Quote(string.Join(' ', v)) + star)]) + ")");
         }
-        return string.Join(" ", parts);
+        return string.Join(" AND ", parts);
     }
+
+    // Фраза FTS5: в двойных кавычках, внутренние удвоены.
+    private static string Quote(string text) => "\"" + text.Replace("\"", "\"\"") + "\"";
 
     /// <summary>
     /// Разбирает сниппет на куски «обычный текст / совпадение» в порядке следования.

@@ -183,6 +183,8 @@ void Pages(DocReaderView reader, Window window)
             // панели выше окна, и до этого слова надо прокрутить саму страницу: ровно тот
             // случай, на котором стрелка «дальше» когда-то не двигала вид вовсе.
             if (p == 1) page.AddText("Dogovor v podvale", 12, new PdfPoint(40, 20), font);
+            // Сумма с разрядами — на странице это два слова, «30» и «772,48».
+            if (p == 2) page.AddText("Itogo 30 772,48 rub", 12, new PdfPoint(40, 720), font);
         }
         File.WriteAllBytes(pdf, builder.Build());
     }
@@ -237,6 +239,16 @@ void Pages(DocReaderView reader, Window window)
     counter = Find<TextBlock>(reader, "CounterLabel")?.Text ?? "";
     Check(counter.StartsWith("2 из 4", StringComparison.Ordinal),
           $"после перехода счетчик показывает «{counter}» вместо «2 из 4»");
+
+    // Сумму набирают подряд, без разрядов. Индекс находит по «30772» документ, где она стоит
+    // как «30 772,48», и страница обязана подсветить совпадение: пока слова страницы сверялись
+    // поодиночке, ни «30», ни «772,48» с запросом не совпадали, и счетчик говорил «нет».
+    reader.SetQuery("30772");
+    if (!Wait(() => (Find<TextBlock>(reader, "CounterLabel")?.Text ?? "").StartsWith("1 из 1", StringComparison.Ordinal),
+              "сумма из двух слов страницы не найдена по числу без разрядов"))
+        return;
+
+    Console.WriteLine("Сумма из двух слов страницы по «30772»: " + Find<TextBlock>(reader, "CounterLabel")?.Text);
 
     // Возврат в текст ничего не ломает, и счетчик снова считает по строкам.
     Find<ToggleButton>(reader, "TextModeBtn")!.IsChecked = true;

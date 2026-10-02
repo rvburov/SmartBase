@@ -168,7 +168,9 @@ public sealed class DocSheet(string name, IReadOnlyList<DocSheetRow> rows, IRead
 ///
 /// <b>Числа и даты.</b> Excel хранит дату числом (45678), а проценты долей — как их читать,
 /// записано в стиле ячейки. Показать «45678» вместо «12.08.2026» значит показать неправду, и
-/// неправду убедительную. Разбором записей формата занят <see cref="DocNumberFormat"/>.
+/// неправду убедительную. Разбором записей формата занят <see cref="DocNumberFormat"/>, а
+/// значение ячейки отсюда (<see cref="Text"/>) берет и индекс поиска: что человек видит, по тому
+/// книга и находится.
 ///
 /// <b>Геометрия.</b> Лист — это не только значения, но и их расстановка: высота строки, ширина
 /// колонки, перенос текста в ячейке и выключка. Без них таблица выглядит не как лист, а как
@@ -256,15 +258,13 @@ public static class DocSheetSource
         catch (OperationCanceledException) { throw; }
         catch { styles = new BookStyles([], [], DefaultFontSize); }
 
+        var date1904 = Date1904(book);
+
         var sheets = new List<DocSheet>();
         var hidden = 0;
-        foreach (var entry in book.Workbook?.Sheets?.Elements<Sheet>() ?? [])
+        foreach (var (entry, part) in Worksheets(book))
         {
             ct.ThrowIfCancellationRequested();
-            if (entry.Id?.Value is not { } id) continue;
-            // Лист-диаграмма — тоже корешок, но таблицы в нем нет.
-            if (!book.TryGetPartById(id, out var found) || found is not WorksheetPart part) continue;
-
             if (entry.State?.Value is { } state && !state.Equals(SheetStateValues.Visible))
             {
                 hidden++;
@@ -272,16 +272,39 @@ public static class DocSheetSource
             }
 
             var sheet = ReadSheet(entry.Name?.Value is { Length: > 0 } name ? name : "Лист",
-                                  part, shared, styles, ct);
+                                  part, shared, styles, date1904, ct);
             if (sheet.Rows.Count > 0) sheets.Add(sheet);
         }
         return new DocBookView(sheets, hidden);
     }
 
+    /// <summary>
+    /// Листы книги в порядке корешков — вместе со скрытыми: у каждого запись корешка (имя,
+    /// видимость) и часть с ячейками. Так книгу обходят и панель, и индекс поиска; панель
+    /// скрытые листы пропускает, индекс — нет.
+    /// </summary>
+    internal static IEnumerable<(Sheet Entry, WorksheetPart Part)> Worksheets(WorkbookPart book)
+    {
+        foreach (var entry in book.Workbook?.Sheets?.Elements<Sheet>() ?? [])
+        {
+            if (entry.Id?.Value is not { } id) continue;
+            // Лист-диаграмма — тоже корешок, но таблицы в нем нет.
+            if (!book.TryGetPartById(id, out var found) || found is not WorksheetPart part) continue;
+            yield return (entry, part);
+        }
+    }
+
+    /// <summary>
+    /// Книга считает дни от 1904 года, а не от 1900-го (<c>workbookPr date1904</c>). Без этого
+    /// признака даты такой книги уехали бы на четыре года назад.
+    /// </summary>
+    internal static bool Date1904(WorkbookPart book) =>
+        book.Workbook?.WorkbookProperties?.Date1904?.Value == true;
+
     // ── Разбор листа ──────────────────────────────────────────────────────────
 
     private static DocSheet ReadSheet(string name, WorksheetPart part, string[] shared,
-                                      BookStyles styles, CancellationToken ct)
+                                      BookStyles styles, bool date1904, CancellationToken ct)
     {
         var sheet  = part.Worksheet;
         var merges = Merges(sheet);
@@ -346,7 +369,7 @@ public static class DocSheetSource
 
                 if (merges.Spans.ContainsKey((index, column))) heads[(index, column)] = style.Paint;
 
-                var (text, red) = Text(cell, shared, style.Format);
+                var (text, red) = Text(cell, shared, style.Format, date1904);
                 if (text.Length == 0) continue;
                 widest = Math.Max(widest, column + 1);
 
@@ -510,22 +533,35 @@ public static class DocSheetSource
 
     // ── Значение ячейки ───────────────────────────────────────────────────────
 
-    private static (string Text, bool Red) Text(Cell cell, string[] shared, string? format)
+    /// <summary>
+    /// Текст ячейки так, как его показывает панель: общая строка — строкой, логическое значение —
+    /// «ИСТИНА» или «ЛОЖЬ», число — по записи формата ячейки. Тем же путем значение берет и индекс
+    /// поиска (<c>DocTextExtractor</c>).
+    /// </summary>
+    /// <param name="shared">Общая таблица строк; пустая — ссылки в нее зовущему не нужны.</param>
+    /// <param name="date1904">Книга считает дни от 1904 года.</param>
+    internal static (string Text, bool Red) Text(Cell cell, string[] shared, string? format, bool date1904)
     {
-        var raw = cell.CellValue?.InnerText ?? "";
+        var raw  = cell.CellValue?.InnerText ?? "";
+        var type = cell.DataType?.Value;
 
-        if (cell.DataType?.Value == CellValues.SharedString)
+        if (type == CellValues.SharedString)
             return (int.TryParse(raw, out var idx) && idx >= 0 && idx < shared.Length ? shared[idx] : "", false);
 
-        if (cell.DataType?.Value == CellValues.InlineString) return (cell.InnerText, false);
-        if (cell.DataType?.Value == CellValues.Boolean)      return (raw == "1" ? "ИСТИНА" : "ЛОЖЬ", false);
-        if (raw.Length == 0)                                 return (cell.InnerText, false);
+        if (type == CellValues.InlineString) return (cell.InnerText, false);
+        if (type == CellValues.Boolean)      return (raw == "1" ? "ИСТИНА" : "ЛОЖЬ", false);
+        if (raw.Length == 0)                 return (cell.InnerText, false);
+
+        // Строка, которую вернула формула, и ошибка формулы — текст, а не число: «00123» из
+        // формулы показывается с нулями, как и в табличном редакторе, а не числом 123 по записи
+        // формата ячейки.
+        if (type == CellValues.String || type == CellValues.Error) return (raw, false);
 
         // Число: как его читать — дата, проценты, деньги — решает запись формата ячейки.
         if (!double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var number))
             return (raw, false);
 
-        var shown = DocNumberFormat.Apply(number, format);
+        var shown = DocNumberFormat.Apply(number, format, date1904);
         return (shown.Text, shown.Red);
     }
 
@@ -556,10 +592,7 @@ public static class DocSheetSource
         var styles = book.WorkbookStylesPart?.Stylesheet;
         if (styles?.CellFormats is not { } formats) return new BookStyles(cells, [], DefaultFontSize);
 
-        var custom = styles.NumberingFormats?.Elements<NumberingFormat>()
-                           .Where(f => f.NumberFormatId?.Value is not null)
-                           .ToDictionary(f => f.NumberFormatId!.Value!, f => f.FormatCode?.Value ?? "")
-                     ?? [];
+        var custom = CustomFormats(styles);
 
         var palette = DocPalette.Read(book);
         var fonts   = styles.Fonts?.Elements<Font>().ToArray()     ?? [];
@@ -574,11 +607,8 @@ public static class DocSheetSource
 
         foreach (var format in formats.Elements<CellFormat>())
         {
-            var id   = format.NumberFormatId?.Value ?? 0;
-            var code = custom.TryGetValue(id, out var own) ? own : DocNumberFormat.Builtin(id);
-
             var alignment = format.Alignment;
-            cells[index++] = new CellStyle(code,
+            cells[index++] = new CellStyle(FormatCode(format, custom),
                                            alignment?.WrapText?.Value == true,
                                            Horizontal(alignment),
                                            Vertical(alignment),
@@ -588,6 +618,36 @@ public static class DocSheetSource
         }
 
         return new BookStyles(cells, [.. paints], basis > 0 ? basis : DefaultFontSize);
+    }
+
+    /// <summary>
+    /// Записи формата чисел по номерам стилей ячеек — без оформления: индексу поиска нужно, КАК
+    /// показано число, а заливки и рамки ему ни к чему.
+    /// </summary>
+    internal static string[] NumberFormats(WorkbookPart book)
+    {
+        var styles = book.WorkbookStylesPart?.Stylesheet;
+        if (styles?.CellFormats is not { } formats) return [];
+
+        var custom = CustomFormats(styles);
+        return [.. formats.Elements<CellFormat>().Select(f => FormatCode(f, custom))];
+    }
+
+    // Свои записи книги по номерам. Номер, записанный дважды, берется последним: падать на такой
+    // книге значило бы потерять форматы всех ее чисел.
+    private static Dictionary<uint, string> CustomFormats(Stylesheet styles)
+    {
+        var custom = new Dictionary<uint, string>();
+        foreach (var format in styles.NumberingFormats?.Elements<NumberingFormat>() ?? [])
+            if (format.NumberFormatId?.Value is { } id) custom[id] = format.FormatCode?.Value ?? "";
+        return custom;
+    }
+
+    // Запись формата стиля: своя из книги или встроенная по номеру.
+    private static string FormatCode(CellFormat format, Dictionary<uint, string> custom)
+    {
+        var id = format.NumberFormatId?.Value ?? 0;
+        return custom.TryGetValue(id, out var own) ? own : DocNumberFormat.Builtin(id);
     }
 
     // ── Оформление ячейки ─────────────────────────────────────────────────────

@@ -1034,11 +1034,11 @@ public partial class DocReaderView : UserControl
             var index = i;
             var found = await Task.Run(() =>
             {
-                var hits = new List<int>();
+                // Слова страницы ищутся вместе, а не поодиночке: фраза запроса переходит через
+                // границу слов. Сумма «30 772,48» на странице — два слова, и запрос «30772»
+                // обязан подсветить оба, раз поиск нашел по нему документ.
                 var words = source.Words(index);
-                for (var w = 0; w < words.Count; w++)
-                    if (DocHighlight.Find(words[w].Text, tokens).Count > 0) hits.Add(w);
-                return (Words: words, Hits: hits);
+                return (Words: words, Hits: DocHighlight.FindInWords([.. words.Select(w => w.Text)], tokens));
             });
 
             if (gen != _gen || scan != _scanGen) return;
@@ -1046,10 +1046,12 @@ public partial class DocReaderView : UserControl
             var page = _pages[index];
             page.SetWords(found.Words);
             page.Hits.Clear();
-            foreach (var w in found.Hits)
+            foreach (var (first, last) in found.Hits)
             {
-                page.Hits.Add((w, _pageHits.Count));
-                _pageHits.Add((index, w));
+                // Совпадение из нескольких слов — одно: у всех его слов один сквозной номер, и
+                // текущим оно становится целиком.
+                for (var w = first; w <= last; w++) page.Hits.Add((w, _pageHits.Count));
+                _pageHits.Add((index, first));
             }
 
             if (found.Hits.Count > 0)

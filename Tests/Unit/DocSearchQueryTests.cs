@@ -33,13 +33,39 @@ public sealed class DocSearchQueryTests
     [Fact]
     public void Only_the_last_word_gets_a_prefix_star()
     {
-        Assert.Equal("\"системы\" \"управл\"*", DocTextIndex.BuildMatch("системы управл"));
+        Assert.Equal("\"системы\" AND \"управл\"*", DocTextIndex.BuildMatch("системы управл"));
     }
 
     [Fact]
     public void Words_are_split_by_spaces_commas_and_semicolons()
     {
-        Assert.Equal("\"а\" \"б\" \"в\"*", DocTextIndex.BuildMatch("а, б; в"));
+        Assert.Equal("\"а\" AND \"б\" AND \"в\"*", DocTextIndex.BuildMatch("а, б; в"));
+    }
+
+    /// <summary>
+    /// Слово из одной пунктуации индекс не видит, и в выражение оно не идет: с явным AND пустая
+    /// фраза не находила бы ничего, и «гост ++» перестал бы находить «гост». Звездочка остается
+    /// за последним словом запроса — так же считает подсветка.
+    /// </summary>
+    [Fact]
+    public void Punctuation_only_words_stay_out_of_the_expression()
+    {
+        Assert.Equal("\"гост\"", DocTextIndex.BuildMatch("гост ++"));
+        Assert.Equal("\"гост\" AND \"лист\"*", DocTextIndex.BuildMatch("гост ++ лист"));
+        Assert.Equal("", DocTextIndex.BuildMatch("++ --"));
+    }
+
+    /// <summary>
+    /// Число из четырех и больше цифр ищется и с разрядами — скобкой через OR, со звездочкой у
+    /// каждого варианта последнего слова. Слова соединяет ЯВНЫЙ AND: неявное «и» у FTS5 скобку
+    /// с вариантами не связывает.
+    /// </summary>
+    [Fact]
+    public void A_long_number_is_searched_with_its_groups_too()
+    {
+        Assert.Equal("(\"30772\"* OR \"30 772\"*)", DocTextIndex.BuildMatch("30772"));
+        Assert.Equal("\"итого\" AND (\"30772.48\"* OR \"30 772 48\"*)", DocTextIndex.BuildMatch("итого 30772.48"));
+        Assert.Equal("(\"30772\" OR \"30 772\") AND \"руб\"*", DocTextIndex.BuildMatch("30772 руб"));
     }
 
     /// <summary>

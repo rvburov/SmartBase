@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text;
+using Microsoft.Data.Sqlite;
 using SmartBase.Core.Documents;
 using SmartBase.Core.Models;
 using SmartBase.Database.DocIndex;
@@ -82,17 +83,21 @@ public sealed class DocTextIndexTests : IDisposable
             ["a.txt"] = "ГОСТ 21.501 лист",
             ["b.txt"] = "компилятор C++ и cat",
             ["c.txt"] = "просто гост без номера",
+            // Сумма и дата так, как их показывает книга: разряды — языка системы.
+            ["d.txt"] = $"Итого {DocNumbersBook.Shown(30772.48)} руб., дата 05.03.2024",
         };
         foreach (var (name, text) in texts) Put(Write(name, text), text);
 
-        foreach (var query in new[] { "21.501", "21.5", "C++", "гост ++", "гост 21", "\"21 501\"" })
+        foreach (var query in new[] { "21.501", "21.5", "C++", "гост ++", "гост 21", "\"21 501\"",
+                                      "30772", "30772,48", "30772.48", "30 772", "05.03.2024", "2024" })
         {
             var found = _index.Search(query);
-            Assert.NotEmpty(found);
+            Assert.True(found.Count > 0, $"по «{query}» ({DocTextIndex.BuildMatch(query)}) не нашлось ничего");
             foreach (var hit in found)
             {
                 var text = texts[Path.GetFileName(hit.Path)];
-                Assert.NotEmpty(DocHighlight.Find(text, DocHighlight.Tokens(query)));
+                Assert.True(DocHighlight.Find(text, DocHighlight.Tokens(query)).Count > 0,
+                            $"«{query}» нашел «{text}», а подсветить в нем нечего");
             }
         }
     }
@@ -165,6 +170,31 @@ public sealed class DocTextIndexTests : IDisposable
 
         Assert.Empty(_index.Search("\"\"\"\""));
         Assert.Empty(_index.Search("   "));
+    }
+
+    /// <summary>
+    /// Договор поиска и панели на настоящей книге: по любому значению, которое показывает панель,
+    /// книга находится, и в ячейке есть что подсветить. Так же — сумма, набранная без разрядов.
+    /// Пока индекс хранил числа как они лежат в файле, дата и деньги по видимому не находились.
+    /// </summary>
+    [Fact]
+    public void A_book_is_found_by_what_the_panel_shows_and_highlighted_there()
+    {
+        var path = DocNumbersBook.Write(_dir);
+        _index.Put(path, DocTextExtractor.Extract(path));
+
+        var cells = DocSheetSource.Open(path).SelectMany(s => s.Rows).SelectMany(r => r.Cells).ToList();
+        Assert.NotEmpty(cells);
+
+        foreach (var cell in cells)
+        {
+            Assert.True(_index.Search(cell.Text).Count == 1, $"по «{cell.Text}» книга не нашлась");
+            Assert.NotEmpty(DocHighlight.Find(cell.Text, DocHighlight.Tokens(cell.Text)));
+        }
+
+        var money = DocNumbersBook.Shown(DocNumbersBook.Money);
+        Assert.Single(_index.Search("30772"));
+        Assert.NotEmpty(DocHighlight.Find(money, DocHighlight.Tokens("30772")));
     }
 
     // ── Инвалидация ──────────────────────────────────────────────────────────
@@ -241,6 +271,120 @@ public sealed class DocTextIndexTests : IDisposable
         var known = _index.Known([DocTextIndex.KeyOf(unsupported), DocTextIndex.KeyOf(scan)]);
         Assert.Equal(DocTextStatus.Unsupported, known[DocTextIndex.KeyOf(unsupported)].Status);
         Assert.Equal(DocTextStatus.NoText,      known[DocTextIndex.KeyOf(scan)].Status);
+    }
+
+    // ── Редакция разбора ─────────────────────────────────────────────────────
+
+    // Редакция всех строк кеша — как ее оставила бы прежняя версия программы.
+    private void SetRevision(int revision)
+    {
+        using var connection = new SqliteConnection($"Data Source={_index.Path};Pooling=False");
+        connection.Open();
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = "UPDATE doc_files SET Revision = @r";
+        cmd.Parameters.AddWithValue("@r", revision);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Кеш помнит, какой редакцией разбора прочитан документ: книга и текст — каждый своей.
+    /// </summary>
+    [Fact]
+    public void Put_remembers_the_revision_of_the_reader()
+    {
+        var book = Write("смета.xlsx", "не важно");
+        var text = Write("заметки.txt", "заметки");
+        Put(book, "смета");
+        Put(text, "заметки");
+
+        var known = _index.Known([DocTextIndex.KeyOf(book), DocTextIndex.KeyOf(text)]);
+        Assert.Equal(1, known[DocTextIndex.KeyOf(book)].Revision);
+        Assert.Equal(0, known[DocTextIndex.KeyOf(text)].Revision);
+    }
+
+    /// <summary>
+    /// Книга, прочитанная прежней редакцией разбора, считается измененной: файл тот же, а текст,
+    /// который из него извлекается, — уже другой. Без этого новые числа доходили бы до поиска
+    /// только у книг, которые с тех пор правили. Документы других форматов не трогаются, а до
+    /// перечитывания книга находится по прежнему тексту.
+    /// </summary>
+    [Fact]
+    public void A_book_read_by_an_older_revision_is_read_again()
+    {
+        // Перепись файл не разбирает — смотрит на время правки и размер, так что книгой он
+        // может и не быть.
+        var book = Write("смета.xlsx", "не важно");
+        var text = Write("заметки.txt", "заметки");
+        Put(book, "смета работ");
+        Put(text, "заметки");
+        Assert.Empty(_index.Survey([book, text]).Pending);
+
+        SetRevision(0);
+        var survey = _index.Survey([book, text]);
+
+        Assert.Equal([book], survey.Pending);
+        Assert.Equal(1, survey.Census.NotRead);
+        Assert.Equal(1, survey.Census.Read);
+        Assert.Equal(DocTextState.NotRead, survey.Files[DocTextIndex.KeyOf(book)].State);
+        Assert.Single(_index.Search("смета"));
+    }
+
+    /// <summary>
+    /// Кеш прежней версии программы — без колонки редакции. Он открывается, колонка
+    /// добавляется, прочитанные книги идут на перечитывание, а остальное остается прочитанным.
+    /// Так обновление программы и доводит новые числа до уже прочитанных книг.
+    /// </summary>
+    [Fact]
+    public void An_old_cache_file_gets_the_revision_and_rereads_its_books()
+    {
+        var book = Write("смета.xlsx", "не важно");
+        var text = Write("заметки.txt", "заметки");
+        var file = Path.Combine(_dir, "old_index.db");
+
+        using (var connection = new SqliteConnection($"Data Source={file};Pooling=False"))
+        {
+            connection.Open();
+            using var cmd = connection.CreateCommand();
+            cmd.CommandText = """
+                CREATE TABLE doc_files (
+                    Id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                    PathKey   TEXT    NOT NULL UNIQUE,
+                    Mtime     INTEGER NOT NULL,
+                    Size      INTEGER NOT NULL,
+                    Status    INTEGER NOT NULL,
+                    Chars     INTEGER NOT NULL,
+                    Pages     INTEGER NOT NULL DEFAULT 0,
+                    IndexedAt TEXT    NOT NULL);
+                CREATE VIRTUAL TABLE doc_fts USING fts5(Text, tokenize='unicode61 remove_diacritics 2');
+                """;
+            cmd.ExecuteNonQuery();
+
+            var id = 0;
+            foreach (var (path, words) in new[] { (book, "смета работ"), (text, "заметки") })
+            {
+                var key = DocTextIndex.KeyOf(path);
+                var (mtime, size) = DocStamps.Of(key);
+                using var ins = connection.CreateCommand();
+                ins.CommandText = """
+                    INSERT INTO doc_files (Id, PathKey, Mtime, Size, Status, Chars, Pages, IndexedAt)
+                    VALUES (@id, @k, @m, @s, 0, @c, 0, '2026-09-01');
+                    INSERT INTO doc_fts (rowid, Text) VALUES (@id, @t);
+                    """;
+                ins.Parameters.AddWithValue("@id", ++id);
+                ins.Parameters.AddWithValue("@k",  key);
+                ins.Parameters.AddWithValue("@m",  mtime);
+                ins.Parameters.AddWithValue("@s",  size);
+                ins.Parameters.AddWithValue("@c",  words.Length);
+                ins.Parameters.AddWithValue("@t",  words);
+                ins.ExecuteNonQuery();
+            }
+        }
+
+        var index = new DocTextIndex(file);
+
+        Assert.Equal([book], index.Survey([book, text]).Pending);
+        Assert.Single(index.Search("смета"));
+        Assert.Single(index.Search("заметки"));
     }
 
     // ── Уборка ───────────────────────────────────────────────────────────────

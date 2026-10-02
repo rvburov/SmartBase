@@ -1,3 +1,6 @@
+using System.Globalization;
+using System.Text;
+
 namespace SmartBase.Core.Documents;
 
 /// <summary>
@@ -20,7 +23,9 @@ namespace SmartBase.Core.Documents;
 /// <item>последнее слово ищется по началу слова (в MATCH ему приписывается <c>*</c>), все
 ///       остальные — целым словом; у фразы «*» достается ее последней части;</item>
 /// <item>регистр и «е/ё» не различаются — так настроен токенизатор индекса
-///       (<c>unicode61 remove_diacritics 2</c>).</item>
+///       (<c>unicode61 remove_diacritics 2</c>);</item>
+/// <item>число из четырех и больше цифр ищется и с разрядами (<see cref="Variants"/>):
+///       «30772» находит «30 772,48» — так сумму показывает книга.</item>
 /// </list>
 ///
 /// Подсвечивается всегда ЦЕЛОЕ слово, даже когда совпало только его начало: набравший
@@ -57,6 +62,57 @@ public static class DocHighlight
         var parts = new List<string>();
         foreach (var (start, end) in Words(token)) parts.Add(Fold(token.AsSpan(start, end - start)));
         return [.. parts];
+    }
+
+    /// <summary>
+    /// Варианты слова запроса — части, которые ищутся подряд. Обычно вариант один. У числа из
+    /// четырех и больше цифр их два: как набрано и с разрядами, как его показывает книга по
+    /// записи «#,##0», — «30772» и «30 772»; дробная часть остается при числе: «30772.48» —
+    /// это и «30 772 48».
+    ///
+    /// Зачем. Поиск хранит книгу так, как ее показывает панель, — с разрядами, а число человек
+    /// набирает подряд. Без второго варианта сумма «30 772,48» по запросу «30772» не находилась
+    /// бы, хотя прежде, пока индекс хранил числа как они лежат в файле, находилась. Разряды
+    /// ставятся по языку системы — тем же, по которому их ставит панель.
+    ///
+    /// Вариантом обзаводится только слово, которое ЦЕЛИКОМ число: «12345-2019» или «№12345» —
+    /// коды, их книга разрядами не делит, как и число с ведущим нулем («01234»).
+    /// </summary>
+    public static IReadOnlyList<string[]> Variants(string? token)
+    {
+        var parts = Parts(token);
+        if (parts.Length == 0) return [];
+
+        var grouped = Grouped(token!);
+        return grouped is null ? [parts] : [parts, grouped];
+    }
+
+    // Число с разрядами, разрезанное на части, как его режет индекс; null — слово не число или
+    // разряды его не меняют.
+    private static string[]? Grouped(string token)
+    {
+        var number = token.AsSpan();
+        if (number.Length > 0 && number[0] is '-' or '+') number = number[1..];
+
+        var point = number.IndexOfAny('.', ',');
+        var whole = point < 0 ? number : number[..point];
+        var tail  = point < 0 ? ReadOnlySpan<char>.Empty : number[(point + 1)..];
+
+        if (whole.Length is < 4 or > 18 || whole[0] == '0' || !AllDigits(whole)) return null;
+        if (point >= 0 && (tail.Length == 0 || !AllDigits(tail))) return null;
+
+        var parts = Parts(long.Parse(whole, CultureInfo.InvariantCulture)
+                              .ToString("#,##0", CultureInfo.CurrentCulture));
+        if (parts.Length < 2) return null;
+
+        return tail.Length > 0 ? [.. parts, tail.ToString()] : parts;
+    }
+
+    private static bool AllDigits(ReadOnlySpan<char> text)
+    {
+        foreach (var c in text)
+            if (!char.IsAsciiDigit(c)) return false;
+        return true;
     }
 
     /// <summary>
@@ -112,6 +168,52 @@ public static class DocHighlight
         return hits;
     }
 
+    /// <summary>
+    /// Совпадения на странице PDF, где текст — это слова с местами, а не строка: какие слова
+    /// подсветить. Слова сшиваются через пробел и ищутся тем же <see cref="Find"/>: фраза
+    /// запроса переходит через границу слов так же, как ее находит индекс, у которого текст
+    /// страницы — сплошная строка. Сумма «30 772,48» на странице — два слова, и запрос «30772»
+    /// обязан подсветить оба; так же и «21.501», разбитое версткой надвое.
+    ///
+    /// Совпадение — диапазон слов от <c>First</c> до <c>Last</c>. Два совпадения в одном слове
+    /// сливаются в одно: подсвечивается слово, и считать его дважды незачем.
+    /// </summary>
+    public static List<(int First, int Last)> FindInWords(IReadOnlyList<string> words,
+                                                          IReadOnlyList<string>? tokens,
+                                                          bool lastIsPrefix = true)
+    {
+        var found = new List<(int First, int Last)>();
+        if (words.Count == 0 || tokens is null || tokens.Count == 0) return found;
+
+        var text   = new StringBuilder();
+        var starts = new int[words.Count];
+        for (var w = 0; w < words.Count; w++)
+        {
+            if (w > 0) text.Append(' ');
+            starts[w] = text.Length;
+            text.Append(words[w]);
+        }
+
+        foreach (var hit in Find(text.ToString(), tokens, lastIsPrefix))
+        {
+            var first = WordAt(starts, hit.Start);
+            var last  = WordAt(starts, hit.End - 1);
+
+            if (found.Count > 0 && found[^1].Last >= first)
+                found[^1] = (found[^1].First, Math.Max(found[^1].Last, last));
+            else
+                found.Add((first, last));
+        }
+        return found;
+    }
+
+    // Слово, которому принадлежит знак: последнее из начавшихся не позже него.
+    private static int WordAt(int[] starts, int at)
+    {
+        var i = Array.BinarySearch(starts, at);
+        return i >= 0 ? i : ~i - 1;
+    }
+
     // Фраза запроса: части подряд; у последней части последнего слова запроса — поиск по началу.
     private readonly record struct Phrase(string[] Parts, bool LastIsPrefix);
 
@@ -120,11 +222,11 @@ public static class DocHighlight
         var phrases = new List<Phrase>(tokens.Count);
         for (var t = 0; t < tokens.Count; t++)
         {
-            var parts = Parts(tokens[t]);
             // Слово из одной пунктуации: индекс из него не делает ни одной части и в поиске
-            // его не учитывает («гост ++» находит все, где есть «гост»). Подсветке — то же.
-            if (parts.Length == 0) continue;
-            phrases.Add(new Phrase(parts, lastIsPrefix && t == tokens.Count - 1));
+            // его не учитывает («гост ++» находит все, где есть «гост»). Подсветке — то же:
+            // вариантов у такого слова нет.
+            foreach (var parts in Variants(tokens[t]))
+                phrases.Add(new Phrase(parts, lastIsPrefix && t == tokens.Count - 1));
         }
         return phrases;
     }

@@ -14,13 +14,18 @@ public readonly record struct DocNumber(string Text, bool Red = false);
 /// Показать «45356» вместо даты или «0,15» вместо процентов значит показать неправду, причем
 /// неправду убедительную: число выглядит настоящим значением ячейки, и ошибку в нем не видно.
 ///
+/// Тем же путем число записывает и индекс поиска: что человек видит в панели, по тому книга и
+/// находится, и найденное есть чем подсветить.
+///
 /// <b>Чего здесь нет.</b> Это не полный движок форматов Excel — их правила огромны (склейка по
-/// разрядам, дробные записи, заполнение до края, подстановка текста). Разобрано то, что
-/// встречается в рабочих книгах: разряды, знаки после запятой, проценты, валюта, свой текст в
-/// записи и отдельная запись для отрицательных — вместе с «красным». Остальное печатается
-/// числом как есть: панель читают, а не считают в ней.
+/// разрядам, заполнение до края, подстановка текста, условия). Разобрано то, что встречается в
+/// рабочих книгах: разряды, знаки после запятой, проценты, валюта, свой текст в записи,
+/// отдельная запись для отрицательных — вместе с «красным» — и даты со временем по их записи
+/// (<c>DocNumberFormat.Dates.cs</c>). Показательная и дробная записи печатаются числом как есть:
+/// разобранные вполсилы, они дали бы число, похожее на правду, — «4 /» вместо «3 1/2». Панель
+/// читают, а не считают в ней.
 /// </summary>
-public static class DocNumberFormat
+public static partial class DocNumberFormat
 {
     /// <summary>
     /// Запись встроенного формата по его номеру. В файле встроенных записей нет — у них только
@@ -49,9 +54,19 @@ public static class DocNumberFormat
         15 => "d-mmm-yy",
         16 => "d-mmm",
         17 => "mmm-yy",
-        18 or 19 or 20 or 21 => "h:mm",
+        18 => "h:mm AM/PM",
+        19 => "h:mm:ss AM/PM",
+        20 => "h:mm",
+        21 => "h:mm:ss",
         22 => "dd.mm.yyyy h:mm",
-        45 or 46 or 47 => "h:mm",
+        // Номера 27–36 и 50–58 — даты и время восточноазиатских языков: записи у каждого языка
+        // свои, а число под ними то же. Показать его датой честнее, чем номером дня.
+        32 => "h:mm",
+        33 => "h:mm:ss",
+        >= 27 and <= 36 or >= 50 and <= 58 => "dd.mm.yyyy",
+        45 => "mm:ss",
+        46 => "[h]:mm:ss",
+        47 => "mm:ss.0",
         48 => "##0.0E+0",
         49 => "@",
         _  => "",
@@ -101,7 +116,7 @@ public static class DocNumberFormat
     /// в книге десятки, а ячеек десятки тысяч, и разбор строки на каждую из них — треть времени
     /// открытия книги на ровном месте.
     /// </summary>
-    private readonly record struct Recipe(bool Date, bool Plain, Spec[] Parts);
+    private readonly record struct Recipe(bool Date, bool Plain, Spec[] Parts, DateRecipe? Dated = null);
 
     private static readonly ConcurrentDictionary<string, Recipe> Recipes = new();
 
@@ -112,7 +127,8 @@ public static class DocNumberFormat
     private const int RecipeCap = 512;
 
     /// <summary>Показать число ячейки по записи ее формата.</summary>
-    public static DocNumber Apply(double value, string? format)
+    /// <param name="date1904">Книга считает дни от 1904 года, а не от 1900-го.</param>
+    public static DocNumber Apply(double value, string? format, bool date1904 = false)
     {
         var code = (format ?? "").Trim();
         if (code.Length == 0 || code.Equals("General", StringComparison.OrdinalIgnoreCase))
@@ -120,7 +136,8 @@ public static class DocNumberFormat
 
         var recipe = Recipes.Count < RecipeCap ? Recipes.GetOrAdd(code, Compile) : Compile(code);
 
-        if (recipe.Date)  return new DocNumber(AsDate(value, code));
+        // Число вне дат (отрицательное, за 9999 годом) показывается числом, а не ошибкой.
+        if (recipe.Date)  return new DocNumber(FormatDate(value, recipe.Dated!, date1904) ?? General(value));
         if (recipe.Plain) return new DocNumber(General(value));
 
         // Запись бывает из нескольких частей: для положительных, для отрицательных, для нуля.
@@ -153,7 +170,7 @@ public static class DocNumberFormat
 
     private static Recipe Compile(string code)
     {
-        if (IsDate(code)) return new Recipe(true, false, []);
+        if (IsDate(code)) return new Recipe(true, false, [], CompileDate(code));
 
         // Показательная запись («0.00E+00») — отдельный разговор про порядок числа, и разбирать
         // ее вполсилы хуже, чем не разбирать: получится число, похожее на правду.
@@ -161,60 +178,38 @@ public static class DocNumberFormat
             code.Contains("E-", StringComparison.OrdinalIgnoreCase))
             return new Recipe(false, true, []);
 
+        // Дробная запись («# ?/?», «?/8») — то же: «?» в ней знаки дроби, а «/» — ее черта, и
+        // разбор как обычного числа печатал 3,5 как «4 /».
+        if (IsFraction(code)) return new Recipe(false, true, []);
+
         return new Recipe(false, false, [.. Sections(code).Select(Parse)]);
+    }
+
+    /// <summary>Дробная запись: черта «/» вне кавычек, скобок и экранирования.</summary>
+    private static bool IsFraction(string code)
+    {
+        var quoted = false;
+        for (var i = 0; i < code.Length; i++)
+        {
+            var ch = code[i];
+            if (ch == '"') { quoted = !quoted; continue; }
+            if (quoted) continue;
+            if (ch is '\\' or '_' or '*') { i++; continue; }
+            if (ch == '[')
+            {
+                var close = code.IndexOf(']', i + 1);
+                if (close < 0) return false;
+                i = close;
+                continue;
+            }
+            if (ch == '/') return true;
+        }
+        return false;
     }
 
     /// <summary>Число без записи формата: без хвоста нулей, как его показывает и сам Excel.</summary>
     public static string General(double value) =>
         value.ToString("0.##########", CultureInfo.CurrentCulture);
-
-    /// <summary>Дата из числа Excel. Число вне диапазона дат показывается числом, а не ошибкой.</summary>
-    public static string AsDate(double value, string format)
-    {
-        try
-        {
-            var date = DateTime.FromOADate(value);
-            var time = Has(format, 'h');
-            var day  = Has(format, 'd') || Has(format, 'y');
-
-            if (day && time) return date.ToString("dd.MM.yyyy HH:mm", CultureInfo.CurrentCulture);
-            if (time)        return date.ToString("HH:mm", CultureInfo.CurrentCulture);
-            return date.ToString("dd.MM.yyyy", CultureInfo.CurrentCulture);
-        }
-        catch
-        {
-            return General(value);
-        }
-    }
-
-    /// <summary>Буква в записи формата — вне кавычек и вне скобок, по тем же причинам.</summary>
-    private static bool Has(string format, char letter)
-    {
-        var quoted = false;
-        for (var i = 0; i < format.Length; i++)
-        {
-            var ch = format[i];
-            if (ch == '"') { quoted = !quoted; continue; }
-            if (quoted) continue;
-            if (ch == '\\') { i++; continue; }
-            if (ch == '[')
-            {
-                var close = format.IndexOf(']', i + 1);
-                if (close < 0) return false;
-
-                // Скобка из одних часов и минут — это тоже время, и букву в ней считаем.
-                var inner = format[(i + 1)..close];
-                if (inner.Length > 0 && inner.All(c => c is 'h' or 'H' or 'm' or 'M' or 's' or 'S')
-                                     && inner.Contains(letter, StringComparison.OrdinalIgnoreCase))
-                    return true;
-
-                i = close;
-                continue;
-            }
-            if (char.ToLowerInvariant(ch) == letter) return true;
-        }
-        return false;
-    }
 
     // ── Разбор записи ─────────────────────────────────────────────────────────
 
