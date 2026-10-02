@@ -69,13 +69,21 @@ public sealed class DocPageSource : IDisposable
     private int _readerWidth;
     private bool _closed;
 
+    /// <summary>Сколько страниц панель показывает — не больше <see cref="MaxPages"/>.</summary>
     public int PageCount => _sizes.Length;
+
+    /// <summary>
+    /// Сколько страниц в документе ВСЕГО. Больше <see cref="PageCount"/> — значит, том показан не
+    /// целиком, и панель обязана сказать об этом, а не оборвать его молча.
+    /// </summary>
+    public int TotalPages { get; }
 
     private DocPageSource(string path, PdfDocument pig, DocPageSize[] sizes)
     {
         _path  = path;
         _pig   = pig;
         _sizes = sizes;
+        TotalPages = Math.Max(sizes.Length, pig.NumberOfPages);
 
         _uprightAspect = 1.0;
         _wideAspect    = 0.0;

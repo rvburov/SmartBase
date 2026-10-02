@@ -76,15 +76,48 @@ public readonly record struct DocSheetRow(int Index, IReadOnlyList<DocCell> Cell
     public IReadOnlyList<DocMerge> Merges { get; } = Merges ?? [];
 }
 
+/// <summary>
+/// Что лист показал не целиком. Потолки строк и колонок нужны — выгрузка на сто тысяч строк не
+/// должна съесть память ради одного открытия панели, — но обрывать лист МОЛЧА нельзя: человек
+/// прочитал бы обрезанную таблицу как целую.
+/// </summary>
+/// <param name="Rows">Строки с данными есть и за последней показанной.</param>
+/// <param name="RowsShown">Номер последней показанной строки — как в Excel, с единицы.</param>
+/// <param name="RowsTotal">Сколько строк в листе; 0 — неизвестно (книга не записала свой размер,
+/// а дальше потолка лист не читался).</param>
+/// <param name="Columns">Данные есть и правее последней показанной колонки.</param>
+/// <param name="ColumnsShown">Сколько колонок показано.</param>
+/// <param name="ColumnsTotal">Сколько колонок в листе.</param>
+public readonly record struct DocSheetCut(bool Rows = false, int RowsShown = 0, int RowsTotal = 0,
+                                          bool Columns = false, int ColumnsShown = 0, int ColumnsTotal = 0)
+{
+    public bool Any => Rows || Columns;
+}
+
+/// <summary>
+/// Книга, как ее показывает Excel: видимые листы в порядке корешков и сколько листов скрыто.
+/// Скрытые не показываются (их не показывает и сам Excel), но их число нужно панели: поиск по
+/// содержимому ищет и в них, и найденное там слово в панели не подсветится — об этом надо
+/// сказать.
+/// </summary>
+public sealed record DocBookView(IReadOnlyList<DocSheet> Sheets, int HiddenSheets)
+{
+    public static DocBookView Empty { get; } = new([], 0);
+}
+
 /// <summary>Лист книги: имя, строки и ширины колонок в знаках.</summary>
 public sealed class DocSheet(string name, IReadOnlyList<DocSheetRow> rows, IReadOnlyList<double> widths,
                              double defaultHeight = DocSheetSource.DefaultHeight,
                              double defaultWidth  = DocSheetSource.DefaultWidth,
                              IReadOnlyList<DocPaint>? paints = null,
-                             double fontSize = DocSheetSource.DefaultFontSize)
+                             double fontSize = DocSheetSource.DefaultFontSize,
+                             DocSheetCut cut = default)
 {
     public string Name { get; } = name;
     public IReadOnlyList<DocSheetRow> Rows { get; } = rows;
+
+    /// <summary>Что из листа не показано: строки и колонки за потолками.</summary>
+    public DocSheetCut Cut { get; } = cut;
 
     /// <summary>Оформления книги: ячейка ссылается сюда своим номером.</summary>
     public IReadOnlyList<DocPaint> Paints { get; } = paints ?? [];
@@ -121,15 +154,17 @@ public sealed class DocSheet(string name, IReadOnlyList<DocSheetRow> rows, IRead
 /// <summary>
 /// Книга Excel для панели чтения: листы, ячейки и объединения.
 ///
-/// Это ТРЕТИЙ разбор XLSX в программе, и каждый нужен для своего:
+/// Разборов XLSX в программе два, и каждый нужен для своего:
 /// <list type="bullet">
 /// <item><c>DocTextExtractor</c> вываливает весь текст подряд — поиску нужны слова, а не
 ///       таблица;</item>
-/// <item><c>DocReadText</c> отдает строки листа текстом — так лист читается в режиме «Текст»;</item>
 /// <item>здесь книга разбирается в СЕТКУ: где какая ячейка стоит, какой она ширины и что с чем
 ///       объединено. Без этого таблицу не нарисовать — текстом она превращается в кашу из
 ///       чисел, потому что колонки в ней держат смысл.</item>
 /// </list>
+/// Режим «Текст» (<c>DocReadText</c>) своего разбора не имеет и берет строки листа ОТСЮДА: раньше
+/// у него был свой обход книги, и два режима показывали разные листы в разном порядке, а скрытые
+/// строки прятал только один из них.
 ///
 /// <b>Числа и даты.</b> Excel хранит дату числом (45678), а проценты долей — как их читать,
 /// записано в стиле ячейки. Показать «45678» вместо «12.08.2026» значит показать неправду, и
@@ -173,42 +208,75 @@ public static class DocSheetSource
     /// Разобрать книгу. Пустой список — файл не XLSX, не открылся или в нем нет ни одного
     /// листа с данными; для панели это не сбой, а повод остаться в режиме текста.
     /// </summary>
-    public static IReadOnlyList<DocSheet> Open(string path, CancellationToken ct = default)
+    public static IReadOnlyList<DocSheet> Open(string path, CancellationToken ct = default) =>
+        OpenBook(path, ct).Sheets;
+
+    /// <summary>То же вместе с числом скрытых листов — его панель показывает строкой над листом.</summary>
+    public static DocBookView OpenBook(string path, CancellationToken ct = default)
     {
-        var ext = DocTextExtractor.ExtensionOf(path);
-        if (ext is not ("xlsx" or "xlsm")) return [];
-
-        try
-        {
-            if (!File.Exists(path)) return [];
-
-            using var doc = SpreadsheetDocument.Open(path, false);
-            var book = doc.WorkbookPart;
-            if (book is null) return [];
-
-            var shared  = book.SharedStringTablePart?.SharedStringTable
-                              ?.Elements<SharedStringItem>().Select(i => i.InnerText).ToArray() ?? [];
-            var styles  = Styles(book);
-
-            var sheets = new List<DocSheet>();
-            foreach (var entry in book.Workbook?.Sheets?.Elements<Sheet>() ?? [])
-            {
-                ct.ThrowIfCancellationRequested();
-                if (entry.Id?.Value is not { } id) continue;
-                if (book.GetPartById(id) is not WorksheetPart part) continue;
-
-                var sheet = ReadSheet(entry.Name?.Value ?? "Лист", part, shared, styles, ct);
-                if (sheet.Rows.Count > 0) sheets.Add(sheet);
-            }
-            return sheets;
-        }
+        try { return Read(path, ct); }
         catch (OperationCanceledException) { throw; }
-        catch { return []; }
+        catch { return DocBookView.Empty; }
     }
 
     /// <summary>Фоновый разбор: книга на тысячи строк не должна держать UI-поток.</summary>
     public static Task<IReadOnlyList<DocSheet>> OpenAsync(string path, CancellationToken ct = default) =>
         Task.Run(() => Open(path, ct), ct);
+
+    /// <summary>Фоновый разбор вместе с числом скрытых листов.</summary>
+    public static Task<DocBookView> OpenBookAsync(string path, CancellationToken ct = default) =>
+        Task.Run(() => OpenBook(path, ct), ct);
+
+    /// <summary>
+    /// Разбор книги без страховки: исключение уходит зовущему. Им пользуется режим «Текст»
+    /// (<see cref="DocReadText"/>): ему битая книга нужна сбоем, а не пустотой — «не прочиталось»
+    /// и «в книге пусто» человеку говорятся по-разному.
+    ///
+    /// <b>Листы идут в порядке корешков</b> (<c>Workbook.Sheets</c>), а не в порядке частей
+    /// пакета: части программа записывает как ей удобно, и с корешками этот порядок совпадать не
+    /// обязан. <b>Скрытый лист пропускается</b> — и обычный скрытый, и «очень скрытый», которого
+    /// не вернуть даже из меню Excel: их не показывает сам Excel.
+    /// </summary>
+    internal static DocBookView Read(string path, CancellationToken ct)
+    {
+        var ext = DocTextExtractor.ExtensionOf(path);
+        if (ext is not ("xlsx" or "xlsm") || !File.Exists(path)) return DocBookView.Empty;
+
+        using var doc = SpreadsheetDocument.Open(path, false);
+        var book = doc.WorkbookPart;
+        if (book is null) return DocBookView.Empty;
+
+        var shared = book.SharedStringTablePart?.SharedStringTable
+                         ?.Elements<SharedStringItem>().Select(i => i.InnerText).ToArray() ?? [];
+
+        // Сломанная таблица оформления не повод терять содержимое: значения покажутся без
+        // заливок и форматов, но покажутся.
+        BookStyles styles;
+        try { styles = Styles(book); }
+        catch (OperationCanceledException) { throw; }
+        catch { styles = new BookStyles([], [], DefaultFontSize); }
+
+        var sheets = new List<DocSheet>();
+        var hidden = 0;
+        foreach (var entry in book.Workbook?.Sheets?.Elements<Sheet>() ?? [])
+        {
+            ct.ThrowIfCancellationRequested();
+            if (entry.Id?.Value is not { } id) continue;
+            // Лист-диаграмма — тоже корешок, но таблицы в нем нет.
+            if (!book.TryGetPartById(id, out var found) || found is not WorksheetPart part) continue;
+
+            if (entry.State?.Value is { } state && !state.Equals(SheetStateValues.Visible))
+            {
+                hidden++;
+                continue;
+            }
+
+            var sheet = ReadSheet(entry.Name?.Value is { Length: > 0 } name ? name : "Лист",
+                                  part, shared, styles, ct);
+            if (sheet.Rows.Count > 0) sheets.Add(sheet);
+        }
+        return new DocBookView(sheets, hidden);
+    }
 
     // ── Разбор листа ──────────────────────────────────────────────────────────
 
@@ -225,6 +293,9 @@ public static class DocSheetSource
             return new DocSheet(name, [], widths, format.Height, format.Width,
                                 styles.Paints, styles.FontSize);
 
+        var cutRows = false;   // дальше потолка строк лист не читался
+        var widest  = 0;       // самая правая колонка с данными, с единицы, — и за потолком тоже
+
         // Строки собираются ПО НОМЕРАМ, а не подряд: между заполненными строками в книге бывают
         // пустые, и без них таблица сжалась бы, а номера строк слева перестали бы совпадать с
         // книгой. Скрытые строки не показываются вовсе — как и в самом Excel.
@@ -240,18 +311,31 @@ public static class DocSheetSource
         foreach (var row in data.Elements<Row>())
         {
             ct.ThrowIfCancellationRequested();
-            if (++seen > MaxRows) break;
+            if (++seen > MaxRows) { cutRows = true; break; }
 
             var index = (int)(row.RowIndex?.Value ?? (uint)seen) - 1;
             if (index < 0) continue;
             if (row.Hidden?.Value == true) { hidden.Add(index); continue; }
 
             var cells = new List<DocCell>();
+            var next  = 0;
 
             foreach (var cell in row.Elements<Cell>())
             {
-                var column = ColumnOf(cell.CellReference?.Value);
-                if (column < 0 || column >= MaxColumns) continue;
+                // Ссылка у ячейки по формату необязательна: без нее ячейка стоит следом за
+                // предыдущей. Так пишут книги иные выгрузки, и пропусти мы такие ячейки — лист
+                // показался бы пустым.
+                var reference = cell.CellReference?.Value;
+                var column    = string.IsNullOrEmpty(reference) ? next : ColumnOf(reference);
+                if (column < 0) continue;
+                next = column + 1;
+
+                if (column >= MaxColumns)
+                {
+                    if (cell.CellValue is not null || cell.InlineString is not null)
+                        widest = Math.Max(widest, column + 1);
+                    continue;
+                }
 
                 // Ячейка, накрытая чужим объединением, своего места на экране не имеет —
                 // Excel хранит ее пустой, но показывать ее нельзя даже если текст в ней есть.
@@ -264,6 +348,7 @@ public static class DocSheetSource
 
                 var (text, red) = Text(cell, shared, style.Format);
                 if (text.Length == 0) continue;
+                widest = Math.Max(widest, column + 1);
 
                 var span = merges.Spans.TryGetValue((index, column), out var m) ? m : (Cols: 1, Rows: 1);
                 cells.Add(new DocCell(column, text, span.Cols, span.Rows,
@@ -296,18 +381,56 @@ public static class DocSheetSource
             }
 
         var rows = new List<DocSheetRow>();
-        for (var i = 0; i <= last && rows.Count < MaxRows; i++)
+        var at   = 0;
+        for (; at <= last && rows.Count < MaxRows; at++)
         {
-            if (hidden.Contains(i)) continue;
+            if (hidden.Contains(at)) continue;
 
-            var spans = crossing.GetValueOrDefault(i);
-            rows.Add(parsed.TryGetValue(i, out var row)
-                ? new DocSheetRow(i, row.Cells, row.Height, spans)
-                : new DocSheetRow(i, [], 0, spans));
+            var spans = crossing.GetValueOrDefault(at);
+            rows.Add(parsed.TryGetValue(at, out var row)
+                ? new DocSheetRow(at, row.Cells, row.Height, spans)
+                : new DocSheetRow(at, [], 0, spans));
         }
 
+        // Потолок показа кончился раньше данных: лист разреженный, и номера строк ушли дальше
+        // двух тысяч, хотя прочитано меньше.
+        if (at <= last) cutRows = true;
+
         return new DocSheet(name, rows, widths, format.Height, format.Width,
-                            styles.Paints, styles.FontSize);
+                            styles.Paints, styles.FontSize,
+                            CutOf(sheet, rows, last, cutRows, widest));
+    }
+
+    /// <summary>
+    /// Что осталось за потолками. Сколько строк в листе всего, книга обычно записывает сама
+    /// (размер листа, <c>&lt;dimension ref="A1:K5400"/&gt;</c>), — им и пользуемся: читать лист
+    /// дальше потолка ради одного числа значило бы потратить ровно то, от чего потолок бережет.
+    /// </summary>
+    private static DocSheetCut CutOf(Worksheet? sheet, List<DocSheetRow> rows, int last,
+                                     bool cutRows, int widest)
+    {
+        var cutColumns = widest > MaxColumns;
+        if (!cutRows && !cutColumns) return default;
+
+        var (extentRows, extentColumns) = Extent(sheet);
+        var shown = rows.Count > 0 ? rows[^1].Index + 1 : 0;
+        var total = cutRows ? Math.Max(extentRows, last + 1) : 0;
+        // Число не больше показанного — значит, настоящего мы не знаем: молчим о нем, а не врем.
+        if (total <= shown) total = 0;
+
+        return new DocSheetCut(cutRows, shown, total,
+                               cutColumns, MaxColumns, cutColumns ? Math.Max(widest, extentColumns) : 0);
+    }
+
+    // Размер листа, записанный самой книгой: номер последней строки и колонки с единицы.
+    // (0, 0) — не записан; Excel его пишет, иные программы — не всегда.
+    private static (int Rows, int Columns) Extent(Worksheet? sheet)
+    {
+        var reference = sheet?.SheetDimension?.Reference?.Value;
+        if (string.IsNullOrEmpty(reference)) return (0, 0);
+
+        var (row, column) = CellOf(reference.Split(':')[^1]);
+        return row < 0 ? (0, 0) : (row + 1, column + 1);
     }
 
     /// <summary>

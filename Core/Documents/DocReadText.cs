@@ -2,7 +2,6 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using DocumentFormat.OpenXml.Packaging;
-using DocumentFormat.OpenXml.Spreadsheet;
 using UglyToad.PdfPig;
 using UglyToad.PdfPig.DocumentLayoutAnalysis.TextExtractor;
 
@@ -12,8 +11,27 @@ namespace SmartBase.Core.Documents;
 /// <param name="Label">«Страница 4», «Лист „Смета“»; пусто — у форматов без такого деления.</param>
 public readonly record struct DocPart(string Label, string Text);
 
-/// <summary>Документ, разобранный для чтения: статус, куски по порядку и число страниц.</summary>
-public readonly record struct DocReadResult(DocTextStatus Status, IReadOnlyList<DocPart> Parts, int Pages = 0)
+/// <summary>
+/// Что разбор для чтения показал не целиком — чтобы панель сказала об этом, а не оборвала
+/// документ молча.
+/// </summary>
+/// <param name="PagesShown">Сколько страниц PDF прочитано; всего их — <c>DocReadResult.Pages</c>.</param>
+/// <param name="Text">Текст оборван потолком знаков (<see cref="DocTextExtractor.MaxChars"/>).</param>
+/// <param name="HiddenSheets">Скрытых листов книги — их не показывает и сам Excel.</param>
+/// <param name="Sheets">Листы книги, показанные не целиком.</param>
+public readonly record struct DocReadCut(int PagesShown = 0, bool Text = false, int HiddenSheets = 0,
+                                         IReadOnlyList<(string Name, DocSheetCut Cut)>? Sheets = null)
+{
+    // Поле, а не свойство с инициализатором: у значения по умолчанию (а им панель сбрасывает
+    // разбор) инициализатор не выполняется, и свойство осталось бы null.
+    private readonly IReadOnlyList<(string Name, DocSheetCut Cut)>? _sheets = Sheets;
+
+    public IReadOnlyList<(string Name, DocSheetCut Cut)> Sheets => _sheets ?? [];
+}
+
+/// <summary>Документ, разобранный для чтения: статус, куски по порядку, число страниц и обрез.</summary>
+public readonly record struct DocReadResult(DocTextStatus Status, IReadOnlyList<DocPart> Parts, int Pages = 0,
+                                            DocReadCut Cut = default)
 {
     public static DocReadResult Of(DocTextStatus status) => new(status, []);
 
@@ -63,20 +81,21 @@ public static class DocReadText
                 return DocReadResult.Of(DocTextStatus.TooBig);
 
             var pages = 0;
+            DocReadCut cut;
             var parts = ext switch
             {
-                "pdf"            => FromPdf(path, ct, out pages),
-                "docx"           => FromDocx(path, ct),
-                "xlsx" or "xlsm" => FromXlsx(path, ct),
-                _                => FromPlainText(path),
+                "pdf"            => FromPdf(path, ct, out pages, out cut),
+                "docx"           => FromDocx(path, ct, out cut),
+                "xlsx" or "xlsm" => FromXlsx(path, ct, out cut),
+                _                => FromPlainText(path, out cut),
             };
 
             // Пустые куски выбрасываем ЗДЕСЬ, а не в разборщиках: пустая страница скана и пустой
             // лист книги — это не текст, и подпись «Страница 7» над пустотой только сбивает.
             var kept = parts.Where(p => p.Text.Length > 0).ToList();
             return kept.Count == 0
-                ? new DocReadResult(DocTextStatus.NoText, [], pages)
-                : new DocReadResult(DocTextStatus.Ok, kept, pages);
+                ? new DocReadResult(DocTextStatus.NoText, [], pages, cut)
+                : new DocReadResult(DocTextStatus.Ok, kept, pages, cut);
         }
         catch (OperationCanceledException) { throw; }
         catch { return DocReadResult.Of(DocTextStatus.Failed); }
@@ -89,7 +108,8 @@ public static class DocReadText
 
     // ── Разборщики ────────────────────────────────────────────────────────────
 
-    private static List<DocPart> FromPdf(string path, CancellationToken ct, out int pageCount)
+    private static List<DocPart> FromPdf(string path, CancellationToken ct, out int pageCount,
+                                         out DocReadCut cut)
     {
         var parts = new List<DocPart>();
         using var doc = PdfDocument.Open(path);
@@ -99,11 +119,14 @@ public static class DocReadText
         pageCount = doc.NumberOfPages;
         var read  = Math.Min(doc.NumberOfPages, DocTextExtractor.MaxPdfPages);
         var total = 0;
+        var shown = 0;
+        var full  = false;
 
         for (var i = 1; i <= read; i++)
         {
             ct.ThrowIfCancellationRequested();
-            if (total >= DocTextExtractor.MaxChars) break;
+            if (total >= DocTextExtractor.MaxChars) { full = true; break; }
+            shown = i;
 
             string text;
             try { text = ContentOrderTextExtractor.GetText(doc.GetPage(i)); }
@@ -114,6 +137,8 @@ public static class DocReadText
             total += body.Length;
             parts.Add(new DocPart($"Страница {i}", body));
         }
+
+        cut = new DocReadCut(PagesShown: shown, Text: full);
         return parts;
     }
 
@@ -122,8 +147,9 @@ public static class DocReadText
     /// разбор для индекса): <c>InnerText</c> склеивает весь документ в одну строку — для поиска
     /// это неважно, а для чтения означает стену текста без единого перевода строки.
     /// </summary>
-    private static List<DocPart> FromDocx(string path, CancellationToken ct)
+    private static List<DocPart> FromDocx(string path, CancellationToken ct, out DocReadCut cut)
     {
+        cut = default;
         using var doc = WordprocessingDocument.Open(path, false);
         var body = doc.MainDocumentPart?.Document?.Body;
         if (body is null) return [];
@@ -132,7 +158,7 @@ public static class DocReadText
         foreach (var p in body.Descendants<DocumentFormat.OpenXml.Wordprocessing.Paragraph>())
         {
             ct.ThrowIfCancellationRequested();
-            if (sb.Length >= DocTextExtractor.MaxChars) break;
+            if (sb.Length >= DocTextExtractor.MaxChars) { cut = new DocReadCut(Text: true); break; }
 
             var line = p.InnerText;
             if (line.Length == 0) continue;
@@ -142,67 +168,58 @@ public static class DocReadText
     }
 
     /// <summary>
-    /// Книга Excel — по листу на кусок, строка листа на строку текста. Значения берутся из
-    /// самих ячеек с разворотом ссылок в общую таблицу строк; разбор для индекса вместо этого
-    /// вываливает всю общую таблицу подряд — для поиска этого достаточно, а читать такое нельзя:
-    /// там нет ни строк, ни листов, и один и тот же текст идет дважды.
+    /// Книга Excel — по листу на кусок, строка листа на строку текста.
+    ///
+    /// Листы, строки и значения берутся из ТОЙ ЖЕ модели листа, по которой рисуется сетка
+    /// режима «Как в документе» (<see cref="DocSheetSource"/>). Раньше у режима был свой обход
+    /// книги — по частям пакета, а не по корешкам, без пропуска скрытых листов и строк и с
+    /// сырыми числами вместо дат, — и, переключив режим, человек видел другие листы в другом
+    /// порядке. Теперь правило одно: листы в порядке корешков, скрытые листы, строки и колонки
+    /// не показываются (как и в самом Excel), значения — в формате своей ячейки.
+    ///
+    /// Разбор для индекса устроен иначе — он вываливает всю общую таблицу строк подряд. Для
+    /// поиска этого достаточно, а читать такое нельзя: там нет ни строк, ни листов.
     /// </summary>
-    private static List<DocPart> FromXlsx(string path, CancellationToken ct)
+    private static List<DocPart> FromXlsx(string path, CancellationToken ct, out DocReadCut cut)
     {
+        var book  = DocSheetSource.Read(path, ct);
         var parts = new List<DocPart>();
-        using var doc = SpreadsheetDocument.Open(path, false);
-        var book = doc.WorkbookPart;
-        if (book is null) return parts;
-
-        var shared = book.SharedStringTablePart?.SharedStringTable
-                         ?.Elements<SharedStringItem>().Select(i => i.InnerText).ToArray() ?? [];
-
-        // Имя листа лежит не в самом листе, а в книге — связываются они идентификатором связи.
-        var names = book.Workbook?.Sheets?.Elements<Sheet>()
-                        .Where(s => s.Id?.Value is not null)
-                        .ToDictionary(s => s.Id!.Value!, s => s.Name?.Value ?? "") ?? [];
-
+        var cuts  = new List<(string, DocSheetCut)>();
         var total = 0;
-        foreach (var part in book.WorksheetParts)
+        var full  = false;
+
+        foreach (var sheet in book.Sheets)
         {
             ct.ThrowIfCancellationRequested();
-            if (total >= DocTextExtractor.MaxChars) break;
+            if (total >= DocTextExtractor.MaxChars) { full = true; break; }
 
-            var id   = book.GetIdOfPart(part);
-            var name = names.TryGetValue(id, out var n) && n.Length > 0 ? n : "Лист";
-            var data = part.Worksheet?.Elements<SheetData>().FirstOrDefault();
-            if (data is null) continue;
-
-            var sb   = new StringBuilder();
-            var rows = 0;
-            foreach (var row in data.Elements<Row>())
+            var sb = new StringBuilder();
+            foreach (var row in sheet.Rows)
             {
-                ct.ThrowIfCancellationRequested();
-                if (++rows > MaxSheetRows || sb.Length >= DocTextExtractor.MaxChars) break;
-
-                var cells = row.Elements<Cell>().Select(c => CellText(c, shared))
-                               .Where(v => v.Length > 0);
-                var line = string.Join(CellGap, cells);
+                // Ячейка скрытой колонки места на листе не имеет — в сетке у нее нулевая
+                // ширина, и текстом ее тоже не показываем.
+                var line = string.Join(CellGap, row.Cells.Where(c => sheet.WidthOf(c.Column) > 0)
+                                                         .Select(c => c.Text));
                 if (line.Length > 0) sb.Append(line).Append('\n');
+                if (sb.Length >= DocTextExtractor.MaxChars) { full = true; break; }
             }
 
             var text = NormalizeForRead(sb.ToString());
             total += text.Length;
-            parts.Add(new DocPart($"Лист «{name}»", text));
+            parts.Add(new DocPart($"Лист «{sheet.Name}»", text));
+            if (sheet.Cut.Any) cuts.Add((sheet.Name, sheet.Cut));
         }
+
+        cut = new DocReadCut(Text: full, HiddenSheets: book.HiddenSheets, Sheets: cuts);
         return parts;
     }
 
-    private static string CellText(Cell cell, string[] shared)
+    private static List<DocPart> FromPlainText(string path, out DocReadCut cut)
     {
-        var raw = cell.CellValue?.InnerText ?? "";
-        if (cell.DataType?.Value != CellValues.SharedString) return raw.Length > 0 ? raw : cell.InnerText;
-
-        return int.TryParse(raw, out var idx) && idx >= 0 && idx < shared.Length ? shared[idx] : "";
+        var text = NormalizeForRead(ReadPlain(path), out var full);
+        cut = new DocReadCut(Text: full);
+        return [new DocPart("", text)];
     }
-
-    private static List<DocPart> FromPlainText(string path) =>
-        [new DocPart("", NormalizeForRead(ReadPlain(path)))];
 
     /// <summary>
     /// Чтение текстового файла с определением кодировки — то же правило, что у разбора для
@@ -238,8 +255,12 @@ public static class DocReadText
     /// Отличие от <c>DocTextExtractor.Normalize</c> в одном: тот схлопывает и переносы тоже.
     /// Для индекса это правильно, для чтения — губительно.
     /// </summary>
-    public static string NormalizeForRead(string? raw)
+    public static string NormalizeForRead(string? raw) => NormalizeForRead(raw, out _);
+
+    /// <summary>То же с признаком, что текст уперся в потолок знаков и обрезан.</summary>
+    public static string NormalizeForRead(string? raw, out bool cut)
     {
+        cut = false;
         if (string.IsNullOrEmpty(raw)) return "";
 
         var sb      = new StringBuilder(Math.Min(raw.Length, DocTextExtractor.MaxChars));
@@ -247,7 +268,8 @@ public static class DocReadText
         var breaks  = 0;       // переводов строки подряд, уже записанных
         var written = false;   // хоть один видимый знак уже есть
 
-        for (var i = 0; i < raw.Length && sb.Length < DocTextExtractor.MaxChars; i++)
+        var i = 0;
+        for (; i < raw.Length && sb.Length < DocTextExtractor.MaxChars; i++)
         {
             var ch = raw[i];
 
@@ -273,6 +295,8 @@ public static class DocReadText
             sb.Append(ch);
         }
 
+        // Остановились на потолке, а дальше есть видимый текст — значит, обрезали.
+        cut = i < raw.Length && raw.AsSpan(i).ContainsAnyExcept(" \t\r\n");
         return sb.ToString().TrimEnd();
     }
 }

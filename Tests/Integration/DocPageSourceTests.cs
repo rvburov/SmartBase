@@ -168,6 +168,30 @@ public sealed class DocPageSourceTests : IDisposable
         Assert.Null(DocPageSource.Open(path));
     }
 
+    /// <summary>
+    /// Том толще потолка показывается не весь, но знает, сколько в нем страниц: иначе панель
+    /// не сказала бы «показаны страницы 1–300 из 302» и оборвала бы том молча.
+    /// </summary>
+    [Fact]
+    public void A_tome_past_the_cap_knows_its_full_size()
+    {
+        using var source = DocPageSource.Open(WritePdf("tome.pdf", DocPageSource.MaxPages + 2));
+
+        Assert.NotNull(source);
+        Assert.Equal(DocPageSource.MaxPages, source.PageCount);
+        Assert.Equal(DocPageSource.MaxPages + 2, source.TotalPages);
+    }
+
+    [Fact]
+    public void A_short_document_is_shown_whole()
+    {
+        using var source = DocPageSource.Open(WritePdf("short.pdf", 3));
+
+        Assert.NotNull(source);
+        Assert.Equal(3, source.PageCount);
+        Assert.Equal(3, source.TotalPages);
+    }
+
     [Fact]
     public void Broken_pdf_opens_as_null()
     {

@@ -11,9 +11,9 @@ namespace SmartBase.Tests.Integration;
 /// Разбор книги Excel в СЕТКУ (<see cref="DocSheetSource"/>) — то, из чего панель чтения рисует
 /// настоящую таблицу.
 ///
-/// Это третий разбор XLSX в программе, и проверки здесь про то, чего нет у двух других: место
-/// ячейки, объединения и ширины колонок. Текстовые разборы такого не знают и знать не должны —
-/// поиску и режиму «Текст» колонки не нужны.
+/// Проверки здесь про то, чего нет у разбора для поиска: место ячейки, объединения и ширины
+/// колонок. Режим «Текст» своего разбора книги не имеет — он берет строки из этой же сетки,
+/// поэтому все, что сказано здесь о листах и строках, верно и для него.
 ///
 /// Отдельная тема — даты. Excel хранит дату числом, а как ее показывать, записано в стиле
 /// ячейки; показать «45356» вместо «05.03.2024» значит показать неправду. Тихая это ошибка
@@ -215,7 +215,184 @@ public sealed class DocSheetSourceTests : IDisposable
         return path;
     }
 
+    /// <summary>
+    /// Книга, у которой порядок частей пакета и порядок корешков РАЗНЫЙ, плюс два скрытых
+    /// листа. Так выглядит книга, где лист перетащили мышью: Excel переставляет корешок, а часть
+    /// пакета остается на прежнем месте.
+    /// </summary>
+    private string WriteShuffledBook()
+    {
+        var path = Path.Combine(_dir, "shuffled.xlsx");
+        using var doc = SpreadsheetDocument.Create(path, SpreadsheetDocumentType.Workbook);
+
+        var book      = doc.AddWorkbookPart();
+        book.Workbook = new Workbook();
+
+        WorksheetPart Part(string text)
+        {
+            var part = book.AddNewPart<WorksheetPart>();
+            part.Worksheet = new Worksheet(new SheetData(TextRow(1, ("A1", text))));
+            part.Worksheet.Save();
+            return part;
+        }
+
+        var estimate = Part("смета");
+        var totals   = Part("итоги");
+        var lookup   = Part("справочник");
+        var deep     = Part("расчет");
+
+        book.Workbook.AppendChild(new Sheets(
+            new Sheet { Id = book.GetIdOfPart(totals),   SheetId = 2, Name = "Итоги" },
+            new Sheet { Id = book.GetIdOfPart(lookup),   SheetId = 3, Name = "Справочник",
+                        State = SheetStateValues.Hidden },
+            new Sheet { Id = book.GetIdOfPart(estimate), SheetId = 1, Name = "Смета" },
+            new Sheet { Id = book.GetIdOfPart(deep),     SheetId = 4, Name = "Расчет",
+                        State = SheetStateValues.VeryHidden }));
+        book.Workbook.Save();
+        return path;
+    }
+
+    // Книга с одним листом из готовых строк и, по желанию, с записанным размером листа.
+    private string WriteRows(string name, string? dimension, params Row[] rows)
+    {
+        var path = Path.Combine(_dir, name);
+        using var doc = SpreadsheetDocument.Create(path, SpreadsheetDocumentType.Workbook);
+
+        var book      = doc.AddWorkbookPart();
+        book.Workbook = new Workbook();
+
+        var part  = book.AddNewPart<WorksheetPart>();
+        var sheet = new Worksheet();
+        if (dimension is not null) sheet.Append(new SheetDimension { Reference = dimension });
+        sheet.Append(new SheetData(rows));
+        part.Worksheet = sheet;
+        part.Worksheet.Save();
+
+        book.Workbook.AppendChild(new Sheets(
+            new Sheet { Id = book.GetIdOfPart(part), SheetId = 1, Name = "Лист" }));
+        book.Workbook.Save();
+        return path;
+    }
+
+    // Строка с текстовыми ячейками; пустая ссылка — ячейка без ссылки.
+    private static Row TextRow(uint index, params (string Reference, string Text)[] cells)
+    {
+        var row = new Row { RowIndex = index };
+        foreach (var (reference, text) in cells)
+        {
+            var cell = new Cell { DataType = CellValues.String, CellValue = new CellValue(text) };
+            if (reference.Length > 0) cell.CellReference = reference;
+            row.Append(cell);
+        }
+        return row;
+    }
+
+    private static Row[] NumberedRows(int count) =>
+        [.. Enumerable.Range(1, count).Select(i => TextRow((uint)i, ($"A{i}", $"строка {i}")))];
+
     // ── Листы и ячейки ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Листы идут в порядке КОРЕШКОВ, а не частей пакета: перетащенный мышью лист Excel
+    /// переставляет только корешком, и по частям пакета книга читалась бы в чужом порядке.
+    /// </summary>
+    [Fact]
+    public void Sheets_follow_the_tab_order_not_the_package_order()
+    {
+        Assert.Equal(["Итоги", "Смета"], DocSheetSource.Open(WriteShuffledBook()).Select(s => s.Name));
+    }
+
+    /// <summary>
+    /// Скрытый лист не показывается — ни обычный скрытый, ни «очень скрытый», которого не вернуть
+    /// даже из меню Excel: их не показывает и сам Excel. Но они считаются — панель о них скажет.
+    /// </summary>
+    [Fact]
+    public void Hidden_sheets_are_skipped_and_counted()
+    {
+        var book = DocSheetSource.OpenBook(WriteShuffledBook());
+
+        Assert.DoesNotContain(book.Sheets, s => s.Name is "Справочник" or "Расчет");
+        Assert.Equal(2, book.HiddenSheets);
+    }
+
+    /// <summary>
+    /// Ссылка у ячейки по формату необязательна: без нее ячейка стоит следом за предыдущей.
+    /// Так пишут книги иные выгрузки — и такой лист сетка раньше показывала пустым.
+    /// </summary>
+    [Fact]
+    public void Cells_without_a_reference_follow_their_neighbour()
+    {
+        var path = WriteRows("bare.xlsx", null,
+            TextRow(1, ("", "Наименование"), ("", "Количество"), ("D1", "Цена"), ("", "Сумма")));
+
+        Assert.Equal([(0, "Наименование"), (1, "Количество"), (3, "Цена"), (4, "Сумма")],
+                     DocSheetSource.Open(path)[0].Rows[0].Cells.Select(c => (c.Column, c.Text)));
+    }
+
+    // ── Что осталось за потолками ─────────────────────────────────────────────
+    //
+    // Потолки строк и колонок нужны, но обрывать лист молча нельзя: человек прочитал бы
+    // обрезанную таблицу как целую. Лист обязан знать, что показан не целиком, и по возможности
+    // — насколько.
+
+    [Fact]
+    public void A_whole_sheet_reports_no_cut()
+    {
+        Assert.All(DocSheetSource.Open(WriteBook()), s => Assert.False(s.Cut.Any));
+    }
+
+    /// <summary>Сколько строк в листе всего, книга записывает сама — этим числом и говорим.</summary>
+    [Fact]
+    public void Rows_past_the_cap_are_reported_with_the_size_the_book_wrote()
+    {
+        var count = DocSheetSource.MaxRows + 5;
+        var sheet = DocSheetSource.Open(WriteRows("long.xlsx", $"A1:A{count}", NumberedRows(count)))[0];
+
+        Assert.True(sheet.Cut.Rows);
+        Assert.Equal(DocSheetSource.MaxRows, sheet.Cut.RowsShown);
+        Assert.Equal(count, sheet.Cut.RowsTotal);
+        Assert.False(sheet.Cut.Columns);
+    }
+
+    /// <summary>Книга не записала свой размер — сколько строк всего, неизвестно, и выдумывать нельзя.</summary>
+    [Fact]
+    public void Without_the_size_of_the_sheet_the_total_stays_unknown()
+    {
+        var sheet = DocSheetSource.Open(WriteRows("long-bare.xlsx", null,
+                                                  NumberedRows(DocSheetSource.MaxRows + 5)))[0];
+
+        Assert.True(sheet.Cut.Rows);
+        Assert.Equal(DocSheetSource.MaxRows, sheet.Cut.RowsShown);
+        Assert.Equal(0, sheet.Cut.RowsTotal);
+    }
+
+    /// <summary>
+    /// Разреженный лист: строк в файле всего две, но вторая — пятитысячная. Прочитано мало, а
+    /// показать до нее нельзя: потолок показа кончается раньше. Это тоже обрез.
+    /// </summary>
+    [Fact]
+    public void A_sparse_sheet_reports_rows_beyond_the_cap()
+    {
+        var sheet = DocSheetSource.Open(WriteRows("sparse.xlsx", null,
+            TextRow(1, ("A1", "начало")), TextRow(5000, ("A5000", "конец"))))[0];
+
+        Assert.True(sheet.Cut.Rows);
+        Assert.Equal(DocSheetSource.MaxRows, sheet.Cut.RowsShown);
+        Assert.Equal(5000, sheet.Cut.RowsTotal);
+    }
+
+    [Fact]
+    public void Columns_past_the_cap_are_reported()
+    {
+        var far   = DocSheetSource.NameOf(DocSheetSource.MaxColumns + 2) + "1";
+        var sheet = DocSheetSource.Open(WriteRows("wide.xlsx", null,
+            TextRow(1, ("A1", "начало"), (far, "далеко"))))[0];
+
+        Assert.True(sheet.Cut.Columns);
+        Assert.Equal(DocSheetSource.MaxColumns, sheet.Cut.ColumnsShown);
+        Assert.Equal(DocSheetSource.MaxColumns + 3, sheet.Cut.ColumnsTotal);
+        Assert.DoesNotContain(sheet.Rows[0].Cells, c => c.Text == "далеко");
+    }
 
     [Fact]
     public void Sheets_come_with_their_names_in_order()

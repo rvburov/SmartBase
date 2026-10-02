@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO;
 using System.Text;
 using DocumentFormat.OpenXml;
@@ -97,6 +98,58 @@ public sealed class DocReadTextTests : IDisposable
         return path;
     }
 
+    /// <summary>
+    /// Книга, на которой два режима панели раньше расходились во всем: порядок частей пакета
+    /// не совпадает с корешками, один лист скрыт, в листе есть скрытая строка, скрытая колонка
+    /// и дата со своим форматом.
+    /// </summary>
+    private string WriteTwoFacedBook()
+    {
+        var path = Path_("two-faced.xlsx");
+        using var doc = SpreadsheetDocument.Create(path, SpreadsheetDocumentType.Workbook);
+
+        var book      = doc.AddWorkbookPart();
+        book.Workbook = new Workbook();
+
+        var styles = book.AddNewPart<WorkbookStylesPart>();
+        styles.Stylesheet = new Stylesheet(
+            new NumberingFormats(new NumberingFormat { NumberFormatId = 165, FormatCode = "dd.mm.yyyy" }),
+            new Fonts(new Font()), new Fills(new Fill()), new Borders(new Border()),
+            new CellStyleFormats(new CellFormat()),
+            new CellFormats(new CellFormat(), new CellFormat { NumberFormatId = 165, ApplyNumberFormat = true }));
+        styles.Stylesheet.Save();
+
+        static Cell Str(string reference, string value) =>
+            new() { CellReference = reference, DataType = CellValues.String, CellValue = new CellValue(value) };
+
+        WorksheetPart Part(params OpenXmlElement[] content)
+        {
+            var part = book.AddNewPart<WorksheetPart>();
+            part.Worksheet = new Worksheet(content);
+            part.Worksheet.Save();
+            return part;
+        }
+
+        var date     = new DateTime(2024, 3, 5).ToOADate().ToString(CultureInfo.InvariantCulture);
+        var estimate = Part(
+            new Columns(new Column { Min = 2, Max = 2, Width = 9, Hidden = true }),
+            new SheetData(
+                new Row(Str("A1", "Труба"), Str("B1", "скрытая колонка"), Str("C1", "12")) { RowIndex = 1 },
+                new Row(Str("A2", "скрытая строка")) { RowIndex = 2, Hidden = true },
+                new Row(new Cell { CellReference = "A3", StyleIndex = 1, CellValue = new CellValue(date) })
+                    { RowIndex = 3 }));
+        var totals = Part(new SheetData(new Row(Str("A1", "Итого")) { RowIndex = 1 }));
+        var lookup = Part(new SheetData(new Row(Str("A1", "справочник")) { RowIndex = 1 }));
+
+        book.Workbook.AppendChild(new Sheets(
+            new Sheet { Id = book.GetIdOfPart(totals),   SheetId = 2, Name = "Итоги" },
+            new Sheet { Id = book.GetIdOfPart(lookup),   SheetId = 3, Name = "Справочник",
+                        State = SheetStateValues.Hidden },
+            new Sheet { Id = book.GetIdOfPart(estimate), SheetId = 1, Name = "Смета" }));
+        book.Workbook.Save();
+        return path;
+    }
+
     private string WriteText(string name, string text)
     {
         var path = Path_(name);
@@ -183,6 +236,69 @@ public sealed class DocReadTextTests : IDisposable
         Assert.Contains("Наименование", rows[0], StringComparison.Ordinal);
         Assert.Contains("Количество",   rows[0], StringComparison.Ordinal);
         Assert.Contains("Труба",        rows[1], StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Оба режима панели показывают книгу ОДИНАКОВО: те же листы в том же порядке — корешков, а
+    /// не частей пакета, — без скрытых листов, строк и колонок, и дату датой. Раньше у «Текста»
+    /// был свой обход книги, и, переключив режим, человек видел другие листы в другом порядке.
+    /// </summary>
+    [Fact]
+    public void Text_mode_shows_the_book_the_way_the_grid_does()
+    {
+        var path = WriteTwoFacedBook();
+        var text = DocReadText.Read(path);
+        var grid = DocSheetSource.OpenBook(path);
+
+        Assert.Equal(DocTextStatus.Ok, text.Status);
+        Assert.Equal(["Лист «Итоги»", "Лист «Смета»"], text.Parts.Select(p => p.Label));
+        Assert.Equal(grid.Sheets.Select(s => $"Лист «{s.Name}»"), text.Parts.Select(p => p.Label));
+        Assert.Equal(1, text.Cut.HiddenSheets);
+        Assert.Equal(grid.HiddenSheets, text.Cut.HiddenSheets);
+
+        var estimate = text.Parts[1].Text;
+        Assert.Contains("Труба", estimate, StringComparison.Ordinal);
+        Assert.Contains("12", estimate, StringComparison.Ordinal);
+        Assert.Contains("05.03.2024", estimate, StringComparison.Ordinal);
+        Assert.DoesNotContain("скрытая", estimate, StringComparison.Ordinal);
+        Assert.DoesNotContain(text.Parts, p => p.Text.Contains("справочник", StringComparison.Ordinal));
+    }
+
+    // ── Что осталось за потолками ─────────────────────────────────────────────
+
+    [Fact]
+    public void A_whole_document_reports_no_cut()
+    {
+        var result = DocReadText.Read(WritePdf("doc.pdf", 3));
+
+        Assert.Equal(3, result.Cut.PagesShown);
+        Assert.False(result.Cut.Text);
+        Assert.False(DocReadText.Read(WriteText("note.txt", "коротко")).Cut.Text);
+    }
+
+    /// <summary>
+    /// Том толще потолка читается не весь — и разбор говорит, сколько прочитано: без этого
+    /// панели не из чего собрать «показаны страницы 1–300 из 302», и том обрывался молча.
+    /// </summary>
+    [Fact]
+    public void A_pdf_past_the_page_cap_reports_how_much_was_read()
+    {
+        var pages  = DocTextExtractor.MaxPdfPages + 2;
+        var result = DocReadText.Read(WritePdf("tome.pdf", pages));
+
+        Assert.Equal(pages, result.Pages);
+        Assert.Equal(DocTextExtractor.MaxPdfPages, result.Cut.PagesShown);
+        Assert.Equal(DocTextExtractor.MaxPdfPages, result.Parts.Count);
+    }
+
+    [Fact]
+    public void Text_past_the_char_cap_is_reported()
+    {
+        var path   = WriteText("huge.txt", new string('я', DocTextExtractor.MaxChars + 10));
+        var result = DocReadText.Read(path, maxFileMb: 0);
+
+        Assert.True(result.Cut.Text);
+        Assert.Equal(DocTextExtractor.MaxChars, result.Parts[0].Text.Length);
     }
 
     [Fact]

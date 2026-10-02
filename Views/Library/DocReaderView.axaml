@@ -43,7 +43,7 @@
         </Style>
     </UserControl.Styles>
 
-    <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,*">
+    <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,*">
 
         <!-- ── Шапка: название документа и закрытие ─────────────────────────── -->
         <Grid Grid.Row="0" Height="56" Margin="16,0" ColumnDefinitions="*,Auto">
@@ -167,6 +167,18 @@
 
         <Border Grid.Row="4" Classes="separator h" />
 
+        <!-- ── Что показано не целиком ──────────────────────────────────────── -->
+        <!-- Потолки панели (страницы тома, строки и колонки листа, знаки текста) и скрытые
+             листы книги. Строка видна, только когда есть о чем сказать, и стоит НАД
+             содержимым, а не в его конце: до конца обрезанного тома человек может и не
+             долистать, а прочитать обрезанное как целое — легко. -->
+        <TextBlock Grid.Row="5" x:Name="CutLabel"
+                   IsVisible="False"
+                   Margin="16,8,16,0"
+                   TextWrapping="Wrap"
+                   FontSize="{DynamicResource FontSizeSmall}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
         <!-- ── Тело: строки документа либо его страницы ─────────────────────── -->
         <!-- Полоса прокрутки вынесена отдельной колонкой и прилегает к правому краю панели —
              стандарт прокрутки проекта (ui/scrolling.md): своя полоса списка жила бы внутри
@@ -174,7 +186,7 @@
 
              Списка два, а не один с разными шаблонами: у них разная прокрутка, и переключение
              режима не должно терять место, на котором человек читал. -->
-        <Grid Grid.Row="5" ColumnDefinitions="*,Auto">
+        <Grid Grid.Row="6" ColumnDefinitions="*,Auto">
             <ListBox Grid.Column="0" x:Name="LinesList"
                      Classes="reader"
                      Margin="16,12,16,12"

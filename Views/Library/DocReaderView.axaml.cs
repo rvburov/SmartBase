@@ -66,6 +66,12 @@ public partial class DocReaderView : UserControl
     /// <summary>Листы книги Excel — второй облик режима «как в документе».</summary>
     private IReadOnlyList<DocSheet> _sheets = [];
 
+    /// <summary>Разбор для чтения — по нему строка «показано не все» говорит про режим «Текст».</summary>
+    private DocReadResult _read;
+
+    /// <summary>Скрытых листов в книге: их не показывает и Excel, но строка о них говорит.</summary>
+    private int _hiddenSheets;
+
     /// <summary>Показанный лист книги.</summary>
     private int _sheetIndex;
 
@@ -309,6 +315,10 @@ public partial class DocReaderView : UserControl
         _sheetRows.Clear();
         _sheetHits.Clear();
         _sheetIndex = 0;
+        _read         = default;
+        _hiddenSheets = 0;
+        CutLabel.Text      = "";
+        CutLabel.IsVisible = false;
         _columns    = [];
         _scrollX    = 0;
         _current    = -1;
@@ -361,6 +371,7 @@ public partial class DocReaderView : UserControl
         }
 
         if (gen != _gen) return;   // за время чтения открыли другой документ
+        _read = result;
 
         if (result.Status != DocTextStatus.Ok)
         {
@@ -410,6 +421,27 @@ public partial class DocReaderView : UserControl
         PagesBar.IsVisible   = PagesBar.IsVisible   && PagesList.IsVisible;
         SheetBar.IsVisible   = SheetBar.IsVisible   && SheetHost.IsVisible;
         SheetHBar.IsVisible  = SheetHBar.IsVisible  && SheetHost.IsVisible;
+
+        UpdateCutNote();
+    }
+
+    /// <summary>
+    /// Строка «показано не все» — под текущий режим: у текста свои потолки, у страниц и листа
+    /// свои (<see cref="DocCutNote"/>). Пока на месте содержимого стоит состояние («Читаю
+    /// документ…», «скан»), строки нет: говорить «показано не все», когда не показано ничего,
+    /// значит путать человека.
+    /// </summary>
+    private void UpdateCutNote()
+    {
+        var note = Document is null || StateLabel.IsVisible ? ""
+                 : _mode == ReadMode.Text ? DocCutNote.ForText(_read)
+                 : ShowsSheet ? DocCutNote.ForSheet(_sheetIndex < _sheets.Count ? _sheets[_sheetIndex] : null,
+                                                    _hiddenSheets)
+                 : _source is { } source ? DocCutNote.ForPages(source.PageCount, source.TotalPages)
+                 : "";
+
+        CutLabel.Text      = note;
+        CutLabel.IsVisible = note.Length > 0;
     }
 
     // ── Режим «как в документе» ───────────────────────────────────────────────
@@ -441,6 +473,7 @@ public partial class DocReaderView : UserControl
         PagesList.ItemsSource  = _pages;
         DocModeBtn.IsEnabled = true;
         ToolTip.SetTip(DocModeBtn, null);
+        UpdateCutNote();
 
         // Совпадения на страницах считаются сразу, а не при переключении режима: счетчик
         // обязан говорить правду в ту же секунду, когда человек нажмет «Как в документе».
@@ -458,8 +491,8 @@ public partial class DocReaderView : UserControl
     {
         if (DocTextExtractor.ExtensionOf(doc.Path) is not ("xlsx" or "xlsm")) return;
 
-        IReadOnlyList<DocSheet> sheets;
-        try { sheets = await DocSheetSource.OpenAsync(doc.Path); }
+        DocBookView book;
+        try { book = await DocSheetSource.OpenBookAsync(doc.Path); }
         catch (OperationCanceledException) { return; }
         catch (Exception ex)
         {
@@ -468,13 +501,14 @@ public partial class DocReaderView : UserControl
         }
 
         if (gen != _gen) return;
-        if (sheets.Count == 0)
+        if (book.Sheets.Count == 0)
         {
             ToolTip.SetTip(DocModeBtn, "В книге нет листов с данными");
             return;
         }
 
-        _sheets = sheets;
+        _sheets       = book.Sheets;
+        _hiddenSheets = book.HiddenSheets;
         BuildSheetTabs();
         ShowSheet(0);
 
@@ -568,6 +602,7 @@ public partial class DocReaderView : UserControl
             Dispatcher.UIThread.Post(FillSheet, DispatcherPriority.Background);
 
             ApplySheetHits();
+            UpdateCutNote();
         }
         finally { _showingSheet = false; }
     }
