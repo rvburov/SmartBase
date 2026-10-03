@@ -75,9 +75,10 @@ SQLite + PG), `CsvExportTests` (выгрузка журнала и диагно�
 раскраска свода, prepared-правки значений при смене настроек поля, сортированный CSV
 журнала, капнутый счет пилюль задач — SQLite такие ошибки прощает, ловит только живой PG),
 `PgCreateDatabaseTests` (создание базы и
-роли-владельца из приложения, `PgDatabaseCreator`) и `PgLibraryTests` (сверка: один
-сценарий «Библиотеки документов» идет на SQLite и на PostgreSQL, и ответы раздела обязаны
-совпасть строка в строку) — `[SkippableFact]`: без поднятого
+роли-владельца из приложения, `PgDatabaseCreator`), `PgLibraryTests` и `PgSearchTests`
+(сверки: один сценарий «Библиотеки документов» или поиска по названию у задач, календаря и
+окна связи идет на SQLite и на PostgreSQL, и ответы обязаны совпасть строка в строку) —
+`[SkippableFact]`: без поднятого
 стенда они помечаются **Skipped**, а не падают, поэтому локально и в CI без Docker набор
 остается зеленым. Стенд — docker-контейнер `sb-pg` (порт **5455**, о выборе порта — врезка
 в [../guides/postgresql-setup.md](../guides/postgresql-setup.md)); нужны базы `smartbase`
@@ -112,8 +113,8 @@ PostgreSQL молча уйдут в Skipped.
 CREATE SCHEMA public;`), чтобы миграция `InitialCreatePg` накатилась начисто.
 `PgCreateDatabaseTests` работают иначе: создают базы/роли с уникальными именами
 `sb_create_test_*` / `sb_create_role_*` и подчищают их в `finally`
-(`DROP DATABASE … WITH (FORCE)`), так что стенд остается чистым. В CI все четыре класса гоняет
-job `postgres` (фильтр `PgProviderTests|PgCreateDatabaseTests|PgBulkWriteTests|PgLibraryTests`)
+(`DROP DATABASE … WITH (FORCE)`), так что стенд остается чистым. В CI все пять классов гоняет
+job `postgres` (фильтр `PgProviderTests|PgCreateDatabaseTests|PgBulkWriteTests|PgLibraryTests|PgSearchTests`)
 с guard-проверкой «Skipped: 0» — см. [../guides/ci.md](../guides/ci.md).
 
 ## Замечания по сборке

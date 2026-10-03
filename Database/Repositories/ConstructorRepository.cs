@@ -6908,6 +6908,7 @@ public partial class ConstructorRepository(AppDbContext db)
     /// SQL LIKE (прогон миллионов строк через приложение на порядок медленнее — замерено).
     /// LIKE регистронезависим только для ASCII, поэтому ищем регистровые варианты подстроки
     /// (как ввели / нижний / ВЕРХНИЙ / С заглавной) — это покрывает практический ввод кириллицы.
+    /// На PostgreSQL LIKE различает регистр и у латиницы — там сравнение ILIKE (<c>LikeOp</c>).
     /// До <paramref name="limit"/> совпадений в хронологическом порядке. Фоново на изолированном
     /// подключении: окно с миллионами событий сканируется секунды и не трогает UI-поток.
     /// (FTS5-trigram пробовали и откатили: минуты бэкафилла при первом старте больших БД и
@@ -6934,7 +6935,8 @@ public partial class ConstructorRepository(AppDbContext db)
                 query, lower, query.ToUpperInvariant(),
                 lower.Length > 0 ? char.ToUpperInvariant(lower[0]) + lower[1..] : lower,
             };
-            var like = string.Join(" OR ", variants.Select((_, i) => $"r.Title LIKE @q{i} ESCAPE '\\'"));
+            var op   = LikeOp(ctx.IsPostgres);
+            var like = string.Join(" OR ", variants.Select((_, i) => $"r.Title {op} @q{i} ESCAPE '\\'"));
 
             var result = new List<CalendarRecord>();
             var conn = ctx.Database.GetDbConnection();

@@ -25,6 +25,31 @@ public sealed class RelationLinkTests
         return (repo, taskCol, rel.Id!.Value, projCol);
     }
 
+    /// <summary>
+    /// Поиск в окне выбора связи не различает регистр, и у кириллицы тоже: «договор» находит
+    /// «ДОГОВОР поставки», как его находит фильтр колонки и как окно само отбирает уже выбранные.
+    /// Голый LIKE SQLite сводил регистр только у латиницы, а «%» и «_» в запросе работали как
+    /// подстановка. Тот же поиск на PostgreSQL сверяется в <c>PgSearchTests</c>.
+    /// </summary>
+    [Fact]
+    public void Picker_search_ignores_case_in_cyrillic_and_takes_wildcards_literally()
+    {
+        using var db = new TempDatabase();
+        var (repo, _, _, projCol) = Setup(db);
+        foreach (var title in new[] { "ДОГОВОР поставки", "договор аренды", "ТехЗадание", "Скидка 50%", "Скидка 500", "a_b", "axb" })
+            SampleData.AddRecord(repo, projCol, title);
+
+        List<string> Find(string q) => [.. repo.SearchRecordTitles(projCol, q).Select(r => r.Title)];
+
+        Assert.Equal(["ДОГОВОР поставки", "договор аренды"], Find("договор"));
+        Assert.Equal(["ДОГОВОР поставки", "договор аренды"], Find("ДоГоВоР"));
+        Assert.Equal(["ДОГОВОР поставки"], Find("ПОСТАВКИ"));
+        Assert.Equal(["ТехЗадание"], Find("техзадание"));
+        Assert.Equal(["Скидка 50%"], Find("50%"));
+        Assert.Equal(["a_b"], Find("a_b"));
+        Assert.Equal(7, Find("").Count);
+    }
+
     [Fact]
     public void Set_and_get_links_preserves_order_and_resolves_titles()
     {

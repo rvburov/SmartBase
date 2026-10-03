@@ -347,7 +347,17 @@ public partial class ConstructorRepository
         if (excludeRecordId > 0) q = q.Where(r => r.Id != excludeRecordId);
         var term = query?.Trim() ?? "";
         if (term.Length > 0)
-            q = q.Where(r => EF.Functions.Like(r.Title, "%" + term + "%"));
+        {
+            // Без учета регистра, и у кириллицы тоже: на SQLite — своей функцией (встроенный LIKE
+            // различает регистр всего, кроме латиницы), на PostgreSQL — ILIKE; так же ищет фильтр
+            // колонки. Голый LIKE не находил «Договор» по «договор», на PostgreSQL — и «GoSt» по
+            // «gost», а «%» и «_» в запросе работали как подстановка. Цена своей функции на
+            // промахе — как у четырех регистровых вариантов LIKE (замер: миллион записей, 1,1 с).
+            var pattern = "%" + EscapeLike(term) + "%";
+            q = db.IsPostgres
+                ? q.Where(r => EF.Functions.ILike(r.Title, pattern, "\\"))
+                : q.Where(r => SqlText.ContainsIgnoreCase(r.Title, term));
+        }
         return q.OrderBy(r => r.Position).ThenBy(r => r.Id)
                 .Take(Math.Max(1, limit))
                 .Select(r => new { r.Id, r.Title })

@@ -174,6 +174,13 @@ public partial class ConstructorRepository
     private static string EscapeLike(string q) =>
         q.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_");
 
+    // Сравнение с образцами поиска — общее у задач, календаря и библиотеки. Варианты выше
+    // рассчитаны на SQLite: там LIKE не различает регистр латиницы. PostgreSQL в LIKE различает
+    // регистр ВСЕГДА, и у латиницы тоже: «gost» не находил «GoSt». Там сравнение — ILIKE:
+    // латиницу он сводит при любой локали сервера, кириллицу — при локали, которая ее знает, а
+    // варианты остаются ради сервера с локалью «C».
+    private static string LikeOp(bool postgres) => postgres ? "ILIKE" : "LIKE";
+
     /// <summary>
     /// Условие вида для одного потока. Возвращает <c>null</c>, если поток виду не подходит
     /// ВООБЩЕ — «Сегодня» и «Просрочено» требуют срока, «Без срока» его запрещает: такой поток
@@ -181,8 +188,8 @@ public partial class ConstructorRepository
     /// </summary>
     /// <param name="dated">Поток «со сроком»: срок доступен прямыми колонками проекции.</param>
     /// <param name="due">Выражения границ срока: начало и конец (для потока «без срока» — null).</param>
-    private static string? ViewCondition(TaskView view, bool dated, (string Start, string End)? due,
-                                         int? statusFieldId)
+    private string? ViewCondition(TaskView view, bool dated, (string Start, string End)? due,
+                                  int? statusFieldId)
     {
         var parts = new List<string>();
 
@@ -230,7 +237,7 @@ public partial class ConstructorRepository
 
         if (view.Search.Length > 0)
             parts.Add("(" + string.Join(" OR ",
-                SearchVariants(view.Search).Select((_, i) => $"r.Title LIKE @q{i} ESCAPE '\\'")) + ")");
+                SearchVariants(view.Search).Select((_, i) => $"r.Title {LikeOp(db.IsPostgres)} @q{i} ESCAPE '\\'")) + ")");
 
         return parts.Count == 0 ? "1 = 1" : string.Join(" AND ", parts);
     }

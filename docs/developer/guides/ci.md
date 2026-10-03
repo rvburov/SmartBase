@@ -66,8 +66,9 @@ Linux, Windows, macOS Apple Silicon, macOS Intel. Упавшая платфор�
 **7. PostgreSQL на живой базе.**
 Контейнер `postgres:16`, порт 5455, базы `smartbase` и `smartbase2` — как у локального стенда.
 Тесты провайдера (`PgProviderTests`), создания баз из приложения (`PgCreateDatabaseTests`),
-сырых массовых путей (`PgBulkWriteTests`) и сверка библиотеки документов с SQLite
-(`PgLibraryTests`) — фильтр `PgProviderTests|PgCreateDatabaseTests|PgBulkWriteTests|PgLibraryTests`.
+сырых массовых путей (`PgBulkWriteTests`) и сверки с SQLite — библиотеки документов
+(`PgLibraryTests`) и поиска по названию у задач, календаря и окна связи (`PgSearchTests`) —
+фильтр `PgProviderTests|PgCreateDatabaseTests|PgBulkWriteTests|PgLibraryTests|PgSearchTests`.
 Только Linux: сервис-контейнеры работают лишь там.
 
 **8. Проверка, что тесты PostgreSQL не пропущены.**

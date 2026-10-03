@@ -388,7 +388,7 @@ public partial class ConstructorRepository
         if (docFields.Count == 0) return result;
 
         var variants = query.Length > 0 ? SearchVariants(query) : [];
-        var like     = db.IsPostgres ? "ILIKE" : "LIKE";
+        var like     = LikeOp(db.IsPostgres);
         var likes    = new List<string>();
         for (var i = 0; i < variants.Count; i++)
             likes.Add($"(r.Title {like} @q{i} ESCAPE '\\' OR v.Value {like} @q{i} ESCAPE '\\')");
