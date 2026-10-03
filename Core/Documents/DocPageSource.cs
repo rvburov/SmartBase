@@ -99,20 +99,26 @@ public sealed class DocPageSource : IDisposable
     /// <summary>
     /// Открыть документ. <c>null</c> — файл не PDF, не открылся или в нем нет страниц; для
     /// панели это не сбой, а повод остаться в режиме текста.
+    ///
+    /// Страницы разбираются по одной, и у тома это заметно, поэтому открытие отменяется между
+    /// страницами (<see cref="OperationCanceledException"/>): панель открыла другой документ —
+    /// дочитывать прежний незачем. Отмененный и не открывшийся документ файл отпускает сразу.
     /// </summary>
-    public static DocPageSource? Open(string path)
+    public static DocPageSource? Open(string path, CancellationToken ct = default)
     {
         if (DocTextExtractor.ExtensionOf(path) != "pdf") return null;
 
+        PdfDocument? pig = null;
         try
         {
-            var pig   = PdfDocument.Open(path);
+            pig = PdfDocument.Open(path);
             var count = Math.Min(pig.NumberOfPages, MaxPages);
             if (count <= 0) { pig.Dispose(); return null; }
 
             var sizes = new DocPageSize[count];
             for (var i = 0; i < count; i++)
             {
+                ct.ThrowIfCancellationRequested();
                 var page = pig.GetPage(i + 1);
 
                 // Размер берем ВИДИМЫЙ: с обрезкой листа и с поворотом /Rotate. `page.Width` и
@@ -124,7 +130,8 @@ public sealed class DocPageSource : IDisposable
             }
             return new DocPageSource(path, pig, sizes);
         }
-        catch { return null; }
+        catch (OperationCanceledException) { pig?.Dispose(); throw; }
+        catch { pig?.Dispose(); return null; }
     }
 
     /// <summary>

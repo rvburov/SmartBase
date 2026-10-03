@@ -192,6 +192,24 @@ public sealed class DocPageSourceTests : IDisposable
         Assert.Equal(3, source.TotalPages);
     }
 
+    /// <summary>
+    /// Открытие тома отменяется между страницами: панель открыла другой документ, и дочитывать
+    /// прежний незачем. Отмененный документ отпускает файл сразу — его могут захотеть
+    /// переименовать или удалить.
+    /// </summary>
+    [Fact]
+    public void Cancelled_opening_throws_and_lets_the_file_go()
+    {
+        var path = WritePdf("tome.pdf", pages: 5);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        Assert.ThrowsAny<OperationCanceledException>(() => DocPageSource.Open(path, cts.Token));
+
+        File.Delete(path);
+        Assert.False(File.Exists(path), "отмененное открытие держит файл");
+    }
+
     [Fact]
     public void Broken_pdf_opens_as_null()
     {
@@ -230,6 +248,21 @@ public sealed class DocPageSourceTests : IDisposable
         Assert.NotNull(png);
         using var image = SKBitmap.Decode(png);
         Assert.True(image.Width > image.Height, "альбомная страница нарисована как книжная");
+    }
+
+    /// <summary>
+    /// Отрисовка, которую отменили, пока она ждала очереди, не рисует ничего: ширина или
+    /// документ уже другие. Сама страница при этом цела и рисуется следующим вызовом.
+    /// </summary>
+    [Fact]
+    public void Cancelled_render_throws_before_drawing()
+    {
+        using var source = DocPageSource.Open(WritePdf("doc.pdf"));
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        Assert.ThrowsAny<OperationCanceledException>(() => source!.Render(0, 400, cts.Token));
+        Assert.NotNull(source!.Render(0, 400));
     }
 
     [Fact]

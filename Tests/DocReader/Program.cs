@@ -15,6 +15,7 @@
 // Стенд гоняет эти три вещи на временных файлах и печатает отчет. Отрисовка headless'ная
 // (UseHeadlessDrawing = true): пиксели здесь не нужны, нужна раскладка и разрешение ресурсов.
 
+using System.Diagnostics;
 using System.Reflection;
 using Avalonia;
 using Avalonia.Controls;
@@ -324,6 +325,8 @@ void Pages(DocReaderView reader, Window window)
     Check(counter.StartsWith("2 из 4", StringComparison.Ordinal),
           $"через паузу пересчета счетчик откатился к «{counter}»");
 
+    RenderWidthChange(reader, window);
+
     // Сумму набирают подряд, без разрядов. Индекс находит по «30772» документ, где она стоит
     // как «30 772,48», и страница обязана подсветить совпадение: пока слова страницы сверялись
     // поодиночке, ни «30», ни «772,48» с запросом не совпадали, и счетчик говорил «нет».
@@ -341,6 +344,95 @@ void Pages(DocReaderView reader, Window window)
 
     LateText(reader);
     Sheets(reader);
+    BigBook(reader);
+}
+
+// ── Смена ширины, пока страница рисуется ────────────────────────────────────────
+
+// Панель сузили, пока страница рисовалась под прежнюю ширину. Картинка под прежнюю ширину
+// приходит уже после смены и раньше ложилась на страницу насовсем: страница, которая «уже
+// рисуется», второй раз не просилась, а потом у нее была картинка — и она так и оставалась
+// растянутой. Порядок здесь задан руками, без гонки.
+//
+// Пикселей картинки стенд не видит — отрисовка безголовая, картинка в ней заглушка, — поэтому
+// сверяется не ширина картинки, а то, чья она. Путей два:
+//   * страница дорисовалась под прежнюю ширину, и итог ждет очереди. Пока он приходит,
+//     страница уведена с экрана: просить ее заново некому, и картинка на ней может быть только
+//     от прежней отрисовки — ее быть не должно;
+//   * отрисовка еще ждала замка источника — ее бросают. Кадры между сменой ширины и отменой
+//     съедают просьбу самой смены: страница в эту минуту «рисуется» и второй раз не просится,
+//     так что заново ее просит только брошенная отрисовка.
+void RenderWidthChange(DocReaderView reader, Window window)
+{
+    Console.WriteLine();
+    Console.WriteLine("Смена ширины, пока страница рисуется:");
+
+    var list  = Find<ListBox>(reader, "PagesList")!;
+    var pages = (System.Collections.IList)Get(reader, "_pages")!;
+    var page  = pages[0]!;
+    int  Width()   => (int)Get(reader, "_pageWidth")!;
+    bool Drawn()   => Prop(page, "Bitmap") is not null;
+    bool Loading() => Prop(page, "Loading") is true;
+
+    list.ScrollIntoView(0);
+    if (!WaitFrames(Drawn, "первая страница так и не нарисовалась")) return;
+
+    // Перерисовать страницу заново: картинку снять и запустить отрисовку, как это делает просьба
+    // страницы, — но без очереди, чтобы порядок задавал стенд.
+    Task Redraw()
+    {
+        Call(page, "SetBitmap", new object?[] { null });
+        SetProp(page, "Loading", true);
+        return (Task)Call(reader, "RenderPageAsync", page, (int)Get(reader, "_gen")!)!;
+    }
+
+    // Сменить ширину на заметную долю: мелкую смену панель не отрабатывает.
+    bool Narrow(double share)
+    {
+        var before = Width();
+        list.Width = list.Bounds.Width * share;
+        window.UpdateLayout();
+        Call(reader, "ReflowPages");
+        Console.WriteLine($"Ширина страниц: {before} → {Width()}");
+        if (Width() != before) return true;
+        Check(false, "ширина страниц не сменилась — проверять нечего");
+        return false;
+    }
+
+    try
+    {
+        // Первый путь: страница дорисовалась до смены, ее итог ждет очереди.
+        var drawing = Redraw();
+        Thread.Sleep(300);
+        list.ScrollIntoView(pages.Count - 1);
+        window.UpdateLayout();
+        if (!Narrow(0.6)) return;
+        if (!Wait(() => drawing.IsCompleted && !Loading(), "прежняя отрисовка страницы так и не кончилась")) return;
+        Console.WriteLine($"Итог отрисовки под прежнюю ширину: {(Drawn() ? "лег на страницу" : "брошен")}");
+        Check(!Drawn(), "картинка под прежнюю ширину легла на страницу");
+
+        list.ScrollIntoView(0);
+        if (!WaitFrames(Drawn, "страница после смены ширины так и не нарисовалась")) return;
+
+        // Второй путь: отрисовка ждет замка источника и попадает под отмену.
+        var gate = Get(Get(reader, "_source")!, "_lock")!;
+        Monitor.Enter(gate);
+        try
+        {
+            drawing = Redraw();
+            if (!Narrow(1.4)) return;
+            Frames(5);
+        }
+        finally { Monitor.Exit(gate); }
+        if (!Wait(() => drawing.IsCompleted, "брошенная отрисовка страницы так и не кончилась")) return;
+        var redrawn = WaitFrames(Drawn, "брошенную страницу не попросили заново");
+        Console.WriteLine($"Брошенная отрисовка: страница {(redrawn ? "попрошена заново и нарисована" : "осталась пустой")}");
+    }
+    finally
+    {
+        list.Width = double.NaN;
+        window.UpdateLayout();
+    }
 }
 
 // ── Текст дочитывается позже страниц ────────────────────────────────────────────
@@ -401,6 +493,18 @@ void LateText(DocReaderView reader)
     Console.WriteLine("Когда текст дочитался: " + counter);
     Check(counter.StartsWith("2 из", StringComparison.Ordinal),
           $"дочитавшийся текст отбросил к «{counter}» вместо второго совпадения");
+
+    // Совпадения только в самом конце тома: «290» стоит лишь на двести девяностой странице —
+    // в ее заголовке и в шестидесяти пунктах. Пока обход страниц до нее не дошел, счетчик не
+    // говорит ни «нет» — совпадение еще найдется, — ни число прежнего запроса: раньше «0 из 300»
+    // по прошлому слову стояло, пока обход не находил первое новое.
+    reader.SetQuery("290");
+    var midway = Counter();
+    Console.WriteLine($"Сразу после смены запроса: «{midway}»");
+    Check(midway.Length == 0, $"пока обход страниц не кончился, счетчик показывает «{midway}»");
+    var found = Wait(() => Counter() == "1 из 61", "совпадения в конце тома не сосчитаны", attempts: 1500);
+    Console.WriteLine("Совпадения в конце тома: " + Counter());
+    if (!found) return;
 }
 
 // «2 из 37» — совпадений на страницах уже не меньше двух.
@@ -532,7 +636,9 @@ void Sheets(DocReaderView reader)
     prevSheet?.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
     Pump();
 
-    // Счет идет по ВСЕЙ книге: «труба» есть и на первом листе, и на втором.
+    // Счет идет по ВСЕЙ книге: «труба» есть и на первом листе, и на втором. Книгу обходят в
+    // фоне — ждем, пока обход кончится.
+    Wait(() => (Find<TextBlock>(reader, "CounterLabel")?.Text ?? "") == "1 из 2", "совпадения книги не сосчитаны");
     var counter = Find<TextBlock>(reader, "CounterLabel")?.Text ?? "";
     Console.WriteLine("Счетчик по книге: " + counter);
     Check(counter == "1 из 2", $"счетчик показывает «{counter}» вместо «1 из 2»");
@@ -570,6 +676,94 @@ void Sheets(DocReaderView reader)
     Check(deck.Count == 0, $"строки наложились друг на друга в {deck.Count} местах — листы перемешались");
     Check(live.Count <= (list?.ItemCount ?? 0),
           "на экране строк больше, чем в открытом листе — остались строки прошлого");
+}
+
+// ── Большая книга ───────────────────────────────────────────────────────────────
+
+// Три листа по две тысячи строк и тридцать колонок. Совпадения книги считаются по каждой
+// ячейке, и прежде этот обход шел на UI-потоке целиком: правка запроса держала панель, пока он
+// не кончится.
+void BigBook(DocReaderView reader)
+{
+    Console.WriteLine();
+    Console.WriteLine("Большая книга:");
+
+    var path = Path.Combine(dir, "реестр.xlsx");
+    var sw   = Stopwatch.StartNew();
+    WriteBigBook(path, sheets: 3, rows: 2000, cols: 30);
+    Console.WriteLine($"Книга 3 × 2000 × 30 записана за {sw.ElapsedMilliseconds} мс");
+
+    reader.Show(new DocRecord { Title = "Реестр", Path = path }, "");
+    var btn = Find<ToggleButton>(reader, "DocModeBtn")!;
+    if (!Wait(() => btn.IsEnabled, "большая книга не открылась таблицей", attempts: 6000)) return;
+    btn.IsChecked = true;
+    Pump();
+    string Counter() => Find<TextBlock>(reader, "CounterLabel")?.Text ?? "";
+
+    // Правка запроса не ждет обхода книги: панель свободна сразу, а счетчик до конца обхода
+    // молчит — не «нет» и не прежнее число. Сравнивается с самим обходом: пока он шел на
+    // UI-потоке, правка запроса держала панель ровно столько, сколько он длился.
+    sw.Restart();
+    reader.SetQuery("задвижка");
+    var held   = sw.Elapsed.TotalMilliseconds;
+    var midway = Counter();
+    Console.WriteLine($"Смена запроса держала панель {held:0} мс, счетчик сразу после: «{midway}»");
+    Check(midway.Length == 0, $"пока книга обходится, счетчик показывает «{midway}»");
+    var counted = Wait(() => Counter() == "1 из 12", "совпадения большой книги не сосчитаны", attempts: 3000);
+    var total   = sw.Elapsed.TotalMilliseconds;
+    Console.WriteLine($"Обход книги кончился через {total:0} мс: «{Counter()}»");
+    if (!counted) return;
+    Check(held * 3 < total, $"смена запроса держала панель {held:0} мс из {total:0} мс обхода");
+
+    // Запрос сменили, пока прежний обход шел: «позиция» есть почти в каждой ячейке, и ее обход
+    // долгий. Его совпадения не попадают в новый счет — ни сразу, ни через паузу.
+    reader.SetQuery("позиция");
+    reader.SetQuery("задвижка");
+    var recount = Wait(() => Counter() == "1 из 12", "после смены запроса посреди обхода счет не сошелся", attempts: 3000);
+    var settle  = DateTime.UtcNow.AddMilliseconds(800);
+    while (DateTime.UtcNow < settle) { Pump(); Thread.Sleep(10); }
+    Console.WriteLine("После смены запроса посреди обхода: " + Counter());
+    if (recount) Check(Counter() == "1 из 12", $"прежний обход дописал свое: «{Counter()}»");
+}
+
+void WriteBigBook(string path, int sheets, int rows, int cols)
+{
+    using var doc = SpreadsheetDocument.Create(path, SpreadsheetDocumentType.Workbook);
+    var book      = doc.AddWorkbookPart();
+    book.Workbook = new X.Workbook();
+    var entries   = new X.Sheets();
+
+    static string Column(int c) => c < 26 ? ((char)('A' + c)).ToString()
+                                          : $"{(char)('A' + c / 26 - 1)}{(char)('A' + c % 26)}";
+
+    for (var s = 0; s < sheets; s++)
+    {
+        var part = book.AddNewPart<WorksheetPart>();
+        using (var writer = OpenXmlWriter.Create(part))
+        {
+            writer.WriteStartElement(new X.Worksheet());
+            writer.WriteStartElement(new X.SheetData());
+            for (var r = 1; r <= rows; r++)
+            {
+                writer.WriteStartElement(new X.Row { RowIndex = (uint)r });
+                for (var c = 0; c < cols; c++)
+                    writer.WriteElement(new X.Cell
+                    {
+                        CellReference = $"{Column(c)}{r}",
+                        DataType      = X.CellValues.String,
+                        // «Задвижка» — раз в пятьсот строк в шестой колонке: по четыре на лист.
+                        CellValue     = new X.CellValue(c == 5 && r % 500 == 0 ? $"Задвижка {r}" : $"Позиция {r}.{c}"),
+                    });
+                writer.WriteEndElement();
+            }
+            writer.WriteEndElement();
+            writer.WriteEndElement();
+        }
+        entries.AppendChild(new X.Sheet { Id = book.GetIdOfPart(part), SheetId = (uint)(s + 1), Name = $"Лист {s + 1}" });
+    }
+
+    book.Workbook.AppendChild(entries);
+    book.Workbook.Save();
 }
 
 void WriteBook(string path)
@@ -673,6 +867,48 @@ bool Wait(Func<bool> until, string complaint, int attempts = 200)
 }
 
 static void Pump() => Dispatcher.UIThread.RunJobs();
+
+// То же, но с кадрами: страница просит свою картинку из отрисовки, а отрисовку безголовой
+// платформе дает только явный такт.
+bool WaitFrames(Func<bool> until, string complaint, int attempts = 300)
+{
+    for (var i = 0; i < attempts; i++)
+    {
+        AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+        Pump();
+        if (until()) return true;
+        Thread.Sleep(10);
+    }
+    Check(false, complaint);
+    return false;
+}
+
+// Прокрутить несколько кадров без условия.
+static void Frames(int count)
+{
+    for (var i = 0; i < count; i++)
+    {
+        AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+        Pump();
+        Thread.Sleep(10);
+    }
+}
+
+// Внутренности панели — поля, свойства и методы по имени: стенду нужно задать порядок событий
+// руками, а снаружи этого не сделать.
+static object? Get(object target, string name) =>
+    target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)?.GetValue(target);
+
+static object? Prop(object target, string name) =>
+    target.GetType().GetProperty(name, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)?.GetValue(target);
+
+static void SetProp(object target, string name, object value) =>
+    target.GetType().GetProperty(name, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)!.SetValue(target, value);
+
+static object? Call(object target, string name, params object?[] args) =>
+    target.GetType().GetMethods(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)
+          .First(m => m.Name == name && m.GetParameters().Length == args.Length)
+          .Invoke(target, args);
 
 // Строки ищем ВНУТРИ списка строк, а не по всей панели: подписи кнопок режима — тоже
 // TextBlock, и по всей панели они попали бы в «строки документа».

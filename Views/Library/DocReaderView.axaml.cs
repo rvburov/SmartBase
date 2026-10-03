@@ -161,6 +161,22 @@ public partial class DocReaderView : UserControl
     /// </summary>
     private int _scanGen;
 
+    /// <summary>
+    /// Обход страниц по текущему запросу дошел до конца. До этого «нет» в счетчике было бы
+    /// неправдой: совпадение может стоять на странице, до которой обход еще не добрался.
+    /// </summary>
+    private bool _pagesScanned;
+
+    /// <summary>
+    /// Поколение и отмена обхода книги — по той же причине, что у страниц: запрос меняют, не
+    /// меняя книги, и прежний обход не должен ни писать в новый список, ни занимать поток.
+    /// </summary>
+    private int _sheetScanGen;
+    private CancellationTokenSource? _sheetScanCts;
+
+    /// <summary>Обход книги по текущему запросу закончен — см. <see cref="_pagesScanned"/>.</summary>
+    private bool _sheetsScanned;
+
     /// <summary>Строки таблицы, которые сейчас на экране: их перерисовывает прокрутка вбок.</summary>
     private readonly HashSet<SheetRowView> _liveRows = [];
 
@@ -185,7 +201,21 @@ public partial class DocReaderView : UserControl
 
     /// <summary>Поколение чтения: ответ старого разбора не должен перерисовать новый документ.</summary>
     private int _gen;
-    private CancellationTokenSource? _cts;
+
+    /// <summary>
+    /// Отмена фоновой работы по документу: разбора текста, открытия страниц и книги, отрисовки
+    /// страниц и обхода совпадений. Открыли другой документ или закрыли панель — прежняя работа
+    /// бросается на ближайшей проверке, а не доделывается впустую: раньше том на триста страниц
+    /// открывался и обходился до конца, даже когда его уже никто не читал. Поколение при этом
+    /// остается: то, что прервать нельзя (страницу PDFium рисует целиком), оно не пускает на экран.
+    /// </summary>
+    private CancellationTokenSource _docCts = new();
+
+    /// <summary>
+    /// Отмена отрисовки страниц под ТЕКУЩУЮ ширину, связанная с отменой документа. Ширина
+    /// сменилась — картинки под прежнюю больше не нужны, в том числе те, что еще ждут очереди.
+    /// </summary>
+    private CancellationTokenSource _renderCts = new();
 
     /// <summary>
     /// Дебаунс правки строки поиска. Пересчет подсветки идет по всему тексту документа, и на
@@ -291,6 +321,7 @@ public partial class DocReaderView : UserControl
         _findDebounce.Stop();
         _widthDebounce.Stop();
 
+        var token = Restart();
         Reset();
         // Почему у документа нет настоящего вида, видно сразу по формату; у PDF и книги это
         // решит итог открытия — страницы и таблица могут и не открыться.
@@ -299,9 +330,9 @@ public partial class DocReaderView : UserControl
         // нажал «Прочитать» после поиска, и ему нужно найденное слово, а не обложка.
         SetMode(ReadMode.Text, force: true);
         ShowState("Читаю документ…");
-        _ = LoadAsync(doc, ++_gen);
-        _ = OpenPagesAsync(doc, _gen);
-        _ = OpenSheetsAsync(doc, _gen);
+        _ = LoadAsync(doc, _gen, token);
+        _ = OpenPagesAsync(doc, _gen, token);
+        _ = OpenSheetsAsync(doc, _gen, token);
     }
 
     /// <summary>
@@ -320,14 +351,25 @@ public partial class DocReaderView : UserControl
     /// <summary>Закрыть панель и отпустить документ — текст мегабайтами в памяти не держим.</summary>
     public void Clear()
     {
-        _gen++;
-        _cts?.Cancel();
-        _cts     = null;
+        Restart();
         Document = null;
         Reset();
         TitleLabel.Text    = "Документ";
         SubtitleLabel.Text = "";
         ShowState("");
+    }
+
+    /// <summary>
+    /// Новый документ или пустая панель: новое поколение и новая отмена, прежняя работа
+    /// бросается (см. <see cref="_docCts"/>).
+    /// </summary>
+    private CancellationToken Restart()
+    {
+        _gen++;
+        _docCts.Cancel();
+        _docCts    = new CancellationTokenSource();
+        _renderCts = CancellationTokenSource.CreateLinkedTokenSource(_docCts.Token);
+        return _docCts.Token;
     }
 
     private void Reset()
@@ -350,10 +392,14 @@ public partial class DocReaderView : UserControl
         _scrollX    = 0;
         _current    = -1;
         _pageWidth  = 0;
+        _pagesScanned  = false;
+        _sheetsScanned = false;
 
         // Документ PDFium отпускаем сразу: он держит открытый файл, а файл могут захотеть
-        // переименовать или удалить прямо сейчас.
-        _source?.Dispose();
+        // переименовать или удалить прямо сейчас. Отпускаем в фоне: если страница в эту минуту
+        // рисуется, закрытие ждет ее конца — PDFium страницу не прерывает, — и UI-потоку ждать
+        // этого незачем, новый документ уже открывается.
+        if (_source is { } closing) _ = Task.Run(closing.Dispose);
         _source = null;
 
         LinesList.ItemsSource = null;
@@ -377,16 +423,12 @@ public partial class DocReaderView : UserControl
 
     // ── Чтение ────────────────────────────────────────────────────────────────
 
-    private async Task LoadAsync(DocRecord doc, int gen)
+    private async Task LoadAsync(DocRecord doc, int gen, CancellationToken token)
     {
-        _cts?.Cancel();
-        var cts = new CancellationTokenSource();
-        _cts = cts;
-
         DocReadResult result;
         try
         {
-            result = await DocReadText.ReadAsync(doc.Path, LibrarySettings.IndexMaxMb, cts.Token);
+            result = await DocReadText.ReadAsync(doc.Path, LibrarySettings.IndexMaxMb, token);
         }
         catch (OperationCanceledException) { return; }
         catch (Exception ex)
@@ -489,12 +531,15 @@ public partial class DocReaderView : UserControl
     /// Открыть документ для показа страницами. Только PDF: страницу надо чем-то нарисовать и
     /// где-то взять места слов — для DOCX и XLSX ни того, ни другого у нас нет.
     /// </summary>
-    private async Task OpenPagesAsync(DocRecord doc, int gen)
+    private async Task OpenPagesAsync(DocRecord doc, int gen, CancellationToken token)
     {
         // Почему у прочих форматов страниц нет, подсказка уже сказала (DocModeHint.ForFormat).
         if (DocTextExtractor.ExtensionOf(doc.Path) != "pdf") return;
 
-        var source = await Task.Run(() => DocPageSource.Open(doc.Path));
+        DocPageSource? source;
+        try { source = await Task.Run(() => DocPageSource.Open(doc.Path, token), token); }
+        catch (OperationCanceledException) { return; }
+
         if (gen != _gen || source is null)
         {
             source?.Dispose();
@@ -523,12 +568,12 @@ public partial class DocReaderView : UserControl
     /// книги — листы с ячейками. Кнопка режима одна, потому что для человека это одно и то же
     /// желание — увидеть документ, а не его текст.
     /// </summary>
-    private async Task OpenSheetsAsync(DocRecord doc, int gen)
+    private async Task OpenSheetsAsync(DocRecord doc, int gen, CancellationToken token)
     {
         if (DocTextExtractor.ExtensionOf(doc.Path) is not ("xlsx" or "xlsm")) return;
 
         DocBookView book;
-        try { book = await DocSheetSource.OpenBookAsync(doc.Path); }
+        try { book = await DocSheetSource.OpenBookAsync(doc.Path, token); }
         catch (OperationCanceledException) { return; }
         catch (Exception ex)
         {
@@ -551,7 +596,7 @@ public partial class DocReaderView : UserControl
 
         DocModeBtn.IsEnabled = true;
         ToolTip.SetTip(DocModeBtn, null);
-        ScanSheets();
+        _ = ScanSheetsAsync(gen);
     }
 
     /// <summary>
@@ -897,22 +942,37 @@ public partial class DocReaderView : UserControl
         foreach (var row in _liveRows) row.InvalidateVisual();
     }
 
-    /// <summary>Найти совпадения по ВСЕЙ книге — по ним ходят стрелки и счетчик.</summary>
-    private void ScanSheets()
+    /// <summary>
+    /// Найти совпадения по ВСЕЙ книге — по ним ходят стрелки и счетчик. Обход идет в фоне, как у
+    /// страниц: лист — это до двух тысяч строк на сотню с лишним колонок, а листов в книге
+    /// бывают десятки, и раньше на каждую правку запроса панель стояла, пока он не кончится.
+    /// </summary>
+    private async Task ScanSheetsAsync(int gen)
     {
+        var scan = ++_sheetScanGen;
+        _sheetScanCts?.Cancel();
+        var cts = CancellationTokenSource.CreateLinkedTokenSource(_docCts.Token);
+        _sheetScanCts = cts;
+
+        // Прежние совпадения снимаем сразу: пока идет обход, на листе не должно стоять
+        // подсветки по старому запросу, а в счетчике — ни старого «3 из 17», ни «нет».
         _sheetHits.Clear();
+        _sheetsScanned = false;
+        ApplySheetHits();
+        UpdateCounter();
+
         var tokens = DocHighlight.Tokens(FindBox.Text);
-
+        var sheets = _sheets;
+        List<(int Sheet, int Row, int Cell)> found = [];
         if (tokens.Count > 0)
-            for (var s = 0; s < _sheets.Count; s++)
-            {
-                var rows = _sheets[s].Rows;
-                for (var r = 0; r < rows.Count; r++)
-                for (var c = 0; c < rows[r].Cells.Count; c++)
-                    if (DocHighlight.Find(rows[r].Cells[c].Text, tokens).Count > 0)
-                        _sheetHits.Add((s, r, c));
-            }
+        {
+            try { found = await Task.Run(() => FindInBook(sheets, tokens, cts.Token), cts.Token); }
+            catch (OperationCanceledException) { return; }
+            if (gen != _gen || scan != _sheetScanGen) return;
+        }
 
+        _sheetHits.AddRange(found);
+        _sheetsScanned = true;
         ApplySheetHits();
         if (_mode == ReadMode.Document && ShowsSheet)
         {
@@ -920,6 +980,26 @@ public partial class DocReaderView : UserControl
             ApplyCurrent(scroll: true);
         }
         else UpdateCounter();
+    }
+
+    /// <summary>Совпадения книги — лист, строка в нем и ячейка — в порядке чтения.</summary>
+    private static List<(int Sheet, int Row, int Cell)> FindInBook(IReadOnlyList<DocSheet> sheets,
+                                                                   List<string> tokens,
+                                                                   CancellationToken ct)
+    {
+        var hits = new List<(int Sheet, int Row, int Cell)>();
+        for (var s = 0; s < sheets.Count; s++)
+        {
+            var rows = sheets[s].Rows;
+            for (var r = 0; r < rows.Count; r++)
+            {
+                ct.ThrowIfCancellationRequested();
+                for (var c = 0; c < rows[r].Cells.Count; c++)
+                    if (DocHighlight.Find(rows[r].Cells[c].Text, tokens).Count > 0)
+                        hits.Add((s, r, c));
+            }
+        }
+        return hits;
     }
 
     /// <summary>Разложить совпадения книги по строкам ОТКРЫТОГО листа.</summary>
@@ -977,6 +1057,9 @@ public partial class DocReaderView : UserControl
         if (_pageWidth > 0 && Math.Abs(width - _pageWidth) < _pageWidth * 0.04) return;
 
         _pageWidth = width;
+        // Картинки под прежнюю ширину не нужны — и те, что еще только ждут очереди: их бросаем.
+        _renderCts.Cancel();
+        _renderCts = CancellationTokenSource.CreateLinkedTokenSource(_docCts.Token);
         foreach (var page in _rendered.ToList()) _pages[page].SetBitmap(null);
         _rendered.Clear();
         foreach (var page in _pages) page.Refresh();
@@ -995,26 +1078,40 @@ public partial class DocReaderView : UserControl
         if (_source is null || page.Bitmap is not null || page.Loading) return;
 
         // Признак ставим сразу: отрисовка успеет позвать нас еще раз, пока задание ждет очереди.
+        // Поколение берем СЕЙЧАС, а не когда задание дойдет: за это время могли открыть другой
+        // документ, и страница прежнего нарисовалась бы из нового источника.
         page.Loading = true;
-        Dispatcher.UIThread.Post(() => _ = RenderPageAsync(page), DispatcherPriority.Background);
+        var gen = _gen;
+        Dispatcher.UIThread.Post(() => _ = RenderPageAsync(page, gen), DispatcherPriority.Background);
     }
 
-    private async Task RenderPageAsync(PageVm page)
+    private async Task RenderPageAsync(PageVm page, int gen)
     {
-        if (_source is not { } source) { page.Loading = false; return; }
+        if (gen != _gen || _source is not { } source) { page.Loading = false; return; }
         if (_pageWidth <= 0) { ReflowPages(); if (_pageWidth <= 0) { page.Loading = false; return; } }
 
-        var gen   = _gen;
         var width = _pageWidth;
+        var token = _renderCts.Token;
+        var again = false;
 
         try
         {
-            var png = await Task.Run(() => source.Render(page.Index, width));
+            var png = await Task.Run(() => source.Render(page.Index, width, token), token);
             if (gen != _gen || png is null) return;
+
+            // Пока страница рисовалась, панель сменила ширину: картинка под прежнюю растянулась
+            // бы и расплылась, а места новой не уступила бы — страница, которая «уже рисуется»,
+            // второй раз не просится. Просим ее заново, под новую ширину.
+            if (width != _pageWidth) { again = true; return; }
 
             using var stream = new MemoryStream(png);
             page.SetBitmap(new Avalonia.Media.Imaging.Bitmap(stream));
             Remember(page.Index);
+        }
+        catch (OperationCanceledException)
+        {
+            // Отменили из-за смены ширины — страница нужна под новую; из-за смены документа — нет.
+            again = gen == _gen;
         }
         catch (Exception ex)
         {
@@ -1023,6 +1120,7 @@ public partial class DocReaderView : UserControl
         finally
         {
             page.Loading = false;
+            if (again && gen == _gen) page.Refresh();
         }
     }
 
@@ -1049,10 +1147,12 @@ public partial class DocReaderView : UserControl
         if (_source is not { } source) return;
 
         // Обход начинается заново — прежний обязан замолчать на первой же своей проверке.
-        var scan = ++_scanGen;
+        var scan  = ++_scanGen;
+        var token = _docCts.Token;
 
         var tokens = DocHighlight.Tokens(FindBox.Text);
         _pageHits.Clear();
+        _pagesScanned = false;
 
         // Следы прежнего запроса снимаем со ВСЕХ страниц сразу, а не по мере обхода: иначе
         // очищенный запрос оставлял бы подсветку на уже показанных страницах (обход при пустом
@@ -1061,21 +1161,30 @@ public partial class DocReaderView : UserControl
         foreach (var stale in _pages)
             if (stale.Hits.Count > 0) { stale.Hits.Clear(); stale.Refresh(); }
 
-        if (tokens.Count == 0) { UpdateCounter(); return; }
+        // Пустой запрос искать нечего — обход закончен. Иначе прежнее «3 из 17» уходит из
+        // счетчика сразу, а не тогда, когда обход дойдет до первого совпадения.
+        _pagesScanned = tokens.Count == 0;
+        UpdateCounter();
+        if (tokens.Count == 0) return;
 
         for (var i = 0; i < _pages.Count; i++)
         {
             if (gen != _gen || scan != _scanGen) return;
 
             var index = i;
-            var found = await Task.Run(() =>
+            (IReadOnlyList<DocWord> Words, List<(int First, int Last)> Hits) found;
+            try
             {
-                // Слова страницы ищутся вместе, а не поодиночке: фраза запроса переходит через
-                // границу слов. Сумма «30 772,48» на странице — два слова, и запрос «30772»
-                // обязан подсветить оба, раз поиск нашел по нему документ.
-                var words = source.Words(index);
-                return (Words: words, Hits: DocHighlight.FindInWords([.. words.Select(w => w.Text)], tokens));
-            });
+                found = await Task.Run(() =>
+                {
+                    // Слова страницы ищутся вместе, а не поодиночке: фраза запроса переходит через
+                    // границу слов. Сумма «30 772,48» на странице — два слова, и запрос «30772»
+                    // обязан подсветить оба, раз поиск нашел по нему документ.
+                    var words = source.Words(index);
+                    return (Words: words, Hits: DocHighlight.FindInWords([.. words.Select(w => w.Text)], tokens));
+                }, token);
+            }
+            catch (OperationCanceledException) { return; }
 
             if (gen != _gen || scan != _scanGen) return;
 
@@ -1102,7 +1211,9 @@ public partial class DocReaderView : UserControl
             }
         }
 
-        if (gen == _gen && scan == _scanGen) UpdateCounter();
+        if (gen != _gen || scan != _scanGen) return;
+        _pagesScanned = true;
+        UpdateCounter();
     }
 
     /// <summary>
@@ -1141,7 +1252,7 @@ public partial class DocReaderView : UserControl
         // Страницы и листы ищут свое: у страниц совпадения считаются по словам с их местами,
         // у книги — по ячейкам, и списка строк для этого недостаточно.
         if (_source is not null) _ = ScanPagesAsync(_gen);
-        if (ShowsSheet) ScanSheets();
+        if (ShowsSheet) _ = ScanSheetsAsync(_gen);
     }
 
     /// <summary>
@@ -1395,10 +1506,12 @@ public partial class DocReaderView : UserControl
     {
         var asked = DocHighlight.Tokens(FindBox.Text).Count > 0;
         var count = HitCount;
+        // «Нет» — только когда искать больше негде: у страниц и книги обход идет в фоне, и пока
+        // он не кончился, совпадение может найтись дальше.
         var ready = _mode switch
         {
-            ReadMode.Document when ShowsSheet => _sheetRows.Count > 0,
-            ReadMode.Document                 => _pages.Count > 0,
+            ReadMode.Document when ShowsSheet => _sheetsScanned,
+            ReadMode.Document                 => _pagesScanned,
             _                                 => _lines.Count > 0,
         };
 
