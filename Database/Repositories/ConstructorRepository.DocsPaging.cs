@@ -351,8 +351,12 @@ public partial class ConstructorRepository
     /// вовсе.
     ///
     /// SQLite сравнивает без учета регистра только латиницу, поэтому кириллица перебирается
-    /// регистровыми вариантами — тот же прием, что в поиске календаря. Набор путей уходит в
-    /// <c>IN</c> по индексу <c>db_field_values(FieldId, Value)</c>: это точный заход, а не скан.
+    /// регистровыми вариантами — тот же прием, что в поиске календаря. PostgreSQL в <c>LIKE</c>
+    /// учитывает регистр ВСЕГДА, и у латиницы тоже: по «gost» не находилось «GoSt», а файл
+    /// «MiXeD-Case.pdf» по «mixed-case» не находился вовсе. Поэтому там сравнение — <c>ILIKE</c>:
+    /// латиницу он сводит при любой локали сервера, кириллицу — при локали, которая ее знает, а
+    /// варианты остаются ради сервера с локалью «C». Набор путей уходит в <c>IN</c> по индексу
+    /// <c>db_field_values(FieldId, Value)</c>: это точный заход, а не скан.
     ///
     /// Пути приходят КЛЮЧАМИ кеша (нормализованными), а в поле записи лежит написание самого
     /// человека, поэтому каждый путь разворачивается в свои написания
@@ -384,9 +388,10 @@ public partial class ConstructorRepository
         if (docFields.Count == 0) return result;
 
         var variants = query.Length > 0 ? SearchVariants(query) : [];
+        var like     = db.IsPostgres ? "ILIKE" : "LIKE";
         var likes    = new List<string>();
         for (var i = 0; i < variants.Count; i++)
-            likes.Add($"(r.Title LIKE @q{i} ESCAPE '\\' OR v.Value LIKE @q{i} ESCAPE '\\')");
+            likes.Add($"(r.Title {like} @q{i} ESCAPE '\\' OR v.Value {like} @q{i} ESCAPE '\\')");
 
         var pathList = paths.SelectMany(DocIndex.DocTextIndex.Spellings)
                             .Distinct(StringComparer.Ordinal)

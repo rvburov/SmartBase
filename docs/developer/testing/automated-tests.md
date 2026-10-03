@@ -73,9 +73,11 @@ SQLite + PG), `CsvExportTests` (выгрузка журнала и диагно�
 
 Тесты `PgProviderTests` (провайдер), `PgBulkWriteTests` (сырые массовые пути: заливка и
 раскраска свода, prepared-правки значений при смене настроек поля, сортированный CSV
-журнала, капнутый счет пилюль задач — SQLite такие ошибки прощает, ловит только живой PG)
-и `PgCreateDatabaseTests` (создание базы и
-роли-владельца из приложения, `PgDatabaseCreator`) — `[SkippableFact]`: без поднятого
+журнала, капнутый счет пилюль задач — SQLite такие ошибки прощает, ловит только живой PG),
+`PgCreateDatabaseTests` (создание базы и
+роли-владельца из приложения, `PgDatabaseCreator`) и `PgLibraryTests` (сверка: один
+сценарий «Библиотеки документов» идет на SQLite и на PostgreSQL, и ответы раздела обязаны
+совпасть строка в строку) — `[SkippableFact]`: без поднятого
 стенда они помечаются **Skipped**, а не падают, поэтому локально и в CI без Docker набор
 остается зеленым. Стенд — docker-контейнер `sb-pg` (порт **5455**, о выборе порта — врезка
 в [../guides/postgresql-setup.md](../guides/postgresql-setup.md)); нужны базы `smartbase`
@@ -89,12 +91,29 @@ docker exec sb-pg psql -U postgres -c "CREATE DATABASE smartbase2;"
 
 На macOS docker работает через colima: перед первым запуском `brew services start colima`.
 
+Без докера — например, на Windows с установленным PostgreSQL — стенд поднимается отдельным
+кластером из тех же программ; служба сервера на 5432 им не задевается:
+
+```bash
+PG="C:/Program Files/PostgreSQL/18/bin"   # там, где стоит сервер
+"$PG/initdb.exe" -D <папка стенда> -U postgres --pwfile=<файл с паролем postgres> \
+                 -A scram-sha-256 -E UTF8 --locale=en-US
+# в postgresql.conf стенда дописать: port = 5455 и listen_addresses = 'localhost'
+"$PG/pg_ctl.exe" -D <папка стенда> -l <журнал сервера> start
+PGPASSWORD=postgres "$PG/psql.exe" -h localhost -p 5455 -U postgres \
+    -c "CREATE DATABASE smartbase;" -c "CREATE DATABASE smartbase2;"
+```
+
+Локаль `en-US` — ради английских сообщений сервера, как у докер-образа. После перезагрузки такой
+стенд сам не стартует: перед прогоном его запускают тем же `pg_ctl … start`, иначе тесты
+PostgreSQL молча уйдут в Skipped.
+
 Перед прогоном каждый PG-тест провайдера сбрасывает схему (`DROP SCHEMA public CASCADE;
 CREATE SCHEMA public;`), чтобы миграция `InitialCreatePg` накатилась начисто.
 `PgCreateDatabaseTests` работают иначе: создают базы/роли с уникальными именами
 `sb_create_test_*` / `sb_create_role_*` и подчищают их в `finally`
-(`DROP DATABASE … WITH (FORCE)`), так что стенд остается чистым. В CI все три класса гоняет
-job `postgres` (фильтр `PgProviderTests|PgCreateDatabaseTests|PgBulkWriteTests`)
+(`DROP DATABASE … WITH (FORCE)`), так что стенд остается чистым. В CI все четыре класса гоняет
+job `postgres` (фильтр `PgProviderTests|PgCreateDatabaseTests|PgBulkWriteTests|PgLibraryTests`)
 с guard-проверкой «Skipped: 0» — см. [../guides/ci.md](../guides/ci.md).
 
 ## Замечания по сборке

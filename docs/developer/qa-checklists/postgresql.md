@@ -105,8 +105,9 @@
 
 ## 4. Кроссплатформенность
 
-- [ ] Linux/Windows: CI (job `postgres`) гоняет `PgProviderTests`, `PgBulkWriteTests` и
-      `PgCreateDatabaseTests` на живом сервере — зеленый прогон с «Skipped: 0».
+- [ ] Linux/Windows: CI (job `postgres`) гоняет `PgProviderTests`, `PgBulkWriteTests`,
+      `PgCreateDatabaseTests` и `PgLibraryTests` на живом сервере — зеленый прогон с
+      «Skipped: 0».
 - [ ] Ручной проход окон на Windows и Linux (формулировки UAC, статусы служб,
       детект каталогов установки) — **пока не выполнялся**; при первом прогоне
       на этих ОС пройти разделы 1–3 целиком.
