@@ -17,7 +17,8 @@ public sealed record PgControlPlan(
 /// Запуск и остановка локального сервера PostgreSQL из окна-помощника. Приложение
 /// НЕ становится менеджером служб: одна команда штатного инструмента ОС на действие,
 /// без демонов и фоновых процессов. Детект способа — best-effort по типовым путям
-/// установщиков (как в PgServerProbe); экзотика дает CanExecute=false и честный
+/// установщиков (как в PgServerProbe), на Windows — по записи установщика в реестре и службам
+/// (PgWindowsInstalls); экзотика дает CanExecute=false и честный
 /// фолбэк «скопируйте команду». Успех запуска/остановки подтверждает не код возврата,
 /// а повторная TCP-проба порта — ее делает вызывающее окно.
 /// </summary>
@@ -84,26 +85,18 @@ public static class PgServerControl
 
     private static PgControlPlan? DetectWindows()
     {
-        // Установщик EDB/winget: «Program Files\PostgreSQL\<версия>», служба
-        // postgresql-x64-<версия>. Управление службой требует повышения (UAC).
-        var pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-        if (pf.Length == 0) return null;
-        var root = Path.Combine(pf, "PostgreSQL");
-        if (!Directory.Exists(root)) return null;
+        // Служба самой новой установки, у которой служба известна: реестр установщика, службы
+        // Windows, «Program Files» (PgWindowsInstalls). Управление службой требует повышения (UAC).
+        var service = PgWindowsInstalls.Find().Select(i => i.Service).FirstOrDefault(s => s is not null);
+        if (service is null) return null;
 
-        var version = Directory.EnumerateDirectories(root)
-                               .Select(Path.GetFileName)
-                               .Where(v => int.TryParse(v, out _))
-                               .OrderByDescending(v => int.Parse(v!))
-                               .FirstOrDefault();
-        if (version is null) return null;
-
-        var service = $"postgresql-x64-{version}";
+        // Имя службы, заведенной руками, может быть с пробелом — net получит его в кавычках.
+        var name = service.Contains(' ') ? $"\"{service}\"" : service;
         return new PgControlPlan(
             CanExecute:   true,
             Description:  $"служба Windows ({service})",
-            StartCommand: $"net start {service}",
-            StopCommand:  $"net stop {service}");
+            StartCommand: $"net start {name}",
+            StopCommand:  $"net stop {name}");
     }
 
     private static PgControlPlan? DetectLinux()

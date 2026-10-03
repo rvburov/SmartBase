@@ -188,7 +188,7 @@ pg_dump -h localhost -p 5432 -U projects -F c -f projects.backup projects
 pg_restore -h localhost -p 5432 -U postgres -d projects projects.backup
 ```
 
-На Windows обе утилиты лежат рядом с сервером:
+На Windows обе утилиты лежат рядом с сервером, в его папке `bin` — по умолчанию
 `C:\Program Files\PostgreSQL\16\bin\`. Делайте копию по расписанию — сервер сам
 себя не бэкапит.
 

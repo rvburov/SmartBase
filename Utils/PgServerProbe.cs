@@ -17,7 +17,8 @@ public enum PgServerStatus
 /// <summary>
 /// Проба сервера PostgreSQL для окна-помощника (PgServerHelpDialog). Работает без прав
 /// администратора и без пароля: доступность — обычное TCP-подключение к порту, наличие
-/// установки — поиск типовых каталогов/бинарников текущей ОС. Оба признака честно
+/// установки — поиск типовых каталогов/бинарников текущей ОС (на Windows — еще по записи
+/// установщика в реестре и службам, PgWindowsInstalls). Оба признака честно
 /// best-effort: сервер на нестандартном порту или в docker-контейнере проба «не увидит»,
 /// установка нестандартным способом не найдется — окно предупреждает об этом текстом.
 /// Пробу соединения с паролем и русские тексты ошибок делает PgConnectDialog.
@@ -55,7 +56,10 @@ public static class PgServerProbe
         {
             if (OperatingSystem.IsWindows())
             {
-                // Установщик EDB/winget ставит в «Program Files\PostgreSQL\<версия>».
+                // Установки — по реестру установщика, службам и «Program Files»
+                // (PgWindowsInstalls). Папка «Program Files\PostgreSQL» без версий внутри — тоже
+                // след установки, как и раньше.
+                if (PgWindowsInstalls.Find().Count > 0) return true;
                 var pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
                 return pf.Length > 0 && Directory.Exists(Path.Combine(pf, "PostgreSQL"));
             }

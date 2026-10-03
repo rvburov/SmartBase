@@ -89,9 +89,12 @@ SQLite — компактная копия файла через `VACUUM INTO` �
 
 Приложение не носит клиент PG с собой — `PgDump.FindBinary()` ищет бинарник по типовым
 путям установщиков (те же корни, что у [PgServerControl](../../../Utils/PgServerControl.cs):
-Homebrew `/opt/homebrew|/usr/local/opt/postgresql*`, Postgres.app, `Program
-Files\PostgreSQL\<версия>\bin`, `/usr/lib/postgresql`, `/usr/pgsql-*`), затем PATH.
-Не найден — честная ошибка в статусе строки и в журнале, а не тихий пропуск.
+Homebrew `/opt/homebrew|/usr/local/opt/postgresql*`, Postgres.app, `/usr/lib/postgresql`,
+`/usr/pgsql-*`), затем PATH. На Windows установки находит
+[PgWindowsInstalls](../../../Utils/PgWindowsInstalls.cs): запись установщика в реестре
+(`HKLM\SOFTWARE\PostgreSQL\Installations`), службы Windows и `Program Files\PostgreSQL\<версия>`.
+Сервер ставят и в другие папки, и пока искали только в «Program Files», такой сервер копии не
+доставался. Не найден — честная ошибка в статусе строки и в журнале, а не тихий пропуск.
 
 Запуск: `pg_dump --format=custom --no-password -f <цель> …`; пароль и режим SSL уходят
 переменными окружения `PGPASSWORD`/`PGSSLMODE` — в аргументах процесса (видных в списке
@@ -175,7 +178,8 @@ SSD): `VACUUM INTO` 3,1 ГБ — 15 с (~200 МБ/с), `integrity_check` коп�
 - **DatabaseManager.BackupTo** — SQLite-копия (та же, что была у прежней кнопки).
 - Тесты: `Tests/Unit/BackupScheduleTests` (+`BackupRotationTests`, `BackupSettingsTests`),
   `Tests/Integration/BackupServiceTests`, `Tests/Integration/PgBackupTests`
-  (SkippableFact: нужен стенд sb-pg и клиент pg_dump).
+  (SkippableFact: нужен стенд sb-pg и клиент pg_dump); поиск клиента на Windows —
+  `Tests/Unit/PgWindowsInstallsTests` и `Tests/Integration/PgLocalInstallTests`.
 
 ## Связанные документы
 

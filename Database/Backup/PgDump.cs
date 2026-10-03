@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Serilog;
 using SmartBase.Logging;
+using SmartBase.Utils;
 
 namespace SmartBase.Database.Backup;
 
@@ -141,20 +142,11 @@ public static class PgDump
         }
     }
 
-    // Установщик EDB/winget: «Program Files\PostgreSQL\<версия>\bin» — как в PgServerControl.
-    private static IEnumerable<string> WindowsCandidates()
-    {
-        var pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-        if (pf.Length == 0) yield break;
-        var root = Path.Combine(pf, "PostgreSQL");
-        if (!Directory.Exists(root)) yield break;
-
-        foreach (var version in Directory.EnumerateDirectories(root)
-                                         .Select(Path.GetFileName)
-                                         .Where(v => int.TryParse(v, out _))
-                                         .OrderByDescending(v => int.Parse(v!)))
-            yield return Path.Combine(root, version!, "bin", "pg_dump.exe");
-    }
+    // Установки — по реестру установщика, службам Windows и «Program Files», самая новая первой:
+    // тот же поиск, что у PgServerControl и PgServerProbe (PgWindowsInstalls). Пока смотрели
+    // только «Program Files», сервер в другой папке резервной копии не доставался вовсе.
+    private static IEnumerable<string> WindowsCandidates() =>
+        PgWindowsInstalls.Find().Select(i => Path.Combine(i.BaseDir, "bin", "pg_dump.exe"));
 
     // Debian/Ubuntu кладут версионные bin-папки, RHEL — /usr/pgsql-N; обычно есть и /usr/bin.
     private static IEnumerable<string> LinuxCandidates()
