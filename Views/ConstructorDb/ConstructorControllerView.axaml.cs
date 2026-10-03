@@ -244,9 +244,10 @@ public partial class ConstructorControllerView : UserControl
         NavbarConstructor.SetTitle(col.Name);
         SetEmptyState(false);
 
-        var (_, _, viewMode) = snapshot?.UiSettings ?? _repository!.GetUiSettings(collectionId);
-        NavbarConstructor.SetViewMode(viewMode);
-        SwitchView(viewMode, snapshot);
+        // Свой сохраненный вид коллекции скрыт в «Отображаемых видах» — открываем видом по
+        // умолчанию; сохраненное не трогаем: вернут вид — коллекция снова откроется им.
+        var (_, _, saved) = snapshot?.UiSettings ?? _repository!.GetUiSettings(collectionId);
+        SwitchView(NavbarConstructor.SetViewMode(saved), snapshot);
 
 
         // Нижняя панель: диапазон видимых строк приедет от таблицы, когда она разложится
@@ -331,8 +332,19 @@ public partial class ConstructorControllerView : UserControl
         RecordPageClosed?.Invoke(this, EventArgs.Empty);
     }
 
+    /// <summary>
+    /// «Отображаемые виды» конструктора сменились: переключатель пересобирается сразу. Скрыли
+    /// открытый вид — коллекция переходит на вид по умолчанию (навбар поднимает ViewChanged).
+    /// </summary>
+    public void ApplyViewVisibility() => NavbarConstructor.ApplyViewVisibility();
+
     private void SwitchView(string mode, CollectionOpenSnapshot? snapshot = null)
     {
+        // Коллекция не открыта — показывать нечего: таблицу и список прячет пустое состояние
+        // (SetEmptyState), а вид поставит открытие коллекции. Сюда так попадает скрытие вида,
+        // открытого у прошлой коллекции.
+        if (_currentCollectionId is null) return;
+
         TableViewCtrl.IsVisible = mode != "list";
         ListViewCtrl.IsVisible  = mode == "list";
 

@@ -330,12 +330,20 @@ public partial class MainWindow
             _notesView?.SetVault(path);
         };
 
-        // «Оформление → Отображение раздела навигации»: панель разделов видна и из настроек,
-        // поэтому скрытый раздел уходит с нее сразу.
+        // «Отображаемые виды» и «Отображение раздела навигации»: набор скрытых применяется сразу.
+        // Панель разделов видна и из настроек; переключатели видов пересобираются, пока их не
+        // видно, и раздел, у которого скрыли открытый вид, уходит на вид по умолчанию. Еще не
+        // построенный раздел прочитает набор сам, при построении. У библиотеки переключателя
+        // нет — вид у нее один.
         view.ViewVisibilityChanged += (_, scope) =>
         {
-            if (scope == SmartBase.Settings.ViewCatalog.ScopeNavigation)
-                ActivityBarControl.ApplyModuleVisibility();
+            switch (scope)
+            {
+                case SmartBase.Settings.ViewCatalog.ScopeNavigation:  ActivityBarControl.ApplyModuleVisibility(); break;
+                case SmartBase.Settings.ViewCatalog.ScopeCalendar:    _calendarView?.ApplyViewVisibility();       break;
+                case SmartBase.Settings.ViewCatalog.ScopeTasks:       _tasksView?.ApplyViewVisibility();          break;
+                case SmartBase.Settings.ViewCatalog.ScopeConstructor: ConstructorModule.ApplyViewVisibility();    break;
+            }
         };
 
         foreach (var (dbId, text) in _dbStatuses) view.SetDatabaseStatus(dbId, text);

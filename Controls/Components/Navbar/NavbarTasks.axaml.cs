@@ -14,9 +14,11 @@ namespace SmartBase.Controls.Components;
 public partial class NavbarTasks : UserControl
 {
     // Только виды, не скрытые в «Оформлении»; ключи и подписи — в ViewCatalog.
-    private readonly string[] _viewKeys;
+    private readonly ViewSwitcher _views;
 
-    public event EventHandler<int>? ViewChanged;
+    /// <summary>Человек выбрал вид (ключ каталога). Подписчиков пока нет: вид у раздела один.
+    /// Ключ, а не позиция в списке: позиция сдвигается, когда вид перед ней скрывают.</summary>
+    public event EventHandler<string>? ViewChanged;
     public event EventHandler<string>? SearchChanged;
     /// <summary>Выбран быстрый фильтр (пункт выпадающего списка рядом с поиском).</summary>
     public event EventHandler<TaskFilter>? FilterChanged;
@@ -40,16 +42,9 @@ public partial class NavbarTasks : UserControl
     {
         InitializeComponent();
 
-        var visible = ViewCatalog.Visible(ViewCatalog.ScopeTasks);
-        _viewKeys   = [.. visible.Select(v => v.Key)];
-
-        ViewSelector.ItemsSource = visible.Select(v => v.Label).ToList();
         // Стартовый вид из настроек; если он скрыт — показываем первый видимый.
-        var saved = Array.IndexOf(_viewKeys, AppSettings.LoadTasksView());
-        ViewSelector.SelectedIndex = saved >= 0 ? saved : 0;
-
-        ViewSelector.SelectionChanged += (_, _) =>
-            ViewChanged?.Invoke(this, ViewSelector.SelectedIndex);
+        _views = new ViewSwitcher(ViewSelector, ViewCatalog.ScopeTasks, AppSettings.LoadTasksView);
+        _views.Changed += key => ViewChanged?.Invoke(this, key);
 
         SearchBox.TextChanged += (_, _) =>
             SearchChanged?.Invoke(this, SearchBox.Text ?? "");
@@ -69,6 +64,9 @@ public partial class NavbarTasks : UserControl
         TitleLabel.Text       = text;
         TitleLabel.Foreground = color ?? (IBrush)Application.Current!.FindResource("BrushPrimaryText")!;
     }
+
+    /// <summary>Перечитать «Отображаемые виды» (их сменили в настройках).</summary>
+    public void ApplyViewVisibility() => _views.Refresh();
 
     /// <summary>Стадии, показанные сейчас в группе стадий (в порядке списка).</summary>
     public IReadOnlyList<string> Stages =>

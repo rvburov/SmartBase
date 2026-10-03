@@ -170,6 +170,39 @@ public sealed class ViewCatalogTests
         Assert.Equal(ViewCatalog.Constructor.Count, ViewCatalog.Visible(ViewCatalog.ScopeConstructor).Count);
     }
 
+    // ── Какой вид показать ────────────────────────────────────────────────────
+    //
+    // Resolve решает, что увидит человек на месте запрошенного вида: на старте, у коллекции со
+    // своим сохраненным видом и после того, как открытый вид скрыли в настройках.
+
+    [Fact]
+    public void Resolve_keeps_a_visible_view()
+    {
+        Assert.Equal("day", ViewCatalog.Resolve(["schedule", "day", "month"], "day", "month"));
+    }
+
+    // Скрытый вид уступает место виду по умолчанию — туда же раздел открывается на старте, — а
+    // не первому в списке.
+    [Fact]
+    public void Resolve_replaces_a_hidden_view_with_the_default()
+    {
+        Assert.Equal("month", ViewCatalog.Resolve(["schedule", "week", "month"], "day", "month"));
+    }
+
+    // Скрыто и умолчание (настройку правили руками) — первый видимый: пустым ответ не бывает.
+    [Fact]
+    public void Resolve_falls_back_to_the_first_visible_view()
+    {
+        Assert.Equal("schedule", ViewCatalog.Resolve(["schedule", "week"], "day", "month"));
+        Assert.Equal("schedule", ViewCatalog.Resolve(["schedule", "week"], null, null));
+    }
+
+    [Fact]
+    public void Resolve_without_views_gives_empty_key()
+    {
+        Assert.Equal("", ViewCatalog.Resolve([], "day", "month"));
+    }
+
     // ── Расширения: динамический раздел ───────────────────────────────────────
     //
     // Пункты берутся из реестра, а не перечислены в каталоге. Поэтому проверки здесь НЕ

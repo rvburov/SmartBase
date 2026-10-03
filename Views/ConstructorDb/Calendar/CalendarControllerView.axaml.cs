@@ -259,7 +259,7 @@ public partial class CalendarControllerView : UserControl
 
     private void Wire(MonthView v)
     {
-        v.DaySelected   += (_, d)  => { _currentDate = d; SwitchView(2); };
+        v.DaySelected   += (_, d)  => DrillDown(2, d);
         v.DayAddClicked += (_, d)  => _ = OpenAddDialog(d);
         v.RecordClicked          += (_, r) => _ = OpenEditDialog(r);
         // Перенос в Месяце — дельтой с ИСХОДНЫМИ датами (само событие уже мутировано drag'ом):
@@ -290,7 +290,7 @@ public partial class CalendarControllerView : UserControl
 
     private void Wire(YearView v)
     {
-        v.MonthSelected += (_, d)  => { _currentDate = d; SwitchView(4); };
+        v.MonthSelected += (_, d)  => DrillDown(4, d);
         // Поиск в попапе дня Года — фоновый SQL LIKE по ВСЕМУ дню (как в «Расписании»):
         // попап показывает лишь первые записи дня-гиганта, локальный фильтр по ним неполон.
         v.DaySearchProvider = async (day, q) =>
@@ -355,13 +355,32 @@ public partial class CalendarControllerView : UserControl
 
     private void SwitchView(int idx)
     {
-        _currentViewIndex = idx;
-        var shown = ViewAt(idx);
+        // Скрытый в «Отображаемых видах» вид не открывается: навбар отдает номер того, что
+        // покажет на самом деле (вместо скрытого — вид по умолчанию).
+        _currentViewIndex = NavbarControl.SetView(idx);
+        var shown = ViewAt(_currentViewIndex);
         foreach (var view in ViewsHost.Children) view.IsVisible = view == shown;
 
-        NavbarControl.SetView(idx);
         RefreshCurrent(scrollToNow: true);
     }
+
+    // Двойной клик по дню «Месяца» или по месяцу «Года» — переход в подробный вид на эту дату.
+    // Вид, скрытый в «Отображаемых видах», так не открывается: клик ничего не делает. Открыть
+    // его значило бы показать вид, которого нет в переключателе, а перейти вместо него в вид
+    // по умолчанию — увести клик туда, куда его не направляли.
+    private void DrillDown(int idx, DateTime date)
+    {
+        if (!NavbarControl.HasView(idx)) return;
+        _currentDate = date;
+        SwitchView(idx);
+    }
+
+    /// <summary>
+    /// «Отображаемые виды» календаря сменились: переключатель пересобирается сразу, а не после
+    /// перезапуска. Скрыли открытый вид — раздел уходит на вид по умолчанию (навбар поднимает
+    /// ViewChanged); скрытый раздел при этом не читает — перечитает при показе.
+    /// </summary>
+    public void ApplyViewVisibility() => NavbarControl.ApplyViewVisibility();
 
     private void NavigatePrev() => Navigate(-1);
     private void NavigateNext() => Navigate(+1);

@@ -5,13 +5,14 @@ using Avalonia.Threading;
 using SmartBase.Controls.Widgets;
 using SmartBase.Core.Models;
 using SmartBase.Settings;
+using SmartBase.Utils;
 
 namespace SmartBase.Controls.Components;
 
 public partial class NavbarConstructor : UserControl
 {
     // Только виды, не скрытые в «Оформлении» (ключи и подписи — в ViewCatalog).
-    private readonly string[] ViewModes;
+    private readonly ViewSwitcher _views;
 
     public event EventHandler<string>? ViewChanged;
     /// <summary>Новое имя коллекции (после blur/Enter). Пусто/whitespace — игнорируется родителем.</summary>
@@ -25,18 +26,9 @@ public partial class NavbarConstructor : UserControl
     {
         InitializeComponent();
 
-        var visible = ViewCatalog.Visible(ViewCatalog.ScopeConstructor);
-        ViewModes   = [.. visible.Select(v => v.Key)];
-
-        ViewSelector.ItemsSource   = visible.Select(v => v.Label).ToList();
-        ViewSelector.SelectedIndex = 0;
-
-        ViewSelector.SelectionChanged += (_, _) =>
-        {
-            var idx = ViewSelector.SelectedIndex;
-            if (idx >= 0 && idx < ViewModes.Length)
-                ViewChanged?.Invoke(this, ViewModes[idx]);
-        };
+        // Вид по умолчанию — настройка constructorView: на него коллекция уходит со скрытого вида.
+        _views = new ViewSwitcher(ViewSelector, ViewCatalog.ScopeConstructor, AppSettings.LoadConstructorView);
+        _views.Changed += mode => ViewChanged?.Invoke(this, mode);
 
         TitleDisplay.PointerPressed += (_, e) =>
         {
@@ -112,15 +104,17 @@ public partial class NavbarConstructor : UserControl
         }
     }
 
-    public string CurrentViewMode =>
-        ViewModes[Math.Max(0, Math.Min(ViewSelector.SelectedIndex, ViewModes.Length - 1))];
+    public string CurrentViewMode => _views.Current;
 
-    /// <summary>Выбрать вид (table/list) без подсветки кнопок — те живут в футере.</summary>
-    public void SetViewMode(string viewMode)
-    {
-        var idx = Array.IndexOf(ViewModes, viewMode);
-        if (idx >= 0) ViewSelector.SelectedIndex = idx;
-    }
+    /// <summary>
+    /// Выбрать вид (table/list) без ViewChanged: вид открывает сам раздел. Скрытый не
+    /// показывается — вместо него вид по умолчанию. Возвращает показанный.
+    /// </summary>
+    public string SetViewMode(string viewMode) => _views.Show(viewMode);
+
+    /// <summary>Перечитать «Отображаемые виды» (их сменили в настройках). Скрыли открытый
+    /// вид — переключатель уходит на вид по умолчанию и сообщает об этом ViewChanged.</summary>
+    public void ApplyViewVisibility() => _views.Refresh();
 
     private void CommitTitle()
     {

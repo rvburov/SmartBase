@@ -565,6 +565,7 @@ async Task Scenario()
         await Settle(quietSec: 1.5, capSec: 60);
     }
     if (Want("settings")) await NavigationVisibility();
+    if (Want("settings")) await SectionViewVisibility();
     if (Want("profile")) ShowModule("profile");
     var profileSidebar = main.FindControl<Control>("ProfileSidebar")!;
     if (Want("profile"))
@@ -606,6 +607,146 @@ async Task NavigationVisibility()
         ? $"Оформление: раздел «{key}» пропадает с панели и возвращается сразу"
         : $"Оформление: НЕ ПРОШЛО — скрытый раздел «{key}» {(gone ? "пропал" : "остался на панели")}, " +
           $"возвращенный {(back ? "вернулся" : "не вернулся")}");
+}
+
+// «Отображаемые виды» календаря и конструктора: скрытый вид уходит из переключателя раздела
+// СРАЗУ; открытый вид, который скрыли, уступает место виду по умолчанию; двойной клик в
+// скрытый вид ничего не делает; коллекция со своим сохраненным скрытым видом открывается видом
+// по умолчанию, а когда вид вернут — снова своим. Наборы меняются тем же обработчиком, что у
+// галочек экрана настроек, и возвращаются к прежним.
+async Task SectionViewVisibility()
+{
+    var settings = Get(main!, "_settingsView")!;
+    void SetHidden(string scope, IReadOnlyList<string> hidden)
+    {
+        var row = ((System.Collections.IEnumerable)Get(settings, "_appearance")!).Cast<object>()
+                  .First(s => (string)s.GetType().GetProperty("Scope")!.GetValue(s)! == scope);
+        Call(settings, "OnAppearanceVisibilityChanged", row, hidden);
+    }
+    static ComboBox Selector(Control navbar) => navbar.FindControl<ComboBox>("ViewSelector")!;
+    static List<string> Labels(Control navbar) =>
+        [.. ((System.Collections.IEnumerable)Selector(navbar).ItemsSource!).Cast<string>()];
+    var faults = new List<string>();
+    void Expect(bool ok, string fault) { if (!ok) faults.Add(fault); }
+
+    // ── Календарь: открыт «День», его скрывают ──────────────────────────────
+    const string Cal = SmartBase.Settings.ViewCatalog.ScopeCalendar;
+    var calendar  = CalendarModule();
+    var calNav    = calendar.FindControl<Control>("NavbarControl")!;
+    var calBefore = AppSettings.LoadHiddenViews(Cal).ToList();
+    var calDef    = AppSettings.LoadCalendarView();
+    int  CalShown()           => (int)Get(calendar, "_currentViewIndex")!;
+    bool CalOnScreen(int idx) => ((Control)Call(calendar, "ViewAt", idx)!).IsVisible;
+    DateTime CalDate()        => (DateTime)Get(calendar, "_currentDate")!;
+    void DoubleClickDay(DateTime day)
+    {
+        var month = Call(calendar, "ViewAt", 4)!;
+        ((Delegate)Get(month, "DaySelected")!).DynamicInvoke(month, day);
+    }
+
+    if (calDef != 4 || calBefore.Count > 0)
+        faults.Add($"календарь: стенд рассчитан на свежие настройки (по умолчанию «Месяц», ничего не скрыто), " +
+                   $"а тут вид {calDef}, скрыто [{string.Join(", ", calBefore)}]");
+    else
+    {
+        Step("виды: скрыть открытый «День» календаря");
+        Call(calendar, "SwitchView", 2);
+        await Settle(quietSec: 0.3, capSec: 10);
+        SetHidden(Cal, [.. calBefore, "day"]);
+        await Settle(quietSec: 0.3, capSec: 10);
+        Expect(!Labels(calNav).Contains("День"), "календарь: скрытый «День» остался в переключателе");
+        Expect(CalShown() == 4 && CalOnScreen(4) && !CalOnScreen(2),
+               $"календарь: скрытый открытый «День» не уступил место «Месяцу» (открыт вид {CalShown()})");
+        Expect(Selector(calNav).SelectedItem as string == "Месяц",
+               $"календарь: переключатель показывает «{Selector(calNav).SelectedItem}», а открыт «Месяц»");
+
+        Step("виды: двойной клик по дню при скрытом «Дне»");
+        var date  = CalDate();
+        var other = date.AddDays(date.Day > 15 ? -3 : 3);
+        DoubleClickDay(other);
+        await Settle(quietSec: 0.3, capSec: 10);
+        Expect(CalShown() == 4 && CalDate() == date,
+               $"календарь: двойной клик по дню сработал при скрытом «Дне» (вид {CalShown()}, дата {CalDate():d})");
+
+        Step("виды: вернуть «День» календаря");
+        SetHidden(Cal, calBefore);
+        await Settle(quietSec: 0.3, capSec: 10);
+        Expect(Labels(calNav).Contains("День"), "календарь: вернувшийся «День» не появился в переключателе");
+        Expect(CalShown() == 4, $"календарь: возврат «Дня» сдвинул открытый вид (открыт {CalShown()})");
+        DoubleClickDay(other);
+        await Settle(quietSec: 0.3, capSec: 10);
+        Expect(CalShown() == 2 && CalOnScreen(2) && CalDate() == other,
+               $"календарь: двойной клик по дню не открыл вернувшийся «День» (вид {CalShown()})");
+
+        SetField(calendar, "_currentDate", date);
+        Call(calendar, "SwitchView", calDef);
+        await Settle(quietSec: 0.3, capSec: 10);
+    }
+
+    // ── Конструктор: открыт «Список», его скрывают ──────────────────────────
+    const string Con = SmartBase.Settings.ViewCatalog.ScopeConstructor;
+    var ctor      = main!.FindControl<Control>("ConstructorModule")!;
+    var conNav    = ctor.FindControl<Control>("NavbarConstructor")!;
+    var table     = ctor.FindControl<Control>("TableViewCtrl")!;
+    var list      = ctor.FindControl<Control>("ListViewCtrl")!;
+    var conBefore = AppSettings.LoadHiddenViews(Con).ToList();
+    var repo      = def.Constructor;
+    var cid       = repo.GetAllCollections().First().Id!.Value;
+    var ui        = repo.GetUiSettings(cid);
+    async Task Open()
+    {
+        OpenCollection(def, cid);
+        await Settle(quietSec: 0.5, capSec: 60);
+    }
+
+    if (conBefore.Count > 0)
+        faults.Add($"конструктор: стенд рассчитан на свежие настройки, а тут скрыто [{string.Join(", ", conBefore)}]");
+    else
+    {
+        Step("виды: скрыть открытый «Список» конструктора");
+        await Open();
+        Selector(conNav).SelectedIndex = Labels(conNav).IndexOf("Список");
+        await Settle(quietSec: 0.5, capSec: 60);
+        Expect(list.IsVisible && !table.IsVisible, "конструктор: выбор «Списка» человеком не открыл список");
+        SetHidden(Con, [.. conBefore, "list"]);
+        await Settle(quietSec: 0.5, capSec: 60);
+        Expect(Labels(conNav).SequenceEqual(["Таблица"]), "конструктор: скрытый «Список» остался в переключателе");
+        Expect(table.IsVisible && !list.IsVisible, "конструктор: коллекция осталась в скрытом «Списке»");
+
+        Step("виды: коллекция со своим скрытым «Списком»");
+        repo.SaveUiSettings(cid, ui.ColResize, ui.RowResize, "list");
+        await Open();
+        Expect(table.IsVisible && !list.IsVisible, "конструктор: коллекция со своим «Списком» открылась скрытым видом");
+        Expect(Selector(conNav).SelectedItem as string == "Таблица",
+               $"конструктор: переключатель показывает «{Selector(conNav).SelectedItem}», а открыта «Таблица»");
+
+        Step("виды: вернуть «Список» конструктора");
+        SetHidden(Con, conBefore);
+        await Settle(quietSec: 0.5, capSec: 60);
+        Expect(Labels(conNav).Contains("Список"), "конструктор: вернувшийся «Список» не появился в переключателе");
+        Expect(table.IsVisible && !list.IsVisible, "конструктор: возврат «Списка» сдвинул открытый вид");
+        await Open();
+        Expect(list.IsVisible && !table.IsVisible, "конструктор: коллекция не вернулась к своему сохраненному «Списку»");
+
+        // Коллекцию закрыли, а переключатель помнит ее «Список»: скрытие «Списка» переводит
+        // его на «Таблицу», но пустому состоянию показывать нечего — ни таблицы, ни списка.
+        Step("виды: скрыть «Список» без открытой коллекции");
+        Call(ctor, "ClearView");
+        SetHidden(Con, [.. conBefore, "list"]);
+        await Settle(quietSec: 0.5, capSec: 60);
+        Expect(!table.IsVisible && !list.IsVisible,
+               "конструктор: скрытие вида без открытой коллекции показало пустую таблицу или список");
+        SetHidden(Con, conBefore);
+        await Settle(quietSec: 0.5, capSec: 60);
+
+        repo.SaveUiSettings(cid, ui.ColResize, ui.RowResize, ui.ViewMode);
+        await Open();
+    }
+
+    Console.WriteLine(faults.Count == 0
+        ? "Виды разделов: скрытый вид уходит из переключателя сразу, открытый уступает место виду по умолчанию, " +
+          "двойной клик в скрытый вид не срабатывает, свой скрытый вид коллекции не открывается"
+        : $"Виды разделов: НЕ ПРОШЛО — {string.Join("; ", faults)}");
 }
 
 // Кадры календаря: неделя и день на заведенной неделе (6–12 июля 2026), прокрутка к 8:00.

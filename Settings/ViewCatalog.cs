@@ -145,4 +145,18 @@ public static class ViewCatalog
     /// <summary>Первый видимый пункт раздела — к нему переезжает выбор «по умолчанию»,
     /// когда прежний пункт скрыли.</summary>
     public static ViewItem? FirstVisible(string scope) => Visible(scope).FirstOrDefault();
+
+    /// <summary>
+    /// Какой вид показать на месте запрошенного <paramref name="key"/>, когда видны
+    /// <paramref name="visible"/>: сам запрошенный; скрыт — вид по умолчанию
+    /// (<paramref name="fallback"/>); скрыт и он — первый видимый. Так скрытый вид не
+    /// показывается ни на старте, ни у коллекции со своим сохраненным видом, ни после того,
+    /// как его скрыли открытым: раздел уходит с него туда же, откуда начинает.
+    /// </summary>
+    public static string Resolve(IReadOnlyList<string> visible, string? key, string? fallback)
+    {
+        if (key is not null && visible.Contains(key))           return key;
+        if (fallback is not null && visible.Contains(fallback)) return fallback;
+        return visible.Count > 0 ? visible[0] : "";
+    }
 }

@@ -217,6 +217,9 @@ public partial class TasksControllerView : UserControl
         foreach (var d in databases) _dbs.Add((d.DbId, d.Name, d.Constructor));
     }
 
+    /// <summary>«Отображаемые виды» задач сменились — переключатель пересобирается сразу.</summary>
+    public void ApplyViewVisibility() => NavbarControl.ApplyViewVisibility();
+
     // ── Загрузка ─────────────────────────────────────────────────────────────
 
     /// <param name="quiet">
