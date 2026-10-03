@@ -217,6 +217,30 @@ public sealed class DocTextExtractorTests : IDisposable
         Assert.Contains("технологической", result.Text);
     }
 
+    // ── PDF ──────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Лист, повернутый без поправки содержимого, и надпись штампа, идущая снизу вверх, попадают
+    /// в индекс целыми словами: разбор идет в порядке потока содержимого, и направление строки
+    /// ему безразлично. Страница панели чтения находит то же самое — см.
+    /// <c>DocPageSourceTests.Sideways_text_comes_in_whole_words</c>.
+    /// </summary>
+    [Fact]
+    public void Turned_and_sideways_pdf_text_is_indexed_in_whole_words()
+    {
+        var path = HandPdf.Write(_dir, "боком.pdf",
+            new HandPdf.Sheet(HandPdf.Plain(40, 782, "Dogovor postavki 21.501"), 90),
+            new HandPdf.Sheet(HandPdf.Upright(270, HandPdf.Full, 40, 60, "Vedomost listov"), 270),
+            new HandPdf.Sheet(HandPdf.Rising(30, 100, "Inv podl 4711")));
+
+        var result = DocTextExtractor.Extract(path);
+
+        Assert.Equal(DocTextStatus.Ok, result.Status);
+        Assert.Contains("Dogovor postavki 21.501", result.Text, StringComparison.Ordinal);
+        Assert.Contains("Vedomost listov",         result.Text, StringComparison.Ordinal);
+        Assert.Contains("Inv podl 4711",           result.Text, StringComparison.Ordinal);
+    }
+
     // ── Отказы ───────────────────────────────────────────────────────────────
 
     [Fact]

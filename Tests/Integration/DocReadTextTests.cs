@@ -207,6 +207,24 @@ public sealed class DocReadTextTests : IDisposable
     }
 
     /// <summary>
+    /// В «Тексте» повернутый лист и надпись штампа читаются целыми словами, каждая на своей
+    /// странице, — как их видит индекс (<c>DocTextExtractorTests</c>) и страница в режиме «Как в
+    /// документе» (<c>DocPageSourceTests</c>).
+    /// </summary>
+    [Fact]
+    public void Turned_and_sideways_pdf_text_reads_in_whole_words()
+    {
+        var result = DocReadText.Read(HandPdf.Write(_dir, "боком.pdf",
+            new HandPdf.Sheet(HandPdf.Plain(40, 782, "Dogovor postavki 21.501"), 180),
+            new HandPdf.Sheet(HandPdf.Rising(30, 100, "Inv podl 4711"))));
+
+        Assert.Equal(DocTextStatus.Ok, result.Status);
+        Assert.Equal(2, result.Parts.Count);
+        Assert.Contains("Dogovor postavki 21.501", result.Parts[0].Text, StringComparison.Ordinal);
+        Assert.Contains("Inv podl 4711",           result.Parts[1].Text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Word отдается абзацами. Разбор для индекса берет тут <c>InnerText</c> целиком — для
     /// поиска этого хватает, а для чтения это стена текста без единого перевода строки.
     /// </summary>

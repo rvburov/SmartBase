@@ -320,6 +320,175 @@ public sealed class DocPageSourceTests : IDisposable
         Assert.Empty(source.Words(42));
     }
 
+    // ── Повернутый лист ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Слово на повернутом листе подсвечивается там, где его нарисовал PDFium. Случаев два:
+    /// содержимое повернуто навстречу листу (обычный альбомный лист — текст на экране стоит
+    /// прямо) и лист повернут без поправки (текст идет боком или вверх ногами).
+    ///
+    /// Место сверяется с ПИКСЕЛЯМИ: края прямоугольника от PdfPig, переведенного в экран, обязаны
+    /// совпасть с краями букв на картинке от PDFium. Поворот, понятый не так, увел бы
+    /// прямоугольник на сотни пикселей — на другую сторону листа.
+    /// </summary>
+    [Theory]
+    [InlineData(0,   true)]
+    [InlineData(90,  true)]
+    [InlineData(180, true)]
+    [InlineData(270, true)]
+    [InlineData(90,  false)]
+    [InlineData(180, false)]
+    [InlineData(270, false)]
+    public void Word_on_a_turned_sheet_lands_where_it_is_drawn(int rotate, bool upright)
+    {
+        var content = upright ? HandPdf.Upright(rotate, HandPdf.Full, 40, 60, "Dogovor")
+                              : HandPdf.Plain(40, 782, "Dogovor");
+        var path = HandPdf.Write(_dir, $"поворот-{rotate}.pdf", new HandPdf.Sheet(content, rotate));
+
+        AssertLandsOnInk(path, "Dogovor");
+    }
+
+    /// <summary>
+    /// Лист обрезан не от нуля, да еще и повернут: место слова сдвигается вместе с обрезкой.
+    /// Иначе подсветка уехала бы ровно на сдвиг обрезки.
+    /// </summary>
+    [Fact]
+    public void Word_on_a_cropped_turned_sheet_lands_where_it_is_drawn()
+    {
+        var crop = new HandPdf.Crop(100, 100, 500, 700);
+        var path = HandPdf.Write(_dir, "обрезка.pdf",
+                                 new HandPdf.Sheet(HandPdf.Upright(90, crop, 40, 60, "Dogovor"), 90, crop));
+
+        AssertLandsOnInk(path, "Dogovor");
+    }
+
+    /// <summary>
+    /// Текст, идущий боком или вверх ногами, приходит ЦЕЛЫМИ словами и в своем порядке.
+    /// Разборщик PdfPig по умолчанию читает лист строками сверху вниз: такой текст он резал на
+    /// буквы, а перевернутый еще и переставлял — поиск по странице его не находил, хотя режим
+    /// «Текст» и индекс находили.
+    /// </summary>
+    [Theory]
+    [InlineData(90)]
+    [InlineData(180)]
+    [InlineData(270)]
+    public void Sideways_text_comes_in_whole_words(int rotate)
+    {
+        var path = HandPdf.Write(_dir, $"боком-{rotate}.pdf",
+                                 new HandPdf.Sheet(HandPdf.Plain(40, 782, "Dogovor postavki 21.501"), rotate));
+
+        using var source = DocPageSource.Open(path);
+        Assert.Equal("Dogovor | postavki | 21.501", string.Join(" | ", source!.Words(0).Select(w => w.Text)));
+    }
+
+    /// <summary>
+    /// Надписи штампа на полях чертежа идут снизу вверх на обычном, неповернутом листе. Они
+    /// находятся поиском по странице, а строки, идущие как обычно, остаются прежними словами.
+    /// </summary>
+    [Fact]
+    public void Stamp_on_the_margin_is_found_on_the_page()
+    {
+        var path = HandPdf.Write(_dir, "штамп.pdf", new HandPdf.Sheet(
+            HandPdf.Plain(40, 782, "Dogovor postavki") + "\n" + HandPdf.Rising(30, 100, "Inv podl 4711")));
+
+        using var source = DocPageSource.Open(path);
+        var words = source!.Words(0);
+        Assert.Equal("Dogovor | postavki | Inv | podl | 4711", string.Join(" | ", words.Select(w => w.Text)));
+
+        var hit = Assert.Single(DocHighlight.FindInWords([.. words.Select(w => w.Text)], DocHighlight.Tokens("podl")));
+        Assert.Equal("podl", words[hit.First].Text);
+    }
+
+    /// <summary>
+    /// Слово, написанное наискось, — водяной знак «КОПИЯ» поперек листа — подсветка накрывает
+    /// целиком. Прямоугольник такого слова у PdfPig повернут, а его Left, Right, Top и Bottom верны
+    /// только у неповернутого: по ним подсветка вышла бы вдвое ниже слова и накрыла бы его
+    /// половину. Охватывающий прямоугольник наклонного слова выше самих букв — в нем место под
+    /// выносные элементы, — поэтому проверка здесь не «впритык», а «накрыто целиком, и лишнее
+    /// поле вокруг не шире десяти пикселей».
+    /// </summary>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(90)]
+    public void Slanted_word_is_covered_whole(int rotate)
+    {
+        var path = HandPdf.Write(_dir, $"наискось-{rotate}.pdf",
+                                 new HandPdf.Sheet(HandPdf.Slanted(200, 400, 30, "Kopiya"), rotate));
+
+        var (word, screen, ink) = Measure(path);
+        Assert.Equal("Kopiya", word.Text);
+
+        // Пиксель на сглаженный край буквы.
+        var why = Describe(screen, ink);
+        Assert.True(screen.X <= ink.Left + 1 && screen.Y <= ink.Top + 1, why);
+        Assert.True(screen.X + screen.Width >= ink.Right - 1 && screen.Y + screen.Height >= ink.Bottom - 1, why);
+
+        Assert.True(ink.Left - screen.X <= 10 && ink.Top - screen.Y <= 10, why);
+        Assert.True(screen.X + screen.Width - ink.Right <= 10 && screen.Y + screen.Height - ink.Bottom <= 10, why);
+    }
+
+    /// <summary>
+    /// Единственное слово листа лежит там, где PDFium нарисовал буквы: каждый край прямоугольника
+    /// — в трех пикселях от края краски. Допуск нужен потому, что край буквы сглажен, а
+    /// прямоугольник PdfPig строится по метрикам шрифта, а не по самой краске.
+    /// </summary>
+    private static void AssertLandsOnInk(string path, string text)
+    {
+        var (word, screen, ink) = Measure(path);
+        Assert.Equal(text, word.Text);
+
+        var why = Describe(screen, ink);
+        Assert.True(Math.Abs(screen.X - ink.Left) <= 3, why);
+        Assert.True(Math.Abs(screen.Y - ink.Top)  <= 3, why);
+        Assert.True(Math.Abs(screen.X + screen.Width  - ink.Right)  <= 3, why);
+        Assert.True(Math.Abs(screen.Y + screen.Height - ink.Bottom) <= 3, why);
+    }
+
+    /// <summary>
+    /// Единственное слово листа, его прямоугольник на экране и края краски на картинке, которую
+    /// нарисовал PDFium.
+    /// </summary>
+    private static (DocWord Word, DocScreenBox Screen, (int Left, int Top, int Right, int Bottom) Ink) Measure(string path)
+    {
+        using var source = DocPageSource.Open(path);
+        Assert.NotNull(source);
+
+        var word = Assert.Single(source!.Words(0));
+
+        var png = source.Render(0, 400);
+        Assert.NotNull(png);
+        using var bitmap = SKBitmap.Decode(png);
+
+        var size   = source.Size(0);
+        var screen = DocPageGeometry.ToScreen(word.Box, size.Height,
+                                              DocPageGeometry.ScaleFor(bitmap.Width, size.Width));
+        return (word, screen, Ink(bitmap));
+    }
+
+    private static string Describe(DocScreenBox screen, (int Left, int Top, int Right, int Bottom) ink) =>
+        $"слово ({screen.X:F0}, {screen.Y:F0}) – ({screen.X + screen.Width:F0}, {screen.Y + screen.Height:F0}), " +
+        $"буквы ({ink.Left}, {ink.Top}) – ({ink.Right}, {ink.Bottom})";
+
+    /// <summary>Края краски на картинке: крайние темные пиксели, правый и нижний — не включая.</summary>
+    private static (int Left, int Top, int Right, int Bottom) Ink(SKBitmap bitmap)
+    {
+        int left = int.MaxValue, top = int.MaxValue, right = -1, bottom = -1;
+        for (var y = 0; y < bitmap.Height; y++)
+        for (var x = 0; x < bitmap.Width; x++)
+        {
+            var pixel = bitmap.GetPixel(x, y);
+            if ((pixel.Red * 299 + pixel.Green * 587 + pixel.Blue * 114) / 1000 > 128) continue;
+
+            left   = Math.Min(left, x);
+            top    = Math.Min(top, y);
+            right  = Math.Max(right, x + 1);
+            bottom = Math.Max(bottom, y + 1);
+        }
+
+        Assert.True(right > 0, "на листе не нарисовано ни одной буквы");
+        return (left, top, right, bottom);
+    }
+
     /// <summary>
     /// После закрытия сеанс молчит, а не падает: панель закрывают в любой момент, в том числе
     /// пока фоновая задача рисует страницу.

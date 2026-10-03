@@ -4,6 +4,10 @@ using Docnet.Core.Converters;
 using Docnet.Core.Models;
 using SkiaSharp;
 using UglyToad.PdfPig;
+using UglyToad.PdfPig.Content;
+using UglyToad.PdfPig.DocumentLayoutAnalysis.WordExtractor;
+using UglyToad.PdfPig.Geometry;
+using UglyToad.PdfPig.Util;
 
 namespace SmartBase.Core.Documents;
 
@@ -41,6 +45,14 @@ public sealed class DocPageSource : IDisposable
 {
     /// <summary>Сколько страниц отдаем панели — тот же потолок, что у разбора текста.</summary>
     public static int MaxPages => DocTextExtractor.MaxPdfPages;
+
+    /// <summary>
+    /// Разборщик слов для текста, идущего НЕ слева направо (см. <see cref="Words"/>).
+    /// Параллельность выключена: слова и так собираются в фоне по странице за раз, и плодить
+    /// задачи внутри одной страницы незачем.
+    /// </summary>
+    private static readonly NearestNeighbourWordExtractor TurnedWords = new(
+        new NearestNeighbourWordExtractor.NearestNeighbourWordExtractorOptions { MaxDegreeOfParallelism = 1 });
 
     private readonly string _path;
     private readonly object _lock = new();
@@ -217,6 +229,20 @@ public sealed class DocPageSource : IDisposable
     /// Слова страницы с их местами. Считаются один раз на страницу и запоминаются: по ним
     /// панель и подсвечивает, и считает совпадения, а разбор страницы заметно дороже поиска
     /// по готовому списку.
+    ///
+    /// Места слов PdfPig отдает уже на ПОКАЗАННОМ листе: поворот <c>/Rotate</c> и сдвиг обрезки
+    /// он учитывает сам, начальной матрицей страницы. Так что слово стоит там, где его рисует
+    /// PDFium, на листе любого поворота, и доворачивать его здесь не нужно.
+    ///
+    /// Зато разборщиков слов два. Разборщик PdfPig по умолчанию читает лист строками сверху вниз
+    /// и рвет слово там, где меняется высота строки, — поэтому текст, идущий БОКОМ, он режет на
+    /// буквы, перевернутый еще и переставляет («r | ovogo | D»), наклонный — тоже. Такой текст
+    /// встречается чаще, чем кажется: надписи штампа на полях чертежа («Инв. № подл.»), лист,
+    /// повернутый без поправки содержимого, водяной знак наискось. Индекс и режим «Текст» читают
+    /// его целыми словами — у них разбор в порядке потока содержимого, — а страница не находила
+    /// вовсе, и счетчик говорил «нет». Поэтому строки, идущие как обычно, собирает прежний
+    /// разборщик — у обычных листов не меняется ничего, — а остальные буквы собирает разборщик
+    /// «по ближайшим соседям»: он знает направление строки. Их слова идут в списке после обычных.
     /// </summary>
     public IReadOnlyList<DocWord> Words(int page)
     {
@@ -231,19 +257,39 @@ public sealed class DocPageSource : IDisposable
             try
             {
                 if (_pig is { } pig)
-                    foreach (var word in pig.GetPage(page + 1).GetWords())
+                {
+                    var letters = pig.GetPage(page + 1).Letters;
+                    if (letters.All(Level))
+                        Add(DefaultWordExtractor.Instance.GetWords(letters));
+                    else
                     {
-                        var box = word.BoundingBox;
-                        words.Add(new DocWord(word.Text, new DocPageBox(
-                            Math.Min(box.Left, box.Right),  Math.Min(box.Bottom, box.Top),
-                            Math.Max(box.Left, box.Right),  Math.Max(box.Bottom, box.Top))));
+                        Add(DefaultWordExtractor.Instance.GetWords([.. letters.Where(Level)]));
+                        Add(TurnedWords.GetWords([.. letters.Where(l => !Level(l))]));
                     }
+                }
             }
             catch { /* страница без текстового слоя или битая — слов просто нет */ }
 
             _words[page] = words;
             return words;
+
+            void Add(IEnumerable<Word> found)
+            {
+                foreach (var word in found)
+                {
+                    // Пробел разборщик соседей отдает отдельным «словом» — искать в нем нечего.
+                    if (string.IsNullOrWhiteSpace(word.Text)) continue;
+
+                    // Прямоугольник слова, идущего боком, у PdfPig повернут вместе со словом, а
+                    // Left, Right, Top и Bottom верны только у неповернутого. Охватывающий
+                    // прямоугольник считается по четырем углам.
+                    var box = word.BoundingBox.Normalise();
+                    words.Add(new DocWord(word.Text, new DocPageBox(box.Left, box.Bottom, box.Right, box.Top)));
+                }
+            }
         }
+
+        static bool Level(Letter letter) => letter.TextOrientation == TextOrientation.Horizontal;
     }
 
     private static byte[]? Encode(Docnet.Core.Readers.IPageReader page)

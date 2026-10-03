@@ -1,6 +1,10 @@
 namespace SmartBase.Core.Documents;
 
-/// <summary>Прямоугольник на странице в пунктах PDF: начало координат — ЛЕВЫЙ НИЖНИЙ угол.</summary>
+/// <summary>
+/// Прямоугольник на странице в пунктах PDF: начало координат — ЛЕВЫЙ НИЖНИЙ угол ПОКАЗАННОГО
+/// листа, то есть уже с поворотом <c>/Rotate</c> и обрезкой. Так места слов отдает PdfPig (см.
+/// <see cref="DocPageSource.Words"/>).
+/// </summary>
 public readonly record struct DocPageBox(double Left, double Bottom, double Right, double Top)
 {
     public double Width  => Right - Left;
@@ -24,7 +28,10 @@ public static class DocPageGeometry
     /// Прямоугольник слова на показанной странице.
     /// </summary>
     /// <param name="box">Место слова в пунктах, как его отдает разборщик PDF.</param>
-    /// <param name="pageHeight">Высота страницы в пунктах — по ней переворачивается ось.</param>
+    /// <param name="pageHeight">
+    /// Высота показанного листа в пунктах — по ней переворачивается ось. У повернутого на четверть
+    /// оборота листа это его неповернутая ширина.
+    /// </param>
     /// <param name="scale">Во сколько раз показанная страница крупнее пунктов.</param>
     /// <param name="padding">
     /// Насколько расширить прямоугольник во все стороны. Подсветка по точным границам букв
