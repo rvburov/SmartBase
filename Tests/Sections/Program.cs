@@ -32,7 +32,9 @@
 //   переноса коллекции в группу и обратно, удаления коллекции.
 //   --only libraryops — чужая правка до открытой ленты библиотеки: документ соседа появляется без
 //   перезахода, с чипом и в подвале; о прежних файлах диск не спрашивается; правки подряд
-//   сливаются в одно перечитывание.
+//   сливаются в одно перечитывание. Затем сбои: кеш не принимает запись — чтение срывается
+//   громко (красная работа с причиной, точка у значка, «Убрать» в панели его гасит); индекс
+//   сломан — подвал говорит, что поиск внутри не сработал, находка по названию на месте.
 
 using System.Diagnostics;
 using System.Reflection;
@@ -2054,6 +2056,80 @@ async Task LibraryOps()
     Call(library, "Refresh");
     var full = await Until(() => Doc("Стенд: свой") is { SizeBytes: < 0 } && Census().Total == 1, 15);
     Expect(full, $"полное перечитывание увидело убранный с диска файл (в подвале {Census().Total})");
+
+    // Сбои заявляют о себе. Кеш, который читается, но не принимает запись (так выглядят кончившееся
+    // место и папка без прав), — триггером со своего подключения. Чтение обязано сорваться громко:
+    // работа в реестре красная и с причиной, у значка фоновых работ — красная точка, подвал не
+    // остается на «Читаю документы», а «Убрать» в панели гасит значок. Сломанный индекс (таблицы
+    // поиска нет) — не «ничего не найдено»: находка по названию на месте, а подвал говорит, что
+    // внутрь документов поиск не заглянул.
+    var service   = DocIndexService.Current!;
+    var cachePath = service.Index.Path;
+    void Cache(string sql)
+    {
+        using var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={cachePath};Pooling=False");
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+        cmd.ExecuteNonQuery();
+    }
+    var bar     = main!.FindControl<Control>("ActivityBarControl")!;
+    var workBtn = (Control)Get(bar, "WorkBtn")!;
+    var failDot = (Control)Get(bar, "WorkFailedDot")!;
+    var status  = (TextBlock)Get(feed, "StatusLabel")!;
+    SmartBase.Core.BackgroundJob? ReadJob() =>
+        SmartBase.Core.BackgroundJobs.All.FirstOrDefault(j => j.Id == "library.read");
+    Task ReadAll() => (Task)Call(library, "ReadDocumentsAsync", new object[] { null! })!;
+
+    Step("библиотека: чтение сорвалось");
+    Cache("CREATE TRIGGER stand_refuse BEFORE INSERT ON doc_files BEGIN SELECT RAISE(ABORT, 'стенд: кеш не принимает запись'); END;");
+    await ReadAll();
+    var loud = await Until(() => ReadJob() is { Failed: true } && failDot.IsVisible, 30);
+    Expect(loud, $"чтение сорвалось громко: работа красная, у значка точка (работа: «{ReadJob()?.Detail}», точка {failDot.IsVisible})");
+    Expect(ReadJob()?.Detail.Contains("кеш документов не принимает запись") == true,
+           $"в строке работы причина: «{ReadJob()?.Detail}»");
+    Expect(!service.Running && status.Text?.Contains("Читаю") == false, $"подвал не остался на чтении: «{status.Text}»");
+    Expect(sink.Entries.Any(e => e.Text.Contains("Чтение документов сорвалось")), "сбой чтения записан в журнал диагностики");
+
+    Step("библиотека: «Убрать» в панели фоновых работ");
+    SmartBase.Controls.Components.BackgroundJobsPanel.Show(bar, workBtn);
+    await Task.Delay(300);
+    var popup  = typeof(SmartBase.Controls.Components.BackgroundJobsPanel)
+                     .GetField("_popup", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null) as Avalonia.Controls.Primitives.Popup;
+    var remove = popup?.Child?.GetVisualDescendants().OfType<TextBlock>().FirstOrDefault(t => t.Text == "Убрать");
+    Expect(remove is not null, "у сорвавшейся работы в панели есть «Убрать»");
+    if (remove is not null)
+    {
+        var pointer  = new Avalonia.Input.Pointer(Avalonia.Input.Pointer.GetNextFreeId(), PointerType.Mouse, true);
+        var released = new PointerEventArgs(InputElement.PointerReleasedEvent, remove, pointer, remove, new Point(1, 1), 0,
+                                            PointerPointProperties.None, KeyModifiers.None);
+        remove.RaiseEvent(new TappedEventArgs(InputElement.TappedEvent, released));
+        var gone = await Until(() => ReadJob() is null && !workBtn.IsVisible && popup is { IsOpen: false }, 10);
+        Expect(gone, $"«Убрать» убрало работу, погасило значок и закрыло панель (работа: «{ReadJob()?.Detail}», значок {workBtn.IsVisible})");
+    }
+
+    Step("библиотека: чтение после починки кеша");
+    Cache("DROP TRIGGER stand_refuse;");
+    await ReadAll();
+    var read = await Until(() => ReadJob() is null && !service.Running && Census().Read == 1, 30);
+    Expect(read, $"починили — чтение прошло и погасло (работа: «{ReadJob()?.Detail}», прочитано {Census().Read})");
+
+    Step("библиотека: поиск внутри сломался");
+    Cache("ALTER TABLE doc_fts RENAME TO doc_fts_stand;");
+    SetField(library, "_searchQuery", "соседа");
+    Call(library, "RefreshCurrent", false, false);
+    var broke = await Until(() => status.Text?.Contains("не сработал") == true, 15);
+    Expect(broke, $"подвал говорит, что поиск внутри не сработал: «{status.Text}»");
+    Expect(Doc("Стенд: от соседа") is not null, "находка по названию на месте");
+    Expect(sink.Entries.Any(e => e.Text.Contains("поиск внутри документов не выполнен")), "сбой поиска записан в журнал диагностики");
+
+    Step("библиотека: поиск после починки индекса");
+    Cache("ALTER TABLE doc_fts_stand RENAME TO doc_fts;");
+    Call(library, "RefreshCurrent", false, false);
+    var healed = await Until(() => status.Text?.Contains("1 внутри текста") == true, 15);
+    Expect(healed, $"починили — поиск снова находит внутри документа: «{status.Text}»");
+    SetField(library, "_searchQuery", "");
+    Call(library, "RefreshCurrent", false, false);
 
     Console.WriteLine(faults == 0 ? "Библиотека: все проверки прошли" : $"Библиотека: НЕ ПРОШЛО {faults}");
 }

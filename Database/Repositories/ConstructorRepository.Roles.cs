@@ -422,6 +422,24 @@ public partial class ConstructorRepository
                 SetRole(entity, role, false);
     }
 
+    // Починка разметки ролей при монтировании (RepairTaskFieldRoles, RepairDocFieldRoles) его не
+    // срывает, но и не молчит: раньше отказ глотался, и коллекция с поломанной разметкой жила
+    // дальше без единого следа. Отказ по правам — обычное дело у пользователя без прав на схему
+    // (доведет тот, у кого они есть), поэтому это сведения. Сбой записи — предупреждение: разметка
+    // осталась поломанной, а повтор будет только при следующем подключении базы.
+    private void LogRepairNotDone(string section, int collectionId, string? collectionName, Exception ex)
+    {
+        var collection = collectionName ?? $"#{collectionId}";
+        if (ex is PermissionDeniedException)
+            Serilog.Log.Information(
+                "Разметка ролей раздела «{Section:l}» в коллекции «{Collection:l}» ({Db:l}) не доведена до конца. " +
+                "{Reason:l} Доведет пользователь с правами на схему", section, collection, db.DisplayPath, ex.Message);
+        else
+            Serilog.Log.Warning(ex,
+                "Разметка ролей раздела «{Section:l}» в коллекции «{Collection:l}» ({Db:l}) не починена — " +
+                "повтор при следующем подключении базы", section, collection, db.DisplayPath);
+    }
+
     // Новое поле под роль: тип и настройки предопределены самой ролью.
     private DbField NewRoleField(int collectionId, FieldRole role) => new()
     {

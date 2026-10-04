@@ -2,6 +2,7 @@ using Microsoft.Data.Sqlite;
 using Serilog;
 using Serilog.Core;
 using Serilog.Events;
+using SmartBase.Core.Models;
 using SmartBase.Database;
 using SmartBase.Logging;
 using SmartBase.Utils;
@@ -133,6 +134,78 @@ public sealed class DiagnosticsLogTests : IDisposable
         Assert.Equal("PostgreSQL", DbErrors.Display(conn));
         Assert.All(Messages(), m => Assert.DoesNotContain("secret", m));
         Assert.Contains(Messages(), m => m.Contains("PostgreSQL"));
+    }
+
+    /// <summary>
+    /// Починка разметки ролей при подключении базы его не срывает, но и не молчит: отказ по
+    /// правам остается сведением — с разделом, коллекцией и тем, какого права не хватило. Раньше
+    /// он глотался, и коллекция с поломанной разметкой жила дальше без единого следа. То, на что
+    /// прав хватило (снять чужую роль), при этом сделано.
+    /// </summary>
+    [Fact]
+    public void A_role_repair_refused_by_rights_leaves_a_trace()
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+        var col  = SampleData.AddCollection(repo, "Архив чертежей").Id!.Value;
+        var file = SampleData.AddField(repo, col, "Скан", "file").Id!.Value;
+
+        // Состояние старой базы: на источнике документов висит еще и роль «Тип документа».
+        var entity = db.Context.DbFields.Single(f => f.Id == file);
+        entity.IsDocFile = true;
+        entity.IsDocType = true;
+        db.Context.SaveChanges();
+
+        // Базу подключает пользователь без права заводить свойства: чужую роль снять он может,
+        // а завести «Тип документа» заново — нет.
+        SetRights(db, PermAction.All & ~PermAction.CreateField);
+
+        Assert.Equal(0, repo.RepairDocFieldRoles());
+
+        var trace = Assert.Single(Messages(LogEventLevel.Information),
+                                  m => m.Contains("Разметка ролей раздела «Библиотека документов»"));
+        Assert.Contains("«Архив чертежей»", trace);
+        Assert.Contains("Недостаточно прав", trace);
+        Assert.False(repo.GetFields(col).Single(f => f.Id == file).IsDocType);
+    }
+
+    /// <summary>То же у близнеца — починки ролей задач: исполнитель с чужой ролью «Назначил».</summary>
+    [Fact]
+    public void A_task_role_repair_refused_by_rights_leaves_a_trace()
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+        var col  = SampleData.AddCollection(repo, "Поручения").Id!.Value;
+        var exec = SampleData.AddField(repo, col, "Исполнитель", "user").Id!.Value;
+
+        var entity = db.Context.DbFields.Single(f => f.Id == exec);
+        entity.IsTaskExec     = true;
+        entity.IsTaskAssigner = true;
+        db.Context.SaveChanges();
+
+        SetRights(db, PermAction.All & ~PermAction.CreateField);
+
+        Assert.Equal(0, repo.RepairTaskFieldRoles());
+
+        var trace = Assert.Single(Messages(LogEventLevel.Information),
+                                  m => m.Contains("Разметка ролей раздела «Задачи»"));
+        Assert.Contains("«Поручения»", trace);
+        Assert.Contains("Недостаточно прав", trace);
+    }
+
+    // Понижает текущего пользователя до допущенного не-админа с заданной маской на всю базу.
+    private static void SetRights(TempDatabase db, PermAction mask)
+    {
+        var me = db.Context.DbUsers.First(u => u.UserKey == CurrentUser.Key);
+        me.IsAdmin = true;    // маски пишет только администратор
+        db.Context.SaveChanges();
+        db.Permissions.Reload(notify: false);
+        db.Permissions.SetMask(db.Permissions.CurrentUserId, null, (int)mask);
+
+        me.IsAdmin    = false;   // теперь маска действует: администратору можно все
+        me.IsApproved = true;
+        db.Context.SaveChanges();
+        db.Permissions.Reload(notify: false);
     }
 
     private sealed class ListSink(List<LogEvent> events) : ILogEventSink

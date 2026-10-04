@@ -1,3 +1,5 @@
+using Microsoft.Data.Sqlite;
+using SmartBase.Database;
 using SmartBase.Database.DocIndex;
 using SmartBase.Utils;
 
@@ -33,6 +35,7 @@ public readonly record struct DocStatusLine(string Text, string ActionText, DocS
 /// <param name="Capped">Выдача уперлась в потолок.</param>
 /// <param name="CacheOpen">Кеш текста открылся при старте; нет — поиск внутри недоступен вовсе.</param>
 /// <param name="TypesNarrowed">Фильтр типов сужает ленту — это тоже причина пустой выдачи.</param>
+/// <param name="TextFailed">Поиск внутри текста по этому запросу сорвался — нашлось только по названию.</param>
 public readonly record struct DocStatusInput(
     DocCensus Census,
     bool      Reading,
@@ -45,7 +48,8 @@ public readonly record struct DocStatusInput(
     bool      Capped,
     bool      CacheOpen,
     bool      TypesNarrowed,
-    bool      Loading = false);
+    bool      Loading = false,
+    bool      TextFailed = false);
 
 /// <summary>
 /// Строка подвала блока поиска — чистая логика без Avalonia, поэтому проверяется тестами.
@@ -70,6 +74,10 @@ public static class DocStatus
     public const string ActionReadRest = "Прочитать остальные";
     public const string ActionRefresh  = "Обновить";
     public const string ActionStop     = "Остановить";
+
+    /// <summary>Что сказать вслед за находками по названию, когда поиск внутри текста сорвался.</summary>
+    public const string TextSearchFailed =
+        "Поиск внутри текста не сработал — подробности в разделе «Диагностика»";
 
     public static DocStatusLine Compose(DocStatusInput s)
     {
@@ -157,6 +165,16 @@ public static class DocStatus
     {
         var found = s.InText + s.ByTitle;
 
+        // Поиск внутри текста сорвался — это важнее и потолка, и пустой выдачи: все остальное
+        // подвал говорит о ПОЛНОМ ответе, а этот ответ неполон так, что уточнением запроса его
+        // не поправить. Без этой ветки испорченный кеш выглядел как «ничего не найдено».
+        if (s.TextFailed)
+            return new DocStatusLine(
+                (found == 0 ? "Ничего не найдено по названию. "
+                            : $"Найдено {found}{(s.Capped ? "+" : "")} по названию. ") +
+                TextSearchFailed,
+                "", DocStatusAction.None);
+
         // Уперлись в потолок: видно, что список обрезан, а не кончился.
         if (s.Capped)
             return new DocStatusLine(
@@ -212,4 +230,41 @@ public static class DocStatus
 
         return new DocStatusLine("Ничего не найдено", "", DocStatusAction.None);
     }
+
+    // ── Сорвавшееся чтение ───────────────────────────────────────────────────
+    //
+    // Это не подвал, а значок фоновых работ и карточка: чтение идет и тогда, когда человек давно
+    // ушел из раздела. Но слова о чтении живут здесь, рядом с остальными, — как и Humanize.
+
+    /// <summary>
+    /// Строка сорвавшегося чтения в панели фоновых работ: «Сорвалось на 120 из 2000: на диске
+    /// нет места». Короткая — панель узкая, а что делать дальше, говорит карточка.
+    /// </summary>
+    public static string ReadFailedDetail(DocIndexRunEnd end) =>
+        $"Сорвалось на {end.Done} из {end.Total}: {Explain(end.Error).Reason}";
+
+    /// <summary>
+    /// Карточка о сорвавшемся чтении: причина и что с ней делать. Причина названа там, где с ней
+    /// есть что сделать: место на диске освобождают, испорченный файл кеша пересоздает «Очистить».
+    /// Остальное отсылает в «Диагностику» — исключение записано там целиком.
+    /// </summary>
+    public static string ReadFailedNotice(DocIndexRunEnd end)
+    {
+        var (reason, advice) = Explain(end.Error);
+        return $"Чтение документов сорвалось: {reason}. {advice}";
+    }
+
+    private const string SeeDiagnostics = "Подробности — в разделе «Диагностика».";
+
+    private static (string Reason, string Advice) Explain(Exception? error) => error switch
+    {
+        SqliteException { SqliteErrorCode: 13 } =>   // SQLITE_FULL
+            ("на диске нет места",
+             "Прочитанное до сбоя сохранено — освободите место и дочитайте остальное."),
+        not null when DbHealthMonitor.IsCorruptionError(error) =>
+            ("файл кеша поврежден",
+             "Кнопка «Очистить» в настройках библиотеки документов создаст его заново."),
+        SqliteException => ("кеш документов не принимает запись", SeeDiagnostics),
+        _               => ("сбой в программе", SeeDiagnostics),
+    };
 }

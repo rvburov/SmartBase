@@ -242,4 +242,82 @@ public sealed class DocIndexServiceTests : IDisposable
         Assert.Single(_index.Search("единственный"));
         Assert.Empty(_index.Pending([first]));
     }
+
+    // ── Сорвавшийся прогон ───────────────────────────────────────────────────
+
+    // Кеш, который читается, но не принимает запись, — так выглядят кончившееся место на диске и
+    // папка без прав на запись. Триггер дает тот же отказ на каждой записи и на любой машине.
+    private void RefuseWrites(bool refuse)
+    {
+        using var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={_index.Path};Pooling=False");
+        connection.Open();
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = refuse
+            ? "CREATE TRIGGER refuse BEFORE INSERT ON doc_files BEGIN SELECT RAISE(ABORT, 'кеш не принимает запись'); END;"
+            : "DROP TRIGGER refuse;";
+        cmd.ExecuteNonQuery();
+    }
+
+    // Итог прогона — из самого события: простоя мало, о конце очередь говорит уже после него.
+    private DocIndexRunEnd _end;
+    private readonly ManualResetEventSlim _ended = new(false);
+
+    private void CatchEnd() => _service.Finished += (_, end) => { _end = end; _ended.Set(); };
+
+    private DocIndexRunEnd NextEnd()
+    {
+        Assert.True(_ended.Wait(Patience), "очередь не сообщила о конце прогона");
+        _ended.Reset();
+        return _end;
+    }
+
+    /// <summary>
+    /// Кеш отказал в записи — прогон встает на первом же документе и говорит почему. Раньше отказ
+    /// глотался: прогон «читал» все остальное в никуда, а в конце звучало «прочитано». Очередь
+    /// после сбоя пуста, ключи путей свободны: когда причину устранили, те же документы читаются
+    /// обычным прогоном.
+    /// </summary>
+    [Fact]
+    public void A_cache_that_refuses_writes_stops_the_run_and_says_why()
+    {
+        var paths = Pile(5, "отказ");
+        CatchEnd();
+        RefuseWrites(true);
+
+        Assert.Equal(5, _service.StartPending(paths));
+        var end = NextEnd();
+
+        Assert.True(end.Failed, "отказ кеша прошел молча");
+        Assert.IsType<Microsoft.Data.Sqlite.SqliteException>(end.Error);
+        Assert.Equal(0, end.Done);
+        Assert.Equal(5, end.Total);
+        Assert.False(_service.Running);
+        Assert.Equal(0, _index.Stats().Indexed);
+
+        RefuseWrites(false);
+        Assert.Equal(5, _service.StartPending(paths));
+
+        Assert.False(NextEnd().Failed);
+        Assert.Equal(5, _index.Stats().Indexed);
+    }
+
+    /// <summary>
+    /// Исключение в потоке очереди — не повод ронять программу: исключение, ушедшее из своего
+    /// потока, завершает процесс целиком. Здесь падает подписчик хода (так упал бы любой дефект
+    /// вне разбора документа), и прогон кончается сбоем с этой причиной, а не тестовым процессом.
+    /// </summary>
+    [Fact]
+    public void A_failure_inside_the_queue_thread_ends_the_run_instead_of_the_program()
+    {
+        var a = Write("a.txt", "Первый документ");
+        var b = Write("b.txt", "Второй документ");
+        CatchEnd();
+        _service.Progress += (_, _) => throw new InvalidOperationException("подписчик хода упал");
+
+        _service.StartPending([a, b]);
+        var end = NextEnd();
+
+        Assert.Equal("подписчик хода упал", Assert.IsType<InvalidOperationException>(end.Error).Message);
+        Assert.False(_service.Running);
+    }
 }

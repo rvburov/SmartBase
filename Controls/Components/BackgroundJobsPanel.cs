@@ -123,30 +123,40 @@ public static class BackgroundJobsPanel
             Grid.SetColumn(name, 0);
             top.Children.Add(name);
 
-            // «Остановить» — кликабельная строка, а не кнопка: панель узкая, и кнопка в ней
-            // перетянула бы на себя все внимание с самих работ.
-            if (job.Stop is { } stop)
+            // Ссылка справа — кликабельная строка, а не кнопка: панель узкая, и кнопка в ней
+            // перетянула бы на себя все внимание с самих работ. У идущей работы она
+            // останавливает, у сорвавшейся — убирает ее из списка: причину человек прочел, и
+            // красный значок дальше не нужен. Без нее сорвавшаяся работа висела бы до следующего
+            // запуска — может быть, до конца сеанса.
+            var (linkText, act) = job.Failed
+                ? ("Убрать", (Action?)(() => BackgroundJobs.Finish(job.Id)))
+                : ("Остановить", job.Stop);
+            if (act is not null)
             {
                 var link = new TextBlock
                 {
-                    Text       = "Остановить",
+                    Text       = linkText,
                     Foreground = accent,
                     FontWeight = bold,
                     Cursor     = new Cursor(StandardCursorType.Hand),
                     VerticalAlignment = VerticalAlignment.Center,
                 };
-                link.Tapped += (_, e) => { e.Handled = true; stop(); };
+                link.Tapped += (_, e) => { e.Handled = true; act(); };
                 Grid.SetColumn(link, 2);
                 top.Children.Add(link);
             }
             rows.Children.Add(top);
 
+            // Ход идущей работы — одна строка: она меняется на каждом документе, и перенос
+            // дергал бы панель. Причина сбоя — переносом: она не меняется, а обрезанная
+            // многоточием не сказала бы, что случилось.
             rows.Children.Add(new TextBlock
             {
                 Text         = job.Detail,
                 FontSize     = small,
                 Foreground   = secondary,
-                TextTrimming = TextTrimming.CharacterEllipsis,
+                TextTrimming = job.Failed ? TextTrimming.None : TextTrimming.CharacterEllipsis,
+                TextWrapping = job.Failed ? TextWrapping.Wrap : TextWrapping.NoWrap,
             });
 
             if (job.Total > 0)

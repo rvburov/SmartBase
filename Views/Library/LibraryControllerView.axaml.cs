@@ -92,6 +92,7 @@ public partial class LibraryControllerView : UserControl
     private int  _foundInText;
     private int  _foundByTitle;
     private bool _foundCapped;
+    private bool _textFailed;
 
     // Ход идущего чтения — приходит событиями очереди, живет здесь ради строки подвала.
     private int       _readDone;
@@ -139,13 +140,30 @@ public partial class LibraryControllerView : UserControl
         };
         DocList.SearchCleared   += (_, _) => { _searchQuery = ""; RefreshCurrent(); RaiseQuery(); };
 
-        if (DocIndexService.Current is { } service)
-        {
-            service.Progress += OnIndexProgress;
-            service.Finished += OnIndexFinished;
-        }
+        Follow(DocIndexService.Current);
 
         RefreshCurrent();
+    }
+
+    // Очередь чтения, на чьи события подписан раздел. Очередь бывает не одна за сеанс: кеш, не
+    // открывшийся при старте, «Очистить» в настройках открывает заново — это уже новая очередь.
+    // Подписка переезжает за ней, иначе ее чтение не сказало бы о себе ничего — ни хода, ни конца,
+    // ни сбоя, — а значок фоновых работ так и висел бы на «0 из N» до выхода из программы.
+    private DocIndexService? _service;
+
+    private void Follow(DocIndexService? service)
+    {
+        if (ReferenceEquals(service, _service)) return;
+        if (_service is { } old)
+        {
+            old.Progress -= OnIndexProgress;
+            old.Finished -= OnIndexFinished;
+        }
+
+        _service = service;
+        if (service is null) return;
+        service.Progress += OnIndexProgress;
+        service.Finished += OnIndexFinished;
     }
 
     /// <param name="force">
@@ -267,7 +285,8 @@ public partial class LibraryControllerView : UserControl
             Capped:        _foundCapped,
             CacheOpen:     service is not null,
             TypesNarrowed: _types is not null,
-            Loading:       _loading));
+            Loading:       _loading,
+            TextFailed:    _textFailed));
 
         DocList.SetStatus(line.Text, line.ActionText, line.Action switch
         {
@@ -495,9 +514,20 @@ public partial class LibraryControllerView : UserControl
         var words = DocTiles.Of(LibrarySettings.CardSize).SnippetWords;
         // Кеш спрашивается на одну находку больше потолка: лишняя и есть признак, что по
         // содержимому нашлось больше, чем можно показать, — и подвал скажет про хвост.
-        var hits  = DocIndexService.Current is { } service
-            ? await service.Index.SearchAsync(query, budget.Ask, words)
-            : [];
+        List<DocHit> hits = [];
+        var textFailed = false;
+        if (DocIndexService.Current is { } service)
+            try { hits = await service.Index.SearchAsync(query, budget.Ask, words); }
+            catch (Exception ex)
+            {
+                // Поиск внутри не сработал (кеш испорчен, занят, пропал) — по названию все равно
+                // ищем: базы целы, и человек получит эту половину ответа вместе с подвалом,
+                // который говорит, что она — половина. Раньше сбой кеша выглядел как «ничего
+                // не найдено».
+                textFailed = true;
+                if (Logging.Diag.Throttle("library-text-search-fail", TimeSpan.FromMinutes(1)))
+                    Serilog.Log.Warning(ex, "Библиотека: поиск внутри документов не выполнен");
+            }
         if (gen != _gen) return;
         if (hits.Count > budget.Limit)
         {
@@ -553,6 +583,7 @@ public partial class LibraryControllerView : UserControl
         _foundInText  = inText;
         _foundByTitle = byTitle;
         _foundCapped  = budget.Capped;
+        _textFailed   = textFailed;
 
         DocList.Show(found, EmptySearchText());
         // Про потолок выдачи говорит подвал блока — общий баннер ошибок для этого не нужен:
@@ -562,11 +593,16 @@ public partial class LibraryControllerView : UserControl
 
     private string EmptySearchText()
     {
-        var indexed = DocIndexService.Current is not null;
-        return indexed
-            ? "Ничего не найдено.\nПоиск по содержимому работает для " +
-              $"{LibrarySettings.SupportedFormats}; сканы без текстового слоя не находятся."
-            : "Ничего не найдено.\nПоиск по содержимому недоступен: кеш документов не открылся.";
+        if (DocIndexService.Current is null)
+            return "Ничего не найдено.\nПоиск по содержимому недоступен: кеш документов не открылся.";
+
+        // Внутрь документов поиск не заглянул — «ничего не найдено» про них было бы неправдой.
+        if (_textFailed)
+            return "Ничего не найдено по названию.\nПоиск внутри документов не сработал — " +
+                   "подробности в разделе «Диагностика».";
+
+        return "Ничего не найдено.\nПоиск по содержимому работает для " +
+               $"{LibrarySettings.SupportedFormats}; сканы без текстового слоя не находятся.";
     }
 
     private void ShowEmpty()
@@ -717,6 +753,12 @@ public partial class LibraryControllerView : UserControl
     /// <summary>
     /// Пути документов отмеченных коллекций. Ходит в базы, поэтому только в фоне: на сотнях
     /// тысяч документов один этот запрос заметен.
+    ///
+    /// База не ответила — исключение уходит зовущему, а не становится пустым списком. Раньше
+    /// недоступная база молча давала «ноль документов»: перепись считала числа подвала без нее, а
+    /// «Прочитать документы» отвечало «все документы уже прочитаны», ничего у нее не спросив.
+    /// Теперь перепись остается прежней и пишет об отказе в журнал, а чтение говорит, что база
+    /// занята или недоступна, — как и лента, которая без этой базы не собирается.
     /// </summary>
     private async Task<List<string>> ActivePathsAsync()
     {
@@ -729,8 +771,7 @@ public partial class LibraryControllerView : UserControl
             var active = byDb is null ? null
                        : byDb.TryGetValue(dbId, out var ids) ? ids : new HashSet<int>();
             if (active is { Count: 0 }) continue;
-            try { paths.AddRange(await repo.LoadDocPathsAsync(active)); }
-            catch { /* база занята — посчитаем при следующем заходе в раздел */ }
+            paths.AddRange(await repo.LoadDocPathsAsync(active));
         }
         return paths;
     }
@@ -752,8 +793,10 @@ public partial class LibraryControllerView : UserControl
             try { await CensusOnceAsync(); }
             catch (Exception ex)
             {
+                // Не ответила база или кеш — прежние числа и чипы остаются: неполная перепись
+                // показала бы числа без документов той базы, которая промолчала.
                 if (Logging.Diag.Throttle("library-census-fail", TimeSpan.FromMinutes(1)))
-                    Serilog.Log.Warning(ex, "Библиотека: состояние кеша документов не прочитано");
+                    Serilog.Log.Warning(ex, "Библиотека: перепись документов не выполнена");
             }
         }
         while (_censusGate.Done());
@@ -825,7 +868,7 @@ public partial class LibraryControllerView : UserControl
         catch (Exception ex)
         {
             if (Logging.Diag.Throttle("library-census-fail", TimeSpan.FromMinutes(1)))
-                Serilog.Log.Warning(ex, "Библиотека: состояние кеша документов не прочитано");
+                Serilog.Log.Warning(ex, "Библиотека: перепись документов не выполнена");
         }
     }
 
@@ -879,12 +922,21 @@ public partial class LibraryControllerView : UserControl
     {
         if (DocIndexService.Current is not { } service) return;
 
+        Follow(service);
         service.MaxFileMb = LibrarySettings.IndexMaxMb;
+
+        List<string> paths;
+        try { paths = await (source is null ? ActivePathsAsync() : source()); }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Библиотека: список документов для чтения не собран");
+            DocList.ShowNotice("Документы не прочитаны: база занята или недоступна.");
+            return;
+        }
 
         List<string> pending;
         try
         {
-            var paths = await (source is null ? ActivePathsAsync() : source());
             // Перепись пересчитываем только для полного охвата: у одной коллекции она не про
             // всю ленту, и подменять ею числа подвала было бы неправдой.
             var survey = await Task.Run(() => service.Index.Survey(paths));
@@ -898,8 +950,11 @@ public partial class LibraryControllerView : UserControl
         }
         catch (Exception ex)
         {
-            Serilog.Log.Warning(ex, "Библиотека: список документов для чтения не собран");
-            DocList.ShowNotice("Документы не прочитаны: база занята или недоступна.");
+            // Базы ответили, а кеш — нет. Сказать «база занята» значило бы послать человека
+            // чинить не то.
+            Serilog.Log.Warning(ex, "Библиотека: кеш документов не ответил перед чтением");
+            DocList.ShowNotice("Документы не прочитаны: кеш документов недоступен — " +
+                               "подробности в разделе «Диагностика».");
             return;
         }
 
@@ -929,7 +984,7 @@ public partial class LibraryControllerView : UserControl
             _readDone  = 0;
             _readTotal = pending.Count;
             _readLeft  = null;
-            Core.BackgroundJobs.Report(ReadJobId, "Чтение документов", $"0 из {pending.Count}",
+            Core.BackgroundJobs.Report(ReadJobId, ReadJobTitle, $"0 из {pending.Count}",
                                        0, pending.Count, () => DocIndexService.Current?.Stop());
         }
         var added = service.StartPending(pending);
@@ -970,13 +1025,15 @@ public partial class LibraryControllerView : UserControl
     /// <summary>Ключ работы в реестре фоновых работ — он же ключ обновления ее строки в панели.</summary>
     private const string ReadJobId = "library.read";
 
+    private const string ReadJobTitle = "Чтение документов";
+
     private void OnIndexProgress(object? sender, DocIndexProgress p)
     {
         // В реестр отчитываемся СРАЗУ, не дожидаясь UI-потока: значок в панели разделов должен
         // жить, даже когда раздел закрыт и его карточки никто не перерисовывает.
         var detail = $"{p.Done} из {p.Total}" +
                      (p.Left is { } left ? $" · осталось {DocStatus.Humanize(left)}" : "");
-        Core.BackgroundJobs.Report(ReadJobId, "Чтение документов", detail,
+        Core.BackgroundJobs.Report(ReadJobId, ReadJobTitle, detail,
                                    p.Done, p.Total, () => DocIndexService.Current?.Stop());
 
         Dispatcher.UIThread.Post(() =>
@@ -989,22 +1046,34 @@ public partial class LibraryControllerView : UserControl
         });
     }
 
-    private void OnIndexFinished(object? sender, EventArgs e)
+    private void OnIndexFinished(object? sender, DocIndexRunEnd end)
     {
-        Core.BackgroundJobs.Finish(ReadJobId);
-        var read = _readDone;
+        // Сорвавшаяся работа остается в реестре — красной, с причиной: человек, давно ушедший из
+        // раздела, иначе не узнал бы, почему чтение кончилось на половине. Уходит она ссылкой
+        // «Убрать» в панели фоновых работ или следующим запуском чтения. Отчитываемся сразу, из
+        // потока очереди, — как и о ходе.
+        if (end.Failed)
+            Core.BackgroundJobs.Fail(ReadJobId, ReadJobTitle, DocStatus.ReadFailedDetail(end));
+        else
+            Core.BackgroundJobs.Finish(ReadJobId);
 
         Dispatcher.UIThread.Post(() =>
         {
             DocList.SetProgress(0, 0);
+            // Подвал — сразу, а не после переписи: сорвавшееся чтение часто значит, что и кеш не
+            // отвечает, перепись тогда не досчитается, и подвал остался бы на «Читаю документы»
+            // со ссылкой «Остановить» у работы, которой уже нет.
+            RefreshStatus();
             if (DocIndexService.Current is { LastSecondsPerDocument: > 0 } s)
                 LibrarySettings.RememberSpeed(s.LastSecondsPerDocument);
 
             // Карточка-событие: человек мог уйти из раздела и не увидеть, что чтение кончилось.
             // Живой ход живет в значке панели разделов, а сюда идут только события.
-            if (read > 0)
+            if (end.Failed)
+                Controls.Widgets.AppNotifications.Error(DocStatus.ReadFailedNotice(end));
+            else if (end.Done > 0)
                 Controls.Widgets.AppNotifications.Info(
-                    $"Документы прочитаны: {read}. " +
+                    $"Документы прочитаны: {end.Done}. " +
                     (_census.NeverSearchable > 0
                         ? $"Внутри {_census.NeverSearchable} поиск искать не будет: " +
                           "сканы без текстового слоя и форматы без чтения текста."

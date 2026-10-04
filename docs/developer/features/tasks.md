@@ -88,9 +88,12 @@
 
 Освободившиеся роли заводятся заново — но только там, где остался исполнитель: без него раздел
 все равно молчит. Обычная база платит два индексных запроса; у пользователя без прав на схему
-починка просто не происходит, ее сделает следующий с правами. Покрытие —
-`TaskRoleGuardTests.Mounting_heals_a_field_that_carries_both_roles` и
-`Mounting_heals_extra_executors_and_roles_left_on_wrong_types`.
+починка не доходит до конца, ее доведет следующий с правами, — а отказ остается сведением в
+журнале диагностики с коллекцией и недостающим правом (`LogRepairNotDone`, общий с библиотекой;
+раньше отказ глотался без следа). Покрытие —
+`TaskRoleGuardTests.Mounting_heals_a_field_that_carries_both_roles`,
+`Mounting_heals_extra_executors_and_roles_left_on_wrong_types` и
+`DiagnosticsLogTests.A_task_role_repair_refused_by_rights_leaves_a_trace`.
 
 **Порядок выбора роли — `(Position, Id)`** (`RoleOrder`). Флаг может оказаться сразу у двух полей
 (копирование, ручная правка, старая база), и без явного порядка `FirstOrDefault`/`LIMIT 1`

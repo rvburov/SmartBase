@@ -319,7 +319,8 @@ public partial class ConstructorRepository
     /// «Статус 2» не за чем.
     ///
     /// Возвращает число вылеченных коллекций. Монтирование не срывает: у пользователя без
-    /// прав на схему починка просто не происходит (ее сделает следующий, у кого права есть).
+    /// прав на схему починка не доходит до конца (доведет следующий, у кого права есть), а отказ
+    /// остается в журнале диагностики (<see cref="LogRepairNotDone"/>).
     /// </summary>
     public int RepairTaskFieldRoles()
     {
@@ -351,8 +352,10 @@ public partial class ConstructorRepository
         var healed = 0;
         foreach (var collectionId in collections)
         {
+            string? name = null;
             try
             {
+                name = CollectionNameOf(collectionId);
                 var fields = CollectionFields(collectionId);
 
                 // (2) Исполнитель — первый по RoleOrder; CollectionFields уже отсортирован.
@@ -393,6 +396,7 @@ public partial class ConstructorRepository
             catch (Exception ex) when (ex is PermissionDeniedException or DbUpdateException)
             {
                 db.ChangeTracker.Clear();   // несохраненные флаги не должны утечь в следующие чтения
+                LogRepairNotDone("Задачи", collectionId, name, ex);
             }
         }
         return healed;

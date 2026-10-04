@@ -83,7 +83,8 @@ public static class BackgroundJobs
 
     /// <summary>
     /// Работа сорвалась. Остается в списке — иначе человек не узнал бы, почему она кончилась;
-    /// уходит по <see cref="Finish"/>, когда о ней прочитали, или при следующем запуске.
+    /// уходит по <see cref="Finish"/>, когда о ней прочитали (ссылка «Убрать» в панели фоновых
+    /// работ), или при следующем запуске: <see cref="Report"/> с тем же ключом заменяет ее идущей.
     /// </summary>
     public static void Fail(string id, string title, string detail)
     {

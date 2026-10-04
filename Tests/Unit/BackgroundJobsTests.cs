@@ -81,6 +81,33 @@ public sealed class BackgroundJobsTests : IDisposable
         Assert.Contains(BackgroundJobs.All, j => j.Id == A && j.Failed);
     }
 
+    // «Убрать» в панели — это Finish сорвавшейся работы: красный значок гаснет, а соседняя
+    // идущая работа остается на месте.
+    [Fact]
+    public void Removing_a_failed_job_clears_the_red_mark_but_keeps_the_others()
+    {
+        BackgroundJobs.Fail(A, "Чтение", "Сорвалось на 1 из 2: на диске нет места");
+        BackgroundJobs.Report(B, "Обновление", "", 1, 2);
+
+        BackgroundJobs.Finish(A);
+
+        Assert.False(BackgroundJobs.AnyFailed);
+        Assert.Contains(BackgroundJobs.All, j => j.Id == B);
+    }
+
+    // Следующий запуск той же работы заменяет сорвавшуюся идущей: красное о прошлом прогоне
+    // рядом с новым ходом было бы враньем.
+    [Fact]
+    public void The_next_run_replaces_a_failed_job()
+    {
+        BackgroundJobs.Fail(A, "Чтение", "кеш недоступен");
+
+        BackgroundJobs.Report(A, "Чтение", "0 из 10", 0, 10);
+
+        Assert.False(BackgroundJobs.AnyFailed);
+        Assert.Single(BackgroundJobs.All, j => j.Id == A);
+    }
+
     [Fact]
     public void Finishing_removes_the_job()
     {

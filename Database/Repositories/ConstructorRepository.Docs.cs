@@ -236,7 +236,8 @@ public partial class ConstructorRepository
     /// может быть сколько угодно, это штатный режим.
     ///
     /// Возвращает число вылеченных коллекций. Монтирование не срывает: у пользователя без прав
-    /// на схему починка просто не происходит (ее сделает следующий, у кого права есть).
+    /// на схему починка не доходит до конца (доведет следующий, у кого права есть), а отказ
+    /// остается в журнале диагностики (<see cref="LogRepairNotDone"/>).
     /// </summary>
     public int RepairDocFieldRoles()
     {
@@ -252,8 +253,10 @@ public partial class ConstructorRepository
         var healed = 0;
         foreach (var collectionId in collections)
         {
+            string? name = null;
             try
             {
+                name = CollectionNameOf(collectionId);
                 var fields  = CollectionFields(collectionId);
                 var anyFile = false;
                 var keepId  = 0;
@@ -294,6 +297,7 @@ public partial class ConstructorRepository
             catch (Exception ex) when (ex is PermissionDeniedException or DbUpdateException)
             {
                 db.ChangeTracker.Clear();   // несохраненные флаги не должны утечь в следующие чтения
+                LogRepairNotDone("Библиотека документов", collectionId, name, ex);
             }
         }
         return healed;

@@ -650,6 +650,12 @@ public sealed class DocTextIndex
     /// Ищет запрос в текстах документов. Возвращает пути с фрагментами вокруг совпадения,
     /// отсортированные по релевантности FTS5 (<c>ORDER BY rank</c>), не больше
     /// <paramref name="limit"/>.
+    ///
+    /// Сбой уходит исключением, а не пустой выдачей: «ничего не нашлось» и «поиск не сработал»
+    /// — разные ответы человеку, и различать их обязан зовущий. Раньше ошибка запроса глоталась,
+    /// и при испорченном кеше раздел честно писал «ничего не найдено». Набранный текст ошибкой
+    /// стать не может: каждое слово идет фразой в кавычках (<see cref="BuildMatch"/>), — так что
+    /// исключение здесь означает кеш (испорчен, занят, пропал) или наш дефект в сборке выражения.
     /// </summary>
     public List<DocHit> Search(string query, int limit = 500, int words = SnippetWordsDefault)
     {
@@ -676,17 +682,9 @@ public sealed class DocTextIndex
             cmd.Parameters.AddWithValue("@q",   match);
             cmd.Parameters.AddWithValue("@lim", Math.Max(1, limit));
 
-            try
-            {
-                using var rdr = cmd.ExecuteReader();
-                while (rdr.Read())
-                    result.Add(new DocHit(rdr.GetString(0), rdr.IsDBNull(1) ? "" : rdr.GetString(1)));
-            }
-            catch (SqliteException)
-            {
-                // Синтаксическая ошибка выражения FTS (пользователь ввел что-то, что не пережил
-                // экранирование) — это пустая выдача, а не сбой поиска.
-            }
+            using var rdr = cmd.ExecuteReader();
+            while (rdr.Read())
+                result.Add(new DocHit(rdr.GetString(0), rdr.IsDBNull(1) ? "" : rdr.GetString(1)));
         }
         return result;
     }
@@ -735,8 +733,10 @@ public sealed class DocTextIndex
         return string.Join(" AND ", parts);
     }
 
-    // Фраза FTS5: в двойных кавычках, внутренние удвоены.
-    private static string Quote(string text) => "\"" + text.Replace("\"", "\"\"") + "\"";
+    // Фраза FTS5: в двойных кавычках, внутренние удвоены. Нулевой знак разбор выражения считает
+    // концом строки: кавычка осталась бы незакрытой, и запрос, вставленный из буфера с таким
+    // знаком, ронял бы поиск. Для токенизатора (и для подсветки) это разделитель — ставим пробел.
+    private static string Quote(string text) => "\"" + text.Replace('\0', ' ').Replace("\"", "\"\"") + "\"";
 
     /// <summary>
     /// Разбирает сниппет на куски «обычный текст / совпадение» в порядке следования.

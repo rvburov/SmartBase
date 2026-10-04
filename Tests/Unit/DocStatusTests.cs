@@ -24,9 +24,10 @@ public sealed class DocStatusTests
         bool      capped = false,
         bool      cacheOpen = true,
         bool      typesNarrowed = false,
-        bool      loading = false) =>
+        bool      loading = false,
+        bool      textFailed = false) =>
         new(census, reading, readDone, readTotal, left, query, inText, byTitle, capped,
-            cacheOpen, typesNarrowed, loading);
+            cacheOpen, typesNarrowed, loading, textFailed);
 
     private static DocCensus Census(int total = 0, int read = 0, int notRead = 0,
                                     int noText = 0, int unsupported = 0, int failed = 0) =>
@@ -320,5 +321,93 @@ public sealed class DocStatusTests
         var line = DocStatus.Compose(In(reading: true, readDone: 1, readTotal: 5, cacheOpen: false));
 
         Assert.Contains("Читаю документы", line.Text);
+    }
+
+    // ── Поиск внутри текста сорвался ─────────────────────────────────────────
+
+    // Сломанный кеш раньше выглядел как «ничего не найдено»: подвал говорил о полном ответе, а
+    // ответ был половиной. Теперь он говорит, что нашлось только по названию и почему.
+    [Fact]
+    public void A_failed_text_search_says_the_hits_are_by_name_only()
+    {
+        var line = DocStatus.Compose(In(census: Census(total: 40, read: 40),
+                                        query: "контроль", byTitle: 5, textFailed: true));
+
+        Assert.Equal($"Найдено 5 по названию. {DocStatus.TextSearchFailed}", line.Text);
+        Assert.Equal(DocStatusAction.None, line.Action);
+    }
+
+    // Пустая выдача при сорвавшемся поиске — не «ничего не найдено»: внутрь документов поиск не
+    // заглядывал. И причина тут одна — сбой, а не непрочитанные документы: читать их сейчас
+    // некуда, кеш не отвечает.
+    [Fact]
+    public void A_failed_text_search_with_nothing_by_name_is_not_called_nothing_found()
+    {
+        var line = DocStatus.Compose(In(census: Census(total: 40, read: 10, notRead: 30),
+                                        query: "контроль", textFailed: true));
+
+        Assert.Equal($"Ничего не найдено по названию. {DocStatus.TextSearchFailed}", line.Text);
+        Assert.Equal(DocStatusAction.None, line.Action);
+    }
+
+    // Сбой важнее упора в потолок: обрезанный список лечится уточнением запроса, сбой — нет.
+    [Fact]
+    public void A_failed_text_search_outranks_the_cap()
+    {
+        var line = DocStatus.Compose(In(census: Census(total: 9000, read: 9000),
+                                        query: "бетон", byTitle: 500, capped: true, textFailed: true));
+
+        Assert.StartsWith("Найдено 500+ по названию.", line.Text);
+        Assert.EndsWith(DocStatus.TextSearchFailed, line.Text);
+    }
+
+    // Без запроса признак сбоя ни при чем: подвал покоя говорит о документах, а не о поиске.
+    [Fact]
+    public void A_failed_text_search_is_forgotten_without_a_query()
+    {
+        var line = DocStatus.Compose(In(census: Census(total: 40, read: 40), textFailed: true));
+
+        Assert.DoesNotContain("не сработал", line.Text);
+    }
+
+    // ── Сорвавшееся чтение ───────────────────────────────────────────────────
+
+    private static DocIndexRunEnd Failed(Exception error) => new(120, 2000, error);
+
+    // Причину называем там, где с ней есть что делать: место освобождают, а прочитанное до сбоя
+    // цело — SQLite откатывает только несостоявшуюся запись.
+    [Fact]
+    public void A_full_disk_is_named_and_the_read_part_is_said_to_be_kept()
+    {
+        var end = Failed(new Microsoft.Data.Sqlite.SqliteException("database or disk is full", 13));
+
+        Assert.Equal("Сорвалось на 120 из 2000: на диске нет места", DocStatus.ReadFailedDetail(end));
+        Assert.StartsWith("Чтение документов сорвалось: на диске нет места.", DocStatus.ReadFailedNotice(end));
+        Assert.Contains("сохранено", DocStatus.ReadFailedNotice(end));
+    }
+
+    // Испорченный файл кеша чинится кнопкой «Очистить» — карточка говорит именно это.
+    [Theory]
+    [InlineData(11)]   // CORRUPT
+    [InlineData(26)]   // NOTADB
+    public void A_broken_cache_file_points_to_the_clear_button(int code)
+    {
+        var end = Failed(new Microsoft.Data.Sqlite.SqliteException("database disk image is malformed", code));
+
+        Assert.EndsWith("файл кеша поврежден", DocStatus.ReadFailedDetail(end));
+        Assert.Contains("«Очистить»", DocStatus.ReadFailedNotice(end));
+    }
+
+    // Остальное — без догадок: что не принял кеш или что сломалось в программе, и где подробности.
+    [Fact]
+    public void Other_failures_send_to_the_diagnostics()
+    {
+        var cache = Failed(new Microsoft.Data.Sqlite.SqliteException("cannot commit", 1));
+        var ours  = Failed(new InvalidOperationException("дефект"));
+
+        Assert.EndsWith("кеш документов не принимает запись", DocStatus.ReadFailedDetail(cache));
+        Assert.EndsWith("сбой в программе", DocStatus.ReadFailedDetail(ours));
+        Assert.Contains("«Диагностика»", DocStatus.ReadFailedNotice(cache));
+        Assert.Contains("«Диагностика»", DocStatus.ReadFailedNotice(ours));
     }
 }

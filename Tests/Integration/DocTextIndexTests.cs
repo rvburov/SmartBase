@@ -173,6 +173,71 @@ public sealed class DocTextIndexTests : IDisposable
     }
 
     /// <summary>
+    /// Что бы человек ни набрал, выражение FTS5 остается правильным. Это условие того, что сбой
+    /// поиска больше не глотается: ошибка запроса теперь значит «кеш сломан» и доходит до подвала
+    /// раздела, — и набранный текст не должен стать ею. Здесь — синтаксис FTS5 (кавычки, звездочка,
+    /// скобки, двоеточие, «NEAR», «OR», «NOT»), знаки LIKE и управляющие символы.
+    /// </summary>
+    [Fact]
+    public void Whatever_a_person_types_never_breaks_the_search_expression()
+    {
+        var path = Write("gost.txt", "ГОСТ 21.501 правила выполнения рабочей документации");
+        Put(path, File.ReadAllText(path));
+
+        var broken = new List<string>();
+        foreach (var query in new[]
+                 {
+                     "\"", "\"гост", "гост\"", "\"\"", "*", "гост*", "*гост", "-гост", "^гост", "гост:21",
+                     "(гост", "гост)", "()", "{гост}", "[21]", "NEAR(гост 21)", "гост OR правила", "OR",
+                     "AND", "NOT гост", "гост AND", "+", "%", "_", "\\", "'", "гост\0правила", "\0гост",
+                     "\u0002", "\u0003гост", "\t", "😀", "á", "21.501*", "\"21 501\"*",
+                     "gost:(21 OR 22)", new string('"', 101), string.Join(' ', Enumerable.Repeat("гост", 300)),
+                 })
+            try { _index.Search(query); }
+            catch (SqliteException ex)
+            {
+                broken.Add($"«{query.Replace("\0", "\\0")}» → {DocTextIndex.BuildMatch(query).Replace("\0", "\\0")}: {ex.Message}");
+            }
+
+        Assert.True(broken.Count == 0, string.Join("\n", broken));
+    }
+
+    /// <summary>
+    /// Испорченный кеш дает сбой поиска, а не «ничего не нашлось». Раньше ошибка запроса
+    /// глоталась, и раздел честно сообщал «ничего не найдено» про документы, которые лежат в
+    /// кеше, — человек искал бы опечатку в запросе, а не чинил кеш. Портятся страницы с данными,
+    /// а не заголовок: первая страница (заголовок и схема) цела, файл открывается, а сам запрос
+    /// падает — так выглядит обрыв питания посреди записи.
+    /// </summary>
+    [Fact]
+    public void A_broken_cache_fails_the_search_instead_of_finding_nothing()
+    {
+        var path = Write("gost.txt", "текст документа");
+        Put(path, "текст документа");
+
+        using (var connection = new SqliteConnection($"Data Source={_index.Path};Pooling=False"))
+        {
+            connection.Open();
+            using var cmd = connection.CreateCommand();
+            cmd.CommandText = "PRAGMA wal_checkpoint(TRUNCATE)";
+            cmd.ExecuteNonQuery();
+        }
+        SqliteConnection.ClearAllPools();
+        foreach (var suffix in new[] { "-wal", "-shm" })
+            try { File.Delete(_index.Path + suffix); } catch { /* нет файла — тем лучше */ }
+
+        const int Page = 4096;
+        var bytes = File.ReadAllBytes(_index.Path);
+        Assert.True(bytes.Length > Page, "в кеше одна страница — портить нечего");
+        Array.Fill(bytes, (byte)0x7F, Page, bytes.Length - Page);
+        File.WriteAllBytes(_index.Path, bytes);
+
+        // SQLITE_CORRUPT — значит, файл открылся и сломался сам запрос, а не открытие кеша.
+        var failure = Assert.ThrowsAny<SqliteException>(() => _index.Search("документа"));
+        Assert.Equal(11, failure.SqliteErrorCode);
+    }
+
+    /// <summary>
     /// Договор поиска и панели на настоящей книге: по любому значению, которое показывает панель,
     /// книга находится, и в ячейке есть что подсветить. Так же — сумма, набранная без разрядов.
     /// Пока индекс хранил числа как они лежат в файле, дата и деньги по видимому не находились.
