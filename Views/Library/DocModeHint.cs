@@ -46,9 +46,17 @@ public static class DocModeHint
                "Документ открывается кнопкой «Открыть» на карточке.";
     }
 
+    /// <summary>
+    /// Книга тяжелее порога чтения — теми же словами, что у режима «Текст»: порог один, и
+    /// снимается он там же, в настройках.
+    /// </summary>
+    public static string BookTooBig(int maxFileMb) =>
+        $"Книга тяжелее порога чтения ({maxFileMb} МБ). Порог меняется в настройках библиотеки.";
+
     /// <summary>Подсказка по итогу разбора книги; null — листы есть и кнопка работает.</summary>
     public static string? ForBook(DocBookView book) =>
-        book.Broken           ? BookFailed
+        book.TooBigMb > 0     ? BookTooBig(book.TooBigMb)
+      : book.Broken           ? BookFailed
       : book.Sheets.Count > 0 ? null
       : book.HiddenSheets > 0 ? BookHidden
       :                         BookEmpty;

@@ -77,8 +77,7 @@ public static class DocReadText
         {
             var info = new FileInfo(path);
             if (!info.Exists) return DocReadResult.Of(DocTextStatus.Failed);
-            if (maxFileMb > 0 && info.Length > (long)maxFileMb * 1024 * 1024)
-                return DocReadResult.Of(DocTextStatus.TooBig);
+            if (DocTextExtractor.TooBig(info.Length, maxFileMb)) return DocReadResult.Of(DocTextStatus.TooBig);
 
             var pages = 0;
             DocReadCut cut;

@@ -608,6 +608,34 @@ public sealed class DocSheetSourceTests : IDisposable
     }
 
     /// <summary>
+    /// Книга тяжелее порога чтения таблицей не разбирается — как не разбирается и текстом
+    /// (<see cref="DocReadText"/>): файл взвешивается ДО разбора. Раньше «Как в документе»
+    /// разбирал целиком ту самую книгу, от которой режим «Текст» отказывался. Порог проверяется
+    /// на файле в мегабайт с байтом, а не на настоящей тяжелой книге: содержимое не важно, до
+    /// него дело не доходит, — без порога этот файл, не будучи книгой, честно не открылся бы.
+    /// </summary>
+    [Fact]
+    public void A_book_heavier_than_the_threshold_is_not_parsed()
+    {
+        var heavy = Path.Combine(_dir, "тяжелая.xlsx");
+        using (var file = File.Create(heavy)) file.SetLength(1024 * 1024 + 1);
+
+        var book = DocSheetSource.OpenBook(heavy, maxFileMb: 1);
+        Assert.Equal(1, book.TooBigMb);
+        Assert.False(book.Broken);
+        Assert.Empty(book.Sheets);
+        // Тот же порог у режима «Текст» — один ответ на одну книгу.
+        Assert.Equal(DocTextStatus.TooBig, DocReadText.Read(heavy, maxFileMb: 1).Status);
+
+        // Без порога до разбора доходит — и файл-подделка честно не открывается.
+        Assert.True(DocSheetSource.OpenBook(heavy, maxFileMb: 0).Broken);
+        // Книга легче порога разбирается как обычно.
+        var light = DocSheetSource.OpenBook(WriteBook(), maxFileMb: 1);
+        Assert.Equal(0, light.TooBigMb);
+        Assert.NotEmpty(light.Sheets);
+    }
+
+    /// <summary>
     /// Книга со счетом дней от 1904 года: без ее признака та же дата уехала бы на четыре года и
     /// день назад — 04.03.2020 вместо 05.03.2024.
     /// </summary>

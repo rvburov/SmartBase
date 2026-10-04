@@ -102,12 +102,18 @@ public readonly record struct DocSheetCut(bool Rows = false, int RowsShown = 0, 
 /// </summary>
 /// <param name="Broken">Книга не открылась: файл битый, занят или пропал. Это не то же, что
 /// книга без листов с данными, — и человеку это говорится по-разному.</param>
-public sealed record DocBookView(IReadOnlyList<DocSheet> Sheets, int HiddenSheets, bool Broken = false)
+/// <param name="TooBigMb">Порог чтения в МБ, которого книга тяжелее, — ее не разбирали вовсе;
+/// 0 — книга не тяжелее порога.</param>
+public sealed record DocBookView(IReadOnlyList<DocSheet> Sheets, int HiddenSheets, bool Broken = false,
+                                 int TooBigMb = 0)
 {
     public static DocBookView Empty { get; } = new([], 0);
 
     /// <summary>Книга не открылась.</summary>
     public static DocBookView Failed { get; } = new([], 0, Broken: true);
+
+    /// <summary>Книга тяжелее порога чтения — разбирать ее таблицей не стали.</summary>
+    public static DocBookView TooBig(int maxFileMb) => new([], 0, TooBigMb: maxFileMb);
 }
 
 /// <summary>Лист книги: имя, строки и ширины колонок в знаках.</summary>
@@ -212,32 +218,50 @@ public static class DocSheetSource
     public const double DefaultFontSize = 11;
 
     /// <summary>
-    /// Разобрать книгу. Пустой список — файл не XLSX, не открылся или в нем нет ни одного
-    /// листа с данными; для панели это не сбой, а повод остаться в режиме текста. Почему именно
-    /// пусто, говорит <see cref="OpenBook"/>.
+    /// Разобрать книгу. Пустой список — файл не XLSX, не открылся, тяжелее порога или в нем нет
+    /// ни одного листа с данными; для панели это не сбой, а повод остаться в режиме текста.
+    /// Почему именно пусто, говорит <see cref="OpenBook"/>.
     /// </summary>
-    public static IReadOnlyList<DocSheet> Open(string path, CancellationToken ct = default) =>
-        OpenBook(path, ct).Sheets;
+    /// <param name="maxFileMb">Порог размера; 0 и меньше — порога нет.</param>
+    public static IReadOnlyList<DocSheet> Open(string path, int maxFileMb = DocTextExtractor.DefaultMaxFileMb,
+                                               CancellationToken ct = default) =>
+        OpenBook(path, maxFileMb, ct).Sheets;
 
     /// <summary>
     /// То же вместе с числом скрытых листов — его панель показывает строкой над листом — и с
-    /// признаком «не открылась» (<see cref="DocBookView.Broken"/>): битую книгу панель не
-    /// называет пустой.
+    /// признаками «не открылась» (<see cref="DocBookView.Broken"/>) и «тяжелее порога»
+    /// (<see cref="DocBookView.TooBigMb"/>): битую и тяжелую книгу панель не называет пустой.
+    ///
+    /// <b>Порог — тот же, что у индекса и у режима «Текст»</b> (<see cref="DocTextExtractor.TooBig"/>):
+    /// файл взвешивается ДО разбора. Без него «Как в документе» разбирал тяжелую книгу целиком —
+    /// ту самую, от которой режим «Текст» отказывался, — и держал ее в памяти, пока открыта панель.
     /// </summary>
-    public static DocBookView OpenBook(string path, CancellationToken ct = default)
+    /// <param name="maxFileMb">Порог размера; 0 и меньше — порога нет.</param>
+    public static DocBookView OpenBook(string path, int maxFileMb = DocTextExtractor.DefaultMaxFileMb,
+                                       CancellationToken ct = default)
     {
-        try { return Read(path, ct); }
+        try
+        {
+            // Взвешивается только книга: у прочих файлов таблицы нет, и спрашивать о них диск
+            // незачем — они пусты для панели и без этого.
+            if (DocTextExtractor.ExtensionOf(path) is "xlsx" or "xlsm" &&
+                DocTextExtractor.TooBig(new FileInfo(path).Length, maxFileMb))
+                return DocBookView.TooBig(maxFileMb);
+            return Read(path, ct);
+        }
         catch (OperationCanceledException) { throw; }
         catch { return DocBookView.Failed; }
     }
 
     /// <summary>Фоновый разбор: книга на тысячи строк не должна держать UI-поток.</summary>
-    public static Task<IReadOnlyList<DocSheet>> OpenAsync(string path, CancellationToken ct = default) =>
-        Task.Run(() => Open(path, ct), ct);
+    public static Task<IReadOnlyList<DocSheet>> OpenAsync(string path, int maxFileMb = DocTextExtractor.DefaultMaxFileMb,
+                                                          CancellationToken ct = default) =>
+        Task.Run(() => Open(path, maxFileMb, ct), ct);
 
     /// <summary>Фоновый разбор вместе с числом скрытых листов.</summary>
-    public static Task<DocBookView> OpenBookAsync(string path, CancellationToken ct = default) =>
-        Task.Run(() => OpenBook(path, ct), ct);
+    public static Task<DocBookView> OpenBookAsync(string path, int maxFileMb = DocTextExtractor.DefaultMaxFileMb,
+                                                  CancellationToken ct = default) =>
+        Task.Run(() => OpenBook(path, maxFileMb, ct), ct);
 
     /// <summary>
     /// Разбор книги без страховки: исключение уходит зовущему. Им пользуется режим «Текст»

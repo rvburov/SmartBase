@@ -572,8 +572,10 @@ public partial class DocReaderView : UserControl
     {
         if (DocTextExtractor.ExtensionOf(doc.Path) is not ("xlsx" or "xlsm")) return;
 
+        // Порог — тот же, что у режима «Текст»: тяжелую книгу таблицей не разбираем, как не
+        // разбираем и текстом.
         DocBookView book;
-        try { book = await DocSheetSource.OpenBookAsync(doc.Path, token); }
+        try { book = await DocSheetSource.OpenBookAsync(doc.Path, LibrarySettings.IndexMaxMb, token); }
         catch (OperationCanceledException) { return; }
         catch (Exception ex)
         {

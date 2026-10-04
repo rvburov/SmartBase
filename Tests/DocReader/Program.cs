@@ -235,6 +235,28 @@ void ModeHints(DocReaderView reader)
               "у книги, которая не открылась, подсказка не говорит об этом"))
         return;
     Console.WriteLine("У битой книги: " + ToolTip.GetTip(btn));
+
+    // Книга тяжелее порога чтения таблицей не разбирается — как и текстом. Раньше «Как в
+    // документе» разбирал ее целиком, хотя «Текст» от нее отказывался. Порог на время проверки —
+    // мегабайт, и файл в мегабайт с байтом не книга: содержимое не важно, до разбора дело не
+    // доходит, а без порога подделка честно «не открылась» бы.
+    var limit = SmartBase.Utils.LibrarySettings.IndexMaxMb;
+    SmartBase.Utils.LibrarySettings.SetIndexMaxMb(1);
+    try
+    {
+        var heavy = Path.Combine(dir, "тяжелая.xlsx");
+        using (var file = File.Create(heavy)) file.SetLength(1024 * 1024 + 1);
+        reader.Show(new DocRecord { Title = "Тяжелая", Path = heavy }, "");
+        var label = Find<TextBlock>(reader, "StateLabel")!;
+        if (!Wait(() => ToolTip.GetTip(btn) as string == DocModeHint.BookTooBig(1) &&
+                        (label.Text ?? "").Contains("тяжелее порога", StringComparison.Ordinal),
+                  "у книги тяжелее порога подсказка кнопки или надпись «Текста» не называют порог"))
+            return;
+        Console.WriteLine("У тяжелой книги: " + ToolTip.GetTip(btn));
+        Console.WriteLine("Текст тяжелой книги: " + label.Text);
+        Check(!btn.IsEnabled, "у книги тяжелее порога кнопка «Как в документе» включена");
+    }
+    finally { SmartBase.Utils.LibrarySettings.SetIndexMaxMb(limit); }
 }
 
 // ── Скан PDF в двух режимах ─────────────────────────────────────────────────────

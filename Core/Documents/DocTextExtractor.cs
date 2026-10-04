@@ -61,6 +61,14 @@ public static class DocTextExtractor
     public const int DefaultMaxFileMb = 64;
 
     /// <summary>
+    /// Тяжелее ли файл порога; 0 и меньше — порога нет. Проверка одна на все три разбора —
+    /// индекс, режим «Текст» и таблицу книги: пока ее не было у таблицы, режим «Текст» тяжелую
+    /// книгу отклонял, а «Как в документе» разбирал целиком.
+    /// </summary>
+    public static bool TooBig(long length, int maxFileMb) =>
+        maxFileMb > 0 && length > (long)maxFileMb * 1024 * 1024;
+
+    /// <summary>
     /// Текстовые форматы: читаются как есть, без разборщика. Этот же список дает на плитке
     /// ленту «ТЕКСТ» (<see cref="DocFormats"/>): лента обещает, что внутри ищется, и обещание
     /// держится ровно потому, что список один. Раньше их было два, и у INI, JSON, XML, YML и
@@ -133,8 +141,7 @@ public static class DocTextExtractor
         {
             var info = new FileInfo(path);
             if (!info.Exists) return DocText.Of(DocTextStatus.Failed);
-            if (maxFileMb > 0 && info.Length > (long)maxFileMb * 1024 * 1024)
-                return DocText.Of(DocTextStatus.TooBig);
+            if (TooBig(info.Length, maxFileMb)) return DocText.Of(DocTextStatus.TooBig);
 
             var pages = 0;
             var text = ext switch

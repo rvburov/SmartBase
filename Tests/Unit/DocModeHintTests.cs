@@ -70,4 +70,18 @@ public sealed class DocModeHintTests
         Assert.Equal(DocModeHint.BookHidden, DocModeHint.ForBook(new DocBookView([], HiddenSheets: 2)));
         Assert.Null(DocModeHint.ForBook(new DocBookView([sheet], 0)));
     }
+
+    /// <summary>
+    /// Книга тяжелее порога — четвертый ответ, и не «пустая» и не «не открылась»: ее не
+    /// разбирали вовсе. Подсказка называет порог и место, где он меняется, — как и надпись режима
+    /// «Текст» о том же документе.
+    /// </summary>
+    [Fact]
+    public void A_book_heavier_than_the_threshold_names_the_threshold()
+    {
+        var hint = DocModeHint.ForBook(DocBookView.TooBig(64)) ?? "";
+
+        Assert.Contains("тяжелее порога чтения (64 МБ)", hint, StringComparison.Ordinal);
+        Assert.Contains("в настройках библиотеки", hint, StringComparison.Ordinal);
+    }
 }
