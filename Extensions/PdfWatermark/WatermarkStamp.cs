@@ -126,7 +126,13 @@ public static class WatermarkStamp
             // ленты библиотеки и ее панель чтения, — поэтому каждый вызов в PDFium идет через
             // общую очередь PdfGate. Очередь берется на КОРОТКИЕ операции, а не на весь прогон:
             // документ на сотню страниц иначе заморозил бы ленту на все время штамповки.
-            using (var reader = PdfGate.Run(() => DocLib.Instance.GetDocReader(source, new PageDimensions(scale))))
+            //
+            // Закрытие документа и страницы — такие же вызовы в PDFium. Пока их закрывал using,
+            // они шли уже после замка, мимо очереди, и сталкивались с отрисовкой миниатюры в
+            // другом потоке. Поэтому страница целиком — открыть, нарисовать, измерить, закрыть —
+            // одна короткая операция под замком, а документ закрывается через очередь в finally.
+            var reader = PdfGate.Run(() => DocLib.Instance.GetDocReader(source, new PageDimensions(scale)));
+            try
             {
                 var count = PdfGate.Run(reader.GetPageCount);
 
@@ -135,21 +141,28 @@ public static class WatermarkStamp
                     ct.ThrowIfCancellationRequested();
 
                     var index = i;
-                    using var page = PdfGate.Run(() => reader.GetPageReader(index));
-                    var jpeg = PdfGate.Run(() => StampPage(page, lines, style));
+                    var (jpeg, width, height) = PdfGate.Run(() =>
+                    {
+                        using var page = reader.GetPageReader(index);
+                        return (StampPage(page, lines, style), page.GetPageWidth(), page.GetPageHeight());
+                    });
 
                     pages.Add(jpeg);
 
                     var sheet = output.AddPage();
                     // Размер листа берется у ИСХОДНОЙ страницы, а не у растра: печать и поля
                     // должны остаться теми же, сколько бы пикселей ни было в картинке.
-                    sheet.Width  = XUnit.FromPoint(page.GetPageWidth()  / scale);
-                    sheet.Height = XUnit.FromPoint(page.GetPageHeight() / scale);
+                    sheet.Width  = XUnit.FromPoint(width  / scale);
+                    sheet.Height = XUnit.FromPoint(height / scale);
 
                     using var gfx    = XGraphics.FromPdfPage(sheet);
                     using var picture = XImage.FromStream(jpeg);
                     gfx.DrawImage(picture, 0, 0, sheet.Width.Point, sheet.Height.Point);
                 }
+            }
+            finally
+            {
+                PdfGate.Run(reader.Dispose);
             }
 
             // Число страниц берется ДО записи: после Save документ PDFsharp считает закрытым и
