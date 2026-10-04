@@ -992,14 +992,7 @@ public partial class LibraryControllerView : UserControl
 
         // Карточка-событие про запуск: человек нажал «Прочитать» и тут же может уйти в другой
         // раздел — он должен знать, где за этим следить.
-        Controls.Widgets.AppNotifications.Info(
-            !running
-                ? $"Читаю {Plural.Count(pending.Count, "документ", "документа", "документов")}. " +
-                  "Можно работать дальше — ход виден в панели разделов слева."
-                : added > 0
-                    ? $"Добавлено к чтению: {Plural.Count(added, "документ", "документа", "документов")}. " +
-                      "Читаю их тем же прогоном."
-                    : "Эти документы уже стоят в очереди чтения.");
+        Controls.Widgets.AppNotifications.Info(DocStatus.ReadStartedNotice(running, pending.Count, added));
     }
 
     // Окно подтверждения — общий ConfirmDialog (Compact по стандарту размеров окон), а не свое.
@@ -1072,12 +1065,7 @@ public partial class LibraryControllerView : UserControl
             if (end.Failed)
                 Controls.Widgets.AppNotifications.Error(DocStatus.ReadFailedNotice(end));
             else if (end.Done > 0)
-                Controls.Widgets.AppNotifications.Info(
-                    $"Документы прочитаны: {end.Done}. " +
-                    (_census.NeverSearchable > 0
-                        ? $"Внутри {_census.NeverSearchable} поиск искать не будет: " +
-                          "сканы без текстового слоя и форматы без чтения текста."
-                        : "Поиск теперь ищет внутри них."));
+                Controls.Widgets.AppNotifications.Info(DocStatus.ReadDoneNotice(end.Done, _census.NeverSearchable));
 
             // Перепись устарела: только что прочитанное поменяло и числа подвала, и чипы
             // карточек. Поиск по содержимому мог не находить того, что как раз разобрали, —

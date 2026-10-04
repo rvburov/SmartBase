@@ -410,4 +410,83 @@ public sealed class DocStatusTests
         Assert.Contains("«Диагностика»", DocStatus.ReadFailedNotice(cache));
         Assert.Contains("«Диагностика»", DocStatus.ReadFailedNotice(ours));
     }
+
+    // ── Согласование с числом ────────────────────────────────────────────────
+    //
+    // Сказуемое — по форме числа («21 документ не прочитан»), местоимение и «скан» — по смыслу
+    // («внутри них», пока документов не ровно один). Пока подвал склонял одно существительное,
+    // выходило «1 документ не прочитаны — внутри них». Числа — на все ловушки: один, два, пять,
+    // одиннадцать (форма «много» вопреки последней цифре) и двадцать один (форма «один», но
+    // документов много).
+
+    [Theory]
+    [InlineData(1,  "1 документ не прочитан — искать можно только по названиям")]
+    [InlineData(2,  "2 документа не прочитаны — искать можно только по названиям")]
+    [InlineData(5,  "5 документов не прочитаны — искать можно только по названиям")]
+    [InlineData(11, "11 документов не прочитаны — искать можно только по названиям")]
+    [InlineData(21, "21 документ не прочитан — искать можно только по названиям")]
+    public void Nothing_read_agrees_with_the_number(int n, string expected) =>
+        Assert.Equal(expected, DocStatus.Compose(In(Census(total: n, notRead: n))).Text);
+
+    [Theory]
+    [InlineData(1,  "Ничего не найдено. 1 документ не прочитан — внутри него поиск не искал")]
+    [InlineData(2,  "Ничего не найдено. 2 документа не прочитаны — внутри них поиск не искал")]
+    [InlineData(5,  "Ничего не найдено. 5 документов не прочитаны — внутри них поиск не искал")]
+    [InlineData(11, "Ничего не найдено. 11 документов не прочитаны — внутри них поиск не искал")]
+    [InlineData(21, "Ничего не найдено. 21 документ не прочитан — внутри них поиск не искал")]
+    public void Nothing_found_among_unread_agrees_with_the_number(int n, string expected) =>
+        Assert.Equal(expected, DocStatus.Compose(In(Census(total: n + 10, read: 10, notRead: n), query: "шов")).Text);
+
+    [Theory]
+    [InlineData(1,  "Ничего не найдено. 1 документ — скан без текстового слоя, внутри него поиск не ищет")]
+    [InlineData(2,  "Ничего не найдено. 2 документа — сканы без текстового слоя, внутри них поиск не ищет")]
+    [InlineData(11, "Ничего не найдено. 11 документов — сканы без текстового слоя, внутри них поиск не ищет")]
+    [InlineData(21, "Ничего не найдено. 21 документ — сканы без текстового слоя, внутри них поиск не ищет")]
+    public void Nothing_found_among_scans_agrees_with_the_number(int n, string expected) =>
+        Assert.Equal(expected, DocStatus.Compose(In(Census(total: n + 10, read: 10, noText: n), query: "шов")).Text);
+
+    [Theory]
+    [InlineData(1,  "Ничего не найдено. У 1 документа формат без чтения текста — он ищется только по названию")]
+    [InlineData(2,  "Ничего не найдено. У 2 документов формат без чтения текста — они ищутся только по названию")]
+    [InlineData(11, "Ничего не найдено. У 11 документов формат без чтения текста — они ищутся только по названию")]
+    [InlineData(21, "Ничего не найдено. У 21 документа формат без чтения текста — они ищутся только по названию")]
+    public void Nothing_found_among_foreign_formats_agrees_with_the_number(int n, string expected) =>
+        Assert.Equal(expected, DocStatus.Compose(In(Census(total: n + 10, read: 10, unsupported: n), query: "шов")).Text);
+
+    /// <summary>
+    /// Нашлось только по названию, а прочитано почти все: внутри прочитанного поиск искал, и
+    /// «внутри текста не искал» было бы неправдой. Подвал говорит о непрочитанных — теми же
+    /// словами, что и при пустой выдаче.
+    /// </summary>
+    [Theory]
+    [InlineData(0,  1,  "Найдено 15 по названию. 1 документ не прочитан — внутри него поиск не искал")]
+    [InlineData(90, 10, "Найдено 15 по названию. 10 документов не прочитаны — внутри них поиск не искал")]
+    [InlineData(0,  21, "Найдено 15 по названию. 21 документ не прочитан — внутри них поиск не искал")]
+    public void Hits_by_name_speak_of_the_unread_only(int read, int notRead, string expected)
+    {
+        var line = DocStatus.Compose(In(census: Census(total: read + notRead, read: read, notRead: notRead),
+                                        query: "контроль", inText: 0, byTitle: 15));
+
+        Assert.Equal(expected, line.Text);
+        Assert.Equal(DocStatusAction.Read, line.Action);
+    }
+
+    [Theory]
+    [InlineData(false, 1,  0, "Читаю 1 документ. Можно работать дальше — ход виден в панели разделов слева.")]
+    [InlineData(false, 21, 0, "Читаю 21 документ. Можно работать дальше — ход виден в панели разделов слева.")]
+    [InlineData(true,  5,  1, "Добавлено к чтению: 1 документ. Читаю его тем же прогоном.")]
+    [InlineData(true,  30, 21, "Добавлено к чтению: 21 документ. Читаю их тем же прогоном.")]
+    [InlineData(true,  1,  0, "Этот документ уже стоит в очереди чтения.")]
+    [InlineData(true,  21, 0, "Эти документы уже стоят в очереди чтения.")]
+    public void The_read_start_card_agrees_with_the_number(bool running, int pending, int added, string expected) =>
+        Assert.Equal(expected, DocStatus.ReadStartedNotice(running, pending, added));
+
+    [Theory]
+    [InlineData(1,  0,  "Прочитано документов: 1. Поиск теперь ищет внутри него.")]
+    [InlineData(21, 0,  "Прочитано документов: 21. Поиск теперь ищет внутри них.")]
+    [InlineData(40, 1,  "Прочитано документов: 40. Внутри 1 документа поиск искать не будет: это скан без текстового слоя или формат без чтения текста.")]
+    [InlineData(40, 5,  "Прочитано документов: 40. Внутри 5 документов поиск искать не будет: это сканы без текстового слоя и форматы без чтения текста.")]
+    [InlineData(40, 21, "Прочитано документов: 40. Внутри 21 документа поиск искать не будет: это сканы без текстового слоя и форматы без чтения текста.")]
+    public void The_read_done_card_agrees_with_the_number(int done, int never, string expected) =>
+        Assert.Equal(expected, DocStatus.ReadDoneNotice(done, never));
 }
