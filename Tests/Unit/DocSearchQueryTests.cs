@@ -33,7 +33,45 @@ public sealed class DocSearchQueryTests
     [Fact]
     public void Only_the_last_word_gets_a_prefix_star()
     {
-        Assert.Equal("\"системы\" AND \"управл\"*", DocTextIndex.BuildMatch("системы управл"));
+        Assert.Equal("\"сварка\" AND \"труб\"*", DocTextIndex.BuildMatch("сварка труб"));
+        Assert.Equal("(\"системы\" OR \"систёмы\") AND \"управл\"*", DocTextIndex.BuildMatch("системы управл"));
+    }
+
+    /// <summary>
+    /// «Е» ищется и как «ё»: токенизатор индекса «ё» не складывает, а набирают обычно без нее.
+    /// Набранная «ё» складывается в «е» и дает те же написания — «учёт» и «учет» ищут одно.
+    /// </summary>
+    [Fact]
+    public void Ye_is_also_searched_as_yo()
+    {
+        Assert.Equal("(\"учет\"* OR \"учёт\"*)", DocTextIndex.BuildMatch("учет"));
+        Assert.Equal("(\"учет\"* OR \"учёт\"*)", DocTextIndex.BuildMatch("учёт"));
+        Assert.Equal("(\"учет\"* OR \"учёт\"*)", DocTextIndex.BuildMatch("УЧЁТ"));
+        Assert.Equal("(\"учет контроль\"* OR \"учёт контроль\"*)", DocTextIndex.BuildMatch("учёт-контроль"));
+    }
+
+    /// <summary>У сложных слов «ё» бывает две — перебираются и такие написания.</summary>
+    [Fact]
+    public void Two_yo_in_a_word_are_spelled_too()
+    {
+        Assert.Contains("\"трёхмёрный\"", DocTextIndex.BuildMatch("трехмерный чертеж"), StringComparison.Ordinal);
+        Assert.Contains("\"трёхмёрный\"", DocTextIndex.BuildMatch("трёхмёрный чертеж"), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Слово из одних «е» не раздувает выражение: написаний не больше потолка, и первым идет
+    /// написание без «ё».
+    /// </summary>
+    [Fact]
+    public void Yo_spellings_are_capped()
+    {
+        var word      = new string('е', 40);
+        var spellings = DocTextIndex.YoSpellings([word]);
+
+        Assert.Equal(DocTextIndex.MaxYoSpellings, spellings.Count);
+        Assert.Equal(word, spellings[0][0]);
+        Assert.Equal(DocTextIndex.MaxYoSpellings, spellings.Select(s => s[0]).Distinct().Count());
+        Assert.Equal(DocTextIndex.MaxYoSpellings, DocTextIndex.BuildMatch(word).Split(" OR ").Length);
     }
 
     [Fact]
@@ -64,30 +102,32 @@ public sealed class DocSearchQueryTests
     public void A_long_number_is_searched_with_its_groups_too()
     {
         Assert.Equal("(\"30772\"* OR \"30 772\"*)", DocTextIndex.BuildMatch("30772"));
-        Assert.Equal("\"итого\" AND (\"30772.48\"* OR \"30 772 48\"*)", DocTextIndex.BuildMatch("итого 30772.48"));
+        Assert.Equal("\"итого\" AND (\"30772 48\"* OR \"30 772 48\"*)", DocTextIndex.BuildMatch("итого 30772.48"));
         Assert.Equal("(\"30772\" OR \"30 772\") AND \"руб\"*", DocTextIndex.BuildMatch("30772 руб"));
     }
 
     /// <summary>
-    /// Спецсимволы синтаксиса FTS5 внутри кавычек перестают быть синтаксисом. Без этого
-    /// «-» открывал бы отрицание, а «*» посреди слова — ошибку разбора.
+    /// Спецсимволы синтаксиса FTS5 до выражения не доходят: слово режется на части так же, как
+    /// его режет токенизатор, и фраза собирается из частей в кавычках. Без этого «-» открывал бы
+    /// отрицание, «*» посреди слова — ошибку разбора, а «OR» менял бы смысл запроса.
     /// </summary>
     [Theory]
-    [InlineData("ГОСТ-34.11", "\"ГОСТ-34.11\"*")]
-    [InlineData("C++", "\"C++\"*")]
-    [InlineData("^начало", "\"^начало\"*")]
-    [InlineData("NEAR", "\"NEAR\"*")]
-    [InlineData("OR", "\"OR\"*")]
+    [InlineData("ГОСТ-34.11", "\"гост 34 11\"*")]
+    [InlineData("C++", "\"c\"*")]
+    [InlineData("^начало", "\"начало\"*")]
+    [InlineData("NEAR", "\"near\"*")]
+    [InlineData("OR", "\"or\"*")]
     public void Special_syntax_is_quoted_away(string query, string expected)
     {
         Assert.Equal(expected, DocTextIndex.BuildMatch(query));
     }
 
-    /// <summary>Двойная кавычка внутри слова удваивается — иначе она закрыла бы терм.</summary>
+    /// <summary>Двойная кавычка вокруг слова — разделитель и в выражение не попадает: терм она не закроет.</summary>
     [Fact]
-    public void Inner_quotes_are_doubled()
+    public void Quotes_around_a_word_stay_out_of_the_expression()
     {
-        Assert.Equal("\"\"\"Регламент\"\"\"*", DocTextIndex.BuildMatch("\"Регламент\""));
+        Assert.Equal("\"гост\"*", DocTextIndex.BuildMatch("\"ГОСТ\""));
+        Assert.Equal("\"гост 34\"*", DocTextIndex.BuildMatch("ГОСТ\"34"));
     }
 
     // ── Разбор сниппета ──────────────────────────────────────────────────────

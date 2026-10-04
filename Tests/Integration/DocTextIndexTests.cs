@@ -85,11 +85,14 @@ public sealed class DocTextIndexTests : IDisposable
             ["c.txt"] = "просто гост без номера",
             // Сумма и дата так, как их показывает книга: разряды — языка системы.
             ["d.txt"] = $"Итого {DocNumbersBook.Shown(30772.48)} руб., дата 05.03.2024",
+            ["e.txt"] = "бухгалтерский учёт, площадь 40 м²",
+            ["f.txt"] = "Le café du coin",
         };
         foreach (var (name, text) in texts) Put(Write(name, text), text);
 
         foreach (var query in new[] { "21.501", "21.5", "C++", "гост ++", "гост 21", "\"21 501\"",
-                                      "30772", "30772,48", "30772.48", "30 772", "05.03.2024", "2024" })
+                                      "30772", "30772,48", "30772.48", "30 772", "05.03.2024", "2024",
+                                      "учет", "учёт", "м²", "cafe", "café" })
         {
             var found = _index.Search(query);
             Assert.True(found.Count > 0, $"по «{query}» ({DocTextIndex.BuildMatch(query)}) не нашлось ничего");
@@ -100,6 +103,95 @@ public sealed class DocTextIndexTests : IDisposable
                             $"«{query}» нашел «{text}», а подсветить в нем нечего");
             }
         }
+    }
+
+    /// <summary>
+    /// Поиск и подсветка складывают буквы и режут слова одинаково — по КАЖДОЙ букве латиницы,
+    /// греческого и кириллицы и по знакам, на которых они уже расходились: отдельные от буквы
+    /// надстрочные знаки, «²», «½», «Ⅳ», знак шрифта-символа, «₽». Документ на знак — слово
+    /// «zz?zz», и по каждому такому слову поиск и подсветка обязаны найти одни и те же
+    /// документы. Сторожится не только <see cref="DocHighlight"/>, но и сам токенизатор: сборка
+    /// SQLite с другими таблицами букв всплывет здесь, а не жалобой «нашлось, но не подсвечено».
+    /// </summary>
+    [Fact]
+    public void Search_and_highlight_treat_every_letter_alike()
+    {
+        var ranges = new (int From, int To)[]
+        {
+            (0x41, 0x5A), (0x61, 0x7A), (0xC0, 0x24F), (0x1E00, 0x1EFF),   // латиница
+            (0x370, 0x3FF), (0x400, 0x4FF), (0x2100, 0x214F),               // греческий, кириллица, «Ω», «K»
+        };
+        var chars = ranges.SelectMany(r => Enumerable.Range(r.From, r.To - r.From + 1))
+                          .Select(i => (char)i)
+                          // «Ϳ» появилась в Юникоде 7.0, в таблицах токенизатора ее еще нет.
+                          .Where(c => char.IsLetter(c) && c != 'Ϳ')
+                          .Concat("\u0300\u0301\u0306\u0308\u0483²³½Ⅳ\uF0B7₽№°_-")
+                          .Distinct()
+                          .ToList();
+
+        var texts = new Dictionary<string, string>();
+        foreach (var c in chars)
+        {
+            var name = $"c{(int)c:X4}.txt";
+            texts[name] = $"zz{c}zz";
+            Put(Write(name, texts[name]), texts[name]);
+        }
+
+        var broken = new List<string>();
+        foreach (var c in chars)
+        {
+            var query  = $"zz{c}zz";
+            var tokens = DocHighlight.Tokens(query);
+            var bySearch    = _index.Search(query, texts.Count).Select(h => Path.GetFileName(h.Path)).ToHashSet();
+            var byHighlight = texts.Where(t => DocHighlight.Find(t.Value, tokens).Count > 0).Select(t => t.Key).ToHashSet();
+            if (bySearch.SetEquals(byHighlight)) continue;
+
+            string Show(IEnumerable<string> names) => string.Join(" ", names.Order().Select(n => texts[n][2..^2]));
+            broken.Add($"«{c}» U+{(int)c:X4}: только поиск [{Show(bySearch.Except(byHighlight))}], " +
+                       $"только подсветка [{Show(byHighlight.Except(bySearch))}]");
+        }
+        Assert.True(broken.Count == 0, $"расхождений {broken.Count}:\n" + string.Join("\n", broken.Take(20)));
+    }
+
+    /// <summary>
+    /// «Ё» и «е» находят друг друга — в обе стороны, по началу слова и в слове с двумя «ё».
+    /// Токенизатор индекса «ё» не складывает («елка» не находила «ёлка»), а набирают обычно без
+    /// нее; уравнивает их запрос (<see cref="DocTextIndex.YoSpellings"/>).
+    /// </summary>
+    [Fact]
+    public void Ye_and_yo_find_each_other()
+    {
+        var texts = new Dictionary<string, string>
+        {
+            ["yo.txt"]    = "бухгалтерский учёт материалов",
+            ["ye.txt"]    = "учет затрат",
+            ["two.txt"]   = "трёхмёрная модель",
+            ["apart.txt"] = "зеленая е\u0308лка",   // «ё» двумя знаками — так ее отдают иные PDF
+        };
+        foreach (var (name, text) in texts) Put(Write(name, text), text);
+
+        string[] Found(string query) =>
+            [.. _index.Search(query).Select(h => Path.GetFileName(h.Path)).Order(StringComparer.Ordinal)];
+
+        Assert.Equal(["ye.txt", "yo.txt"], Found("учет"));
+        Assert.Equal(["ye.txt", "yo.txt"], Found("учёт"));
+        Assert.Equal(["ye.txt", "yo.txt"], Found("УЧЁТ"));
+        Assert.Equal(["ye.txt", "yo.txt"], Found("уче"));
+        Assert.Equal(["two.txt"],          Found("трехмерная"));
+        Assert.Equal(["apart.txt"],        Found("елка"));
+        Assert.Equal(["apart.txt"],        Found("ёлка"));
+    }
+
+    /// <summary>«Й» и «и» — разные буквы и для поиска: «иода» не находит «йода», «мои» — «мой».</summary>
+    [Fact]
+    public void Short_i_and_i_are_different_letters()
+    {
+        Put(Write("iod.txt", "раствор йода"), "раствор йода");
+        Put(Write("my.txt", "мой дом"), "мой дом");
+
+        Assert.Empty(_index.Search("иода"));
+        Assert.Empty(_index.Search("мои"));
+        Assert.Single(_index.Search("йода"));
     }
 
     /// <summary>Последнее слово запроса ищется по префиксу: «безопасн» находит «безопасности».</summary>
@@ -190,7 +282,7 @@ public sealed class DocTextIndexTests : IDisposable
                      "\"", "\"гост", "гост\"", "\"\"", "*", "гост*", "*гост", "-гост", "^гост", "гост:21",
                      "(гост", "гост)", "()", "{гост}", "[21]", "NEAR(гост 21)", "гост OR правила", "OR",
                      "AND", "NOT гост", "гост AND", "+", "%", "_", "\\", "'", "гост\0правила", "\0гост",
-                     "\u0002", "\u0003гост", "\t", "😀", "á", "21.501*", "\"21 501\"*",
+                     "\u0002", "\u0003гост", "\t", "😀", "a\u0301", "21.501*", "\"21 501\"*",
                      "gost:(21 OR 22)", new string('"', 101), string.Join(' ', Enumerable.Repeat("гост", 300)),
                  })
             try { _index.Search(query); }

@@ -22,8 +22,14 @@ namespace SmartBase.Core.Documents;
 ///       пропускается;</item>
 /// <item>последнее слово ищется по началу слова (в MATCH ему приписывается <c>*</c>), все
 ///       остальные — целым словом; у фразы «*» достается ее последней части;</item>
-/// <item>регистр и «е/ё» не различаются — так настроен токенизатор индекса
-///       (<c>unicode61 remove_diacritics 2</c>);</item>
+/// <item>слово и буквы — как у токенизатора индекса (<c>unicode61 remove_diacritics 2</c>):
+///       регистр не различается, с латиницы снимаются надстрочные знаки («cafe» — это «café»),
+///       «²» и «½» — часть слова («м²»), а «й» остается «й» (<see cref="Fold"/>,
+///       <see cref="IsWordChar"/>);</item>
+/// <item>«ё» читается как «е». Это единственное правило, которого у токенизатора нет: «ё» для
+///       него своя буква. Подсветка складывает ее здесь, а поиск уравнивает запросом — каждое
+///       «е» слова ищется и как «ё» (<c>DocTextIndex.YoSpellings</c>), а в поиске по
+///       названию «ё» складывается с обеих сторон сравнения;</item>
 /// <item>число из четырех и больше цифр ищется и с разрядами (<see cref="Variants"/>):
 ///       «30772» находит «30 772,48» — так сумму показывает книга.</item>
 /// </list>
@@ -52,9 +58,9 @@ public static class DocHighlight
             .Where(t => t.Length > 0)];
 
     /// <summary>
-    /// Части слова запроса — так, как режет его токенизатор <c>unicode61</c>: буквы и цифры
-    /// подряд образуют часть, все остальное — разделитель. «21.501» — две части, «C++» — одна
-    /// («c»), «++» — ни одной. Части уже сложены (<see cref="Fold"/>).
+    /// Части слова запроса — так, как режет его токенизатор <c>unicode61</c>: знаки слова
+    /// (<see cref="IsWordChar"/>) подряд образуют часть, все остальное — разделитель. «21.501» —
+    /// две части, «C++» — одна («c»), «++» — ни одной. Части уже сложены (<see cref="Fold"/>).
     /// </summary>
     public static string[] Parts(string? token)
     {
@@ -231,7 +237,8 @@ public static class DocHighlight
         return phrases;
     }
 
-    // Границы слов текста: [Start, End) каждой непрерывной цепочки букв и цифр.
+    // Границы слов текста: [Start, End) каждой непрерывной цепочки знаков слова. Снимаемый знак
+    // (<see cref="IsDroppedMark"/>) слово продолжает, но не начинает — так и у токенизатора.
     private static List<(int Start, int End)> Words(string text)
     {
         var words = new List<(int Start, int End)>();
@@ -240,40 +247,105 @@ public static class DocHighlight
         {
             if (!IsWordChar(text[pos])) { pos++; continue; }
             var start = pos;
-            while (pos < text.Length && IsWordChar(text[pos])) pos++;
+            while (pos < text.Length && (IsWordChar(text[pos]) || IsDroppedMark(text[pos]))) pos++;
             words.Add((start, pos));
         }
         return words;
     }
 
     /// <summary>
-    /// Буква слова. Цифры считаются буквами (артикул «ГОСТ 21.501» — три слова, и «21» из
-    /// них ищется наравне с прочими), знак подчеркивания — нет: так режет на слова токенизатор
-    /// <c>unicode61</c>.
+    /// Знак слова — тот, который токенизатор <c>unicode61</c> считает частью слова: буквы,
+    /// цифры и прочие числа («м²», «½», римская «Ⅳ» — одно слово), знаки личного пользования (ими
+    /// шрифты-символы отдают в PDF маркеры списков) и «₽» — знака рубля нет в таблицах
+    /// токенизатора, и он держит его за букву. Знак подчеркивания — не знак слова. Совпадение с
+    /// токенизатором по каждому знаку латиницы, греческого и кириллицы сторожит
+    /// <c>DocTextIndexTests</c>: найденное поиском обязано подсветиться, а иное — нет.
     /// </summary>
-    private static bool IsWordChar(char c) => char.IsLetterOrDigit(c);
+    private static bool IsWordChar(char c)
+    {
+        if (c < 128) return char.IsAsciiLetterOrDigit(c);
+        return c == '₽' || CharUnicodeInfo.GetUnicodeCategory(c) is
+            UnicodeCategory.UppercaseLetter or UnicodeCategory.LowercaseLetter or
+            UnicodeCategory.TitlecaseLetter or UnicodeCategory.ModifierLetter or
+            UnicodeCategory.OtherLetter or UnicodeCategory.DecimalDigitNumber or
+            UnicodeCategory.LetterNumber or UnicodeCategory.OtherNumber or
+            UnicodeCategory.PrivateUse;
+    }
 
     /// <summary>
-    /// Слово в виде, в котором его сравнивают: нижний регистр, «ё» как «е», «й» как «и».
-    ///
-    /// Последнее выглядит странно, но это ровно то, что делает индекс: у токенизатора
-    /// <c>unicode61</c> с <c>remove_diacritics 2</c> обе буквы раскладываются на основу плюс
-    /// надстрочный знак, а знак снимается. Расходиться с ним нельзя — иначе найденное в поиске
-    /// слово в панели чтения осталось бы неподсвеченным.
+    /// Отдельный от буквы знак, который токенизатор снимает, не разрывая слова: ударение
+    /// («за́мок» — это «замок»), две точки и бреве разложенных «ё» и «й», седиль и прочие —
+    /// ровно его список (<c>sqlite3Fts5UnicodeIsdiacritic</c>). Остальные такие знаки для него —
+    /// разделители слов. Разложенная «й» поэтому и для индекса, и здесь — «и»; в тексте документов
+    /// буквы почти всегда целые, и это касается редкого PDF.
+    /// </summary>
+    private static bool IsDroppedMark(char c) =>
+        c is >= '\u0300' and <= '\u0331' && DroppedMarks.Contains(c);
+
+    private const string DroppedMarks =
+        "\u0300\u0301\u0302\u0303\u0304\u0306\u0307\u0308\u0309\u030A\u030B\u030C\u030F\u0311" +
+        "\u031B\u0323\u0324\u0325\u0326\u0327\u0328\u032D\u032E\u0330\u0331";
+
+    /// <summary>
+    /// Слово в виде, в котором его сравнивают: нижний регистр, без снимаемых знаков, латиница
+    /// без надстрочных знаков («café» — «cafe»), греческие начертания одной буквы — одной буквой
+    /// («ϕ» — «φ», «ς» — «σ»), «ё» как «е». Все, кроме «ё», — ровно то, что делает токенизатор
+    /// индекса; расходиться с ним нельзя, иначе найденное в поиске слово в панели чтения осталось
+    /// бы неподсвеченным, а подсвеченное — не найденным. «Й» остается «й»: для токенизатора это
+    /// своя буква, и «мой» с «мои» — разные слова.
     /// </summary>
     public static string Fold(string? word) => string.IsNullOrEmpty(word) ? "" : Fold(word.AsSpan());
 
     private static string Fold(ReadOnlySpan<char> word)
     {
         var chars = new char[word.Length];
-        for (var i = 0; i < word.Length; i++) chars[i] = Fold(word[i]);
-        return new string(chars);
+        var n = 0;
+        foreach (var c in word)
+            if (!IsDroppedMark(c)) chars[n++] = Fold(c);
+        return new string(chars, 0, n);
     }
 
-    private static char Fold(char c) => char.ToLowerInvariant(c) switch
+    private static char Fold(char c)
     {
-        'ё' => 'е',
-        'й' => 'и',
-        var lower => lower,
-    };
+        var lower = char.ToLowerInvariant(c);
+        if (lower < '\u00C0') return lower;
+        if (lower == 'ё') return 'е';
+        if (lower <= '\u024F') return LatinBare[lower - '\u00C0'];
+        if (lower is >= '\u1E00' and <= '\u1EFF') return LatinMoreBare[lower - '\u1E00'];
+        return lower switch
+        {
+            'ς' => 'σ', 'ϐ' => 'β', 'ϑ' => 'θ', 'ϕ' => 'φ',
+            'ϖ' => 'π', 'ϰ' => 'κ', 'ϱ' => 'ρ', 'ϵ' => 'ε',
+            _   => lower,
+        };
+    }
+
+    // Латиница без надстрочных знаков: буква, которая раскладывается на латинскую основу и
+    // знаки, становится основой. Две таблицы — по двум блокам латиницы с такими буквами.
+    private static readonly char[] LatinBare     = BareLetters('\u00C0', '\u024F');
+    private static readonly char[] LatinMoreBare = BareLetters('\u1E00', '\u1EFF');
+
+    private static char[] BareLetters(char from, char to)
+    {
+        var table = new char[to - from + 1];
+        for (var c = from; c <= to; c++)
+        {
+            var parts = c.ToString().Normalize(NormalizationForm.FormD);
+            var bare  = parts.Length > 1 && char.IsAsciiLetter(parts[0]);
+            for (var i = 1; bare && i < parts.Length; i++)
+                bare = CharUnicodeInfo.GetUnicodeCategory(parts[i]) == UnicodeCategory.NonSpacingMark;
+            table[c - from] = bare ? char.ToLowerInvariant(parts[0]) : c;
+        }
+
+        // Расхождения таблиц токенизатора с разложением Юникода — его, и повторяются как есть:
+        // длинная «ſ» для него «s», а «ǡ» он оставляет буквой.
+        void Set(char letter, char value)
+        {
+            if (letter >= from && letter <= to) table[letter - from] = value;
+        }
+        Set('ſ', 's');
+        Set('ẛ', 's');
+        Set('ǡ', 'ǡ');
+        return table;
+    }
 }

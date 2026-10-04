@@ -36,10 +36,12 @@ public sealed class DocHighlightTests
     [Fact]
     public void Match_expression_is_built_from_the_same_words()
     {
-        var tokens = DocHighlight.Tokens("гост 21.501");
-        var match  = DocTextIndex.BuildMatch("гост 21.501");
+        var tokens = DocHighlight.Tokens("ГОСТ 21.501");
+        var match  = DocTextIndex.BuildMatch("ГОСТ 21.501");
 
-        foreach (var token in tokens) Assert.Contains(token, match, StringComparison.Ordinal);
+        // Фраза выражения — те же части, на которые слово режет подсветка, и так же сложенные.
+        foreach (var token in tokens)
+            Assert.Contains("\"" + string.Join(' ', DocHighlight.Parts(token)) + "\"", match, StringComparison.Ordinal);
         // Последнему слову приписан «*» — его же панель ищет по началу слова.
         Assert.EndsWith("*", match, StringComparison.Ordinal);
     }
@@ -53,14 +55,72 @@ public sealed class DocHighlightTests
     }
 
     /// <summary>
-    /// «ё» ищется как «е» — так документ с «учёт» находится по «учет». Это не вольность
-    /// подсветки, а поведение токенизатора индекса (<c>unicode61 remove_diacritics 2</c>).
+    /// «ё» ищется как «е» — так документ с «учёт» находится по «учет», и наоборот. У
+    /// токенизатора индекса такого правила нет, поиск уравнивает «е» и «ё» запросом
+    /// (<c>DocTextIndex.YoSpellings</c>), а подсветка — сложением.
     /// </summary>
     [Fact]
     public void Yo_is_read_as_ye()
     {
         Assert.Equal(["учёт"], Words("бухгалтерский учёт ведется", "учет"));
         Assert.Equal(["учет"], Words("бухгалтерский учет ведется", "учёт"));
+        Assert.Equal(["УЧЁТ"], Words("БУХГАЛТЕРСКИЙ УЧЁТ", "учет"));
+    }
+
+    /// <summary>
+    /// А «й» — своя буква, и для токенизатора тоже: «мой» и «мои» — разные слова. Пока
+    /// подсветка складывала «й» в «и», панель подсвечивала то, чего поиск не находил.
+    /// </summary>
+    [Fact]
+    public void Short_i_is_a_letter_of_its_own()
+    {
+        Assert.Equal(["мои"], Words("мой дом и мои книги", "мои"));
+        Assert.Empty(Words("йод", "иод"));
+        Assert.Equal(["йод"], Words("йод", "йод"));
+    }
+
+    /// <summary>
+    /// С латиницы надстрочные знаки снимаются, как в индексе: «cafe» находит «café», и панель
+    /// обязана его подсветить.
+    /// </summary>
+    [Fact]
+    public void Latin_letters_lose_their_marks()
+    {
+        Assert.Equal(["café"], Words("Le café du coin", "cafe"));
+        Assert.Equal(["Zürich"], Words("Werk Zürich", "zurich"));
+        Assert.Equal(["Zurich"], Words("Werk Zurich", "zürich"));
+    }
+
+    /// <summary>
+    /// Знак, стоящий отдельно от буквы, — ударение или две точки разложенной «ё» — слова не
+    /// рвет: индекс его снимает, а слово читает целым.
+    /// </summary>
+    [Fact]
+    public void A_mark_apart_from_its_letter_does_not_split_the_word()
+    {
+        Assert.Equal(["за\u0301мок"], Words("старый за\u0301мок", "замок"));
+        Assert.Equal(["за\u0301мок"], Words("старый за\u0301мок", "за\u0301мок"));
+        Assert.Equal(["е\u0308лка"],   Words("зеленая е\u0308лка", "ёлка"));
+    }
+
+    /// <summary>
+    /// «²», «½» и римская «Ⅳ» — часть слова: «м²» для индекса одно слово, и по «м²» не
+    /// подсвечивается каждое слово на «м».
+    /// </summary>
+    [Fact]
+    public void Superscripts_and_fractions_belong_to_the_word()
+    {
+        Assert.Equal(["м²"], Words("площадь 40 м² и масса", "м²"));
+        Assert.Equal(["½"],  Words("доля ½ ставки", "½"));
+        Assert.Empty(Words("объем 5 м³", "м3"));
+    }
+
+    /// <summary>Греческие начертания одной буквы — одна буква: «φ» находит и «ϕ», как в индексе.</summary>
+    [Fact]
+    public void Greek_letter_shapes_are_one_letter()
+    {
+        Assert.Equal(["ϕ"], Words("угол ϕ = 30°", "φ"));
+        Assert.Equal(["ς"], Words("ς", "σ"));
     }
 
     /// <summary>

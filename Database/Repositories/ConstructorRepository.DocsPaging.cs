@@ -360,6 +360,11 @@ public partial class ConstructorRepository
     /// варианты остаются ради сервера с локалью «C». Набор путей уходит в <c>IN</c> по индексу
     /// <c>db_field_values(FieldId, Value)</c>: это точный заход, а не скан.
     ///
+    /// «Ё» не отличается от «е» — как и в поиске по тексту (<c>DocTextIndex.YoSpellings</c>):
+    /// «Учёт материалов» находится по «учет», а «Учет» — по «учёт». Сложение — <c>REPLACE</c>,
+    /// он есть у обоих провайдеров; вариантами здесь не обойтись — их число росло бы вдвое с
+    /// каждым «е» запроса.
+    ///
     /// Пути приходят КЛЮЧАМИ кеша (нормализованными), а в поле записи лежит написание самого
     /// человека, поэтому каждый путь разворачивается в свои написания
     /// (<c>DocTextIndex.Spellings</c>) — без этого поиск по содержимому молча терял бы находки.
@@ -389,11 +394,17 @@ public partial class ConstructorRepository
             .ToList();
         if (docFields.Count == 0) return result;
 
-        var variants = query.Length > 0 ? SearchVariants(query) : [];
+        // «ё» — как «е», и в запросе, и в названии с путем: так же, как поиск по тексту. Без «е»
+        // в запросе сложение ничего не меняет, и колонки сравниваются как есть.
+        var folded   = query.Replace('ё', 'е').Replace('Ё', 'Е');
+        var withYe   = folded.Contains('е') || folded.Contains('Е');
+        string Fold(string column) => withYe ? $"REPLACE(REPLACE({column}, 'ё', 'е'), 'Ё', 'Е')" : column;
+
+        var variants = folded.Length > 0 ? SearchVariants(folded) : [];
         var like     = LikeOp(db.IsPostgres);
         var likes    = new List<string>();
         for (var i = 0; i < variants.Count; i++)
-            likes.Add($"(r.Title {like} @q{i} ESCAPE '\\' OR v.Value {like} @q{i} ESCAPE '\\')");
+            likes.Add($"({Fold("r.Title")} {like} @q{i} ESCAPE '\\' OR {Fold("v.Value")} {like} @q{i} ESCAPE '\\')");
 
         var pathList = paths.SelectMany(DocIndex.DocTextIndex.Spellings)
                             .Distinct(StringComparer.Ordinal)

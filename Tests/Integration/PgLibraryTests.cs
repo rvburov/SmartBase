@@ -80,6 +80,10 @@ public sealed class PgLibraryTests
         Assert.DoesNotContain("Скидка 500",      Answer("поиск «50%»"));
         Assert.DoesNotContain("axb",             Answer("поиск «a_b»"));
         Assert.Contains("Scan_01.PDF",           Answer(@"поиск «Archive\Scan»"));
+        // «Ё» — как «е»: и в названии записи, и в имени файла, и в самом запросе.
+        Assert.Contains("Учёт поставок", Answer("поиск «учет»"));
+        Assert.Contains("Учёт поставок", Answer("поиск «УЧЁТ»"));
+        Assert.Contains("Отчёт.pdf",     Answer("поиск «отчет»"));
         // Путь из кеша сходится с записью, а на Windows — и с написанием прямыми слешами.
         Assert.Contains("ГОСТ 21.501.pdf", Answer("поиск по путям кеша"));
         if (OperatingSystem.IsWindows())
@@ -143,6 +147,7 @@ public sealed class PgLibraryTests
             second: (dealsScan, @"D:\Archive\Scan_01-скан.pdf"));
         Doc(deals, dealsFile, dealsType, "Договор аренды",   20, @"D:\Archive\MiXeD-Case.pdf", "Договор");
         Doc(deals, dealsFile, dealsType, "договор подряда",  30, @"D:\Archive\подряд.docx");
+        Doc(deals, dealsFile, dealsType, "Учёт поставок",    40, @"D:\Archive\Отчёт.pdf",      "Договор");
 
         string Show(DocRecord d) =>
             $"{d.CollectionName} · {d.Title} · {d.FileFieldName} · {d.Path} · «{d.DocType}»";
@@ -235,6 +240,9 @@ public sealed class PgLibraryTests
         Say("поиск «50%»", Find("50%"));
         Say("поиск «a_b»", Find("a_b"));
         Say(@"поиск «Archive\Scan»", Find(@"Archive\Scan"));
+        Say("поиск «учет»", Find("учет"));
+        Say("поиск «УЧЁТ»", Find("УЧЁТ"));
+        Say("поиск «отчет»", Find("отчет"));
         // Ключи кеша — такие, какими их дает KeyOf на Windows: с обратными слешами. Второй документ
         // записан в поле прямыми слешами и находится только через написания пути
         // (DocTextIndex.Spellings). Сам KeyOf не зовется: на Linux «C:\…» не корень, и ключ ушел

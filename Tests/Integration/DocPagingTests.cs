@@ -559,6 +559,34 @@ public sealed class DocPagingTests
         Assert.Single(repo.SearchDocs(null, "РЕГЛАМЕНТ", []));
     }
 
+    /// <summary>
+    /// «Ё» и «е» в названии и пути не различаются — как в поиске по тексту: «Учёт материалов»
+    /// находится по «учет», «Учет затрат» — по «учёт», файл «Отчёт.pdf» — по «отчет». А «й» — своя
+    /// буква: «иода» не находит «йода».
+    /// </summary>
+    [Fact]
+    public void Search_by_title_treats_yo_as_ye()
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+
+        var shell = Library(repo);
+        AddDoc(repo, shell, "Учёт материалов", "/u.pdf");
+        AddDoc(repo, shell, "Учет затрат",     "/z.pdf");
+        AddDoc(repo, shell, "Сверка",          "/Отчёт.pdf");
+        AddDoc(repo, shell, "Раствор йода",    "/i.pdf");
+
+        string[] Found(string query) =>
+            [.. Paths(repo.SearchDocs(null, query, [])).Order(StringComparer.Ordinal)];
+
+        Assert.Equal(["/u.pdf", "/z.pdf"], Found("учет"));
+        Assert.Equal(["/u.pdf", "/z.pdf"], Found("учёт"));
+        Assert.Equal(["/u.pdf", "/z.pdf"], Found("УЧЁТ"));
+        Assert.Equal(["/Отчёт.pdf"],       Found("отчет"));
+        Assert.Equal(["/Отчёт.pdf"],       Found("Отчёт"));
+        Assert.Empty(Found("иода"));
+    }
+
     /// <summary>Пути, найденные в кеше текста, сшиваются с записями — это и есть поиск
     /// по содержимому со стороны базы.</summary>
     [Fact]

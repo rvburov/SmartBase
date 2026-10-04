@@ -724,17 +724,19 @@ public sealed class DocTextIndex
         Task.Run(() => Search(query, limit, words));
 
     /// <summary>
-    /// Собирает выражение MATCH из пользовательского запроса. Каждое слово берется в двойные
-    /// кавычки (внутренние удваиваются) — так спецсимволы синтаксиса FTS5 (<c>* : ^ - NEAR OR</c>)
-    /// перестают быть синтаксисом и ищутся как текст. Последнему слову приписывается <c>*</c>:
-    /// человек, набравший «автоматизир», ожидает найти «автоматизированных».
+    /// Собирает выражение MATCH из пользовательского запроса. Каждое слово идет фразой в
+    /// двойных кавычках (внутренние удваиваются) — так спецсимволы синтаксиса FTS5
+    /// (<c>* : ^ - NEAR OR</c>) перестают быть синтаксисом. Последнему слову приписывается
+    /// <c>*</c>: человек, набравший «автоматизир», ожидает найти «автоматизированных».
     /// Пустой или бессловесный запрос дает пустую строку — поиск не выполняется.
     ///
-    /// Запрос режется на слова НЕ здесь, а в <see cref="DocHighlight.Tokens"/>: по этим же
-    /// словам панель чтения подсвечивает найденное в документе, и второй разбор запроса
-    /// означал бы «нашлось, но не подсвечено» при первом же расхождении. Оттуда же варианты
-    /// слова (<see cref="DocHighlight.Variants"/>): число «30772» ищется и как «30 772» — так
-    /// его показывает книга, — и варианты идут скобкой через OR.
+    /// Запрос режется на слова НЕ здесь, а в <see cref="DocHighlight.Tokens"/>, а слово — на
+    /// части в <see cref="DocHighlight.Variants"/>: по этим же частям панель чтения подсвечивает
+    /// найденное в документе, и второй разбор запроса означал бы «нашлось, но не подсвечено»
+    /// при первом же расхождении. Фраза собирается из сложенных частей, а не из набранного
+    /// слова: «ГОСТ-34.11» — это «гост 34 11», для токенизатора одно и то же. У слова бывает
+    /// несколько вариантов — число «30772» ищется и как «30 772», так его показывает книга, а
+    /// каждое «е» — и как «ё» (<see cref="YoSpellings"/>), — и варианты идут скобкой через OR.
     ///
     /// Слова соединяются ЯВНЫМ AND: у FTS5 неявное «и» связывает только фразы, а скобку с
     /// вариантами — нет. Слово из одной пунктуации («++») в выражение не идет вовсе: частей у
@@ -749,17 +751,62 @@ public sealed class DocTextIndex
         var parts = new List<string>(tokens.Count);
         for (var i = 0; i < tokens.Count; i++)
         {
-            var variants = DocHighlight.Variants(tokens[i]);
-            if (variants.Count == 0) continue;
+            var star = i == tokens.Count - 1 ? "*" : "";
+            var alternatives = DocHighlight.Variants(tokens[i])
+                .SelectMany(YoSpellings)
+                .Select(v => Quote(string.Join(' ', v)) + star)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            if (alternatives.Count == 0) continue;
 
-            var star   = i == tokens.Count - 1 ? "*" : "";
-            var quoted = Quote(tokens[i]) + star;
-
-            parts.Add(variants.Count < 2
-                ? quoted
-                : "(" + string.Join(" OR ", [quoted, .. variants.Skip(1).Select(v => Quote(string.Join(' ', v)) + star)]) + ")");
+            parts.Add(alternatives.Count == 1
+                ? alternatives[0]
+                : "(" + string.Join(" OR ", alternatives) + ")");
         }
         return string.Join(" AND ", parts);
+    }
+
+    /// <summary>Больше скольких написаний через «е» и «ё» одно слово запроса не дает.</summary>
+    public const int MaxYoSpellings = 64;
+
+    /// <summary>
+    /// Написания слова через «е» и «ё». Токенизатор индекса складывает регистр и снимает
+    /// надстрочные знаки с латиницы, но «ё» для него своя буква: «учёт» по «учет» не находился,
+    /// и наоборот, а набирают обычно без «ё». Сложить «ё» в самом кеше значило бы перечитать
+    /// все библиотеки и показывать в карточках «е» там, где в документе «ё», поэтому уравнивает
+    /// запрос: части в нем уже сложены в «е» (<see cref="DocHighlight.Fold"/>), и каждое «е»
+    /// ищется и как «ё».
+    ///
+    /// «Ё» стоит под ударением, а ударение в слове одно — у сложных слов два («трёхмёрный»).
+    /// Поэтому перебираются написания с нулем, одной и двумя «ё» — первым идет написание без
+    /// «ё» — и не больше <see cref="MaxYoSpellings"/>: слово из одних «е» не раздует выражение.
+    /// </summary>
+    public static List<string[]> YoSpellings(string[] parts)
+    {
+        var spots = new List<(int Part, int At)>();
+        for (var p = 0; p < parts.Length; p++)
+            for (var at = 0; at < parts[p].Length; at++)
+                if (parts[p][at] == 'е') spots.Add((p, at));
+
+        var spellings = new List<string[]> { parts };
+        string[] With(params (int Part, int At)[] yo)
+        {
+            var copy = (string[])parts.Clone();
+            foreach (var (p, at) in yo)
+            {
+                var chars = copy[p].ToCharArray();
+                chars[at] = 'ё';
+                copy[p] = new string(chars);
+            }
+            return copy;
+        }
+
+        for (var a = 0; a < spots.Count && spellings.Count < MaxYoSpellings; a++)
+            spellings.Add(With(spots[a]));
+        for (var a = 0; a < spots.Count && spellings.Count < MaxYoSpellings; a++)
+            for (var b = a + 1; b < spots.Count && spellings.Count < MaxYoSpellings; b++)
+                spellings.Add(With(spots[a], spots[b]));
+        return spellings;
     }
 
     // Фраза FTS5: в двойных кавычках, внутренние удвоены. Нулевой знак разбор выражения считает
