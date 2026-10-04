@@ -99,7 +99,9 @@ Linux, Windows, macOS Apple Silicon, macOS Intel. Упавшая платфор�
 за пределы шлюза; они идут в общем наборе модульных тестов.
 
 **11. Вспомогательные проекты.**
-`dotnet build` для `Tests/Benchmarks`, `Tests/DbGenerator`, `Tests/MultiProcess`.
+`dotnet build` для `Tests/Benchmarks`, `Tests/DbGenerator`, `Tests/MultiProcess` и
+`Tests/DocReader`; стенд панели чтения еще и прогоняется — это проверки, а не инструмент.
+Расхождение — код возврата 1, сводка по разделам стенда — в конце вывода шага.
 
 **12. Уборка ветки `ci`.**
 Удаляется после прогона, в том числе после красного и отмененного.

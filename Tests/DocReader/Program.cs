@@ -63,6 +63,7 @@ var dir = Path.Combine(Path.GetTempPath(), "sb-readerstand-" + Guid.NewGuid().To
 Directory.CreateDirectory(dir);
 
 var failures = 0;
+var sections = new List<(string Name, int Failures)>();
 try
 {
     Run();
@@ -72,11 +73,47 @@ finally
     try { Directory.Delete(dir, recursive: true); } catch { /* занят — уберет система */ }
 }
 
+// Сводка по разделам: по одному итоговому числу не понять, что именно покраснело.
+Console.WriteLine();
+Console.WriteLine("Разделы:");
+foreach (var (name, count) in sections)
+    Console.WriteLine($"  {name}: {(count == 0 ? "в порядке" : $"расхождений {count}")}");
+
 Console.WriteLine();
 Console.WriteLine(failures == 0 ? "Готово: расхождений нет." : $"Расхождений: {failures}");
 return failures == 0 ? 0 : 1;
 
+// Разделы независимы: каждый открывает свой документ, и несбывшееся ожидание обрывает только
+// свой раздел. Раньше разделы звали друг друга по цепочке, и один провал уносил из отчета все,
+// что шло после, — проверки книги целиком. Исключение в разделе — тоже расхождение, и остальные
+// разделы оно не останавливает.
 void Run()
+{
+    var reader = new DocReaderView();
+    var window = new Window { Width = 520, Height = 700, Content = reader };
+    window.Show();
+
+    Section("текстовый файл",            () => TextFile(reader));
+    Section("текст без текстового слоя", () => TextScan(reader));
+    Section("подсказки кнопки режима",   () => ModeHints(reader));
+    Section("скан PDF в двух режимах",   () => ScanModes(reader));
+    Section("как в документе",           () => Pages(reader, window));
+    Section("текст дочитывается позже",  () => LateText(reader));
+    Section("лист книги таблицей",       () => Sheets(reader));
+    Section("большая книга",             () => BigBook(reader));
+}
+
+void Section(string name, Action body)
+{
+    var before = failures;
+    try { body(); }
+    catch (Exception ex) { Check(false, $"раздел упал: {ex.GetType().Name}: {ex.Message}"); }
+    sections.Add((name, failures - before));
+}
+
+// ── Текстовый файл ──────────────────────────────────────────────────────────────
+
+void TextFile(DocReaderView reader)
 {
     var path = Path.Combine(dir, "договор.txt");
     File.WriteAllText(path,
@@ -96,10 +133,6 @@ void Run()
         CollectionName = "Договоры",
         DbName         = "Основная",
     };
-
-    var reader = new DocReaderView();
-    var window = new Window { Width = 520, Height = 700, Content = reader };
-    window.Show();
 
     // Панель читает документ в фоне — ждем, пока строки появятся в дереве.
     reader.Show(doc, "договор");
@@ -143,8 +176,14 @@ void Run()
     // видна: пропади она, полоса меняла бы ширину от документа к документу.
     var pagesBtn = Find<ToggleButton>(reader, "DocModeBtn");
     Check(pagesBtn is { IsEnabled: false }, "у текстового файла режим «как в документе» доступен");
+}
 
+// ── Текст без текстового слоя ───────────────────────────────────────────────────
+
+void TextScan(DocReaderView reader)
+{
     // Скан без текстового слоя: панель обязана объяснить это словами, а не пустотой.
+    var pagesBtn = Find<ToggleButton>(reader, "DocModeBtn");
     var empty = Path.Combine(dir, "скан.txt");
     File.WriteAllText(empty, "   \n\n  ");
     reader.Show(new DocRecord { Title = "Скан", Path = empty }, "договор");
@@ -168,10 +207,6 @@ void Run()
     Console.WriteLine("Подсказка у текстового файла: " + txtHint);
     Check(txtHint.Contains("текстового файла", StringComparison.Ordinal),
           $"у текстового файла подсказка «{txtHint}»");
-
-    ModeHints(reader);
-    ScanModes(reader);
-    Pages(reader, window);
 }
 
 // ── Подсказки кнопки режима ─────────────────────────────────────────────────────
@@ -341,10 +376,6 @@ void Pages(DocReaderView reader, Window window)
     Find<ToggleButton>(reader, "TextModeBtn")!.IsChecked = true;
     Pump();
     Check(Find<ListBox>(reader, "LinesList") is { IsVisible: true }, "по возврату не показан текст");
-
-    LateText(reader);
-    Sheets(reader);
-    BigBook(reader);
 }
 
 // ── Смена ширины, пока страница рисуется ────────────────────────────────────────

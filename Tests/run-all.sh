@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Прогон автотестов SmartBase.
 #   ./Tests/run-all.sh                   — Unit (быстрый гейт) + Integration (SQLite + PG, если поднят sb-pg)
+#                                          + стенд панели чтения библиотеки (Tests/DocReader)
 #   ./Tests/run-all.sh --with-extensions — плюс тесты расширений (Tests/Extensions/*)
 #   ./Tests/run-all.sh --with-bench      — плюс быстрый прогон бенчмарков (маленькие объемы, смоук)
 #
@@ -15,6 +16,13 @@ dotnet test Tests/Unit
 echo
 echo "== Integration (SQLite + PostgreSQL, если поднят sb-pg) =="
 dotnet test Tests/Integration
+
+# Стенд — живая Avalonia без экрана: разметка панели, подсветка, переходы, страницы PDF, таблица
+# книги. Отдельным проектом он в тесты не входит и, пока его не гонял общий прогон, мог стоять
+# красным месяцами. Расхождение — код возврата 1, и прогон останавливается.
+echo
+echo "== Стенд панели чтения библиотеки =="
+dotnet run --project Tests/DocReader -f net10.0
 
 if [[ "${1:-}" == "--with-extensions" ]]; then
   echo

@@ -28,7 +28,7 @@ UI/ViewModels в охват сознательно не входят — тес�
 dotnet test Tests/Unit                 # быстрый гейт: чистая логика, мс
 dotnet test Tests/Integration          # SQLite + PostgreSQL (медленнее)
 dotnet test SmartBase.sln              # оба набора ядра
-./Tests/run-all.sh                     # оба набора ядра (+ --with-bench для бенчмарков)
+./Tests/run-all.sh                     # оба набора ядра и стенд панели чтения (+ --with-bench)
 ./Tests/run-all.sh --with-extensions   # плюс тесты расширений
 dotnet test Tests/Integration --collect:"XPlat Code Coverage"   # покрытие (coverlet)
 ```

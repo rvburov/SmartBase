@@ -32,7 +32,7 @@
 dotnet test Tests/Unit                 # быстрый гейт (мс), без внешних зависимостей
 dotnet test Tests/Integration          # SQLite + PostgreSQL (если поднят стенд sb-pg)
 dotnet test SmartBase.sln              # оба набора ядра
-./Tests/run-all.sh                     # оба набора ядра
+./Tests/run-all.sh                     # оба набора ядра и стенд панели чтения
 ./Tests/run-extensions.sh              # все наборы расширений
 ./Tests/run-extensions.sh PdfRename    # один набор расширения
 ./Tests/run-all.sh --with-extensions   # ядро + расширения
