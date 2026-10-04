@@ -30,6 +30,9 @@
 //   «Расположение» и «Отображение»; время до результата, паузы UI, память.
 //   --only sidebarops — раскладка строк боковой панели после сворачивания баз, подключения базы,
 //   переноса коллекции в группу и обратно, удаления коллекции.
+//   --only libraryops — чужая правка до открытой ленты библиотеки: документ соседа появляется без
+//   перезахода, с чипом и в подвале; о прежних файлах диск не спрашивается; правки подряд
+//   сливаются в одно перечитывание.
 
 using System.Diagnostics;
 using System.Reflection;
@@ -455,6 +458,7 @@ async Task Scenario()
     if (only == "calops") { await CalendarOps(); return; }
     if (only == "tableops") { await TableOps(); return; }
     if (only == "sidebarops") { await SidebarOps(); return; }
+    if (only == "libraryops") { await LibraryOps(); return; }
     if (only == "sidebars")
     {
         // Дерево после старта: базы подключались в фоне, строки заглушек переносились на
@@ -1921,6 +1925,137 @@ Point EntryCenter(Control view, string title)
         return item.Owner.TranslatePoint(item.Bounds.Center, main!) ?? default;
     }
     throw new InvalidOperationException($"Нет события «{title}» в виде");
+}
+
+// ── Библиотека: чужая правка доходит до открытой ленты ──────────────────────────────
+//
+// Сосед по общей базе прикрепил документ к записи. Правка пишется мимо шины своих правок — чистым
+// SQL на своем подключении, как ее пишет другая машина, — а вызов OnRemoteChanges изображает
+// поллер журнала изменений. Открытая лента обязана показать документ без перезахода в раздел, с
+// чипом «не прочитан», и посчитать его в подвале. Перечитывание при этом ЛЕГКОЕ: о прежних файлах
+// диск не спрашивается — это видно по файлу, который убрали с диска перед правкой: лента и подвал
+// по-прежнему считают его на месте, пока раздел не перечитают целиком. Частые правки сливаются:
+// три подряд сразу после перечитывания дают одно отложенное, а не три.
+async Task LibraryOps()
+{
+    var faults = 0;
+    void Expect(bool ok, string what)
+    {
+        if (!ok) faults++;
+        Console.WriteLine(ok ? $"  {what}" : $"  НЕ ПРОШЛО: {what}");
+    }
+
+    var db   = workspace.Mounted.First(d => string.Equals(d.Path, mainPath, StringComparison.OrdinalIgnoreCase));
+    var repo = db.Constructor;
+    var dir  = Path.Combine(runDir, "libraryops");
+    if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+    Directory.CreateDirectory(dir);
+
+    // Своя библиотечная коллекция с одним документом — это своя правка, она идет шиной.
+    var col  = repo.AddCollection(new SmartBase.Core.Models.DbCollection { Name = "Стенд: документы" }).Id!.Value;
+    var file = repo.AddField(new SmartBase.Core.Models.DbField
+               { CollectionId = col, Name = "Файл", FieldType = "file", Position = 1000 }).Id!.Value;
+    repo.SetFileFieldInLibrary(file, true);
+    var ownPath = Path.Combine(dir, "свой.txt");
+    File.WriteAllText(ownPath, "свой документ");
+    var own = repo.AddRecord(new SmartBase.Core.Models.DbRecord { CollectionId = col, Title = "Стенд: свой", Position = 1000 }).Id!.Value;
+    repo.SetFieldValue(own, file, ownPath);
+
+    Step("библиотека: лента со своим документом");
+    ShowModule("library");
+    await Settle(1.5, 90);
+    var library = (SmartBase.Views.Library.LibraryControllerView)Module("LibraryModule");
+    var feed    = (SmartBase.Views.Library.DocListView)Get(library, "DocList")!;
+
+    SmartBase.Core.Models.DocRecord? Doc(string title) =>
+        feed.Cards.Select(c => c.Doc).FirstOrDefault(d => d.Title == title);
+    SmartBase.Database.DocIndex.DocCensus Census() => (SmartBase.Database.DocIndex.DocCensus)Get(library, "_census")!;
+    int Generation() => (int)Get(library, "_gen")!;
+    async Task<bool> Until(Func<bool> done, double capSec)
+    {
+        var sw = Stopwatch.StartNew();
+        while (sw.Elapsed.TotalSeconds < capSec)
+        {
+            if (done()) return true;
+            await Task.Delay(100);
+        }
+        return done();
+    }
+
+    if (!await Until(() => Doc("Стенд: свой") is not null && Census().Total == 1, 30))
+    {
+        Expect(false, $"лента не показала свой документ или перепись его не посчитала (в подвале {Census().Total})");
+        Console.WriteLine($"Библиотека: НЕ ПРОШЛО {faults}");
+        return;
+    }
+
+    // Чужая правка: свой файл убрали с диска, а сосед прикрепил новый документ.
+    File.Delete(ownPath);
+    var theirPath = Path.Combine(dir, "соседа.txt");
+    File.WriteAllText(theirPath, "документ соседа");
+    using (var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={db.Path}"))
+    {
+        conn.Open();
+        using var tx  = conn.BeginTransaction();
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = """
+            INSERT INTO db_records (CollectionId, Title, Position, CreatedAt, UpdatedAt, AllDay)
+            VALUES ($c, 'Стенд: от соседа', 2000, $now, $now, 0);
+            SELECT last_insert_rowid();
+            """;
+        cmd.Parameters.AddWithValue("$c", col);
+        cmd.Parameters.AddWithValue("$now", DateTime.Now.ToString("o"));
+        var rec = Convert.ToInt32(cmd.ExecuteScalar());
+        cmd.Parameters.Clear();
+        cmd.CommandText = "INSERT INTO db_field_values (RecordId, FieldId, Value) VALUES ($r, $f, $v)";
+        cmd.Parameters.AddWithValue("$r", rec);
+        cmd.Parameters.AddWithValue("$f", file);
+        cmd.Parameters.AddWithValue("$v", theirPath);
+        cmd.ExecuteNonQuery();
+        tx.Commit();
+    }
+
+    void Poll() => Call(main!, "OnRemoteChanges", db.DbId,
+        new List<SmartBase.Database.ChangePoller.RemoteChange> { new("insert", "record", "Стенд: документы") });
+
+    Step("библиотека: чужая правка");
+    var before = Generation();
+    Poll();
+    var arrived = await Until(() => Doc("Стенд: от соседа") is not null && Census().Total == 2, 15);
+    var theirs  = Doc("Стенд: от соседа");
+    var mine    = Doc("Стенд: свой");
+    Expect(arrived, $"документ соседа появился в открытой ленте без перезахода (в подвале {Census().Total})");
+    Expect(theirs?.TextState == SmartBase.Core.Models.DocTextState.NotRead,
+           $"у документа соседа чип «не прочитан» (состояние {theirs?.TextState})");
+    Expect(Generation() - before == 1, $"одно перечитывание на правку (было {Generation() - before})");
+    Expect(mine is { SizeBytes: >= 0 },
+           "легкий путь не спрашивал диск о прежнем файле: убранный файл лента еще считает на месте");
+
+    // Правки подряд проверяются, только пока не вышел промежуток с прошлого перечитывания: если
+    // документ соседа доезжал дольше, первая из них законно перечитала бы ленту сразу.
+    Step("библиотека: правки подряд");
+    var since = DateTime.UtcNow - (DateTime)Get(library, "_remoteLast")!;
+    if (since > TimeSpan.FromSeconds(3))
+        Console.WriteLine($"  сценарий не сложился: с перечитывания прошло {since.TotalSeconds:0.0} с — правки подряд не проверены");
+    else
+    {
+        var settled = Generation();
+        Poll(); Poll(); Poll();
+        await Task.Delay(1000);
+        Expect(Generation() == settled, $"внутри промежутка лента не перечитывается (перечитываний {Generation() - settled})");
+        await Until(() => Generation() > settled, 8);
+        await Task.Delay(1500);
+        Expect(Generation() - settled == 1, $"три правки подряд — одно отложенное перечитывание (было {Generation() - settled})");
+    }
+
+    // Полное перечитывание (здесь — Refresh раздела) спрашивает диск заново и видит убранный файл.
+    Step("библиотека: полное перечитывание");
+    Call(library, "Refresh");
+    var full = await Until(() => Doc("Стенд: свой") is { SizeBytes: < 0 } && Census().Total == 1, 15);
+    Expect(full, $"полное перечитывание увидело убранный с диска файл (в подвале {Census().Total})");
+
+    Console.WriteLine(faults == 0 ? "Библиотека: все проверки прошли" : $"Библиотека: НЕ ПРОШЛО {faults}");
 }
 
 // Разделы окна (кроме конструктора) строит первый показ, поэтому по имени в разметке их нет —

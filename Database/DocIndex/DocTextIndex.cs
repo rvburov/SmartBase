@@ -34,12 +34,44 @@ public readonly record struct DocCensus(
 {
     /// <summary>Внутри скольких документов поиск искать не будет, сколько ни читай.</summary>
     public int NeverSearchable => NoText + Unsupported + Failed;
+
+    /// <summary>
+    /// Числа по состояниям документов — те же, что дала бы перепись этих путей
+    /// (<see cref="DocTextIndex.Survey"/>): в счет идут только файлы, найденные на диске. Так числа
+    /// подвала пересчитываются из карты состояний, не спрашивая диск заново, — легкое
+    /// перечитывание ленты по чужой правке спрашивает его только о новых путях.
+    /// </summary>
+    public static DocCensus Of(IEnumerable<DocFileState> files)
+    {
+        int total = 0, read = 0, notRead = 0, noText = 0, unsupported = 0, failed = 0;
+        foreach (var file in files)
+        {
+            if (!file.OnDisk) continue;
+            total++;
+            switch (file.State)
+            {
+                case DocTextState.Read:        read++;        break;
+                case DocTextState.NotRead:     notRead++;     break;
+                case DocTextState.NoText:      noText++;      break;
+                case DocTextState.Unsupported: unsupported++; break;
+                default:                       failed++;      break;
+            }
+        }
+        return new DocCensus(total, read, notRead, noText, unsupported, failed);
+    }
 }
 
 /// <summary>Что сказать про текст одного документа на его карточке.</summary>
 /// <param name="State">Состояние текста — им подписан серый чип.</param>
 /// <param name="Pages">Число страниц из кеша; 0 — неизвестно (есть только у прочитанных).</param>
-public readonly record struct DocFileState(DocTextState State, int Pages);
+public readonly record struct DocFileState(DocTextState State, int Pages)
+{
+    /// <summary>
+    /// Файл нашелся на диске. В числа подвала идут только такие, и по этому признаку
+    /// <see cref="DocCensus.Of"/> пересчитывает их из карты состояний без нового обхода диска.
+    /// </summary>
+    public bool OnDisk { get; init; } = true;
+}
 
 /// <summary>
 /// Итог одной переписи: что разобрать, сколько документов в каком состоянии и что сказать про
@@ -332,9 +364,9 @@ public sealed class DocTextIndex
             var changed = !has || (size >= 0 && (e.Mtime != mtime || e.Size != size ||
                                                  e.Revision < DocTextExtractor.RevisionOf(key)));
 
-            files[key] = changed
+            files[key] = (changed
                 ? new DocFileState(DocTextState.NotRead, 0)
-                : new DocFileState(StateOf(e.Status), e.Pages);
+                : new DocFileState(StateOf(e.Status), e.Pages)) with { OnDisk = size >= 0 };
 
             if (size < 0) continue;                        // файла нет на диске — он не документ
             total++;

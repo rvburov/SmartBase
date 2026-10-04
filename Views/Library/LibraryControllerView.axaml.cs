@@ -165,6 +165,47 @@ public partial class LibraryControllerView : UserControl
         RefreshCurrent(quiet);
     }
 
+    /// <summary>
+    /// Чужая правка в базах (сосед по общей базе, поллер журнала изменений) — перечитать ленту
+    /// ЛЕГКО. Перечитывать ее на каждую чужую правку вместе с переписью нельзя: перепись
+    /// спрашивает у диска каждый файл, а на общей папке сервера это секунды. Поэтому легкий путь
+    /// заново читает только базу, а диск спрашивает о новых путях — тех, которых не было ни на
+    /// экране, ни в прошлой переписи; страничная лента и так читает лишь видимые страницы. Числа
+    /// подвала при этом пересчитываются из карты состояний (<see cref="DocCensus.Of"/>), так что
+    /// чипы с ними не расходятся. И не чаще раза в <see cref="RemoteGap"/>: правки, пришедшие за
+    /// время ожидания, заберет одно отложенное перечитывание.
+    ///
+    /// Раньше чужую правку открытая библиотека не получала вовсе: документ, который сосед
+    /// прикрепил к записи, появлялся только после перезахода в раздел.
+    /// </summary>
+    public void RefreshRemote(Dictionary<int, HashSet<int>> activeByDb)
+    {
+        // Сосед подключил коллекцию к библиотеке или отключил: это уже другая лента, а не правка
+        // данных в прежней, — обычное чтение.
+        if (!DocLoadPlan.SameActiveIds(_activeByDb, activeByDb)) { SetActiveIds(activeByDb); return; }
+        if (_remotePending) return;   // перечитывание уже назначено — оно заберет и эту правку
+
+        var wait = DocLoadPlan.RemoteWait(_remoteLast, DateTime.UtcNow, RemoteGap);
+        if (wait <= TimeSpan.Zero) { RefreshRemoteNow(); return; }
+
+        _remotePending = true;
+        DispatcherTimer.RunOnce(() => { _remotePending = false; RefreshRemoteNow(); }, wait);
+    }
+
+    /// <summary>Не чаще одного легкого перечитывания по чужим правкам за этот промежуток.</summary>
+    private static readonly TimeSpan RemoteGap = TimeSpan.FromSeconds(5);
+
+    private DateTime _remoteLast = DateTime.MinValue;
+    private bool     _remotePending;
+
+    private void RefreshRemoteNow()
+    {
+        _remoteLast = DateTime.UtcNow;
+        // Сосед мог проставить или сменить тип документа — посчитанные гистограммы устарели.
+        ForgetHistograms();
+        RefreshCurrent(quiet: true, light: true);
+    }
+
     /// <summary>Обновить набор смонтированных БД (live add/remove) без переподписки обработчиков.</summary>
     public void SetDatabases(IReadOnlyList<DatabaseManager> databases)
     {
@@ -243,21 +284,26 @@ public partial class LibraryControllerView : UserControl
     /// «Загрузка…» не показывается. Так перечитываются данные ПОСЛЕ действия — человек смотрит
     /// на карточку, а не начинает все заново.
     /// </param>
-    private void RefreshCurrent(bool quiet = false)
+    /// <param name="light">
+    /// Легкое перечитывание по чужой правке (<see cref="RefreshRemote"/>): диск спрашивается
+    /// только о новых путях, полной переписи нет.
+    /// </param>
+    private void RefreshCurrent(bool quiet = false, bool light = false)
     {
         // Скрытый раздел не читает (то же правило, что у «Задач» и календаря): лента по всем
         // базам на старте шла по разу на каждую подключенную базу. Отметка остается, раздел
-        // перечитается при показе; громкое обновление среди отложенных побеждает тихое.
+        // перечитается при показе; громкое обновление среди отложенных побеждает тихое. Легкое
+        // при этом не откладывается: при показе раздел перечитается целиком.
         if (!IsVisible)
         {
             _loadDeferred   = true;
             _deferredQuiet &= quiet;
             return;
         }
-        if (_loadDeferred) quiet &= _deferredQuiet;
+        if (_loadDeferred) { quiet &= _deferredQuiet; light = false; }
         _loadDeferred  = false;
         _deferredQuiet = true;
-        _ = LoadAsync(quiet);
+        _ = LoadAsync(quiet, light);
     }
 
     private bool _loadDeferred;
@@ -273,7 +319,7 @@ public partial class LibraryControllerView : UserControl
                                      DispatcherPriority.Background);
     }
 
-    private async Task LoadAsync(bool quiet = false)
+    private async Task LoadAsync(bool quiet = false, bool light = false)
     {
         DataStamp = ChangeBus.Now();
         if (_dbs.Count == 0)
@@ -298,7 +344,7 @@ public partial class LibraryControllerView : UserControl
         _virtual = null;
         _thumbAsked.Clear();
 
-        var work = _searchQuery.Trim().Length > 0 ? LoadSearchAsync(gen) : LoadFeedAsync(gen);
+        var work = _searchQuery.Trim().Length > 0 ? LoadSearchAsync(gen) : LoadFeedAsync(gen, light);
 
         // Оверлей — только если не успели за 400 мс И эта загрузка все еще актуальна: правило
         // целиком в DocLoadPlan, там же его «почему» и тесты.
@@ -327,12 +373,16 @@ public partial class LibraryControllerView : UserControl
 
         // Подвал показывает то, что известно СЕЙЧАС, и обновится сам, когда досчитается перепись.
         RefreshStatus();
-        _ = RefreshCensusAsync();
+        _ = light ? RefreshCensusLightAsync() : RefreshCensusAsync();
     }
 
     // Обычная лента: размеры потоков считаются в фоне, дальше — либо все в память, либо страницы.
-    private async Task LoadFeedAsync(int gen)
+    private async Task LoadFeedAsync(int gen, bool light = false)
     {
+        // Легкое перечитывание берет отметки файлов у карточек на экране: чужая правка меняет
+        // базу, а не файлы, и спрашивать диск заново о тех же путях незачем. Это касается ленты
+        // в памяти — страничная и так спрашивает диск лишь о видимых страницах.
+        var shown   = light ? ShownStamps() : null;
         var view    = new ConstructorRepository.DocView(_types);
         var entries = new List<DocVirtualList.Entry>();
         var total   = 0;
@@ -380,7 +430,7 @@ public partial class LibraryControllerView : UserControl
                 if (gen != _gen) return;
                 // Файлы спрашиваются в пуле, а не карточкой в UI-потоке: здесь их до десяти тысяч, и
                 // на сетевой папке раздел висел бы на них при каждом открытии.
-                await Task.Run(() => DocStamps.Probe(part));
+                await Task.Run(() => Probe(part, shown));
                 if (gen != _gen) return;
                 foreach (var d in part)
                 {
@@ -401,6 +451,34 @@ public partial class LibraryControllerView : UserControl
         list.TextState     = ApplyTextState;
         _virtual = list;
         DocList.Show(list);
+    }
+
+    // Отметки файлов карточек на экране (лента в памяти): путь → время правки и размер.
+    private Dictionary<string, (long Mtime, long Size)> ShownStamps()
+    {
+        var stamps = new Dictionary<string, (long Mtime, long Size)>(StringComparer.Ordinal);
+        foreach (var card in DocList.Cards)
+            if (card.Doc is { OnDiskKnown: true, Path.Length: > 0 } doc)
+                stamps[doc.Path] = (doc.Mtime, doc.SizeBytes);
+        return stamps;
+    }
+
+    // Отметки файлов: известные — с экрана, остальные — с диска.
+    private static void Probe(List<DocRecord> docs, Dictionary<string, (long Mtime, long Size)>? shown)
+    {
+        if (shown is not { Count: > 0 }) { DocStamps.Probe(docs); return; }
+
+        var fresh = new List<DocRecord>();
+        foreach (var doc in docs)
+        {
+            if (doc.Path.Length > 0 && shown.TryGetValue(doc.Path, out var stamp))
+            {
+                (doc.Mtime, doc.SizeBytes) = stamp;
+                doc.OnDiskKnown = true;
+            }
+            else fresh.Add(doc);
+        }
+        if (fresh.Count > 0) DocStamps.Probe(fresh);
     }
 
     // Поиск: сначала кеш текста (он отдает пути и сниппеты), потом базы — они сшивают пути с
@@ -705,6 +783,50 @@ public partial class LibraryControllerView : UserControl
         // Ни одного файла не нашлось (галочки сняты, папка отвалилась) — уборку не начинаем:
         // попытка за запуск одна, и тратить ее на заход, когда диск молчит, незачем.
         if (survey.Census.Total > 0) _ = service.SweepOnceAsync();
+    }
+
+    /// <summary>
+    /// Легкая перепись после чужой правки (<see cref="RefreshRemote"/>). Пути берутся из баз
+    /// заново — это запрос к базе, а не к диску, — а диск спрашивается только о новых: тех, кого
+    /// нет в карте состояний прошлой переписи. Числа подвала пересчитываются по карте
+    /// (<see cref="DocCensus.Of"/>) — по тем же правилам, что у полной переписи, поэтому чипы и
+    /// числа по-прежнему из одного источника, а убранный соседом документ из чисел уходит.
+    /// Измененный на диске файл легкая перепись не заметит — это дело полной, при следующем
+    /// заходе в раздел: чужая правка меняет базу, а не файлы.
+    ///
+    /// Карты еще нет (полная перепись не досчиталась) — дополнять нечего, идет полная.
+    /// </summary>
+    private async Task RefreshCensusLightAsync()
+    {
+        if (_states is not { } states || DocIndexService.Current is not { } service)
+        {
+            await RefreshCensusAsync();
+            return;
+        }
+
+        var gen = _gen;
+        try
+        {
+            var paths  = await ActivePathsAsync();
+            var fresh  = paths.Where(p => !states.ContainsKey(DocTextIndex.KeyOf(p))).ToList();
+            var survey = fresh.Count > 0 ? await Task.Run(() => service.Index.Survey(fresh)) : null;
+            if (gen != _gen) return;
+
+            var merged = new Dictionary<string, DocFileState>(states, StringComparer.Ordinal);
+            if (survey is not null)
+                foreach (var (key, state) in survey.Files) merged[key] = state;
+
+            _states = merged;
+            _census = DocCensus.Of(paths.Select(p => merged.GetValueOrDefault(DocTextIndex.KeyOf(p),
+                                                                              new DocFileState(DocTextState.NotRead, 0))));
+            ApplyTextStateToShownCards();
+            RefreshStatus();
+        }
+        catch (Exception ex)
+        {
+            if (Logging.Diag.Throttle("library-census-fail", TimeSpan.FromMinutes(1)))
+                Serilog.Log.Warning(ex, "Библиотека: состояние кеша документов не прочитано");
+        }
     }
 
     /// <summary>

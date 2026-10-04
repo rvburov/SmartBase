@@ -237,4 +237,22 @@ public sealed class DocLoadPlanTests
         Assert.Equal(DocReaderAction.Ignore,
                      DocLoadPlan.ReaderToggle(wantOpen: true, isOpen, hasLastRead: true));
     }
+
+    // ── Чужие правки ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Лента по чужой правке перечитывается не чаще раза в промежуток: первая правка — сразу,
+    /// следующая внутри промежутка ждет его конца, после конца — снова сразу.
+    /// </summary>
+    [Fact]
+    public void Remote_refresh_waits_out_the_gap_since_the_last_one()
+    {
+        var gap  = TimeSpan.FromSeconds(5);
+        var last = new DateTime(2026, 10, 4, 12, 0, 0, DateTimeKind.Utc);
+
+        Assert.Equal(TimeSpan.Zero, DocLoadPlan.RemoteWait(DateTime.MinValue, last, gap));   // первая — сразу
+        Assert.Equal(TimeSpan.FromSeconds(3), DocLoadPlan.RemoteWait(last, last.AddSeconds(2), gap));
+        Assert.Equal(TimeSpan.Zero, DocLoadPlan.RemoteWait(last, last.AddSeconds(5), gap));
+        Assert.Equal(TimeSpan.Zero, DocLoadPlan.RemoteWait(last, last.AddMinutes(1), gap));
+    }
 }

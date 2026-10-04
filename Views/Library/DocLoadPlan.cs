@@ -98,6 +98,18 @@ public static class DocLoadPlan
         // если его нет — откатывается обратно.
         return hasLastRead ? DocReaderAction.Open : DocReaderAction.Rollback;
     }
+
+    /// <summary>
+    /// Сколько ждать до следующего перечитывания ленты по чужой правке: не чаще одного за
+    /// <paramref name="gap"/>. Ноль — можно сейчас. Поллер приносит чужие правки раз в несколько
+    /// секунд, а массовая правка соседа идет пачками подряд, и перечитывать ленту на каждую пачку
+    /// незачем: правки, пришедшие за время ожидания, заберет одно отложенное перечитывание.
+    /// </summary>
+    public static TimeSpan RemoteWait(DateTime last, DateTime now, TimeSpan gap)
+    {
+        var wait = last + gap - now;
+        return wait > TimeSpan.Zero ? wait : TimeSpan.Zero;
+    }
 }
 
 /// <summary>Решение <see cref="DocLoadPlan.ReaderToggle"/>.</summary>

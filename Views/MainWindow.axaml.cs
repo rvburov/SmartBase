@@ -898,10 +898,14 @@ public partial class MainWindow : Window
 
         // Видимый агрегатный модуль перечитывает события/задачи затронутой БД. Задачи — принудительно:
         // при том же наборе галочек SetActiveIds чтение пропускает, а чужая правка галочек не меняет.
+        // Библиотека — легким путем и не чаще раза в несколько секунд: полное перечитывание
+        // спрашивает у диска каждый файл (RefreshRemote). Правки пользователей ее не касаются.
         if (_activeModule == "calendar")
             _calendarView?.SetActiveIds(CalendarSidebar.GetActiveIds());
         else if (_activeModule == "tasks")
             _tasksView?.SetActiveIds(TasksSidebar.GetActiveIds(), force: true);
+        else if (_activeModule == "library" && changes.Any(c => c.TargetType != "user"))
+            _libraryView?.RefreshRemote(LibrarySidebar.GetActiveIds());
 
         // Открытая панель записи могла показывать измененную запись — перечитать значения.
         if (_recordPanelLogicalOpen && _currentConstructorDbId == dbId)

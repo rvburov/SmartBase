@@ -655,7 +655,42 @@ public sealed class DocTextIndexTests : IDisposable
         var survey = _index.Survey([path]);
 
         Assert.Equal(0, survey.Census.Total);
-        Assert.Equal(new DocFileState(DocTextState.Read, 2), survey.Files[DocTextIndex.KeyOf(path)]);
+        Assert.Equal(new DocFileState(DocTextState.Read, 2) { OnDisk = false },
+                     survey.Files[DocTextIndex.KeyOf(path)]);
+    }
+
+    /// <summary>
+    /// Числа подвала, пересчитанные из карты состояний (<see cref="DocCensus.Of"/>), совпадают с
+    /// числами самой переписи — на наборе всех исходов, с измененным и пропавшим файлом и с путем,
+    /// записанным дважды. На этом держится легкое перечитывание ленты по чужой правке: диск оно
+    /// спрашивает только о новых путях, а числа берет из карты, и разойтись с чипами им нельзя.
+    /// </summary>
+    [Fact]
+    public void Census_recounted_from_the_states_matches_the_survey()
+    {
+        var ok      = Write("ok.txt",      "текст прочитан");
+        var scan    = Write("scan.txt",    "скан");
+        var foreign = Write("draw.txt",    "чертеж");
+        var broken  = Write("broken.txt",  "битый");
+        var fresh   = Write("fresh.txt",   "еще не трогали");
+        var edited  = Write("edited.txt",  "первая редакция");
+        var gone    = Write("gone.txt",    "был");
+
+        _index.Put(ok,      new DocText(DocTextStatus.Ok, "текст прочитан", Pages: 3));
+        _index.Put(scan,    new DocText(DocTextStatus.NoText, "", Pages: 12));
+        _index.Put(foreign, DocText.Of(DocTextStatus.Unsupported));
+        _index.Put(broken,  DocText.Of(DocTextStatus.Failed));
+        _index.Put(edited,  new DocText(DocTextStatus.Ok, "первая редакция", Pages: 1));
+        _index.Put(gone,    new DocText(DocTextStatus.Ok, "был", Pages: 2));
+        File.WriteAllText(edited, "вторая редакция, заметно длиннее первой");
+        File.Delete(gone);
+
+        string[] paths = [ok, scan, foreign, broken, fresh, edited, gone, ok];
+        var survey = _index.Survey(paths);
+
+        Assert.Equal(survey.Census, DocCensus.Of(paths.Select(p => survey.Files[DocTextIndex.KeyOf(p)])));
+        Assert.Equal(new DocCensus(Total: 7, Read: 2, NotRead: 2, NoText: 1, Unsupported: 1, Failed: 1),
+                     survey.Census);
     }
 
     // Большая папка спрашивается листингом (DocStamps), а не по файлу, — а кеш записывал отметку
