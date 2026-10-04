@@ -66,10 +66,13 @@ public sealed class DocRolesTests
 
         repo.SetFileFieldInLibrary(file.Id!.Value, false);
         Assert.Empty(repo.GetDocCollectionIds());
+        // Файловый столбец остался, но в раздел он больше не ведет — плашки «привязано» нет.
+        Assert.False(repo.HasDocFileField(colId));
         // Столбец на месте, значение тоже.
         Assert.Contains(repo.GetFields(colId), f => f.Id == typeId);
 
         repo.SetFileFieldInLibrary(file.Id!.Value, true);
+        Assert.True(repo.HasDocFileField(colId));
         Assert.Equal(new[] { colId }, Ids(repo.GetDocCollectionIds()));
         Assert.Single(repo.GetFields(colId), f => f.Name == "Тип документа");
         Assert.Equal(typeId, repo.DocTypeFieldId(colId));
@@ -95,10 +98,22 @@ public sealed class DocRolesTests
         repo.SetFileFieldInLibrary(original.Id!.Value, true);
         repo.SetFileFieldInLibrary(scan.Id!.Value,     true);
 
-        Assert.Equal([original.Id!.Value, scan.Id!.Value], repo.DocFileFieldIds(colId));
+        Assert.Equal([original.Id!.Value, scan.Id!.Value], DocFileFields(repo, colId));
         // «Тип документа» все равно один: эта роль эксклюзивна.
         Assert.Single(repo.GetFields(colId), f => f.IsDocType);
     }
+
+    // Файловые поля коллекции, включенные в библиотеку, по порядку столбцов.
+    private static int[] DocFileFields(ConstructorRepository repo, int collectionId) =>
+        [.. repo.GetFields(collectionId)
+                .Where(f => f.FieldType == "file" && f.IsDocFile)
+                .OrderBy(f => f.Position).ThenBy(f => f.Id)
+                .Select(f => f.Id!.Value)];
+
+    // Документы коллекции так, как их показывает лента, — страницей во весь поток.
+    private static List<DocRecord> Feed(ConstructorRepository repo, int collectionId) =>
+        repo.GetDocPage(collectionId, repo.DocTypeFieldId(collectionId) ?? 0,
+                        ConstructorRepository.DocView.All, 0, 100);
 
     [Fact]
     public void A_record_with_two_file_fields_gives_two_documents()
@@ -116,7 +131,7 @@ public sealed class DocRolesTests
         repo.SetFieldValue(record, original.Id!.Value, "/docs/gost.pdf");
         repo.SetFieldValue(record, scan.Id!.Value,     "/docs/gost-scan.pdf");
 
-        var docs = repo.GetDocRecords();
+        var docs = Feed(repo, colId);
         Assert.Equal(2, docs.Count);
         Assert.Equal(new[] { "/docs/gost.pdf", "/docs/gost-scan.pdf" },
                      docs.Select(d => d.Path).ToArray());
@@ -140,7 +155,10 @@ public sealed class DocRolesTests
         SampleData.AddRecord(repo, colId, "Нет файла", 2000);
         repo.SetFieldValue(filled, file.Id!.Value, "/docs/a.pdf");
 
-        Assert.Single(repo.GetDocRecords());
+        // Ни лента, ни ее счет, ни пути для чтения строку без пути документом не считают.
+        Assert.Equal(["/docs/a.pdf"], Feed(repo, colId).Select(d => d.Path));
+        Assert.Equal(1, repo.CountDocs(colId, repo.DocTypeFieldId(colId) ?? 0, ConstructorRepository.DocView.All));
+        Assert.Equal(["/docs/a.pdf"], repo.GetDocPaths());
     }
 
     // ── Подтягивание одноименного столбца ────────────────────────────────────
@@ -388,7 +406,8 @@ public sealed class DocRolesTests
         repo.DeleteField(scan.Id!.Value);
 
         Assert.Equal(new[] { colId }, Ids(repo.GetDocCollectionIds()));
-        Assert.Equal([original.Id!.Value], repo.DocFileFieldIds(colId));
+        Assert.True(repo.HasDocFileField(colId));
+        Assert.Equal([original.Id!.Value], DocFileFields(repo, colId));
     }
 
     // ── Подключение коллекции из сайдбара ────────────────────────────────────

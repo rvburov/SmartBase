@@ -72,16 +72,6 @@ public partial class ConstructorRepository
     }
 
     /// <summary>
-    /// Файловые поля коллекции, включенные в библиотеку, в порядке <see cref="RoleOrder"/>.
-    /// Пустой список — коллекция в разделе не участвует.
-    /// </summary>
-    public List<int> DocFileFieldIds(int collectionId) =>
-        RoleOrder(db.DbFields.AsNoTracking()
-                    .Where(f => f.CollectionId == collectionId &&
-                                f.FieldType == "file" && f.IsDocFile))
-        .Select(f => f.Id).ToList();
-
-    /// <summary>
     /// Поле «Тип документа» коллекции (null — его нет). Роль эксклюзивна, но порядок нужен
     /// старым базам и копиям коллекций, где флаг мог оказаться сразу у двух полей, — до того,
     /// как их починит <see cref="RepairDocFieldRoles"/>.
@@ -92,12 +82,13 @@ public partial class ConstructorRepository
                                 (f.FieldType == "select" || f.FieldType == "status")))
         .Select(f => (int?)f.Id).FirstOrDefault();
 
-    /// <summary>Есть ли у коллекции хотя бы одно включенное файловое поле.</summary>
-    public bool HasDocFileField(int collectionId) => DocFileFieldIds(collectionId).Count > 0;
-
-    /// <summary>Есть ли в базе хоть одна коллекция с документами — для пустого состояния раздела.</summary>
-    public bool HasAnyDocFileField() =>
-        db.DbFields.AsNoTracking().Any(f => f.FieldType == "file" && f.IsDocFile);
+    /// <summary>
+    /// Есть ли у коллекции хотя бы одно включенное файловое поле — плашка «привязано к разделу»
+    /// в окне свойства и в конструкторе.
+    /// </summary>
+    public bool HasDocFileField(int collectionId) =>
+        db.DbFields.AsNoTracking()
+          .Any(f => f.CollectionId == collectionId && f.FieldType == "file" && f.IsDocFile);
 
     /// <summary>
     /// Коллекции с включенным файловым полем — те, что участвуют в библиотеке. Ими боковая
@@ -303,90 +294,25 @@ public partial class ConstructorRepository
         return healed;
     }
 
-    // ── Чтение документов ─────────────────────────────────────────────────────
+    // ── Пути документов ───────────────────────────────────────────────────────
+    //
+    // Своего читателя карточек здесь нет: ленту читают страницы (DocsPaging.cs) — и раздел «в
+    // памяти» тоже, одной страницей во весь поток, — а поиск читает свою выдачу. Сплошной
+    // читатель всей проекции с потолком в тысячу строк жил здесь для одних тестов и мог разойтись
+    // с лентой, которую видит человек; тесты сверяются теперь с самой лентой.
 
     /// <summary>
-    /// Документы по активным коллекциям (null — все коллекции базы, ПУСТОЙ набор — ни одной,
-    /// как у календаря и задач). Документ = запись коллекции × включенное файловое поле с
-    /// НЕПУСТЫМ значением: строка без пути — это не документ, показывать в библиотеке нечего
-    /// (в отличие от задач, где пустой исполнитель — осмысленное «никому не роздано»).
+    /// Все пути документов активных коллекций — перепись и очередь чтения сверяют их с кешем,
+    /// чтобы понять, что еще не разобрано. Только пути, без остальной карточки: на сотнях тысяч
+    /// документов это разница между одной колонкой и полной проекцией.
     ///
-    /// Чтение идет от db_records по покрывающему индексу (CollectionId, Position); путь
-    /// приезжает JOIN'ом сиком по кластерному PK (RecordId, FieldId) таблицы db_field_values
-    /// (она WITHOUT ROWID), «Тип документа» — коррелированным подзапросом, как «Статус» у задач.
-    /// Сортировку и слияние баз делает контроллер.
+    /// <b>Потолка нет.</b> Раньше путей бралось не больше 100 000, и библиотека крупнее читалась
+    /// частично и молча: перепись считала числа подвала без хвоста, «Прочитать документы» его не
+    /// разбирало, а «все уже прочитано» звучало при непрочитанном хвосте. Перепись и так держит
+    /// по строке на каждый путь — чипам карточек нужен каждый, — так что потолок не берег память, а
+    /// только прятал хвост. Цена — замер <c>docfeed</c>: 1,1 с на 500 000 документов, в фоне.
     /// </summary>
-    public List<DocRecord> GetDocRecords(ISet<int>? activeIds = null, int limit = 1000)
-    {
-        var result = new List<DocRecord>();
-        if (activeIds is { Count: 0 }) return result;
-
-        var colFilter = activeIds is null
-            ? ""
-            : $" AND f.CollectionId IN ({string.Join(",", activeIds)})";
-
-        var conn = db.Database.GetDbConnection();
-        var opened = conn.State != System.Data.ConnectionState.Open;
-        if (opened) conn.Open();
-        try
-        {
-            using var cmd = conn.CreateCommand();
-            // ORDER BY у роли «Тип документа» повторяет RoleOrder: при двух полях с одним
-            // флагом читаем ровно то поле, в которое пишет разметка (без порядка SQLite отдавал
-            // бы произвольное, и карточка спорила бы с фильтром типов).
-            cmd.CommandText = $@"
-                SELECT r.Id, f.Id, f.Name, f.CollectionId, c.Name, c.Color, r.Title, v.Value,
-                       (SELECT vt.Value FROM db_field_values vt
-                          JOIN db_fields ft ON ft.Id = vt.FieldId
-                         WHERE vt.RecordId = r.Id AND ft.CollectionId = f.CollectionId
-                           AND ft.IsDocType = 1
-                         ORDER BY ft.Position, ft.Id LIMIT 1)
-                FROM db_fields f
-                JOIN db_collections c ON c.Id = f.CollectionId
-                JOIN db_records r     ON r.CollectionId = f.CollectionId
-                JOIN db_field_values v ON v.RecordId = r.Id AND v.FieldId = f.Id AND v.Value <> ''
-                WHERE f.FieldType = 'file' AND f.IsDocFile = 1{colFilter}
-                ORDER BY f.CollectionId, r.Position, r.Id, f.Position, f.Id
-                LIMIT {Math.Max(1, limit)}";
-
-            using var rdr = cmd.ExecuteReader();
-            while (rdr.Read()) result.Add(ReadDocRow(rdr));
-        }
-        finally { if (opened) conn.Close(); }
-        return result;
-    }
-
-    /// <summary>Строка карточки из читателя проекции документов. Вынесено, потому что ту же
-    /// проекцию читает постраничный путь: разъехавшись, два режима раздела показывали бы
-    /// разное.</summary>
-    private static DocRecord ReadDocRow(System.Data.Common.DbDataReader rdr) => new()
-    {
-        Id             = rdr.GetInt32(0),
-        FileFieldId    = rdr.GetInt32(1),
-        FileFieldName  = rdr.IsDBNull(2) ? "" : rdr.GetString(2),
-        CollectionId   = rdr.GetInt32(3),
-        CollectionName = rdr.IsDBNull(4) ? "" : rdr.GetString(4),
-        Color          = rdr.IsDBNull(5) ? "#007AFF" : rdr.GetString(5),
-        Title          = rdr.IsDBNull(6) ? "" : rdr.GetString(6),
-        Path           = rdr.IsDBNull(7) ? "" : rdr.GetString(7),
-        DocType        = rdr.IsDBNull(8) ? "" : rdr.GetString(8),
-    };
-
-    /// <summary>Фоновая загрузка документов на ОТДЕЛЬНОМ подключении (общий контекст однопоточный).</summary>
-    public Task<List<DocRecord>> LoadDocsAsync(ISet<int>? activeIds = null, int limit = 1000) =>
-        Task.Run(() =>
-        {
-            using var ctx = new AppDbContext(db.DbPath);
-            ctx.ApplyPerformancePragmas();
-            return new ConstructorRepository(ctx).GetDocRecords(activeIds, limit);
-        });
-
-    /// <summary>
-    /// Все пути документов активных коллекций — очередь индексации читает их, чтобы понять,
-    /// что еще не разобрано. Только пути, без остальной карточки: на сотнях тысяч документов
-    /// это разница между одной колонкой и полной проекцией.
-    /// </summary>
-    public List<string> GetDocPaths(ISet<int>? activeIds = null, int limit = 100_000)
+    public List<string> GetDocPaths(ISet<int>? activeIds = null)
     {
         var result = new List<string>();
         if (activeIds is { Count: 0 }) return result;
@@ -405,8 +331,7 @@ public partial class ConstructorRepository
                 SELECT DISTINCT v.Value
                 FROM db_fields f
                 JOIN db_field_values v ON v.FieldId = f.Id AND v.Value <> ''
-                WHERE f.FieldType = 'file' AND f.IsDocFile = 1{colFilter}
-                LIMIT {Math.Max(1, limit)}";
+                WHERE f.FieldType = 'file' AND f.IsDocFile = 1{colFilter}";
             using var rdr = cmd.ExecuteReader();
             while (rdr.Read())
                 if (!rdr.IsDBNull(0)) result.Add(rdr.GetString(0));
@@ -416,11 +341,11 @@ public partial class ConstructorRepository
     }
 
     /// <summary>Фоновое чтение путей на ОТДЕЛЬНОМ подключении.</summary>
-    public Task<List<string>> LoadDocPathsAsync(ISet<int>? activeIds = null, int limit = 100_000) =>
+    public Task<List<string>> LoadDocPathsAsync(ISet<int>? activeIds = null) =>
         Task.Run(() =>
         {
             using var ctx = new AppDbContext(db.DbPath);
             ctx.ApplyPerformancePragmas();
-            return new ConstructorRepository(ctx).GetDocPaths(activeIds, limit);
+            return new ConstructorRepository(ctx).GetDocPaths(activeIds);
         });
 }

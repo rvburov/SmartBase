@@ -124,7 +124,9 @@ public partial class ConstructorRepository
                          ORDER BY ft.Position, ft.Id LIMIT 1)";
 
     // Тело запроса ленты одной коллекции: ведет db_records по индексу (CollectionId, Position),
-    // путь приезжает соединением сиком по PK, тип — подзапросом.
+    // путь приезжает соединением сиком по PK, тип — подзапросом. Строка без пути — не документ:
+    // показывать в библиотеке нечего (у задач наоборот — пустой исполнитель значит «никому не
+    // роздано», и карточка нужна).
     private const string DocBody = @"
         FROM db_records r
         JOIN db_fields f       ON f.CollectionId = r.CollectionId
@@ -448,6 +450,21 @@ public partial class ConstructorRepository
             ctx.ApplyPerformancePragmas();
             return new ConstructorRepository(ctx).SearchDocs(activeIds, query, paths, view, limit);
         });
+
+    // Строка выдачи поиска. В отличие от страницы ленты (ReadDocPageRow) выдача идет по всем
+    // отмеченным коллекциям сразу, поэтому название и цвет коллекции едут в каждой строке.
+    private static DocRecord ReadDocRow(System.Data.Common.DbDataReader rdr) => new()
+    {
+        Id             = rdr.GetInt32(0),
+        FileFieldId    = rdr.GetInt32(1),
+        FileFieldName  = rdr.IsDBNull(2) ? "" : rdr.GetString(2),
+        CollectionId   = rdr.GetInt32(3),
+        CollectionName = rdr.IsDBNull(4) ? "" : rdr.GetString(4),
+        Color          = rdr.IsDBNull(5) ? "#007AFF" : rdr.GetString(5),
+        Title          = rdr.IsDBNull(6) ? "" : rdr.GetString(6),
+        Path           = rdr.IsDBNull(7) ? "" : rdr.GetString(7),
+        DocType        = rdr.IsDBNull(8) ? "" : rdr.GetString(8),
+    };
 
     /// <summary>
     /// Количества по типам документа для выпадашки навбара: значение → сколько документов.

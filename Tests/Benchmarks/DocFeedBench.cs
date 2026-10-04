@@ -106,12 +106,12 @@ public static class DocFeedBench
         Console.WriteLine("── Поиск и пути ──");
         Time("поиск по названию, редкое слово",   runs, () => repo.SearchDocs(null, "Документ 1234", []));
         Time("поиск по названию, частое слово",   runs, () => repo.SearchDocs(null, "документ", []));
-        Time("GetDocPaths (перепись, чтение)",    runs, () => repo.GetDocPaths(null, int.MaxValue));
+        Time("GetDocPaths (перепись, чтение)",    runs, () => repo.GetDocPaths());
         Console.WriteLine();
 
         if (files > 0)
         {
-            MakeFiles(repo.GetDocPaths(null, int.MaxValue).Take(files));
+            MakeFiles(repo.GetDocPaths().Take(files));
             Census(repo, runs);
         }
 
@@ -122,7 +122,7 @@ public static class DocFeedBench
 
     private static void Census(ConstructorRepository repo, int runs)
     {
-        var paths = repo.GetDocPaths(null, int.MaxValue);
+        var paths = repo.GetDocPaths();
         var onDisk = paths.Where(File.Exists).ToList();
         Console.WriteLine($"── Перепись кеша: {paths.Count:N0} путей, на диске {onDisk.Count:N0} ──");
 

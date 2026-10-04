@@ -155,11 +155,9 @@ public sealed class PgLibraryTests
             $"взять {string.Join(",", plan.Candidates.Select(c => c.FieldName))}; " +
             $"завести при отказе {string.Join(",", plan.FieldsToCreateIfDeclined)}; " +
             $"при согласии {string.Join(",", plan.FieldsToCreateIfAdopted)}");
-        Say("есть ли документы в базе", repo.HasAnyDocFileField());
         Say("подключен ли «Архив» до подключения", repo.HasDocFileField(archive));
         repo.EnsureDocCollection(archive);
         Say("подключен ли «Архив» после", repo.HasDocFileField(archive));
-        Say("файловых столбцов у «Договоров»", repo.DocFileFieldIds(deals).Count);
 
         // Починка ролей при монтировании: флаг источника документов на текстовом поле —
         // состояние старой базы или ручной правки. Флаг снимается, повторная починка пустая.
@@ -248,11 +246,10 @@ public sealed class PgLibraryTests
         Say("поиск «договор» в «Нормативах»", Find("договор", active: new HashSet<int> { norms }));
         Say("поиск в фоне", List(repo.SearchDocsAsync(new HashSet<int> { deals }, "аренд", []).GetAwaiter().GetResult()));
 
-        // ── Пути для очереди чтения и сплошное чтение ──
+        // ── Пути для переписи и очереди чтения ──
         Say("пути", string.Join(" | ", repo.GetDocPaths().Order(StringComparer.Ordinal)));
         Say("пути в фоне", string.Join(" | ", repo.LoadDocPathsAsync().GetAwaiter().GetResult().Order(StringComparer.Ordinal)));
-        Say("все документы", List(repo.GetDocRecords()));
-        Say("документы в фоне", List(repo.LoadDocsAsync(new HashSet<int> { deals }).GetAwaiter().GetResult()));
+        Say("пути «Договоров»", string.Join(" | ", repo.GetDocPaths(new HashSet<int> { deals }).Order(StringComparer.Ordinal)));
 
         return lines;
     }

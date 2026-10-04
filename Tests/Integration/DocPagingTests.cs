@@ -80,28 +80,31 @@ public sealed class DocPagingTests
 
     /// <summary>
     /// Страницы воспроизводят порядок сплошного чтения ровно. Это тот самый инвариант, ради
-    /// которого счет и страница собираются одними и теми же кусками SQL.
+    /// которого счет и страница собираются одними и теми же кусками SQL. Сплошное чтение — то,
+    /// что делает раздел «в памяти»: одна страница во весь поток длиной в счет. Своего сплошного
+    /// читателя у раздела больше нет — тест сверялся с ним, а лента его не звала, и разойтись они
+    /// могли незаметно. Порядок к тому же известен заранее — по позициям записей.
     /// </summary>
     [Fact]
     public void Pages_reproduce_the_in_memory_order_exactly()
     {
         using var db = new TempDatabase();
         var repo = db.Constructor;
+        var all  = ConstructorRepository.DocView.All;
 
         var shell = Library(repo);
-        for (var i = 1; i <= 25; i++)
+        for (var i = 25; i >= 1; i--)
             AddDoc(repo, shell, $"D{i:D2}", $"/d{i:D2}.pdf", position: i * 10);
 
-        var whole = repo.GetDocRecords().Select(d => d.Path).ToList();
+        var total = repo.CountDocs(shell.ColId, shell.TypeId, all);
+        var whole = repo.GetDocPage(shell.ColId, shell.TypeId, all, 0, total).Select(d => d.Path).ToList();
 
         var paged = new List<string>();
-        for (var skip = 0; skip < whole.Count; skip += 7)
-            paged.AddRange(repo.GetDocPage(shell.ColId, shell.TypeId,
-                                           ConstructorRepository.DocView.All, skip, 7)
-                               .Select(d => d.Path));
+        for (var skip = 0; skip < total; skip += 7)
+            paged.AddRange(repo.GetDocPage(shell.ColId, shell.TypeId, all, skip, 7).Select(d => d.Path));
 
+        Assert.Equal(Enumerable.Range(1, 25).Select(i => $"/d{i:D2}.pdf"), whole);
         Assert.Equal(whole, paged);
-        Assert.Equal(25, whole.Count);
     }
 
     /// <summary>Документы одной записи идут подряд, в порядке файловых столбцов.</summary>
@@ -448,7 +451,8 @@ public sealed class DocPagingTests
 
         Assert.Equal([("ГОСТ", 1)], repo.GetDocTypeCounts(active));
         Assert.Single(repo.GetDocCollectionStats(active));
-        Assert.Single(repo.GetDocRecords(active));
+        Assert.Equal(["/g1.pdf"], repo.GetDocPaths(active));
+        Assert.Equal(["/g1.pdf"], repo.SearchDocs(active, "Г", []).Select(d => d.Path));
     }
 
     /// <summary>ПУСТОЙ набор активных коллекций — «ни одной», а не «все».</summary>
@@ -462,10 +466,10 @@ public sealed class DocPagingTests
         AddDoc(repo, shell, "Г1", "/g1.pdf", "ГОСТ");
 
         var none = new HashSet<int>();
-        Assert.Empty(repo.GetDocRecords(none));
         Assert.Empty(repo.GetDocCollectionStats(none));
         Assert.Empty(repo.GetDocTypeCounts(none));
         Assert.Empty(repo.GetDocPaths(none));
+        Assert.Empty(repo.SearchDocs(none, "Г1", []));
     }
 
     // ── Пути для индексации ──────────────────────────────────────────────────
@@ -483,6 +487,41 @@ public sealed class DocPagingTests
         SampleData.AddRecord(repo, shell.ColId, "Без файла", 4000);
 
         Assert.Equal(["/other.pdf", "/same.pdf"], repo.GetDocPaths().Order().ToArray());
+    }
+
+    /// <summary>
+    /// У путей нет потолка. Раньше их бралось не больше 100 000, и библиотека крупнее читалась
+    /// частично и молча: перепись считала числа подвала без хвоста, «Прочитать документы» его не
+    /// разбирало, а «все уже прочитано» звучало при непрочитанном хвосте. Документы заводятся
+    /// одним запросом: сотня тысяч записей через репозиторий шла бы минуты.
+    /// </summary>
+    [Fact]
+    public void Doc_paths_have_no_cap_however_big_the_library()
+    {
+        const int Count = 100_001;
+        using var db = new TempDatabase();
+        var repo  = db.Constructor;
+        var shell = Library(repo);
+
+        using (var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={db.Path};Pooling=False"))
+        {
+            conn.Open();
+            using var tx  = conn.BeginTransaction();
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = $"""
+                WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < {Count})
+                INSERT INTO db_records (CollectionId, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, AllDay, Title)
+                SELECT {shell.ColId}, '2026-01-01T00:00:00', '2026-01-01T00:00:00', '', '', i, 0, 'Д' || i FROM n;
+                INSERT INTO db_field_values (RecordId, FieldId, Value)
+                SELECT Id, {shell.FileId}, '/docs/' || Id || '.pdf' FROM db_records WHERE CollectionId = {shell.ColId};
+                """;
+            cmd.ExecuteNonQuery();
+            tx.Commit();
+        }
+
+        Assert.Equal(Count, repo.GetDocPaths().Count);
+        Assert.Equal(Count, repo.LoadDocPathsAsync(new HashSet<int> { shell.ColId }).GetAwaiter().GetResult().Count);
     }
 
     // ── Поиск ────────────────────────────────────────────────────────────────
