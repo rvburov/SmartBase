@@ -61,6 +61,20 @@ public readonly record struct DocCensus(
     }
 }
 
+/// <summary>
+/// Сводка кеша для экрана настроек — по исходам разбора, каждый отдельно. Раньше чужие форматы,
+/// битые файлы и файлы тяжелее порога складывались в одно число, и по нему нельзя было понять,
+/// поможет ли поднять порог — а задается он в соседней выпадашке.
+/// </summary>
+/// <param name="Indexed">Текст прочитан.</param>
+/// <param name="NoText">Сканы без текстового слоя.</param>
+/// <param name="Unsupported">Форматы без чтения текста.</param>
+/// <param name="Failed">Не удалось прочитать: битый, занят, нет прав.</param>
+/// <param name="TooBig">Тяжелее порога — не разбирались.</param>
+/// <param name="Bytes">Размер файла кеша.</param>
+public readonly record struct DocCacheStats(int Indexed, int NoText, int Unsupported, int Failed,
+                                           int TooBig, long Bytes);
+
 /// <summary>Что сказать про текст одного документа на его карточке.</summary>
 /// <param name="State">Состояние текста — им подписан серый чип.</param>
 /// <param name="Pages">Число страниц из кеша; 0 — неизвестно (есть только у прочитанных).</param>
@@ -320,7 +334,10 @@ public sealed class DocTextIndex
     /// или размер. Файл, признанный неподдержанным или битым, повторно не тревожится, пока сам
     /// не изменится, — иначе очередь каждый раз перемалывала бы одни и те же сканы.
     /// </summary>
-    public List<string> Pending(IReadOnlyCollection<string> paths) => Survey(paths).Pending;
+    /// <param name="maxFileMb">Порог размера, с которым будут читать (см. <see cref="Survey"/>).</param>
+    public List<string> Pending(IReadOnlyCollection<string> paths,
+                                int maxFileMb = DocTextExtractor.DefaultMaxFileMb) =>
+        Survey(paths, maxFileMb).Pending;
 
     /// <summary>
     /// Один проход по набору путей: что надо разобрать, сколько документов в каком состоянии и
@@ -340,8 +357,15 @@ public sealed class DocTextIndex
     /// Прочитанный прежней редакцией разбора (<c>DocTextExtractor.RevisionOf</c>) считается
     /// измененным: файл тот же, а текст, который из него извлекается, — уже другой. Поиск до
     /// перечитывания находит такой документ по прежнему тексту — слова в нем те же.
+    ///
+    /// Отложенный порогом (<see cref="DocTextStatus.TooBig"/>) читается заново, как только порог
+    /// его пропускает: человек поднял порог — значит, хочет эти файлы прочитать. Раньше отметка
+    /// «тяжелее порога» держалась до правки самого файла, и поднятый порог на уже встреченные
+    /// файлы не действовал вовсе, хотя сводка кеша прямо предлагает его поднять.
     /// </summary>
-    public DocSurvey Survey(IReadOnlyCollection<string> paths)
+    /// <param name="maxFileMb">Порог размера, с которым будут читать; 0 — без порога.</param>
+    public DocSurvey Survey(IReadOnlyCollection<string> paths,
+                            int maxFileMb = DocTextExtractor.DefaultMaxFileMb)
     {
         var keys    = paths.Select(KeyOf).ToList();
         var known   = Known(keys);
@@ -362,7 +386,9 @@ public sealed class DocTextIndex
             // нет на диске, сверять нечего — ему остается то, что помнит кеш.
             var has     = known.TryGetValue(key, out var e);
             var changed = !has || (size >= 0 && (e.Mtime != mtime || e.Size != size ||
-                                                 e.Revision < DocTextExtractor.RevisionOf(key)));
+                                                 e.Revision < DocTextExtractor.RevisionOf(key) ||
+                                                 (e.Status == DocTextStatus.TooBig &&
+                                                  !DocTextExtractor.TooBig(size, maxFileMb))));
 
             files[key] = (changed
                 ? new DocFileState(DocTextState.NotRead, 0)
@@ -617,30 +643,33 @@ public sealed class DocTextIndex
         }
     }
 
-    /// <summary>Сводка кеша для экрана настроек: сколько документов разобрано, сколько без текста,
-    /// сколько весит файл.</summary>
-    public (int Indexed, int NoText, int Failed, long Bytes) Stats()
+    /// <summary>
+    /// Сводка кеша для экрана настроек: сколько документов в каком исходе разбора и сколько весит
+    /// файл (<see cref="DocCacheStats"/>).
+    /// </summary>
+    public DocCacheStats Stats()
     {
         lock (_lock)
         {
             using var connection = Open();
             using var cmd = connection.CreateCommand();
-            cmd.CommandText = """
-                SELECT SUM(CASE WHEN Status = 0 THEN 1 ELSE 0 END),
-                       SUM(CASE WHEN Status = 1 THEN 1 ELSE 0 END),
-                       SUM(CASE WHEN Status IN (2,3,4) THEN 1 ELSE 0 END)
+            cmd.CommandText = $"""
+                SELECT SUM(CASE WHEN Status = {(int)DocTextStatus.Ok}          THEN 1 ELSE 0 END),
+                       SUM(CASE WHEN Status = {(int)DocTextStatus.NoText}      THEN 1 ELSE 0 END),
+                       SUM(CASE WHEN Status = {(int)DocTextStatus.Unsupported} THEN 1 ELSE 0 END),
+                       SUM(CASE WHEN Status = {(int)DocTextStatus.Failed}      THEN 1 ELSE 0 END),
+                       SUM(CASE WHEN Status = {(int)DocTextStatus.TooBig}      THEN 1 ELSE 0 END)
                 FROM doc_files
                 """;
             using var rdr = cmd.ExecuteReader();
-            var (ok, noText, failed) = rdr.Read()
-                ? (rdr.IsDBNull(0) ? 0 : rdr.GetInt32(0),
-                   rdr.IsDBNull(1) ? 0 : rdr.GetInt32(1),
-                   rdr.IsDBNull(2) ? 0 : rdr.GetInt32(2))
-                : (0, 0, 0);
+            int Count(int i) => rdr.IsDBNull(i) ? 0 : rdr.GetInt32(i);
+            var read = rdr.Read();
 
             long bytes;
             try { bytes = new FileInfo(_path).Length; } catch { bytes = 0; }
-            return (ok, noText, failed, bytes);
+            return read
+                ? new DocCacheStats(Count(0), Count(1), Count(2), Count(3), Count(4), bytes)
+                : new DocCacheStats(0, 0, 0, 0, 0, bytes);
         }
     }
 

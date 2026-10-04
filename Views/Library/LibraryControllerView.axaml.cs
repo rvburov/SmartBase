@@ -808,7 +808,7 @@ public partial class LibraryControllerView : UserControl
 
         var gen    = _gen;
         var paths  = await ActivePathsAsync();
-        var survey = await Task.Run(() => service.Index.Survey(paths));
+        var survey = await Task.Run(() => service.Index.Survey(paths, LibrarySettings.IndexMaxMb));
 
         // Пока шли на диск, лента сменилась или перепись попросили заново — этот итог про
         // прежний набор документов, и показывать его нельзя.
@@ -852,7 +852,7 @@ public partial class LibraryControllerView : UserControl
         {
             var paths  = await ActivePathsAsync();
             var fresh  = paths.Where(p => !states.ContainsKey(DocTextIndex.KeyOf(p))).ToList();
-            var survey = fresh.Count > 0 ? await Task.Run(() => service.Index.Survey(fresh)) : null;
+            var survey = fresh.Count > 0 ? await Task.Run(() => service.Index.Survey(fresh, LibrarySettings.IndexMaxMb)) : null;
             if (gen != _gen) return;
 
             var merged = new Dictionary<string, DocFileState>(states, StringComparer.Ordinal);
@@ -939,7 +939,7 @@ public partial class LibraryControllerView : UserControl
         {
             // Перепись пересчитываем только для полного охвата: у одной коллекции она не про
             // всю ленту, и подменять ею числа подвала было бы неправдой.
-            var survey = await Task.Run(() => service.Index.Survey(paths));
+            var survey = await Task.Run(() => service.Index.Survey(paths, LibrarySettings.IndexMaxMb));
             pending = survey.Pending;
             if (source is null)
             {

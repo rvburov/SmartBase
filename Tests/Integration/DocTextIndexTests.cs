@@ -575,19 +575,49 @@ public sealed class DocTextIndexTests : IDisposable
         Assert.Single(_index.Search("документа"));
     }
 
+    /// <summary>
+    /// Сводка кеша называет каждый исход отдельно. Раньше чужие форматы, битые файлы и файлы
+    /// тяжелее порога складывались в одно число, и по нему нельзя было понять, поможет ли
+    /// поднять порог.
+    /// </summary>
     [Fact]
     public void Stats_count_documents_by_status()
     {
         Put(Write("ok.txt", "есть текст"), "есть текст");
         _index.Put(Write("scan.txt", ""), DocText.Of(DocTextStatus.NoText));
+        _index.Put(Write("draw.dwg", "x"), DocText.Of(DocTextStatus.Unsupported));
         _index.Put(Write("broken.txt", "x"), DocText.Of(DocTextStatus.Failed));
+        _index.Put(Write("heavy.txt", "x"), DocText.Of(DocTextStatus.TooBig));
+        _index.Put(Write("heavy2.txt", "x"), DocText.Of(DocTextStatus.TooBig));
 
-        var (indexed, noText, failed, bytes) = _index.Stats();
+        var stats = _index.Stats();
 
-        Assert.Equal(1, indexed);
-        Assert.Equal(1, noText);
-        Assert.Equal(1, failed);
-        Assert.True(bytes > 0);
+        Assert.Equal(new DocCacheStats(Indexed: 1, NoText: 1, Unsupported: 1, Failed: 1, TooBig: 2, stats.Bytes),
+                     stats);
+        Assert.True(stats.Bytes > 0);
+    }
+
+    /// <summary>
+    /// Файл, отложенный порогом, читается заново, как только порог его пропускает. Раньше отметка
+    /// «тяжелее порога» держалась до правки самого файла: человек поднимал порог, а уже встреченные
+    /// тяжелые файлы так и оставались непрочитанными, хотя сводка кеша прямо советует поднять
+    /// порог. Тяжелее нового порога — по-прежнему не тревожится; без порога читается все.
+    /// </summary>
+    [Fact]
+    public void A_file_held_back_by_the_threshold_is_read_once_the_threshold_lets_it_in()
+    {
+        var light = Write("light.txt", "был тяжелее прежнего порога");
+        var heavy = Path.Combine(_dir, "heavy.txt");
+        using (var file = File.Create(heavy)) file.SetLength(1024 * 1024 + 1);
+        _index.Put(light, DocText.Of(DocTextStatus.TooBig));
+        _index.Put(heavy, DocText.Of(DocTextStatus.TooBig));
+
+        var survey = _index.Survey([light, heavy], maxFileMb: 1);
+
+        Assert.Equal([light], survey.Pending);
+        Assert.Equal(DocTextState.NotRead, survey.Files[DocTextIndex.KeyOf(light)].State);
+        Assert.Equal(DocTextState.Failed,  survey.Files[DocTextIndex.KeyOf(heavy)].State);
+        Assert.Equal([light, heavy], _index.Survey([light, heavy], maxFileMb: 0).Pending);
     }
 
     // ── Перепись состояний ───────────────────────────────────────────────────

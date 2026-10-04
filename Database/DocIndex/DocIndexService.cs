@@ -126,7 +126,7 @@ public sealed class DocIndexService
     /// </summary>
     public int Start(IReadOnlyCollection<string> paths)
     {
-        var pending = _index.Pending(paths);
+        var pending = _index.Pending(paths, MaxFileMb);
         return StartPending(pending);
     }
 

@@ -34,7 +34,8 @@
 //   перезахода, с чипом и в подвале; о прежних файлах диск не спрашивается; правки подряд
 //   сливаются в одно перечитывание. Затем сбои: кеш не принимает запись — чтение срывается
 //   громко (красная работа с причиной, точка у значка, «Убрать» в панели его гасит); индекс
-//   сломан — подвал говорит, что поиск внутри не сработал, находка по названию на месте.
+//   сломан — подвал говорит, что поиск внутри не сработал, находка по названию на месте. Поднятый
+//   порог берет в чтение файл, который кеш помнит «тяжелее порога».
 
 using System.Diagnostics;
 using System.Reflection;
@@ -2130,6 +2131,28 @@ async Task LibraryOps()
     Expect(healed, $"починили — поиск снова находит внутри документа: «{status.Text}»");
     SetField(library, "_searchQuery", "");
     Call(library, "RefreshCurrent", false, false);
+
+    // Поднятый порог действует на уже встреченные файлы. Файл в 2 МБ кеш помнит «тяжелее порога»
+    // (так его записало бы чтение при пороге в мегабайт): при пороге 1 МБ он не тревожится, а
+    // подняли порог — перепись берет его в чтение, и чип говорит «текст не прочитан». Раньше
+    // отметка держалась до правки самого файла, и поднятый порог не действовал вовсе.
+    Step("библиотека: поднятый порог");
+    var limit     = LibrarySettings.IndexMaxMb;
+    var heavyPath = Path.Combine(dir, "тяжелый.txt");
+    using (var heavyFile = File.Create(heavyPath)) heavyFile.SetLength(2L * 1024 * 1024);
+    var heavyRec = repo.AddRecord(new SmartBase.Core.Models.DbRecord { CollectionId = col, Title = "Стенд: тяжелый", Position = 3000 }).Id!.Value;
+    repo.SetFieldValue(heavyRec, file, heavyPath);
+    service.Index.Put(heavyPath, SmartBase.Core.Documents.DocText.Of(SmartBase.Core.Documents.DocTextStatus.TooBig));
+    try
+    {
+        LibrarySettings.SetIndexMaxMb(1);
+        var held = await Until(() => Doc("Стенд: тяжелый")?.TextState == SmartBase.Core.Models.DocTextState.Failed, 20);
+        Expect(held, $"при пороге 1 МБ файл в 2 МБ остается отложенным (чип {Doc("Стенд: тяжелый")?.TextState})");
+        LibrarySettings.SetIndexMaxMb(64);
+        var freed = await Until(() => Doc("Стенд: тяжелый")?.TextState == SmartBase.Core.Models.DocTextState.NotRead, 20);
+        Expect(freed, $"порог подняли — файл ждет чтения (чип {Doc("Стенд: тяжелый")?.TextState})");
+    }
+    finally { LibrarySettings.SetIndexMaxMb(limit); }
 
     Console.WriteLine(faults == 0 ? "Библиотека: все проверки прошли" : $"Библиотека: НЕ ПРОШЛО {faults}");
 }

@@ -72,18 +72,8 @@ public partial class SettingsView
 
         try
         {
-            var (indexed, noText, failed, bytes) = service.Index.Stats();
-            // Форматы перечисляем прямо здесь: без этого «разобрано 1 190» не объясняет, почему
-            // часть документов так и не находится по содержимому, а это главный источник
-            // недоумения. Раньше это стояло у тумблера автоматической индексации, а тумблера
-            // больше нет — чтение запускает кнопка в самом разделе.
-            LibraryCacheDesc.Text =
-                $"Разобрано документов: {indexed}. Без текстового слоя: {noText}. " +
-                $"Не прочитано: {failed}. Занято на диске: {Mb(bytes + thumbs)}. " +
-                $"Текст читается у {DocTextExtractor.SupportedText}; распознавания картинок нет, " +
-                "поэтому сканы без текстового слоя в поиск по содержимому не попадают. " +
-                "Очистка удаляет только кеш — сами документы и записи не трогаются, " +
-                "а прочитать их заново можно кнопкой в разделе.";
+            // Слова сводки собирает чистый LibraryCacheSummary — там же их «почему» и тесты.
+            LibraryCacheDesc.Text = LibraryCacheSummary.Compose(service.Index.Stats(), thumbs);
             LibraryClearCacheBtn.IsEnabled = true;
         }
         catch (Exception ex)
@@ -93,10 +83,6 @@ public partial class SettingsView
             LibraryClearCacheBtn.IsEnabled = true;
         }
     }
-
-    private static string Mb(long bytes) =>
-        bytes < 1024L * 1024 ? $"{Math.Max(1, bytes / 1024)} КБ"
-                             : $"{bytes / (1024.0 * 1024):0.#} МБ";
 
     // ── Обработчики ───────────────────────────────────────────────────────────
 
