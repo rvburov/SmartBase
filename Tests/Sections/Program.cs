@@ -2154,6 +2154,136 @@ async Task LibraryOps()
     }
     finally { LibrarySettings.SetIndexMaxMb(limit); }
 
+    // Шрифт и размер карточки меняют в настройках, пока лента скрыта. Вернулись — у верхнего края
+    // тот же документ, на котором ушли (так решил пользователь). Раньше после смены шрифта лента
+    // съезжала на пару документов: она перестраивала себя сама (источник в null и обратно), и
+    // виртуальная панель мерила место уже новой высотой строки. Размер карточки место держал и
+    // тогда, хотя в коде было написано «с начала». Место меряет сам стенд, а не проверяемый код.
+    Step("библиотека: шрифт и размер карточки держат место");
+    using (var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={db.Path}"))
+    {
+        conn.Open();
+        using var tx  = conn.BeginTransaction();
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        for (var i = 1; i <= 80; i++)
+        {
+            cmd.Parameters.Clear();
+            cmd.CommandText = """
+                INSERT INTO db_records (CollectionId, Title, Position, CreatedAt, UpdatedAt, AllDay)
+                VALUES ($c, $t, $p, $now, $now, 0);
+                SELECT last_insert_rowid();
+                """;
+            cmd.Parameters.AddWithValue("$c", col);
+            cmd.Parameters.AddWithValue("$t", $"Стенд: лента {i:000}");
+            cmd.Parameters.AddWithValue("$p", 4000 + i);
+            cmd.Parameters.AddWithValue("$now", DateTime.Now.ToString("o"));
+            var rec = Convert.ToInt32(cmd.ExecuteScalar());
+            cmd.Parameters.Clear();
+            cmd.CommandText = "INSERT INTO db_field_values (RecordId, FieldId, Value) VALUES ($r, $f, $v)";
+            cmd.Parameters.AddWithValue("$r", rec);
+            cmd.Parameters.AddWithValue("$f", file);
+            cmd.Parameters.AddWithValue("$v", Path.Combine(dir, $"лента-{i:000}.txt"));
+            cmd.ExecuteNonQuery();
+        }
+        tx.Commit();
+    }
+    // Текст в кеше и поиск по нему: у карточки с цитатой высота растет вместе со шрифтом. Без
+    // цитаты высоту держит наименьшая высота карточки, шрифт ее не меняет — и съехать ленте не на
+    // чем, проверка ничего бы не различила.
+    for (var i = 1; i <= 80; i++)
+    {
+        var text = $"Лента {i:000}: ленточные фундаменты, армирование ленты и опалубка ленты под нагрузкой.";
+        var path = Path.Combine(dir, $"лента-{i:000}.txt");
+        File.WriteAllText(path, text);
+        service.Index.Put(path, new SmartBase.Core.Documents.DocText(SmartBase.Core.Documents.DocTextStatus.Ok, text));
+    }
+    SetField(library, "_searchQuery", "ленты");
+    Call(library, "RefreshCurrent", false, false);
+    var cardsScroll = (ScrollViewer)Get(feed, "CardsScroll")!;
+    var cardsHost   = (ItemsControl)Get(feed, "CardsHost")!;
+    var listed = await Until(() => feed.Cards.Count >= 80 && cardsScroll.Extent.Height > cardsScroll.Viewport.Height * 3, 20);
+    Expect(listed, $"поиск по тексту дал прокручиваемую ленту из 80 документов с цитатами (карточек {feed.Cards.Count})");
+
+    // Место меряет сам стенд, а не проверяемый код: верхняя карточка — первая из разложенных,
+    // чей низ ниже верхнего края ленты.
+    (int Index, string? Title, double Height) Top()
+    {
+        var best = (Index: int.MaxValue, Title: (string?)null, Height: 0.0);
+        foreach (var card in cardsHost.GetRealizedContainers())
+        {
+            if (card.Bounds.Height <= 0 || card.TranslatePoint(default, cardsScroll) is not { } at) continue;
+            if (at.Y + card.Bounds.Height <= 0) continue;
+            var i = cardsHost.IndexFromContainer(card);
+            if (i >= 0 && i < best.Index)
+                best = (i, (card.DataContext as SmartBase.Views.Library.DocCardVm)?.Doc.Title, card.Bounds.Height);
+        }
+        return best;
+    }
+    string? TopTitle() => Top().Title;
+    async Task ScrollTo(int index, double into)
+    {
+        cardsHost.ScrollIntoView(index);
+        await Settle(0.5, 5);
+        if (cardsHost.ContainerFromIndex(index) is { } card && card.TranslatePoint(default, cardsScroll) is { } at)
+            cardsScroll.Offset = cardsScroll.Offset.WithY(cardsScroll.Offset.Y + at.Y + into * card.Bounds.Height);
+        await Settle(0.5, 5);
+    }
+    // Каким путем раздел перечитался при показе: сразу (с прошлого чтения в базах что-то
+    // записали) или отложенным чтением после раскладки.
+    void ShowLibrary(string what)
+    {
+        ShowModule("library");
+        Console.WriteLine($"  {what}: перечитывание при показе — {((bool)Get(library, "_loadDeferred")! ? "после раскладки" : "сразу")}");
+    }
+
+    var fontDelta = FontScale.Delta;
+    var cardSize  = LibrarySettings.CardSize;
+    try
+    {
+        // Шрифт — от самого мелкого к самому крупному: чем сильнее меняется высота строки, тем
+        // дальше съехала бы лента, перемерь панель место новой высотой.
+        FontScale.SetDelta(AppSettings.FontDeltaMin);
+        await Settle(1.5, 20);
+        await ScrollTo(40, 0.4);
+        var atStart  = TopTitle();
+        var smallRow = Top().Height;
+        Expect(atStart is not null && !atStart.EndsWith("001"), $"лента стоит посередине («{atStart}»)");
+
+        ShowModule("settings");
+        await Settle(1, 20);
+        FontScale.SetDelta(0);   // ползунок шлет изменения пачкой
+        FontScale.SetDelta(AppSettings.FontDeltaMax);
+        ShowLibrary("шрифт");
+        await Settle(1.5, 30);
+        Console.WriteLine($"  высота карточки при шрифте {AppSettings.FontDeltaMin:+0;-0} — {smallRow:0.#}, при {AppSettings.FontDeltaMax:+0;-0} — {Top().Height:0.#}");
+        Expect(TopTitle() == atStart, $"после смены шрифта сверху тот же документ («{TopTitle()}» вместо «{atStart}»)");
+
+        // После возврата человек прокрутил ленту сам — тихое перечитывание держит уже это место.
+        await ScrollTo(10, 0.4);
+        var moved = TopTitle();
+        Call(library, "RefreshCurrent", true, false);
+        await Settle(1.5, 20);
+        Expect(moved is not null && TopTitle() == moved, $"после возврата лента держит новое место («{TopTitle()}» вместо «{moved}»)");
+
+        var beforeSize = TopTitle();
+        ShowModule("settings");
+        await Settle(1, 20);
+        LibrarySettings.SetCardSize(cardSize == SmartBase.Views.Library.DocCardSize.Large
+            ? SmartBase.Views.Library.DocCardSize.Small : SmartBase.Views.Library.DocCardSize.Large);
+        ShowLibrary("размер карточки");
+        await Settle(1.5, 30);
+        Expect(TopTitle() == beforeSize, $"после смены размера карточки сверху тот же документ («{TopTitle()}» вместо «{beforeSize}»)");
+    }
+    finally
+    {
+        FontScale.SetDelta(fontDelta);
+        LibrarySettings.SetCardSize(cardSize);
+        SetField(library, "_searchQuery", "");
+        Call(library, "RefreshCurrent", false, false);
+        await Settle(1, 20);
+    }
+
     Console.WriteLine(faults == 0 ? "Библиотека: все проверки прошли" : $"Библиотека: НЕ ПРОШЛО {faults}");
 }
 

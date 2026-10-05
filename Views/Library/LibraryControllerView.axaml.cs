@@ -56,10 +56,6 @@ public partial class LibraryControllerView : UserControl
     private IReadOnlySet<string>? _types;
     private string _searchQuery = "";
 
-    /// <summary>Размер карточки на момент последнего чтения — по нему видно, что настройка
-    /// сменила именно РАЗМЕР, и прокрутку восстанавливать нельзя.</summary>
-    private DocCardSize _cardSize = LibrarySettings.CardSize;
-
     private int _gen;
     private DocVirtualList? _virtual;
 
@@ -247,14 +243,14 @@ public partial class LibraryControllerView : UserControl
     private void OnLibrarySettingsChanged()
     {
         if (DocIndexService.Current is { } s) s.MaxFileMb = LibrarySettings.IndexMaxMb;
-        if (_dbs.Count == 0) return;
 
-        // Смена размера карточки меняет высоту КАЖДОЙ строки, а тихое обновление возвращает
-        // прокрутку в пикселях — прежнее смещение указывало бы уже на другой документ. Поэтому
-        // размер обновляет ленту громко, с начала, а остальные настройки — по-прежнему тихо.
-        var resized = _cardSize != LibrarySettings.CardSize;
-        _cardSize   = LibrarySettings.CardSize;
-        RefreshCurrent(quiet: !resized);
+        // Все настройки перечитывают ленту тихо, и она остается на том же документе — и после
+        // смены размера карточки, когда высота каждой строки другая (так решил пользователь).
+        // Прежнее смещение в пикселях при этом не врет: виртуальная панель переводит его в номер
+        // строки своей оценкой высоты, а оценка до перестройки — прежняя. Раньше размер
+        // перечитывал ленту громко «с начала» — так было написано, а на деле лента и тогда
+        // оставалась на месте. Сторож — стенд разделов («шрифт и размер карточки держат место»).
+        if (_dbs.Count > 0) RefreshCurrent(quiet: true);
     }
 
     private void OnFontScaleChanged()
