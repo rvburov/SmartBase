@@ -243,6 +243,42 @@ public sealed class DocIndexServiceTests : IDisposable
         Assert.Empty(_index.Pending([first]));
     }
 
+    // ── Замер скорости ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Скорость меряется после разогрева (<see cref="DocReadPace"/>): «осталось» молчит, пока за
+    /// разогревом не разобрано еще пять документов, а прогон короче этого скорость не меряет — раздел
+    /// запомнил бы ее для окна подтверждения. Раньше разогрев шел в среднюю, и медленные первые
+    /// документы завышали и «осталось около …», и время в окне подтверждения.
+    /// </summary>
+    [Fact]
+    public async Task Speed_is_measured_after_the_warm_up()
+    {
+        var seen = new System.Collections.Concurrent.ConcurrentQueue<DocIndexProgress>();
+        _service.Progress += (_, p) => seen.Enqueue(p);
+        var warmUp = DocReadPace.WarmUp;
+
+        var shortRun = Enumerable.Range(0, 2 * warmUp - 1)
+            .Select(i => Write($"short-{i:D2}.txt", $"Короткий прогон, документ {i}")).ToList();
+        Assert.Equal(shortRun.Count, _service.StartPending(shortRun));
+        await Settle();
+
+        Assert.Equal(0, _service.LastSecondsPerDocument);
+        Assert.All(seen, p => Assert.Null(p.Left));
+
+        seen.Clear();
+        var total   = 3 * warmUp;
+        var longRun = Enumerable.Range(0, total)
+            .Select(i => Write($"long-{i:D2}.txt", $"Длинный прогон, документ {i}")).ToList();
+        Assert.Equal(total, _service.StartPending(longRun));
+        await Settle();
+
+        Assert.True(_service.LastSecondsPerDocument > 0, "прогон длиннее разогрева скорость не измерил");
+        // «Осталось» — с пятого документа после разогрева и до последнего, на котором ждать нечего.
+        Assert.Equal(Enumerable.Range(2 * warmUp, total - 2 * warmUp),
+                     seen.Where(p => p.Left is not null).Select(p => p.Done));
+    }
+
     // ── Сорвавшийся прогон ───────────────────────────────────────────────────
 
     // Кеш, который читается, но не принимает запись, — так выглядят кончившееся место на диске и

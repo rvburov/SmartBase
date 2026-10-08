@@ -8,7 +8,8 @@ namespace SmartBase.Database.DocIndex;
 /// <param name="Total">Сколько было в очереди на момент старта прогона.</param>
 /// <param name="File">Имя текущего документа — его показывает подсказка.</param>
 /// <param name="Left">
-/// Сколько осталось по средней скорости ЭТОГО прогона; <c>null</c>, пока мерить не на чем.
+/// Сколько осталось по средней скорости ЭТОГО прогона без разогрева (<see cref="DocReadPace"/>);
+/// <c>null</c>, пока мерить не на чем.
 /// Это замер по настоящим файлам человека, а не оценка: документы у всех разные, и угадать
 /// скорость заранее нельзя.
 /// </param>
@@ -85,6 +86,7 @@ public sealed class DocIndexService
     private int _done;
     private int _total;
     private long _startedTicks;
+    private DocReadPace _pace = new();
 
     // Уборка сирот сделана за этот запуск программы. Обход всех папок кеша стоит дорого, а
     // сироты появляются не быстрее, чем человек переименовывает документы.
@@ -99,9 +101,10 @@ public sealed class DocIndexService
     public bool Running { get; private set; }
 
     /// <summary>
-    /// Сколько секунд уходило на документ в последнем прогоне; 0 — прогонов еще не было или
-    /// разобрать ничего не успели. Из этого числа берется время в окне подтверждения: оно
-    /// измерено на НАСТОЯЩИХ файлах человека, а не угадано.
+    /// Сколько секунд уходило на документ в последнем прогоне, без разогрева (см.
+    /// <see cref="DocReadPace"/>); 0 — прогонов еще не было или прогон был слишком коротким для
+    /// замера. Из этого числа берется время в окне подтверждения: оно измерено на НАСТОЯЩИХ файлах
+    /// человека, а не угадано.
     /// </summary>
     public double LastSecondsPerDocument { get; private set; }
 
@@ -166,6 +169,7 @@ public sealed class DocIndexService
         _done         = 0;
         _total        = _queue.Count;
         _startedTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+        _pace         = new DocReadPace();
         _cts          = new CancellationTokenSource();
         _idle.Reset();
 
@@ -284,12 +288,11 @@ public sealed class DocIndexService
             lock (_lock)
             {
                 // Замер по тому, что успели: остановленный прогон тоже мерит честно — сколько
-                // документов прошло, за столько времени.
+                // документов прошло после разогрева, за столько времени. Прогон короче разогрева
+                // и пяти документов за ним скорость не меряет — запоминать раздел будет нечего.
                 done  = _done;
                 total = _total;
-                if (done > 0)
-                    LastSecondsPerDocument =
-                        System.Diagnostics.Stopwatch.GetElapsedTime(_startedTicks).TotalSeconds / done;
+                LastSecondsPerDocument = _pace.SecondsPerDocument ?? 0;
 
                 _cts?.Dispose();
                 _cts    = null;
@@ -383,24 +386,9 @@ public sealed class DocIndexService
             lock (_lock) _queued.Remove(DocTextIndex.KeyOf(path));
 
             var done = Interlocked.Increment(ref _done);
-            Progress?.Invoke(this, new DocIndexProgress(done, total, FileNameOf(path), Left(done, total)));
+            _pace.Done(done, System.Diagnostics.Stopwatch.GetElapsedTime(_startedTicks));
+            Progress?.Invoke(this, new DocIndexProgress(done, total, FileNameOf(path), _pace.Left(total)));
         }
-    }
-
-    /// <summary>
-    /// Сколько еще ждать — по средней скорости этого прогона. Первые документы в счет не идут:
-    /// на одном-двух средняя пляшет, и «осталось 4 часа» сменялось бы на «2 минуты» через секунду.
-    /// </summary>
-    private TimeSpan? Left(int done, int total)
-    {
-        const int WarmUp = 5;
-        if (done < WarmUp || done >= total) return null;
-
-        var elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(_startedTicks);
-        if (elapsed <= TimeSpan.Zero) return null;
-
-        var perDoc = elapsed / done;
-        return perDoc * (total - done);
     }
 
     private static string FileNameOf(string path)
