@@ -272,6 +272,19 @@ public sealed class RelationSelectBox : Panel
         _search?.Focus();
     }
 
+    /// <summary>
+    /// Раскрыть выбор записей с набранным в поле поиска (правка ячейки таблицы набором): записи
+    /// отбирает само поле поиска, как при наборе в нем, фокус и каретка — в конце поиска.
+    /// </summary>
+    public void OpenSearch(string text)
+    {
+        if (_recordId <= 0 || _popup is null || _search is null) return;
+        _search.Text  = text;   // отбор — по TextChanged поля, один запрос к базе, а не два
+        _popup.IsOpen = true;
+        _search.Focus();
+        _search.SelectionStart = _search.SelectionEnd = _search.CaretIndex = text.Length;
+    }
+
     // Показ закрытого вида — названия через разделитель поля (как read-ячейка мультисписка).
     private void RefreshDisplay()
     {

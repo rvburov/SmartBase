@@ -66,6 +66,11 @@ public static class ShortcutActions
         string id, string title, ShortcutBlock block, ShortcutContext ctx, string label, params string[] gestures) =>
         new(id, title, block, ctx, gestures.Select(G).ToArray(), Rebindable: false, FixedLabel: label);
 
+    /// <summary>Буквы и цифры — жесты справочной строки «Начать правку набором текста»: печатать в
+    /// выделенную ячейку можно любой из них, и все они заняты набором.</summary>
+    private static string[] LettersAndDigits() =>
+        [.. Enumerable.Range('A', 26).Select(c => ((char)c).ToString()), .. Enumerable.Range(0, 10).Select(d => d.ToString())];
+
     public static IReadOnlyList<ShortcutAction> All { get; } =
     [
         // ── Глобальные ──────────────────────────────────────────────────────────
@@ -131,6 +136,10 @@ public static class ShortcutActions
         Ref("table.ref.tabPrev",    "К ячейке левее",                      ShortcutBlock.Table, ShortcutContext.Table, "Shift+Tab"),
         Ref("table.ref.edit",       "Начать правку ячейки",                ShortcutBlock.Table, ShortcutContext.Table, "Enter"),
         Ref("table.ref.editF2",     "Начать правку ячейки второй клавишей", ShortcutBlock.Table, ShortcutContext.Table, "F2"),
+        RefLabel("table.ref.type",  "Начать правку набором текста",        ShortcutBlock.Table, ShortcutContext.Table,
+                 "Буква или цифра", LettersAndDigits()),
+        Ref("table.ref.editMode",   "Переключить стрелки в правке между текстом и ячейками",
+            ShortcutBlock.Table, ShortcutContext.Table, "F2"),
         Ref("table.ref.newline",    "Перенос строки в тексте и ссылке",    ShortcutBlock.Table, ShortcutContext.Table, "Alt+Enter"),
         Ref("table.ref.escape",     "Снять выделение, отменить правку",    ShortcutBlock.Table, ShortcutContext.Table, "Escape"),
 

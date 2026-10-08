@@ -178,6 +178,29 @@ public partial class DateEditor : UserControl
         set => Input.Padding = new Avalonia.Thickness(value, 0, 0, 0);
     }
 
+    /// <summary>Каретка стоит в поле ручного ввода (ячейка таблицы: стрелки и F2 решают по нему).</summary>
+    public bool IsManualInputFocused => Input.IsKeyboardFocusWithin;
+
+    /// <summary>
+    /// Начать ручной ввод с набранного: поле получает его вместо показанного значения, каретку в
+    /// конце и фокус (правка ячейки таблицы набором — цифрой на выделенной ячейке). Поле попадает в
+    /// визуальное дерево с первой раскладкой редактора, до нее фокус в него не ставится.
+    /// </summary>
+    public void BeginManualInput(string text)
+    {
+        Input.Text = text;
+        Input.Focus();
+        Input.SelectionStart = Input.SelectionEnd = Input.CaretIndex = text.Length;
+    }
+
+    /// <summary>Принять набранное в поле, как Enter в нем. Правка ячейки зовет это сама: таблица
+    /// забирает Enter раньше поля, а закрывается раньше, чем поле узнает об уходе фокуса.</summary>
+    public void CommitManualInput() => CommitManual();
+
+    /// <summary>Отказаться от набранного: поле снова показывает значение, и уход фокуса из него
+    /// (редактор снимается вместе с правкой ячейки) ничего не запишет.</summary>
+    public void CancelManualInput() => Input.Text = _value?.ToDisplay() ?? "";
+
     // ── Внутреннее ────────────────────────────────────────────────────────────
 
     private void SetValue(DateValue? v, bool raise)
@@ -190,6 +213,8 @@ public partial class DateEditor : UserControl
     private void CommitManual()
     {
         var text = Input.Text?.Trim() ?? "";
+        // В поле то же, что показано: набора не было (или от него отказались) — писать нечего.
+        if (text == (_value?.ToDisplay() ?? "")) return;
         if (text.Length == 0)
         {
             if (_value is not null) SetValue(null, raise: true);

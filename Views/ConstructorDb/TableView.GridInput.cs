@@ -23,8 +23,9 @@ namespace SmartBase.Views.ConstructorDb;
 /// правка ячейки накладным редактором (<see cref="EditorHost"/>) с теми же редакторами по типам
 /// (<c>BuildCellEditor</c>) и правилами коммита: Enter, Tab, клик мимо редактора, подмена строк
 /// пишут; Escape не пишет; уход фокуса пишет, не закрывая. Второй клик по той же ячейке открывает
-/// правку по своей паре «прошлый клик / выделенная ячейка». Галочка и скрепка «Файла» — кнопки на
-/// отпускании, имя файла — действие <c>FileEditor</c> (открыть, поправить путь руками).
+/// правку по своей паре «прошлый клик / выделенная ячейка»; набор на выделенной ячейке открывает ее
+/// с набранным (партиал <c>CellTyping</c>). Галочка и скрепка «Файла» — кнопки на отпускании, имя
+/// файла — действие <c>FileEditor</c> (открыть, поправить путь руками).
 /// </summary>
 public partial class TableView
 {
@@ -93,6 +94,13 @@ public partial class TableView
         // Escape в правке — отмена без записи. Всплытием, а не туннелем: раскрытый список закрывает
         // себя по Escape сам (и помечает клавишу), правка при этом остается.
         AddHandler(KeyDownEvent, OnEditKeyDown, RoutingStrategies.Bubble);
+
+        // Набор на выделенной ячейке открывает правку с набранным (TableView.CellTyping.cs). Туннелем —
+        // раньше списка с его встроенным поиском по буквам.
+        AddHandler(TextInputEvent, OnTableTextInput, RoutingStrategies.Tunnel);
+        // Клик в поле правки, начатой набором, переводит ее из «ввода» в «правку»: стрелки — по тексту.
+        RecordsGrid.Editor.AddHandler(PointerPressedEvent, (_, _) => _enterMode = false,
+                                      RoutingStrategies.Tunnel, handledEventsToo: true);
 
         // Протягивание: движения и отпускание — с handledEventsToo, чтобы дойти и сквозь редактор.
         RecordsGrid.Surface.AddHandler(PointerMovedEvent,       OnGridPointerMoved,    RoutingStrategies.Bubble, handledEventsToo: true);
@@ -370,22 +378,23 @@ public partial class TableView
     // ── Правка ────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Открыть правку ячейки: второй клик по ней, Enter или F2 на якоре выделения. Редактор
+    /// Открыть правку ячейки: второй клик по ней, Enter или F2 на якоре выделения, набор на нем
+    /// (<c>BeginEditByTyping</c> — он же потом кладет набранное в редактор или поиск). Редактор
     /// (<c>BuildCellEditor</c>) кладется над ячейкой. Фокус — в поле у текстовых типов, в список у
     /// списков; у даты, мультисписка и связи остается в таблице — их открывают кликом, а Enter, Tab
     /// и Escape работают с таблицы. Галочка, файл и вычисляемые колонки — только для чтения (правятся
     /// кликом или никак). Без права правки записей — окно с причиной, если правку просили мышью;
-    /// клавиатура молчит.
+    /// клавиатура молчит. Возвращает открытый редактор; null — правка не открылась.
     /// </summary>
-    private void BeginEdit(int row, int column, bool byMouse)
+    private Control? BeginEdit(int row, int column, bool byMouse)
     {
-        if (!IsDataColumn(column) || CachedRowAt(row) is not { IsLoading: false, IsAddRow: false } vm) return;
+        if (!IsDataColumn(column) || CachedRowAt(row) is not { IsLoading: false, IsAddRow: false } vm) return null;
         var def = _colDefs[column];
-        if (def.IsReadOnly) return;
+        if (def.IsReadOnly) return null;
         if (!Can(PermAction.EditRecord))
         {
             if (byMouse) PermissionNotice.Show(this, PermAction.EditRecord);
-            return;
+            return null;
         }
         if (IsCellEditing) CommitEdit(focusGrid: false);
 
@@ -402,6 +411,7 @@ public partial class TableView
         if (editor is TextBox { TextAlignment: TextAlignment.Right } rightAligned) KeepRightTextInPlace(rightAligned);
         OpenEditor(row, column, vm, editor);
         if (editor is TextBox or ComboBox) editor.Focus();
+        return editor;
     }
 
     // Поле ввода раскладывает текст по ширине, округленной ВВЕРХ до целого DIP (так делает его
@@ -425,6 +435,8 @@ public partial class TableView
     private void OpenEditor(int row, int column, TableRowVm vm, Control editor)
     {
         var def = _colDefs[column];
+        ResetTyping();   // режимы набора ставит BeginEditByTyping уже после открытия
+        if (editor is ComboBox) _listKey = def.Key;   // выбор списка пишется при записи правки
         IsCellEditing  = true;
         _editingCell   = (row, column);
         _editRow       = vm;
@@ -437,13 +449,26 @@ public partial class TableView
     }
 
     /// <summary>Закрыть правку с записью набранного: Enter, Tab, клик мимо редактора, подмена строк,
-    /// закрытие окна. Редакторы с выбором уже записали свое на каждом изменении.</summary>
+    /// закрытие окна. Список пишет выбор здесь же (<c>FlushDeferredList</c>); мультисписок, связь и
+    /// выбор даты в календаре уже записали свое на каждом изменении.</summary>
     private void CommitEdit(bool focusGrid)
     {
         if (!IsCellEditing) return;
         // Путь, набранный руками: FileEditor пишет его сам и закрывает правку своим событием.
         if (RecordsGrid.Editor.Editor is FileEditor file) file.CommitManualEdit();
-        if (IsCellEditing && _editRow is { } row && row.RecordId == _editRecordId) FlushEditingBox();
+        var live = IsCellEditing && _editRow is { } row && row.RecordId == _editRecordId;
+        // Дату, набранную руками, принимаем явно: поле узнало бы об уходе фокуса только после снятия
+        // редактора, а строке к тому времени могла достаться другая запись — тогда набранное не пишем.
+        if (RecordsGrid.Editor.Editor is DateEditor date)
+        {
+            if (live) date.CommitManualInput();
+            else      date.CancelManualInput();
+        }
+        if (live)
+        {
+            FlushEditingBox();
+            FlushDeferredList(_editRow!);
+        }
         CloseEditor(focusGrid);
     }
 
@@ -452,6 +477,8 @@ public partial class TableView
     {
         if (!IsCellEditing) return;
         if (RecordsGrid.Editor.Editor is FileEditor file) file.CancelManualEdit();
+        // Иначе уход фокуса из снятого поля даты записал бы набранное руками.
+        if (RecordsGrid.Editor.Editor is DateEditor date) date.CancelManualInput();
         CloseEditor(focusGrid);
     }
 
@@ -466,6 +493,9 @@ public partial class TableView
         _editRow      = null;
         _editRecordId = 0;
         RecordsGrid.Editor.Close();
+        // Режимы набора — после снятия редактора: снимаемый список еще может сообщить о выборе, и
+        // отложенная правка его не запишет.
+        ResetTyping();
         if (focusGrid || hadFocus) RecordsGrid.Surface.Focus();
     }
 

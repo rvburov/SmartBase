@@ -126,6 +126,20 @@ public sealed class MultiSelectBox : Panel
         RefreshDisplay();
     }
 
+    /// <summary>
+    /// Раскрыть чеклист с набранным в поле поиска (правка ячейки таблицы набором): пункты сразу
+    /// отобраны, фокус и каретка — в конце поиска. Галочки ставятся как обычно.
+    /// </summary>
+    public void OpenSearch(string text)
+    {
+        _popup.IsOpen = true;
+        if (_search is null) return;
+        _search.Text = text;
+        Filter(text);   // TextChanged придет отложенно — отбор нужен сразу
+        _search.Focus();
+        _search.SelectionStart = _search.SelectionEnd = _search.CaretIndex = text.Length;
+    }
+
     /// <summary>Текущее значение для хранения — JSON-массив выбранных опций (в порядке опций).</summary>
     public string Storage => MultiSelectValue.Serialize(_options.Where(_selected.Contains));
 

@@ -345,6 +345,10 @@ public partial class TableView : UserControl
 
     private void OnTableKeyDown(object? sender, KeyEventArgs e)
     {
+        // Клавиши, которые зависят от того, как начата правка и что правится: стрелки «ввода», F2,
+        // Escape списка и выбора, пробел и Backspace набранного в списке (TableView.CellTyping.cs).
+        if (IsCellEditing && HandleTypingKey(e)) return;
+
         if (IsCellEditing && e.Key == Key.Enter)
         {
             OnEnterWhileEditing(e);
@@ -355,6 +359,7 @@ public partial class TableView : UserControl
         if (IsCellEditing && e.Key == Key.Tab && e.KeyModifiers is KeyModifiers.None or KeyModifiers.Shift)
         {
             e.Handled = true;
+            TakeFocusedListItem();
             CommitEditAndFocusGrid();
 
             var key = e.KeyModifiers == KeyModifiers.Shift ? CellNavKey.ShiftTab : CellNavKey.Tab;
@@ -404,7 +409,7 @@ public partial class TableView : UserControl
     /// <summary>
     /// Enter в открытом редакторе только фиксирует значение, и выделена остается та же ячейка
     /// (Enter не «стрелка вниз»: иначе рамка и активная ячейка расходились бы, и следующий Delete
-    /// или Ctrl+C уходил бы не туда).
+    /// или Ctrl+C уходил бы не туда). Так же и в правке, начатой набором.
     ///
     /// Alt+Enter в текстовой ячейке — перевод строки внутри значения. В остальных редакторах он
     /// ничего не делает (перенос в числе или дате превратил бы значение в текст), но и сетке не
@@ -412,13 +417,8 @@ public partial class TableView : UserControl
     /// </summary>
     private void OnEnterWhileEditing(KeyEventArgs e)
     {
-        // Раскрытый список выбирает пункт по Enter — эту клавишу у него не отнимаем. Фокус при этом
-        // стоит на пункте во всплывающем окне, у которого свое визуальное дерево, — список ищется по
-        // логическому (пункт → список).
-        if (e.Source is StyledElement source
-            && source.GetSelfAndLogicalAncestors().OfType<ComboBox>().FirstOrDefault() is { IsDropDownOpen: true })
-            return;
-
+        // Раскрытый список Enter тоже записывает сразу, как текст: пункт под фокусом и есть выбор
+        // (TakeFocusedListItem берет его так же, как сам список по Enter).
         e.Handled = true;
 
         if (e.KeyModifiers == KeyModifiers.Alt)
@@ -427,6 +427,7 @@ public partial class TableView : UserControl
             return;
         }
 
+        TakeFocusedListItem();
         CommitEditAndFocusGrid();
     }
 
@@ -993,9 +994,9 @@ public partial class TableView : UserControl
 
     /// <summary>
     /// Редактор ячейки по типу поля — кладется в накладной редактор сетки (<see cref="EditorHost"/>).
-    /// Текстовые поля пишут значение при коммите правки (<see cref="FlushEditingBox"/>), редакторы с
-    /// выбором — на каждое изменение. <paramref name="relLinks"/> — кеш связей таблицы: из него
-    /// редактор связи берет стартовый набор.
+    /// Текстовые поля и список пишут значение при коммите правки (<see cref="FlushEditingBox"/>,
+    /// <c>FlushDeferredList</c>), мультисписок, связь и выбор даты в календаре — на каждое изменение.
+    /// <paramref name="relLinks"/> — кеш связей таблицы: из него редактор связи берет стартовый набор.
     /// </summary>
     private Control BuildCellEditor(TableColumnDef def, TableRowVm row, RelationLinksCache relLinks)
     {
@@ -1045,8 +1046,15 @@ public partial class TableView : UserControl
                     SelectedItem             = row[def.Key],
                 };
                 ApplyEditorCellStyle(combo, row, def.Key);
+                // Выбор пишется при записи правки (FlushDeferredList) или при уходе фокуса из списка
+                // (FlushListWhenFocusLeft), а не на каждое изменение: Escape уходит без записи, как
+                // с текстом. Уход фокуса смотрится после самого ухода — фокус в пункты раскрытого
+                // списка уходом не считается.
                 combo.SelectionChanged += (_, _) =>
-                    row[def.Key] = combo.SelectedItem?.ToString() ?? "";
+                {
+                    if (ReferenceEquals(RecordsGrid.Editor.Editor, combo)) _listDirty = true;
+                };
+                combo.LostFocus += (_, _) => Dispatcher.UIThread.Post(() => FlushListWhenFocusLeft(combo));
                 return combo;
             }
 
@@ -1137,22 +1145,7 @@ public partial class TableView : UserControl
         var end   = Math.Max(tb.SelectionStart, tb.SelectionEnd);
         var prospective = text[..start] + e.Text + text[end..];
 
-        if (!IsPartialNumber(prospective)) e.Handled = true;
-    }
-
-    // Допускает незавершенный ввод: "", "-", "12", "12,", "-3.5".
-    private static bool IsPartialNumber(string s)
-    {
-        if (s.Length == 0) return true;
-        var i = s[0] == '-' ? 1 : 0;
-        var seps = 0;
-        for (; i < s.Length; i++)
-        {
-            var c = s[i];
-            if (c is '.' or ',') { if (++seps > 1) return false; }
-            else if (!char.IsDigit(c)) return false;
-        }
-        return true;
+        if (!CellTyping.IsPartialNumber(prospective)) e.Handled = true;
     }
 
     // ── Выделение колонок голубой заливкой (одиночное и Shift-диапазон) ────────
