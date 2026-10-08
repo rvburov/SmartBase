@@ -254,7 +254,10 @@ public class AppDbContext : DbContext
         }
         else
         {
-            options.UseSqlite(SqliteConnectionString(_dbPath),
+            // Подключение — из SqliteGate: открывается под замком своего пула (обход гонки пула
+            // Microsoft.Data.Sqlite, см. там). Закрывает его сам контекст.
+            options.UseSqlite(SqliteGate.NewConnection(SqliteConnectionString(_dbPath)),
+                              contextOwnsConnection: true,
                               o => o.CommandTimeout(WaitSeconds(_dbPath)));
         }
         // Один тип контекста обслуживает два провайдера: без своего ключа кеша EF отдал бы
@@ -369,8 +372,8 @@ public class AppDbContext : DbContext
         if (PgConnectionInfo.IsPostgresConnectionString(dbPath)) return;
         try
         {
-            using var key = new Microsoft.Data.Sqlite.SqliteConnection(SqliteConnectionString(dbPath));
-            Microsoft.Data.Sqlite.SqliteConnection.ClearPool(key);
+            using var key = SqliteGate.NewConnection(SqliteConnectionString(dbPath));
+            SqliteGate.ClearPool(key);
         }
         catch { /* best-effort: без сброса просто останется старое поведение */ }
     }

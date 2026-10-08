@@ -61,7 +61,7 @@ public sealed class IngressReplies
 
     private SqliteConnection Open()
     {
-        var connection = new SqliteConnection($"Data Source={_path}");
+        var connection = SqliteGate.NewConnection($"Data Source={_path}");
         connection.Open();
 
         using var pragma = connection.CreateCommand();

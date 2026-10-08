@@ -76,7 +76,7 @@ public sealed class OutgoingSourceTests : IDisposable
         }
         finally
         {
-            try { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); } catch { /* best-effort */ }
+            try { SqliteGate.ClearAllPools(); } catch { /* best-effort */ }
             TempDatabase.Cleanup(appDb);
             try { Directory.Delete(dir, recursive: true); } catch { /* временная папка */ }
         }

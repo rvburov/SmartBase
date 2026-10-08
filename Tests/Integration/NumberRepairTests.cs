@@ -50,7 +50,7 @@ public sealed class NumberRepairTests
                 // версией еще не открывался, снимаем флаг.
                 Exec(raw, "DELETE FROM db_meta WHERE Key = 'repair.number-display';");
             }
-            SqliteConnection.ClearAllPools();
+            SqliteGate.ClearAllPools();
 
             // Монтирование: фоновый ремонт (Dispose его дожидается) и флаг «сделано».
             using (DatabaseManager.Open(1, "old", path)) { }
@@ -90,7 +90,7 @@ public sealed class NumberRepairTests
                 raw.Open();
                 Exec(raw, "DELETE FROM db_meta WHERE Key = 'repair.number-display';");
             }
-            SqliteConnection.ClearAllPools();
+            SqliteGate.ClearAllPools();
 
             using (DatabaseManager.Open(1, "ok", path)) { }
 

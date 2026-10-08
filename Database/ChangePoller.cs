@@ -250,7 +250,7 @@ public sealed class ChangePoller : IDisposable
     {
         w.Conn = w.IsPostgres
             ? new NpgsqlConnection(w.Path)
-            : new SqliteConnection($"Data Source={w.Path};Mode=ReadOnly;Pooling=False");
+            : SqliteGate.NewConnection($"Data Source={w.Path};Mode=ReadOnly;Pooling=False");
         w.Conn.Open();
         if (w.IsPostgres) return;
         using var cmd = w.Conn.CreateCommand();

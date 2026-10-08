@@ -320,7 +320,7 @@ internal static class BloatBench
 
     private static void Cleanup(string path)
     {
-        try { SqliteConnection.ClearAllPools(); } catch { /* best-effort */ }
+        try { SqliteGate.ClearAllPools(); } catch { /* best-effort */ }
         foreach (var suffix in new[] { "", "-wal", "-shm", "-journal" })
         {
             var p = path + suffix;

@@ -45,7 +45,7 @@ public sealed class ScenarioDeedsTests : IDisposable
         TempDatabase.Cleanup(_appDb);
         TempDatabase.Cleanup(_otherDb);
 
-        try { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); } catch { /* best-effort */ }
+        try { SqliteGate.ClearAllPools(); } catch { /* best-effort */ }
         try { Directory.Delete(_dir, recursive: true); } catch { /* временная папка */ }
     }
 

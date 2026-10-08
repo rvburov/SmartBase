@@ -3,6 +3,7 @@ using System.Text;
 using Microsoft.Data.Sqlite;
 using SmartBase.Core.Documents;
 using SmartBase.Core.Models;
+using SmartBase.Database;
 using SmartBase.Database.DocIndex;
 
 namespace SmartBase.Tests.Integration;
@@ -314,7 +315,7 @@ public sealed class DocTextIndexTests : IDisposable
             cmd.CommandText = "PRAGMA wal_checkpoint(TRUNCATE)";
             cmd.ExecuteNonQuery();
         }
-        SqliteConnection.ClearAllPools();
+        SqliteGate.ClearAllPools();
         foreach (var suffix in new[] { "-wal", "-shm" })
             try { File.Delete(_index.Path + suffix); } catch { /* нет файла — тем лучше */ }
 
@@ -985,7 +986,7 @@ public sealed class DocTextIndexTests : IDisposable
 
         // Портим файл под работающим кешем: пул держит дескриптор, но не запрещает записывать
         // в файл со стороны — именно так и выглядит поломка в жизни.
-        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        SqliteGate.ClearAllPools();
         File.WriteAllBytes(path, [.. Enumerable.Repeat((byte)0x7F, 4096)]);
         foreach (var suffix in new[] { "-wal", "-shm" })
             try { File.Delete(path + suffix); } catch { /* нет файла — тем лучше */ }

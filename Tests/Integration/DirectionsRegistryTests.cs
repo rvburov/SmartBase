@@ -31,7 +31,7 @@ public sealed class DirectionsRegistryTests : IDisposable
 
     private static void Cleanup(string dir, string appDb, string dataDb)
     {
-        try { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); } catch { /* best-effort */ }
+        try { SqliteGate.ClearAllPools(); } catch { /* best-effort */ }
         TempDatabase.Cleanup(appDb);
         TempDatabase.Cleanup(dataDb);
         try { Directory.Delete(dir, recursive: true); } catch { /* временная папка */ }

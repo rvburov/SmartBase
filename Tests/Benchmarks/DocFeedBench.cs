@@ -153,7 +153,7 @@ public static class DocFeedBench
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
+            SqliteGate.ClearAllPools();
             foreach (var s in new[] { "", "-wal", "-shm" })
                 try { File.Delete(indexPath + s); } catch { /* временный файл */ }
         }

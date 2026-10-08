@@ -21,7 +21,7 @@ public sealed class CopyTraceTests : IDisposable
     public void Dispose()
     {
         SecurityJournal.Attach(null);
-        try { SqliteConnection.ClearAllPools(); } catch { /* best-effort */ }
+        try { SqliteGate.ClearAllPools(); } catch { /* best-effort */ }
 
         foreach (var suffix in new[] { "", "-wal", "-shm" })
         {

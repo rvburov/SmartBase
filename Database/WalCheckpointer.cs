@@ -103,7 +103,7 @@ public static class WalCheckpointer
             {
                 _again.TryRemove(dbPath, out _);
                 await Hold(dbPath);   // отсрочку могли заказать, пока шел прошлый проход
-                using var conn = new Microsoft.Data.Sqlite.SqliteConnection(
+                using var conn = SqliteGate.NewConnection(
                     new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder { DataSource = dbPath, Pooling = false }.ToString());
                 conn.Open();
                 for (var attempt = 0; attempt < 120; attempt++)

@@ -43,7 +43,7 @@ public sealed class TempDatabase : IDisposable
         try { Manager.Dispose(); } catch { /* при падении теста файл все равно чистим */ }
 
         // Пул Microsoft.Data.Sqlite держит файловый дескриптор — без сброса файл «занят».
-        try { SqliteConnection.ClearAllPools(); } catch { /* best-effort */ }
+        try { SqliteGate.ClearAllPools(); } catch { /* best-effort */ }
         foreach (var suffix in new[] { "", "-wal", "-shm", "-journal" })
         {
             var p = Path + suffix;

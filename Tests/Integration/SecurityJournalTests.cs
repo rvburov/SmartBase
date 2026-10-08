@@ -22,7 +22,7 @@ public sealed class SecurityJournalTests : IDisposable
     public void Dispose()
     {
         SecurityJournal.Attach(null);
-        try { SqliteConnection.ClearAllPools(); } catch { /* best-effort */ }
+        try { SqliteGate.ClearAllPools(); } catch { /* best-effort */ }
         foreach (var suffix in new[] { "", "-wal", "-shm" })
         {
             try { if (File.Exists(_path + suffix)) File.Delete(_path + suffix); } catch { /* временный файл */ }
@@ -591,7 +591,7 @@ public sealed class SecurityJournalTests : IDisposable
             command.ExecuteNonQuery();
         }
 
-        SqliteConnection.ClearAllPools();
+        SqliteGate.ClearAllPools();
         Assert.NotEqual(0, Journal().Verify());
     }
 

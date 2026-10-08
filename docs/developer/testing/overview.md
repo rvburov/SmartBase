@@ -48,7 +48,7 @@ dotnet test SmartBase.sln              # оба набора ядра
 Это самая устойчивая граница при росте: быстрый сигнал не платит за медленные интеграционные тесты.
 
 Оба набора гоняются ПОСЛЕДОВАТЕЛЬНО (`DisableTestParallelization` в `AssemblyInfo.cs` каждого):
-Integration — из-за процесс-глобального `SqliteConnection.ClearAllPools()`, Unit — из-за статики
+Integration — из-за процесс-глобального `SqliteGate.ClearAllPools()`, Unit — из-за статики
 `AppSettings.AttachStore`. Причины расписаны в самих файлах.
 
 ## Почему тесты расширений вынесены отдельно

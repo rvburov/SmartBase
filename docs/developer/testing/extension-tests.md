@@ -74,7 +74,7 @@ Namespace и имя сборки — `SmartBase.Tests.Extensions.<Имя>`. Ра
 причина, и с абзацем-объяснением:
 
 - **`DocsCollection`**, **`TimeCollector`** и **`DocRegistry`** — локальный `TempDatabase.Dispose`
-  зовет `SqliteConnection.ClearAllPools()` (процесс-глобальная), а `DatabaseManager.Open` трогает
+  зовет `SqliteGate.ClearAllPools()` (процесс-глобальная), а `DatabaseManager.Open` трогает
   статику `CurrentUser`;
 - **`PdfWatermark`** — то же самое плюс своя причина: `DocLib.Instance` (PDFium) — синглтон на
   процесс и НЕ потокобезопасен, а через него идут и наложение знака, и рендер страниц в стенде.

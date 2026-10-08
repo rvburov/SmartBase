@@ -55,7 +55,7 @@ public sealed class IngressReadTests : IDisposable
         _registry.Dispose();
         _db.Dispose();
 
-        try { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); } catch { /* best-effort */ }
+        try { SqliteGate.ClearAllPools(); } catch { /* best-effort */ }
         try { Directory.Delete(_dir, recursive: true); } catch { /* временная папка */ }
     }
 

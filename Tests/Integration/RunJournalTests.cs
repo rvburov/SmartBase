@@ -22,7 +22,7 @@ public sealed class RunJournalTests : IDisposable
     public void Dispose()
     {
         RunJournal.Attach(null);
-        try { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); } catch { /* best-effort */ }
+        try { SqliteGate.ClearAllPools(); } catch { /* best-effort */ }
         foreach (var suffix in new[] { "", "-wal", "-shm" })
         {
             try { if (File.Exists(_path + suffix)) File.Delete(_path + suffix); } catch { /* временный файл */ }

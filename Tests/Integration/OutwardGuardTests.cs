@@ -24,7 +24,7 @@ public sealed class OutwardGuardTests : IDisposable
         EgressGate.Close();
         SecurityJournal.Attach(null);
 
-        try { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); } catch { /* best-effort */ }
+        try { SqliteGate.ClearAllPools(); } catch { /* best-effort */ }
 
         foreach (var suffix in new[] { "", "-wal", "-shm" })
         {
@@ -76,7 +76,7 @@ public sealed class OutwardGuardTests : IDisposable
         }
         finally
         {
-            try { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); } catch { /* best-effort */ }
+            try { SqliteGate.ClearAllPools(); } catch { /* best-effort */ }
             TempDatabase.Cleanup(appDb);
             TempDatabase.Cleanup(dataDb);
             try { Directory.Delete(dir, recursive: true); } catch { /* временная папка */ }

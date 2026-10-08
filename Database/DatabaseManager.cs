@@ -1038,7 +1038,7 @@ public sealed partial class DatabaseManager : IDisposable
         try
         {
             if (!File.Exists(path)) return false;
-            using var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path};Mode=ReadOnly;Pooling=False");
+            using var conn = SqliteGate.NewConnection($"Data Source={path};Mode=ReadOnly;Pooling=False");
             conn.Open();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "SELECT 1 FROM sqlite_master WHERE type='table' AND name='db_meta';";

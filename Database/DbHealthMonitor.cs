@@ -513,7 +513,7 @@ public sealed class DbHealthMonitor : IDisposable
         try
         {
             if (!File.Exists(path)) return (false, false);
-            using var conn = new SqliteConnection($"Data Source={path};Mode=ReadOnly;Pooling=False");
+            using var conn = SqliteGate.NewConnection($"Data Source={path};Mode=ReadOnly;Pooling=False");
             conn.Open();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "SELECT 1;";

@@ -221,8 +221,8 @@ public sealed class DocTextIndex
         // подключения): общий ClearAllPools задел бы и app.db, и журналы.
         try
         {
-            using var probe = new SqliteConnection(ConnectionString);
-            SqliteConnection.ClearPool(probe);
+            using var probe = SqliteGate.NewConnection(ConnectionString);
+            SqliteGate.ClearPool(probe);
         }
         catch { /* пула нет — тем лучше */ }
 
@@ -242,7 +242,7 @@ public sealed class DocTextIndex
 
     private SqliteConnection Open()
     {
-        var connection = new SqliteConnection(ConnectionString);
+        var connection = SqliteGate.NewConnection(ConnectionString);
         try
         {
             connection.Open();

@@ -46,7 +46,7 @@ public sealed class TempDatabase : IDisposable
     /// части платформ файл «занят» и не удаляется.</summary>
     public static void Cleanup(string path)
     {
-        try { SqliteConnection.ClearAllPools(); } catch { /* best-effort */ }
+        try { SqliteGate.ClearAllPools(); } catch { /* best-effort */ }
         foreach (var suffix in new[] { "", "-wal", "-shm", "-journal" })
         {
             var p = path + suffix;

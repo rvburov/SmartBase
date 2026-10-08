@@ -1,4 +1,5 @@
 using Microsoft.Data.Sqlite;
+using SmartBase.Database;
 
 namespace SmartBase.Logging;
 
@@ -259,7 +260,7 @@ public sealed class LogReader
 
     private static SqliteConnection OpenRead(string path)
     {
-        var conn = new SqliteConnection(new SqliteConnectionStringBuilder
+        var conn = SqliteGate.NewConnection(new SqliteConnectionStringBuilder
         {
             DataSource = path,
             Mode       = SqliteOpenMode.ReadOnly,

@@ -238,7 +238,7 @@ switch (args.FirstOrDefault())
             }
             m.Context.Database.ExecuteSqlRaw("INSERT INTO db_meta (\"Key\", \"Value\") VALUES ('load.stand', '1')");
         }
-        SqliteConnection.ClearAllPools();
+        SqliteGate.ClearAllPools();
         Console.WriteLine($"фикстура: {o.Records} записей × {fieldIds.Count} полей за {sw.Elapsed.TotalSeconds:F1} с");
 
         // Режим журнала — уже после DatabaseManager (он ставит DELETE на сетевом профиле);

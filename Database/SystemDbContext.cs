@@ -42,7 +42,7 @@ public class SystemDbContext : DbContext
     public SystemDbContext(string path) => _path = path;
 
     protected override void OnConfiguring(DbContextOptionsBuilder options)
-        => options.UseSqlite($"Data Source={_path}");
+        => options.UseSqlite(SqliteGate.NewConnection($"Data Source={_path}"), contextOwnsConnection: true);
 
     protected override void OnModelCreating(ModelBuilder model)
     {

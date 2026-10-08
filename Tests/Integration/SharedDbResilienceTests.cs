@@ -135,7 +135,7 @@ public sealed class SharedDbResilienceTests
                 Assert.Contains(repo.GetRecords(colId), r => r.Title == "");
                 Assert.Contains(repo.GetRecordsPageAfter(colId, null, null, 10), r => r.Title == "");
             }
-            SqliteConnection.ClearAllPools();
+            SqliteGate.ClearAllPools();
 
             // Монтирование: фоновый ремонт (Dispose его дожидается) и флаг «сделано».
             using (DatabaseManager.Open(1, "old", path)) { }
