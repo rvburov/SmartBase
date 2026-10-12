@@ -61,6 +61,7 @@ public static class PdfAnalyzerEngine
         public string FileName = "";
         public DateTime Mtime;
         public string RawKd = "", RawPd = "";
+        public bool   NoSpecification;           // КД без спецификации своего исполнения → «Проверить»
     }
 
     public static AnalyzeResult Run(
@@ -282,18 +283,21 @@ public static class PdfAnalyzerEngine
         return s;
     }
 
-    // ── Кэш названий изделий (designations_map) ───────────────────────────────
+    // ── Кэш названий изделий ПД (designations_map) ────────────────────────────
+    // КД сюда не входит: у нее имя изделия берется только из спецификации своего исполнения
+    // (KdSpecificationNames), без запасных источников.
 
     private static void BuildDesignationCache(List<Row> rows, Dictionary<string, string> cache)
     {
         var known = new HashSet<string>(DocumentCodes.KdNameMapping.Keys, StringComparer.Ordinal);
         // Коды-носители ПД (НД/НДЗ) и суффиксы; ПД-документы с кодом вида ловит регэксп ниже.
-        foreach (var c in new[] { "-ЛУ", "-УЛ", "ЛУ", "УЛ", "НДЗ", "НД", "НДЗ-УЛ", "НД-УЛ", "-01" }) known.Add(c);
+        foreach (var c in new[] { "-ЛУ", "-УЛ", "ЛУ", "УЛ", "НДЗ", "НД", "НДЗ-УЛ", "НД-УЛ" }) known.Add(c);
 
         var map = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var r in rows)
         {
-            var designation = r.RawKd.Length > 0 ? r.RawKd : r.RawPd;
+            if (r.RawKd.Length > 0) continue;
+            var designation = r.RawPd;
             if (designation.Length == 0) continue;
 
             var cleanName = r.Name;
@@ -326,6 +330,21 @@ public static class PdfAnalyzerEngine
             }
         }
         foreach (var (k, v) in map) cache[k] = v;
+    }
+
+    // Имена изделий КД: номер изделия с исполнением (…001, …001-01, …001-02) → название из имени
+    // файла его спецификации. Спецификация без названия (или с названием вида документа) имени не
+    // дает — ее строка и документы ее исполнения уйдут в «Проверить».
+    private static Dictionary<string, string> KdSpecificationNames(List<Row> rows)
+    {
+        var names = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var r in rows)
+        {
+            if (DocumentCodes.ParseKdNumber(r.DesignationKd) is not { IsSpecification: true } n) continue;
+            if (r.Name.Length == 0 || DocumentCodes.IsDocTypeName(r.Name)) continue;
+            names.TryAdd(n.Product, r.Name);
+        }
+        return names;
     }
 
     // ── Отбор строк по типу выгрузки (полное разделение КД и ПД) ───────────────
@@ -403,10 +422,11 @@ public static class PdfAnalyzerEngine
         var designation = row.DesignationKd;
         if (designation.Length == 0) return new SortKeyData(folder, "", 999, 0, 0, "");
 
-        var baseNumber = DocumentCodes.GetBaseDesignation(designation);
-        int exec = 0;
-        var em = Regex.Match(baseNumber, @"-(\d+)(?=[A-ZА-Я]|$)");
-        if (em.Success) { exec = int.Parse(em.Groups[1].Value); baseNumber = Regex.Replace(baseNumber, @"-\d+", ""); }
+        // Каждое исполнение — отдельное изделие: строки группируются по исполнениям (базовое,
+        // затем -01, -02…), внутри — спецификация и документы по коду.
+        var number = DocumentCodes.ParseKdNumber(designation);
+        var baseNumber = number?.Base ?? DocumentCodes.GetBaseDesignation(designation);
+        int exec = number?.Execution ?? -1;
 
         var cleanForCode = designation;
         int hasSuffix = 0, suffixType = 0;
@@ -485,19 +505,26 @@ public static class PdfAnalyzerEngine
         {
             var allDes = new Dictionary<string, string>(StringComparer.Ordinal);
             foreach (var r in rows)
-            {
-                if (r.DesignationKd.Length > 0 && r.Name.Length > 0) allDes[r.DesignationKd] = r.Name;
                 if (r.DesignationPd.Length > 0 && r.Name.Length > 0) allDes[r.DesignationPd] = r.Name;
-            }
+            var kdSpecs = KdSpecificationNames(rows);
 
             foreach (var r in rows)
             {
-                var des = r.DesignationKd.Length > 0 ? r.DesignationKd : r.DesignationPd;
-                if (des.Length == 0) continue;   // нет обозначения — оставляем имя как есть
                 // splitName: изделие / тип / лист — каждая часть с новой строки внутри ячейки.
+                if (r.DesignationKd.Length > 0)
+                {
+                    var product = DocumentCodes.ParseKdNumber(r.DesignationKd) is { } n
+                        ? kdSpecs.GetValueOrDefault(n.Product, "") : "";
+                    r.NoSpecification = product.Length == 0;
+                    r.Name = r.NoSpecification
+                        ? DocumentCodes.KdNoSpecificationName
+                        : DocumentCodes.GetKdDocumentName(r.DesignationKd, product, splitName);
+                    continue;
+                }
+                if (r.DesignationPd.Length == 0) continue;   // нет обозначения — оставляем имя как есть
                 r.Name = splitName
-                    ? DocumentCodes.GetDocumentFullNameMultiline(des, r.FileName, allDes, cache)
-                    : DocumentCodes.GetDocumentFullName(des, r.FileName, allDes, cache);
+                    ? DocumentCodes.GetDocumentFullNameMultiline(r.DesignationPd, r.FileName, allDes, cache)
+                    : DocumentCodes.GetDocumentFullName(r.DesignationPd, r.FileName, allDes, cache);
             }
         }
 
@@ -566,6 +593,9 @@ public static class PdfAnalyzerEngine
 
     // ── Запись в Excel ────────────────────────────────────────────────────────
 
+    // Светло-красная заливка Excel (та же, что у правила «Светло-красная заливка»).
+    private static readonly XLColor NoSpecificationFill = XLColor.FromHtml("#FFC7CE");
+
     private static void WriteExcel(string savePath, List<Row> rows,
         List<(string Header, Func<Row, object?> Value)> columns, CancellationToken ct)
     {
@@ -577,6 +607,8 @@ public static class PdfAnalyzerEngine
 
         for (int c = 0; c < columns.Count; c++)
             ws.Cell(1, c + 1).Value = columns[c].Header;
+
+        var nameCol = columns.FindIndex(c => c.Header is "Наименование документа" or "Наименование");
 
         for (int i = 0; i < rows.Count; i++)
         {
@@ -592,6 +624,9 @@ public static class PdfAnalyzerEngine
                     case string s: cell.Value = s; break;
                 }
             }
+            // «Проверить» у КД без спецификации своего исполнения — светло-красной заливкой.
+            if (rows[i].NoSpecification && nameCol >= 0)
+                ws.Cell(i + 2, nameCol + 1).Style.Fill.BackgroundColor = NoSpecificationFill;
         }
 
         FormatSheet(ws, columns);

@@ -426,7 +426,7 @@ public sealed class PdfAnalyzerRunTests : IDisposable
     // ── Наименование ──────────────────────────────────────────────────────────
 
     /// <summary>Имя изделия подтягивается из соседней спецификации: файл без кода документа дает
-    /// название всем документам того же изделия. Ради этого и строится кэш обозначений.</summary>
+    /// название всем документам того же изделия.</summary>
     [Fact]
     public void Product_names_are_taken_from_the_neighbouring_specification()
     {
@@ -453,6 +453,116 @@ public sealed class PdfAnalyzerRunTests : IDisposable
                           .Select(r => Cell(ws, r.RowNumber() - 1, "Наименование документа")).ToList();
             Assert.Contains(names, n => n.Contains('\n'));
         }, ExportType.Kd, splitName: true);
+    }
+
+    // ── Спецификации КД и исполнения ──────────────────────────────────────────
+
+    // Строки ведомости КД по порядку: обозначение, наименование, есть ли заливка «Проверить».
+    private static List<(string Designation, string Name, bool Marked)> KdRows(
+        IXLWorksheet ws, string nameHeader = "Наименование документа", string desHeader = "Обозначение документа КД")
+    {
+        var nameCol = ws.Row(1).CellsUsed().First(c => c.GetString() == nameHeader).Address.ColumnNumber;
+        return [.. ws.RowsUsed().Skip(1).Select(r => (
+            Cell(ws, r.RowNumber() - 1, desHeader),
+            Cell(ws, r.RowNumber() - 1, nameHeader),
+            r.Cell(nameCol).Style.Fill.PatternType != XLFillPatternValues.None))];
+    }
+
+    /// <summary>Спецификация исполнения (…-02) — такой же источник имени, как базовая, но только
+    /// для документов своего исполнения. Общий документ …СБ к исполнению −02 не относится: без
+    /// базовой спецификации он «Проверить».</summary>
+    [Fact]
+    public void Execution_specification_names_only_its_own_documents()
+    {
+        Pdf("АБВГ.301234.001-02 Блок питания.pdf");
+        Pdf("АБВГ.301234.001-02СБ.pdf");
+        Pdf("АБВГ.301234.001-02СБ-ЛУ.pdf");
+        Pdf("АБВГ.301234.001-02Э3.pdf");
+        Pdf("АБВГ.301234.001СБ.pdf");
+
+        RunAndCheck(ws => Assert.Equal(
+        [
+            ("АБВГ.301234.001СБ",       "Проверить", true),
+            ("АБВГ.301234.001-02",      "Блок питания", false),
+            ("АБВГ.301234.001-02СБ",    "Блок питания Сборочный чертеж", false),
+            ("АБВГ.301234.001-02СБ-ЛУ", "Блок питания Сборочный чертеж Лист утверждения", false),
+            ("АБВГ.301234.001-02Э3",    "Блок питания Схема электрическая принципиальная", false),
+        ], KdRows(ws)), ExportType.Kd, recursive: true);
+    }
+
+    /// <summary>У каждого исполнения свое имя: −01 не берет имя базовой (раньше брало), а
+    /// название в имени файла документа уступает имени спецификации. Строки идут группами по
+    /// исполнениям: базовое, −01, −02.</summary>
+    [Fact]
+    public void Every_execution_keeps_its_own_name_and_group()
+    {
+        Pdf("АБВГ.301234.001-02 Блок питания облегченный.pdf");
+        Pdf("АБВГ.301234.001-02СБ Сборка.pdf");
+        Pdf("АБВГ.301234.001-01Э3.pdf");
+        Pdf("АБВГ.301234.001-01СБ.pdf");
+        Pdf("АБВГ.301234.001-01 Блок питания резервный.pdf");
+        Pdf("АБВГ.301234.001СБ.pdf");
+        Pdf("АБВГ.301234.001 Блок питания.pdf");
+
+        RunAndCheck(ws => Assert.Equal(
+        [
+            ("АБВГ.301234.001",      "Блок питания", false),
+            ("АБВГ.301234.001СБ",    "Блок питания Сборочный чертеж", false),
+            ("АБВГ.301234.001-01",   "Блок питания резервный", false),
+            ("АБВГ.301234.001-01СБ", "Блок питания резервный Сборочный чертеж", false),
+            ("АБВГ.301234.001-01Э3", "Блок питания резервный Схема электрическая принципиальная", false),
+            ("АБВГ.301234.001-02",   "Блок питания облегченный", false),
+            ("АБВГ.301234.001-02СБ", "Блок питания облегченный Сборочный чертеж", false),
+        ], KdRows(ws)), ExportType.Kd, recursive: true);
+    }
+
+    /// <summary>Нет спецификации своего исполнения — имя не берется ни у базовой, ни из имени
+    /// файла документа: в ячейке «Проверить» со светло-красной заливкой.</summary>
+    [Fact]
+    public void Document_without_its_execution_specification_is_marked_to_check()
+    {
+        Pdf("АБВГ.301234.001 Блок питания.pdf");
+        Pdf("АБВГ.301234.001-03Э3 Блок питания усиленный.pdf");
+        Pdf("АБВГ.301234.001-03ПЭ3.pdf");
+
+        RunAndCheck(ws =>
+        {
+            Assert.Equal(
+            [
+                ("АБВГ.301234.001",       "Блок питания", false),
+                ("АБВГ.301234.001-03Э3",  "Проверить", true),
+                ("АБВГ.301234.001-03ПЭ3", "Проверить", true),
+            ], KdRows(ws));
+
+            var fill = ws.Cell(3, 2).Style.Fill.BackgroundColor.Color;   // «Наименование документа»
+            Assert.Equal("FFFFC7CE", fill.ToArgb().ToString("X8"));
+        }, ExportType.Kd, recursive: true);
+    }
+
+    /// <summary>Спецификация без названия в имени файла имени изделию не дает: «Проверить» и у нее,
+    /// и у документов ее исполнения.</summary>
+    [Fact]
+    public void Specification_without_a_name_marks_its_execution_to_check()
+    {
+        Pdf("АБВГ.301234.001-01.pdf");
+        Pdf("АБВГ.301234.001-01СБ.pdf");
+
+        RunAndCheck(ws => Assert.Equal(
+        [
+            ("АБВГ.301234.001-01",   "Проверить", true),
+            ("АБВГ.301234.001-01СБ", "Проверить", true),
+        ], KdRows(ws)), ExportType.Kd, recursive: true);
+    }
+
+    // Опись КД подписывает колонку «Наименование» — заливка ставится и туда.
+    [Fact]
+    public void Inventory_marks_the_name_column_too()
+    {
+        Pdf("АБВГ.301234.001СБ Блок питания.pdf");
+
+        RunAndCheck(ws => Assert.Equal(
+            [("АБВГ.301234.001СБ", "Проверить", true)],
+            KdRows(ws, nameHeader: "Наименование", desHeader: "Обозначение")), ExportType.Inventory);
     }
 
     // ── Прогресс, отмена и статистика ─────────────────────────────────────────

@@ -73,6 +73,51 @@ public sealed class DocumentCodesKdTests
         Assert.Equal(expectedCode, code);
     }
 
+    // ── Изделие и исполнение ──────────────────────────────────────────────────
+
+    /// <summary>Каждое исполнение — отдельное изделие: номер изделия хранит исполнение, а код
+    /// документа и лист отбрасывает. По нему документ находит спецификацию СВОЕГО исполнения.</summary>
+    [Theory]
+    [InlineData("АБВГ.301234.001",        "АБВГ.301234.001",    -1, true)]
+    [InlineData("АБВГ.301234.001-01",     "АБВГ.301234.001-01",  1, true)]
+    [InlineData("АБВГ.301234.001-02",     "АБВГ.301234.001-02",  2, true)]
+    [InlineData("АБВГ.301234.001СБ",      "АБВГ.301234.001",    -1, false)]
+    [InlineData("АБВГ.301234.001-02СБ",   "АБВГ.301234.001-02",  2, false)]
+    [InlineData("АБВГ.301234.001-02СБ-ЛУ","АБВГ.301234.001-02",  2, false)]
+    [InlineData("АБВГ.301234.001-ЛУ",     "АБВГ.301234.001",    -1, false)]   // лист — документ, не спецификация
+    [InlineData("АБВГ.301234.001-01Э3-УЛ","АБВГ.301234.001-01",  1, false)]
+    public void Kd_number_keeps_the_execution_in_the_product(
+        string designation, string product, int execution, bool isSpecification)
+    {
+        var n = DocumentCodes.ParseKdNumber(designation);
+
+        Assert.NotNull(n);
+        Assert.Equal("АБВГ.301234.001", n.Value.Base);
+        Assert.Equal(product, n.Value.Product);
+        Assert.Equal(execution, n.Value.Execution);
+        Assert.Equal(isSpecification, n.Value.IsSpecification);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("АБВГ.12345-01 34 01")]   // ПД
+    public void Non_kd_number_is_not_parsed(string? designation) =>
+        Assert.Null(DocumentCodes.ParseKdNumber(designation));
+
+    [Theory]
+    [InlineData("АБВГ.301234.001-02",     "Блок питания")]
+    [InlineData("АБВГ.301234.001-02СБ",   "Блок питания Сборочный чертеж")]
+    [InlineData("АБВГ.301234.001-02СБ-ЛУ","Блок питания Сборочный чертеж Лист утверждения")]
+    [InlineData("АБВГ.301234.001-02ТУ-ЛУ","Блок питания Технические условия Лист утверждения")]   // особая комбинация
+    public void Kd_document_name_is_product_type_and_sheet(string designation, string expected) =>
+        Assert.Equal(expected, DocumentCodes.GetKdDocumentName(designation, "Блок питания", multiline: false));
+
+    [Fact]
+    public void Kd_document_name_can_be_split_into_lines() =>
+        Assert.Equal("Блок питания\nСборочный чертеж\nЛист утверждения",
+            DocumentCodes.GetKdDocumentName("АБВГ.301234.001-01СБ-ЛУ", "Блок питания", multiline: true));
+
     // ── Порядок в ведомости ───────────────────────────────────────────────────
 
     [Fact]

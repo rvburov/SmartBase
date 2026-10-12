@@ -317,6 +317,78 @@ public static class DocumentCodes
         return (baseStr.TrimEnd('-'), found);
     }
 
+    // ══════════════════════════════════════════════════════════════════════════
+    //  Спецификации КД и исполнения
+    // ──────────────────────────────────────────────────────────────────────────
+    //  Каждое исполнение — отдельное изделие: АААА.000000.000 (базовое), …-01, …-02 и т. д.
+    //  Спецификация — номер без кода документа, у каждого исполнения своя и со своим
+    //  наименованием. Документ (…-02СБ, …СБ) берет имя изделия только у спецификации
+    //  СВОЕГО исполнения; у другого исполнения или у базовой — никогда.
+
+    /// <summary>Наименование документа КД, если у его исполнения нет спецификации с названием.</summary>
+    public const string KdNoSpecificationName = "Проверить";
+
+    /// <summary>Разобранный номер КД: база без исполнения, исполнение (-1 у базового), номер
+    /// изделия (база + исполнение) и признак спецификации (кода документа нет).</summary>
+    public readonly record struct KdNumber(string Base, int Execution, string Product, bool IsSpecification);
+
+    private static readonly Regex KdNumberRx = new(
+        @"^(?<product>(?<base>[A-ZА-Я]{4}\.\d{6}\.\d{3,4}(?:-\d{2}\.\d{2})?)(?:-(?<exec>\d+))?)(?<rest>.*)$",
+        RegexOptions.Compiled);
+
+    /// <summary>Разбор номера КД на изделие и исполнение; null — если это не КД-номер.
+    /// …001-02СБ-ЛУ → изделие …001-02, исполнение 2; …001СБ → изделие …001, исполнение -1.</summary>
+    public static KdNumber? ParseKdNumber(string? designation)
+    {
+        if (string.IsNullOrEmpty(designation)) return null;
+        var m = KdNumberRx.Match(designation);
+        if (!m.Success) return null;
+
+        var exec = m.Groups["exec"];
+        int execution = !exec.Success ? -1 : int.TryParse(exec.Value, out var n) ? n : int.MaxValue;
+        return new KdNumber(m.Groups["base"].Value, execution, m.Groups["product"].Value,
+                            m.Groups["rest"].Length == 0);
+    }
+
+    /// <summary>Наименование документа КД с известным именем изделия (из спецификации его
+    /// исполнения): изделие + тип по коду + лист; каждая часть с новой строки при multiline.</summary>
+    public static string GetKdDocumentName(string designation, string product, bool multiline)
+        => JoinParts(GetKdDocumentNameParts(designation, product), multiline ? "\n" : " ");
+
+    /// <summary>Части наименования документа КД: [изделие], [тип документа], [лист]. Тип и лист —
+    /// по тем же правилам, что в <see cref="GetDocumentFullNameParts"/>; изделие передается готовым.</summary>
+    public static (string Product, string DocType, string Suffix) GetKdDocumentNameParts(string designation, string product)
+    {
+        // Конкретные комбинации «код+лист» с особым именем (Д42-УЛ, ТУ-ЛУ…) — приоритетом.
+        foreach (var exc in SheetExceptionCodes)
+        {
+            if (!designation.EndsWith(exc)) continue;
+            var docType = KdNameMapping[exc];
+            var (excType, excSheet) = SplitSheetSuffix(docType);
+            return (docType.Contains(product) ? "" : product, excType, excSheet);
+        }
+
+        var suffixText = "";
+        var cleanDes = designation;
+        if (designation.EndsWith("-ЛУ")) { suffixText = "Лист утверждения"; cleanDes = designation[..^3]; }
+        else if (designation.EndsWith("-УЛ")) { suffixText = "Информационно-удостоверяющий лист"; cleanDes = designation[..^3]; }
+        cleanDes = Regex.Replace(cleanDes, @"-\d+(?=[A-ZА-Я])", "");
+
+        var (_, docCode) = ExtractBaseAndCode(cleanDes);
+        var typePart = docCode is not null && KdNameMapping.TryGetValue(docCode, out var dt) ? dt : "";
+        if (typePart.Length == 0)
+            foreach (var code in KdNameMapping.Keys.Where(c => Array.IndexOf(SuffixCodes, c) < 0).OrderByDescending(c => c.Length))
+            {
+                if (cleanDes.Contains($"-{code}")) { typePart = KdNameMapping[code]; break; }
+                if (cleanDes.EndsWith(code) && code.Length < cleanDes.Length) { typePart = KdNameMapping[code]; break; }
+            }
+
+        var prodPart = typePart.Length > 0 && typePart.Contains(product) ? "" : product;
+        var joined = string.Join(" ", new[] { prodPart, typePart }.Where(s => s.Length > 0));
+        var sheetPart = suffixText.Length > 0 && !joined.Contains(suffixText) ? suffixText : "";
+        return (prodPart, typePart, sheetPart);
+    }
+
     /// <summary>Полное наименование одной строкой: [название изделия] + [тип документа] + [суффикс].</summary>
     public static string GetDocumentFullName(
         string? designation, string fileName, IReadOnlyDictionary<string, string>? allDesignations,
@@ -348,11 +420,7 @@ public static class DocumentCodes
         // а общий суффикс. Его должна обработать обычная ветка ниже, чтобы тип основного
         // документа (напр. «Сборочный чертеж») попал в наименование вместе с «Лист утверждения».
         // Конкретные же комбинации (Д42-УЛ, ТУ-ЛУ…) остаются приоритетом — у них имена-переопределения.
-        var exceptions = KdNameMapping.Keys
-            .Where(c => (c.EndsWith("-УЛ") || c.EndsWith("-ЛУ")) && Array.IndexOf(SuffixCodes, c) < 0)
-            .OrderByDescending(c => c.Length).ToArray();
-
-        foreach (var exc in exceptions)
+        foreach (var exc in SheetExceptionCodes)
         {
             if (!designation.EndsWith(exc)) continue;
             var docType = KdNameMapping[exc];
@@ -462,6 +530,12 @@ public static class DocumentCodes
 
         return (prodPart, typePart, sheetPart);
     }
+
+    // Конкретные комбинации «код+лист» с особым именем (Д42-УЛ, ТУ-ЛУ…), от длинной к короткой;
+    // голые -ЛУ/-УЛ сюда не входят.
+    private static readonly string[] SheetExceptionCodes = KdNameMapping.Keys
+        .Where(c => (c.EndsWith("-УЛ") || c.EndsWith("-ЛУ")) && Array.IndexOf(SuffixCodes, c) < 0)
+        .OrderByDescending(c => c.Length).ToArray();
 
     // Названия удостоверяющих листов (от длинного к короткому) — для отделения «листа» от типа документа.
     private static readonly string[] SheetSuffixNames =
