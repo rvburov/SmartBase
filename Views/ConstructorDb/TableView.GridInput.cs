@@ -162,8 +162,13 @@ public partial class TableView
                     _buttonPress = (-1, hdef.Key, hit.Bounds, GridButton.Filter);
                     e.Pointer.Handled = true;
                 }
-                // Меню шапки — фабрика колонки (строится на нажатии).
-                if (right && hdef.BuildHeaderMenu is { } factory) OpenMenu(factory(hdef));
+                // Меню шапки — фабрика колонки (строится на нажатии). Как у «№»: колонка вне
+                // выделения выделяется одна, внутри — набор сохраняется, и меню работает по всему.
+                if (right && hdef.BuildHeaderMenu is { } factory)
+                {
+                    if (!_selectedColumnKeys.Contains(hdef.Key)) SelectColumn(hdef.Key, shift: false);
+                    OpenMenu(factory(hdef));
+                }
                 return;
 
             case GridHitKind.HeaderAdd:

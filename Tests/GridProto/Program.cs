@@ -871,6 +871,29 @@ int RunKeys()
     table.LastOpenedMenu?.Close(); Pump();
     Click(HeaderAt(f[2]), button: MouseButton.Right);
     Expect(table.LastOpenedMenu is { } m3 && m3.Items.Count > 4, $"меню шапки открыто ({table.LastOpenedMenu?.Items.Count} пунктов)");
+    // Заголовок — как «№»: столбец вне выделения выделяется один, внутри набор сохраняется.
+    string Cols() => $"[{string.Join(", ", table.SelectedColumnKeys)}]";
+    Expect(table.SelectedColumnKeys.SequenceEqual([f[2]]), $"правый клик по заголовку выделяет столбец {Cols()}");
+    table.LastOpenedMenu?.Close(); Pump();
+    Expect(table.SelectedColumnKeys.SequenceEqual([f[2]]), "после закрытия меню столбец остается выделенным");
+    Click(HeaderAt(f[3]), RawInputModifiers.Shift);
+    Click(HeaderAt(f[3]), button: MouseButton.Right);
+    Expect(table.SelectedColumnKeys.SequenceEqual([f[2], f[3]]), $"правый клик внутри выделения столбцов его сохраняет {Cols()}");
+    table.LastOpenedMenu?.Close(); Pump();
+    Click(HeaderAt(f[4]), button: MouseButton.Right);
+    Expect(table.SelectedColumnKeys.SequenceEqual([f[4]]), $"правый клик вне выделения столбцов выделяет один {Cols()}");
+    table.LastOpenedMenu?.Close(); Pump();
+    var chevron = s.FilterButtonRect(f[1])!.Value.Center;
+    Click(s.TranslatePoint(chevron, w) ?? chevron, button: MouseButton.Right);
+    Expect(table.SelectedColumnKeys.SequenceEqual([f[1]]) && table.LastOpenedMenu is { IsOpen: true },
+           $"правый клик по кнопке фильтра — то же меню и тот же столбец {Cols()}");
+    table.LastOpenedMenu?.Close(); Pump();
+    Click(HeaderAt(f[0]), button: MouseButton.Right);
+    Expect(table.SelectedColumnKeys.SequenceEqual([f[0]]), $"правый клик по «Названию» выделяет его столбец {Cols()}");
+    table.LastOpenedMenu?.Close(); Pump();
+    Click(Center(2, f[1]));
+    Click(HeaderAt(f[2]), button: MouseButton.Right);
+    Expect(Range() is null && table.SelectedColumnKeys.SequenceEqual([f[2]]), $"правый клик по заголовку снимает выделение ячеек {R(Range())}");
     table.LastOpenedMenu?.Close(); Pump();
 
     Console.WriteLine("Клавиатура:");
