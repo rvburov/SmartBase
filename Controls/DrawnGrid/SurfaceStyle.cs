@@ -8,6 +8,22 @@ using SmartBase.Utils;
 
 namespace SmartBase.Controls.DrawnGrid;
 
+/// <summary>Как рисованная надпись встает «по центру» — так же, как контрол, который ее заменит.</summary>
+internal enum TextCentering
+{
+    /// <summary>Блок надписи по центру области, левый край — на целом пикселе кадра (номер строки,
+    /// «№» и «+» шапки — как TextBlock с HorizontalAlignment=Center на краю окна).</summary>
+    Block,
+
+    /// <summary>Блок надписи по центру области, на целом пикселе — смещение от края области
+    /// (значение ячейки, которая правится списком: TextBlock внутри полосы значения).</summary>
+    BlockInArea,
+
+    /// <summary>Каждая строка по центру полосы шириной, округленной вверх до DIP (значение ячейки,
+    /// которая правится полем ввода: TextAlignment=Center у TextBox).</summary>
+    Lines,
+}
+
 /// <summary>
 /// Токены вида и примитивы рисования, общие для всех рисованных поверхностей (таблица коллекции и
 /// служебные таблицы — <see cref="GridSurface"/>, список свойств страницы записи —
@@ -66,6 +82,10 @@ internal sealed class SurfaceStyle
     public double LineWidth       { get; private set; } = 1;
     public double RowHeight       { get; private set; } = 36;
     public double LineHeight      { get; private set; } = 16;     // LineHeightBase — целая высота строки текста ячеек
+
+    /// <summary>Отступ строки текста от края в строке обычной высоты — «сверху» и «снизу» в высокой
+    /// строке держат именно его (<see cref="CellAlign.TextTop"/>).</summary>
+    public double TextEdge => Math.Max(0, (RowHeight - LineHeight) / 2);
     public Typeface Typeface      { get; private set; } = Typeface.Default;
     public double FontSize        { get; private set; } = 12;
     public double IconStroke      { get; private set; } = 1.8;
@@ -252,33 +272,49 @@ internal sealed class SurfaceStyle
     }
 
     /// <summary>
-    /// Надпись в области: отступ <paramref name="pad"/> с обеих сторон, по вертикали по центру на целом
-    /// пикселе (как TextBlock с VerticalAlignment=Center при округлении раскладки). lineHeight NaN —
-    /// естественная высота строки (заголовки), иначе целый токен LineHeightBase (ячейки).
-    /// <paramref name="clipText"/> — обрезка по прямоугольнику самой надписи, как у TextBlock с
-    /// многоточием (выступ первой буквы за левый край не рисуется; высота — вверх до физического
-    /// пикселя); иначе обрезка по области только при переполнении. <paramref name="trimming"/> —
-    /// многоточие (надписи) или обрезка без него (поле ввода).
+    /// Надпись в области: отступ <paramref name="pad"/> с обеих сторон, по вертикали — по
+    /// <paramref name="valign"/> на целом пикселе (по центру — как TextBlock с
+    /// VerticalAlignment=Center при округлении раскладки; сверху и снизу —
+    /// <see cref="CellAlign.TextTop"/>). lineHeight NaN — естественная высота строки (заголовки),
+    /// иначе целый токен LineHeightBase (ячейки). <paramref name="clipText"/> — обрезка по
+    /// прямоугольнику самой надписи, как у TextBlock с многоточием (выступ первой буквы за левый
+    /// край не рисуется; высота — вверх до физического пикселя); иначе обрезка по области только
+    /// при переполнении. <paramref name="trimming"/> — многоточие (надписи) или обрезка без него
+    /// (поле ввода). <paramref name="centering"/> — как центровать надпись «по центру».
     /// </summary>
     public void DrawText(DrawingContext ctx, string text, Rect area, IBrush brush, string brushId,
                          TextAlignment align, int maxLines, double lineHeight, double pad, bool underline,
-                         bool clipText, double scale, TextTrimming? trimming = null)
+                         bool clipText, double scale, TextTrimming? trimming = null,
+                         CellVAlign valign = CellVAlign.Center, TextCentering centering = TextCentering.Block)
     {
         if (string.IsNullOrEmpty(text)) return;
 
         var maxW   = Math.Max(1, area.Width - pad * 2);
-        // Центрованная надпись (номер строки, «№» и «+» шапки) — как TextBlock с
-        // HorizontalAlignment=Center: раскладка естественной ширины, а ее левый край ложится на
-        // целый пиксель (округление раскладки), а не на половинку от выравнивания внутри полосы.
-        var layout = Text.Get(text, maxW, align == TextAlignment.Center ? TextAlignment.Left : align, brush, brushId,
+        // Центрованная надпись (номер строки, «№» и «+» шапки, ячейки, которые правятся списком) —
+        // как TextBlock с HorizontalAlignment=Center: раскладка естественной ширины, а ее левый край
+        // ложится на целый пиксель (округление раскладки), а не на половинку от выравнивания внутри
+        // полосы. Ячейка, которая правится полем ввода, центрует каждую строку в полосе, как само
+        // поле (TextAlignment=Center), — иначе текст сдвигался бы при входе в правку.
+        var lines  = align == TextAlignment.Center && centering == TextCentering.Lines;
+        var block  = align == TextAlignment.Center && !lines;
+        // Поле ввода раскладывает текст по ширине, округленной ВВЕРХ до целого DIP (так делает его
+        // презентер текста), — строки по центру считаются от той же ширины, иначе на дробной ширине
+        // колонки текст правки стоял бы на полпикселя правее показа (стережет Tests/EditGeometry).
+        var layoutW = lines ? Math.Ceiling(maxW - 1e-6) : maxW;
+        var layout = Text.Get(text, layoutW, block ? TextAlignment.Left : align, brush, brushId,
                               maxLines, lineHeight, underline ? Underline : null, trimming);
         // Ширина надписи — с правым свесом последнего глифа и округленная вверх до пикселя, как
         // DesiredSize у TextBlock при округлении раскладки.
         var textW  = Math.Min(Math.Ceiling(layout.WidthIncludingTrailingWhitespace * scale) / scale, maxW);
-        var x      = align == TextAlignment.Center
-            ? Snap(area.X + (area.Width - textW) / 2, scale)
-            : area.X + pad;
-        var y      = Snap(area.Y + Math.Max(0, (area.Height - layout.Height) / 2), scale);
+        // Значение списка — TextBlock внутри полосы значения: его ширина округлена вверх до целого
+        // DIP (а не пикселя), и раскладка округляет его положение в координатах РОДИТЕЛЯ — на целый
+        // пиксель ложится смещение от края ячейки, а не абсолютная координата. Иначе на дробных
+        // ширинах показ и правка расходились бы на пиксель (стережет Tests/EditGeometry).
+        var x      = !block ? area.X + pad
+                   : centering == TextCentering.BlockInArea
+                       ? area.X + Snap((area.Width - Math.Min(Math.Ceiling(layout.WidthIncludingTrailingWhitespace - 1e-6), maxW)) / 2, scale)
+                   : Snap(area.X + (area.Width - textW) / 2, scale);
+        var y      = Snap(area.Y + CellAlign.TextTop(valign, area.Height, layout.Height, TextEdge), scale);
 
         if (clipText)
         {

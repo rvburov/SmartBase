@@ -67,11 +67,17 @@
             <Setter Property="CornerRadius" Value="0" />
             <Setter Property="Background"   Value="Transparent" />
         </Style>
-        <!-- То же для списка: копия темы подменяет фон рамки по наведению и нажатию. -->
+        <!-- То же для списка: копия темы подменяет фон рамки по наведению и нажатию, а общий стиль
+             программы (Controls.axaml) — в фокусе, где список в правке всегда. Серый фокуса совпадал
+             с подсветкой наведения и прятался, но закрывал цвет ячейки и, у текста сверху или
+             снизу, лежал серой полосой поверх нее. -->
         <Style Selector="Canvas.cellEditor ComboBox:pointerover /template/ Border#Background">
             <Setter Property="Background" Value="{Binding $parent[ComboBox].Background}" />
         </Style>
         <Style Selector="Canvas.cellEditor ComboBox:pressed /template/ Border#Background">
+            <Setter Property="Background" Value="{Binding $parent[ComboBox].Background}" />
+        </Style>
+        <Style Selector="Canvas.cellEditor ComboBox:focus /template/ Border#Background">
             <Setter Property="Background" Value="{Binding $parent[ComboBox].Background}" />
         </Style>
         <Style Selector="Canvas.cellEditor Border.timeField">

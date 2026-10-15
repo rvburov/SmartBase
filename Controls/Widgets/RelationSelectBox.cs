@@ -53,6 +53,9 @@ public sealed class RelationSelectBox : Panel
     private readonly AvaloniaList<RelationOptionVm> _shown    = [];
     private readonly TextBlock _valueText;
     private readonly TextBlock _placeholder;
+    private readonly Panel     _valuePanel;
+    private readonly Border    _box;
+    private readonly Control?  _iconHit;
     private readonly Popup?    _popup;
     private TextBox?   _search;
     private TextBlock? _moreHint;
@@ -95,6 +98,7 @@ public sealed class RelationSelectBox : Panel
         var left = new Panel();
         left.Children.Add(_placeholder);
         left.Children.Add(_valueText);
+        _valuePanel = left;
 
         var content = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), VerticalAlignment = VerticalAlignment.Stretch };
         Grid.SetColumn(left, 0);
@@ -127,6 +131,8 @@ public sealed class RelationSelectBox : Panel
             VerticalAlignment = VerticalAlignment.Stretch,
             Child             = content,
         };
+        _box     = box;
+        _iconHit = iconHit;
         Children.Add(box);
 
         if (editing)
@@ -270,6 +276,30 @@ public sealed class RelationSelectBox : Panel
         RefreshList("");
         _popup.IsOpen = true;
         _search?.Focus();
+    }
+
+    /// <summary>
+    /// Где стоят названия — ячейка таблицы с расположением текста. «По центру» — по центру всего
+    /// бокса, а не полосы левее иконки связи: полоса названий получает слева отступ на ширину иконки
+    /// и становится симметричной, поэтому текст при входе в правку не сдвигается. «Справа» — у
+    /// иконки: на нее названия не ложатся.
+    /// </summary>
+    public void SetValueAlignment(HorizontalAlignment alignment)
+    {
+        // Слева — прежняя растянутая надпись: текст и обрезка многоточием те же, что без настройки.
+        var placed = alignment == HorizontalAlignment.Left ? HorizontalAlignment.Stretch : alignment;
+        _valueText.HorizontalAlignment   = placed;
+        _placeholder.HorizontalAlignment = placed;
+        if (alignment != HorizontalAlignment.Center) return;
+
+        void Fit()
+        {
+            var chrome = _iconHit?.Bounds.Width ?? 0;
+            var margin = new Thickness(Math.Max(0, chrome + _box.Padding.Right - _box.Padding.Left), 0, 0, 0);
+            if (_valuePanel.Margin != margin) _valuePanel.Margin = margin;
+        }
+        if (_iconHit is not null) _iconHit.SizeChanged += (_, _) => Fit();
+        Fit();
     }
 
     /// <summary>

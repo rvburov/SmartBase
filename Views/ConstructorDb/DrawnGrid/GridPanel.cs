@@ -416,34 +416,38 @@ public sealed class GridPanel : Avalonia.Controls.Grid
     /// <summary>Область строк в координатах поверхности (под шапкой, без полос прокрутки).</summary>
     public Rect BodyRect() => new(0, Surface.HeaderHeight, Surface.ViewportWidth, Surface.ViewportHeight);
 
-    // ── Оформление строк и колонок (меню «Изменить цвет») ─────────────────────
+    // ── Оформление строк и колонок (меню «Изменить цвет», «Форматирование текста») ──
 
     public RowStyle RowStyleOf(int recordId)    => _rowStyles.GetValueOrDefault(recordId);
     public RowStyle ColumnStyleOf(string key)   => _colStyles.GetValueOrDefault(key);
 
-    /// <summary>Цвет строк уже записан в базу фасадом — обновить словарь и перерисовать: цвет
-    /// читается на кадре, строки перечитывать не нужно.</summary>
-    public void ApplyRowStyle(IEnumerable<int> recordIds, StyleAspect aspect, string? hex)
+    /// <summary>Оформление строк уже записано в базу фасадом — обновить словарь и перерисовать:
+    /// оно читается на кадре, строки перечитывать не нужно.</summary>
+    public void ApplyRowStyle(IEnumerable<int> recordIds, IReadOnlyList<(StyleAspect Aspect, string? Value)> changes)
     {
         foreach (var id in recordIds)
         {
-            var cur  = RowStyleOf(id);
-            var next = aspect == StyleAspect.Background ? cur with { Bg = hex } : cur with { Fg = hex };
+            var next = WithChanges(RowStyleOf(id), changes);
             if (next.IsEmpty) _rowStyles.Remove(id); else _rowStyles[id] = next;
         }
         Surface.RefreshSelectionVisuals();
     }
 
     /// <summary>То же для колонок.</summary>
-    public void ApplyColumnStyle(IEnumerable<string> keys, StyleAspect aspect, string? hex)
+    public void ApplyColumnStyle(IEnumerable<string> keys, IReadOnlyList<(StyleAspect Aspect, string? Value)> changes)
     {
         foreach (var key in keys)
         {
-            var cur  = ColumnStyleOf(key);
-            var next = aspect == StyleAspect.Background ? cur with { Bg = hex } : cur with { Fg = hex };
+            var next = WithChanges(ColumnStyleOf(key), changes);
             if (next.IsEmpty) _colStyles.Remove(key); else _colStyles[key] = next;
         }
         Surface.RefreshSelectionVisuals();
+    }
+
+    private static RowStyle WithChanges(RowStyle style, IReadOnlyList<(StyleAspect Aspect, string? Value)> changes)
+    {
+        foreach (var (aspect, value) in changes) style = style.With(aspect, value);
+        return style;
     }
 
     private void OnRowsCollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)

@@ -90,6 +90,12 @@ namespace SmartBase.Database.Migrations
                     b.Property<string>("Fg")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("HAlign")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("VAlign")
+                        .HasColumnType("TEXT");
+
                     b.HasKey("CollectionId", "RecordId", "Key");
 
                     b.HasIndex("RecordId");
@@ -158,11 +164,17 @@ namespace SmartBase.Database.Migrations
                     b.Property<string>("Fg")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("HAlign")
+                        .HasColumnType("TEXT");
+
                     b.Property<int?>("Level")
                         .HasColumnType("INTEGER");
 
                     b.Property<int?>("Position")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("VAlign")
+                        .HasColumnType("TEXT");
 
                     b.Property<bool?>("Visible")
                         .HasColumnType("INTEGER");
@@ -488,8 +500,14 @@ namespace SmartBase.Database.Migrations
                     b.Property<string>("Fg")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("HAlign")
+                        .HasColumnType("TEXT");
+
                     b.Property<int>("Level")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("VAlign")
+                        .HasColumnType("TEXT");
 
                     b.Property<bool>("Visible")
                         .HasColumnType("INTEGER");

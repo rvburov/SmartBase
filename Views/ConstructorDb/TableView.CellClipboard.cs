@@ -516,6 +516,7 @@ public partial class TableView
 
         menu.Items.Add(new Separator());
         AddCellColorItems(menu, row, def);
+        AddCellTextFormatItems(menu, row, def);
 
         return menu;
     }
@@ -546,11 +547,8 @@ public partial class TableView
         menu.Items.Add(host);
     }
 
-    private async Task ApplySelectedCellsStyleAsync(StyleAspect aspect, string? hex)
-    {
-        if (await SelectedCellsAsync() is not { Count: > 0 } cells) return;
-        ApplyCellStyleChange(cells.Select(t => (t.Row.RecordId, t.Column.Key)).ToList(), aspect, hex);
-    }
+    private Task ApplySelectedCellsStyleAsync(StyleAspect aspect, string? hex) =>
+        ApplySelectedCellsStyleAsync([(aspect, hex)]);
 
     /// <summary>Выделить все ячейки строки — для пунктов меню строки.</summary>
     private void SelectWholeRow(Func<TableRowVm?> row)

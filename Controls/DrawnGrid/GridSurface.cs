@@ -271,6 +271,39 @@ public sealed class GridSurface : Control, IEditorSurface
     /// <summary>Область редактора — тело таблицы под шапкой (<see cref="IEditorSurface"/>).</summary>
     public Rect EditorClip => new(0, HeaderHeight, ViewportWidth, ViewportHeight);
 
+    /// <summary>Цвет правящейся ячейки (ячейка → строка → колонка). Поверхность рисует ее без значения
+    /// и цвета, а цвет кладет под редактор держатель правки — на всю ячейку: редактор текста,
+    /// прижатого к верху или низу высокой строки, занимает лишь полосу у края. null — без цвета.</summary>
+    public IBrush? EditorFill(int row, string key)
+    {
+        if (RowAt(row) is not { IsAddRow: false, IsLoading: false } vm) return null;
+        var style = ResolveStyle(vm, key, _rowStyle(vm.RecordId));
+        return style.Bg is not null ? ColorTools.Fill(style.Bg) : null;
+    }
+
+    /// <summary>
+    /// Отступы редактора внутри области ячейки: у текста по центру их нет, у текста сверху и снизу
+    /// редактор стоит в полосе у края (<see cref="CellAlign.EditorInset"/>) и центрует в ней свое
+    /// содержимое — оно встает ровно туда, где нарисован текст показа, вместе с кнопкой редактора.
+    /// <paramref name="lines"/> — сколько строк текста в редакторе сейчас (у поля ввода растет с
+    /// набором переводов строки); больше, чем помещается в ячейку, не бывает.
+    /// </summary>
+    public Thickness EditorInset(int row, string key, int lines)
+    {
+        EnsureTokens();
+        var c = _columns.IndexOf(key);
+        if (c < 0 || RowAt(row) is not { IsAddRow: false, IsLoading: false } vm) return default;
+        if (!CellAlign.Applies(_columns[c].FieldType)) return default;
+
+        var valign = ResolveStyle(vm, key, _rowStyle(vm.RecordId)).VAlign ?? CellVAlign.Center;
+        if (valign == CellVAlign.Center) return default;
+
+        var area  = ContentRect(CellRect(row, c), c);
+        var textH = Math.Min(Math.Max(1, lines), FitLines(area.Height)) * _s.LineHeight;
+        var (top, bottom) = CellAlign.EditorInset(valign, area.Height, textH, _s.TextEdge);
+        return new Thickness(0, top, 0, bottom);
+    }
+
     /// <summary>Квадрат галочки в ячейке (координаты поверхности) — по нему щелкают, как по квадрату
     /// <c>CheckBox</c> нынешней таблицы.</summary>
     public Rect CheckboxRect(Rect cell)
@@ -1160,10 +1193,17 @@ public sealed class GridSurface : Control, IEditorSurface
         var fg   = style.Fg is not null ? ColorTools.Text(style.Fg) : null;
         var fgId = style.Fg ?? "";
 
+        // Расположение текста — тем же каскадом; не задано — правило типа (число вправо, остальное
+        // влево) и по вертикали центр. У служебных таблиц оформления нет — там всегда правило типа.
+        var align  = ToTextAlignment(style.HAlign ?? CellAlign.DefaultH(def.FieldType));
+        var valign = style.VAlign ?? CellVAlign.Center;
+        var centering = EditsInTextBox(def) ? TextCentering.Lines : TextCentering.BlockInArea;
+
         if (row.IsLoading)
         {
             if (def.Key == TableRowVm.TitleKey)
-                DrawText(ctx, row[TableRowVm.TitleKey], inner, _s.Primary, "p", TextAlignment.Left, 1, _s.LineHeight);
+                DrawText(ctx, row[TableRowVm.TitleKey], inner, _s.Primary, "p", align, 1, _s.LineHeight,
+                         valign: valign, centering: centering);
             return;
         }
 
@@ -1190,13 +1230,13 @@ public sealed class GridSurface : Control, IEditorSurface
             {
                 // Названия целей через разделитель поля; пусто — серое «связи нет» (RelationSelectBox).
                 var text = RelationText(row, def);
-                if (text.Length == 0) DrawText(ctx, "связи нет", inner, _s.Secondary, "s", TextAlignment.Left, 1, _s.LineHeight);
-                else DrawText(ctx, text, inner, fg ?? _s.Primary, fg is null ? "p" : fgId, TextAlignment.Left, 1, _s.LineHeight);
+                if (text.Length == 0) DrawText(ctx, "связи нет", inner, _s.Secondary, "s", align, 1, _s.LineHeight, valign: valign, centering: centering);
+                else DrawText(ctx, text, inner, fg ?? _s.Primary, fg is null ? "p" : fgId, align, 1, _s.LineHeight, valign: valign, centering: centering);
                 return;
             }
 
             case "file":
-                DrawFile(ctx, row, def, inner, fg, fgId, scale);
+                DrawFile(ctx, row, def, inner, fg, fgId, scale, align, valign);
                 return;
         }
 
@@ -1211,13 +1251,13 @@ public sealed class GridSurface : Control, IEditorSurface
                 _            => row.CreatedAt,
             };
             DrawText(ctx, FieldTypeInfo.FormatComputedDisplay(raw, def.FieldType), inner,
-                     fg ?? _s.Secondary, fg is null ? "s" : fgId, TextAlignment.Left, 1, _s.LineHeight);
+                     fg ?? _s.Secondary, fg is null ? "s" : fgId, align, 1, _s.LineHeight, valign: valign, centering: centering);
             return;
         }
 
         // Столько строк, сколько влезает по высоте ячейки (FitLinesToCell) — только явные переводы
         // строки, переноса по словам у ячеек нет.
-        var lines = Math.Max(1, (int)(inner.Height / _s.LineHeight));
+        var lines = FitLines(inner.Height);
 
         if (def.Key == TableRowVm.TitleKey)
         {
@@ -1225,27 +1265,26 @@ public sealed class GridSurface : Control, IEditorSurface
             if (string.IsNullOrWhiteSpace(title)) title = TitleText.Placeholder;
             var muted = title == TitleText.Placeholder;
             DrawText(ctx, title, inner, fg ?? (muted ? _s.Secondary : _s.Primary), fg is null ? (muted ? "s" : "p") : fgId,
-                     TextAlignment.Left, lines, _s.LineHeight);
+                     align, lines, _s.LineHeight, valign: valign, centering: centering);
             return;
         }
 
         var display = CellDisplayText.Of(def.FieldType, row[def.Key], def.NumberFormat, def.Separator);
         if (display.Length == 0) return;
 
-        if (def.FieldType == "number")
-        {
-            DrawText(ctx, display, inner, fg ?? _s.Primary, fg is null ? "p" : fgId, TextAlignment.Right, 1, _s.LineHeight);
-            return;
-        }
-        DrawText(ctx, display, inner, fg ?? _s.Primary, fg is null ? "p" : fgId, TextAlignment.Left, lines, _s.LineHeight);
+        // Число — одной строкой (поле ввода числа переводов строки не держит).
+        DrawText(ctx, display, inner, fg ?? _s.Primary, fg is null ? "p" : fgId, align,
+                 def.FieldType == "number" ? 1 : lines, _s.LineHeight, valign: valign, centering: centering);
     }
 
     // «Файл» как у FileEditor в плоском режиме: имя ссылкой (акцент, подчеркнуто), когда файл на
     // месте; «имя — файл не найден» серым, когда его нет; пусто — серое «Выбрать файл…»; у
     // авто-привязки — «папка недоступна» / имя / «файл не найден». Справа — кнопка-скрепка
     // (Button.timeArrow: отступы 4 и 8, иконка 16). Есть ли файл — из кеша FileProbe, диск с
-    // UI-потока не спрашивается.
-    private void DrawFile(DrawingContext ctx, TableRowVm row, TableColumnDef def, Rect inner, IBrush? fg, string fgId, double scale)
+    // UI-потока не спрашивается. Расположение текста двигает надпись в полосе левее скрепки, а
+    // скрепку по вертикали — вместе со строкой текста.
+    private void DrawFile(DrawingContext ctx, TableRowVm row, TableColumnDef def, Rect inner, IBrush? fg, string fgId,
+                          double scale, TextAlignment align, CellVAlign valign)
     {
         var path = row[def.Key];
         var auto = def.FileAutoFolder.Length > 0;
@@ -1254,9 +1293,14 @@ public sealed class GridSurface : Control, IEditorSurface
         // У авто-привязки скрепки нет (FileEditor прячет кнопку выбора) — надпись во всю ширину.
         var clipW    = auto ? 0 : ClipPadLeft + IconSize + ClipPadRight;
         var textRect = new Rect(inner.X, inner.Y, Math.Max(1, inner.Width - clipW), inner.Height);
-        DrawText(ctx, text, textRect, brush, brushId, TextAlignment.Left, 1, _s.LineHeight, underline: underline);
+        DrawText(ctx, text, textRect, brush, brushId, align, 1, _s.LineHeight, underline: underline, valign: valign,
+                 centering: TextCentering.BlockInArea);
         if (!auto && _s.Paperclip is not null)
-            DrawIcon(ctx, _s.Paperclip, inner.Right - ClipPadRight - IconSize, Snap(inner.Y + (inner.Height - IconSize) / 2, scale), _s.Secondary);
+        {
+            var line = CellAlign.TextTop(valign, inner.Height, _s.LineHeight, _s.TextEdge);
+            DrawIcon(ctx, _s.Paperclip, inner.Right - ClipPadRight - IconSize,
+                     Snap(inner.Y + line + (_s.LineHeight - IconSize) / 2, scale), _s.Secondary);
+        }
     }
 
     private RowStyle ResolveStyle(TableRowVm row, string key, RowStyle rowStyle)
@@ -1266,6 +1310,22 @@ public sealed class GridSurface : Control, IEditorSurface
         if (rowStyle.IsEmpty && column.IsEmpty && cell.IsEmpty) return RowStyle.None;
         return RowStyle.Resolve(cell, rowStyle, column);
     }
+
+    // Сколько строк текста помещается в ячейку этой высоты (не меньше одной).
+    private int FitLines(double height) => Math.Max(1, (int)(height / _s.LineHeight));
+
+    private static TextAlignment ToTextAlignment(CellHAlign align) => align switch
+    {
+        CellHAlign.Center => TextAlignment.Center,
+        CellHAlign.Right  => TextAlignment.Right,
+        _                 => TextAlignment.Left,
+    };
+
+    // «По центру» у ячейки, которая правится полем ввода («Название», текст, ссылка, число, дата),
+    // центрует каждую строку, как само поле; у остальных — блок надписи внутри ячейки, как TextBlock
+    // списка, мультисписка и связи (SurfaceStyle.DrawText, TextCentering). Иначе текст сдвигался бы
+    // при входе в правку.
+    private static bool EditsInTextBox(TableColumnDef def) => def.FieldType is "text" or "url" or "number" or "date";
 
     private string RelationText(TableRowVm row, TableColumnDef def)
     {
@@ -1366,14 +1426,16 @@ public sealed class GridSurface : Control, IEditorSurface
         hit.Def?.CellEnabled is not { } enabledOf || RowAt(hit.Row) is not { } row || enabledOf(row);
 
     // Надпись в области ячейки (SurfaceStyle.DrawText): отступ pad с обеих сторон (по умолчанию —
-    // отступ ячейки: 6 у таблицы коллекции, 8 у служебных), по вертикали по центру на целом пикселе;
-    // обрезка по надписи у служебных таблиц (ClipText).
+    // отступ ячейки: 6 у таблицы коллекции, 8 у служебных), по вертикали — по расположению текста
+    // (по умолчанию по центру) на целом пикселе; обрезка по надписи у служебных таблиц (ClipText).
     private void DrawText(DrawingContext ctx, string text, Rect area, IBrush brush, string brushId,
-                          TextAlignment align, int maxLines, double lineHeight, double pad = double.NaN, bool underline = false)
+                          TextAlignment align, int maxLines, double lineHeight, double pad = double.NaN, bool underline = false,
+                          CellVAlign valign = CellVAlign.Center, TextCentering centering = TextCentering.Block)
     {
         if (DebugSkipText) return;
         if (double.IsNaN(pad)) pad = CellTextPad;
-        _s.DrawText(ctx, text, area, brush, brushId, align, maxLines, lineHeight, pad, underline, ClipText, _frameScale);
+        _s.DrawText(ctx, text, area, brush, brushId, align, maxLines, lineHeight, pad, underline, ClipText, _frameScale,
+                    valign: valign, centering: centering);
     }
 
     // Галочка — как единый CheckBox приложения (AppCheckBox): квадрат 16×16, радиус 2, рамка в

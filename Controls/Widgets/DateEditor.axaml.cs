@@ -175,7 +175,33 @@ public partial class DateEditor : UserControl
     /// текстом остальных колонок; на карточке записи — 0 (отступ задает карточка).</summary>
     public double ContentLeftPadding
     {
-        set => Input.Padding = new Avalonia.Thickness(value, 0, 0, 0);
+        set
+        {
+            _leftPadding  = value;
+            Input.Padding = new Avalonia.Thickness(value, 0, 0, 0);
+        }
+    }
+
+    private double _leftPadding;
+
+    /// <summary>
+    /// Где стоит значение в поле — ячейка таблицы с расположением текста. «По центру» — по центру
+    /// всего редактора, а не поля левее кнопки календаря: поле получает слева отступ шириной кнопки,
+    /// полоса значения становится симметричной, и дата при входе в правку не сдвигается. «Справа» —
+    /// у кнопки: на нее значение не ложится.
+    /// </summary>
+    public void SetValueAlignment(Avalonia.Media.TextAlignment alignment)
+    {
+        Input.TextAlignment = alignment;
+        if (alignment != Avalonia.Media.TextAlignment.Center) return;
+
+        void Fit()
+        {
+            var padding = new Avalonia.Thickness(Math.Max(_leftPadding, Arrow.Bounds.Width), 0, 0, 0);
+            if (Input.Padding != padding) Input.Padding = padding;
+        }
+        Arrow.SizeChanged += (_, _) => Fit();
+        Fit();
     }
 
     /// <summary>Каретка стоит в поле ручного ввода (ячейка таблицы: стрелки и F2 решают по нему).</summary>

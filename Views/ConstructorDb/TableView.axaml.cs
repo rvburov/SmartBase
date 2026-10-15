@@ -103,6 +103,9 @@ public partial class TableView : UserControl
     private const double CellDropdownPadRight = 8;
     private static readonly Thickness CellContentMargin  = new(CellContentPad, 0, CellContentPad, 0);
     private static readonly Thickness CellDropdownPadding = new(CellContentPad, 0, CellDropdownPadRight, 0);
+    // Список «по центру»: слева — колонка стрелки шаблона (32, ComboBoxTheme) плюс правый отступ,
+    // полоса значения симметрична относительно ячейки.
+    private static readonly Thickness CellDropdownCenteredPadding = new(32 + CellDropdownPadRight, 0, CellDropdownPadRight, 0);
 
     // ── Состояние ─────────────────────────────────────────────────────────────
     private ConstructorRepository? _repository;
@@ -944,25 +947,39 @@ public partial class TableView : UserControl
     private static Geometry CheckIcon   => Icon("IconCheck");
     private static Geometry XIcon       => Icon("IconClose");
 
-    // ── Цвет ячейки у редактора ───────────────────────────────────────────────
+    // ── Оформление ячейки у редактора ─────────────────────────────────────────
 
-    /// <summary>Пользовательский цвет ячейки для РЕДАКТОРА: сетка рисует правящуюся ячейку без
-    /// значения и цвета, поэтому заливку и цвет текста редактор ставит себе сам — иначе окрашенная
-    /// ячейка на клике теряла бы цвет и текста, и фона.</summary>
-    private (IBrush? Fill, IBrush? Text) EditorCellStyle(TableRowVm row, string key)
-    {
-        if (row.IsAddRow) return (null, null);
-        var style = RowStyle.Resolve(row.CellStyle(key), RowStyleOf(row.RecordId), ColumnStyleOf(key));
-        return (ColorTools.Fill(style.Bg), ColorTools.Text(style.Fg));
-    }
+    /// <summary>Оформление правящейся ячейки — каскад ячейка → строка → колонка (RowStyle.Resolve).
+    /// Сетка рисует правящуюся ячейку без значения и цвета: заливку под редактор кладет держатель
+    /// правки (EditorHost.EditorFill), цвет текста и расположение редактор ставит себе сам — иначе
+    /// оформленная ячейка на клике теряла бы цвет текста, а текст уезжал бы с места.</summary>
+    private RowStyle ResolvedStyle(TableRowVm row, string key) =>
+        row.IsAddRow ? RowStyle.None
+                     : RowStyle.Resolve(row.CellStyle(key), RowStyleOf(row.RecordId), ColumnStyleOf(key));
 
-    /// <summary>Поставить редактору цвет ячейки (ничего не делает у неокрашенной).</summary>
+    /// <summary>Поставить редактору цвет текста ячейки (ничего не делает у неокрашенной).</summary>
     private void ApplyEditorCellStyle(TemplatedControl editor, TableRowVm row, string key)
     {
-        var (fill, text) = EditorCellStyle(row, key);
-        if (fill is not null) editor.Background = fill;
-        if (text is not null) editor.Foreground = text;
+        if (ColorTools.Text(ResolvedStyle(row, key).Fg) is { } text) editor.Foreground = text;
     }
+
+    /// <summary>Где стоит текст правящейся ячейки по горизонтали: каскад, иначе правило типа.</summary>
+    private CellHAlign EditorHAlign(TableRowVm row, TableColumnDef def) =>
+        ResolvedStyle(row, def.Key).HAlign ?? CellAlign.DefaultH(def.FieldType);
+
+    private static TextAlignment ToTextAlignment(CellHAlign align) => align switch
+    {
+        CellHAlign.Center => TextAlignment.Center,
+        CellHAlign.Right  => TextAlignment.Right,
+        _                 => TextAlignment.Left,
+    };
+
+    private static HorizontalAlignment ToHorizontal(CellHAlign align) => align switch
+    {
+        CellHAlign.Center => HorizontalAlignment.Center,
+        CellHAlign.Right  => HorizontalAlignment.Right,
+        _                 => HorizontalAlignment.Left,
+    };
 
     // Оформление строк и колонок живет в сетке: она читает его на кадре и перечитывает при перезагрузке.
     private RowStyle RowStyleOf(int recordId) => RecordsGrid.RowStyleOf(recordId);
@@ -1002,6 +1019,12 @@ public partial class TableView : UserControl
     {
         if (row.IsAddRow) return new Border();
 
+        // Расположение текста ячейки (каскад, иначе правило типа): редактор ставит значение туда же,
+        // где его нарисовала сетка. «По центру» у редакторов с кнопкой справа — по центру всей
+        // ячейки, а не полосы левее кнопки; «справа» — у самой кнопки (на нее текст не ложится).
+        // Вертикаль — забота держателя правки: полоса у края (EditorHost, CellAlign.EditorInset).
+        var hAlign = EditorHAlign(row, def);
+
         switch (def.FieldType)
         {
             case "date":
@@ -1015,6 +1038,7 @@ public partial class TableView : UserControl
                     VerticalAlignment  = VerticalAlignment.Center,
                     Storage            = row[def.Key],
                 };
+                editor.SetValueAlignment(ToTextAlignment(hAlign));
                 editor.Changed += (_, _) => row[def.Key] = editor.Storage ?? "";
                 return editor;
             }
@@ -1034,16 +1058,20 @@ public partial class TableView : UserControl
                 // Растягиваем на всю ячейку и центрируем содержимое: копия темы ставит
                 // ComboBox'у VerticalAlignment=Top, и при MinHeight=30 в строке 36px список
                 // висел бы у верхнего края — текст вставал на 3px выше надписи показа.
+                // По центру: слева отступ на всю колонку стрелки шаблона (32) и правый отступ — полоса
+                // значения симметрична, и выбор стоит по центру ячейки, как в показе.
                 var combo = new ComboBox
                 {
-                    BorderThickness          = new Thickness(0),
-                    Padding                  = CellDropdownPadding,
-                    HorizontalAlignment      = HorizontalAlignment.Stretch,
-                    VerticalAlignment        = VerticalAlignment.Stretch,
-                    VerticalContentAlignment = VerticalAlignment.Center,
-                    MinHeight                = 0,
-                    ItemsSource              = options,
-                    SelectedItem             = row[def.Key],
+                    BorderThickness            = new Thickness(0),
+                    Padding                    = hAlign == CellHAlign.Center ? CellDropdownCenteredPadding : CellDropdownPadding,
+                    HorizontalAlignment        = HorizontalAlignment.Stretch,
+                    VerticalAlignment          = VerticalAlignment.Stretch,
+                    // Слева — прежнее растянутое содержимое темы: без расположения ничего не меняется.
+                    HorizontalContentAlignment = hAlign == CellHAlign.Left ? HorizontalAlignment.Stretch : ToHorizontal(hAlign),
+                    VerticalContentAlignment   = VerticalAlignment.Center,
+                    MinHeight                  = 0,
+                    ItemsSource                = options,
+                    SelectedItem               = row[def.Key],
                 };
                 ApplyEditorCellStyle(combo, row, def.Key);
                 // Выбор пишется при записи правки (FlushDeferredList) или при уходе фокуса из списка
@@ -1064,6 +1092,7 @@ public partial class TableView : UserControl
                 {
                     ContentPadding = new Thickness(CellContentPad, 0),
                 };
+                box.SetValueAlignment(ToHorizontal(hAlign));
                 box.Changed += (_, _) => row[def.Key] = box.Storage;
                 return box;
             }
@@ -1073,6 +1102,7 @@ public partial class TableView : UserControl
                 // Правка ячейки: текст + иконка-связь справа, по клику по иконке — чеклист выбора
                 // (как чеклист «Мультисписка»). «→» у пункта → открыть цель.
                 var rel = new RelationSelectBox(_repository, relFid, def.Relation, editing: true, contentLeftPadding: CellContentPad, cache: relLinks);
+                rel.SetValueAlignment(ToHorizontal(hAlign));
                 rel.Navigate += (_, t) =>
                 {
                     if (t.DbId > 0) CrossDbRecordRequested?.Invoke(this, t);   // межбазовый переход
@@ -1099,7 +1129,7 @@ public partial class TableView : UserControl
                     BorderThickness          = new Thickness(0),
                     Padding                  = CellContentMargin,
                     VerticalContentAlignment = VerticalAlignment.Center,
-                    TextAlignment            = TextAlignment.Right,
+                    TextAlignment            = ToTextAlignment(hAlign),   // по умолчанию — вправо
                     Text                     = NumberFormatValue.Format(row[def.Key], def.NumberFormat),
                 };
                 ApplyEditorCellStyle(tb, row, def.Key);
@@ -1123,6 +1153,7 @@ public partial class TableView : UserControl
                     BorderThickness          = new Thickness(0),
                     Padding                  = CellContentMargin,
                     VerticalContentAlignment = VerticalAlignment.Center,
+                    TextAlignment            = ToTextAlignment(hAlign),
                     Watermark                = isTitle ? TitleText.Placeholder
                                              : def.FieldType == "url" ? "https://" : null,
                     Text                     = isTitle ? TitleText.Editable(row[def.Key]) : row[def.Key],
@@ -1276,6 +1307,7 @@ public partial class TableView : UserControl
         menu.Items.Add(miDisplay);
 
         AddColorItems(menu, row);
+        AddRowTextFormatItems(menu, row);
 
         // Работа со значениями строки: копирование, очистка и вставка идут своей группой
         // выше «Удалить» — очистку значений не должно тянуть перепутать с удалением записи.
@@ -1399,20 +1431,24 @@ public partial class TableView : UserControl
         return selected.Contains(recordId) && selected.Count > 1 ? selected : [recordId];
     }
 
-    private void ApplyRowStyle(List<int> recordIds, StyleAspect aspect, string? hex)
+    private void ApplyRowStyle(List<int> recordIds, StyleAspect aspect, string? value) =>
+        ApplyRowStyle(recordIds, [(aspect, value)]);
+
+    private void ApplyRowStyle(List<int> recordIds, IReadOnlyList<(StyleAspect Aspect, string? Value)> changes)
     {
         if (_repository is null) return;
-        try { _repository.SetRowStyle(_collectionId, recordIds, aspect, hex); }
+        try { _repository.SetRowStyle(_collectionId, recordIds, changes); }
         catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { return; }
 
-        // Сетка держит оформление сама и красит при рисовании.
-        RecordsGrid.ApplyRowStyle(recordIds, aspect, hex);
+        // Сетка держит оформление сама и применяет его при рисовании.
+        RecordsGrid.ApplyRowStyle(recordIds, changes);
     }
 
-    private void ApplyCellStyleChange(List<(int RecordId, string Key)> cells, StyleAspect aspect, string? hex)
+    private void ApplyCellStyleChange(List<(int RecordId, string Key)> cells,
+                                      IReadOnlyList<(StyleAspect Aspect, string? Value)> changes)
     {
         if (_repository is null) return;
-        try { _repository.SetCellStyle(_collectionId, cells, aspect, hex); }
+        try { _repository.SetCellStyle(_collectionId, cells, changes); }
         catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { return; }
 
         foreach (var (recordId, key) in cells)
@@ -1423,27 +1459,32 @@ public partial class TableView : UserControl
             if (row.CellStyles is { } existing)
                 foreach (var (k, v) in existing) next[k] = v;
 
-            var cur     = next.TryGetValue(key, out var c) ? c : RowStyle.None;
-            var updated = aspect == StyleAspect.Background ? cur with { Bg = hex } : cur with { Fg = hex };
+            var updated = next.TryGetValue(key, out var c) ? c : RowStyle.None;
+            foreach (var (aspect, value) in changes) updated = updated.With(aspect, value);
             if (updated.IsEmpty) next.Remove(key); else next[key] = updated;
 
             row.SetStyle(next);
         }
     }
 
-    private void ApplyColumnStyle(List<string> keys, StyleAspect aspect, string? hex)
+    private void ApplyColumnStyle(List<string> keys, StyleAspect aspect, string? value) =>
+        ApplyColumnStyle(keys, [(aspect, value)]);
+
+    private void ApplyColumnStyle(List<string> keys, IReadOnlyList<(StyleAspect Aspect, string? Value)> changes)
     {
         if (_repository is null || keys.Count == 0) return;
-        try { _repository.SetColumnStyle(_collectionId, keys, aspect, hex); }
+        try { _repository.SetColumnStyle(_collectionId, keys, changes); }
         catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { return; }
 
-        RecordsGrid.ApplyColumnStyle(keys, aspect, hex);   // красит при рисовании
+        RecordsGrid.ApplyColumnStyle(keys, changes);   // применяется при рисовании
 
-        // Снимаем выделение колонок: его голубая заливка лежит ПОД полупрозрачным цветом,
-        // и на выделенной колонке разницу «покрасил / снял цвет» почти не видно. Выделение
-        // здесь — жест «эти колонки», он свое отработал (так же гаснет после дубля и
-        // удаления свойств). Выделение СТРОК не трогаем: это основное состояние таблицы.
-        ClearColumnSelection();
+        // После цвета снимаем выделение колонок: его голубая заливка лежит ПОД полупрозрачным
+        // цветом, и на выделенной колонке разницу «покрасил / снял цвет» почти не видно. Выделение
+        // здесь — жест «эти колонки», он свое отработал (так же гаснет после дубля и удаления
+        // свойств). Расположение текста видно и под выделением, а клавишами его пробуют подряд
+        // («по центру», потом «справа») — выделение остается. Выделение СТРОК не трогаем: это
+        // основное состояние таблицы.
+        if (changes.Any(c => c.Aspect is StyleAspect.Background or StyleAspect.Text)) ClearColumnSelection();
     }
 
     // Удаление из меню записи. Если запись входит в текущее мультивыделение (правый
@@ -1573,6 +1614,7 @@ public partial class TableView : UserControl
         menu.Items.Add(miDisplay);
 
         AddColumnColorItems(menu, key);
+        AddColumnTextFormatItems(menu, key, "text");
 
         // Значения столбца названий: копировать и вставлять их можно, очистка их не трогает
         // (см. ClearCellsAsync) — пункт остается на месте ради единообразия всех трех меню.
@@ -1681,6 +1723,7 @@ public partial class TableView : UserControl
         menu.Items.Add(miDisplay);
 
         AddColumnColorItems(menu, fieldId.ToString());
+        AddColumnTextFormatItems(menu, fieldId.ToString(), fieldType);
 
         // «Файл» с авто-привязкой: пересканировать папку и пересобрать значения (файлы на диске
         // могли поменяться / появились новые). Значения read-only ведет правило.

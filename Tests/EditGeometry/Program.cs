@@ -73,6 +73,13 @@ TitleNoJump("заголовок коллекции", new SmartBase.Controls.Comp
 
 DrawnCellNoJump();
 
+// ── Расположение текста: показ и правка стоят в одном месте ───────────────────
+//
+// Те же пять типов в высокой строке при всех девяти сочетаниях горизонтали и вертикали (меню
+// «Форматирование текста»): редактор обязан поставить значение туда же, где его нарисовала сетка.
+
+DrawnCellAlignNoJump();
+
 // ── Плоский режим: высоту задает контейнер, а не виджет ─────────────────────────
 //
 // Жесткая высота 34 внутри строки карточки (40) делала «Дату» на 2px выше соседей и сдвигала
@@ -305,6 +312,198 @@ void DrawnCellNoJump()
             Pump();
             Expect(!table.IsCellEditing, $"{name}: Escape не закрыл правку");
         }
+        window.Close();
+    }
+    finally
+    {
+        try { Directory.Delete(dir, recursive: true); } catch { /* временная папка */ }
+    }
+}
+
+// Расположение текста (меню «Форматирование текста»): та же проверка «показ и правка в одном месте»,
+// но в высокой строке (ручная высота 96) и при всех девяти сочетаниях горизонтали и вертикали —
+// столбцам задано расположение, редактор обязан поставить значение туда же, где его нарисовала
+// сетка. Поля ввода («Название», текст, число) совпадают до физического пикселя всегда; список и
+// дата — по вертикали всегда, по горизонтали слева и по центру, а справа их значение встает левее
+// кнопки редактора (на кнопку текст не ложится) — там сверяется только вертикаль. На одном сочетании
+// столбцы окрашены: заливка под редактором обязана лечь на всю ячейку, хотя сам редактор стоит в
+// полосе у края.
+void DrawnCellAlignNoJump()
+{
+    Console.WriteLine("\nрисованная сетка: расположение текста — показ и правка в одном месте (масштаб 2, строка 96)");
+
+    var dir = Path.Combine(Path.GetTempPath(), "sb-editgeometry-align-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(dir);
+    try
+    {
+        using var mgr = SmartBase.Database.DatabaseManager.Open(9403, "editgeometry-align", Path.Combine(dir, "test.db"));
+        var repo = mgr.Constructor;
+        var col  = repo.AddCollection(new SmartBase.Core.Models.DbCollection { Name = "Расположение" });
+        var cid  = col.Id!.Value;
+        int Field(string name, string type, int pos, string config = "{}") => repo.AddField(new SmartBase.Core.Models.DbField
+        {
+            CollectionId = cid, Name = name, FieldType = type, Position = pos, ConfigJson = config,
+        }).Id!.Value;
+        var fText   = Field("Текст", "text", 1000);
+        var fNumber = Field("Число", "number", 1010);
+        var fSelect = Field("Список", "select", 1020, "{\"options\":[\"Первая\",\"Вторая\"]}");
+        var fDate   = Field("Дата", "date", 1030);
+        var rec = repo.AddRecord(new SmartBase.Core.Models.DbRecord { CollectionId = cid, Title = "Список", Position = 10 });
+        var rid = rec.Id!.Value;
+        repo.SetFieldValue(rid, fText, "Проба текста");
+        repo.SetFieldValue(rid, fNumber, "1234.5");
+        repo.SetFieldValue(rid, fSelect, "Вторая");
+        repo.SetFieldValue(rid, fDate, "2026-09-25");
+
+        // Высокая строка — иначе «сверху» и «снизу» совпадают с центром и проверять нечего.
+        var ui = repo.GetUiSettings(cid);
+        repo.SaveUiSettings(cid, ui.ColResize, rowResize: true, ui.ViewMode);
+        repo.SaveRowHeights(cid, new Dictionary<int, int> { [rid] = 96 });
+
+        var title   = SmartBase.ViewModels.ConstructorDb.TableRowVm.TitleKey;
+        var columns = new[]
+        {
+            (Key: title,               Name: "«Название»", Chrome: 0.0),
+            (Key: fText.ToString(),    Name: "текст",      Chrome: 0.0),
+            (Key: fNumber.ToString(),  Name: "число",      Chrome: 0.0),
+            (Key: fSelect.ToString(),  Name: "список",     Chrome: 32.0),
+            (Key: fDate.ToString(),    Name: "дата",       Chrome: 32.0),
+        };
+        var keys = columns.Select(c => c.Key).ToList();
+
+        var window = new Window { Width = 1200, Height = 400 };
+        SetRetinaScale(window);
+        var table  = new SmartBase.Views.ConstructorDb.TableView();
+        window.Content = table;
+        window.Show();
+        Pump();
+
+        var checks = 0;
+        // EDITGEOM_ALIGN=«center/top» — только одно сочетание (разбор одного расхождения без прогона всех).
+        var only = Environment.GetEnvironmentVariable("EDITGEOM_ALIGN");
+        var combos = 0;
+        foreach (var h in new[] { "left", "center", "right" })
+        foreach (var v in new[] { "top", "center", "bottom" })
+        {
+            if (only is { Length: > 0 } && only != $"{h}/{v}") continue;
+            combos++;
+            var colored = h == "center" && v == "top";
+            repo.SetColumnStyle(cid, keys,
+            [
+                (SmartBase.Core.Models.StyleAspect.HAlign, h),
+                (SmartBase.Core.Models.StyleAspect.VAlign, v),
+                (SmartBase.Core.Models.StyleAspect.Background, colored ? "#34C759" : null),
+            ]);
+            table.Load(repo, cid, repo.ReadOpenSnapshot(cid));
+            Pump();
+
+            var panel = table.DrawnPanel;
+            if (panel is null) { Expect(false, "рисованная сетка не включилась"); return; }
+            var surface = panel.Surface;
+            for (var i = 0; i < 100 && !surface.VisibleCellsLoaded(); i++) Pump();
+
+            var line = new List<string>();
+            foreach (var (key, name, chrome) in columns)
+            {
+                var c = surface.Columns.IndexOf(key);
+                if (c < 0) { Expect(false, $"{name}: колонки нет в раскладке"); continue; }
+                var cell   = surface.CellRect(0, c);
+                var origin = surface.TranslatePoint(new Point(0, 0), window)!.Value;
+                var at     = new Point(origin.X + cell.X + cell.Width / 2, origin.Y + cell.Y + cell.Height / 2);
+                var inner  = new Rect(origin.X + cell.X + 2, origin.Y + cell.Y + 2,
+                                      cell.Width - surface.LineWidth - 4 - chrome, cell.Height - surface.LineWidth - 4);
+
+                // Оба кадра — с указателем вне таблицы: подсветка наведения под редактором совпадает
+                // по цвету с серым фокуса списка и прятала его (так и прятался серый поверх цвета
+                // ячейки в правке).
+                var away = new Point(10, window.Height - 10);
+                Click(window, at);
+                window.MouseMove(away);
+                Pump();
+                var shown = window.CaptureRenderedFrame()!;
+                Click(window, at);
+                window.MouseMove(away);
+                var editor = panel.Editor.Editor;
+                if (!table.IsCellEditing || editor is null) { Expect(false, $"{h}/{v} {name}: второй клик не открыл правку"); continue; }
+                foreach (var box in editor.GetVisualDescendants().OfType<TextBox>().Prepend(editor as TextBox).OfType<TextBox>())
+                {
+                    box.CaretBrush = Brushes.Red;
+                    box.SelectionStart = box.SelectionEnd = 0;
+                }
+                for (var i = 0; i < 25; i++) { Pump(); window.CaptureRenderedFrame(); }
+                var edited = window.CaptureRenderedFrame()!;
+
+                if (Environment.GetEnvironmentVariable("EDITGEOM_DUMP") is { Length: > 0 } dump)
+                {
+                    using (var f1 = File.Create(Path.Combine(dump, $"align-{h}-{v}-{name}-shown.png"))) shown.Save(f1);
+                    using (var f2 = File.Create(Path.Combine(dump, $"align-{h}-{v}-{name}-edited.png"))) edited.Save(f2);
+                    // Где на самом деле стоит текст редактора: надписи и презентер поля — в координатах окна.
+                    foreach (var tb in editor.GetVisualDescendants().OfType<TextBlock>().Where(t => !string.IsNullOrEmpty(t.Text) && t.IsEffectivelyVisible))
+                    {
+                        Console.WriteLine($"      надпись «{tb.Text}» {tb.TranslatePoint(default, window)} {tb.Bounds.Size}, желаемая {tb.DesiredSize}, ячейка {origin.X + cell.X} ширина {cell.Width}"
+                                          + $", текст {tb.TextLayout.WidthIncludingTrailingWhitespace:F3} свесы {tb.TextLayout.OverhangLeading:F3}/{tb.TextLayout.OverhangTrailing:F3}");
+                        for (Visual? up = tb.GetVisualParent(); up is not null && !ReferenceEquals(up, editor.GetVisualParent()); up = up.GetVisualParent())
+                            Console.WriteLine($"        ↑ {up.GetType().Name} «{(up as Control)?.Name}» {up.TranslatePoint(default, window)} {up.Bounds.Size}"
+                                              + (up is Avalonia.Layout.Layoutable lay ? $" отступы {lay.Margin}" : "")
+                                              + (up is Avalonia.Controls.Presenters.ContentPresenter cp ? $" содержимое {cp.HorizontalContentAlignment}, padding {cp.Padding}" : ""));
+                    }
+                    foreach (var pres in editor.GetVisualDescendants().OfType<Avalonia.Controls.Presenters.TextPresenter>())
+                        Console.WriteLine($"      презентер {pres.TranslatePoint(default, window)} {pres.Bounds.Size}, предел {pres.TextLayout.MaxWidth:F3}, текст {pres.TextLayout.WidthIncludingTrailingWhitespace:F3}, ячейка {origin.X + cell.X} ширина {cell.Width}");
+                }
+
+                var a = InkBounds(shown, inner, 2.0);
+                var b = InkBounds(edited, inner, 2.0);
+                line.Add($"{name} {ShowPx(a)}→{ShowPx(b)}");
+                Expect(a is not null && b is not null, $"{h}/{v} {name}: текст не найден в одном из состояний");
+                if (a is { } ia && b is { } ib)
+                {
+                    if (chrome > 0 && h == "right")
+                        Expect(ia.T == ib.T && ia.B == ib.B,
+                               $"{h}/{v} {name}: текст сдвигается по вертикали: {ShowPx(a)} → {ShowPx(b)}");
+                    else if (h == "center")
+                    {
+                        // По центру глифы стоят на дробных позициях, а поле ввода красит текст чернее
+                        // показа (в фокусе — черный, у показа BrushPrimaryText), и полупрозрачный пиксель
+                        // края буквы проходит порог «чернил» в одном кадре и нет в другом. Сдвиг же двигает
+                        // ОБА края на одно и то же: пиксель по одному краю допускается, общий сдвиг — нет.
+                        var (dl, dr) = (ib.L - ia.L, ib.R - ia.R);
+                        Expect(ia.T == ib.T && ia.B == ib.B && Math.Abs(dl) <= 1 && Math.Abs(dr) <= 1 && !(dl == dr && dl != 0),
+                               $"{h}/{v} {name}: текст сдвигается: {ShowPx(a)} → {ShowPx(b)}");
+                    }
+                    else
+                        Expect(ia == ib, $"{h}/{v} {name}: текст сдвигается: {ShowPx(a)} → {ShowPx(b)}");
+                }
+                checks++;
+
+                // Фон рядом с текстом — внутри полосы редактора: редактор прозрачный в любом
+                // состоянии, под ним тот же фон или цвет ячейки, что в показе.
+                if (a is { } ta)
+                {
+                    var beside = new Point(origin.X + cell.X + 3, (ta.T + ta.B) / 2 / 2.0);
+                    Expect(Pixel(shown, beside, 2.0) == Pixel(edited, beside, 2.0),
+                           $"{h}/{v} {name}: фон рядом с текстом в правке другой: #{Pixel(shown, beside, 2.0):X6} → #{Pixel(edited, beside, 2.0):X6}");
+                }
+
+                // Заливка — и у края, куда редактор не дотягивается (он в полосе у верха ячейки).
+                if (colored)
+                {
+                    var low = new Point(origin.X + cell.X + 3, origin.Y + cell.Y + cell.Height - surface.LineWidth - 3);
+                    Expect(Pixel(shown, low, 2.0) == Pixel(edited, low, 2.0),
+                           $"{h}/{v} {name}: заливка у низа ячейки в правке другая: #{Pixel(shown, low, 2.0):X6} → #{Pixel(edited, low, 2.0):X6}");
+                }
+
+                window.KeyPress(Avalonia.Input.Key.Escape, Avalonia.Input.RawInputModifiers.None);
+                window.KeyRelease(Avalonia.Input.Key.Escape, Avalonia.Input.RawInputModifiers.None);
+                Pump();
+                Expect(!table.IsCellEditing, $"{h}/{v} {name}: Escape не закрыл правку");
+                // Второй Escape снимает выделение: следующий клик по ячейке снова выделяет, а не правит.
+                window.KeyPress(Avalonia.Input.Key.Escape, Avalonia.Input.RawInputModifiers.None);
+                window.KeyRelease(Avalonia.Input.Key.Escape, Avalonia.Input.RawInputModifiers.None);
+                Pump();
+            }
+            Console.WriteLine($"    {h,-6}/{v,-6}: {string.Join("; ", line)}");
+        }
+        Expect(checks == combos * columns.Length, $"сверено {checks} ячеек из {combos * columns.Length}");
         window.Close();
     }
     finally

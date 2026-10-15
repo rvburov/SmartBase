@@ -176,6 +176,12 @@ public static class MenuIcons
     // Заголовок пункта «Изменить цвет»: иконка палитры + стандартный текст.
     public static Control ColorHeader() => PaletteHeader("Изменить цвет");
 
+    // Подменю «Форматирование текста» таблицы: та же «T», что у «Форматирования» редактора заметок,
+    // — одно и то же действие в программе выглядит одинаково везде. Внутри — «Расположение текста»
+    // с иконкой строк, прижатых к краю.
+    public static Control TextFormattingHeader() => Header(Icon("IconType"),      "Форматирование текста");
+    public static Control TextPlacementHeader()  => Header(Icon("IconAlignLeft"), "Расположение текста");
+
     // Тот же заголовок с произвольным текстом: пунктов выбора цвета в таблице несколько
     // («Цвет записи», «Цвет текста строки», «Фон ячейки», «Фон колонки»).
     public static Control PaletteHeader(string text) => Header(Palette, text);

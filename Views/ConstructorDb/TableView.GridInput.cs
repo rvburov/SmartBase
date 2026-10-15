@@ -6,6 +6,7 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
+using SmartBase.Controls.Components;
 using SmartBase.Controls.Dialogs;
 using SmartBase.Controls.Widgets;
 using SmartBase.Core.Models;
@@ -445,7 +446,37 @@ public partial class TableView
         _editingBoxRow = vm;
         _editingBoxKey = def.Key;
         _editingBoxDef = def;
-        RecordsGrid.Editor.Open(row, def.Key, editor);
+
+        // Текст сверху или снизу высокой строки: редактор стоит в полосе у края высотой со свой текст.
+        // У поля ввода полоса растет с набранными переводами строки (Alt+Enter), у остальных — по
+        // строкам показа значения (мультисписок через перенос строки); после правки держатель
+        // переставляет полосу.
+        Func<int> lines;
+        if (editor is TextBox box)
+        {
+            lines = () => TextLineCount(box.Text);
+            box.TextChanged += (_, _) => RelayoutEditor(box);
+        }
+        else
+        {
+            lines = () => def.FieldType is "number" or "relation" ? 1
+                        : TextLineCount(CellDisplayText.Of(def.FieldType, vm[def.Key], def.NumberFormat, def.Separator));
+            if (editor is MultiSelectBox multi) multi.Changed += (_, _) => RelayoutEditor(multi);
+        }
+        RecordsGrid.Editor.Open(row, def.Key, editor, lines);
+    }
+
+    private void RelayoutEditor(Control editor)
+    {
+        if (ReferenceEquals(RecordsGrid.Editor.Editor, editor)) RecordsGrid.Editor.Relayout();
+    }
+
+    private static int TextLineCount(string? text)
+    {
+        if (string.IsNullOrEmpty(text)) return 1;
+        var count = 1;
+        foreach (var ch in text) if (ch == '\n') count++;
+        return count;
     }
 
     /// <summary>Закрыть правку с записью набранного: Enter, Tab, клик мимо редактора, подмена строк,

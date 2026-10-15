@@ -39,6 +39,8 @@ public sealed class MultiSelectBox : Panel
     private readonly AvaloniaList<OptionVm> _shown = [];   // отфильтрованный источник для ListBox
     private readonly TextBlock _valueText;
     private readonly TextBlock _placeholder;
+    private readonly Panel _valuePanel;
+    private readonly TextBlock _caret;
     private readonly Popup _popup;
     private readonly Border _box;
     private TextBox? _search;
@@ -78,6 +80,7 @@ public sealed class MultiSelectBox : Panel
         var left = new Panel();
         left.Children.Add(_placeholder);
         left.Children.Add(_valueText);
+        _valuePanel = left;
 
         var caret = new TextBlock
         {
@@ -86,6 +89,7 @@ public sealed class MultiSelectBox : Panel
             VerticalAlignment = VerticalAlignment.Center,
             Foreground        = Brush("BrushSecondaryText", Colors.Gray),
         };
+        _caret = caret;
 
         var content = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), VerticalAlignment = VerticalAlignment.Center };
         Grid.SetColumn(left, 0);
@@ -124,6 +128,30 @@ public sealed class MultiSelectBox : Panel
         Children.Add(_popup);
 
         RefreshDisplay();
+    }
+
+    /// <summary>
+    /// Где стоит значение — ячейка таблицы с расположением текста. «По центру» — по центру всего
+    /// бокса, а не полосы левее стрелки: полоса значения получает слева отступ на ширину стрелки и
+    /// становится симметричной, поэтому значение при входе в правку не сдвигается. «Справа» — у
+    /// стрелки: на нее значение не ложится.
+    /// </summary>
+    public void SetValueAlignment(HorizontalAlignment alignment)
+    {
+        // Слева — прежняя растянутая надпись: текст и обрезка многоточием те же, что без настройки.
+        var placed = alignment == HorizontalAlignment.Left ? HorizontalAlignment.Stretch : alignment;
+        _valueText.HorizontalAlignment   = placed;
+        _placeholder.HorizontalAlignment = placed;
+        if (alignment != HorizontalAlignment.Center) return;
+
+        void Fit()
+        {
+            var chrome = _caret.Bounds.Width + _caret.Margin.Left + _caret.Margin.Right;
+            var margin = new Thickness(Math.Max(0, chrome + _box.Padding.Right - _box.Padding.Left), 0, 0, 0);
+            if (_valuePanel.Margin != margin) _valuePanel.Margin = margin;
+        }
+        _caret.SizeChanged += (_, _) => Fit();
+        Fit();
     }
 
     /// <summary>

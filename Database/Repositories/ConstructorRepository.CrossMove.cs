@@ -239,14 +239,14 @@ public partial class ConstructorRepository
                     InsertRows(tgtCtx, "ui_row_heights", "CollectionId, RecordId, Height",
                         heights.Select(h => new object[] { newColId, recMap[h.RecordId], h.Height }));
 
-                    InsertRows(tgtCtx, "record_display", "CollectionId, RecordId, Visible, Level, Bg, Fg",
+                    InsertRows(tgtCtx, "record_display", "CollectionId, RecordId, Visible, Level, Bg, Fg, HAlign, VAlign",
                         displays.Select(d => new object?[]
-                            { newColId, recMap[d.RecordId], d.Visible, d.Level, d.Bg, d.Fg }));
+                            { newColId, recMap[d.RecordId], d.Visible, d.Level, d.Bg, d.Fg, d.HAlign, d.VAlign }));
 
                     // Key ремапится на новый id поля — как у column_meta ниже; «__title__» едет как есть.
-                    InsertRows(tgtCtx, "cell_style", "CollectionId, RecordId, Key, Bg, Fg",
+                    InsertRows(tgtCtx, "cell_style", "CollectionId, RecordId, Key, Bg, Fg, HAlign, VAlign",
                         cells.Select(c => new object?[]
-                            { newColId, recMap[c.RecordId], RemapColumnKey(c.Key, fieldMap), c.Bg, c.Fg }));
+                            { newColId, recMap[c.RecordId], RemapColumnKey(c.Key, fieldMap), c.Bg, c.Fg, c.HAlign, c.VAlign }));
 
                     tx.Commit();
                 }
@@ -278,7 +278,7 @@ public partial class ConstructorRepository
                     {
                         CollectionId = newColId, Key = RemapColumnKey(cm.Key, fieldMap), Position = cm.Position,
                         Visible = cm.Visible, Level = cm.Level, DisplayName = cm.DisplayName,
-                        Bg = cm.Bg, Fg = cm.Fg, Width = cm.Width,
+                        Bg = cm.Bg, Fg = cm.Fg, Width = cm.Width, HAlign = cm.HAlign, VAlign = cm.VAlign,
                     });
                 tgtCtx.SaveChanges();
                 tx.Commit();
@@ -403,8 +403,8 @@ public partial class ConstructorRepository
     private sealed record ValueRow(long RecordId, int FieldId, string Value);
     private sealed record CalRow(long RecordId, int FieldId, string StartIso, string EndIso, int AllDay);
     private sealed record HeightRow(long RecordId, int Height);
-    private sealed record DisplayRow(long RecordId, int Visible, int Level, string? Bg, string? Fg);
-    private sealed record CellStyleRow(long RecordId, string Key, string? Bg, string? Fg);
+    private sealed record DisplayRow(long RecordId, int Visible, int Level, string? Bg, string? Fg, string? HAlign, string? VAlign);
+    private sealed record CellStyleRow(long RecordId, string Key, string? Bg, string? Fg, string? HAlign, string? VAlign);
 
     // Ключ колонки (column_meta / cell_style) в терминах приемника: числовой ключ — это id
     // поля, его переводим по карте; «__title__» и незнакомые ключи едут как есть.
@@ -458,14 +458,13 @@ public partial class ConstructorRepository
     {
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
-        cmd.CommandText = "SELECT RecordId, Visible, Level, Bg, Fg FROM record_display " +
+        cmd.CommandText = "SELECT RecordId, Visible, Level, Bg, Fg, HAlign, VAlign FROM record_display " +
                           $"WHERE CollectionId = {collectionId} AND RecordId IN ({string.Join(",", recordIds)})";
         using var r = cmd.ExecuteReader();
         var list = new List<DisplayRow>();
         while (r.Read())
             list.Add(new DisplayRow(Convert.ToInt64(r.GetValue(0)), r.GetInt32(1), r.GetInt32(2),
-                                    r.IsDBNull(3) ? null : r.GetString(3),
-                                    r.IsDBNull(4) ? null : r.GetString(4)));
+                                    TextOrNull(r, 3), TextOrNull(r, 4), TextOrNull(r, 5), TextOrNull(r, 6)));
         return list;
     }
 
@@ -476,16 +475,17 @@ public partial class ConstructorRepository
     {
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
-        cmd.CommandText = "SELECT RecordId, Key, Bg, Fg FROM cell_style " +
+        cmd.CommandText = "SELECT RecordId, Key, Bg, Fg, HAlign, VAlign FROM cell_style " +
                           $"WHERE CollectionId = {collectionId} AND RecordId IN ({string.Join(",", recordIds)})";
         using var r = cmd.ExecuteReader();
         var list = new List<CellStyleRow>();
         while (r.Read())
             list.Add(new CellStyleRow(Convert.ToInt64(r.GetValue(0)), r.GetString(1),
-                                      r.IsDBNull(2) ? null : r.GetString(2),
-                                      r.IsDBNull(3) ? null : r.GetString(3)));
+                                      TextOrNull(r, 2), TextOrNull(r, 3), TextOrNull(r, 4), TextOrNull(r, 5)));
         return list;
     }
+
+    private static string? TextOrNull(System.Data.Common.DbDataReader r, int i) => r.IsDBNull(i) ? null : r.GetString(i);
 
     // ── Запись в приемник ───────────────────────────────────────────────────────
 

@@ -119,6 +119,13 @@ public static class ShortcutActions
         Cmd("table.columnWidthMode",   "Ручная ширина столбцов",      ShortcutBlock.Table, ShortcutContext.Table, "Alt+W"),
         Cmd("table.deleteColumns",     "Удалить выделенные свойства", ShortcutBlock.Table, ShortcutContext.Table, "Alt+Delete", "Delete", "Backspace"),
 
+        // ── Таблица: расположение текста ────────────────────────────────────────
+        // Горизонталь — клавишами текстового редактора: выделенные столбцы, иначе выделенные
+        // ячейки, иначе выделенные строки. Вертикаль — только из меню «Форматирование текста».
+        Cmd("table.alignLeft",   "Текст горизонтально слева",     ShortcutBlock.Table, ShortcutContext.Table, "Ctrl+L"),
+        Cmd("table.alignCenter", "Текст горизонтально по центру", ShortcutBlock.Table, ShortcutContext.Table, "Ctrl+E"),
+        Cmd("table.alignRight",  "Текст горизонтально справа",    ShortcutBlock.Table, ShortcutContext.Table, "Ctrl+R"),
+
         // ── Таблица: справочно ──────────────────────────────────────────────────
         RefLabel("table.ref.move",   "Перейти между ячейками", ShortcutBlock.Table, ShortcutContext.Table,
                  "Стрелки",       "Up", "Down", "Left", "Right"),

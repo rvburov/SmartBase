@@ -113,6 +113,9 @@ public partial class TableView
             return true;
         }
 
+        // ── Расположение текста (TableView.TextFormat.cs) ─────────────────────
+        if (HandleAlignShortcut(e)) return true;
+
         // ── Само меню ─────────────────────────────────────────────────────────
         if (ShortcutSettings.Matches("app.contextMenu", e)) return OpenContextMenuByShortcut();
 

@@ -22,6 +22,13 @@ public interface IEditorSurface
     void SetEditingCell(int row, string key);
 
     void ClearEditingCell();
+
+    /// <summary>Заливка под редактором на всю ячейку (цвет ячейки таблицы); null — без заливки.</summary>
+    IBrush? EditorFill(int row, string key) => null;
+
+    /// <summary>Отступы редактора внутри ячейки (текст, прижатый к верху или низу высокой строки);
+    /// <paramref name="lines"/> — строк текста в редакторе. Пусто — редактор во всю ячейку.</summary>
+    Thickness EditorInset(int row, string key, int lines) => default;
 }
 
 /// <summary>
@@ -35,6 +42,11 @@ public interface IEditorSurface
 /// содержимое растянуто по обеим осям, поэтому текст правки стоит там же, где текст показа.
 /// Прокрутка, ширины, высоты и ресайз двигают редактор вместе с ячейкой
 /// (<see cref="GridSurface.ViewChanged"/>); над шапкой он не показывается — обрезка по области строк.
+///
+/// Текст, прижатый к верху или низу высокой строки, редактор держит не во всю ячейку, а в полосе у
+/// края (<see cref="IEditorSurface.EditorInset"/>): каждый редактор центрует свое содержимое, и в
+/// полосе оно встает туда же, где нарисован текст, вместе с кнопкой редактора. Цвет ячейки лежит
+/// под редактором на всю ячейку (<see cref="IEditorSurface.EditorFill"/>), сами редакторы прозрачные.
 ///
 /// Жизненный цикл правки (когда открыть, что записать, когда закрыть) ведет фасад — здесь только
 /// где стоит редактор и какую ячейку он правит. Класс «cellEditor» — для стилей редакторов в ячейке
@@ -73,16 +85,25 @@ public sealed class EditorHost : Canvas
     public Rect? EditorBounds =>
         IsOpen && _cell.IsVisible ? new Rect(GetLeft(_cell), GetTop(_cell), _cell.Width, _cell.Height) : null;
 
-    /// <summary>Поставить редактор на ячейку. Прежний, если был, снимается без записи — записывает фасад.</summary>
-    public void Open(int row, string key, Control editor)
+    /// <summary>Поставить редактор на ячейку. Прежний, если был, снимается без записи — записывает фасад.
+    /// <paramref name="lines"/> — сколько строк текста в редакторе (у поля ввода — по набранному;
+    /// после набора переводов строки фасад зовет <see cref="Relayout"/>); null — одна строка.</summary>
+    public void Open(int row, string key, Control editor, Func<int>? lines = null)
     {
         Close();
-        Row = row;
-        Key = key;
+        Row    = row;
+        Key    = key;
+        _lines = lines;
         _cell.Child = editor;
         _surface.SetEditingCell(row, key);
         Place();
     }
+
+    private Func<int>? _lines;
+
+    /// <summary>Переставить редактор по текущему тексту (полоса текста сверху или снизу растет вместе
+    /// с числом строк).</summary>
+    public void Relayout() => Place();
 
     /// <summary>Запись правящейся ячейки уехала на другую строку среза (структурное обновление) —
     /// редактор едет за ней.</summary>
@@ -97,8 +118,11 @@ public sealed class EditorHost : Canvas
     public void Close()
     {
         if (_cell.Child is null && Key is null) return;
-        _cell.Child     = null;
-        _cell.IsVisible = false;
+        _cell.Child      = null;
+        _cell.IsVisible  = false;
+        _cell.Background = null;
+        _cell.Padding    = default;
+        _lines = null;
         Row = -1;
         Key = null;
         _surface.ClearEditingCell();
@@ -111,9 +135,11 @@ public sealed class EditorHost : Canvas
 
         SetLeft(_cell, r.X);
         SetTop(_cell, r.Y);
-        _cell.Width     = r.Width;
-        _cell.Height    = r.Height;
-        _cell.IsVisible = true;
+        _cell.Width      = r.Width;
+        _cell.Height     = r.Height;
+        _cell.Background = _surface.EditorFill(Row, Key);
+        _cell.Padding    = _surface.EditorInset(Row, Key, _lines?.Invoke() ?? 1);
+        _cell.IsVisible  = true;
 
         var body = _surface.EditorClip;
         if (body == _clip) return;

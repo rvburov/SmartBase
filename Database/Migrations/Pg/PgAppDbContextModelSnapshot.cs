@@ -111,6 +111,14 @@ namespace SmartBase.Database.Migrations.Pg
                         .HasColumnType("text")
                         .HasColumnName("fg");
 
+                    b.Property<string>("HAlign")
+                        .HasColumnType("text")
+                        .HasColumnName("halign");
+
+                    b.Property<string>("VAlign")
+                        .HasColumnType("text")
+                        .HasColumnName("valign");
+
                     b.HasKey("CollectionId", "RecordId", "Key");
 
                     b.HasIndex("RecordId");
@@ -196,6 +204,10 @@ namespace SmartBase.Database.Migrations.Pg
                         .HasColumnType("text")
                         .HasColumnName("fg");
 
+                    b.Property<string>("HAlign")
+                        .HasColumnType("text")
+                        .HasColumnName("halign");
+
                     b.Property<int?>("Level")
                         .HasColumnType("integer")
                         .HasColumnName("level");
@@ -203,6 +215,10 @@ namespace SmartBase.Database.Migrations.Pg
                     b.Property<int?>("Position")
                         .HasColumnType("integer")
                         .HasColumnName("position");
+
+                    b.Property<string>("VAlign")
+                        .HasColumnType("text")
+                        .HasColumnName("valign");
 
                     b.Property<int?>("Visible")
                         .HasColumnType("integer")
@@ -609,9 +625,17 @@ namespace SmartBase.Database.Migrations.Pg
                         .HasColumnType("text")
                         .HasColumnName("fg");
 
+                    b.Property<string>("HAlign")
+                        .HasColumnType("text")
+                        .HasColumnName("halign");
+
                     b.Property<int>("Level")
                         .HasColumnType("integer")
                         .HasColumnName("level");
+
+                    b.Property<string>("VAlign")
+                        .HasColumnType("text")
+                        .HasColumnName("valign");
 
                     b.Property<int>("Visible")
                         .HasColumnType("integer")

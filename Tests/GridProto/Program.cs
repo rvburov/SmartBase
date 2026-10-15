@@ -9,7 +9,8 @@
 // различий по строкам и колонкам, карты и вырезки в PNG (с этапа 3 — и сцены выделения);
 // --gestures — безголовая мышь на копии базы: наведение, полоски ширины и высоты, ресайз окна,
 // режимы, навигация нижней панели. Режим этапа 3: --keys — клавиши и мышь на настоящем TableView
-// с рисованной сеткой (выделение, протягивание с автопрокруткой, меню, буфер, отмена). Режим этапа 4:
+// с рисованной сеткой (выделение, протягивание с автопрокруткой, меню, буфер, отмена, расположение
+// текста: «Форматирование текста» в меню и Ctrl+L/E/R). Режим этапа 4:
 // --edit — правка на том же фасаде (набор с паузами, коммит и отмена, уход фокуса, редакторы по типам,
 // правка набором на выделенной ячейке); с --pg — то же на базе PostgreSQL (стенд sb-pg, порт 5455).
 // Режим этапа 5: --ops — операции на нем же (окно фильтра у кнопки заголовка, отбор и сортировка в
@@ -1031,6 +1032,111 @@ int RunKeys()
     Key(Avalonia.Input.Key.Right);
     Expect(Range() == CellRange.Single(2, Col(f[3])), $"→ перешагивает обе скрытые: {R(Range())}");
 
+    Console.WriteLine("Расположение текста:");
+    // Пункты подменю «Форматирование текста» → «Расположение текста» ищутся по подписи; галочка
+    // выбранного — иконка перед подписью (MenuIcons.ChoiceHeader), у прочих на ее месте распорка.
+    MenuItem? Find(ItemsControl? parent, string text) =>
+        parent?.Items.OfType<MenuItem>().FirstOrDefault(i =>
+            i.Header is Control c && Avalonia.LogicalTree.LogicalExtensions.GetSelfAndLogicalDescendants(c)
+                                         .OfType<TextBlock>().Any(t => t.Text == text));
+    MenuItem? Placement(string text) =>
+        Find(Find(Find(table.LastOpenedMenu, "Форматирование текста"), "Расположение текста"), text);
+    void Choose(MenuItem? item)
+    {
+        item?.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent, item));
+        Pump();
+        table.LastOpenedMenu?.Close();
+        Pump();
+    }
+    static bool Checked(MenuItem? item) => item?.Header is StackPanel sp && sp.Children.FirstOrDefault() is Viewbox;
+    RowStyle CellAt(int row, string key) =>
+        repo3.GetCellStylesBatch(cid3, [rows[row].RecordId]).GetValueOrDefault(rows[row].RecordId)?.GetValueOrDefault(key) ?? RowStyle.None;
+    // Координаты — по текущей раскладке: выше стенд прятал столбец и перестраивал колонки.
+    Point CellNow(int row, string key)
+    {
+        var lc = s.Columns;
+        var c  = lc.IndexOf(key);
+        return new(lc.Left(c) - s.OffsetX + lc.Width(c) / 2, s.HeaderHeight + s.RowLayout.Top(row) - s.OffsetY + s.RowPitch / 2);
+    }
+    Point HeaderNow(string key)
+    {
+        var lc = s.Columns;
+        return new(lc.Left(lc.IndexOf(key)) - s.OffsetX + 20, s.HeaderHeight / 2);
+    }
+    var placementItems = new[] { "Горизонтально слева", "Горизонтально по центру", "Горизонтально справа",
+                                 "Вертикально сверху", "Вертикально по центру", "Вертикально снизу", "По умолчанию" };
+
+    s.OffsetY = 0; Pump();
+    Key(Avalonia.Input.Key.Escape);
+    // Ячейки: от «Названия» до текстовой колонки в двух строках; галочки между ними пропускаются.
+    Drag(CellNow(1, title), CellNow(2, textKey));
+    var alignCols = visibleKeys.Take(visibleKeys.IndexOf(textKey) + 1).ToList();
+    Click(CellNow(1, title), button: MouseButton.Right);
+    Expect(placementItems.All(t => Placement(t) is not null), "меню ячейки: «Форматирование текста» → «Расположение текста», семь пунктов");
+    Expect(Checked(Placement("Горизонтально слева")) && Checked(Placement("Вертикально по центру"))
+           && !Checked(Placement("Горизонтально по центру")),
+           "галочки у того, что видно в ячейке: слева и по центру");
+    Expect(Placement("Горизонтально по центру")?.InputGesture?.ToString() == "Ctrl+E", $"у пункта — его клавиша: {Placement("Горизонтально по центру")?.InputGesture}");
+    Choose(Placement("Горизонтально по центру"));
+    var textCells = alignCols.Where(k => defs.First(d => d.Key == k).FieldType != "checkbox").ToList();
+    Expect(Enumerable.Range(1, 2).All(r => textCells.All(k => CellAt(r, k).HAlign == CellHAlign.Center)),
+           $"по центру — все выделенные ячейки ({textCells.Count} столбца × 2 строки)");
+    Expect(alignCols.Except(textCells).All(k => CellAt(1, k).IsEmpty), "ячейки галочек пропущены");
+    Expect(Range() == new CellRange(1, Col(title), 2, Col(textKey)), "выделение ячеек на месте");
+
+    s.Focus(); Pump();
+    Key(Avalonia.Input.Key.R, RawInputModifiers.Control);
+    Expect(WaitUntil(() => CellAt(2, textKey).HAlign == CellHAlign.Right, TimeSpan.FromSeconds(5))
+           && CellAt(1, title).HAlign == CellHAlign.Right, "Ctrl+R — выделенные ячейки справа");
+    Click(CellNow(1, title), button: MouseButton.Right);
+    Expect(Checked(Placement("Горизонтально справа")) && !Checked(Placement("Горизонтально по центру")), "галочка переехала на «справа»");
+    Choose(Placement("По умолчанию"));
+    Expect(Enumerable.Range(1, 2).All(r => textCells.All(k => CellAt(r, k).IsEmpty)), "«По умолчанию» снимает расположение ячеек");
+
+    // Столбец: Ctrl+E по выделенному заголовку — аспект column_meta, выделение столбца остается.
+    string Styles() =>
+        $"столбцы [{string.Join(", ", table.SelectedColumnKeys)}], ячейки {R(Range())}, записи [{string.Join(", ", table.SelectedRecordIds())}]; "
+        + $"оформление столбцов: {string.Join("; ", repo3.GetColumnStyles(cid3).Select(kv => $"{kv.Key}={kv.Value}"))}";
+    Click(HeaderNow(textKey));
+    var picked = table.SelectedColumnKeys.SequenceEqual([textKey]);
+    Expect(picked, picked ? "клик по заголовку выделил столбец" : $"клик по заголовку выделил столбец: {Styles()}");
+    Key(Avalonia.Input.Key.E, RawInputModifiers.Control);
+    var centered = repo3.GetColumnStyles(cid3).GetValueOrDefault(textKey).HAlign == CellHAlign.Center;
+    Expect(centered, centered ? "Ctrl+E по столбцу — столбец по центру" : $"Ctrl+E по столбцу — столбец по центру: {Styles()}");
+    Expect(table.SelectedColumnKeys.SequenceEqual([textKey]), "выделение столбца после расположения не снимается");
+    Click(HeaderNow(textKey), button: MouseButton.Right);
+    Expect(Checked(Placement("Горизонтально по центру")) && Checked(Placement("Вертикально по центру")), "меню столбца: галочки у его расположения");
+    Choose(Placement("Вертикально сверху"));
+    Expect(repo3.GetColumnStyles(cid3).GetValueOrDefault(textKey) is { HAlign: CellHAlign.Center, VAlign: CellVAlign.Top },
+           "«Вертикально сверху» — вертикаль столбца, горизонталь та же");
+    Click(HeaderNow(textKey), button: MouseButton.Right);
+    Choose(Placement("По умолчанию"));
+    Expect(!repo3.GetColumnStyles(cid3).ContainsKey(textKey), "«По умолчанию» снимает оба расположения столбца");
+    if (defs.FirstOrDefault(d => d.FieldType == "checkbox" && s.Columns.IndexOf(d.Key) >= 0) is { } check)
+    {
+        Click(HeaderNow(check.Key), button: MouseButton.Right);
+        Expect(Find(table.LastOpenedMenu, "Форматирование текста") is null, $"у галочки «{check.Header}» пункта нет");
+        table.LastOpenedMenu?.Close(); Pump();
+    }
+
+    // Строка: в меню «№» галочек нет, пока строке ничего не задано; Ctrl+L — по выделенной записи.
+    // Клик по ячейке гасит выделение столбца, Escape — ячейку: адресат клавиши — только запись.
+    Click(CellNow(2, textKey));
+    Key(Avalonia.Input.Key.Escape);
+    Click(CellNow(4, num), button: MouseButton.Right);
+    Expect(placementItems.Take(6).All(t => !Checked(Placement(t))), "меню строки без своего расположения — без галочек");
+    Choose(Placement("Вертикально снизу"));
+    var rid4 = rows[4].RecordId;
+    Expect(repo3.GetRowStyles(cid3).GetValueOrDefault(rid4).VAlign == CellVAlign.Bottom, "«Вертикально снизу» — строка");
+    Expect(table.SelectedRecordIds().SequenceEqual([rid4]) && Range() is null, "выделена запись, ячеек нет");
+    Key(Avalonia.Input.Key.L, RawInputModifiers.Control);
+    Expect(repo3.GetRowStyles(cid3).GetValueOrDefault(rid4) is { HAlign: CellHAlign.Left, VAlign: CellVAlign.Bottom },
+           "Ctrl+L — по выделенной записи, вертикаль на месте");
+    Click(CellNow(4, num), button: MouseButton.Right);
+    Expect(Checked(Placement("Горизонтально слева")) && Checked(Placement("Вертикально снизу")), "меню строки: галочки у заданного строке");
+    Choose(Placement("По умолчанию"));
+    Expect(!repo3.GetRowStyles(cid3).ContainsKey(rid4), "«По умолчанию» снимает расположение строки");
+
     w.Close();
     SecurityJournal.Attach(null);
     Console.WriteLine();
@@ -1377,14 +1483,18 @@ int RunEdit()
     Key(Avalonia.Input.Key.Escape);
     s.OffsetY = 0; Pump();
 
-    // Окрашенная ячейка: заливку и цвет текста редактор ставит себе сам (EditorCellStyle), поверхность
-    // под ним цвет не рисует — иначе полупрозрачная заливка легла бы дважды.
+    // Окрашенная ячейка: поверхность под редактором цвет не рисует, заливку на всю ячейку кладет
+    // держатель правки (EditorHost ← GridSurface.EditorFill), а редактор прозрачный — иначе
+    // полупрозрачная заливка легла бы дважды, а у редактора в полосе у края (текст сверху или снизу)
+    // цвет был бы не во всю ячейку.
     var rid13 = Row(13).RecordId;
     repo4.BulkSetCellStyle(cid4, [(rid13, K(fText))], StyleAspect.Background, "#FF3B30", CancellationToken.None);
     table.ReloadRows(); Reload();
     OpenBySecondClick(13, K(fText));
-    Expect(Box()?.Background is Avalonia.Media.ISolidColorBrush fill && fill.Color == ((Avalonia.Media.ISolidColorBrush)SmartBase.Utils.ColorTools.Fill("#FF3B30")!).Color,
-           "редактор окрашенной ячейки — с ее заливкой");
+    var red = ((Avalonia.Media.ISolidColorBrush)SmartBase.Utils.ColorTools.Fill("#FF3B30")!).Color;
+    Expect(Box()?.Parent is Border holder && holder.Background is Avalonia.Media.ISolidColorBrush fill && fill.Color == red
+           && Box()?.Background is not Avalonia.Media.ISolidColorBrush { Color.A: > 0 },
+           "редактор окрашенной ячейки — на ее заливке, сам прозрачный");
     Key(Avalonia.Input.Key.Escape);
     OpenBySecondClick(11, K(fText));
     var line = s.CellRect(11, L.IndexOf(K(fText)));
