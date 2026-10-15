@@ -10,7 +10,8 @@
 // --gestures — безголовая мышь на копии базы: наведение, полоски ширины и высоты, ресайз окна,
 // режимы, навигация нижней панели. Режим этапа 3: --keys — клавиши и мышь на настоящем TableView
 // с рисованной сеткой (выделение, протягивание с автопрокруткой, меню, буфер, отмена, расположение
-// текста: «Форматирование текста» в меню и Ctrl+L/E/R). Режим этапа 4:
+// текста: «Форматирование текста» в меню и Ctrl+L/E/R; контекстные меню: открыто одно, нажатие мимо
+// и уход из программы закрывают). Режим этапа 4:
 // --edit — правка на том же фасаде (набор с паузами, коммит и отмена, уход фокуса, редакторы по типам,
 // правка набором на выделенной ячейке); с --pg — то же на базе PostgreSQL (стенд sb-pg, порт 5455).
 // Режим этапа 5: --ops — операции на нем же (окно фильтра у кнопки заголовка, отбор и сортировка в
@@ -29,6 +30,7 @@ using Avalonia.Input;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using SmartBase.Logging;
+using SmartBase.Controls.Behaviors;
 using SmartBase.Controls.Components;
 using SmartBase.Controls.Widgets;
 using SmartBase.Core.Models;
@@ -1137,6 +1139,83 @@ int RunKeys()
     Choose(Placement("По умолчанию"));
     Expect(!repo3.GetRowStyles(cid3).ContainsKey(rid4), "«По умолчанию» снимает расположение строки");
 
+    // Контекстные меню (ContextMenuDismiss): открыто одно, гаснет от нажатия не в нем и от ухода
+    // из программы. На Windows и macOS меню — отдельное попап-окно, и правый щелчок мимо открытого
+    // меню оставлял новое меню без подложки: клик мимо его не закрывал, следующие щелчки клали меню
+    // поверх. Здесь меню живет в слое окна, и сбоя не видно — его воспроизводит второе окно ниже.
+    Console.WriteLine("Контекстные меню:");
+    Click(CellNow(3, textKey), button: MouseButton.Right);
+    var cellMenu = table.LastOpenedMenu;
+    Click(CellNow(6, num), button: MouseButton.Right);
+    var rowMenu = table.LastOpenedMenu;
+    Click(HeaderNow(textKey), button: MouseButton.Right);
+    var headMenu = table.LastOpenedMenu;
+    Expect(cellMenu is { IsOpen: false } && rowMenu is { IsOpen: false } && headMenu is { IsOpen: true }
+           && ContextMenuDismiss.Count == 1, $"правый щелчок мимо меню: прежнее закрыто, открыто одно ({ContextMenuDismiss.Count})");
+    Click(CellNow(8, textKey));
+    Expect(headMenu is { IsOpen: false } && ContextMenuDismiss.Count == 0, "клик мимо меню закрывает его");
+
+    // Нажатие внутри меню и в его подменю меню не закрывает; разделитель — место без действия.
+    Point MiddleOf(Control c) => c.TranslatePoint(new Point(c.Bounds.Width / 2, c.Bounds.Height / 2), w) ?? default;
+    bool OpenAfterPress(Control? target, ContextMenu menu)
+    {
+        if (target is null) return false;
+        var at = MiddleOf(target);
+        w.MouseMove(at); w.MouseDown(at, MouseButton.Left); Pump();
+        var open = menu.IsOpen;
+        w.MouseUp(at, MouseButton.Left); Pump();
+        return open && menu.IsOpen;
+    }
+    Click(CellNow(3, textKey), button: MouseButton.Right);
+    var openMenu = table.LastOpenedMenu!;
+    Expect(OpenAfterPress(openMenu.Items.OfType<Separator>().FirstOrDefault(), openMenu), "нажатие внутри меню его не закрывает");
+    var formatItem = Find(openMenu, "Форматирование текста")!;
+    formatItem.IsSubMenuOpen = true; Pump();
+    var placeItem = Find(formatItem, "Расположение текста")!;
+    placeItem.IsSubMenuOpen = true; Pump();
+    Expect(OpenAfterPress(placeItem.Items.OfType<Separator>().FirstOrDefault(), openMenu) && placeItem.IsSubMenuOpen,
+           "нажатие в подменю меню не закрывает");
+    // Уход в другую программу — событие платформы окна (в Avalonia 11.2 оно внутреннее).
+    void Platform(string name) =>
+        (typeof(Avalonia.Platform.IWindowBaseImpl).GetProperty(name, System.Reflection.BindingFlags.Instance
+            | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic)?.GetValue(w.PlatformImpl) as Action)?.Invoke();
+    Platform("Activated"); Pump();
+    Platform("Deactivated"); Pump();
+    Expect(!openMenu.IsOpen && ContextMenuDismiss.Count == 0, "уход в другую программу закрывает меню");
+    Platform("Activated"); Pump();
+
+    // Меню как на Windows и macOS (OwnWindowMenuInput): перехват нажатий меню не видит окна
+    // программы, и меню открывается на нажатии правой кнопки, как в таблице.
+    var pad  = new Border { Background = Avalonia.Media.Brushes.White };
+    var w2   = new Window { Width = 640, Height = 420, Content = pad };
+    w2.Show();
+    Settle(w2);
+    var made = new List<ContextMenu>();
+    pad.AddHandler(InputElement.PointerPressedEvent, (_, e) =>
+    {
+        if (!e.GetCurrentPoint(pad).Properties.IsRightButtonPressed) return;
+        var m = new ContextMenu(new OwnWindowMenuInput()) { ItemsSource = new[] { "Первый", "Второй" } };
+        made.Add(m);
+        m.Open(pad);
+    });
+    void ClickPad(Point at, MouseButton button = MouseButton.Left)
+    {
+        w2.MouseMove(at); w2.MouseDown(at, button); w2.MouseUp(at, button); Pump();
+    }
+    int OpenMade() => made.Count(m => m.IsOpen);
+    ClickPad(new Point(40, 40), MouseButton.Right);
+    ClickPad(new Point(320, 260), MouseButton.Right);
+    Expect(made.Count == 2 && !made[0].IsOpen && made[1].IsOpen, $"меню отдельным окном: правый щелчок мимо — открыто одно новое ({OpenMade()})");
+    ClickPad(new Point(560, 60));
+    Expect(OpenMade() == 0, $"меню отдельным окном: клик мимо закрывает и новое меню ({OpenMade()})");
+    ClickPad(new Point(40, 40), MouseButton.Right);
+    ClickPad(new Point(320, 260), MouseButton.Right);
+    ClickPad(new Point(500, 120), MouseButton.Right);
+    Expect(OpenMade() == 1, $"меню отдельным окном: три правых щелчка подряд — открыто одно ({OpenMade()})");
+    ContextMenuDismiss.CloseAll();
+    w2.Close();
+    Pump();
+
     w.Close();
     SecurityJournal.Attach(null);
     Console.WriteLine();
@@ -2097,4 +2176,12 @@ string? Arg(string key)
 {
     var i = Array.IndexOf(args, key);
     return i >= 0 && i + 1 < args.Length ? args[i + 1] : null;
+}
+
+// Перехват нажатий меню, как на Windows и macOS: Avalonia вешает его на окно, где нарисовано меню, —
+// там это отдельное попап-окно, и нажатий в окне программы он не видит. В безголовом режиме меню
+// живет в слое окна программы, и перехват закрывал бы меню раньше подложки, пряча сбой; здесь снят.
+sealed class OwnWindowMenuInput() : Avalonia.Controls.Platform.DefaultMenuInteractionHandler(true)
+{
+    protected override void RootPointerPressed(object? sender, PointerPressedEventArgs e) { }
 }

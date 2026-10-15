@@ -474,8 +474,9 @@ public partial class MainWindow : Window
         _recordPanelWidth = AppSettings.LoadRecordPanelWidth();
         _readerWidth      = AppSettings.LoadLibraryReaderWidth();
 
-        // При потере фокуса окном закрываем открытые контекстные меню/flyout —
-        // иначе на macOS popup «зависает» поверх других приложений (Avalonia issue).
+        // При потере фокуса окном закрываем открытые выпадашки/flyout — иначе на macOS
+        // popup «зависает» поверх других приложений (Avalonia issue); контекстные меню
+        // закрывает ContextMenuDismiss.
         // Заодно переводим синхронизацию чужих правок в экономный режим.
         Deactivated += (_, _) =>
         {
@@ -641,18 +642,11 @@ public partial class MainWindow : Window
             ? null
             : new Avalonia.Media.ScaleTransform(scale, scale);
 
-    // Закрывает открытые контекстные меню и flyout. Вызывается при потере фокуса окном —
-    // иначе на macOS popup «зависает» поверх других окон (Avalonia issue).
+    // Закрывает открытые выпадашки и flyout. Вызывается при потере фокуса окном —
+    // иначе на macOS popup «зависает» поверх других окон (Avalonia issue). Контекстные
+    // меню здесь не ищутся: их в любом окне закрывает ContextMenuDismiss.
     private void CloseOpenPopups()
     {
-        // Материализуем дерево в список ДО закрытия: Close()/Hide() меняют визуальное
-        // дерево, а GetVisualDescendants() ленивый — иначе «Collection was modified».
-        var controls = this.GetVisualDescendants().OfType<Control>().ToList();
-
-        foreach (var ctrl in controls)
-            if (ctrl.ContextMenu is { IsOpen: true } cm)
-                cm.Close();
-
         // Выпадашки на голом Popup (списки даты и времени, «Мультисписок», «Связь», панель
         // фоновых работ) живут в логическом дереве, а не в визуальном: визуально их содержимое
         // уехало в отдельный popup-рут.

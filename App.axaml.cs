@@ -15,7 +15,13 @@ namespace SmartBase;
 
 public partial class App : Application
 {
-    public override void Initialize() => AvaloniaXamlLoader.Load(this);
+    public override void Initialize()
+    {
+        AvaloniaXamlLoader.Load(this);
+        // Контекстное меню — одно на программу и гаснет от любого нажатия мимо (на Windows и macOS
+        // сама Avalonia этого не держит, см. ContextMenuDismiss).
+        Controls.Behaviors.ContextMenuDismiss.Install();
+    }
 
     public override void OnFrameworkInitializationCompleted()
     {
