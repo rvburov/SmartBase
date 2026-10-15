@@ -123,6 +123,11 @@ job `postgres` (фильтр `PgProviderTests|PgCreateDatabaseTests|PgBulkWriteT
   `SmartBase.csproj` папка `packages/**` исключена из компиляции — иначе `.cs`-файлы из
   пакетов (например, `Microsoft.NET.Test.Sdk.Program.cs`) попадали бы в глоб `**/*.cs`
   основного проекта и ломали сборку.
+- Рабочие папки ИИ-агентов (`.claude/worktrees/`, `.agents/worktrees/`, см. AGENTS.md) — полные
+  копии проекта внутри него, но в каталогах с точкой: их глоб `**/*.cs` пропускает сам (проверено —
+  ни одного файла), а каталог без точки втянул бы чужую копию исходников. `ScreenReferenceTests`,
+  который обходит весь корень, пропускает каталоги с точкой явно. Кэш NuGet рабочие папки берут
+  из основной (`RestorePackagesPath` в `Directory.Build.props`).
 - Перф-замеры (`Tests/Benchmarks`), генератор стенда (`Tests/DbGenerator`) и многопроцессный
   `Tests/MultiProcess` — консольные инструменты, не автотесты
   ([benchmarks.md](benchmarks.md), [multi-process.md](multi-process.md), [test-database.md](test-database.md)).

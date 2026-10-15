@@ -75,3 +75,8 @@ logs/
 # ===== Тестовые большие БД (не коммитить только сами файлы БД) =====
 # Генератор Tests/DbGenerator (C#) и docs/guides/test-database.md — в репозитории.
 Tests/*.db
+
+# Рабочие папки агентов (git worktree, см. AGENTS.md): Claude Code — .claude/worktrees,
+# остальные ИИ — .agents/worktrees (Scripts/worktree.sh). В репозиторий они попасть не должны.
+.claude/worktrees/
+.agents/worktrees/

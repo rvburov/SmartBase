@@ -89,6 +89,10 @@ public sealed class ScreenReferenceTests
             var relative = Path.GetRelativePath(root, file);
             if (relative.StartsWith("artifacts", StringComparison.Ordinal)) continue;
             if (relative.StartsWith("packages",  StringComparison.Ordinal)) continue;
+            // Папки с точкой — служебные, в том числе рабочие папки агентов .claude/worktrees и
+            // .agents/worktrees (копии проекта, см. AGENTS.md): файл, удаленный в main, нашелся бы
+            // в старой копии, и сторож пропустил бы ссылку на него.
+            if (relative.StartsWith('.')) continue;
 
             names.Add(Path.GetFileNameWithoutExtension(file));
         }

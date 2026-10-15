@@ -69,7 +69,8 @@ WAL, вручную их удалять не нужно.
   (macOS — там `ApplicationData` указывает на нативную папку Apple, а не на `~/.config`).
 - **Debug:** папка `.localdata/` в корне проекта (находится по маркеру
   `SmartBase.csproj`) — изолированно «как venv», переживает `dotnet clean` и снос
-  `artifacts/`.
+  `artifacts/`. В рабочей папке ИИ-агента (git worktree, см. AGENTS.md) — своя `.localdata/`:
+  маркер ищется вверх от сборки, и первым находится `SmartBase.csproj` самой рабочей папки.
 
 `database.db` → `AppSettings.DbPath`, `app.db` → `AppSettings.SystemDbPath`,
 `integrations.db` → `AppSettings.RunJournalPath`, `security.db` →

@@ -32,6 +32,14 @@ windows-таргет — только под ним работают натив�
 | `packages/` | локальный кэш NuGet (аналог venv) | нет |
 | `dist/` | готовые сборки для раздачи | нет |
 | `.localdata/` | dev-данные при Debug: `database.db`, `app.db`, `logs.db` + служебные `instance.lock`, `show.signal`, `crash.log` | нет |
+| `.claude/worktrees/` | рабочие папки Claude Code (git worktree): копия проекта на ветке `worktree-<имя>` | нет |
+| `.agents/worktrees/` | рабочие папки других ИИ-агентов, их создает `Scripts/worktree.sh new` | нет |
+
+Рабочие папки агентов — не временные файлы: внутри может быть незакоммиченная или не влитая
+в `main` работа, поэтому убирают их только `Scripts/worktree.sh remove`. Сборка основной папки
+их не видит — каталоги с точкой MSBuild пропускает сам. Пакеты NuGet рабочая папка берет из
+`packages/` основной (`RestorePackagesPath` в `Directory.Build.props`). Правила параллельной
+работы — [AGENTS.md](../../../AGENTS.md).
 
 ## База данных при разработке
 
@@ -39,6 +47,7 @@ windows-таргет — только под ним работают натив�
 `SmartBase.csproj`, см. [AppSettings](../../../Utils/AppSettings.cs)) — изолированно,
 переживает `dotnet clean` и снос `artifacts/`. В Release — в папке данных
 пользователя ОС. Подробнее — [databases.md](../architecture/database/storage-and-migrations.md).
+У рабочей папки агента своя `.localdata/`: программа, запущенная оттуда, начинает с пустой базы.
 
 ## Миграции EF Core
 
@@ -73,6 +82,8 @@ dotnet ef migrations add ИмяМиграцииPg --context PgAppDbContext --fra
 - Общая архитектура и запуск — [architecture/overview.md](../architecture/overview.md).
 - Модель данных — [architecture/data-model.md](../architecture/data-model.md).
 - Как работают фичи — [features/](../features/).
+- Указания ИИ-агентам и параллельная работа в рабочих папках (git worktree) —
+  [AGENTS.md](../../../AGENTS.md) и [Scripts/worktree.sh](../../../Scripts/worktree.sh).
 
 ## Диагностика сбоев (crash.log)
 

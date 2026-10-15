@@ -178,9 +178,13 @@ Scripts/macos-build.sh osx-x64   Release 1.2.3  # Intel
 | `packages/` | локальный кэш NuGet (аналог venv) | нет |
 | `dist/` | готовые сборки для раздачи, по версиям `Version <X.Y.Z>/<rid>/` | нет |
 | `.localdata/` | dev-данные при Debug: `database.db`, `app.db`, `logs.db` + служебные `instance.lock`, `show.signal`, `crash.log` | нет |
+| `.claude/worktrees/` | рабочие папки Claude Code (git worktree) — см. [AGENTS.md](../../../AGENTS.md) | нет |
+| `.agents/worktrees/` | рабочие папки других ИИ-агентов | нет |
 
 Очистить только сборку — удалить `artifacts/` и `packages/`. Папку `.localdata/` при
-очистке не трогают (там dev-база). Подробнее — [databases.md](../architecture/database/storage-and-migrations.md).
+очистке не трогают (там dev-база). Рабочие папки агентов не трогают тоже: в них может быть не
+влитая работа, убирают их только `Scripts/worktree.sh remove`. Подробнее —
+[databases.md](../architecture/database/storage-and-migrations.md).
 
 ## Скрипты сборки ([Scripts/](../../../Scripts/))
 
@@ -191,6 +195,7 @@ Scripts/macos-build.sh osx-x64   Release 1.2.3  # Intel
 | `macos-build.sh` | сборка macOS → `dist/<rid>/SmartBase.app` |
 | `linux-install.sh` | установка иконки/ярлыка на Linux-машине (пост-установка) |
 | `generate-icons.sh` | проверка мастеров и генерация `icon.ico`/`icon.icns` (только macOS) |
+| `worktree.sh` | рабочие папки ИИ-агентов: `check`, `new`, `sync`, `merge`, `remove` — см. [AGENTS.md](../../../AGENTS.md) |
 
 ## Связанные документы
 

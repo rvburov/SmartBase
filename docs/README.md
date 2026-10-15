@@ -1,7 +1,8 @@
 # Документация проекта
 
-Календарь-Планировщик на базе универсального конструктора данных (Avalonia + .NET +
-EF Core/SQLite). Документация разделена на два раздела:
+Универсальный конструктор баз данных, над которым надстроены календарь, задачи, библиотека
+документов и другие разделы (Avalonia + .NET + EF Core/SQLite). Документация разделена на два
+раздела:
 
 - **[developer/](developer/)** — как устроено и работает приложение (для разработчиков) —
   основной раздел.
@@ -65,6 +66,8 @@ EF Core/SQLite). Документация разделена на два раз�
 
 - [build-and-run.md](developer/guides/build-and-run.md) — сборка и запуск: dev-режим, релиз по ОС, версия/дата.
 - [developer-guide.md](developer/guides/developer-guide.md) — миграции, соглашения, раскладка вывода.
+- [AGENTS.md](../AGENTS.md) — указания ИИ-агентам: правила проекта и параллельная работа в рабочих
+  папках (git worktree, `Scripts/worktree.sh`).
 - [postgresql-setup.md](developer/guides/postgresql-setup.md) — PostgreSQL: сервер, база, подключение.
 - [auto-update.md](developer/guides/auto-update.md) — автообновление (сетевая папка + установщик).
 - [ci.md](developer/guides/ci.md) — что и где гоняет CI: матрица ОС, стенд PostgreSQL, guard-проверки.

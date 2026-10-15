@@ -12,4 +12,18 @@
     <UseArtifactsOutput>true</UseArtifactsOutput>
   </PropertyGroup>
 
+  <!--
+    Рабочая папка агента (git worktree, см. Scripts/worktree.sh и AGENTS.md) берет пакеты из
+    кэша основной папки, а не качает свои ~2 ГБ. В рабочей папке .git — файл со строкой
+    «gitdir: <основная>/.git/worktrees/<имя>», в основной — каталог, и File.Exists отличает одну
+    от другой; где бы ни лежала рабочая папка, основная — три уровня выше ее gitdir.
+    Ссылку на кэш внутри рабочей папки не ставить: git worktree remove на Windows проходит по
+    ссылке и стирает содержимое кэша.
+  -->
+  <PropertyGroup Condition="$([System.IO.File]::Exists('$(MSBuildThisFileDirectory).git'))">
+    <SbWorktreeGitDir>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory).git').Trim().Substring(7).Trim())</SbWorktreeGitDir>
+    <SbWorktreeGitDir>$([System.IO.Path]::Combine('$(MSBuildThisFileDirectory)', '$(SbWorktreeGitDir)'))</SbWorktreeGitDir>
+    <RestorePackagesPath>$([System.IO.Path]::GetFullPath('$(SbWorktreeGitDir)/../../../packages/packages'))</RestorePackagesPath>
+  </PropertyGroup>
+
 </Project>
