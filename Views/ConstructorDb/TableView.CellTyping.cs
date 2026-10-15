@@ -56,7 +56,7 @@ public partial class TableView
     }
 
     // Ввод текста — туннелем, раньше полей и списков (у списка свой поиск по буквам, он ищет только
-    // среди показанных пунктов и не знает, что «ё» — это «е»).
+    // среди показанных пунктов и не знает, что «е с точками» — это «е»).
     private void OnTableTextInput(object? sender, TextInputEventArgs e)
     {
         if (e.Handled || string.IsNullOrEmpty(e.Text)) return;
