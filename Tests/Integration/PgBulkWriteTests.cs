@@ -86,7 +86,7 @@ public sealed class PgBulkWriteTests
                                          $"WHERE collectionid = {col.Id!.Value} AND bg = '#FFCC00' AND visible = 1"));
         Assert.Equal(500, PgScalar(cs, $"SELECT COUNT(*) FROM cell_style " +
                                        $"WHERE collectionid = {col.Id!.Value} AND bg = '#FF3B30'"));
-        Assert.Equal(new RowStyle("#FFCC00", null), repo.GetRowStyles(col.Id!.Value)[ids[0]]);
+        Assert.Equal(new RowStyle("#FFCC00", null), repo.GetRowStyles(col.Id!.Value)[ids[0]] with { At = default });
     }
 
     /// <summary>

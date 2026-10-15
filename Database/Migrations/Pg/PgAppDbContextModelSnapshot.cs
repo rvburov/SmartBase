@@ -196,6 +196,10 @@ namespace SmartBase.Database.Migrations.Pg
                         .HasColumnType("text")
                         .HasColumnName("bg");
 
+                    b.Property<long?>("BgAt")
+                        .HasColumnType("bigint")
+                        .HasColumnName("bgat");
+
                     b.Property<string>("DisplayName")
                         .HasColumnType("text")
                         .HasColumnName("displayname");
@@ -204,9 +208,17 @@ namespace SmartBase.Database.Migrations.Pg
                         .HasColumnType("text")
                         .HasColumnName("fg");
 
+                    b.Property<long?>("FgAt")
+                        .HasColumnType("bigint")
+                        .HasColumnName("fgat");
+
                     b.Property<string>("HAlign")
                         .HasColumnType("text")
                         .HasColumnName("halign");
+
+                    b.Property<long?>("HAlignAt")
+                        .HasColumnType("bigint")
+                        .HasColumnName("halignat");
 
                     b.Property<int?>("Level")
                         .HasColumnType("integer")
@@ -219,6 +231,10 @@ namespace SmartBase.Database.Migrations.Pg
                     b.Property<string>("VAlign")
                         .HasColumnType("text")
                         .HasColumnName("valign");
+
+                    b.Property<long?>("VAlignAt")
+                        .HasColumnType("bigint")
+                        .HasColumnName("valignat");
 
                     b.Property<int?>("Visible")
                         .HasColumnType("integer")
@@ -621,13 +637,25 @@ namespace SmartBase.Database.Migrations.Pg
                         .HasColumnType("text")
                         .HasColumnName("bg");
 
+                    b.Property<long?>("BgAt")
+                        .HasColumnType("bigint")
+                        .HasColumnName("bgat");
+
                     b.Property<string>("Fg")
                         .HasColumnType("text")
                         .HasColumnName("fg");
 
+                    b.Property<long?>("FgAt")
+                        .HasColumnType("bigint")
+                        .HasColumnName("fgat");
+
                     b.Property<string>("HAlign")
                         .HasColumnType("text")
                         .HasColumnName("halign");
+
+                    b.Property<long?>("HAlignAt")
+                        .HasColumnType("bigint")
+                        .HasColumnName("halignat");
 
                     b.Property<int>("Level")
                         .HasColumnType("integer")
@@ -636,6 +664,10 @@ namespace SmartBase.Database.Migrations.Pg
                     b.Property<string>("VAlign")
                         .HasColumnType("text")
                         .HasColumnName("valign");
+
+                    b.Property<long?>("VAlignAt")
+                        .HasColumnType("bigint")
+                        .HasColumnName("valignat");
 
                     b.Property<int>("Visible")
                         .HasColumnType("integer")

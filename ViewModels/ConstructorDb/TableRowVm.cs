@@ -59,6 +59,25 @@ public class TableRowVm : INotifyPropertyChanged
         if (notify) NotifyAllCells();
     }
 
+    /// <summary>Снять с ячеек колонок <paramref name="column"/> аспекты изменений — так, как их
+    /// уже сняла база при выставлении строке или колонке (выставленное последним видно во всех
+    /// ее ячейках). Строк без своих ячеек это не касается.</summary>
+    public void DropCellAspects(Func<string, bool> column, IReadOnlyList<(StyleAspect Aspect, string? Value)> changes)
+    {
+        if (CellStyles is null) return;
+        Dictionary<string, RowStyle>? next = null;
+        foreach (var (key, style) in CellStyles)
+        {
+            if (!column(key)) continue;
+            var dropped = style;
+            foreach (var (aspect, _) in changes) dropped = dropped.With(aspect, null);
+            if (dropped == style) continue;
+            next ??= new Dictionary<string, RowStyle>(CellStyles);
+            if (dropped.IsEmpty) next.Remove(key); else next[key] = dropped;
+        }
+        if (next is not null) SetStyle(next);
+    }
+
     /// <summary>Аудит-метаданные записи для «вычисляемых» типов свойств (read-only).</summary>
     public string CreatedAt => _createdAt;
     public string UpdatedAt => _updatedAt;

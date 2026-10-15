@@ -335,15 +335,17 @@ FK-каскадов у этих таблиц нет (исключение — `c
 | `Width` | INTEGER, NULL | аспект «ручная ширина» в DIP; NULL = ширина не задана (стандартная) |
 | `HAlign` | TEXT, NULL | аспект «текст по горизонтали»: `left`, `center`, `right`; NULL = правило типа (число вправо, остальное влево) |
 | `VAlign` | TEXT, NULL | аспект «текст по вертикали»: `top`, `center`, `bottom`; NULL = по центру |
+| `BgAt`, `FgAt`, `HAlignAt`, `VAlignAt` | INTEGER, NULL | когда выставлен аспект оформления (тики UTC): на пересечении строки и колонки видно выставленное позже; отметка без значения — выставленное «По умолчанию» / «Без цвета»; NULL = не выставлялся или выставлен до этого правила |
 
 Каждый аспект независим; строка живет, пока задан хоть один (сброс последнего
 удаляет строку). Заменила прежние `column_order` + `column_display` +
 `system_field_meta` (миграция `SchemaCompact`), а с аспектом `Width` — и
 `ui_col_widths` (миграции `ColumnMetaWidth` / `ColumnMetaWidthPg`). Аспекты расположения
 текста `HAlign`/`VAlign` (у всех трех таблиц оформления) — миграции `TableTextAlign` /
-`TableTextAlignPg`.
+`TableTextAlignPg`; отметки выставления у `column_meta` и `record_display` — `TableStyleStamps` /
+`TableStyleStampsPg` (см. [data-model.md → «Цвет»](../data-model.md#цвет-оформление-таблицы)).
 
-> `Width` и оформление (`Bg`/`Fg`/`HAlign`/`VAlign`) обязаны участвовать в проверке «строка пуста» (`RemoveColumnMetaIfEmpty`):
+> `Width` и оформление (`Bg`/`Fg`/`HAlign`/`VAlign` и отметки `…At`: отметка без значения — выставленное «По умолчанию») обязаны участвовать в проверке «строка пуста» (`RemoveColumnMetaIfEmpty`):
 > `SaveColumnDisplay` и `WriteColumnOrder` обнуляют свои аспекты у ВСЕХ строк коллекции,
 > и без этой проверки строка с одной лишь сохраненной шириной была бы удалена, а ручные
 > ширины молча терялись бы после окна «Отображение».
@@ -360,6 +362,7 @@ FK-каскадов у этих таблиц нет (исключение — `c
 | `Fg` | TEXT, NULL | аспект «цвет текста строки»; NULL = стандартный |
 | `HAlign` | TEXT, NULL | аспект «текст строки по горизонтали» (`left/center/right`); NULL = не задан |
 | `VAlign` | TEXT, NULL | аспект «текст строки по вертикали» (`top/center/bottom`); NULL = не задан |
+| `BgAt`, `FgAt`, `HAlignAt`, `VAlignAt` | INTEGER, NULL | когда выставлен аспект строке — как у `column_meta` |
 
 Аспекты независимы, как в `column_meta`: строка живет, пока задан хоть один. Поэтому
 запись идет точечным upsert'ом (`SetRowStyle`, `SaveRecordDisplay`), а не «снести все

@@ -38,6 +38,77 @@ public sealed class TableStyleTests
         Assert.True(RowStyle.None.IsEmpty);
     }
 
+    // ── Выставленное последним ────────────────────────────────────────────────
+
+    /// <summary>Между строкой и колонкой видно выставленное позже — по отметкам выставления.</summary>
+    [Fact]
+    public void The_later_of_row_and_column_wins()
+    {
+        var row    = new RowStyle(Green, null, HAlign: CellHAlign.Right, At: new StyleStamps(Bg: 30, HAlign: 10));
+        var column = new RowStyle(Red,   null, HAlign: CellHAlign.Center, At: new StyleStamps(Bg: 20, HAlign: 20));
+
+        var style = RowStyle.Resolve(RowStyle.None, row, column);
+
+        Assert.Equal(Green, style.Bg);                    // фон строке выставлен позже
+        Assert.Equal(CellHAlign.Center, style.HAlign);    // расположение колонке — позже
+    }
+
+    /// <summary>Отметка без значения — выставленное «По умолчанию»: оно перебивает более раннее
+    /// значение другого уровня, а более позднее значение перебивает его.</summary>
+    [Fact]
+    public void A_later_default_beats_an_earlier_value()
+    {
+        var row    = new RowStyle(null, null, HAlign: CellHAlign.Right, At: new StyleStamps(HAlign: 10));
+        var reset  = new RowStyle(null, null, At: new StyleStamps(HAlign: 20));
+
+        Assert.Null(RowStyle.Resolve(RowStyle.None, row, reset).HAlign);
+        Assert.Equal(CellHAlign.Right,
+                     RowStyle.Resolve(RowStyle.None, row with { At = new StyleStamps(HAlign: 30) }, reset).HAlign);
+        Assert.False(reset.IsEmpty);   // отметка — тоже оформление: строка хранения живет ради нее
+    }
+
+    /// <summary>Ячейка — всегда последняя в своей строке и колонке (их смена снимает аспект у
+    /// ячеек), поэтому ее значение видно при любых отметках.</summary>
+    [Fact]
+    public void The_cell_always_wins()
+    {
+        var cell   = new RowStyle(null, null, VAlign: CellVAlign.Bottom);
+        var column = new RowStyle(null, null, VAlign: CellVAlign.Top, At: new StyleStamps(VAlign: long.MaxValue));
+
+        Assert.Equal(CellVAlign.Bottom, RowStyle.Resolve(cell, RowStyle.None, column).VAlign);
+    }
+
+    /// <summary>Оформление до этого правила отметок не несет — там строка сильнее колонки, как
+    /// было; выставленное после правила перебивает его.</summary>
+    [Fact]
+    public void Styles_without_stamps_keep_the_old_order()
+    {
+        var oldRow    = new RowStyle(null, null, HAlign: CellHAlign.Right);
+        var oldColumn = new RowStyle(null, null, HAlign: CellHAlign.Center);
+        var newColumn = oldColumn with { At = new StyleStamps(HAlign: 1) };
+
+        Assert.Equal(CellHAlign.Right,  RowStyle.Resolve(RowStyle.None, oldRow, oldColumn).HAlign);
+        Assert.Equal(CellHAlign.Center, RowStyle.Resolve(RowStyle.None, oldRow, newColumn).HAlign);
+    }
+
+    [Fact]
+    public void With_stamps_only_the_given_aspect()
+    {
+        var style = RowStyle.None.With(StyleAspect.VAlign, "top", 42).With(StyleAspect.Background, null, 7);
+
+        Assert.Equal(CellVAlign.Top, style.VAlign);
+        Assert.Equal(new StyleStamps(Bg: 7, VAlign: 42), style.At);
+        Assert.Equal(7, style.At.Of(StyleAspect.Background));
+    }
+
+    [Fact]
+    public void Stamps_strictly_grow()
+    {
+        var stamps = Enumerable.Range(0, 1000).Select(_ => StyleStamps.Next()).ToList();
+
+        Assert.True(stamps.Zip(stamps.Skip(1)).All(p => p.Second > p.First));
+    }
+
     /// <summary>Строка хранения живет, пока задан хоть один аспект, — расположение текста
     /// считается наравне с цветом.</summary>
     [Fact]

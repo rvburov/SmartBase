@@ -422,31 +422,35 @@ public sealed class GridPanel : Avalonia.Controls.Grid
     public RowStyle ColumnStyleOf(string key)   => _colStyles.GetValueOrDefault(key);
 
     /// <summary>Оформление строк уже записано в базу фасадом — обновить словарь и перерисовать:
-    /// оно читается на кадре, строки перечитывать не нужно.</summary>
-    public void ApplyRowStyle(IEnumerable<int> recordIds, IReadOnlyList<(StyleAspect Aspect, string? Value)> changes)
+    /// оно читается на кадре, строки перечитывать не нужно. <paramref name="at"/> — отметки так,
+    /// как их записала база (SetRowStyle), — по ним кадр выбирает между строкой и колонкой.</summary>
+    public void ApplyRowStyle(IEnumerable<int> recordIds, IReadOnlyList<(StyleAspect Aspect, string? Value)> changes,
+                              StyleStamps at)
     {
         foreach (var id in recordIds)
         {
-            var next = WithChanges(RowStyleOf(id), changes);
+            var next = WithChanges(RowStyleOf(id), changes, at);
             if (next.IsEmpty) _rowStyles.Remove(id); else _rowStyles[id] = next;
         }
         Surface.RefreshSelectionVisuals();
     }
 
     /// <summary>То же для колонок.</summary>
-    public void ApplyColumnStyle(IEnumerable<string> keys, IReadOnlyList<(StyleAspect Aspect, string? Value)> changes)
+    public void ApplyColumnStyle(IEnumerable<string> keys, IReadOnlyList<(StyleAspect Aspect, string? Value)> changes,
+                                 StyleStamps at)
     {
         foreach (var key in keys)
         {
-            var next = WithChanges(ColumnStyleOf(key), changes);
+            var next = WithChanges(ColumnStyleOf(key), changes, at);
             if (next.IsEmpty) _colStyles.Remove(key); else _colStyles[key] = next;
         }
         Surface.RefreshSelectionVisuals();
     }
 
-    private static RowStyle WithChanges(RowStyle style, IReadOnlyList<(StyleAspect Aspect, string? Value)> changes)
+    private static RowStyle WithChanges(RowStyle style, IReadOnlyList<(StyleAspect Aspect, string? Value)> changes,
+                                        StyleStamps at)
     {
-        foreach (var (aspect, value) in changes) style = style.With(aspect, value);
+        foreach (var (aspect, value) in changes) style = style.With(aspect, value, at.Of(aspect));
         return style;
     }
 

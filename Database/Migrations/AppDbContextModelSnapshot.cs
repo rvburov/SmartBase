@@ -158,14 +158,23 @@ namespace SmartBase.Database.Migrations
                     b.Property<string>("Bg")
                         .HasColumnType("TEXT");
 
+                    b.Property<long?>("BgAt")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("DisplayName")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Fg")
                         .HasColumnType("TEXT");
 
+                    b.Property<long?>("FgAt")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("HAlign")
                         .HasColumnType("TEXT");
+
+                    b.Property<long?>("HAlignAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<int?>("Level")
                         .HasColumnType("INTEGER");
@@ -175,6 +184,9 @@ namespace SmartBase.Database.Migrations
 
                     b.Property<string>("VAlign")
                         .HasColumnType("TEXT");
+
+                    b.Property<long?>("VAlignAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<bool?>("Visible")
                         .HasColumnType("INTEGER");
@@ -497,17 +509,29 @@ namespace SmartBase.Database.Migrations
                     b.Property<string>("Bg")
                         .HasColumnType("TEXT");
 
+                    b.Property<long?>("BgAt")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("Fg")
                         .HasColumnType("TEXT");
 
+                    b.Property<long?>("FgAt")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("HAlign")
                         .HasColumnType("TEXT");
+
+                    b.Property<long?>("HAlignAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<int>("Level")
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("VAlign")
                         .HasColumnType("TEXT");
+
+                    b.Property<long?>("VAlignAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<bool>("Visible")
                         .HasColumnType("INTEGER");

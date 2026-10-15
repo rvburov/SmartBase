@@ -10,21 +10,31 @@ namespace SmartBase.Core.Models;
 ///
 /// Расположение текста хранится словами (<see cref="CellAlign.Store(CellHAlign?)"/>), а не
 /// числами: строку базы читает и человек, и сторонний разбор.
-public readonly record struct RowStyle(string? Bg, string? Fg, CellHAlign? HAlign = null, CellVAlign? VAlign = null)
+///
+/// <see cref="At"/> — когда аспект выставлен строке или колонке (у ячейки отметок нет): по ним
+/// <see cref="Resolve"/> выбирает выставленное позже. Отметка без значения — выставленное
+/// «По умолчанию» («Без цвета»): оно тоже перебивает более раннее.
+public readonly record struct RowStyle(string? Bg, string? Fg, CellHAlign? HAlign = null, CellVAlign? VAlign = null,
+                                       StyleStamps At = default)
 {
     public static readonly RowStyle None = default;
 
-    public bool IsEmpty => Bg is null && Fg is null && HAlign is null && VAlign is null;
+    public bool IsEmpty => Bg is null && Fg is null && HAlign is null && VAlign is null && At.IsEmpty;
 
     /// Отбрасывает мусор из БД (пустые строки, битый hex, незнакомое слово) — иначе одно кривое
     /// значение роняло бы отрисовку всей строки таблицы.
-    public static RowStyle Clean(string? bg, string? fg, string? hAlign = null, string? vAlign = null) =>
+    public static RowStyle Clean(string? bg, string? fg, string? hAlign = null, string? vAlign = null,
+                                 StyleStamps at = default) =>
         new(AppPalette.IsHex(bg) ? bg : null, AppPalette.IsHex(fg) ? fg : null,
-            CellAlign.ParseH(hAlign), CellAlign.ParseV(vAlign));
+            CellAlign.ParseH(hAlign), CellAlign.ParseV(vAlign), at);
 
-    /// ЕДИНСТВЕННОЕ место, где описан приоритет оформления. Точечное перебивает общее:
-    /// ячейка → строка → колонка. Все аспекты считаются одинаково и независимо друг от друга:
-    /// колонка «по центру» и ячейка в ней «сверху» дают текст по центру и сверху.
+    /// ЕДИНСТВЕННОЕ место, где описан приоритет оформления: что выставлено последним, то и
+    /// видно. Ячейка — всегда последняя в своей строке и колонке: смена строки или колонки
+    /// сбрасывает этот аспект у ее ячеек (ConstructorRepository.SetRowStyle/SetColumnStyle).
+    /// Между строкой и колонкой побеждает выставленное позже, в том числе «По умолчанию»;
+    /// без отметок (оформление до этого правила) — строка, как было. Все аспекты считаются
+    /// одинаково и независимо друг от друга: колонка «по центру» и ячейка в ней «сверху» дают
+    /// текст по центру и сверху.
     ///
     /// Все три уровня — оформление ЭТОЙ таблицы. Был еще сквозной цвет записи
     /// (db_records.Color), который подмешивался в заливку строки и всплывал в календаре,
@@ -34,10 +44,20 @@ public readonly record struct RowStyle(string? Bg, string? Fg, CellHAlign? HAlig
     /// Сюда же позже встанет слой правил («Статус = Готово → зеленый») — между
     /// ручными уровнями и дефолтом; ни схема, ни вызывающий код не изменятся.
     public static RowStyle Resolve(RowStyle cell, RowStyle row, RowStyle column) =>
-        new(Bg:     cell.Bg     ?? row.Bg     ?? column.Bg,
-            Fg:     cell.Fg     ?? row.Fg     ?? column.Fg,
-            HAlign: cell.HAlign ?? row.HAlign ?? column.HAlign,
-            VAlign: cell.VAlign ?? row.VAlign ?? column.VAlign);
+        new(Bg:     Pick(cell.Bg,     row.Bg,     row.At.Bg,     column.Bg,     column.At.Bg),
+            Fg:     Pick(cell.Fg,     row.Fg,     row.At.Fg,     column.Fg,     column.At.Fg),
+            HAlign: Pick(cell.HAlign, row.HAlign, row.At.HAlign, column.HAlign, column.At.HAlign),
+            VAlign: Pick(cell.VAlign, row.VAlign, row.At.VAlign, column.VAlign, column.At.VAlign));
+
+    // Аспект задан у уровня, если есть значение или отметка («По умолчанию» тоже выставлено).
+    private static T Pick<T>(T cell, T row, long rowAt, T column, long columnAt)
+    {
+        if (cell is not null) return cell;
+        var rowSet    = row is not null || rowAt > 0;
+        var columnSet = column is not null || columnAt > 0;
+        if (rowSet && columnSet) return rowAt >= columnAt ? row : column;
+        return rowSet ? row : column;
+    }
 
     /// Тот же стиль с одним замененным аспектом. <paramref name="value"/> — в формате хранения
     /// (hex, «left», «top»…); null или мусор — аспект сброшен.
@@ -49,6 +69,10 @@ public readonly record struct RowStyle(string? Bg, string? Fg, CellHAlign? HAlig
         StyleAspect.VAlign     => this with { VAlign = CellAlign.ParseV(value) },
         _                      => this,
     };
+
+    /// То же для строки и колонки: значение вместе с отметкой, когда его выставили.
+    public RowStyle With(StyleAspect aspect, string? value, long at) =>
+        With(aspect, value) with { At = At.With(aspect, at) };
 
     /// Значение аспекта, годное к записи в базу: цвет — hex, расположение — свое слово;
     /// все остальное — null («не задан»).
@@ -70,6 +94,50 @@ public readonly record struct RowStyle(string? Bg, string? Fg, CellHAlign? HAlig
         StyleAspect.VAlign     => "VAlign",
         _                      => throw new ArgumentOutOfRangeException(nameof(aspect), aspect, null),
     };
+
+    /// Столбец отметки аспекта — у record_display и column_meta («BgAt», «HAlignAt»…).
+    public static string StampColumn(StyleAspect aspect) => Column(aspect) + "At";
+}
+
+/// <summary>
+/// Когда аспект выставлен строке или колонке: тики UTC, 0 — не выставлялся (или выставлен до
+/// этого правила). Сравниваются только между собой — время в них не читается.
+/// </summary>
+public readonly record struct StyleStamps(long Bg = 0, long Fg = 0, long HAlign = 0, long VAlign = 0)
+{
+    private static long _last;
+
+    public bool IsEmpty => Bg == 0 && Fg == 0 && HAlign == 0 && VAlign == 0;
+
+    public long Of(StyleAspect aspect) => aspect switch
+    {
+        StyleAspect.Background => Bg,
+        StyleAspect.Text       => Fg,
+        StyleAspect.HAlign     => HAlign,
+        StyleAspect.VAlign     => VAlign,
+        _                      => 0,
+    };
+
+    public StyleStamps With(StyleAspect aspect, long at) => aspect switch
+    {
+        StyleAspect.Background => this with { Bg = at },
+        StyleAspect.Text       => this with { Fg = at },
+        StyleAspect.HAlign     => this with { HAlign = at },
+        StyleAspect.VAlign     => this with { VAlign = at },
+        _                      => this,
+    };
+
+    /// <summary>Отметка «сейчас». Строго растет в пределах программы, даже если часы отступили:
+    /// два выставления подряд не получат одну отметку.</summary>
+    public static long Next()
+    {
+        while (true)
+        {
+            var last = Interlocked.Read(ref _last);
+            var next = Math.Max(DateTime.UtcNow.Ticks, last + 1);
+            if (Interlocked.CompareExchange(ref _last, next, last) == last) return next;
+        }
+    }
 }
 
 /// Какой аспект оформления правит вызов: заливка, цвет текста или расположение текста. Один и

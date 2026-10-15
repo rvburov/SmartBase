@@ -689,6 +689,15 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
                 row.NotifyCellsChanged();
     }
 
+    /// <summary>Каждая строка загруженных страниц (заглушки «Загрузка…» тоже) — для правок, которые
+    /// уже записаны в базу и должны дойти до кеша без перечитывания (оформление колонки или строки).</summary>
+    public void ForEachCachedRow(Action<TableRowVm> action)
+    {
+        foreach (var rows in _pages.Values)
+            foreach (var row in rows)
+                action(row);
+    }
+
     /// <summary>Ищет строку по RecordId в уже загруженных страницах (не инициирует загрузку).</summary>
     public TableRowVm? FindCachedByRecordId(int recordId)
     {

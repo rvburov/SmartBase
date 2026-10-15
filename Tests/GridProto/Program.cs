@@ -10,8 +10,8 @@
 // --gestures — безголовая мышь на копии базы: наведение, полоски ширины и высоты, ресайз окна,
 // режимы, навигация нижней панели. Режим этапа 3: --keys — клавиши и мышь на настоящем TableView
 // с рисованной сеткой (выделение, протягивание с автопрокруткой, меню, буфер, отмена, расположение
-// текста: «Форматирование текста» в меню и Ctrl+L/E/R; контекстные меню: открыто одно, нажатие мимо
-// и уход из программы закрывают). Режим этапа 4:
+// текста: «Форматирование текста» в меню и Ctrl+L/E/R, выставленное последним видно во всей строке и
+// столбце; контекстные меню: открыто одно, нажатие мимо и уход из программы закрывают). Режим этапа 4:
 // --edit — правка на том же фасаде (набор с паузами, коммит и отмена, уход фокуса, редакторы по типам,
 // правка набором на выделенной ячейке); с --pg — то же на базе PostgreSQL (стенд sb-pg, порт 5455).
 // Режим этапа 5: --ops — операции на нем же (окно фильтра у кнопки заголовка, отбор и сортировка в
@@ -1161,6 +1161,51 @@ int RunKeys()
     Expect(Checked(Placement("Горизонтально слева")) && Checked(Placement("Вертикально снизу")), "меню строки: галочки у заданного строке");
     Choose(Placement("По умолчанию"));
     Expect(!repo3.GetRowStyles(cid3).ContainsKey(rid4), "«По умолчанию» снимает расположение строки");
+
+    // Выставленное последним видно во всей строке и колонке: их смена снимает этот аспект у ячеек —
+    // в базе по всем записям и сразу в загруженных строках, без перечитывания; на пересечении строки
+    // и колонки побеждает выставленное позже, в том числе «По умолчанию».
+    Console.WriteLine("Выставленное последним:");
+    // Строки — из текущего списка сетки: выше стенд перестраивал колонки, и прежние объекты строк
+    // устарели (то, что рисуется, живет в новых).
+    RowStyle Cached(int row, string key) => p.Rows![row].CellStyle(key);
+    RowStyle SeenAt(int row, string key) =>
+        RowStyle.Resolve(p.Rows![row].CellStyle(key), p.RowStyleOf(p.Rows![row].RecordId), p.ColumnStyleOf(key));
+    var otherKey = visibleKeys.First(k => k != textKey && k != title && defs.First(d => d.Key == k).FieldType != "checkbox");
+
+    Drag(CellNow(5, textKey), CellNow(6, textKey));
+    s.Focus(); Pump();
+    Key(Avalonia.Input.Key.R, RawInputModifiers.Control);
+    Click(CellNow(5, textKey), button: MouseButton.Right);
+    Choose(Placement("Вертикально снизу"));
+    // Ячейки пишутся асинхронно (выделение собирается в фоне) — ждем, пока дойдут до строк.
+    Expect(WaitUntil(() => Cached(5, textKey) is { HAlign: CellHAlign.Right, VAlign: CellVAlign.Bottom }
+                           && Cached(6, textKey).HAlign == CellHAlign.Right, TimeSpan.FromSeconds(5)),
+           "ячейки столбца: справа и снизу");
+    Click(HeaderNow(textKey));
+    Key(Avalonia.Input.Key.E, RawInputModifiers.Control);
+    Expect(CellAt(5, textKey) is { HAlign: null, VAlign: CellVAlign.Bottom } && CellAt(6, textKey).HAlign is null,
+           "столбец по центру снимает горизонталь его ячеек в базе, вертикаль остается");
+    Expect(Cached(5, textKey) is { HAlign: null, VAlign: CellVAlign.Bottom } && Cached(6, textKey).HAlign is null,
+           "и в загруженных строках, без перечитывания");
+    Expect(SeenAt(5, textKey) is { HAlign: CellHAlign.Center, VAlign: CellVAlign.Bottom },
+           $"в ячейке видно: по центру от столбца и снизу свое ({SeenAt(5, textKey).HAlign}, {SeenAt(5, textKey).VAlign})");
+
+    Click(CellNow(7, num), button: MouseButton.Right);
+    Choose(Placement("Горизонтально справа"));
+    Expect(SeenAt(7, textKey).HAlign == CellHAlign.Right && SeenAt(8, textKey).HAlign == CellHAlign.Center,
+           "строка справа позже столбца: на пересечении строка, в других строках столбец");
+    Click(HeaderNow(textKey), button: MouseButton.Right);
+    Choose(Placement("По умолчанию"));
+    Expect(SeenAt(7, textKey).HAlign is null && SeenAt(7, otherKey).HAlign == CellHAlign.Right,
+           "«По умолчанию» столбцу позже строки: в нем обычный вид, остальная строка справа");
+    Click(CellNow(7, num), button: MouseButton.Right);
+    Choose(Placement("По умолчанию"));
+    Drag(CellNow(5, textKey), CellNow(6, textKey));
+    Click(CellNow(5, textKey), button: MouseButton.Right);
+    Choose(Placement("По умолчанию"));
+    Expect(!repo3.GetRowStyles(cid3).ContainsKey(rows[7].RecordId) && CellAt(5, textKey).IsEmpty && SeenAt(7, textKey).HAlign is null,
+           "уборка: строка и ячейки по умолчанию");
 
     // Контекстные меню (ContextMenuDismiss): открыто одно, гаснет от нажатия не в нем и от ухода
     // из программы. На Windows и macOS меню — отдельное попап-окно, и правый щелчок мимо открытого

@@ -1509,10 +1509,12 @@ public partial class ConstructorRepository(AppDbContext db)
             SELECT {newCol}, ColResize, RowResize, ViewMode FROM ui_collection_settings WHERE CollectionId = {srcCol}");
 
         db.Database.ExecuteSqlInterpolated($@"
-            INSERT INTO column_meta (CollectionId, Key, Position, Visible, Level, DisplayName, Bg, Fg, Width, HAlign, VAlign)
+            INSERT INTO column_meta (CollectionId, Key, Position, Visible, Level, DisplayName, Bg, Fg, Width, HAlign, VAlign,
+                                     BgAt, FgAt, HAlignAt, VAlignAt)
             SELECT {newCol},
                    CASE WHEN fm.new_fid IS NOT NULL THEN CAST(fm.new_fid AS TEXT) ELSE cm.Key END,
-                   cm.Position, cm.Visible, cm.Level, cm.DisplayName, cm.Bg, cm.Fg, cm.Width, cm.HAlign, cm.VAlign
+                   cm.Position, cm.Visible, cm.Level, cm.DisplayName, cm.Bg, cm.Fg, cm.Width, cm.HAlign, cm.VAlign,
+                   cm.BgAt, cm.FgAt, cm.HAlignAt, cm.VAlignAt
             FROM column_meta cm
             LEFT JOIN _dup_fmap fm ON cm.Key GLOB '[0-9]*' AND CAST(cm.Key AS INTEGER) = fm.old_fid
             WHERE cm.CollectionId = {srcCol}");
@@ -1527,8 +1529,10 @@ public partial class ConstructorRepository(AppDbContext db)
                 WHERE h.CollectionId = {srcCol}");
 
             db.Database.ExecuteSqlInterpolated($@"
-                INSERT INTO record_display (CollectionId, RecordId, Visible, Level, Bg, Fg, HAlign, VAlign)
-                SELECT {newCol}, {firstNew} + r.rn - 1, d.Visible, d.Level, d.Bg, d.Fg, d.HAlign, d.VAlign FROM record_display d
+                INSERT INTO record_display (CollectionId, RecordId, Visible, Level, Bg, Fg, HAlign, VAlign,
+                                            BgAt, FgAt, HAlignAt, VAlignAt)
+                SELECT {newCol}, {firstNew} + r.rn - 1, d.Visible, d.Level, d.Bg, d.Fg, d.HAlign, d.VAlign,
+                       d.BgAt, d.FgAt, d.HAlignAt, d.VAlignAt FROM record_display d
                 JOIN (SELECT Id AS old_id, ROW_NUMBER() OVER (ORDER BY Position, Id) AS rn
                       FROM db_records WHERE CollectionId = {srcCol}) r ON r.old_id = d.RecordId
                 WHERE d.CollectionId = {srcCol}");
@@ -1635,10 +1639,12 @@ public partial class ConstructorRepository(AppDbContext db)
         // Числовой ключ column_meta сопоставляется текстом (Key = CAST(old_fid AS TEXT)) —
         // без GLOB (его в PG нет) и без CAST(Key AS INTEGER), падающего на '__title__'.
         db.Database.ExecuteSqlInterpolated($@"
-            INSERT INTO column_meta (CollectionId, Key, Position, Visible, Level, DisplayName, Bg, Fg, Width, HAlign, VAlign)
+            INSERT INTO column_meta (CollectionId, Key, Position, Visible, Level, DisplayName, Bg, Fg, Width, HAlign, VAlign,
+                                     BgAt, FgAt, HAlignAt, VAlignAt)
             SELECT {newCollectionId},
                    CASE WHEN fm.new_fid IS NOT NULL THEN CAST(fm.new_fid AS TEXT) ELSE cm.Key END,
-                   cm.Position, cm.Visible, cm.Level, cm.DisplayName, cm.Bg, cm.Fg, cm.Width, cm.HAlign, cm.VAlign
+                   cm.Position, cm.Visible, cm.Level, cm.DisplayName, cm.Bg, cm.Fg, cm.Width, cm.HAlign, cm.VAlign,
+                   cm.BgAt, cm.FgAt, cm.HAlignAt, cm.VAlignAt
             FROM column_meta cm
             LEFT JOIN _dup_fmap fm ON cm.Key = CAST(fm.old_fid AS TEXT)
             WHERE cm.CollectionId = {srcCollectionId}");
@@ -1651,8 +1657,10 @@ public partial class ConstructorRepository(AppDbContext db)
                 JOIN _dup_rmap m ON m.old_id = h.RecordId WHERE h.CollectionId = {srcCollectionId}");
 
             db.Database.ExecuteSqlInterpolated($@"
-                INSERT INTO record_display (CollectionId, RecordId, Visible, Level, Bg, Fg, HAlign, VAlign)
-                SELECT {newCollectionId}, m.new_id, d.Visible, d.Level, d.Bg, d.Fg, d.HAlign, d.VAlign FROM record_display d
+                INSERT INTO record_display (CollectionId, RecordId, Visible, Level, Bg, Fg, HAlign, VAlign,
+                                            BgAt, FgAt, HAlignAt, VAlignAt)
+                SELECT {newCollectionId}, m.new_id, d.Visible, d.Level, d.Bg, d.Fg, d.HAlign, d.VAlign,
+                       d.BgAt, d.FgAt, d.HAlignAt, d.VAlignAt FROM record_display d
                 JOIN _dup_rmap m ON m.old_id = d.RecordId WHERE d.CollectionId = {srcCollectionId}");
 
             db.Database.ExecuteSqlInterpolated($@"
@@ -1910,8 +1918,9 @@ public partial class ConstructorRepository(AppDbContext db)
         List<(int RecordId, int Height)>                      RowHeights,
         (bool ColResize, bool RowResize, string ViewMode)?    Settings,
         List<(string Key, int? Position, bool? Visible, int? Level, string? DisplayName, string? Bg, string? Fg, int? Width,
-              string? HAlign, string? VAlign)> ColumnMeta,
-        List<(int RecordId, bool Visible, int Level, string? Bg, string? Fg, string? HAlign, string? VAlign)> RecordDisplay,
+              string? HAlign, string? VAlign, StyleStamps At)> ColumnMeta,
+        List<(int RecordId, bool Visible, int Level, string? Bg, string? Fg, string? HAlign, string? VAlign,
+              StyleStamps At)> RecordDisplay,
         List<(int RecordId, string Key, string? Bg, string? Fg, string? HAlign, string? VAlign)> CellStyles);
 
     // Снимок группы со всей вложенной веткой (подгруппы + коллекции).
@@ -1948,9 +1957,9 @@ public partial class ConstructorRepository(AppDbContext db)
             Settings:      settings is null ? null : (settings.ColResize, settings.RowResize, settings.ViewMode),
             ColumnMeta:    db.ColumnMeta.AsNoTracking().Where(m => m.CollectionId == collectionId).ToList()
                              .Select(m => (m.Key, m.Position, m.Visible, m.Level, m.DisplayName, m.Bg, m.Fg, m.Width,
-                                           m.HAlign, m.VAlign)).ToList(),
+                                           m.HAlign, m.VAlign, StampsOf(m))).ToList(),
             RecordDisplay: db.RecordDisplay.AsNoTracking().Where(d => d.CollectionId == collectionId).ToList()
-                             .Select(d => (d.RecordId, d.Visible, d.Level, d.Bg, d.Fg, d.HAlign, d.VAlign)).ToList(),
+                             .Select(d => (d.RecordId, d.Visible, d.Level, d.Bg, d.Fg, d.HAlign, d.VAlign, StampsOf(d))).ToList(),
             CellStyles:    db.CellStyles.AsNoTracking().Where(c => c.CollectionId == collectionId).ToList()
                              .Select(c => (c.RecordId, c.Key, c.Bg, c.Fg, c.HAlign, c.VAlign)).ToList());
     }
@@ -2042,21 +2051,29 @@ public partial class ConstructorRepository(AppDbContext db)
                 CollectionId = newCollectionId, ColResize = st.ColResize, RowResize = st.RowResize, ViewMode = st.ViewMode,
             });
 
-        foreach (var (key, pos, vis, lvl, name, bg, fg, width, hAlign, vAlign) in ui.ColumnMeta)
-            db.ColumnMeta.Add(new ColumnMetaEntity
+        foreach (var (key, pos, vis, lvl, name, bg, fg, width, hAlign, vAlign, at) in ui.ColumnMeta)
+        {
+            var meta = new ColumnMetaEntity
             {
                 CollectionId = newCollectionId, Key = RemapColKey(key, fieldMap),
                 Position = pos, Visible = vis, Level = lvl, DisplayName = name, Bg = bg, Fg = fg,
                 Width = width, HAlign = hAlign, VAlign = vAlign,
-            });
+            };
+            SetStamps(meta, at);
+            db.ColumnMeta.Add(meta);
+        }
 
-        foreach (var (oldRid, vis, lvl, bg, fg, hAlign, vAlign) in ui.RecordDisplay)
-            if (recordMap.TryGetValue(oldRid, out var nrid))
-                db.RecordDisplay.Add(new RecordDisplayEntity
-                {
-                    CollectionId = newCollectionId, RecordId = nrid, Visible = vis, Level = lvl,
-                    Bg = bg, Fg = fg, HAlign = hAlign, VAlign = vAlign,
-                });
+        foreach (var (oldRid, vis, lvl, bg, fg, hAlign, vAlign, at) in ui.RecordDisplay)
+        {
+            if (!recordMap.TryGetValue(oldRid, out var nrid)) continue;
+            var display = new RecordDisplayEntity
+            {
+                CollectionId = newCollectionId, RecordId = nrid, Visible = vis, Level = lvl,
+                Bg = bg, Fg = fg, HAlign = hAlign, VAlign = vAlign,
+            };
+            SetStamps(display, at);
+            db.RecordDisplay.Add(display);
+        }
 
         foreach (var (oldRid, key, bg, fg, hAlign, vAlign) in ui.CellStyles)
             if (recordMap.TryGetValue(oldRid, out var nrid))
@@ -2534,10 +2551,12 @@ public partial class ConstructorRepository(AppDbContext db)
             SELECT {newCol}, ColResize, RowResize, ViewMode FROM src.ui_collection_settings WHERE CollectionId = {srcCol}");
 
         Exec(conn, tx, $@"
-            INSERT INTO main.column_meta (CollectionId, Key, Position, Visible, Level, DisplayName, Bg, Fg, Width, HAlign, VAlign)
+            INSERT INTO main.column_meta (CollectionId, Key, Position, Visible, Level, DisplayName, Bg, Fg, Width, HAlign, VAlign,
+                                     BgAt, FgAt, HAlignAt, VAlignAt)
             SELECT {newCol},
                    CASE WHEN fm.new_fid IS NOT NULL THEN CAST(fm.new_fid AS TEXT) ELSE cm.Key END,
-                   cm.Position, cm.Visible, cm.Level, cm.DisplayName, cm.Bg, cm.Fg, cm.Width, cm.HAlign, cm.VAlign
+                   cm.Position, cm.Visible, cm.Level, cm.DisplayName, cm.Bg, cm.Fg, cm.Width, cm.HAlign, cm.VAlign,
+                   cm.BgAt, cm.FgAt, cm.HAlignAt, cm.VAlignAt
             FROM src.column_meta cm
             LEFT JOIN _move_fmap fm ON cm.Key GLOB '[0-9]*' AND CAST(cm.Key AS INTEGER) = fm.old_fid
             WHERE cm.CollectionId = {srcCol}");
@@ -2551,8 +2570,10 @@ public partial class ConstructorRepository(AppDbContext db)
                 SELECT {newCol}, {firstNew} + r.rn - 1, h.Height FROM src.ui_row_heights h
                 JOIN {rank} r ON r.old_id = h.RecordId WHERE h.CollectionId = {srcCol}");
             Exec(conn, tx, $@"
-                INSERT INTO main.record_display (CollectionId, RecordId, Visible, Level, Bg, Fg, HAlign, VAlign)
-                SELECT {newCol}, {firstNew} + r.rn - 1, d.Visible, d.Level, d.Bg, d.Fg, d.HAlign, d.VAlign FROM src.record_display d
+                INSERT INTO main.record_display (CollectionId, RecordId, Visible, Level, Bg, Fg, HAlign, VAlign,
+                                            BgAt, FgAt, HAlignAt, VAlignAt)
+                SELECT {newCol}, {firstNew} + r.rn - 1, d.Visible, d.Level, d.Bg, d.Fg, d.HAlign, d.VAlign,
+                       d.BgAt, d.FgAt, d.HAlignAt, d.VAlignAt FROM src.record_display d
                 JOIN {rank} r ON r.old_id = d.RecordId WHERE d.CollectionId = {srcCol}");
             Exec(conn, tx, $@"
                 INSERT INTO main.cell_style (CollectionId, RecordId, Key, Bg, Fg, HAlign, VAlign)
@@ -5976,41 +5997,111 @@ public partial class ConstructorRepository(AppDbContext db)
     // Сквозного цвета записи (db_records.Color) здесь БОЛЬШЕ НЕТ: цвет строки в таблице
     // читается как оформление таблицы, а не как свойство записи, и в других разделах
     // всплывал полосками, которых там не ждут. Уровень убран, см. DbRecordEntity.Color.
-    // «Без цвета» и «По умолчанию» везде = null: строка-дельта удаляется, если аспектов не
-    // осталось. Несколько аспектов за раз («По умолчанию» снимает оба расположения) пишутся
-    // одним сохранением — перегрузки со списком изменений.
+    // «Без цвета» и «По умолчанию» = null: строка-дельта удаляется, если аспектов не осталось.
+    // Несколько аспектов за раз («По умолчанию» снимает оба расположения) пишутся одним
+    // сохранением — перегрузки со списком изменений.
+    //
+    // Что выставлено последним, то и видно (RowStyle.Resolve). Строке и колонке выставление
+    // ставит отметку (ITableStyleStamps) и снимает этот аспект у их ячеек — одной командой
+    // базе, по всем записям, а не по загруженным. «По умолчанию» строке или колонке тоже
+    // ставит отметку (значения нет, отметка есть): оно перебивает выставленное раньше другим
+    // уровнем. Строке такая отметка нужна, только если у какой-то колонки аспект задан, —
+    // иначе перебивать нечего, и строка-дельта просто удаляется.
 
     /// <summary>Один аспект оформления строк этой коллекции; null — сбросить аспект.</summary>
-    public void SetRowStyle(int collectionId, IReadOnlyList<int> recordIds, StyleAspect aspect, string? value) =>
+    public StyleStamps SetRowStyle(int collectionId, IReadOnlyList<int> recordIds, StyleAspect aspect, string? value) =>
         SetRowStyle(collectionId, recordIds, [(aspect, value)]);
 
-    /// <summary>Несколько аспектов оформления строк одним сохранением.</summary>
-    public void SetRowStyle(int collectionId, IReadOnlyList<int> recordIds,
-                            IReadOnlyList<(StyleAspect Aspect, string? Value)> changes)
+    /// <summary>Несколько аспектов оформления строк одним сохранением. Возвращает отметки так, как
+    /// они записаны (у сброса без отметки — 0): сетка кладет их в свой словарь, не перечитывая базу.</summary>
+    public StyleStamps SetRowStyle(int collectionId, IReadOnlyList<int> recordIds,
+                                   IReadOnlyList<(StyleAspect Aspect, string? Value)> changes)
     {
-        if (recordIds.Count == 0 || changes.Count == 0) return;
+        if (recordIds.Count == 0 || changes.Count == 0) return default;
         Demand(PermAction.EditRecord, collectionId);
         var stored = StoredChanges(changes);
 
+        // Сброс отмечается, только если аспект задает хоть одна колонка — иначе перебивать нечего.
+        var columnAspects = ColumnStyledAspects(collectionId);
+        var applied       = Stamps(stored, StyleStamps.Next(), columnAspects.Contains);
+
+        using var tx = db.Database.BeginTransaction();
         var existing = db.RecordDisplay
             .Where(d => d.CollectionId == collectionId && recordIds.Contains(d.RecordId))
             .ToDictionary(d => d.RecordId);
 
         foreach (var recordId in recordIds)
         {
-            if (existing.TryGetValue(recordId, out var row))
+            if (!existing.TryGetValue(recordId, out var row))
             {
-                SetTableStyle(row, stored);
-                RemoveRecordDisplayIfEmpty(row);
+                row = new RecordDisplayEntity { CollectionId = collectionId, RecordId = recordId };
+                db.RecordDisplay.Add(row);
             }
-            else if (stored.Any(c => c.Value is not null))
-            {
-                var added = new RecordDisplayEntity { CollectionId = collectionId, RecordId = recordId };
-                SetTableStyle(added, stored);
-                db.RecordDisplay.Add(added);
-            }
+            SetTableStyle(row, stored, applied);
+            RemoveRecordDisplayIfEmpty(row);
         }
         db.SaveChanges();
+
+        ClearCellAspects(db.CellStyles.Where(c => c.CollectionId == collectionId && recordIds.Contains(c.RecordId)),
+                         stored.Select(c => c.Aspect));
+        tx.Commit();
+        return applied;
+    }
+
+    // Аспекты, заданные хоть одной колонкой коллекции (column_meta мала — читается целиком).
+    private HashSet<StyleAspect> ColumnStyledAspects(int collectionId)
+    {
+        var aspects = new HashSet<StyleAspect>();
+        foreach (var m in db.ColumnMeta.AsNoTracking()
+                     .Where(m => m.CollectionId == collectionId
+                                 && (m.Bg != null || m.Fg != null || m.HAlign != null || m.VAlign != null))
+                     .Select(m => new { m.Bg, m.Fg, m.HAlign, m.VAlign }))
+        {
+            if (m.Bg     is not null) aspects.Add(StyleAspect.Background);
+            if (m.Fg     is not null) aspects.Add(StyleAspect.Text);
+            if (m.HAlign is not null) aspects.Add(StyleAspect.HAlign);
+            if (m.VAlign is not null) aspects.Add(StyleAspect.VAlign);
+        }
+        return aspects;
+    }
+
+    // Задан ли аспект своим значением хоть у одной строки коллекции.
+    private bool RowsStyle(int collectionId, StyleAspect aspect)
+    {
+        var rows = db.RecordDisplay.AsNoTracking().Where(d => d.CollectionId == collectionId);
+        return aspect switch
+        {
+            StyleAspect.Background => rows.Any(d => d.Bg != null),
+            StyleAspect.Text       => rows.Any(d => d.Fg != null),
+            StyleAspect.HAlign     => rows.Any(d => d.HAlign != null),
+            StyleAspect.VAlign     => rows.Any(d => d.VAlign != null),
+            _                      => false,
+        };
+    }
+
+    // Смена строки или колонки — последнее слово для ее ячеек: свой этот аспект у них снимается
+    // (RowStyle.Resolve считает ячейку всегда последней), опустевшие строки cell_style удаляются.
+    private static void ClearCellAspects(IQueryable<CellStyleEntity> cells, IEnumerable<StyleAspect> aspects)
+    {
+        foreach (var aspect in aspects.Distinct())
+        {
+            switch (aspect)
+            {
+                case StyleAspect.Background:
+                    cells.Where(c => c.Bg != null).ExecuteUpdate(s => s.SetProperty(c => c.Bg, (string?)null));
+                    break;
+                case StyleAspect.Text:
+                    cells.Where(c => c.Fg != null).ExecuteUpdate(s => s.SetProperty(c => c.Fg, (string?)null));
+                    break;
+                case StyleAspect.HAlign:
+                    cells.Where(c => c.HAlign != null).ExecuteUpdate(s => s.SetProperty(c => c.HAlign, (string?)null));
+                    break;
+                case StyleAspect.VAlign:
+                    cells.Where(c => c.VAlign != null).ExecuteUpdate(s => s.SetProperty(c => c.VAlign, (string?)null));
+                    break;
+            }
+        }
+        cells.Where(c => c.Bg == null && c.Fg == null && c.HAlign == null && c.VAlign == null).ExecuteDelete();
     }
 
     /// <summary>
@@ -6021,7 +6112,9 @@ public partial class ConstructorRepository(AppDbContext db)
     /// этой причине. Здесь трекер не участвует, а каждый пакет идет своей транзакцией.
     ///
     /// Снимать оформление этим путем нельзя (пустая строка оформления не удаляется) — для
-    /// точечных правок и сброса остается SetRowStyle.
+    /// точечных правок и сброса остается SetRowStyle. Отметку выставления строка получает, как и
+    /// там, а ячейки этих строк не трогаются: путь — для только что созданных записей (свод
+    /// трудоемкости красит их, а следом свои ячейки), снимать у них нечего.
     /// </summary>
     public void BulkSetRowStyle(int collectionId, IReadOnlyList<int> recordIds, StyleAspect aspect,
                                 string value, CancellationToken ct, int batchSize = 20_000)
@@ -6030,13 +6123,14 @@ public partial class ConstructorRepository(AppDbContext db)
         Demand(PermAction.EditRecord, collectionId);
 
         var column = RowStyle.Column(aspect);
+        var stamp  = RowStyle.StampColumn(aspect);
         var conn   = db.Database.GetDbConnection();
 
         using var cmd = conn.CreateCommand();
         cmd.CommandText =
-            $"INSERT INTO record_display (CollectionId, RecordId, Visible, Level, {column}) " +
-            "VALUES (@cid, @rid, @visible, @level, @val) " +
-            $"ON CONFLICT (CollectionId, RecordId) DO UPDATE SET {column} = excluded.{column}";
+            $"INSERT INTO record_display (CollectionId, RecordId, Visible, Level, {column}, {stamp}) " +
+            "VALUES (@cid, @rid, @visible, @level, @val, @at) " +
+            $"ON CONFLICT (CollectionId, RecordId) DO UPDATE SET {column} = excluded.{column}, {stamp} = excluded.{stamp}";
         var pCid = AddParam(cmd, "@cid", System.Data.DbType.Int32);
         var pRid = AddParam(cmd, "@rid", System.Data.DbType.Int32);
         // Visible/Level — дефолты сущности. Visible — ЧИСЛО 0/1, а не DbType.Boolean:
@@ -6046,10 +6140,12 @@ public partial class ConstructorRepository(AppDbContext db)
         var pVis = AddParam(cmd, "@visible", System.Data.DbType.Int32);
         var pLvl = AddParam(cmd, "@level",   System.Data.DbType.Int32);
         var pVal = AddParam(cmd, "@val",     System.Data.DbType.String);
+        var pAt  = AddParam(cmd, "@at",      System.Data.DbType.Int64);
         pCid.Value = collectionId;
         pVis.Value = 1;
         pLvl.Value = 1;
         pVal.Value = stored;
+        pAt.Value  = StyleStamps.Next();
 
         RunBatched(cmd, recordIds.Count, batchSize, ct, i => pRid.Value = recordIds[i]);
     }
@@ -6227,36 +6323,45 @@ public partial class ConstructorRepository(AppDbContext db)
     /// <summary>Один аспект оформления колонок; аспект column_meta, как видимость и подпись.
     /// Список ключей, а не один: колонки выделяются пачкой (Shift+клик по заголовкам), и
     /// оформление применяется ко всему выделению — как дубль и удаление свойств.</summary>
-    public void SetColumnStyle(int collectionId, IReadOnlyList<string> keys, StyleAspect aspect, string? value) =>
+    public StyleStamps SetColumnStyle(int collectionId, IReadOnlyList<string> keys, StyleAspect aspect, string? value) =>
         SetColumnStyle(collectionId, keys, [(aspect, value)]);
 
-    /// <summary>Несколько аспектов оформления колонок одним сохранением.</summary>
-    public void SetColumnStyle(int collectionId, IReadOnlyList<string> keys,
-                               IReadOnlyList<(StyleAspect Aspect, string? Value)> changes)
+    /// <summary>Несколько аспектов оформления колонок одним сохранением. Возвращает отметки,
+    /// как у SetRowStyle.</summary>
+    public StyleStamps SetColumnStyle(int collectionId, IReadOnlyList<string> keys,
+                                      IReadOnlyList<(StyleAspect Aspect, string? Value)> changes)
     {
-        if (keys.Count == 0 || changes.Count == 0) return;
+        if (keys.Count == 0 || changes.Count == 0) return default;
         Demand(PermAction.EditField, collectionId);
         var stored = StoredChanges(changes);
 
+        // Сброс отмечается, только если аспект задан хоть у одной строки — иначе перебивать нечего.
+        // Строк record_display бывает много, поэтому вопрос задается по аспекту и только о сбросах.
+        var rowAspects = stored.Where(c => c.Value is null).Select(c => c.Aspect).Distinct()
+                               .Where(a => RowsStyle(collectionId, a)).ToHashSet();
+        var applied    = Stamps(stored, StyleStamps.Next(), rowAspects.Contains);
+
+        using var tx = db.Database.BeginTransaction();
         var existing = db.ColumnMeta
             .Where(m => m.CollectionId == collectionId && keys.Contains(m.Key))
             .ToDictionary(m => m.Key);
 
         foreach (var key in keys)
         {
-            if (existing.TryGetValue(key, out var row))
+            if (!existing.TryGetValue(key, out var row))
             {
-                SetTableStyle(row, stored);
-                RemoveColumnMetaIfEmpty(row);
+                row = new ColumnMetaEntity { CollectionId = collectionId, Key = key };
+                db.ColumnMeta.Add(row);
             }
-            else if (stored.Any(c => c.Value is not null))
-            {
-                var added = new ColumnMetaEntity { CollectionId = collectionId, Key = key };
-                SetTableStyle(added, stored);
-                db.ColumnMeta.Add(added);
-            }
+            SetTableStyle(row, stored, applied);
+            RemoveColumnMetaIfEmpty(row);
         }
         db.SaveChanges();
+
+        ClearCellAspects(db.CellStyles.Where(c => c.CollectionId == collectionId && keys.Contains(c.Key)),
+                         stored.Select(c => c.Aspect));
+        tx.Commit();
+        return applied;
     }
 
     // Значения, годные к записи: мусор (битый hex, незнакомое слово) становится сбросом аспекта.
@@ -6278,28 +6383,75 @@ public partial class ConstructorRepository(AppDbContext db)
         }
     }
 
-    private static bool HasTableStyle(ITableStyleRow row) =>
-        row.Bg is not null || row.Fg is not null || row.HAlign is not null || row.VAlign is not null;
+    // Отметки выставления по аспектам: значение отмечается всегда, сброс — только если
+    // stampReset(аспект): тогда это выставленное «По умолчанию», а не отсутствие настройки.
+    private static StyleStamps Stamps(List<(StyleAspect Aspect, string? Value)> changes, long at,
+                                      Func<StyleAspect, bool> stampReset)
+    {
+        var stamps = default(StyleStamps);
+        foreach (var (aspect, value) in changes)
+            stamps = stamps.With(aspect, value is not null || stampReset(aspect) ? at : 0);
+        return stamps;
+    }
 
-    /// <summary>Оформление строк коллекции: recordId → стиль (аспекты record_display).
-    /// Только заданные строки: таблица разрежена, отсутствие ключа = строка без своего
-    /// оформления.</summary>
+    // Строке и колонке — значения вместе с отметками (0 — отметки нет).
+    private static void SetTableStyle(ITableStyleStamps row, List<(StyleAspect Aspect, string? Value)> changes,
+                                      StyleStamps applied)
+    {
+        SetTableStyle(row, changes);
+        foreach (var (aspect, _) in changes)
+        {
+            long? stamp = applied.Of(aspect) is > 0 and var at ? at : null;
+            switch (aspect)
+            {
+                case StyleAspect.Background: row.BgAt     = stamp; break;
+                case StyleAspect.Text:       row.FgAt     = stamp; break;
+                case StyleAspect.HAlign:     row.HAlignAt = stamp; break;
+                case StyleAspect.VAlign:     row.VAlignAt = stamp; break;
+            }
+        }
+    }
+
+    private static StyleStamps StampsOf(ITableStyleStamps row) =>
+        new(row.BgAt ?? 0, row.FgAt ?? 0, row.HAlignAt ?? 0, row.VAlignAt ?? 0);
+
+    private static void SetStamps(ITableStyleStamps row, StyleStamps at)
+    {
+        row.BgAt     = at.Bg     > 0 ? at.Bg     : null;
+        row.FgAt     = at.Fg     > 0 ? at.Fg     : null;
+        row.HAlignAt = at.HAlign > 0 ? at.HAlign : null;
+        row.VAlignAt = at.VAlign > 0 ? at.VAlign : null;
+    }
+
+    // Отметка без значения — тоже оформление: выставленное «По умолчанию» (см. RowStyle.At).
+    private static bool HasTableStyle(ITableStyleRow row) =>
+        row.Bg is not null || row.Fg is not null || row.HAlign is not null || row.VAlign is not null
+        || row is ITableStyleStamps s
+           && (s.BgAt is not null || s.FgAt is not null || s.HAlignAt is not null || s.VAlignAt is not null);
+
+    /// <summary>Оформление строк коллекции: recordId → стиль (аспекты record_display с
+    /// отметками). Только заданные строки: таблица разрежена, отсутствие ключа = строка без
+    /// своего оформления.</summary>
     public Dictionary<int, RowStyle> GetRowStyles(int collectionId) =>
         db.RecordDisplay.AsNoTracking()
           .Where(d => d.CollectionId == collectionId
-                      && (d.Bg != null || d.Fg != null || d.HAlign != null || d.VAlign != null))
-          .Select(d => new { d.RecordId, d.Bg, d.Fg, d.HAlign, d.VAlign })
+                      && (d.Bg != null || d.Fg != null || d.HAlign != null || d.VAlign != null
+                          || d.BgAt != null || d.FgAt != null || d.HAlignAt != null || d.VAlignAt != null))
+          .Select(d => new { d.RecordId, d.Bg, d.Fg, d.HAlign, d.VAlign, d.BgAt, d.FgAt, d.HAlignAt, d.VAlignAt })
           .ToList()
-          .ToDictionary(d => d.RecordId, d => RowStyle.Clean(d.Bg, d.Fg, d.HAlign, d.VAlign));
+          .ToDictionary(d => d.RecordId, d => RowStyle.Clean(d.Bg, d.Fg, d.HAlign, d.VAlign,
+              new StyleStamps(d.BgAt ?? 0, d.FgAt ?? 0, d.HAlignAt ?? 0, d.VAlignAt ?? 0)));
 
-    /// <summary>Оформление колонок: key → стиль (аспекты column_meta).</summary>
+    /// <summary>Оформление колонок: key → стиль (аспекты column_meta с отметками).</summary>
     public Dictionary<string, RowStyle> GetColumnStyles(int collectionId) =>
         db.ColumnMeta.AsNoTracking()
           .Where(m => m.CollectionId == collectionId
-                      && (m.Bg != null || m.Fg != null || m.HAlign != null || m.VAlign != null))
-          .Select(m => new { m.Key, m.Bg, m.Fg, m.HAlign, m.VAlign })
+                      && (m.Bg != null || m.Fg != null || m.HAlign != null || m.VAlign != null
+                          || m.BgAt != null || m.FgAt != null || m.HAlignAt != null || m.VAlignAt != null))
+          .Select(m => new { m.Key, m.Bg, m.Fg, m.HAlign, m.VAlign, m.BgAt, m.FgAt, m.HAlignAt, m.VAlignAt })
           .ToList()
-          .ToDictionary(m => m.Key, m => RowStyle.Clean(m.Bg, m.Fg, m.HAlign, m.VAlign));
+          .ToDictionary(m => m.Key, m => RowStyle.Clean(m.Bg, m.Fg, m.HAlign, m.VAlign,
+              new StyleStamps(m.BgAt ?? 0, m.FgAt ?? 0, m.HAlignAt ?? 0, m.VAlignAt ?? 0)));
 
     /// <summary>Оформление ячеек ОДНОЙ СТРАНИЦЫ записей: recordId → (key → стиль).
     /// Зовется постранично рядом с GetFieldValuesBatch; AsNoTracking по той же причине.</summary>

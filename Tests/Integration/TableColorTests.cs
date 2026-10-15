@@ -17,6 +17,9 @@ public sealed class TableColorTests
     private const string Green = "#34C759";
     private const string Red   = "#FF3B30";
 
+    // Вид без отметок выставления: тест сверяет значения, а не время (RowStyle.At).
+    private static RowStyle Look(RowStyle style) => style with { At = default };
+
     private static (ConstructorRepository Repo, int ColId, int FieldId, int RecId) Seed(TempDatabase db)
     {
         var repo  = db.Constructor;
@@ -37,11 +40,11 @@ public sealed class TableColorTests
 
         repo.SetRowStyle(colId, [recId], StyleAspect.Background, Green);
         repo.SetRowStyle(colId, [recId], StyleAspect.Text, Red);
-        Assert.Equal(new RowStyle(Green, Red), repo.GetRowStyles(colId)[recId]);
+        Assert.Equal(new RowStyle(Green, Red), Look(repo.GetRowStyles(colId)[recId]));
 
         // Аспекты независимы: сброс одного не трогает другой, строка живет ради оставшегося.
         repo.SetRowStyle(colId, [recId], StyleAspect.Background, null);
-        Assert.Equal(new RowStyle(null, Red), repo.GetRowStyles(colId)[recId]);
+        Assert.Equal(new RowStyle(null, Red), Look(repo.GetRowStyles(colId)[recId]));
 
         repo.SetRowStyle(colId, [recId], StyleAspect.Text, null);
         Assert.Empty(repo.GetRowStyles(colId));
@@ -96,12 +99,12 @@ public sealed class TableColorTests
 
         var styles = repo.GetRowStyles(colId);
         Assert.Equal(3, styles.Count);
-        Assert.All(all, id => Assert.Equal(new RowStyle(Green, Red), styles[id]));
+        Assert.All(all, id => Assert.Equal(new RowStyle(Green, Red), Look(styles[id])));
 
         // Сброс фона у всей пачки: цвет текста остается, строки живы.
         repo.SetRowStyle(colId, all, StyleAspect.Background, null);
         styles = repo.GetRowStyles(colId);
-        Assert.All(all, id => Assert.Equal(new RowStyle(null, Red), styles[id]));
+        Assert.All(all, id => Assert.Equal(new RowStyle(null, Red), Look(styles[id])));
 
         // Сброс второго аспекта — строк не остается вовсе.
         repo.SetRowStyle(colId, all, StyleAspect.Text, null);
@@ -230,11 +233,11 @@ public sealed class TableColorTests
 
         var styles = repo.GetColumnStyles(colId);
         Assert.Equal(3, styles.Count);
-        Assert.All(keys, k => Assert.Equal(new RowStyle(Green, Red), styles[k]));
+        Assert.All(keys, k => Assert.Equal(new RowStyle(Green, Red), Look(styles[k])));
 
         repo.SetColumnStyle(colId, keys, StyleAspect.Background, null);
         styles = repo.GetColumnStyles(colId);
-        Assert.All(keys, k => Assert.Equal(new RowStyle(null, Red), styles[k]));
+        Assert.All(keys, k => Assert.Equal(new RowStyle(null, Red), Look(styles[k])));
 
         repo.SetColumnStyle(colId, keys, StyleAspect.Text, null);
         Assert.Empty(repo.GetColumnStyles(colId));

@@ -1437,11 +1437,18 @@ public partial class TableView : UserControl
     private void ApplyRowStyle(List<int> recordIds, IReadOnlyList<(StyleAspect Aspect, string? Value)> changes)
     {
         if (_repository is null) return;
-        try { _repository.SetRowStyle(_collectionId, recordIds, changes); }
+        StyleStamps at;
+        try { at = _repository.SetRowStyle(_collectionId, recordIds, changes); }
         catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { return; }
 
-        // Сетка держит оформление сама и применяет его при рисовании.
-        RecordsGrid.ApplyRowStyle(recordIds, changes);
+        // Сетка держит оформление сама и применяет его при рисовании. Ячейки строк потеряли этот
+        // аспект в базе (выставленное последним видно во всей строке) — так же и в загруженных.
+        RecordsGrid.ApplyRowStyle(recordIds, changes, at);
+        var rows = recordIds.ToHashSet();
+        RowsSource?.ForEachCachedRow(row =>
+        {
+            if (rows.Contains(row.RecordId)) row.DropCellAspects(_ => true, changes);
+        });
     }
 
     private void ApplyCellStyleChange(List<(int RecordId, string Key)> cells,
@@ -1473,10 +1480,14 @@ public partial class TableView : UserControl
     private void ApplyColumnStyle(List<string> keys, IReadOnlyList<(StyleAspect Aspect, string? Value)> changes)
     {
         if (_repository is null || keys.Count == 0) return;
-        try { _repository.SetColumnStyle(_collectionId, keys, changes); }
+        StyleStamps at;
+        try { at = _repository.SetColumnStyle(_collectionId, keys, changes); }
         catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { return; }
 
-        RecordsGrid.ApplyColumnStyle(keys, changes);   // применяется при рисовании
+        RecordsGrid.ApplyColumnStyle(keys, changes, at);   // применяется при рисовании
+        // Ячейки колонок потеряли этот аспект в базе во всех записях — так же и в загруженных.
+        var columns = keys.ToHashSet();
+        RowsSource?.ForEachCachedRow(row => row.DropCellAspects(columns.Contains, changes));
 
         // После цвета снимаем выделение колонок: его голубая заливка лежит ПОД полупрозрачным
         // цветом, и на выделенной колонке разницу «покрасил / снял цвет» почти не видно. Выделение

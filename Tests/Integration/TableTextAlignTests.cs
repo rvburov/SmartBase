@@ -11,7 +11,8 @@ namespace SmartBase.Tests.Integration;
 /// (docs/developer/architecture/data-model.md): HAlign/VAlign у cell_style, record_display и
 /// column_meta. Строка оформления живет, пока задан хоть один аспект, поэтому снятие цвета не
 /// уносит расположение и наоборот; при дубле и переносе коллекции расположение едет теми же
-/// путями, что и цвет. Каскад и правило типа — в Tests/Unit/TableStyleTests.
+/// путями, что и цвет, — вместе с отметками выставления. Правило «выставленное последним» —
+/// в TableStyleOrderTests, каскад и правило типа — в Tests/Unit/TableStyleTests.
 /// </summary>
 public sealed class TableTextAlignTests
 {
@@ -30,25 +31,33 @@ public sealed class TableTextAlignTests
         return (repo, col.Id!.Value, field.Id!.Value.ToString(), rec.Id!.Value);
     }
 
-    // Все три уровня сразу: ячейка «по центру / снизу», строка «справа», колонка «сверху».
+    // Вид без отметок выставления: сверяются значения, а не время (RowStyle.At).
+    private static RowStyle Look(RowStyle style) => style with { At = default };
+
+    // Все три уровня сразу и по порядку: строка «справа», позже колонка «по центру» и «сверху»,
+    // последней ячейка «снизу» (смена строки или колонки сбросила бы ячейку).
     private static void AlignEverything(ConstructorRepository repo, int colId, string key, int recId)
     {
-        repo.SetCellStyle(colId, [(recId, key)], [(StyleAspect.HAlign, "center"), (StyleAspect.VAlign, "bottom")]);
         repo.SetRowStyle(colId, [recId], StyleAspect.HAlign, "right");
-        repo.SetColumnStyle(colId, [key], StyleAspect.VAlign, "top");
+        repo.SetColumnStyle(colId, [key], [(StyleAspect.HAlign, "center"), (StyleAspect.VAlign, "top")]);
+        repo.SetCellStyle(colId, [(recId, key)], StyleAspect.VAlign, "bottom");
     }
 
     private static void AssertAligned(ConstructorRepository repo, int colId)
     {
-        var rows = repo.GetRowStyles(colId);
-        var row  = Assert.Single(rows);
-        Assert.Equal(new RowStyle(null, null, HAlign: CellHAlign.Right), row.Value);
-
+        var row    = Assert.Single(repo.GetRowStyles(colId));
         var column = Assert.Single(repo.GetColumnStyles(colId));
-        Assert.Equal(new RowStyle(null, null, VAlign: CellVAlign.Top), column.Value);
+        Assert.Equal(new RowStyle(null, null, HAlign: CellHAlign.Right), Look(row.Value));
+        Assert.Equal(new RowStyle(null, null, CellHAlign.Center, CellVAlign.Top), Look(column.Value));
 
-        var cells = repo.GetCellStylesBatch(colId, [row.Key])[row.Key];
-        Assert.Equal(new RowStyle(null, null, CellHAlign.Center, CellVAlign.Bottom), cells[column.Key]);
+        var cell = repo.GetCellStylesBatch(colId, [row.Key])[row.Key][column.Key];
+        Assert.Equal(new RowStyle(null, null, VAlign: CellVAlign.Bottom), cell);
+
+        // Колонка выставлена позже строки — на пересечении видна она. Без отметок, доехавших
+        // вместе со значениями, перебила бы строка («справа»).
+        Assert.True(column.Value.At.HAlign > row.Value.At.HAlign && row.Value.At.HAlign > 0);
+        Assert.Equal(new RowStyle(null, null, CellHAlign.Center, CellVAlign.Bottom),
+                     RowStyle.Resolve(cell, row.Value, column.Value));
     }
 
     // ── Уровни ────────────────────────────────────────────────────────────────
@@ -90,7 +99,7 @@ public sealed class TableTextAlignTests
         // Окно «Отображение записей» ничего не знает о расположении — и не должно его стирать.
         repo.SaveRecordDisplay(colId, [(recId, false, 1)]);
         repo.SaveRecordDisplay(colId, []);
-        Assert.Equal(new RowStyle(null, null, CellHAlign.Center, CellVAlign.Top), repo.GetRowStyles(colId)[recId]);
+        Assert.Equal(new RowStyle(null, null, CellHAlign.Center, CellVAlign.Top), Look(repo.GetRowStyles(colId)[recId]));
 
         repo.SetRowStyle(colId, [recId], ResetAlign);
         Assert.Empty(repo.GetRowStyles(colId));
@@ -220,7 +229,7 @@ public sealed class TableTextAlignTests
 
             repo.SetCellStyle(colId, [(recId, key)], ResetAlign);
             Assert.Empty(repo.GetCellStylesBatch(colId, [recId]));
-            repo.SetCellStyle(colId, [(recId, key)], [(StyleAspect.HAlign, "center"), (StyleAspect.VAlign, "bottom")]);
+            repo.SetCellStyle(colId, [(recId, key)], StyleAspect.VAlign, "bottom");
             srcColId = colId;
         }
 

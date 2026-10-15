@@ -64,6 +64,17 @@ public interface ITableStyleRow
     string? VAlign { get; set; }
 }
 
+// Когда аспект выставлен строке или колонке (тики UTC; RowStyle.At): между строкой и колонкой
+// видно выставленное позже. У ячейки отметок нет — она всегда последняя в своей строке и колонке.
+// Отметка без значения — выставленное «По умолчанию».
+public interface ITableStyleStamps : ITableStyleRow
+{
+    long? BgAt     { get; set; }
+    long? FgAt     { get; set; }
+    long? HAlignAt { get; set; }
+    long? VAlignAt { get; set; }
+}
+
 // Метаданные колонки таблицы — порядок, видимость/уровень, подпись, оформление, ручная ширина —
 // одной строкой на (CollectionId, Key). Key = TableRowVm.TitleKey ("__title__") либо
 // строковый id поля. Каждый аспект nullable: null = дефолт (порядок по Position полей,
@@ -72,7 +83,7 @@ public interface ITableStyleRow
 // ConstructorRepository.RemoveColumnMetaIfEmpty).
 // Объединяет прежние таблицы column_order + column_display + system_field_meta, а с
 // аспектом Width — и ui_col_widths (там ключ числовой и «__title__» не помещается).
-public class ColumnMetaEntity : ITableStyleRow
+public class ColumnMetaEntity : ITableStyleStamps
 {
     public int     CollectionId { get; set; }
     public string  Key          { get; set; } = "";
@@ -85,6 +96,10 @@ public class ColumnMetaEntity : ITableStyleRow
     public int?    Width        { get; set; }   // ручная ширина колонки в DIP; null = не задана
     public string? HAlign       { get; set; }   // текст по горизонтали: left/center/right; null = по типу
     public string? VAlign       { get; set; }   // текст по вертикали: top/center/bottom; null = по центру
+    public long?   BgAt         { get; set; }   // когда выставлен фон (ITableStyleStamps)
+    public long?   FgAt         { get; set; }
+    public long?   HAlignAt     { get; set; }
+    public long?   VAlignAt     { get; set; }
 }
 
 // Метаданные записи в таблице — аналог column_meta, но для строк. Visible=false — запись
@@ -101,7 +116,7 @@ public class ColumnMetaEntity : ITableStyleRow
 // строки = видима, уровень 1, без своего цвета. Поэтому запись аспектов — точечный
 // upsert (SetRowStyle / SaveRecordDisplay), а не «удалить все и переписать»: иначе
 // сохранение видимости стирало бы цвет.
-public class RecordDisplayEntity : ITableStyleRow
+public class RecordDisplayEntity : ITableStyleStamps
 {
     public int     CollectionId { get; set; }
     public int     RecordId     { get; set; }
@@ -111,6 +126,10 @@ public class RecordDisplayEntity : ITableStyleRow
     public string? Fg           { get; set; }   // цвет текста строки, hex; null = стандартный
     public string? HAlign       { get; set; }   // текст строки по горизонтали; null = не задан
     public string? VAlign       { get; set; }   // текст строки по вертикали; null = не задан
+    public long?   BgAt         { get; set; }   // когда выставлен фон строки (ITableStyleStamps)
+    public long?   FgAt         { get; set; }
+    public long?   HAlignAt     { get; set; }
+    public long?   VAlignAt     { get; set; }
 }
 
 // Оформление ОДНОЙ ячейки таблицы: (коллекция, запись, колонка) → фон, цвет текста и
