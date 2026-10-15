@@ -61,7 +61,7 @@ public static class PdfAnalyzerEngine
         public string FileName = "";
         public DateTime Mtime;
         public string RawKd = "", RawPd = "";
-        public bool   NoSpecification;           // КД без спецификации своего исполнения → «Проверить»
+        public bool   NameMissing;               // КД без имени изделия: «Проверить» / «Нет спецификации»
     }
 
     public static AnalyzeResult Run(
@@ -284,8 +284,8 @@ public static class PdfAnalyzerEngine
     }
 
     // ── Кэш названий изделий ПД (designations_map) ────────────────────────────
-    // КД сюда не входит: у нее имя изделия берется только из спецификации своего исполнения
-    // (KdSpecificationNames), без запасных источников.
+    // КД сюда не входит: у нее имя изделия берется только из спецификаций (KdSpecificationNames
+    // и KdProductName), без запасных источников.
 
     private static void BuildDesignationCache(List<Row> rows, Dictionary<string, string> cache)
     {
@@ -332,19 +332,31 @@ public static class PdfAnalyzerEngine
         foreach (var (k, v) in map) cache[k] = v;
     }
 
-    // Имена изделий КД: номер изделия с исполнением (…001, …001-01, …001-02) → название из имени
-    // файла его спецификации. Спецификация без названия (или с названием вида документа) имени не
-    // дает — ее строка и документы ее исполнения уйдут в «Проверить».
+    // Спецификации КД: номер изделия с исполнением (…001, …001-01, …001-02) → название из имени
+    // файла. Номер без кода без названия (или с названием вида документа) попадает с "": это может
+    // быть и спецификация, и чертеж детали — имя изделия неизвестно, но номер в папке есть.
     private static Dictionary<string, string> KdSpecificationNames(List<Row> rows)
     {
         var names = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var r in rows)
         {
             if (DocumentCodes.ParseKdNumber(r.DesignationKd) is not { IsSpecification: true } n) continue;
-            if (r.Name.Length == 0 || DocumentCodes.IsDocTypeName(r.Name)) continue;
-            names.TryAdd(n.Product, r.Name);
+            var name = DocumentCodes.IsDocTypeName(r.Name) ? "" : r.Name;
+            // Файл с названием важнее безымянной копии того же номера.
+            if (!names.TryGetValue(n.Product, out var known) || known.Length == 0) names[n.Product] = name;
         }
         return names;
+    }
+
+    // Имя изделия для строки КД: спецификация своего исполнения, а если ее нет — у документа
+    // исполнения базовая (без исполнения). "" — спецификация нашлась, но без названия (или номер не
+    // разобран) → «Проверить»; null — не нашлось ни той, ни другой → «Нет спецификации».
+    private static string? KdProductName(string designation, Dictionary<string, string> specs)
+    {
+        if (DocumentCodes.ParseKdNumber(designation) is not { } n) return "";
+        if (specs.TryGetValue(n.Product, out var own)) return own;
+        if (n.Execution >= 0 && specs.TryGetValue(n.Base, out var baseName)) return baseName;
+        return null;
     }
 
     // ── Отбор строк по типу выгрузки (полное разделение КД и ПД) ───────────────
@@ -513,12 +525,14 @@ public static class PdfAnalyzerEngine
                 // splitName: изделие / тип / лист — каждая часть с новой строки внутри ячейки.
                 if (r.DesignationKd.Length > 0)
                 {
-                    var product = DocumentCodes.ParseKdNumber(r.DesignationKd) is { } n
-                        ? kdSpecs.GetValueOrDefault(n.Product, "") : "";
-                    r.NoSpecification = product.Length == 0;
-                    r.Name = r.NoSpecification
-                        ? DocumentCodes.KdNoSpecificationName
-                        : DocumentCodes.GetKdDocumentName(r.DesignationKd, product, splitName);
+                    var product = KdProductName(r.DesignationKd, kdSpecs);
+                    r.NameMissing = string.IsNullOrEmpty(product);
+                    r.Name = product switch
+                    {
+                        null => DocumentCodes.KdNoSpecificationName,
+                        ""   => DocumentCodes.KdCheckName,
+                        _    => DocumentCodes.GetKdDocumentName(r.DesignationKd, product, splitName),
+                    };
                     continue;
                 }
                 if (r.DesignationPd.Length == 0) continue;   // нет обозначения — оставляем имя как есть
@@ -594,7 +608,7 @@ public static class PdfAnalyzerEngine
     // ── Запись в Excel ────────────────────────────────────────────────────────
 
     // Светло-красная заливка Excel (та же, что у правила «Светло-красная заливка»).
-    private static readonly XLColor NoSpecificationFill = XLColor.FromHtml("#FFC7CE");
+    private static readonly XLColor NameMissingFill = XLColor.FromHtml("#FFC7CE");
 
     private static void WriteExcel(string savePath, List<Row> rows,
         List<(string Header, Func<Row, object?> Value)> columns, CancellationToken ct)
@@ -624,9 +638,9 @@ public static class PdfAnalyzerEngine
                     case string s: cell.Value = s; break;
                 }
             }
-            // «Проверить» у КД без спецификации своего исполнения — светло-красной заливкой.
-            if (rows[i].NoSpecification && nameCol >= 0)
-                ws.Cell(i + 2, nameCol + 1).Style.Fill.BackgroundColor = NoSpecificationFill;
+            // «Проверить» и «Нет спецификации» у КД — светло-красной заливкой.
+            if (rows[i].NameMissing && nameCol >= 0)
+                ws.Cell(i + 2, nameCol + 1).Style.Fill.BackgroundColor = NameMissingFill;
         }
 
         FormatSheet(ws, columns);
