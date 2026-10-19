@@ -305,10 +305,10 @@ public partial class ConstructorRepository
     }
 
     /// <summary>
-    /// Свип незавершенного generic-переноса при монтировании: kill посреди пакетной заливки
-    /// оставляет в приемнике частичную копию под маркером crossmove.pending.* — доудаляем ее
-    /// (источник переносом не тронут, его данные целы). Сбой свипа не валит монтирование:
-    /// маркер остается, доудалим в следующий раз.
+    /// Свип незавершенного generic-переноса и дубля при монтировании: kill посреди пакетной заливки
+    /// оставляет в приемнике частичную копию под маркером crossmove.pending.* (дубль коллекции —
+    /// duplicate.pending.collection) — доудаляем ее (источник не тронут, его данные целы). Сбой
+    /// свипа не валит монтирование: маркер остается, доудалим в следующий раз.
     /// </summary>
     public void SweepUnfinishedCrossMove()
     {
@@ -321,6 +321,14 @@ public partial class ConstructorRepository
                 DeleteCollectionData(colId, log: false);
                 RemoveMeta(db, PendingCollectionKey);
                 Serilog.Log.Information("Незавершенный перенос в {Db:l}: частичная копия коллекции {Id} удалена", db.DisplayPath, colId);
+            }
+            if (int.TryParse(GetMeta(db, PendingDuplicateKey), out var dupId))
+            {
+                Serilog.Log.Warning("Незавершенный дубль в {Db:l}: найден маркер {Key:l} — частичная копия коллекции {Id} удаляется",
+                                    db.DisplayPath, PendingDuplicateKey, dupId);
+                DeleteCollectionData(dupId, log: false);
+                RemoveMeta(db, PendingDuplicateKey);
+                Serilog.Log.Information("Незавершенный дубль в {Db:l}: частичная копия коллекции {Id} удалена", db.DisplayPath, dupId);
             }
             if (int.TryParse(GetMeta(db, PendingGroupKey), out var grpId))
             {
@@ -495,13 +503,43 @@ public partial class ConstructorRepository
 
     // ── Запись в приемник ───────────────────────────────────────────────────────
 
-    // Записи пакета prepared-вставкой с RETURNING Id: точная карта старый id → новый,
-    // без допущения непрерывности (на PG identity-последовательность делят все клиенты).
+    // Записи пакета: точная карта старый id → новый, без допущения непрерывности (на PG
+    // identity-последовательность делят все клиенты).
+    //  • SQLite — prepared-вставка с RETURNING Id.
+    //  • PG — id берутся из самой последовательности одним запросом (nextval выданное никому больше
+    //    не отдаст; identity BY DEFAULT принимает явные id — так же делает дубль на PG,
+    //    CopyCollectionDataPg), записи уходят потоком COPY. По команде на запись перенос платил
+    //    сетевой ход и разбор запроса сервером за каждую запись: на стенде 300 тыс. записей в PG
+    //    одни записи шли 31 с, на сервере в сети — задержка сети на каждую.
     private static Dictionary<long, long> InsertRecordsBatch(AppDbContext tgt, int newColId, List<RecPage> page)
     {
         var conn = tgt.Database.GetDbConnection();
+        var dbTx = tgt.Database.CurrentTransaction!.GetDbTransaction();
+        var map  = new Dictionary<long, long>(page.Count);
+
+        if (conn is Npgsql.NpgsqlConnection pg)
+        {
+            using (var ids = conn.CreateCommand())
+            {
+                ids.Transaction = dbTx;
+                ids.CommandText = "SELECT nextval(pg_get_serial_sequence('db_records', 'id')) " +
+                                  $"FROM generate_series(1, {page.Count})";
+                using var r = ids.ExecuteReader();
+                var at = 0;
+                while (r.Read()) map[page[at++].OldId] = r.GetInt64(0);
+            }
+            CopyRows(pg, "db_records",
+                "Id, CollectionId, CreatedAt, Position, StartDt, EndDt, AllDay, Title, UpdatedAt, CreatedBy, UpdatedBy, Color",
+                page.Select(rec => new object?[]
+                {
+                    map[rec.OldId], newColId, rec.CreatedAt, rec.Position, rec.StartDt, rec.EndDt, rec.AllDay,
+                    rec.Title, rec.UpdatedAt, rec.CreatedBy, rec.UpdatedBy, rec.Color,
+                }));
+            return map;
+        }
+
         using var ins = conn.CreateCommand();
-        ins.Transaction = tgt.Database.CurrentTransaction!.GetDbTransaction();
+        ins.Transaction = dbTx;
         ins.CommandText =
             "INSERT INTO db_records (CollectionId, CreatedAt, Position, StartDt, EndDt, AllDay, Title, UpdatedAt, CreatedBy, UpdatedBy, Color) " +
             "VALUES (@cid, @created, @pos, @s, @e, @a, @t, @ua, @cb, @ub, @clr) RETURNING Id";
@@ -518,7 +556,6 @@ public partial class ConstructorRepository
         var pClr     = AddParam(ins, "@clr",     DbType.String);   // сквозной цвет записи едет с ней
         ins.Prepare();
 
-        var map = new Dictionary<long, long>(page.Count);
         pCid.Value = newColId;
         foreach (var rec in page)
         {
@@ -537,50 +574,79 @@ public partial class ConstructorRepository
         return map;
     }
 
-    // Multi-row INSERT (VALUES (…), (…), …) кусками: строки-значения параметризуются
-    // (пользовательские данные), портативно на оба провайдера. Кусок ограничен числом
-    // параметров (лимиты: SQLite 32766, PG 65535 — 500×N колонок с запасом ниже обоих).
-    private const int InsertChunkRows = 500;
-
     private static void InsertTriples(AppDbContext tgt, string table, string columns,
                                       IEnumerable<(long A, object B, object C)> rows)
         => InsertRows(tgt, table, columns, rows.Select(r => new object[] { r.A, r.B, r.C }));
 
+    // Строки в приемник: на SQLite — одной prepared-командой на строку, на PG — потоком COPY.
+    // Прежде шли multi-row INSERT по 500 строк с параметрами @p0…@p1499: каждый кусок
+    // разбирался заново, а привязка параметра по имени ищет его среди всех параметров команды —
+    // цена куска росла как квадрат его размера, и на 300 тыс. записей значения и проекция
+    // переносились больше двух минут в обе стороны.
     private static void InsertRows(AppDbContext tgt, string table, string columns, IEnumerable<object?[]> rows)
     {
         var conn = tgt.Database.GetDbConnection();
-        var tx   = tgt.Database.CurrentTransaction!.GetDbTransaction();
+        if (conn is Npgsql.NpgsqlConnection pg) { CopyRows(pg, table, columns, rows); return; }
 
-        var chunk = new List<object?[]>(InsertChunkRows);
+        var width = columns.Split(',').Length;
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tgt.Database.CurrentTransaction!.GetDbTransaction();
+        cmd.CommandText = $"INSERT INTO {table} ({columns}) VALUES ({string.Join(", ", Enumerable.Range(0, width).Select(i => $"@p{i}"))})";
+        var ps = Enumerable.Range(0, width).Select(i => AddParam(cmd, $"@p{i}")).ToArray();
+        var prepared = false;
         foreach (var row in rows)
         {
-            chunk.Add(row);
-            if (chunk.Count == InsertChunkRows) { Flush(); chunk.Clear(); }
-        }
-        if (chunk.Count > 0) Flush();
-        return;
-
-        void Flush()
-        {
-            using var cmd = conn.CreateCommand();
-            cmd.Transaction = tx;
-            var sb = new System.Text.StringBuilder($"INSERT INTO {table} ({columns}) VALUES ");
-            var p  = 0;
-            for (var i = 0; i < chunk.Count; i++)
-            {
-                if (i > 0) sb.Append(',');
-                sb.Append('(');
-                for (var j = 0; j < chunk[i].Length; j++)
-                {
-                    if (j > 0) sb.Append(',');
-                    var name = $"@p{p++}";
-                    sb.Append(name);
-                    AddParam(cmd, name).Value = chunk[i][j] ?? DBNull.Value;
-                }
-                sb.Append(')');
-            }
-            cmd.CommandText = sb.ToString();
+            for (var i = 0; i < width; i++) ps[i].Value = row[i] ?? DBNull.Value;
+            if (!prepared) { cmd.Prepare(); prepared = true; }
             cmd.ExecuteNonQuery();
+        }
+    }
+
+    // Поток COPY в текстовом формате: тип каждого столбца разбирает сервер, как у INSERT, —
+    // значения пишутся строками, null — \N. Идет в открытой транзакции подключения.
+    private static void CopyRows(Npgsql.NpgsqlConnection pg, string table, string columns, IEnumerable<object?[]> rows)
+    {
+        using var w = pg.BeginTextImport($"COPY {table} ({columns}) FROM STDIN");
+        var line = new System.Text.StringBuilder();
+        foreach (var row in rows)
+        {
+            line.Clear();
+            for (var i = 0; i < row.Length; i++)
+            {
+                if (i > 0) line.Append('\t');
+                AppendCopyValue(line, row[i]);
+            }
+            line.Append('\n');
+            w.Write(line);
+        }
+    }
+
+    // Значение для текстового COPY: обратная косая, табуляция и переводы строк экранируются
+    // (иначе строка значения порвала бы строку потока), null — \N.
+    internal static void AppendCopyValue(System.Text.StringBuilder sb, object? value)
+    {
+        switch (value)
+        {
+            case null or DBNull:
+                sb.Append(@"\N");
+                return;
+            case string s:
+                foreach (var ch in s)
+                    switch (ch)
+                    {
+                        case '\\': sb.Append(@"\\"); break;
+                        case '\t':  sb.Append(@"\t");  break;
+                        case '\n':  sb.Append(@"\n");  break;
+                        case '\r':  sb.Append(@"\r");  break;
+                        default:    sb.Append(ch);     break;
+                    }
+                return;
+            case IFormattable f:
+                sb.Append(f.ToString(null, System.Globalization.CultureInfo.InvariantCulture));
+                return;
+            default:
+                sb.Append(value);
+                return;
         }
     }
 

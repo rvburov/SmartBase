@@ -190,11 +190,14 @@ public sealed class BackupService : IDisposable
         try
         {
             var ext = BackupRotation.Extension(entry.IsPostgres);
-            var copies = Directory.EnumerateFiles(folder)
-                                  .Select(Path.GetFileName)
-                                  .Where(n => n is not null && BackupRotation.IsCopyOf(n, entry.Name, ext))
-                                  .Select(n => n!)
-                                  .ToList();
+            var names = Directory.EnumerateFiles(folder).Select(Path.GetFileName).Select(n => n!).ToList();
+
+            // Недописанные копии этой базы, брошенные оборванным запуском (выход из программы,
+            // пропавший диск): копии идут строго по одной, и своя к этому моменту уже на месте.
+            foreach (var part in names.Where(n => BackupRotation.IsPartOf(n, entry.Name, ext)))
+                File.Delete(Path.Combine(folder, part));
+
+            var copies = names.Where(n => BackupRotation.IsCopyOf(n, entry.Name, ext)).ToList();
             var doomed = BackupRotation.SelectForDeletion(copies, keep);
             foreach (var name in doomed)
                 File.Delete(Path.Combine(folder, name));

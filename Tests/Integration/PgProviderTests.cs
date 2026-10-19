@@ -141,6 +141,56 @@ public sealed class PgProviderTests
         Assert.Equal(0, PgScalar(cs1, $"SELECT COUNT(*) FROM db_records WHERE collectionid = {srcColId}")); // источник удален
     }
 
+    /// <summary>Перенос SQLite → PostgreSQL и обратно несколькими пакетами: на PG записи и значения
+    /// идут потоком COPY, и значение со служебными символами текстового формата (табуляция,
+    /// переводы строк, обратная косая, буквальное «\N») обязано доехать до байта в обе стороны;
+    /// название, порядок записей и проекция календаря — тоже.</summary>
+    [SkippableFact]
+    public void Move_sqlite_to_pg_and_back_keeps_every_value_exactly()
+    {
+        Skip.IfNot(PgTestServer.IsAvailable, "Стенд PostgreSQL sb-pg (порт 5455) не поднят");
+        var cs = PgTestServer.ConnectionString(PgTestServer.Database1);
+        ResetSchema(cs);
+
+        string[] tricky = ["таб\tвнутри", "строка\nвторая", "возврат\rкаретки", @"косая \ и \N буквально", "\\N",
+                           "кавычки ' и \"", "  пробелы по краям  ", "эмодзи 🙂 и юникод"];
+        using var lite = new TempDatabase(dbId: 1, name: "lite");
+        var repo = lite.Constructor;
+        var col  = SampleData.AddCollection(repo, "Переносимая");
+        var text = SampleData.AddField(repo, col.Id!.Value, "Текст", "text", position: 10);
+        var date = SampleData.AddCalendarDateField(repo, col.Id!.Value, position: 20);
+        for (var i = 0; i < 40; i++)
+        {
+            var rec = SampleData.AddRecord(repo, col.Id!.Value, tricky[i % tricky.Length] + $" {i}", position: (40 - i) * 10);
+            repo.SetFieldValue(rec.Id!.Value, text.Id!.Value, tricky[(i + 3) % tricky.Length]);
+            if (i % 2 == 0) repo.SetFieldValue(rec.Id!.Value, date.Id!.Value, new DateTime(2026, 3, 1).AddDays(i).ToString("yyyy-MM-dd"));
+        }
+        var expected = Snapshot(repo, col.Id!.Value);
+        var calendar = Convert.ToInt64(lite.Context.CalendarIndex.Count(c => c.CollectionId == col.Id!.Value));
+
+        using var pg = DatabaseManager.Open(102, "pg", cs, provider: "postgres");
+        var pgCol = pg.Constructor.MoveCollectionIsolated(lite.Path, col.Id!.Value, targetGroupId: null, batchSize: 7,
+                                                          sourceDbId: 1, targetDbId: 102);
+        Assert.Equal(expected, Snapshot(pg.Constructor, pgCol));
+        Assert.Equal(calendar, PgScalar(cs, $"SELECT COUNT(*) FROM calendar_index WHERE collectionid = {pgCol}"));
+
+        var back = repo.MoveCollectionIsolated(cs, pgCol, targetGroupId: null, batchSize: 7, sourceDbId: 102, targetDbId: 1);
+        Assert.Equal(expected, Snapshot(repo, back));
+        Assert.Equal(0, PgScalar(cs, $"SELECT COUNT(*) FROM db_records WHERE collectionid = {pgCol}"));
+    }
+
+    // Записи коллекции в порядке (Position, Id): название и значение каждого поля по имени поля.
+    private static List<string> Snapshot(ConstructorRepository repo, int colId)
+    {
+        var fields = repo.GetFields(colId).ToDictionary(f => f.Id!.Value, f => f.Name);
+        var recs   = repo.GetRecordsPage(colId, 0, 1000);
+        var values = repo.GetFieldValuesBatch(recs.Select(r => r.Id!.Value).ToList());
+        return recs.Select(r => r.Title + " | " + string.Join(" | ",
+                       values.GetValueOrDefault(r.Id!.Value, []).OrderBy(v => fields[v.Key])
+                             .Select(v => $"{fields[v.Key]}={v.Value}")))
+                   .ToList();
+    }
+
     [SkippableFact]
     public void Unfinished_crossmove_is_swept_on_mount()
     {
