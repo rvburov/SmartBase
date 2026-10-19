@@ -8,6 +8,7 @@
 #   Scripts/worktree.sh new <имя>       # (другие ИИ) новая папка .agents/worktrees/<имя>
 #                                       #   на ветке <имя> от локального main
 #   Scripts/worktree.sh sync            # (в рабочей папке) перенести свою ветку на свежий main
+#                                       #   (локальный или origin/main — какой новее)
 #   Scripts/worktree.sh merge [<имя>]   # влить ветку в main перемоткой; без имени — ветку этой папки
 #   Scripts/worktree.sh remove <имя>    # убрать папку и ветку — только когда все уже в main
 #
@@ -23,11 +24,20 @@
 # Пакеты NuGet рабочая папка берет из кеша основной (Directory.Build.props), ссылок внутри
 # рабочей папки нет: git worktree remove на Windows проходит по ссылке и стирает ее цель.
 #
+# «Свежий main» — локальный main или origin/main, смотря какой из них уже содержит другой:
+# облачные копии и другие компьютеры отправляют работу на GitHub, а вливания здесь остаются
+# локальными до push. Разошлись — решает пользователь, скрипт останавливается.
+#
+# В облачной копии (CLAUDE_CODE_REMOTE=true) рабочих папок нет: check не считает ветку основной
+# папки ошибкой и показывает, что не отправлено на GitHub и не влито в main на GitHub.
+#
 # Ни одна команда не удаляет незакоммиченное и не влитое в main: такие случаи скрипт
-# называет и останавливается. На Windows запускать из Git Bash.
+# называет и останавливается. push сюда не входит — только по просьбе пользователя.
+# На Windows запускать из Git Bash.
 set -euo pipefail
 
 BASE=main
+REMOTE=origin
 MAX_NAME=20
 LONGEST_INSIDE=175   # самый длинный путь внутри папки проекта (пакеты, сборка) — с запасом
 
@@ -98,8 +108,77 @@ behind() { git rev-list --count "$1..$BASE"; }   # коммиты main, кото
 # Первые строки вывода с отступом; sed дочитывает поток до конца, git не получает SIGPIPE.
 first() { sed -n "1,${1}s/^/      /p"; }
 
+# Тихо обновить origin/main; без сети остается последнее полученное состояние.
+fetch_origin() {
+  git remote get-url "$REMOTE" > /dev/null 2>&1 || return 0
+  if ! git fetch --quiet "$REMOTE" "$BASE" 2> /dev/null; then
+    note "нет связи с $REMOTE — берется последний полученный $REMOTE/$BASE"
+  fi
+}
+
+# Свежий main: локальный или origin/main — смотря какой из них уже содержит другой.
+newest_base() {
+  local remote="$REMOTE/$BASE"
+  if ! git rev-parse -q --verify "$remote" > /dev/null; then
+    echo "$BASE"
+  elif git merge-base --is-ancestor "$remote" "$BASE"; then
+    echo "$BASE"
+  elif git merge-base --is-ancestor "$BASE" "$remote"; then
+    echo "$remote"
+  else
+    die "локальный $BASE и $remote разошлись — как их соединить, решает пользователь"
+  fi
+}
+
+cloud() { [[ "${CLAUDE_CODE_REMOTE:-}" == true ]]; }
+
+# Облачная копия: одна папка, работа уходит только через GitHub (AGENTS.md, «Облачная копия»).
+cmd_check_cloud() {
+  local problems=0 branch dirty a u remote="$REMOTE/$BASE"
+  fetch_origin
+  branch=$(git branch --show-current)
+  dirty=$(changes "$HERE" all)
+  echo "Облачная копия: $HERE (рабочие папки не нужны)"
+  echo "[копия] ветка ${branch:-(без ветки)}"
+  if [[ "$dirty" != 0 ]]; then
+    note "НЕ ЗАКОММИЧЕНО изменений: $dirty"
+    git status --short | first 20
+    problems=$((problems + 1))
+  fi
+  if [[ -n "$branch" ]]; then
+    if git rev-parse -q --verify "$REMOTE/$branch" > /dev/null; then
+      u=$(git rev-list --count "$REMOTE/$branch..HEAD")
+    else
+      u=$(git rev-list --count HEAD --not --remotes="$REMOTE")
+    fi
+    if [[ "$u" != 0 ]]; then
+      note "НЕ ОТПРАВЛЕНО на GitHub коммитов: $u — пропадут вместе с машиной сессии (git push -u $REMOTE HEAD)"
+      problems=$((problems + 1))
+    fi
+  fi
+  if git rev-parse -q --verify "$remote" > /dev/null; then
+    a=$(git rev-list --count "$remote..HEAD")
+    if [[ "$a" != 0 ]]; then
+      note "не в $BASE на GitHub коммитов: $a (в $BASE — только по просьбе пользователя)"
+      git log -n 10 --format='%h %s' "$remote..HEAD" | first 10
+    fi
+    a=$(git rev-list --count "HEAD..$remote")
+    if [[ "$a" != 0 ]]; then
+      note "$BASE на GitHub ушел вперед на $a — перед отправкой в $BASE: git rebase $remote, тесты"
+    fi
+  fi
+  echo
+  if [[ "$problems" == 0 ]]; then
+    echo "ИТОГ: все закоммичено и отправлено на GitHub."
+  else
+    echo "ИТОГ: требует внимания мест: $problems — показать пользователю."
+  fi
+}
+
 cmd_check() {
   local problems=0 path branch flags dirty a b
+  if cloud; then cmd_check_cloud; return; fi
+  fetch_origin
   echo "Основная папка: $MAIN"
   echo "Рабочие папки:  Claude Code — $CLAUDE_ROOT/<имя>"
   echo "                другие ИИ   — $AGENTS_ROOT/<имя>"
@@ -118,10 +197,17 @@ cmd_check() {
     git -C "$MAIN" status --short | first 20
     problems=$((problems + 1))
   fi
-  if git rev-parse -q --verify "origin/$BASE" > /dev/null; then
-    a=$(git rev-list --count "origin/$BASE..$BASE")
-    if [[ "$a" != 0 ]]; then
-      note "на сервер не отправлено коммитов $BASE: $a (push — только по просьбе)"
+  if git rev-parse -q --verify "$REMOTE/$BASE" > /dev/null; then
+    a=$(git rev-list --count "$REMOTE/$BASE..$BASE")
+    b=$(git rev-list --count "$BASE..$REMOTE/$BASE")
+    if [[ "$a" != 0 && "$b" != 0 ]]; then
+      note "ВНИМАНИЕ: локальный $BASE и $REMOTE/$BASE разошлись ($a и $b коммитов) — решает пользователь"
+      problems=$((problems + 1))
+    elif [[ "$a" != 0 ]]; then
+      note "на GitHub не отправлено коммитов $BASE: $a (push — только по просьбе)"
+    elif [[ "$b" != 0 ]]; then
+      note "$BASE на GitHub впереди локального на $b — догнать: git pull --ff-only в основной папке"
+      note "(sync рабочих папок и так ставит ветки на $REMOTE/$BASE)"
     fi
   fi
 
@@ -218,20 +304,24 @@ cmd_new() {
 }
 
 cmd_sync() {
-  local branch
+  local branch target
+  ! cloud || die "в облачной копии рабочих папок нет: git fetch $REMOTE && git rebase $REMOTE/$BASE (AGENTS.md, «Облачная копия»)"
   [[ "$HERE" != "$MAIN" ]] || die "sync запускается в рабочей папке, а не в основной"
   branch=$(git branch --show-current)
   [[ -n "$branch" ]] || die "папка не на ветке"
   [[ "$(changes "$HERE" tracked)" == 0 ]] || die "есть незакоммиченные правки — сначала коммит"
-  if ! git rebase -q "$BASE"; then
-    echo "Конфликт при переносе на $BASE. Разрешить и git rebase --continue, или отменить: git rebase --abort." >&2
+  fetch_origin
+  target=$(newest_base)
+  if ! git rebase -q "$target"; then
+    echo "Конфликт при переносе на $target. Разрешить и git rebase --continue, или отменить: git rebase --abort." >&2
     exit 1
   fi
-  echo "Ветка $branch стоит на свежем $BASE. Прогнать тесты, затем: Scripts/worktree.sh merge"
+  echo "Ветка $branch стоит на свежем $BASE ($target). Прогнать тесты, затем: Scripts/worktree.sh merge"
 }
 
 cmd_merge() {
   local name="${1:-}" hit path branch a
+  ! cloud || die "в облачной копии в $BASE отправляют через GitHub, по просьбе пользователя (AGENTS.md, «Облачная копия»)"
   if [[ -z "$name" ]]; then
     [[ "$HERE" != "$MAIN" ]] || die "в основной папке укажите имя: Scripts/worktree.sh merge <имя>"
     path="$HERE"
@@ -258,6 +348,12 @@ cmd_merge() {
   fi
   git merge-base --is-ancestor "$BASE" "$branch" \
     || die "$BASE ушел вперед — сначала Scripts/worktree.sh sync в папке ветки, тесты, потом merge"
+  fetch_origin
+  newest_base > /dev/null
+  if git rev-parse -q --verify "$REMOTE/$BASE" > /dev/null; then
+    git merge-base --is-ancestor "$REMOTE/$BASE" "$branch" \
+      || die "$BASE на GitHub ушел вперед — сначала Scripts/worktree.sh sync в папке ветки, тесты, потом merge"
+  fi
   [[ "$(git -C "$MAIN" branch --show-current)" == "$BASE" ]] || die "основная папка не на $BASE"
   [[ "$(changes "$MAIN" tracked)" == 0 ]] \
     || die "в основной папке незакоммиченные правки — разобрать их с пользователем"

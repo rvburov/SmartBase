@@ -195,7 +195,8 @@ Scripts/macos-build.sh osx-x64   Release 1.2.3  # Intel
 | `macos-build.sh` | сборка macOS → `dist/<rid>/SmartBase.app` |
 | `linux-install.sh` | установка иконки/ярлыка на Linux-машине (пост-установка) |
 | `generate-icons.sh` | проверка мастеров и генерация `icon.ico`/`icon.icns` (только macOS) |
-| `worktree.sh` | рабочие папки ИИ-агентов: `check`, `new`, `sync`, `merge`, `remove` — см. [AGENTS.md](../../../AGENTS.md) |
+| `worktree.sh` | рабочие папки ИИ-агентов: `check`, `new`, `sync`, `merge`, `remove`; `sync` и `merge` учитывают `main` на GitHub, в облачной копии `check` показывает неотправленное — см. [AGENTS.md](../../../AGENTS.md) |
+| `cloud-session.sh` | хук `SessionStart` облачных сессий Claude Code (`.claude/settings.json`): автор коммитов — пользователь, подпись выключена |
 
 ## Связанные документы
 

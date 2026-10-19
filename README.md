@@ -453,7 +453,8 @@ SmartBase/
 │   └── Styles/                 # Colors, Typography, Icons, темы контролов
 │
 ├── Scripts/                    # windows-build.sh, linux-build.sh, macos-build.sh, linux-install.sh, generate-icons.sh,
-│                               #   worktree.sh (рабочие папки ИИ-агентов: создать, проверить, влить в main, убрать)
+│                               #   worktree.sh (рабочие папки ИИ-агентов: создать, проверить, влить в main, убрать),
+│                               #   cloud-session.sh (облачная сессия Claude Code: автор коммитов — пользователь)
 ├── Tests/                      # Unit, Integration (xUnit), Extensions/* + ExtensionsShared
 │                               #   плюс Benchmarks, DbGenerator, MultiProcess и стенды без экрана
 │                               #   (GridProto, RecordPage, Sections, DocReader…, см. Tests/README.md)

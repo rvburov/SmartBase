@@ -82,8 +82,9 @@ dotnet ef migrations add ИмяМиграцииPg --context PgAppDbContext --fra
 - Общая архитектура и запуск — [architecture/overview.md](../architecture/overview.md).
 - Модель данных — [architecture/data-model.md](../architecture/data-model.md).
 - Как работают фичи — [features/](../features/).
-- Указания ИИ-агентам и параллельная работа в рабочих папках (git worktree) —
-  [AGENTS.md](../../../AGENTS.md) и [Scripts/worktree.sh](../../../Scripts/worktree.sh).
+- Указания ИИ-агентам, параллельная работа в рабочих папках (git worktree) и облачные копии —
+  [AGENTS.md](../../../AGENTS.md), [Scripts/worktree.sh](../../../Scripts/worktree.sh) и
+  [Scripts/cloud-session.sh](../../../Scripts/cloud-session.sh).
 
 ## Диагностика сбоев (crash.log)
 
