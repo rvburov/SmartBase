@@ -23,6 +23,59 @@ public sealed class DocSheetSourceTests : IDisposable
 {
     private readonly string _dir;
 
+    [Theory]
+    [InlineData(true, 2, 1)]
+    [InlineData(false, 0, 0)]
+    public void Frozen_panes_are_distinguished_from_split_windows(bool frozen, int rows, int columns)
+    {
+        var path = Path.Combine(_dir, "panes.xlsx");
+        using (var doc = SpreadsheetDocument.Create(path, SpreadsheetDocumentType.Workbook))
+        {
+            var book = doc.AddWorkbookPart();
+            book.Workbook = new Workbook();
+            var sheet = book.AddNewPart<WorksheetPart>();
+            sheet.Worksheet = new Worksheet(new SheetViews(new SheetView(new Pane
+                { State = frozen ? PaneStateValues.Frozen : PaneStateValues.Split,
+                  VerticalSplit = 2, HorizontalSplit = 1 }) { WorkbookViewId = 0 }),
+                new SheetData(new Row(new Cell { CellReference = "A1", DataType = CellValues.String,
+                    CellValue = new CellValue("Шапка") }) { RowIndex = 1 }));
+            book.Workbook.Append(new Sheets(new Sheet { Id = book.GetIdOfPart(sheet), SheetId = 1, Name = "Лист" }));
+            book.Workbook.Save();
+        }
+        var parsed = Assert.Single(DocSheetSource.Open(path));
+        Assert.Equal(rows, parsed.FrozenRows);
+        Assert.Equal(columns, parsed.FrozenColumns);
+    }
+
+    [Fact]
+    public void A_sheet_reports_both_row_and_column_limits()
+    {
+        var path = Path.Combine(_dir, "limits.xlsx");
+        using (var doc = SpreadsheetDocument.Create(path, SpreadsheetDocumentType.Workbook))
+        {
+            var book = doc.AddWorkbookPart();
+            book.Workbook = new Workbook();
+            var sheet = book.AddNewPart<WorksheetPart>();
+            var data = new SheetData();
+            for (var i = 1; i <= DocSheetSource.MaxRows + 1; i++)
+            {
+                var row = new Row { RowIndex = (uint)i };
+                row.Append(new Cell { CellReference = $"A{i}", DataType = CellValues.String, CellValue = new CellValue("строка") });
+                if (i == 1) row.Append(new Cell { CellReference = "DY1", DataType = CellValues.String, CellValue = new CellValue("за краем") });
+                data.Append(row);
+            }
+            sheet.Worksheet = new Worksheet(new SheetDimension { Reference = $"A1:DY{DocSheetSource.MaxRows + 1}" }, data);
+            sheet.Worksheet.Save();
+            book.Workbook.Append(new Sheets(new Sheet { Id = book.GetIdOfPart(sheet), SheetId = 1, Name = "Лист" }));
+            book.Workbook.Save();
+        }
+        var parsed = Assert.Single(DocSheetSource.Open(path));
+        Assert.Equal(DocSheetSource.MaxRows, parsed.Rows.Count);
+        Assert.True(parsed.Cut.Rows);
+        Assert.True(parsed.Cut.Columns);
+        Assert.All(parsed.Rows, row => Assert.All(row.Cells, cell => Assert.True(cell.Column < DocSheetSource.MaxColumns)));
+    }
+
     public DocSheetSourceTests()
     {
         _dir = Path.Combine(Path.GetTempPath(), "sb-docsheet-" + Guid.NewGuid().ToString("N")[..8]);

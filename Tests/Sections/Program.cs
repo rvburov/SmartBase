@@ -304,8 +304,9 @@ Dispatcher.UIThread.UnhandledException += (_, e) =>
     Console.WriteLine($"    [исключение UI] {e.Exception.GetType().Name}: {e.Exception.Message}");
     e.Handled = true;
 };
-// Номер потока ОС нужен только разбору стеков EventPipe (Windows); проба пауз работает везде.
-var uiThread = OperatingSystem.IsWindows() ? Native.GetCurrentThreadId() : 0u;
+// Системный номер потока: Windows — kernel32, Linux — gettid; остальные ОС без разбора стеков.
+var uiThread = OperatingSystem.IsWindows() ? Native.GetCurrentThreadId()
+    : OperatingSystem.IsLinux() ? Native.GetLinuxThreadId() : 0u;
 Boot("платформа Avalonia и стили приложения");
 
 // Реестр и настройки — в папке стенда (как у App, но без путей AppSettings: они смотрят в
@@ -2702,6 +2703,9 @@ static string FindRoot()
 
 static class Native
 {
+    [DllImport("libc", EntryPoint = "gettid")]
+    public static extern uint GetLinuxThreadId();
+
     [DllImport("kernel32.dll")]
     public static extern uint GetCurrentThreadId();
 }

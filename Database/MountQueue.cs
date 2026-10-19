@@ -14,7 +14,7 @@ namespace SmartBase.Database;
 ///
 /// События поднимаются ИЗ ФОНОВОГО ПОТОКА — подписчик (MainWindow) маршалит в UI сам.
 /// </summary>
-public sealed class MountQueue
+public sealed class MountQueue : IDisposable
 {
     public enum ItemState { Queued, Mounting, Failed, Maintenance }
 
@@ -34,7 +34,44 @@ public sealed class MountQueue
     private readonly Dictionary<int, ItemStatus> _status = [];
     private bool _running;
 
-    public MountQueue(Workspace ws) => _ws = ws;
+    private readonly string _jobPrefix = "mount." + Guid.NewGuid().ToString("N") + ".";
+    private bool _disposed;
+    private readonly HashSet<int> _forgotten = [];
+
+    public MountQueue(Workspace ws)
+    {
+        _ws = ws;
+        Changed += ReportBackground;
+    }
+
+    private void ReportBackground(int dbId, bool stateChanged)
+    {
+        lock (_gate)
+        {
+            if (_disposed) return;
+            var id = _jobPrefix + dbId;
+            if (_forgotten.Contains(dbId) || !_status.TryGetValue(dbId, out var status)) Core.BackgroundJobs.Finish(id);
+            else if (status.State == ItemState.Failed)
+            {
+                // «Убрать» подтверждает ошибку: новый текст обратного отсчета не возвращает ее.
+                if (!stateChanged && !Core.BackgroundJobs.All.Any(j => j.Id == id)) return;
+                Core.BackgroundJobs.Fail(id, "Подключение базы", $"{status.Name}: {status.Text}");
+            }
+            else Core.BackgroundJobs.Report(id,
+                status.State == ItemState.Maintenance ? "Обслуживание базы" : "Подключение базы",
+                $"{status.Name}: {status.Text}");
+        }
+    }
+
+    public void Dispose()
+    {
+        lock (_gate)
+        {
+            _disposed = true;
+            Changed -= ReportBackground;
+            foreach (var id in _status.Keys) Core.BackgroundJobs.Finish(_jobPrefix + id);
+        }
+    }
 
     /// <summary>Стартовая партия: мелкие файлы первыми (недоступные — нулевой размер, т.е.
     /// первыми: их сбой виден сразу и никого не задерживает).</summary>
@@ -61,6 +98,7 @@ public sealed class MountQueue
             if (_ws.Get(entry.Id) is not null) return;                 // уже смонтирована
             if (_queue.Any(e => e.Id == entry.Id)) return;             // уже ждет
             if (_status.TryGetValue(entry.Id, out var s) && s.State == ItemState.Mounting) return;
+            _forgotten.Remove(entry.Id);
             _queue.Add(entry);
             _status[entry.Id] = new ItemStatus(entry.Id, entry.Name, ItemState.Queued, "в очереди…");
         }
@@ -104,6 +142,7 @@ public sealed class MountQueue
     {
         lock (_gate)
         {
+            _forgotten.Add(dbId);
             _queue.RemoveAll(e => e.Id == dbId);
             if (_status.TryGetValue(dbId, out var s) && s.State != ItemState.Mounting)
                 _status.Remove(dbId);

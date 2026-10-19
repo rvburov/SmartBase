@@ -916,6 +916,7 @@ public partial class SidebarTree : UserControl
 
         CalendarSettings.Changed += OnSectionSettingsChanged;
         TaskSettings.Changed     += OnSectionSettingsChanged;
+        LibrarySettings.Changed  += OnSectionSettingsChanged;
         OnSectionSettingsChanged();
     }
 
@@ -928,6 +929,7 @@ public partial class SidebarTree : UserControl
         Utils.ConstructorSettings.Changed -= OnConstructorSettingsChanged;
         CalendarSettings.Changed -= OnSectionSettingsChanged;
         TaskSettings.Changed     -= OnSectionSettingsChanged;
+        LibrarySettings.Changed  -= OnSectionSettingsChanged;
         base.OnDetachedFromVisualTree(e);
     }
 

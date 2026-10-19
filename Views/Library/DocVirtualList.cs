@@ -65,6 +65,9 @@ internal sealed class DocVirtualList : IList<object>, IList, INotifyCollectionCh
     private readonly SemaphoreSlim _loadGate = new(4);
     private DispatcherTimer? _loadTimer;
     private int _generation;
+    private readonly DocOrderKey[]? _order;
+    public event Action? OrderInvalidated;
+    private bool _orderInvalidated;
 
     /// <summary>Выделение, пережившее перезагрузку: ключи документов, которые надо снова
     /// подсветить — в том числе в карточках, которые еще не приехали.</summary>
@@ -92,7 +95,12 @@ internal sealed class DocVirtualList : IList<object>, IList, INotifyCollectionCh
     /// Отменить фоновые страницы: список выброшен и его строки больше никто не покажет.
     /// Без этого догрузка осиротевшего списка продолжала бы занимать подключения.
     /// </summary>
-    public void Cancel() => _generation++;
+    public void Cancel()
+    {
+        _generation++;
+        _loadTimer?.Stop();
+        _needLoad.Clear();
+    }
 
     /// <summary>
     /// Догнать УЖЕ приехавшие карточки, когда перепись кеша досчиталась. Новые страницы
@@ -111,9 +119,10 @@ internal sealed class DocVirtualList : IList<object>, IList, INotifyCollectionCh
                 }
     }
 
-    public DocVirtualList(IReadOnlyList<Entry> entries, IEnumerable<DocKey>? preselect = null)
+    public DocVirtualList(IReadOnlyList<Entry> entries, IEnumerable<DocKey>? preselect = null, DocOrderKey[]? order = null)
     {
         _entries = entries.ToList();
+        _order = order;
         if (preselect is not null) foreach (var k in preselect) _preselect.Add(k);
 
         _map = new DocRowMap([.. _entries.Select(e => e.Docs)]);
@@ -122,7 +131,7 @@ internal sealed class DocVirtualList : IList<object>, IList, INotifyCollectionCh
 
     // ── IList: доступ по индексу ─────────────────────────────────────────────
 
-    public int Count => _map.Count;
+    public int Count => _order?.Length ?? _map.Count;
 
     public object this[int index]
     {
@@ -205,6 +214,64 @@ internal sealed class DocVirtualList : IList<object>, IList, INotifyCollectionCh
         }
     }
 
+    public static Task<DocOrderKey[]> BuildOrderAsync(IReadOnlyList<Entry> entries, DocSort sort,
+                                                     CancellationToken ct = default) =>
+        BuildOrderAsync(entries, sort, (entry, token) => entry.Repo.GetDocOrderKeysAsync(
+            entry.ColId, entry.TypeFieldId, entry.View, sort, token), ct);
+
+    internal static async Task<DocOrderKey[]> BuildOrderAsync(IReadOnlyList<Entry> entries, DocSort sort,
+        Func<Entry, CancellationToken, Task<List<DocOrderItem>>> readKeys, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var streams = new List<DocOrderStream>(entries.Count);
+        foreach (var entry in entries)
+        {
+            ct.ThrowIfCancellationRequested();
+            var keys = await readKeys(entry, ct);
+            ct.ThrowIfCancellationRequested();
+            streams.Add(new DocOrderStream(entry.DbId, entry.ColId, keys));
+        }
+        return await Task.Run(() => DocOrderPlan.Merge(streams, sort, ct), ct);
+    }
+
+    private async Task LoadOrderedPageAsync(int gen, int page)
+    {
+        var start = page * PageSize;
+        var keys = _order!.Skip(start).Take(PageSize).ToArray();
+        var records = new Dictionary<(int Entry, int Record, int Field), DocRecord>();
+        foreach (var group in keys.GroupBy(k => k.Entry))
+        {
+            if (gen != _generation) return;
+            var entry = _entries[group.Key];
+            var docs = await entry.Repo.GetDocsByOrderKeysAsync(entry.ColId, entry.TypeFieldId, group.ToArray(), entry.View);
+            await Task.Run(() => DocStamps.Probe(docs));
+            foreach (var doc in docs)
+            {
+                doc.DbId = entry.DbId;
+                doc.DbName = entry.DbName;
+                records[(group.Key, doc.Id!.Value, doc.FileFieldId)] = doc;
+            }
+        }
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (gen != _generation || !_pages.TryGetValue(page, out var rows)) return;
+            for (var i = 0; i < keys.Length && i < rows.Length; i++)
+            {
+                var key = keys[i];
+                if (!records.TryGetValue((key.Entry, key.RecordId, key.FieldId), out var doc))
+                {
+                    if (!_orderInvalidated) { _orderInvalidated = true; OrderInvalidated?.Invoke(); }
+                    continue;
+                }
+                TextState?.Invoke(doc);
+                if (rows[i] is not DocCardVm card) continue;
+                card.Fill(doc);
+                card.IsSelected = DocSelection.KeyOf(doc) is { } selected && _preselect.Contains(selected);
+                CardRealized?.Invoke(card);
+            }
+        });
+    }
+
     private async Task LoadPageBackgroundAsync(int gen, int page)
     {
         await _loadGate.WaitAsync();
@@ -214,7 +281,8 @@ internal sealed class DocVirtualList : IList<object>, IList, INotifyCollectionCh
             if (gen != _generation) return;
             if (!_pending.Contains(page) || !_pages.ContainsKey(page)) return;
 
-            foreach (var (e, local, n, slot) in Segments(page))
+            if (_order is not null) await LoadOrderedPageAsync(gen, page);
+            else foreach (var (e, local, n, slot) in Segments(page))
             {
                 var seek = DocSeekPlan.Choose(local, n, e.Docs, e.Known);
                 var part = await e.Repo.GetDocPageAsync(e.ColId, e.TypeFieldId, e.View, seek, n);

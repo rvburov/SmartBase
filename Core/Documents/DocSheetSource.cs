@@ -122,8 +122,10 @@ public sealed class DocSheet(string name, IReadOnlyList<DocSheetRow> rows, IRead
                              double defaultWidth  = DocSheetSource.DefaultWidth,
                              IReadOnlyList<DocPaint>? paints = null,
                              double fontSize = DocSheetSource.DefaultFontSize,
-                             DocSheetCut cut = default)
+                             DocSheetCut cut = default, int frozenRows = 0, int frozenColumns = 0)
 {
+    public int FrozenRows { get; } = Math.Clamp(frozenRows, 0, DocSheetSource.MaxRows);
+    public int FrozenColumns { get; } = Math.Clamp(frozenColumns, 0, DocSheetSource.MaxColumns);
     public string Name { get; } = name;
     public IReadOnlyList<DocSheetRow> Rows { get; } = rows;
 
@@ -342,6 +344,11 @@ public static class DocSheetSource
                                       BookStyles styles, bool date1904, CancellationToken ct)
     {
         var sheet  = part.Worksheet;
+        var pane = sheet?.Descendants<Pane>().FirstOrDefault();
+        var frozen = pane?.State?.Value == PaneStateValues.Frozen || pane?.State?.Value == PaneStateValues.FrozenSplit;
+        static int Split(double? value, int cap) => value is { } n && double.IsFinite(n) && n > 0 ? (int)Math.Min(n, cap) : 0;
+        var fixedRows = frozen ? Split(pane?.VerticalSplit?.Value, MaxRows) : 0;
+        var fixedColumns = frozen ? Split(pane?.HorizontalSplit?.Value, MaxColumns) : 0;
         var merges = Merges(sheet);
         var format = Format(sheet);
         var widths = Widths(sheet, format.Width);
@@ -349,7 +356,7 @@ public static class DocSheetSource
         var data = sheet?.Elements<SheetData>().FirstOrDefault();
         if (data is null)
             return new DocSheet(name, [], widths, format.Height, format.Width,
-                                styles.Paints, styles.FontSize);
+                                styles.Paints, styles.FontSize, frozenRows: fixedRows, frozenColumns: fixedColumns);
 
         var cutRows = false;   // дальше потолка строк лист не читался
         var widest  = 0;       // самая правая колонка с данными, с единицы, — и за потолком тоже
@@ -456,7 +463,7 @@ public static class DocSheetSource
 
         return new DocSheet(name, rows, widths, format.Height, format.Width,
                             styles.Paints, styles.FontSize,
-                            CutOf(sheet, rows, last, cutRows, widest));
+                            CutOf(sheet, rows, last, cutRows, widest), fixedRows, fixedColumns);
     }
 
     /// <summary>

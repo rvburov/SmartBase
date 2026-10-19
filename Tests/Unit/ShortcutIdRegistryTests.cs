@@ -18,7 +18,7 @@ public sealed class ShortcutIdRegistryTests
     // Литерал вида «блок.действие» или «блок.ref.действие» с блоком из реестра. Имена файлов
     // (app.db, notes.md) отсеиваются по расширению: у id расширений не бывает.
     private static readonly Regex IdLiteral = new(
-        "\"((?:app|sidebar|table|record|calendar|tasks|notes|notesTree|windows)\\.[A-Za-z0-9_.]+)\"",
+        "\"((?:app|sidebar|table|record|calendar|tasks|notes|notesTree|windows|library)\\.[A-Za-z0-9_.]+)\"",
         RegexOptions.Compiled);
 
     private static readonly string[] FileSuffixes = [".db", ".md", ".json", ".cs", ".axaml", ".log", ".txt"];
@@ -51,6 +51,8 @@ public sealed class ShortcutIdRegistryTests
                 foreach (Match m in IdLiteral.Matches(File.ReadAllText(file)))
                 {
                     var id = m.Groups[1].Value;
+                    // Ключ фоновой работы, а не сочетания клавиш.
+                    if (id == "library.read") continue;
                     if (FileSuffixes.Any(s => id.EndsWith(s, StringComparison.OrdinalIgnoreCase))) continue;
                     if (ShortcutActions.Find(id) is null)
                         unknown.Add($"{Path.GetRelativePath(root, file)}: {id}");

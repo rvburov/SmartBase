@@ -56,6 +56,19 @@ public sealed class DocIndexServiceTests : IDisposable
     private async Task Settle() =>
         Assert.True(await _service.Wait(Patience), "очередь не закончила прогон");
 
+    [Fact]
+    public async Task Disposal_waits_for_the_worker_and_rejects_new_work()
+    {
+        var paths = Pile(30, "закрытие");
+        Assert.Equal(paths.Count, _service.Start(paths));
+        var waiting = _service.Wait();
+        await _service.DisposeAsync().AsTask().WaitAsync(Patience);
+        await waiting.WaitAsync(Patience);
+        Assert.False(_service.Running);
+        Assert.Throws<ObjectDisposedException>(() => _service.StartPending(paths));
+        await _service.DisposeAsync();
+    }
+
     private string Write(string name, string text)
     {
         var path = Path.Combine(_dir, name);

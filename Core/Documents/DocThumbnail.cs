@@ -194,28 +194,34 @@ public static class DocThumbnail
     }
 
     /// <summary>
-    /// Уборка кеша: стирает картинки, к которым давно не обращались. Зовется раз в запуск,
+    /// Уборка кеша: стирает старые картинки по времени записи и ограничивает объем папки. Зовется раз в запуск,
     /// ошибки глотает — недоступный кеш это не повод падать.
     /// </summary>
-    public static int Tidy(string cacheDir, int keepDays = KeepDays)
+    public static int Tidy(string cacheDir, int keepDays = KeepDays,
+                           long maxBytes = DocLibraryLimits.ThumbnailCacheBytes)
     {
         var removed = 0;
         try
         {
             if (!Directory.Exists(cacheDir)) return 0;
             var edge = DateTime.UtcNow.AddDays(-Math.Max(1, keepDays));
-            foreach (var file in Directory.EnumerateFiles(cacheDir, "*.png"))
+            var files = new DirectoryInfo(cacheDir).EnumerateFiles("*.png")
+                .OrderBy(f => f.LastWriteTimeUtc).ThenBy(f => f.Name, StringComparer.Ordinal).ToList();
+            var bytes = files.Sum(f => f.Length);
+            foreach (var file in files)
             {
+                if (file.LastWriteTimeUtc >= edge && bytes <= Math.Max(0, maxBytes)) continue;
                 try
                 {
-                    if (File.GetLastAccessTimeUtc(file) >= edge) continue;
-                    File.Delete(file);
+                    var size = file.Length;
+                    file.Delete();
+                    bytes -= size;
                     removed++;
                 }
                 catch { /* занят или пропал — пропускаем */ }
             }
         }
-        catch { /* нет доступа к папке кеша — уборки просто не будет */ }
+        catch { /* нет доступа — уборка не мешает чтению */ }
         return removed;
     }
 

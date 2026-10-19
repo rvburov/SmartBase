@@ -142,6 +142,8 @@ public partial class App : Application
 
                             desktop.Exit += (_, _) =>
                             {
+                                // Отмена сразу; тяжелый разбор не задерживает выход UI-потока.
+                                _ = Database.DocIndex.DocIndexService.DetachAsync();
                                 var mounted = workspace.Mounted.Count;
                                 // Файл единственного экземпляра — первым делом: если закрытие сетевой
                                 // базы зависнет, повторный запуск (и перезапуск апдейтером) не должен

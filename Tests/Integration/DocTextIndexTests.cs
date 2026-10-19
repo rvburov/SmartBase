@@ -45,6 +45,19 @@ public sealed class DocTextIndexTests : IDisposable
     private void Put(string path, string text) =>
         _index.Put(path, new DocText(DocTextStatus.Ok, DocTextExtractor.Normalize(text)));
 
+    [Theory]
+    [InlineData("40 м²", "м2")]
+    [InlineData("40 м2", "м²")]
+    [InlineData("объем 5 см³", "см3")]
+    [InlineData("объем 5 см3", "см³")]
+    public void Typed_units_find_and_highlight_superscript_units(string text, string query)
+    {
+        var path = Write("units.txt", text);
+        Put(path, text);
+        Assert.Single(_index.Search(query));
+        Assert.Single(DocHighlight.Find(text, DocHighlight.Tokens(query)));
+    }
+
     // ── Схема ────────────────────────────────────────────────────────────────
 
     /// <summary>

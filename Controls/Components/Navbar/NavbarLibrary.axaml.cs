@@ -1,3 +1,4 @@
+using SmartBase.Core.Documents;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
@@ -24,8 +25,7 @@ namespace SmartBase.Controls.Components;
 /// списка разъехалась бы с оригиналом по мелочам (правила галочек при поиске, «(Пусто)»
 /// последним, ширина строки под прокруткой), а чинить пришлось бы дважды.
 ///
-/// Сортировки в выпадашке нет (<c>Sortable = false</c>): порядок ленты задает коллекция, а не
-/// тип документа. Показать «От А до Я» и ничего не переставить было бы хуже, чем не показывать.
+/// Тип документа не задает сортировку: для общего порядка всех баз рядом стоит отдельный селектор.
 /// </summary>
 public partial class NavbarLibrary : UserControl
 {
@@ -50,6 +50,12 @@ public partial class NavbarLibrary : UserControl
     {
         InitializeComponent();
         TypeBtn.Click += (_, _) => ShowTypes();
+        SortSelector.ItemsSource = new[] { "По коллекциям", "По названию ↑", "По названию ↓", "По изменению файла" };
+        SyncSort();
+        SortSelector.SelectionChanged += (_, _) =>
+        {
+            if (!_syncSort && SortSelector.SelectedIndex >= 0) LibrarySettings.SetSort((DocSort)SortSelector.SelectedIndex);
+        };
 
         ReaderBtn.IsCheckedChanged += (_, _) =>
         {
@@ -71,6 +77,14 @@ public partial class NavbarLibrary : UserControl
     {
         if (ReaderBtn.IsChecked == isOpen) return;
         ReaderBtn.IsChecked = isOpen;   // вызовет IsCheckedChanged → UpdateReaderIcon
+    }
+
+    private bool _syncSort;
+    public void SyncSort()
+    {
+        _syncSort = true;
+        SortSelector.SelectedIndex = (int)LibrarySettings.Sort;
+        _syncSort = false;
     }
 
     private void UpdateReaderIcon()

@@ -15,7 +15,7 @@ if (args.Length == 0)
     Console.WriteLine("  delete  --db PATH [--batch N] [--col ИМЯ]      — удаление большой коллекции: время, темп, файл и -wal, память");
     Console.WriteLine("  pgdelete [--rows N] [--db ИМЯ]                 — то же удаление на PostgreSQL (стенд sb-pg)");
     Console.WriteLine("  wide    --db PATH [--columns N]                — цена широкой таблицы в ядре: снимок открытия, страницы, значения");
-    Console.WriteLine("  docread [--count N] [--pages N] [--dir PATH]  — скорость чтения текста документов (библиотека документов)");
+    Console.WriteLine("  docread [--count N] [--pages N] [--dir PATH] [--csv PATH] — разбор, FTS и открытие XLSX (библиотека документов)");
     Console.WriteLine("  docfeed [--docs N] [--cols N] [--files N] [--root DIR] [--db PATH] — лента библиотеки: счет, страницы, перепись кеша");
     Console.WriteLine("  backup  --db PATH [--network]                  — резервная копия: файл проводником, прежняя и нынешняя копия");
     Console.WriteLine("  pgmove  --db PATH [--pg ИМЯ] [--col ИМЯ]       — перенос коллекции SQLite → PostgreSQL и обратно (стенд sb-pg)");

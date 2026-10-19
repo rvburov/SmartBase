@@ -28,6 +28,52 @@ namespace SmartBase.Tests.Integration;
 /// </summary>
 public sealed class DocThumbnailTests : IDisposable
 {
+    [Fact]
+    public void Tidy_uses_write_age_even_when_access_time_says_the_opposite()
+    {
+        Directory.CreateDirectory(_cache);
+        var old = Path.Combine(_cache, "old.png");
+        var fresh = Path.Combine(_cache, "fresh.png");
+        File.WriteAllBytes(old, [1, 2]);
+        File.WriteAllBytes(fresh, [3, 4]);
+        File.SetLastWriteTimeUtc(old, DateTime.UtcNow.AddDays(-100));
+        File.SetLastAccessTimeUtc(old, DateTime.UtcNow);
+        File.SetLastAccessTimeUtc(fresh, DateTime.UtcNow.AddDays(-100));
+        Assert.Equal(1, DocThumbnail.Tidy(_cache));
+        Assert.False(File.Exists(old));
+        Assert.True(File.Exists(fresh));
+    }
+
+    [Fact]
+    public void Tidy_removes_oldest_images_until_the_size_budget_is_met()
+    {
+        Directory.CreateDirectory(_cache);
+        for (var i = 0; i < 3; i++)
+        {
+            var file = Path.Combine(_cache, $"{i}.png");
+            File.WriteAllBytes(file, new byte[10]);
+            File.SetLastWriteTimeUtc(file, DateTime.UtcNow.AddDays(i - 3));
+        }
+        Assert.Equal(2, DocThumbnail.Tidy(_cache, maxBytes: 10));
+        Assert.Equal("2.png", Path.GetFileName(Assert.Single(Directory.GetFiles(_cache))));
+    }
+
+    [Fact]
+    public void Editing_the_source_produces_a_new_thumbnail()
+    {
+        var path = WritePdf("edited.pdf", 595, 842);
+        var first = DocThumbnail.Render(_cache, path);
+        Assert.NotNull(first);
+        var bytes = File.ReadAllBytes(first);
+        var stamp = File.GetLastWriteTimeUtc(path);
+        WritePdf("edited.pdf", 842, 595);
+        File.SetLastWriteTimeUtc(path, stamp.AddSeconds(2));
+        Assert.Null(DocThumbnail.Cached(_cache, path));
+        var second = DocThumbnail.Render(_cache, path);
+        Assert.NotNull(second);
+        Assert.NotEqual(first, second);
+        Assert.False(bytes.SequenceEqual(File.ReadAllBytes(second)));
+    }
     private readonly string _dir;
     private readonly string _cache;
 

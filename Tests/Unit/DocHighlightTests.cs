@@ -112,7 +112,7 @@ public sealed class DocHighlightTests
     {
         Assert.Equal(["м²"], Words("площадь 40 м² и масса", "м²"));
         Assert.Equal(["½"],  Words("доля ½ ставки", "½"));
-        Assert.Empty(Words("объем 5 м³", "м3"));
+        Assert.Equal(["м³"], Words("объем 5 м³", "м3"));
     }
 
     /// <summary>Греческие начертания одной буквы — одна буква: «φ» находит и «ϕ», как в индексе.</summary>

@@ -1,0 +1,107 @@
+pass,file,bytes,extract_ms,fts_ms,book_ms,status,chars
+1,"CppCoreGuidelines.md",841419,13.300,20.010,0.000,Ok,784586
+1,"PDF 2.0 UTF-8 string and annotation.pdf",4504,287.933,0.470,0.000,NoText,0
+1,"PDF 2.0 image with BPC.pdf",8989,54.976,0.425,0.000,Ok,199
+1,"PDF 2.0 via incremental save.pdf",5607,1.038,0.266,0.000,Ok,26
+1,"PDF 2.0 with offset start.pdf",5264,6.356,0.257,0.000,Ok,26
+1,"PDF 2.0 with page level output intent.pdf",10538,7.132,0.377,0.000,Ok,235
+1,"Simple PDF 2.0 file.pdf",5211,5.466,2.137,0.000,Ok,11
+1,"linux-coding-style.txt",45673,0.904,1.540,0.000,Ok,43914
+1,"pdf20-utf8-test.pdf",13926,64.825,0.522,0.000,Ok,107
+1,"riscv-spec.pdf",5165389,1605.861,10.774,0.000,Ok,608888
+1,"sp800-63-3-definitions.md",36743,0.757,1.211,0.000,Ok,36575
+1,"sp800-63-3-errata.md",1087,0.047,0.279,0.000,Ok,1079
+1,"sp800-63-3-sec1_2_introduction.md",15627,0.319,0.617,0.000,Ok,15572
+1,"sp800-63-3-sec3_definitions.md",169,0.028,2.610,0.000,Ok,166
+1,"sp800-63-3-sec4_model.md",22131,0.398,0.885,0.000,Ok,22063
+1,"sp800-63-3-sec5_DIRM.md",18835,0.402,0.670,0.000,Ok,18742
+1,"sp800-63-3-sec6_xAL.md",17896,0.403,0.678,0.000,Ok,17494
+1,"sp800-63-3-sec7_tofedornottofed.md",1970,0.059,0.347,0.000,Ok,1961
+1,"sp800-63-3-sec8_references.md",6863,0.139,0.465,0.000,Ok,6818
+1,"sp800-63a-errata.md",1509,0.099,0.303,0.000,Ok,1492
+1,"sp800-63a-sec10_references.md",5075,0.113,0.383,0.000,Ok,5043
+1,"sp800-63a-sec1_2_introduction.md",5430,0.152,0.394,0.000,Ok,5406
+1,"sp800-63a-sec3_definitions.md",183,0.029,0.249,0.000,Ok,179
+1,"sp800-63a-sec4_ial.md",24261,0.511,0.767,0.000,Ok,23939
+1,"sp800-63a-sec5_proofing.md",22569,0.427,0.725,0.000,Ok,22422
+1,"sp800-63a-sec6_dc.md",2539,0.073,0.333,0.000,Ok,2529
+1,"sp800-63a-sec7_security.md",3777,0.092,0.365,0.000,Ok,3748
+1,"sp800-63a-sec8_privacy.md",10111,0.199,0.515,0.000,Ok,10077
+1,"sp800-63a-sec9_usability.md",17923,0.399,0.664,0.000,Ok,17740
+1,"sp800-63b-appA_memorized.md",7687,0.191,3.491,0.000,Ok,7664
+1,"sp800-63b-errata.md",2026,0.065,0.353,0.000,Ok,2006
+1,"sp800-63b-references.md",11891,0.226,0.549,0.000,Ok,11807
+1,"sp800-63b-sec10_usability.md",27044,0.553,0.850,0.000,Ok,26825
+1,"sp800-63b-sec1_2_introduction.md",5565,0.123,0.387,0.000,Ok,5543
+1,"sp800-63b-sec3_definitions.md",183,0.028,0.308,0.000,Ok,180
+1,"sp800-63b-sec4_aal.md",19908,0.365,0.653,0.000,Ok,19818
+1,"sp800-63b-sec5_authenticators.md",58975,1.156,1.320,0.000,Ok,58583
+1,"sp800-63b-sec6_lifecycle.md",15025,0.327,0.642,0.000,Ok,14962
+1,"sp800-63b-sec7_session.md",8385,0.196,0.537,0.000,Ok,8331
+1,"sp800-63b-sec8_security.md",12739,0.276,0.583,0.000,Ok,12696
+1,"sp800-63b-sec9_privacy.md",5346,0.119,0.397,0.000,Ok,5326
+1,"sp800-63c-errata.md",1109,0.046,0.302,0.000,Ok,1093
+1,"sp800-63c-references.md",4231,0.100,0.374,0.000,Ok,4206
+1,"sp800-63c-sec10_usability.md",16176,0.345,0.685,0.000,Ok,16085
+1,"sp800-63c-sec11_examples.md",8309,0.170,5.623,0.000,Ok,8271
+1,"sp800-63c-sec1_2_introduction.md",4191,0.083,0.288,0.000,Ok,4177
+1,"sp800-63c-sec3_definitions.md",190,0.020,0.154,0.000,Ok,187
+1,"sp800-63c-sec4_fal.md",7962,0.112,0.294,0.000,Ok,7936
+1,"sp800-63c-sec5_federation.md",15111,0.200,0.484,0.000,Ok,15033
+1,"sp800-63c-sec6_assertions.md",14926,0.198,0.389,0.000,Ok,14876
+1,"sp800-63c-sec7_presentation.md",8633,0.242,0.312,0.000,Ok,8575
+1,"sp800-63c-sec8_security.md",5275,0.080,0.238,0.000,Ok,5255
+1,"sp800-63c-sec9_privacy.md",12043,0.162,0.403,0.000,Ok,12005
+2,"CppCoreGuidelines.md",841419,20.879,11.973,0.000,Ok,784586
+2,"PDF 2.0 UTF-8 string and annotation.pdf",4504,0.450,0.214,0.000,NoText,0
+2,"PDF 2.0 image with BPC.pdf",8989,0.497,0.189,0.000,Ok,199
+2,"PDF 2.0 via incremental save.pdf",5607,0.239,0.165,0.000,Ok,26
+2,"PDF 2.0 with offset start.pdf",5264,0.340,0.165,0.000,Ok,26
+2,"PDF 2.0 with page level output intent.pdf",10538,0.473,0.172,0.000,Ok,235
+2,"Simple PDF 2.0 file.pdf",5211,0.306,1.546,0.000,Ok,11
+2,"linux-coding-style.txt",45673,1.272,1.011,0.000,Ok,43914
+2,"pdf20-utf8-test.pdf",13926,1.289,0.270,0.000,Ok,107
+2,"riscv-spec.pdf",5165389,654.401,7.588,0.000,Ok,608888
+2,"sp800-63-3-definitions.md",36743,0.440,0.845,0.000,Ok,36575
+2,"sp800-63-3-errata.md",1087,0.033,0.185,0.000,Ok,1079
+2,"sp800-63-3-sec1_2_introduction.md",15627,0.211,0.428,0.000,Ok,15572
+2,"sp800-63-3-sec3_definitions.md",169,0.019,1.727,0.000,Ok,166
+2,"sp800-63-3-sec4_model.md",22131,0.255,0.533,0.000,Ok,22063
+2,"sp800-63-3-sec5_DIRM.md",18835,0.247,0.459,0.000,Ok,18742
+2,"sp800-63-3-sec6_xAL.md",17896,0.208,0.445,0.000,Ok,17494
+2,"sp800-63-3-sec7_tofedornottofed.md",1970,0.039,0.187,0.000,Ok,1961
+2,"sp800-63-3-sec8_references.md",6863,0.089,0.303,0.000,Ok,6818
+2,"sp800-63a-errata.md",1509,0.034,0.173,0.000,Ok,1492
+2,"sp800-63a-sec10_references.md",5075,0.067,0.239,0.000,Ok,5043
+2,"sp800-63a-sec1_2_introduction.md",5430,0.075,0.238,0.000,Ok,5406
+2,"sp800-63a-sec3_definitions.md",183,0.018,0.158,0.000,Ok,179
+2,"sp800-63a-sec4_ial.md",24261,0.273,0.458,0.000,Ok,23939
+2,"sp800-63a-sec5_proofing.md",22569,0.293,0.441,0.000,Ok,22422
+2,"sp800-63a-sec6_dc.md",2539,0.047,0.186,0.000,Ok,2529
+2,"sp800-63a-sec7_security.md",3777,0.056,0.224,0.000,Ok,3748
+2,"sp800-63a-sec8_privacy.md",10111,0.127,0.349,0.000,Ok,10077
+2,"sp800-63a-sec9_usability.md",17923,0.211,0.453,0.000,Ok,17740
+2,"sp800-63b-appA_memorized.md",7687,0.102,2.286,0.000,Ok,7664
+2,"sp800-63b-errata.md",2026,0.042,0.208,0.000,Ok,2006
+2,"sp800-63b-references.md",11891,0.176,0.375,0.000,Ok,11807
+2,"sp800-63b-sec10_usability.md",27044,0.305,0.582,0.000,Ok,26825
+2,"sp800-63b-sec1_2_introduction.md",5565,0.078,0.247,0.000,Ok,5543
+2,"sp800-63b-sec3_definitions.md",183,0.018,0.126,0.000,Ok,180
+2,"sp800-63b-sec4_aal.md",19908,0.253,0.397,0.000,Ok,19818
+2,"sp800-63b-sec5_authenticators.md",58975,0.683,0.880,0.000,Ok,58583
+2,"sp800-63b-sec6_lifecycle.md",15025,0.185,0.375,0.000,Ok,14962
+2,"sp800-63b-sec7_session.md",8385,0.108,0.319,0.000,Ok,8331
+2,"sp800-63b-sec8_security.md",12739,0.155,0.351,0.000,Ok,12696
+2,"sp800-63b-sec9_privacy.md",5346,0.074,0.439,0.000,Ok,5326
+2,"sp800-63c-errata.md",1109,0.032,0.174,0.000,Ok,1093
+2,"sp800-63c-references.md",4231,0.060,0.217,0.000,Ok,4206
+2,"sp800-63c-sec10_usability.md",16176,0.190,0.468,0.000,Ok,16085
+2,"sp800-63c-sec11_examples.md",8309,0.109,5.195,0.000,Ok,8271
+2,"sp800-63c-sec1_2_introduction.md",4191,0.081,0.337,0.000,Ok,4177
+2,"sp800-63c-sec3_definitions.md",190,0.019,0.137,0.000,Ok,187
+2,"sp800-63c-sec4_fal.md",7962,0.103,0.281,0.000,Ok,7936
+2,"sp800-63c-sec5_federation.md",15111,0.175,0.408,0.000,Ok,15033
+2,"sp800-63c-sec6_assertions.md",14926,0.237,0.451,0.000,Ok,14876
+2,"sp800-63c-sec7_presentation.md",8633,0.137,0.292,0.000,Ok,8575
+2,"sp800-63c-sec8_security.md",5275,0.073,0.229,0.000,Ok,5255
+2,"sp800-63c-sec9_privacy.md",12043,0.147,0.387,0.000,Ok,12005

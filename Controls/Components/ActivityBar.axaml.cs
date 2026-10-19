@@ -19,7 +19,6 @@ public partial class ActivityBar : UserControl
 
         // Значок фоновых работ живет отдельно от разделов: он показывает не «где я», а «что
         // сейчас делает программа». Реестр отчитывается с любого потока — маршалим сами.
-        BackgroundJobs.Changed += OnBackgroundJobsChanged;
         UpdateWorkButton();
 
         SidebarBtn.IsCheckedChanged += (_, _) =>
@@ -41,6 +40,19 @@ public partial class ActivityBar : UserControl
     }
 
     // ── Значок фоновых работ ──────────────────────────────────────────────────
+
+    protected override void OnAttachedToVisualTree(Avalonia.VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        BackgroundJobs.Changed += OnBackgroundJobsChanged;
+        UpdateWorkButton();
+    }
+
+    protected override void OnDetachedFromVisualTree(Avalonia.VisualTreeAttachmentEventArgs e)
+    {
+        BackgroundJobs.Changed -= OnBackgroundJobsChanged;
+        base.OnDetachedFromVisualTree(e);
+    }
 
     private void OnBackgroundJobsChanged() => Dispatcher.UIThread.Post(UpdateWorkButton);
 

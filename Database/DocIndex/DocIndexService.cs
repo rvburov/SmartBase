@@ -73,14 +73,15 @@ public readonly record struct DocIndexRunEnd(int Done, int Total, Exception? Err
 /// Раньше ошибка записи глоталась: прогон «читал» оставшиеся тысячи документов в никуда и в конце
 /// сообщал «прочитано», а любое другое исключение в потоке роняло всю программу.
 /// </summary>
-public sealed class DocIndexService
+public sealed class DocIndexService : IAsyncDisposable
 {
     private readonly DocTextIndex _index;
     private readonly object       _lock = new();
 
     private CancellationTokenSource?  _cts;
     private Thread?                   _thread;
-    private readonly ManualResetEventSlim _idle = new(initialState: true);
+    private TaskCompletionSource _idle = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private bool _disposed;
     private readonly Queue<string>   _queue = new();
     private readonly HashSet<string> _queued = new(StringComparer.Ordinal);
     private int _done;
@@ -92,7 +93,11 @@ public sealed class DocIndexService
     // сироты появляются не быстрее, чем человек переименовывает документы.
     private int _swept;
 
-    public DocIndexService(DocTextIndex index) => _index = index;
+    public DocIndexService(DocTextIndex index)
+    {
+        _index = index;
+        _idle.SetResult();
+    }
 
     /// <summary>Кеш, в который пишет очередь — им же пользуется поиск.</summary>
     public DocTextIndex Index => _index;
@@ -140,10 +145,10 @@ public sealed class DocIndexService
     /// </summary>
     public int StartPending(IReadOnlyCollection<string> pending)
     {
-        if (pending.Count == 0) return 0;
-
         lock (_lock)
         {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (pending.Count == 0) return 0;
             var added = 0;
             foreach (var p in pending)
                 if (_queued.Add(DocTextIndex.KeyOf(p))) { _queue.Enqueue(p); added++; }
@@ -171,7 +176,8 @@ public sealed class DocIndexService
         _startedTicks = System.Diagnostics.Stopwatch.GetTimestamp();
         _pace         = new DocReadPace();
         _cts          = new CancellationTokenSource();
-        _idle.Reset();
+        if (_idle.Task.IsCompleted)
+            _idle = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         var ct = _cts.Token;
         _thread = new Thread(() => Drain(ct))
@@ -247,10 +253,28 @@ public sealed class DocIndexService
     }
 
     /// <summary>Дожидается конца прогона — для очистки кеша, тестов и закрытия приложения.</summary>
-    public Task Wait() => Task.Run(() => _idle.Wait());
+    public Task Wait()
+    {
+        lock (_lock) return _idle.Task;
+    }
 
     /// <summary>То же с потолком ожидания; <c>false</c> — не дождались.</summary>
-    public Task<bool> Wait(TimeSpan timeout) => Task.Run(() => _idle.Wait(timeout));
+    public async Task<bool> Wait(TimeSpan timeout)
+    {
+        try { await Wait().WaitAsync(timeout).ConfigureAwait(false); return true; }
+        catch (TimeoutException) { return false; }
+    }
+
+    /// <summary>Запретить новые прогоны, отменить текущий и дождаться выхода без блокировки UI.</summary>
+    public ValueTask DisposeAsync()
+    {
+        lock (_lock)
+        {
+            _disposed = true;
+            Stop();
+            return new ValueTask(_idle.Task);
+        }
+    }
 
     private void Drain(CancellationToken ct)
     {
@@ -321,7 +345,7 @@ public sealed class DocIndexService
                     // Под тем же замком, что и Reset нового прогона: иначе между «прогон
                     // кончился» и этой строкой успел бы начаться следующий, и ожидающий
                     // очистку кеша отпустило бы при живом потоке, который еще пишет в кеш.
-                    _idle.Set();
+                    _idle.TrySetResult();
                 }
             }
 
@@ -408,7 +432,18 @@ public sealed class DocIndexService
     /// <summary>Общая очередь; null — кеш не открылся при старте.</summary>
     public static DocIndexService? Current => _current;
 
-    public static void Attach(DocIndexService service) => _current = service;
+    public static void Attach(DocIndexService service)
+    {
+        var previous = Interlocked.Exchange(ref _current, service);
+        if (previous is not null && !ReferenceEquals(previous, service)) _ = previous.DisposeAsync();
+    }
+
+    /// <summary>Отпустить общую очередь при закрытии приложения.</summary>
+    public static ValueTask DetachAsync()
+    {
+        var previous = Interlocked.Exchange(ref _current, null);
+        return previous?.DisposeAsync() ?? ValueTask.CompletedTask;
+    }
 
     /// <summary>
     /// Открыть кеш по пути и стать общей очередью; <c>false</c> — не удалось, раздел останется
@@ -422,7 +457,7 @@ public sealed class DocIndexService
     {
         try
         {
-            _current = new DocIndexService(new DocTextIndex(path)) { MaxFileMb = maxFileMb };
+            Attach(new DocIndexService(new DocTextIndex(path)) { MaxFileMb = maxFileMb });
             return true;
         }
         catch (Exception ex)

@@ -1,4 +1,5 @@
 using SmartBase.Core.Models;
+using SmartBase.Core.Documents;
 using SmartBase.Database.Repositories;
 
 namespace SmartBase.Tests.Integration;
@@ -37,6 +38,69 @@ public sealed class DocPagingTests
 
     private static ConstructorRepository.DocView Types(params string[] types) =>
         new(new HashSet<string>(types));
+
+    [Fact]
+    public async Task Cancelled_order_query_reports_cancellation_instead_of_an_empty_result()
+    {
+        using var db = new TempDatabase();
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var shell = Library(db.Constructor);
+        Assert.ThrowsAny<OperationCanceledException>(() => db.Constructor.GetDocOrderKeys(
+            shell.ColId, shell.TypeId, ConstructorRepository.DocView.All, DocSort.Modified, cts.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => db.Constructor.GetDocOrderKeysAsync(
+            shell.ColId, shell.TypeId, ConstructorRepository.DocView.All, DocSort.Title, cts.Token));
+    }
+
+    [Fact]
+    public void Modified_order_reads_real_file_stamps_after_the_database_query()
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+        var shell = Library(repo);
+        var folder = Path.Combine(Path.GetTempPath(), "sb-sort-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            var a = Path.Combine(folder, "a.txt");
+            var b = Path.Combine(folder, "b.txt");
+            File.WriteAllText(a, "старый");
+            File.WriteAllText(b, "новый");
+            File.SetLastWriteTimeUtc(a, DateTime.UtcNow.AddDays(-2));
+            var old = AddDoc(repo, shell, "А", a);
+            var fresh = AddDoc(repo, shell, "Я", b);
+            var keys = repo.GetDocOrderKeys(shell.ColId, shell.TypeId, ConstructorRepository.DocView.All, DocSort.Modified);
+            Assert.All(keys, k => Assert.True(k.Modified > 0));
+            var order = DocOrderPlan.Merge([new(1, shell.ColId, keys)], DocSort.Modified);
+            Assert.Equal(new[] { fresh, old }, order.Select(k => k.RecordId).ToArray());
+        }
+        finally { Directory.Delete(folder, true); }
+    }
+
+    [Fact]
+    public void Global_order_fetches_exact_file_keys_and_applies_type_filter()
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+        var shell = Library(repo);
+        var second = SampleData.AddField(repo, shell.ColId, "Скан", "file");
+        repo.SetFileFieldInLibrary(second.Id!.Value, true);
+        var a = AddDoc(repo, shell, "Я", "/a.pdf", "СП");
+        var b = AddDoc(repo, shell, "А", "/b.pdf", "ГОСТ");
+        repo.SetFieldValue(a, second.Id.Value, "/scan.pdf");
+        var keys = repo.GetDocOrderKeys(shell.ColId, shell.TypeId, Types("СП"), DocSort.Title);
+        Assert.Equal(2, keys.Count);
+        var order = DocOrderPlan.Merge([new(1, shell.ColId, keys)], DocSort.Title);
+        var docs = repo.GetDocsByOrderKeys(shell.ColId, shell.TypeId, order);
+        Assert.Equal(new[] { "/a.pdf", "/scan.pdf" }, docs.Select(d => d.Path).Order().ToArray());
+        Assert.DoesNotContain(docs, d => d.Id == b);
+        Assert.All(docs, d => Assert.Equal(shell.ColId, d.CollectionId));
+        Assert.Empty(repo.GetDocsByOrderKeys(shell.ColId, shell.TypeId, []));
+        repo.SetFieldValue(a, shell.TypeId, "ГОСТ");
+        Assert.Empty(repo.GetDocsByOrderKeys(shell.ColId, shell.TypeId, order, Types("СП")));
+        Assert.Throws<ArgumentOutOfRangeException>(() => repo.GetDocsByOrderKeys(shell.ColId, shell.TypeId,
+            Enumerable.Repeat(new DocOrderKey(0, a, shell.FileId), 201).ToArray()));
+    }
 
     // ── Размеры ──────────────────────────────────────────────────────────────
 

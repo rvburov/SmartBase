@@ -19,6 +19,9 @@ using System.Diagnostics;
 using System.Reflection;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
+using SmartBase.Utils;
+using SmartBase.Core.Documents;
 using Avalonia.Controls.Documents;
 using Avalonia.Headless;
 using Avalonia.Markup.Xaml.Styling;
@@ -64,6 +67,7 @@ Directory.CreateDirectory(dir);
 
 var failures = 0;
 var sections = new List<(string Name, int Failures)>();
+TaskCompletionSource? textRelease = null;
 try
 {
     Run();
@@ -89,8 +93,14 @@ return failures == 0 ? 0 : 1;
 // разделы оно не останавливает.
 void Run()
 {
-    var reader = new DocReaderView();
-    var window = new Window { Width = 520, Height = 700, Content = reader };
+    var reader = new DocReaderView(async (path, maxMb, ct) =>
+    {
+        var release = textRelease;
+        if (release is not null) await release.Task.WaitAsync(ct);
+        return await DocReadText.ReadAsync(path, maxMb, ct);
+    });
+    var host = new Grid { Children = { reader } };
+    var window = new Window { Width = 520, Height = 700, Content = host };
     window.Show();
 
     Section("текстовый файл",            () => TextFile(reader));
@@ -100,14 +110,22 @@ void Run()
     Section("как в документе",           () => Pages(reader, window));
     Section("текст дочитывается позже",  () => LateText(reader));
     Section("лист книги таблицей",       () => Sheets(reader));
+    Section("закрепленные области",      () => FrozenPanes(reader));
+    Section("клавиши библиотеки",        () => LibraryKeys(reader, host));
     Section("большая книга",             () => BigBook(reader));
+    Section("закрытие панели",           () => DetachReader(reader, host));
+    window.Close();
+    Section("подписки панелей",          PanelSubscriptions);
+    Section("отмена подкачки ленты",      CancelFeed);
+    Section("сортировка страниц двух баз", SortedPages);
+    Section("отмена общей сортировки",    CancelOrder);
 }
 
 void Section(string name, Action body)
 {
     var before = failures;
     try { body(); }
-    catch (Exception ex) { Check(false, $"раздел упал: {ex.GetType().Name}: {ex.Message}"); }
+    catch (Exception ex) { Check(false, $"раздел упал: {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}"); }
     sections.Add((name, failures - before));
 }
 
@@ -512,52 +530,57 @@ void LateText(DocReaderView reader)
         File.WriteAllBytes(tome, builder.Build());
     }
 
-    reader.Show(new DocRecord { Title = "Том", Path = tome }, "dogovor");
-
-    var btn   = Find<ToggleButton>(reader, "DocModeBtn")!;
-    var lines = Find<ListBox>(reader, "LinesList")!;
-    string Counter() => Find<TextBlock>(reader, "CounterLabel")?.Text ?? "";
-    // Текст дочитан — у списка строк есть источник. ItemCount для этого не годится: после
-    // сброса источника он держит число строк прошлого документа.
-    bool TextLoaded() => lines.ItemsSource is System.Collections.ICollection { Count: > 0 };
-
-    if (!Wait(() => btn.IsEnabled, "страницы тома не открылись")) return;
-    btn.IsChecked = true;
-    Pump();
-
-    // Два совпадения на страницах — и шаг ко второму.
-    if (!Wait(() => HitsAtLeast(Counter(), 2), "на страницах тома не нашлось и двух совпадений")) return;
-    Find<Button>(reader, "NextBtn")?.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
-    Pump();
-
-    Console.WriteLine($"Шаг по страницам: {Counter()}, текст к этой минуте {(TextLoaded() ? "дочитан" : "еще читается")}");
-    if (TextLoaded())
+    textRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    try
     {
-        // Текст успел раньше — проверять нечего, и выдавать это за пройденную проверку нельзя.
-        Console.WriteLine("Сценарий не сложился: текст дочитался раньше шага по страницам.");
-        return;
+        reader.Show(new DocRecord { Title = "Том", Path = tome }, "dogovor");
+
+        var btn   = Find<ToggleButton>(reader, "DocModeBtn")!;
+        var lines = Find<ListBox>(reader, "LinesList")!;
+        string Counter() => Find<TextBlock>(reader, "CounterLabel")?.Text ?? "";
+        // Текст дочитан — у списка строк есть источник. ItemCount для этого не годится: после
+        // сброса источника он держит число строк прошлого документа.
+        bool TextLoaded() => lines.ItemsSource is System.Collections.ICollection { Count: > 0 };
+
+        if (!Wait(() => btn.IsEnabled, "страницы тома не открылись", attempts: 3000)) return;
+        btn.IsChecked = true;
+        Pump();
+
+        // Два совпадения на страницах — и шаг ко второму.
+        if (!Wait(() => HitsAtLeast(Counter(), 2), "на страницах тома не нашлось и двух совпадений")) return;
+        Find<Button>(reader, "NextBtn")?.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Pump();
+
+        Console.WriteLine($"Шаг по страницам: {Counter()}, текст к этой минуте {(TextLoaded() ? "дочитан" : "еще читается")}");
+        Check(!TextLoaded(), "текст показан до разрешения разбора");
+        textRelease.SetResult();
+
+        if (!Wait(TextLoaded, "текст тома так и не дочитался", attempts: 1500)) return;
+        var settle = DateTime.UtcNow.AddMilliseconds(300);
+        while (DateTime.UtcNow < settle) { Pump(); Thread.Sleep(10); }
+
+        var counter = Counter();
+        Console.WriteLine("Когда текст дочитался: " + counter);
+        Check(counter.StartsWith("2 из", StringComparison.Ordinal),
+              $"дочитавшийся текст отбросил к «{counter}» вместо второго совпадения");
+
+        // Совпадения только в самом конце тома: «290» стоит лишь на двести девяностой странице —
+        // в ее заголовке и в шестидесяти пунктах. Пока обход страниц до нее не дошел, счетчик не
+        // говорит ни «нет» — совпадение еще найдется, — ни число прежнего запроса: раньше «0 из 300»
+        // по прошлому слову стояло, пока обход не находил первое новое.
+        reader.SetQuery("290");
+        var midway = Counter();
+        Console.WriteLine($"Сразу после смены запроса: «{midway}»");
+        Check(midway.Length == 0, $"пока обход страниц не кончился, счетчик показывает «{midway}»");
+        var found = Wait(() => Counter() == "1 из 61", "совпадения в конце тома не сосчитаны", attempts: 1500);
+        Console.WriteLine("Совпадения в конце тома: " + Counter());
+        if (!found) return;
     }
-
-    if (!Wait(TextLoaded, "текст тома так и не дочитался", attempts: 1500)) return;
-    var settle = DateTime.UtcNow.AddMilliseconds(300);
-    while (DateTime.UtcNow < settle) { Pump(); Thread.Sleep(10); }
-
-    var counter = Counter();
-    Console.WriteLine("Когда текст дочитался: " + counter);
-    Check(counter.StartsWith("2 из", StringComparison.Ordinal),
-          $"дочитавшийся текст отбросил к «{counter}» вместо второго совпадения");
-
-    // Совпадения только в самом конце тома: «290» стоит лишь на двести девяностой странице —
-    // в ее заголовке и в шестидесяти пунктах. Пока обход страниц до нее не дошел, счетчик не
-    // говорит ни «нет» — совпадение еще найдется, — ни число прежнего запроса: раньше «0 из 300»
-    // по прошлому слову стояло, пока обход не находил первое новое.
-    reader.SetQuery("290");
-    var midway = Counter();
-    Console.WriteLine($"Сразу после смены запроса: «{midway}»");
-    Check(midway.Length == 0, $"пока обход страниц не кончился, счетчик показывает «{midway}»");
-    var found = Wait(() => Counter() == "1 из 61", "совпадения в конце тома не сосчитаны", attempts: 1500);
-    Console.WriteLine("Совпадения в конце тома: " + Counter());
-    if (!found) return;
+    finally
+    {
+        textRelease.TrySetResult();
+        textRelease = null;
+    }
 }
 
 // «2 из 37» — совпадений на страницах уже не меньше двух.
@@ -568,6 +591,98 @@ static bool HitsAtLeast(string counter, int count)
 }
 
 // ── Лист книги таблицей ─────────────────────────────────────────────────────────
+
+void FrozenPanes(DocReaderView reader)
+{
+    var path = Path.Combine(dir, "frozen.xlsx");
+    WriteBigBook(path, 1, 120, 16);
+    using (var doc = SpreadsheetDocument.Open(path, true))
+    {
+        var sheet = doc.WorkbookPart!.WorksheetParts.First().Worksheet;
+        sheet.PrependChild(new X.SheetViews(new X.SheetView(new X.Pane
+            { State = X.PaneStateValues.Frozen, VerticalSplit = 2, HorizontalSplit = 1 }) { WorkbookViewId = 0 }));
+        sheet.Save();
+    }
+    reader.Show(new DocRecord { Title = "Закрепление", Path = path }, "");
+    var mode = Find<ToggleButton>(reader, "DocModeBtn")!;
+    if (!Wait(() => mode.IsEnabled, "книга с закреплением не открылась")) return;
+    mode.IsChecked = true;
+    Frames(4);
+    var pinned = Find<StackPanel>(reader, "FrozenRows")!;
+    var rows = Find<ListBox>(reader, "SheetRows")!;
+    Check(pinned.Children.Count == 2 && pinned.Bounds.Height > 0, "закрепленные строки не показаны отдельно");
+    Check((int)Get(reader, "_frozenColumns")! == 1, "закрепленная колонка потеряна");
+    var before = pinned.TranslatePoint(default, reader);
+    var scroll = rows.GetVisualDescendants().OfType<ScrollViewer>().First();
+    scroll.Offset = new Vector(400, 700);
+    Frames(4);
+    Check(scroll.Offset.X > 0 && scroll.Offset.Y > 0, "контрольная прокрутка не сработала");
+    Check(pinned.TranslatePoint(default, reader) == before, "закрепленные строки уехали при прокрутке");
+    Check(Math.Abs((double)Get(reader, "_scrollX")! - scroll.Offset.X) < 1, "закрепленная шапка не получила горизонтальный сдвиг");
+    Check(pinned.Children.All(c => c.Bounds.Height > 0), "закрепленные строки имеют нулевую высоту");
+}
+
+void LibraryKeys(DocReaderView reader, Grid host)
+{
+    var list = new DocListView();
+    host.Children.Add(list);
+    Frames(3);
+    var refresh = 0;
+    list.RefreshRequested += (_, _) => refresh++;
+    void Key(Control control, Key key, KeyModifiers modifiers = KeyModifiers.None) =>
+        control.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = key, KeyModifiers = modifiers });
+    try
+    {
+        Key(list, Avalonia.Input.Key.F5);
+        Check(refresh == 1, "F5 не обновил ленту ровно один раз");
+        ShortcutSettings.SetGesture("library.refresh", ShortcutGesture.Parse("F6")!.Value);
+        Key(list, Avalonia.Input.Key.F5);
+        Check(refresh == 1, "старая клавиша работает после переназначения");
+        Key(list, Avalonia.Input.Key.F6);
+        Check(refresh == 2, "новая клавиша не обновила ленту");
+        Key(list, Avalonia.Input.Key.F, KeyModifiers.Control);
+        Check(Find<TextBox>(list, "SearchBox")!.IsFocused, "Ctrl+F не перевел фокус в поиск ленты");
+        var path = Path.Combine(dir, "keys.txt");
+        File.WriteAllText(path, "ключ один\nключ два\nключ три");
+        var document = new DocRecord { Id = 37, DbId = 1, FileFieldId = 1, Title = "Клавиши", Path = path };
+        var card = new DocCardVm(document);
+        list.Show(new List<object> { card });
+        var pointer = new Avalonia.Input.Pointer(Avalonia.Input.Pointer.GetNextFreeId(), PointerType.Mouse, true);
+        var released = new PointerEventArgs(InputElement.PointerReleasedEvent, list, pointer, list,
+            new Point(1, 1), 0, PointerPointProperties.None, KeyModifiers.None);
+        Call(list, "OnCardTapped", card, new TappedEventArgs(InputElement.TappedEvent, released));
+        Check(list.IsFocused && list.Selection.Contains(document), "выбор карточки оставил фокус в поиске");
+        var read = 0;
+        var opened = 0;
+        list.DocReadRequested += (_, _) => read++;
+        list.DocActivated += (_, _) => opened++;
+        Key(list, Avalonia.Input.Key.Enter);
+        Key(list, Avalonia.Input.Key.Enter, KeyModifiers.Control);
+        Check(read == 1 && opened == 1, "Enter и Ctrl+Enter не различают чтение и открытие выбранного");
+        reader.Show(document, "ключ");
+        if (Wait(() => Find<TextBlock>(reader, "CounterLabel")?.Text == "1 из 3", "нет совпадений для проверки F3"))
+        {
+            Key(reader, Avalonia.Input.Key.F3);
+            Check(Find<TextBlock>(reader, "CounterLabel")?.Text == "2 из 3", "F3 не перешел к следующему совпадению");
+            Key(reader, Avalonia.Input.Key.F3, KeyModifiers.Shift);
+            Check(Find<TextBlock>(reader, "CounterLabel")?.Text == "1 из 3", "Shift+F3 не вернулся к предыдущему совпадению");
+        }
+        var closed = 0;
+        void Close(object? sender, EventArgs e) => closed++;
+        reader.CloseRequested += Close;
+        try
+        {
+            Key(reader, Avalonia.Input.Key.Escape);
+            Check(closed == 1, "Escape не закрыл панель чтения");
+        }
+        finally { reader.CloseRequested -= Close; }
+    }
+    finally
+    {
+        ShortcutSettings.Reset("library.refresh");
+        host.Children.Remove(list);
+    }
+}
 
 void Sheets(DocReaderView reader)
 {
@@ -753,6 +868,11 @@ void BigBook(DocReaderView reader)
     Pump();
     string Counter() => Find<TextBlock>(reader, "CounterLabel")?.Text ?? "";
 
+    if (!Wait(() => Find<ListBox>(reader, "LinesList")?.ItemsSource is System.Collections.ICollection { Count: > 0 },
+              "текст большой книги не дочитался", attempts: 6000)) return;
+    var textHits = (System.Collections.ICollection)Get(reader, "_hits")!;
+    Check(textHits.Count == 0, "у книги без запроса уже есть совпадения текста");
+
     // Правка запроса не ждет обхода книги: панель свободна сразу, а счетчик до конца обхода
     // молчит — не «нет» и не прежнее число. Сравнивается с самим обходом: пока он шел на
     // UI-потоке, правка запроса держала панель ровно столько, сколько он длился.
@@ -766,7 +886,9 @@ void BigBook(DocReaderView reader)
     var total   = sw.Elapsed.TotalMilliseconds;
     Console.WriteLine($"Обход книги кончился через {total:0} мс: «{Counter()}»");
     if (!counted) return;
-    Check(held * 3 < total, $"смена запроса держала панель {held:0} мс из {total:0} мс обхода");
+    // Проверяем причину задержки, а не отношение двух времен под нагрузкой машины:
+    // скрытый текст не обходится; его подсветка догоняет запрос при показе.
+    Check(textHits.Count == 0, "смена запроса пересчитала скрытый текст книги");
 
     // Запрос сменили, пока прежний обход шел: «позиция» есть почти в каждой ячейке, и ее обход
     // долгий. Его совпадения не попадают в новый счет — ни сразу, ни через паузу.
@@ -777,7 +899,244 @@ void BigBook(DocReaderView reader)
     while (DateTime.UtcNow < settle) { Pump(); Thread.Sleep(10); }
     Console.WriteLine("После смены запроса посреди обхода: " + Counter());
     if (recount) Check(Counter() == "1 из 12", $"прежний обход дописал свое: «{Counter()}»");
+    Find<ToggleButton>(reader, "TextModeBtn")!.IsChecked = true;
+    Pump();
+    Check(textHits.Count == 12, $"после возврата в текст найдено {textHits.Count} вместо 12");
+
 }
+
+void DetachReader(DocReaderView reader, Grid host)
+{
+    Find<ToggleButton>(reader, "DocModeBtn")!.IsChecked = true;
+    Pump();
+    var find = (DispatcherTimer)Get(reader, "_findDebounce")!;
+    var width = (DispatcherTimer)Get(reader, "_widthDebounce")!;
+    find.Start();
+    width.Start();
+    var token = ((CancellationTokenSource)Get(reader, "_docCts")!).Token;
+    host.Children.Remove(reader);
+    Pump();
+    Check(!find.IsEnabled && !width.IsEnabled, "после снятия панели таймеры продолжают работать");
+    Check(token.IsCancellationRequested, "после снятия панели разбор не отменен");
+    Check(reader.Document is null && Get(reader, "_source") is null, "снятая панель держит документ");
+    host.Children.Add(reader);
+    var path = Path.Combine(dir, "после-снятия.txt");
+    File.WriteAllText(path, "Проверка повторного открытия");
+    reader.Show(new DocRecord { Title = "Проверка", Path = path }, "Проверка");
+    Wait(() => Find<TextBlock>(reader, "CounterLabel")?.Text == "1 из 1", "панель не работает после повторного присоединения");
+}
+
+void PanelSubscriptions()
+{
+    var service = new SmartBase.Database.DocIndex.DocIndexService(
+        new SmartBase.Database.DocIndex.DocTextIndex(Path.Combine(dir, "lifecycle-index.db")));
+    SmartBase.Database.DocIndex.DocIndexService.Attach(service);
+    var library = new LibraryControllerView();
+    var bar = new SmartBase.Controls.Components.ActivityBar();
+    var sidebar = new SmartBase.Controls.Components.SidebarTree();
+    var host = new StackPanel { Children = { library, bar, sidebar } };
+    var root = new Grid();
+    var window = new Window { Content = root };
+    try
+    {
+        Check(Subscriptions(typeof(SmartBase.Utils.LibrarySettings), "Changed", library) == 0,
+              "не показанная библиотека уже удерживается настройками");
+        for (var cycle = 0; cycle < 2; cycle++)
+        {
+            root.Children.Add(host);
+            window.Show();
+            Pump();
+            Check(Subscriptions(typeof(SmartBase.Utils.LibrarySettings), "Changed", library) == 1,
+                  "показанная библиотека не слушает настройки ровно один раз");
+            Check(Subscriptions(typeof(SmartBase.Utils.LibrarySettings), "Changed", sidebar) == 1,
+                  "сайдбар не слушает настройки библиотеки ровно один раз");
+            Check(Subscriptions(service.GetType(), "Progress", library, service) == 1,
+                  "показанная библиотека не слушает прогресс ровно один раз");
+            Check(Subscriptions(typeof(SmartBase.Core.BackgroundJobs), "Changed", bar) == 1,
+                  "показанная панель разделов не слушает фоновые работы ровно один раз");
+            root.Children.Remove(host);
+            Pump();
+            Check(Subscriptions(typeof(SmartBase.Utils.LibrarySettings), "Changed", library) == 0 &&
+                  Subscriptions(typeof(SmartBase.Utils.FontScale), "Changed", library) == 0,
+                  "снятая библиотека удерживается настройками");
+            Check(Subscriptions(service.GetType(), "Progress", library, service) == 0 &&
+                  Subscriptions(service.GetType(), "Finished", library, service) == 0,
+                  "снятая библиотека удерживается очередью чтения");
+            Check(Subscriptions(typeof(SmartBase.Core.BackgroundJobs), "Changed", bar) == 0,
+                  "снятая панель разделов удерживается реестром работ");
+            Check(Subscriptions(typeof(SmartBase.Utils.LibrarySettings), "Changed", sidebar) == 0,
+                  "снятый сайдбар удерживается настройками библиотеки");
+        }
+    }
+    finally
+    {
+        window.Close();
+        SmartBase.Database.DocIndex.DocIndexService.DetachAsync().AsTask().GetAwaiter().GetResult();
+    }
+}
+
+void CancelFeed()
+{
+    using var database = SmartBase.Database.DatabaseManager.Open(73, "Стенд ленты", Path.Combine(dir, "feed.db"));
+    var repo = database.Constructor;
+    var collection = repo.AddCollection(new DbCollection { Name = "Документы" }).Id!.Value;
+    var file = repo.AddField(new DbField { CollectionId = collection, Name = "Файл", FieldType = "file" }).Id!.Value;
+    repo.SetFileFieldInLibrary(file, true);
+    var record = repo.AddRecord(new DbRecord { CollectionId = collection, Title = "Страница ленты" }).Id!.Value;
+    var path = Path.Combine(dir, "feed.txt");
+    File.WriteAllText(path, "Документ ленты");
+    repo.SetFieldValue(record, file, path);
+
+    DocVirtualList Feed() => new([new DocVirtualList.Entry
+    {
+        DbId = database.DbId, DbName = database.Name, ColId = collection, Repo = repo,
+        TypeFieldId = repo.DocTypeFieldId(collection)!.Value,
+        View = SmartBase.Database.Repositories.ConstructorRepository.DocView.All, Docs = 1,
+    }]);
+
+    var extra = repo.AddRecord(new DbRecord { CollectionId = collection, Title = "Альфа" }).Id!.Value;
+    repo.SetFieldValue(extra, file, path);
+    var entries = new List<DocVirtualList.Entry> { new()
+    {
+        DbId = database.DbId, DbName = database.Name, ColId = collection, Repo = repo,
+        TypeFieldId = repo.DocTypeFieldId(collection)!.Value,
+        View = SmartBase.Database.Repositories.ConstructorRepository.DocView.All, Docs = 2,
+    } };
+    var keysTask = DocVirtualList.BuildOrderAsync(entries, DocSort.Title);
+    if (!Wait(() => keysTask.IsCompleted, "общая сортировка не построилась")) return;
+    var ordered = new DocVirtualList(entries, order: keysTask.GetAwaiter().GetResult());
+    var first = (DocCardVm)ordered[0];
+    var last = (DocCardVm)ordered[1];
+    Call(ordered, "FlushPendingLoads");
+    if (!Wait(() => !first.IsPlaceholder && !last.IsPlaceholder, "сортированная страница не загрузилась")) return;
+    Check(first.Doc.Id == extra && last.Doc.Id == record, "сортированная страница загрузилась в исходном порядке");
+    Check(first.HasDb && first.DbText == database.Name && !first.SubtitleValue.Contains(database.Name),
+          "бейдж базы отсутствует или дублируется в подписи");
+    ordered.Cancel();
+    repo.DeleteRecord(extra);
+
+    // Контроль: тот же настоящий источник загружает карточку, если его не отменять.
+    var live = Feed();
+    var liveCard = (DocCardVm)live[0];
+    Call(live, "FlushPendingLoads");
+    if (!Wait(() => !liveCard.IsPlaceholder, "контрольная страница ленты не загрузилась", attempts: 1500)) return;
+    Check(liveCard.Doc.Path == path, "контрольная карточка загрузила другой документ");
+    live.Cancel();
+
+    var cancelled = Feed();
+    var loaded = 0;
+    cancelled.CardRealized += _ => loaded++;
+    var card = (DocCardVm)cancelled[0];
+    cancelled.Cancel();
+    // Вручную наступает срок отложенной подкачки: тест не зависит от 90 мс таймера.
+    Call(cancelled, "FlushPendingLoads");
+    if (!Wait(() => ((HashSet<int>)Get(cancelled, "_pending")!).Count == 0,
+              "отмененная подкачка не закончилась")) return;
+    Pump();
+    Check(card.IsPlaceholder && loaded == 0, "отмененный список все же загрузил документ");
+    cancelled.Cancel();
+}
+
+void CancelOrder()
+{
+    using var cts = new CancellationTokenSource();
+    var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var release = new TaskCompletionSource<List<DocOrderItem>>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var reads = 0;
+    using var database = SmartBase.Database.DatabaseManager.Open(93, "Отмена", Path.Combine(dir, "sort-cancel.db"));
+    var col = database.Constructor.AddCollection(new DbCollection { Name = "Источник" }).Id!.Value;
+    DocVirtualList.Entry Entry(int id) => new() { DbId = id, DbName = "Источник " + id, ColId = col,
+        Repo = database.Constructor, TypeFieldId = -1,
+        View = SmartBase.Database.Repositories.ConstructorRepository.DocView.All };
+    var task = DocVirtualList.BuildOrderAsync([Entry(1), Entry(2)], DocSort.Title,
+        (_, token) =>
+        {
+            Check(token == cts.Token, "запрос источника не получил токен отмены");
+            reads++;
+            entered.TrySetResult();
+            return release.Task;
+        }, cts.Token);
+    if (!Wait(() => entered.Task.IsCompleted, "первый источник не запрошен")) return;
+    cts.Cancel();
+    release.SetResult([new(1, 1, "Документ")]);
+    if (!Wait(() => task.IsCompleted, "отмена не завершила построение порядка")) return;
+    Check(task.IsCanceled && reads == 1, "отмененная сортировка продолжила читать источники или вернула результат");
+
+    var library = new LibraryControllerView();
+    var host = new Grid { Children = { library } };
+    var window = new Window { Content = host };
+    window.Show();
+    Pump();
+    var field = typeof(LibraryControllerView).GetField("_loadCts", BindingFlags.Instance | BindingFlags.NonPublic)!;
+    using var onHide = new CancellationTokenSource();
+    using var onReload = new CancellationTokenSource();
+    using var onDetach = new CancellationTokenSource();
+    try
+    {
+        field.SetValue(library, onHide);
+        library.IsVisible = false;
+        Check(onHide.IsCancellationRequested && (bool)Get(library, "_loadDeferred")!,
+              "скрытие библиотеки не остановило подготовку с отложенным повтором");
+        library.IsVisible = true;
+        Pump();
+        Check(!(bool)Get(library, "_loadDeferred")!, "возврат в библиотеку не возобновил отложенную загрузку");
+        field.SetValue(library, onReload);
+        Call(library, "LoadAsync", false, false);
+        Check(onReload.IsCancellationRequested, "новая загрузка не отменила прежнюю сортировку");
+        field.SetValue(library, onDetach);
+        host.Children.Remove(library);
+        Pump();
+        Check(onDetach.IsCancellationRequested, "снятая библиотека продолжает сортировку");
+    }
+    finally { field.SetValue(library, null); window.Close(); }
+}
+
+void SortedPages()
+{
+    using var a = SmartBase.Database.DatabaseManager.Open(91, "Первая", Path.Combine(dir, "sort-a.db"));
+    using var b = SmartBase.Database.DatabaseManager.Open(92, "Вторая", Path.Combine(dir, "sort-b.db"));
+    var path = Path.Combine(dir, "sort.txt");
+    File.WriteAllText(path, "Общий файл");
+    var entries = new List<DocVirtualList.Entry>();
+    var selected = new List<DocKey>();
+    foreach (var db in new[] { a, b })
+    {
+        var repo = db.Constructor;
+        var col = repo.AddCollection(new DbCollection { Name = "Порядок" }).Id!.Value;
+        var field = repo.AddField(new DbField { CollectionId = col, Name = "Файл", FieldType = "file" }).Id!.Value;
+        repo.SetFileFieldInLibrary(field, true);
+        var count = db == a ? 300 : 301;
+        for (var i = 0; i < count; i++)
+        {
+            var number = db == a ? 600 - i * 2 : 601 - i * 2;
+            var record = repo.AddRecord(new DbRecord { CollectionId = col, Title = number.ToString("D4") }).Id!.Value;
+            repo.SetFieldValue(record, field, path);
+            if (number is 1 or 301 or 601) selected.Add(new DocKey(db.DbId, record, field));
+        }
+        entries.Add(new DocVirtualList.Entry { DbId = db.DbId, DbName = db.Name, Repo = repo,
+            ColId = col, TypeFieldId = repo.DocTypeFieldId(col)!.Value,
+            View = SmartBase.Database.Repositories.ConstructorRepository.DocView.All, Docs = count });
+    }
+    var task = DocVirtualList.BuildOrderAsync(entries, DocSort.Title);
+    if (!Wait(() => task.IsCompleted, "каталог двух баз не построен")) return;
+    var list = new DocVirtualList(entries, selected, task.GetAwaiter().GetResult());
+    var indices = new[] { 0, 300, 600 };
+    var cards = indices.Select(i => (DocCardVm)list[i]).ToArray();
+    Call(list, "FlushPendingLoads");
+    try
+    {
+        if (!Wait(() => cards.All(c => !c.IsPlaceholder), "начало, середина и конец не загрузились", attempts: 1500)) return;
+        Check(list.Count == 601, "общий порядок потерял документы одной из баз");
+        Check(cards.Select(c => c.Doc.Title).SequenceEqual(new[] { "0001", "0301", "0601" }),
+              "страницы двух баз нарушают общий порядок");
+        Check(cards.All(c => c.IsSelected), "сортированная подкачка потеряла выделение");
+    }
+    finally { list.Cancel(); }
+}
+
+static int Subscriptions(Type type, string name, object target, object? owner = null) =>
+    (type.GetField(name, BindingFlags.Static | BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(owner) as Delegate)?
+    .GetInvocationList().Count(d => ReferenceEquals(d.Target, target)) ?? 0;
 
 void WriteBigBook(string path, int sheets, int rows, int cols)
 {

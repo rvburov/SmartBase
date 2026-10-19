@@ -2,14 +2,14 @@ namespace SmartBase.Core.Models;
 
 /// <summary>Блок раздела «Сочетания клавиш» — приставка в названии строки: «Таблица: Копировать
 /// значения ячеек».</summary>
-public enum ShortcutBlock { Global, Sidebar, Table, RecordPage, Calendar, Tasks, Notes, NotesTree, Windows }
+public enum ShortcutBlock { Global, Sidebar, Table, RecordPage, Calendar, Tasks, Notes, NotesTree, Windows, Library }
 
 /// <summary>
 /// Зона конфликтов сочетания. Действия конфликтуют, когда их зоны пересекаются: одинаковая
 /// зона либо участие <see cref="Global"/>. Разные локальные зоны живут в разных фокусах —
 /// Delete уже сегодня значит разное в таблице, календаре и боковой панели, и это нормально.
 /// </summary>
-public enum ShortcutContext { Global, Table, Sidebar, Calendar, Tasks, Notes, NotesTree, RecordPage, Windows }
+public enum ShortcutContext { Global, Table, Sidebar, Calendar, Tasks, Notes, NotesTree, RecordPage, Windows, Library, LibraryReader }
 
 /// <summary>
 /// Действие с сочетанием клавиш. <paramref name="Defaults"/> — стандартные жесты: первый
@@ -79,6 +79,16 @@ public static class ShortcutActions
         Cmd("app.zoomOut",   "Уменьшить масштаб интерфейса",   ShortcutBlock.Global, ShortcutContext.Global, "Ctrl+Minus"),
         Cmd("app.zoomReset", "Стандартный масштаб интерфейса", ShortcutBlock.Global, ShortcutContext.Global, "Ctrl+Shift+0"),
         Cmd("app.contextMenu", "Открыть контекстное меню",     ShortcutBlock.Global, ShortcutContext.Global, "Shift+F10"),
+
+        // Библиотека: лента и панель чтения имеют разные зоны фокуса.
+        Cmd("library.find", "Поиск в ленте", ShortcutBlock.Library, ShortcutContext.Library, "Ctrl+F"),
+        Cmd("library.refresh", "Обновить ленту", ShortcutBlock.Library, ShortcutContext.Library, "F5"),
+        Cmd("library.activate", "Прочитать документ / выполнить поиск", ShortcutBlock.Library, ShortcutContext.Library, "Enter"),
+        Cmd("library.open", "Открыть файл", ShortcutBlock.Library, ShortcutContext.Library, "Ctrl+Enter"),
+        Cmd("library.readerFind", "Поиск в документе", ShortcutBlock.Library, ShortcutContext.LibraryReader, "Ctrl+F"),
+        Cmd("library.nextMatch", "Следующее совпадение", ShortcutBlock.Library, ShortcutContext.LibraryReader, "F3", "Enter"),
+        Cmd("library.previousMatch", "Предыдущее совпадение", ShortcutBlock.Library, ShortcutContext.LibraryReader, "Shift+F3"),
+        Cmd("library.closeReader", "Закрыть панель чтения", ShortcutBlock.Library, ShortcutContext.LibraryReader, "Escape"),
 
         // ── Боковая панель ──────────────────────────────────────────────────────
         Cmd("sidebar.createCollection",    "Создать коллекцию",     ShortcutBlock.Sidebar, ShortcutContext.Sidebar, "Ctrl+Shift+N"),
@@ -233,6 +243,7 @@ public static class ShortcutActions
         ShortcutBlock.Calendar   => "Календарь",
         ShortcutBlock.Tasks      => "Задачи",
         ShortcutBlock.Notes      => "Заметки",
+        ShortcutBlock.Library    => "Библиотека документов",
         ShortcutBlock.NotesTree  => "Дерево заметок",
         _                        => "Окна и поля",
     };

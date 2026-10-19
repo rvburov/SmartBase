@@ -228,7 +228,7 @@
                  видит. Без них таблица из середины листа выглядит как таблица с начала. -->
             <Grid Grid.Column="0" x:Name="SheetHost"
                   IsVisible="False"
-                  RowDefinitions="Auto,Auto,*,Auto"
+                  RowDefinitions="Auto,Auto,Auto,*,Auto"
                   ColumnDefinitions="*,Auto">
                 <!-- Корешки листов. Полоса идет во всю ширину блока и без полей: она — край
                      книги, а не плашка на нем.
@@ -285,7 +285,11 @@
                      самое, что строка таблицы, и знать про это разметке незачем. -->
                 <Decorator Grid.Row="1" x:Name="SheetHead" />
 
-                <ListBox Grid.Row="2" x:Name="SheetRows"
+                <Decorator Grid.Row="2" x:Name="FrozenRowsBox" Width="0" ClipToBounds="True">
+                    <StackPanel x:Name="FrozenRows" />
+                </Decorator>
+
+                <ListBox Grid.Row="3" x:Name="SheetRows"
                          Classes="reader"
                          SelectionMode="Single"
                          ScrollViewer.VerticalScrollBarVisibility="Hidden"
@@ -294,19 +298,19 @@
                 <!-- Обе полосы листа живут ВНУТРИ его сетки, а не снаружи, как у текста и
                      страниц: только так между ними получается угол. Вертикальная начинается на
                      уровне полосы букв — стандарт прокрутки проекта (ui/scrolling.md). -->
-                <ScrollBar Grid.Row="1" Grid.RowSpan="2" Grid.Column="1" x:Name="SheetBar"
+                <ScrollBar Grid.Row="1" Grid.RowSpan="3" Grid.Column="1" x:Name="SheetBar"
                            Orientation="Vertical"
                            IsVisible="False" />
 
                 <!-- Горизонтальная полоса: таблица шире панели почти всегда, и без нее
                       правые колонки было бы не достать. -->
-                <ScrollBar Grid.Row="3" Grid.Column="0" x:Name="SheetHBar"
+                <ScrollBar Grid.Row="4" Grid.Column="0" x:Name="SheetHBar"
                            Orientation="Horizontal"
                            IsVisible="False" />
 
                 <!-- Квадрат на пересечении полос — иначе там белое пятно. Схлопывается сам
                      вместе со спрятанной полосой: своя строка и своя колонка у него Auto. -->
-                <Border Grid.Row="3" Grid.Column="1" x:Name="SheetCorner"
+                <Border Grid.Row="4" Grid.Column="1" x:Name="SheetCorner"
                         Background="{DynamicResource BrushScrollbarTrack}" />
             </Grid>
 

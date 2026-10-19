@@ -60,27 +60,30 @@ public static class DocStamps
     /// Отметки набора путей. Ключ ответа — путь ровно в том написании, в каком его передали;
     /// повторы допустимы и спрашиваются один раз.
     /// </summary>
-    public static Dictionary<string, (long Mtime, long Size)> Of(IEnumerable<string> paths)
+    public static Dictionary<string, (long Mtime, long Size)> Of(IEnumerable<string> paths, CancellationToken ct = default)
     {
+        ct.ThrowIfCancellationRequested();
         var result  = new Dictionary<string, (long Mtime, long Size)>(StringComparer.Ordinal);
         var singles = new List<string>();
 
         foreach (var folder in paths.Distinct(StringComparer.Ordinal).GroupBy(FolderOf, StringComparer.Ordinal))
         {
+            ct.ThrowIfCancellationRequested();
             var wanted = folder.ToList();
             if (folder.Key.Length == 0 || wanted.Count < ListingThreshold)
             {
                 singles.AddRange(wanted);
                 continue;
             }
-            singles.AddRange(List(folder.Key, wanted, result));
+            singles.AddRange(List(folder.Key, wanted, result, ct));
         }
 
         var stamps = new (long Mtime, long Size)[singles.Count];
-        Parallel.For(0, singles.Count, new ParallelOptions { MaxDegreeOfParallelism = Parallelism },
+        Parallel.For(0, singles.Count, new ParallelOptions { MaxDegreeOfParallelism = Parallelism, CancellationToken = ct },
                      i => stamps[i] = Of(singles[i]));
         for (var i = 0; i < singles.Count; i++) result[singles[i]] = stamps[i];
 
+        ct.ThrowIfCancellationRequested();
         return result;
     }
 
@@ -112,7 +115,7 @@ public static class DocStamps
     /// листинг не нашел или не дочитал, возвращаются — их спросят по одному.
     /// </summary>
     private static List<string> List(string folder, List<string> wanted,
-                                     Dictionary<string, (long Mtime, long Size)> result)
+                                     Dictionary<string, (long Mtime, long Size)> result, CancellationToken ct)
     {
         // Имя → пути с этим именем: одна папка, записанная двумя написаниями, дает два пути к
         // одному файлу, и отметку получают оба.
@@ -131,6 +134,7 @@ public static class DocStamps
         {
             foreach (var file in new DirectoryInfo(folder).EnumerateFiles())
             {
+                ct.ThrowIfCancellationRequested();
                 if (++seen > budget) break;
                 if (!byName.TryGetValue(file.Name, out var paths)) continue;
 
@@ -141,6 +145,7 @@ public static class DocStamps
                 if (found.Count == wanted.Count) break;
             }
         }
+        catch (OperationCanceledException) { throw; }
         catch
         {
             // Папку не дочитали (нет прав, сеть моргнула) — спросим все ее пути по одному,

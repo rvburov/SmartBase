@@ -300,8 +300,10 @@ public static class DocHighlight
     {
         var chars = new char[word.Length];
         var n = 0;
+        var unit = false;
+        foreach (var c in word) if (char.IsLetter(c)) { unit = true; break; }
         foreach (var c in word)
-            if (!IsDroppedMark(c)) chars[n++] = Fold(c);
+            if (!IsDroppedMark(c)) chars[n++] = unit && c is '²' or '³' ? c == '²' ? '2' : '3' : Fold(c);
         return new string(chars, 0, n);
     }
 

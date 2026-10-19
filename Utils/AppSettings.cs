@@ -956,6 +956,13 @@ public static class AppSettings
         else                               _store?.Set(KeyLibraryCardSize, key);
     }
 
+    public static string LoadLibrarySort() => _store?.Get(KeyLibrarySort) ?? "Collections";
+    public static void SaveLibrarySort(string value)
+    {
+        if (value == "Collections") _store?.Remove(KeyLibrarySort);
+        else _store?.Set(KeyLibrarySort, value);
+    }
+
     public static string LoadLibraryView() => _store?.Get(KeyLibraryView) ?? LibraryViewDefault;
 
     public static void SaveLibraryView(string key)
@@ -1014,9 +1021,7 @@ public static class AppSettings
         else                                _store?.Set(KeyLibraryIndexMaxMb, mb.ToString());
     }
 
-    // Вида раздела «Библиотека документов» в настройках НЕТ: вид у раздела один, переключателя
-    // в навбаре нет, и хранить «какой из одного вида открывать» не о чем. Появится второй вид —
-    // сюда вернутся Load/SaveLibraryView по образцу задач.
+    // libraryView сохраняет прежнюю настройку для совместимости; в навбаре остается один вид — карточки.
 
     public static string LoadTasksDefaultStage() => _store?.Get(KeyTasksDefaultStage) ?? TasksDefaultStageDefault;
 
@@ -1532,6 +1537,7 @@ public static class AppSettings
     private const string KeyLibraryThumbnails            = "libraryThumbnails";
     private const string KeyLibraryCardSize              = "libraryCardSize";
     private const string KeyLibraryReaderWidth           = "libraryReaderWidth";
+    private const string KeyLibrarySort = "librarySort";
     private const string KeyLibraryView                  = "libraryView";
     private const string KeyLibraryIndexMaxMb            = "libraryIndexMaxMb";
     private const string KeyCalendarView     = "calendarView";

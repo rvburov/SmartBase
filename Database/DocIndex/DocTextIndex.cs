@@ -686,7 +686,7 @@ public sealed class DocTextIndex
     /// стать не может: каждое слово идет фразой в кавычках (<see cref="BuildMatch"/>), — так что
     /// исключение здесь означает кеш (испорчен, занят, пропал) или наш дефект в сборке выражения.
     /// </summary>
-    public List<DocHit> Search(string query, int limit = 500, int words = SnippetWordsDefault)
+    public List<DocHit> Search(string query, int limit = DocLibraryLimits.SearchResults, int words = SnippetWordsDefault)
     {
         // Границы — от того же мусора, что и у лимита: ноль слов дал бы пустые цитаты, а
         // сотни — строку, которую никто не читает.
@@ -719,7 +719,7 @@ public sealed class DocTextIndex
     }
 
     /// <summary>Фоновый поиск: файл кеша читается с диска, UI-поток ждать не должен.</summary>
-    public Task<List<DocHit>> SearchAsync(string query, int limit = 500,
+    public Task<List<DocHit>> SearchAsync(string query, int limit = DocLibraryLimits.SearchResults,
                                           int words = SnippetWordsDefault) =>
         Task.Run(() => Search(query, limit, words));
 
@@ -787,8 +787,11 @@ public sealed class DocTextIndex
     {
         var spots = new List<(int Part, int At)>();
         for (var p = 0; p < parts.Length; p++)
+        {
+            var unit = parts[p].Any(char.IsLetter);
             for (var at = 0; at < parts[p].Length; at++)
-                if (parts[p][at] == 'е') spots.Add((p, at));
+                if (parts[p][at] == 'е' || unit && parts[p][at] is '2' or '3') spots.Add((p, at));
+        }
 
         var spellings = new List<string[]> { parts };
         string[] With(params (int Part, int At)[] yo)
@@ -797,7 +800,7 @@ public sealed class DocTextIndex
             foreach (var (p, at) in yo)
             {
                 var chars = copy[p].ToCharArray();
-                chars[at] = 'ё';
+                chars[at] = chars[at] switch { '2' => '²', '3' => '³', _ => 'ё' };
                 copy[p] = new string(chars);
             }
             return copy;

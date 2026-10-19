@@ -1,0 +1,320 @@
+[
+  {
+    "file": "CppCoreGuidelines.md",
+    "url": "https://raw.githubusercontent.com/isocpp/CppCoreGuidelines/33bcd015997f0d8e0fa0202eb66254a16f59ad8f/CppCoreGuidelines.md",
+    "bytes": 841419,
+    "sha256": "27b53e7de83994ffe5c4e4c302a97a2fe83e48eccc7b09a0d734906609079ca7"
+  },
+  {
+    "file": "PDF 2.0 UTF-8 string and annotation.pdf",
+    "url": "https://raw.githubusercontent.com/pdf-association/pdf20examples/c20f2c17bfcc4baab7cfe62e70fae64caf14d5fa/PDF%202.0%20UTF-8%20string%20and%20annotation.pdf",
+    "bytes": 4504,
+    "sha256": "f3a018213564a420db81062a0e584fbcc5f705e353ed477da43bab6222f137b6"
+  },
+  {
+    "file": "PDF 2.0 image with BPC.pdf",
+    "url": "https://raw.githubusercontent.com/pdf-association/pdf20examples/c20f2c17bfcc4baab7cfe62e70fae64caf14d5fa/PDF%202.0%20image%20with%20BPC.pdf",
+    "bytes": 8989,
+    "sha256": "fc517dd0d4c72d1b11e3449acc3e816d2719dc14e69a7e14b84da02808103370"
+  },
+  {
+    "file": "PDF 2.0 via incremental save.pdf",
+    "url": "https://raw.githubusercontent.com/pdf-association/pdf20examples/c20f2c17bfcc4baab7cfe62e70fae64caf14d5fa/PDF%202.0%20via%20incremental%20save.pdf",
+    "bytes": 5607,
+    "sha256": "9b25d59d07034634a990e79db6ef82b9f86769d9b94d8d8635f20d06aaec9d18"
+  },
+  {
+    "file": "PDF 2.0 with offset start.pdf",
+    "url": "https://raw.githubusercontent.com/pdf-association/pdf20examples/c20f2c17bfcc4baab7cfe62e70fae64caf14d5fa/PDF%202.0%20with%20offset%20start.pdf",
+    "bytes": 5264,
+    "sha256": "a5b92313770f16ba1db649ccdc97d42f7744659c691897538734eebdc1bc9e9a"
+  },
+  {
+    "file": "PDF 2.0 with page level output intent.pdf",
+    "url": "https://raw.githubusercontent.com/pdf-association/pdf20examples/c20f2c17bfcc4baab7cfe62e70fae64caf14d5fa/PDF%202.0%20with%20page%20level%20output%20intent.pdf",
+    "bytes": 10538,
+    "sha256": "7c13afe3078a4c202184edce3169f7bc842c8fd3db9da7140af6bc0b3b2fa44a"
+  },
+  {
+    "file": "Simple PDF 2.0 file.pdf",
+    "url": "https://raw.githubusercontent.com/pdf-association/pdf20examples/c20f2c17bfcc4baab7cfe62e70fae64caf14d5fa/Simple%20PDF%202.0%20file.pdf",
+    "bytes": 5211,
+    "sha256": "296d2a0b2ce19b606f29265694f194a754fbc61783982b5b8d730e8637482236"
+  },
+  {
+    "file": "linux-coding-style.txt",
+    "url": "https://raw.githubusercontent.com/torvalds/linux/c03c1a14507dfaf8b856c2608f9ac216021fc222/Documentation/process/coding-style.rst",
+    "bytes": 45673,
+    "sha256": "332454d2ab9a0462dd9f292c52291cf3b5e1afcd638aa06df15f557c47a126f5"
+  },
+  {
+    "file": "pdf20-utf8-test.pdf",
+    "url": "https://raw.githubusercontent.com/pdf-association/pdf20examples/c20f2c17bfcc4baab7cfe62e70fae64caf14d5fa/pdf20-utf8-test.pdf",
+    "bytes": 13926,
+    "sha256": "a7ca717ef062df0a65e58487d26358c81424b76084a2000ca1c74b9e5776b7a1"
+  },
+  {
+    "file": "riscv-spec.pdf",
+    "url": "https://github.com/riscv/riscv-isa-manual/releases/download/riscv-isa-release-7a90b34-2026-10-15/riscv-spec.pdf",
+    "bytes": 5165389,
+    "sha256": "b1e20a9de862370965d170640bd47decc1d88f243ad9f0f4819b612ede94fc48"
+  },
+  {
+    "file": "sp800-63-3-definitions.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63-3/definitions.md",
+    "bytes": 36743,
+    "sha256": "a756b9f9a6879a49077fa9518dc1d582973cd94cc3a1ef70af91b3e7e8aeaec9"
+  },
+  {
+    "file": "sp800-63-3-errata.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63-3/errata.md",
+    "bytes": 1087,
+    "sha256": "58bc11d5f747bc4a5f816b89bdf5f8a97f980541754bc0710cf3dbccbc773fc3"
+  },
+  {
+    "file": "sp800-63-3-sec1_2_introduction.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63-3/sec1_2_introduction.md",
+    "bytes": 15627,
+    "sha256": "781255494677fe8222af02b9534bde8dfc08e801aac48cb7ac499829d310eaf0"
+  },
+  {
+    "file": "sp800-63-3-sec3_definitions.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63-3/sec3_definitions.md",
+    "bytes": 169,
+    "sha256": "0b0a4b58780dfdbc6aa60fe17a1ba8f7e5f8e27c633dd334ca8412bf0a10399e"
+  },
+  {
+    "file": "sp800-63-3-sec4_model.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63-3/sec4_model.md",
+    "bytes": 22131,
+    "sha256": "20a928aa9505d699961c52ed524aa5b1bb75c97acf193dbe2470773cada03e5f"
+  },
+  {
+    "file": "sp800-63-3-sec5_DIRM.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63-3/sec5_DIRM.md",
+    "bytes": 18835,
+    "sha256": "98b8d5ce7bab74d0dfc54bcda429d1fec1e788ed4a00235d5e5e52a56ad8cc3b"
+  },
+  {
+    "file": "sp800-63-3-sec6_xAL.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63-3/sec6_xAL.md",
+    "bytes": 17896,
+    "sha256": "8afbca98f601acdb22b2822cc29da400115ab2cb692904a3d82c9bfb09317c52"
+  },
+  {
+    "file": "sp800-63-3-sec7_tofedornottofed.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63-3/sec7_tofedornottofed.md",
+    "bytes": 1970,
+    "sha256": "e76c56f832102df6556ea6b0ef99bcc2b6ed2ec8119c9afc8337d7aee422dd4f"
+  },
+  {
+    "file": "sp800-63-3-sec8_references.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63-3/sec8_references.md",
+    "bytes": 6863,
+    "sha256": "09222cb95b37aba2f85778ddfef0d155a62d15412388285a70f4a0d42ceebba1"
+  },
+  {
+    "file": "sp800-63a-errata.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63a/errata.md",
+    "bytes": 1509,
+    "sha256": "77737b41768c1e16704e137b7127c52905b9163501cec0634c6f6b003334ffa4"
+  },
+  {
+    "file": "sp800-63a-sec10_references.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63a/sec10_references.md",
+    "bytes": 5075,
+    "sha256": "cac756dc04d69ed794917b2a5626b2c8d2714111e18bf46f1cd86e154341bb8d"
+  },
+  {
+    "file": "sp800-63a-sec1_2_introduction.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63a/sec1_2_introduction.md",
+    "bytes": 5430,
+    "sha256": "9439690758ecdf9c6cbe84a4167f67222ad0bab3f23d52840766685e43beca42"
+  },
+  {
+    "file": "sp800-63a-sec3_definitions.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63a/sec3_definitions.md",
+    "bytes": 183,
+    "sha256": "e9b6051840cb65b6fa941d241284b84d11de2c3b2e373b137e25953cb93fc03f"
+  },
+  {
+    "file": "sp800-63a-sec4_ial.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63a/sec4_ial.md",
+    "bytes": 24261,
+    "sha256": "ec1423fb2a4f681013266f4031ac5b99b2c95dc8ddec169160f9baef77098827"
+  },
+  {
+    "file": "sp800-63a-sec5_proofing.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63a/sec5_proofing.md",
+    "bytes": 22569,
+    "sha256": "3d63472762f53d75c0bb3acf83b383de9b17417e13c3d11d2aa45f6f11eed9e8"
+  },
+  {
+    "file": "sp800-63a-sec6_dc.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63a/sec6_dc.md",
+    "bytes": 2539,
+    "sha256": "f643749e87e66e351fcd4a0ed88eea445966a1c78ac232b8270c1d2fa1d379d2"
+  },
+  {
+    "file": "sp800-63a-sec7_security.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63a/sec7_security.md",
+    "bytes": 3777,
+    "sha256": "e695d8478eabb33d03fc7779de58e1c8cba254f5ad65f758b0ae9a0cdc2f2e26"
+  },
+  {
+    "file": "sp800-63a-sec8_privacy.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63a/sec8_privacy.md",
+    "bytes": 10111,
+    "sha256": "a8b6b60eb66870e1234a5e732c90196e68ea1c8a1d3aa052af3159009de82448"
+  },
+  {
+    "file": "sp800-63a-sec9_usability.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63a/sec9_usability.md",
+    "bytes": 17923,
+    "sha256": "cf6283d319fbcc9a07b105a709ed9176b3466efb396db4c69410767f24b165c1"
+  },
+  {
+    "file": "sp800-63b-appA_memorized.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63b/appA_memorized.md",
+    "bytes": 7687,
+    "sha256": "5f73b318f60cfc43ffe3e478b4db8909fadb2c83042f2646dd781a0f0e4184a2"
+  },
+  {
+    "file": "sp800-63b-errata.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63b/errata.md",
+    "bytes": 2026,
+    "sha256": "20316d042a8f12d2b1d871499a9fdab96a3a7747413f2fb2d3dfd3473327a91e"
+  },
+  {
+    "file": "sp800-63b-references.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63b/references.md",
+    "bytes": 11891,
+    "sha256": "275e27bebbd8b716c2663a58ee83ddcae0e5342c6a4d4822ae0699b5150fd17f"
+  },
+  {
+    "file": "sp800-63b-sec10_usability.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63b/sec10_usability.md",
+    "bytes": 27044,
+    "sha256": "a3710070e122a2408e2b745450d1ac46abac45007c767cf4f7668a870469239a"
+  },
+  {
+    "file": "sp800-63b-sec1_2_introduction.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63b/sec1_2_introduction.md",
+    "bytes": 5565,
+    "sha256": "959e4b064dac539539ebcaf0bd6f6988a6964c89e957bf5a669f941d1c46a10d"
+  },
+  {
+    "file": "sp800-63b-sec3_definitions.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63b/sec3_definitions.md",
+    "bytes": 183,
+    "sha256": "41526905ad0aed2b491def4c87aa9e4979aeba69735c8eaee7b3f7738e85b65b"
+  },
+  {
+    "file": "sp800-63b-sec4_aal.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63b/sec4_aal.md",
+    "bytes": 19908,
+    "sha256": "67c343d4758dcc69c3c650e220558c33aef571b1c9feef32b1fe01614c5a3f6d"
+  },
+  {
+    "file": "sp800-63b-sec5_authenticators.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63b/sec5_authenticators.md",
+    "bytes": 58975,
+    "sha256": "743895a61296a5fdb2da7a47317dad400bd9596a512604ab1ff611190848435a"
+  },
+  {
+    "file": "sp800-63b-sec6_lifecycle.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63b/sec6_lifecycle.md",
+    "bytes": 15025,
+    "sha256": "8bff5e68ba78e9ede782f078a419fcc88f37330a49d63ef7769412a8fe5cb979"
+  },
+  {
+    "file": "sp800-63b-sec7_session.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63b/sec7_session.md",
+    "bytes": 8385,
+    "sha256": "a4b62387452fa8400bf5bd1c606f7b7975c3e4d942dd1271ec5210138d64fb19"
+  },
+  {
+    "file": "sp800-63b-sec8_security.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63b/sec8_security.md",
+    "bytes": 12739,
+    "sha256": "9df9a188b16ff5ca0b056cba2800a5024c15e339a248379e4884f2a7431507e7"
+  },
+  {
+    "file": "sp800-63b-sec9_privacy.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63b/sec9_privacy.md",
+    "bytes": 5346,
+    "sha256": "f04dcbd49c70b91fea11fdb033e8b462cfb719f1d025d8956b75e975fdf0d352"
+  },
+  {
+    "file": "sp800-63c-errata.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63c/errata.md",
+    "bytes": 1109,
+    "sha256": "1ed1689587149a50b5a134b09d1c42fe7a4b0e00302256d04cbaab7423dd251b"
+  },
+  {
+    "file": "sp800-63c-references.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63c/references.md",
+    "bytes": 4231,
+    "sha256": "dae02b2ab5171fb635b25177b06b16e69731564afde9191e4da55f501902be39"
+  },
+  {
+    "file": "sp800-63c-sec10_usability.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63c/sec10_usability.md",
+    "bytes": 16176,
+    "sha256": "7fa847832720a295b18f6da57075b3bafa2e292922892f6898dd49a3c787c47c"
+  },
+  {
+    "file": "sp800-63c-sec11_examples.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63c/sec11_examples.md",
+    "bytes": 8309,
+    "sha256": "5a49b474b30ac4809d63305fa5c8c8ce821470ef0f316692c39d661a41743fcd"
+  },
+  {
+    "file": "sp800-63c-sec1_2_introduction.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63c/sec1_2_introduction.md",
+    "bytes": 4191,
+    "sha256": "68ba76651ecf5cd951da21742221b7682e4f5e4c61b64df7ab0056671b529258"
+  },
+  {
+    "file": "sp800-63c-sec3_definitions.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63c/sec3_definitions.md",
+    "bytes": 190,
+    "sha256": "3eb039c20054bb9f5ad03823ceda8d83851adc1d2a7012ecc44d57991a96610f"
+  },
+  {
+    "file": "sp800-63c-sec4_fal.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63c/sec4_fal.md",
+    "bytes": 7962,
+    "sha256": "223c1b104a9de621a46b056e36bf36e396ad4593fc5b384fb5d745fe2358bda5"
+  },
+  {
+    "file": "sp800-63c-sec5_federation.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63c/sec5_federation.md",
+    "bytes": 15111,
+    "sha256": "9150376700228de066ddbc445ed1c735ea3f09699b9e6a33795350a21e1c374c"
+  },
+  {
+    "file": "sp800-63c-sec6_assertions.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63c/sec6_assertions.md",
+    "bytes": 14926,
+    "sha256": "26917887eff1af6f0ae15c95ab3a3de7b6eb963e13760bf21f615480bbff5ebe"
+  },
+  {
+    "file": "sp800-63c-sec7_presentation.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63c/sec7_presentation.md",
+    "bytes": 8633,
+    "sha256": "4b35ce8bc8f45834ddbc3b7f63c0dd52a42544c62e9261025b58eca41628f236"
+  },
+  {
+    "file": "sp800-63c-sec8_security.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63c/sec8_security.md",
+    "bytes": 5275,
+    "sha256": "6cf82034b554b340c181560d31364d0dfd4cd257adf75591c71a88b7bf5be515"
+  },
+  {
+    "file": "sp800-63c-sec9_privacy.md",
+    "url": "https://raw.githubusercontent.com/usnistgov/800-63-3/7dee3cad9d429dcefc27ba1976a55704bff0800a/sp800-63c/sec9_privacy.md",
+    "bytes": 12043,
+    "sha256": "131d9e3c7789744e3e6be979abbdb25cf9c17abb06767b35cc6b968874d76fbd"
+  }
+]

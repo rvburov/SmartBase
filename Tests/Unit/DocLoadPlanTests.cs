@@ -1,3 +1,4 @@
+using SmartBase.Core.Documents;
 using SmartBase.Views.Library;
 
 namespace SmartBase.Tests.Unit;
@@ -19,15 +20,15 @@ public sealed class DocLoadPlanTests
     [Fact]
     public void Small_sections_are_read_into_memory()
     {
-        Assert.True(DocLoadPlan.NeedsDocRead(0, 10_000));
-        Assert.True(DocLoadPlan.NeedsDocRead(9_999, 10_000));
-        Assert.True(DocLoadPlan.NeedsDocRead(10_000, 10_000));
+        Assert.True(DocLoadPlan.NeedsDocRead(0, DocLibraryLimits.InMemoryDocuments));
+        Assert.True(DocLoadPlan.NeedsDocRead(DocLibraryLimits.InMemoryDocuments - 1, DocLibraryLimits.InMemoryDocuments));
+        Assert.True(DocLoadPlan.NeedsDocRead(DocLibraryLimits.InMemoryDocuments, DocLibraryLimits.InMemoryDocuments));
     }
 
     [Fact]
     public void Sections_over_the_cap_are_paged()
     {
-        Assert.False(DocLoadPlan.NeedsDocRead(10_001, 10_000));
+        Assert.False(DocLoadPlan.NeedsDocRead(DocLibraryLimits.InMemoryDocuments + 1, DocLibraryLimits.InMemoryDocuments));
     }
 
     // ── Набор активных коллекций ─────────────────────────────────────────────

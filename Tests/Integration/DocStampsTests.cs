@@ -30,6 +30,25 @@ public sealed class DocStampsTests : IDisposable
 
     // Файл заданного размера — разный размер у соседей, чтобы перепутанная отметка не сошлась
     // случайно.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Cancelled_file_probe_returns_no_partial_result(bool beforeStart)
+    {
+        using var cts = new CancellationTokenSource();
+        var path = Make("cancel", "file.txt", 10);
+        var enumerated = false;
+        IEnumerable<string> Paths()
+        {
+            enumerated = true;
+            if (!beforeStart) cts.Cancel();
+            yield return path;
+        }
+        if (beforeStart) cts.Cancel();
+        Assert.ThrowsAny<OperationCanceledException>(() => DocStamps.Of(Paths(), cts.Token));
+        Assert.Equal(!beforeStart, enumerated);
+    }
+
     private string Make(string folder, string name, int bytes)
     {
         var dir = Path.Combine(_dir, folder);

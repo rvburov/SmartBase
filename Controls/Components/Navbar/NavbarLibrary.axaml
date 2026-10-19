@@ -4,18 +4,23 @@
              Height="56"
              Background="{StaticResource BrushBg}">
 
-    <!-- Навбар раздела: слева заголовок, справа фильтр типов. Строки поиска здесь нет — она
+    <!-- Навбар раздела: слева заголовок, справа сортировка и фильтр типов. Строки поиска здесь нет — она
          стоит блоком над лентой (DocListView.axaml). Переключателя вида тоже нет: вид один. -->
-    <Grid ColumnDefinitions="Auto,*,Auto,Auto"
+    <Grid ColumnDefinitions="*,Auto,Auto,Auto"
           Margin="16,0"
           VerticalAlignment="Center">
 
         <!-- Заголовок раздела -->
         <TextBlock Grid.Column="0" x:Name="TitleLabel"
-                   Text="Библиотека документов"
+                   Text="Библиотека документов" TextTrimming="CharacterEllipsis"
                    VerticalAlignment="Center"
                    FontSize="{DynamicResource FontSizeLarge}"
                    FontWeight="{StaticResource FontWeightBold}" />
+
+        <ComboBox Grid.Column="1" x:Name="SortSelector" Width="160" Height="30" Margin="8,0,8,0"
+                  VerticalAlignment="Center" VerticalContentAlignment="Center"
+                  Background="{StaticResource BrushSecondaryBg}" CornerRadius="{StaticResource RadiusBase}"
+                  ToolTip.Tip="Порядок документов из всех баз" />
 
         <!-- Выпадашка типов документа. Это НЕ ComboBox: содержимое рисует общий
              ColumnFilterPanel — тот же чеклист с поиском, количествами справа и «Готово»,

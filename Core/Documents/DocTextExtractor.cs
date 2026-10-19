@@ -1,6 +1,7 @@
 using System.IO;
 using System.Text;
 using System.Threading;
+using System.Xml;
 using DocumentFormat.OpenXml.Packaging;
 using UglyToad.PdfPig;
 using UglyToad.PdfPig.DocumentLayoutAnalysis.TextExtractor;
@@ -125,8 +126,8 @@ public static class DocTextExtractor
     };
 
     /// <summary>
-    /// Разобрать документ. Исключений не бросает НИКОГДА: очередь индексации обходит тысячи
-    /// чужих файлов, и любой из них может оказаться битым — это рядовой исход, а не сбой.
+    /// Разобрать документ. Ошибки файла становятся статусом; отмена выходит исключением,
+    /// чтобы очередь остановилась, а не записала отмененный разбор как испорченный файл.
     /// </summary>
     /// <param name="maxFileMb">Порог размера; 0 и меньше — порога нет.</param>
     public static DocText Extract(string path, int maxFileMb = DefaultMaxFileMb,
@@ -147,7 +148,7 @@ public static class DocTextExtractor
             var text = ext switch
             {
                 "pdf"          => FromPdf(path, ct, out pages),
-                "docx"         => FromDocx(path),
+                "docx"         => FromDocx(path, ct),
                 "xlsx" or "xlsm" => FromXlsx(path, ct),
                 _              => FromPlainText(path),
             };
@@ -190,11 +191,58 @@ public static class DocTextExtractor
         return sb.ToString();
     }
 
-    private static string FromDocx(string path)
+    private static string FromDocx(string path, CancellationToken ct)
     {
+        ct.ThrowIfCancellationRequested();
         using var doc = WordprocessingDocument.Open(path, false);
-        var body = doc.MainDocumentPart?.Document?.Body;
-        return body?.InnerText ?? "";
+        if (doc.MainDocumentPart is not { } main) return "";
+        using var stream = main.GetStream(FileMode.Open, FileAccess.Read);
+        return ReadDocxText(stream, ct);
+    }
+
+    // Читаем XML потоком: построение всего Body перед обходом не дает остановить большой
+    // документ. Пробелы складываем сразу, чтобы потолок относился к тексту, а не к отступам XML.
+    internal static string ReadDocxText(Stream stream, CancellationToken ct)
+    {
+        using var reader = XmlReader.Create(stream, new XmlReaderSettings
+        {
+            DtdProcessing = DtdProcessing.Prohibit,
+            IgnoreWhitespace = false,
+        });
+        var text = new StringBuilder();
+        var body = false;
+        var textElement = false;
+        var space = true;
+        while (reader.Read())
+        {
+            ct.ThrowIfCancellationRequested();
+            if (reader.LocalName == "body" && reader.NamespaceURI is
+                "http://schemas.openxmlformats.org/wordprocessingml/2006/main" or
+                "http://purl.oclc.org/ooxml/wordprocessingml/main")
+            {
+                if (reader.NodeType == XmlNodeType.EndElement) break;
+                if (reader.NodeType == XmlNodeType.Element) body = true;
+            }
+            if (reader.NodeType == XmlNodeType.Element)
+                textElement = !reader.IsEmptyElement &&
+                              reader.LocalName is "t" or "delText" or "instrText" or "delInstrText";
+            else if (reader.NodeType == XmlNodeType.EndElement) textElement = false;
+            if (!body) continue;
+            if (reader.NodeType is not (XmlNodeType.Text or XmlNodeType.CDATA) &&
+                !(textElement && reader.NodeType is XmlNodeType.Whitespace or XmlNodeType.SignificantWhitespace)) continue;
+            foreach (var ch in reader.Value)
+            {
+                if ((text.Length & 1023) == 0) ct.ThrowIfCancellationRequested();
+                if (text.Length >= MaxChars) return text.ToString().TrimEnd();
+                if (char.IsWhiteSpace(ch) || char.IsControl(ch))
+                {
+                    if (!space) { text.Append(' '); space = true; }
+                }
+                else { text.Append(ch); space = false; }
+            }
+        }
+        ct.ThrowIfCancellationRequested();
+        return text.ToString().TrimEnd();
     }
 
     private static string FromXlsx(string path, CancellationToken ct)

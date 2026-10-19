@@ -1,5 +1,9 @@
 using System.Diagnostics;
 using System.Text;
+using DocumentFormat.OpenXml.Packaging;
+using DocumentFormat.OpenXml;
+using W = DocumentFormat.OpenXml.Wordprocessing;
+using X = DocumentFormat.OpenXml.Spreadsheet;
 using SmartBase.Core.Documents;
 using SmartBase.Database.DocIndex;
 using UglyToad.PdfPig.Writer;
@@ -29,6 +33,11 @@ public static class DocReadBench
         var dir   = BenchUtil.ArgStr(args, "--dir");
         var keep  = args.Contains("--keep");
 
+        if (count <= 0 || pages <= 0 || (dir is not null && !Directory.Exists(dir)))
+        {
+            Console.Error.WriteLine("Нужны положительные --count/--pages и существующая папка --dir.");
+            return 1;
+        }
         var generated = dir is null;
         dir ??= Path.Combine(Path.GetTempPath(), "sb-docbench-" + Guid.NewGuid().ToString("N")[..8]);
 
@@ -42,7 +51,7 @@ public static class DocReadBench
 
             var files = Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories)
                                  .Where(f => DocTextExtractor.IsSupported(f))
-                                 .ToList();
+                                 .OrderBy(f => f, StringComparer.Ordinal).ToList();
             if (files.Count == 0)
             {
                 Console.WriteLine($"В {dir} нет документов поддержанных форматов " +
@@ -54,6 +63,7 @@ public static class DocReadBench
             Console.WriteLine($"Документов: {files.Count}, суммарно {Mb(TotalBytes(files))}");
             Console.WriteLine();
 
+            MeasurePipeline(files, BenchUtil.ArgStr(args, "--csv"));
             Measure(files);
             return 0;
         }
@@ -117,6 +127,48 @@ public static class DocReadBench
                           "со сканами, таблицами и встроенными шрифтами тяжелее.");
     }
 
+    // Отдельные проходы: первый включает разогрев библиотек, второй использует прогретый процесс.
+    // Это не сброс кеша ОС. Put пишет настоящий FTS, как очередь приложения.
+    private static void MeasurePipeline(List<string> files, string? csv)
+    {
+        var lines = new List<string> { "pass,file,bytes,extract_ms,fts_ms,book_ms,status,chars" };
+        var root = Path.Combine(Path.GetTempPath(), "sb-docpipeline-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            for (var pass = 1; pass <= 2; pass++)
+            {
+                var index = new DocTextIndex(Path.Combine(root, $"index-{pass}.db"));
+                double extracted = 0, indexed = 0, books = 0;
+                foreach (var file in files)
+                {
+                    var watch = Stopwatch.StartNew();
+                    var text = DocTextExtractor.Extract(file);
+                    var read = watch.Elapsed.TotalMilliseconds;
+                    watch.Restart();
+                    index.Put(file, text);
+                    var put = watch.Elapsed.TotalMilliseconds;
+                    var book = 0.0;
+                    if (DocTextExtractor.ExtensionOf(file) is "xlsx" or "xlsm")
+                    {
+                        watch.Restart();
+                        _ = DocSheetSource.OpenBook(file);
+                        book = watch.Elapsed.TotalMilliseconds;
+                    }
+                    extracted += read;
+                    indexed += put;
+                    books += book;
+                    var name = Path.GetFileName(file).Replace("\"", "\"\"");
+                    lines.Add(FormattableString.Invariant($"{pass},\"{name}\",{new FileInfo(file).Length},{read:F3},{put:F3},{book:F3},{text.Status},{text.Text.Length}"));
+                }
+                Console.WriteLine($"Проход {pass}: разбор {extracted:F1} мс, запись FTS {indexed:F1} мс, " +
+                    $"открытие книг {books:F1} мс; разбор + FTS {(extracted + indexed) / files.Count:F1} мс/документ.");
+            }
+            if (csv is not null) File.WriteAllLines(csv, lines, new UTF8Encoding(false));
+        }
+        finally { try { Directory.Delete(root, true); } catch { /* временный стенд */ } }
+    }
+
     private static string Humanize(TimeSpan t) =>
         t < TimeSpan.FromMinutes(1) ? $"{t.TotalSeconds:0} с"
         : t < TimeSpan.FromHours(1) ? $"{t.TotalMinutes:0} мин"
@@ -138,7 +190,8 @@ public static class DocReadBench
             // Word заметная часть, текстовые файлы — остаток.
             var kind = i % 10;
             if      (kind < 7) WritePdf(Path.Combine(dir, $"doc-{i:0000}.pdf"), pages, rnd);
-            else if (kind < 9) WriteText(Path.Combine(dir, $"note-{i:0000}.txt"), pages, rnd);
+            else if (kind == 7) WriteDocx(Path.Combine(dir, $"word-{i:0000}.docx"), pages, rnd);
+            else if (kind == 8) WriteBook(Path.Combine(dir, $"book-{i:0000}.xlsx"), pages, rnd);
             else               WriteText(Path.Combine(dir, $"list-{i:0000}.md"),  pages, rnd);
         }
     }
@@ -163,6 +216,33 @@ public static class DocReadBench
         }
 
         File.WriteAllBytes(path, builder.Build());
+    }
+
+    private static void WriteDocx(string path, int pages, Random rnd)
+    {
+        using var doc = WordprocessingDocument.Create(path, WordprocessingDocumentType.Document);
+        var main = doc.AddMainDocumentPart();
+        var body = new W.Body();
+        for (var i = 0; i < pages * 40; i++)
+            body.Append(new W.Paragraph(new W.Run(new W.Text(Line(rnd, false)))));
+        main.Document = new W.Document(body);
+        main.Document.Save();
+    }
+
+    private static void WriteBook(string path, int pages, Random rnd)
+    {
+        using var doc = SpreadsheetDocument.Create(path, SpreadsheetDocumentType.Workbook);
+        var book = doc.AddWorkbookPart();
+        book.Workbook = new X.Workbook();
+        var sheet = book.AddNewPart<WorksheetPart>();
+        var data = new X.SheetData();
+        for (var i = 1; i <= pages * 40; i++)
+            data.Append(new X.Row(new X.Cell { CellReference = $"A{i}", DataType = X.CellValues.String,
+                CellValue = new X.CellValue(Line(rnd, false)) }) { RowIndex = (uint)i });
+        sheet.Worksheet = new X.Worksheet(data);
+        sheet.Worksheet.Save();
+        book.Workbook.Append(new X.Sheets(new X.Sheet { Id = book.GetIdOfPart(sheet), SheetId = 1, Name = "Смета" }));
+        book.Workbook.Save();
     }
 
     private static void WriteText(string path, int pages, Random rnd)

@@ -31,7 +31,7 @@ namespace SmartBase.Views.Library;
 /// </summary>
 public partial class DocListView : UserControl
 {
-    /// <summary>Документ отдают системе — «Открыть» в карточке или пункт меню.</summary>
+    /// <summary>Документ отдают системе — «Открыть» в карточке или переназначаемая клавиша.</summary>
     public event EventHandler<DocRecord>? DocActivated;
 
     /// <summary>
@@ -40,7 +40,7 @@ public partial class DocListView : UserControl
     /// </summary>
     public event EventHandler<DocRecord>? DocReadRequested;
 
-    /// <summary>Выделение изменилось — контроллер обновляет подвал и меню.</summary>
+    /// <summary>Выделение изменилось — контроллер обновляет подвал.</summary>
     public event EventHandler? SelectionChanged;
 
     /// <summary>
@@ -64,6 +64,7 @@ public partial class DocListView : UserControl
     public DocListView()
     {
         InitializeComponent();
+        Focusable = true;
 
         CardsHost.ItemTemplate = new FuncDataTemplate<object>((item, _) => item switch
         {
@@ -72,12 +73,7 @@ public partial class DocListView : UserControl
         }, supportsRecycling: false);
 
         SearchBox.TextChanged += (_, _) => SyncCommandRow();
-        SearchBox.KeyDown     += (_, e) =>
-        {
-            if (e.Key is not Avalonia.Input.Key.Enter) return;
-            e.Handled = true;
-            Find();
-        };
+        AddHandler(KeyDownEvent, OnLibraryKeyDown, Avalonia.Interactivity.RoutingStrategies.Tunnel);
         FindBtn.Click  += (_, _) => Find();
         ClearBtn.Click += (_, _) =>
         {
@@ -97,6 +93,38 @@ public partial class DocListView : UserControl
         // разложенные строки, мерила место уже новой высотой, и после смены шрифта лента
         // съезжала на пару документов (стенд разделов: с 41-го на 39-й).
     }
+
+    public event EventHandler? RefreshRequested;
+
+    private void OnLibraryKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (ShortcutSettings.Matches("library.find", e))
+        {
+            SearchBox.Focus();
+            SearchBox.SelectAll();
+            e.Handled = true;
+        }
+        else if (ShortcutSettings.Matches("library.refresh", e))
+        {
+            RefreshRequested?.Invoke(this, EventArgs.Empty);
+            e.Handled = true;
+        }
+        else if (ShortcutSettings.Matches("library.activate", e))
+        {
+            if (SearchBox.IsFocused) Find();
+            else if (SelectedDocument() is { } doc) DocReadRequested?.Invoke(this, doc);
+            e.Handled = true;
+        }
+        else if (ShortcutSettings.Matches("library.open", e) && SelectedDocument() is { } doc)
+        {
+            DocActivated?.Invoke(this, doc);
+            e.Handled = true;
+        }
+    }
+
+    private DocRecord? SelectedDocument() =>
+        _anchor is { IsPlaceholder: false } anchor && _selection.Contains(anchor.Doc) ? anchor.Doc
+        : RealizedDocs().FirstOrDefault(_selection.Contains);
 
     /// <summary>Выделенные документы — их ключи переживают перезагрузку ленты.</summary>
     public DocSelection Selection => _selection;
@@ -411,10 +439,15 @@ public partial class DocListView : UserControl
             VerticalAlignment   = VerticalAlignment.Center,
             HorizontalAlignment = HorizontalAlignment.Right,
         };
-        right.Children.Add(BoundChip(vm, nameof(DocCardVm.TypeText),
+        var identity = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+        identity.Bind(Visual.IsVisibleProperty, new Binding(nameof(DocCardVm.HasIdentity)) { Source = vm });
+        identity.Children.Add(BoundChip(vm, nameof(DocCardVm.DbText),
+            nameof(DocCardVm.DbBg), nameof(DocCardVm.DbFg), nameof(DocCardVm.HasDb)));
+        identity.Children.Add(BoundChip(vm, nameof(DocCardVm.TypeText),
                                          nameof(DocCardVm.TypeBg),
                                          nameof(DocCardVm.TypeFg),
                                          nameof(DocCardVm.HasType)));
+        right.Children.Add(identity);
         right.Children.Add(BoundChip(vm, nameof(DocCardVm.UnreadText),
                                          nameof(DocCardVm.UnreadBg),
                                          nameof(DocCardVm.UnreadFg),
@@ -535,7 +568,7 @@ public partial class DocListView : UserControl
     private static Border BoundChip(DocCardVm vm, string textProp, string bgProp, string fgProp,
                                     string visibleProp)
     {
-        var label = new TextBlock { FontWeight = FontWeight.SemiBold };
+        var label = new TextBlock { FontWeight = FontWeight.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 120 };
         label.Bind(TextBlock.TextProperty,       new Binding(textProp) { Source = vm });
         label.Bind(TextBlock.ForegroundProperty, new Binding(fgProp)   { Source = vm });
 
@@ -555,6 +588,7 @@ public partial class DocListView : UserControl
     private void OnCardTapped(DocCardVm vm, TappedEventArgs e)
     {
         if (vm.IsPlaceholder) return;
+        Focus();
 
         var mods = e.KeyModifiers;
         if (mods.HasFlag(KeyModifiers.Shift) && mods.HasFlag(KeyModifiers.Control) && _anchor is not null)
@@ -650,6 +684,11 @@ public partial class DocCardVm : ObservableObject
     public bool   HasBadge      { get; private set; } = true;
     public IImage? Thumbnail    { get; private set; }
     public bool   HasThumbnail  => Thumbnail is not null;
+    public string DbText { get; private set; } = "";
+    public bool HasDb => DbText.Length > 0;
+    public bool HasIdentity => HasDb || HasType;
+    public IBrush DbBg { get; private set; } = Brushes.Transparent;
+    public IBrush DbFg { get; private set; } = Brushes.Gray;
     public string TypeText      { get; private set; } = "";
     public IBrush TypeBg        { get; private set; } = Brushes.Transparent;
     public IBrush TypeFg        { get; private set; } = Brushes.Gray;
@@ -723,6 +762,7 @@ public partial class DocCardVm : ObservableObject
         nameof(FormatLabel), nameof(FormatFill), nameof(FormatStroke), nameof(HasBadge),
         nameof(Thumbnail), nameof(HasThumbnail),
         nameof(TypeText), nameof(TypeBg), nameof(TypeFg), nameof(HasType),
+        nameof(DbText), nameof(HasDb), nameof(DbBg), nameof(DbFg), nameof(HasIdentity),
         nameof(IsMissing), nameof(MissingText), nameof(MissingBg), nameof(MissingFg),
         nameof(IsUnread), nameof(UnreadText), nameof(UnreadBg), nameof(UnreadFg),
         nameof(MetaText), nameof(HasMeta),
@@ -743,7 +783,9 @@ public partial class DocCardVm : ObservableObject
 
         var parts = new List<string>();
         if (doc.CollectionName.Length > 0) parts.Add(doc.CollectionName);
-        if (doc.DbName.Length > 0)         parts.Add($"база «{doc.DbName}»");
+        DbText = doc.DbName;
+        DbBg = Brush("BrushSecondaryBg", "#F2F2F7");
+        DbFg = Brush("BrushSecondaryText", "#8E8E93");
         // Имя файла в подписи — только если оно не стало заголовком: дважды одно и то же
         // в двух строках подряд выглядит ошибкой показа.
         if (!byFile && doc.FileName.Length > 0) parts.Add(doc.FileName);

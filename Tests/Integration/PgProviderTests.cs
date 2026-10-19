@@ -22,6 +22,28 @@ public sealed class PgProviderTests
         cmd.ExecuteNonQuery();
     }
 
+    [SkippableFact]
+    public async Task Library_order_keys_and_batch_fetch_work_on_postgres()
+    {
+        Skip.IfNot(PgTestServer.IsAvailable, "PostgreSQL не поднят");
+        var cs = PgTestServer.ConnectionString(PgTestServer.Database1);
+        ResetSchema(cs);
+        using var manager = DatabaseManager.Open(101, "pg-library", cs, provider: "postgres");
+        var repo = manager.Constructor;
+        var col = SampleData.AddCollection(repo, "Документы").Id!.Value;
+        var field = SampleData.AddField(repo, col, "Файл", "file").Id!.Value;
+        repo.SetFileFieldInLibrary(field, true);
+        var type = repo.DocTypeFieldId(col)!.Value;
+        var record = SampleData.AddRecord(repo, col, "Название").Id!.Value;
+        repo.SetFieldValue(record, field, "/document.pdf");
+        var keys = await repo.GetDocOrderKeysAsync(col, type, ConstructorRepository.DocView.All,
+            SmartBase.Core.Documents.DocSort.Title);
+        Assert.Equal("Название", Assert.Single(keys).Title);
+        var docs = await repo.GetDocsByOrderKeysAsync(col, type,
+            [new SmartBase.Core.Documents.DocOrderKey(0, record, field)]);
+        Assert.Equal("/document.pdf", Assert.Single(docs).Path);
+    }
+
     private static long PgScalar(string connString, string sql)
     {
         using var conn = new NpgsqlConnection(connString);

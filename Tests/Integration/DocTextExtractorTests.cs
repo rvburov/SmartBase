@@ -33,6 +33,95 @@ public sealed class DocTextExtractorTests : IDisposable
 
     private string Path_(string name) => Path.Combine(_dir, name);
 
+    [Fact]
+    public void The_default_size_limit_rejects_a_file_over_64_megabytes()
+    {
+        var path = Path_("heavy.txt");
+        using (var stream = File.Create(path)) stream.SetLength(64L * 1024 * 1024 + 1);
+        Assert.Equal(DocTextStatus.TooBig, DocTextExtractor.Extract(path).Status);
+    }
+
+    [Fact]
+    public void Text_is_cut_at_the_character_budget()
+    {
+        var path = WriteText("long.txt", new string('а', DocTextExtractor.MaxChars) + "КОНЕЦ");
+        var text = DocTextExtractor.Extract(path);
+        Assert.Equal(DocTextStatus.Ok, text.Status);
+        Assert.Equal(DocTextExtractor.MaxChars, text.Text.Length);
+        Assert.DoesNotContain("КОНЕЦ", text.Text);
+    }
+
+    [Fact]
+    public void A_password_protected_pdf_reports_failed_without_crashing()
+    {
+        var path = Path_("locked.pdf");
+        using (var document = new PdfSharp.Pdf.PdfDocument())
+        {
+            document.AddPage();
+            document.SecuritySettings.UserPassword = "fixture-password";
+            document.Save(path);
+        }
+        Assert.Equal(DocTextStatus.Failed, DocTextExtractor.Extract(path).Status);
+    }
+
+    [Fact]
+    public void Docx_stream_keeps_text_in_tables_and_runs_without_xml_indentation()
+    {
+        var path = Path_("составной.docx");
+        using (var doc = WordprocessingDocument.Create(path, WordprocessingDocumentType.Document))
+        {
+            var main = doc.AddMainDocumentPart();
+            main.Document = new Document(new Body(
+                new Paragraph(new Run(new Text("Дого")), new Run(new Text("вор ") { Space = SpaceProcessingModeValues.Preserve })),
+                new Table(new TableRow(new TableCell(new Paragraph(new Run(new Text("номер 42"))))))));
+            main.Document.Save();
+        }
+        var result = DocTextExtractor.Extract(path);
+        Assert.Equal(DocTextStatus.Ok, result.Status);
+        Assert.Equal("Договор номер 42", result.Text);
+    }
+
+    [Fact]
+    public void Docx_reading_stops_when_cancelled_inside_the_xml_stream()
+    {
+        using var cancelled = new CancellationTokenSource();
+        var xml = "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>" +
+                  string.Concat(Enumerable.Repeat("<w:p><w:r><w:t>текст документа </w:t></w:r></w:p>", 10_000)) +
+                  "</w:body></w:document>";
+        using var stream = new CancellingStream(Encoding.UTF8.GetBytes(xml), cancelled);
+
+        Assert.Throws<OperationCanceledException>(() => DocTextExtractor.ReadDocxText(stream, cancelled.Token));
+        Assert.True(stream.Position < stream.Length, "отмена замечена только после чтения всего XML");
+    }
+
+    private sealed class CancellingStream(byte[] bytes, CancellationTokenSource cancelled) : MemoryStream(bytes)
+    {
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            var read = base.Read(buffer, offset, Math.Min(count, 1024));
+            if (Position >= 2048) cancelled.Cancel();
+            return read;
+        }
+    }
+
+    [Fact]
+    public void Docx_stream_keeps_a_separate_space_run_and_ignores_indentation()
+    {
+        var xml = """
+            <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+              <w:body>
+                <w:p>
+                  <w:r><w:t>Договор</w:t></w:r>
+                  <w:r><w:t> </w:t></w:r>
+                  <w:r><w:t>номер</w:t></w:r>
+                </w:p>
+              </w:body>
+            </w:document>
+            """;
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(xml));
+        Assert.Equal("Договор номер", DocTextExtractor.ReadDocxText(stream, default));
+    }
+
     private string WriteText(string name, string text, Encoding? encoding = null)
     {
         var path = Path_(name);

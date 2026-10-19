@@ -601,6 +601,7 @@ public partial class MainWindow : Window
             _localFlushTimer?.Stop();
             _changes.Dispose();
             _health.Dispose();
+            _mountQueue.Dispose();
             _notifications.Dispose();
             _backup.Dispose();
             _inbox.Dispose();

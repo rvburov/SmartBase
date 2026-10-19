@@ -104,6 +104,10 @@ public partial class DocReaderView : UserControl
     /// блока, и переприсваивать источник ради этого нельзя — прокрутка вернулась бы в начало.
     /// </summary>
     private readonly ObservableCollection<SheetRowVm> _sheetRows = [];
+    private readonly ObservableCollection<SheetRowVm> _scrollRows = [];
+    private int _frozenRowCount;
+    private int _frozenColumns;
+    private double FrozenWidth => _columns.Length == 0 ? 0 : _columns[Math.Min(_frozenColumns, _columns.Length - 1)];
 
     /// <summary>
     /// Совпадения в книге: лист, строка в нем и ячейка. Счет идет по ВСЕЙ книге, а не по
@@ -226,8 +230,15 @@ public partial class DocReaderView : UserControl
     /// <summary>Дребезг смены ширины панели: страницы перерисовываются под новую ширину.</summary>
     private readonly DispatcherTimer _widthDebounce = new() { Interval = TimeSpan.FromMilliseconds(300) };
 
-    public DocReaderView()
+    private bool _textHighlightsStale;
+
+    private readonly Func<string, int, CancellationToken, Task<DocReadResult>> _readText;
+
+    public DocReaderView() : this(DocReadText.ReadAsync) { }
+
+    internal DocReaderView(Func<string, int, CancellationToken, Task<DocReadResult>> readText)
     {
+        _readText = readText;
         InitializeComponent();
 
         LinesList.ItemTemplate = new FuncDataTemplate<ReaderLine>((_, _) => new ReaderLineView(this), supportsRecycling: false);
@@ -266,7 +277,7 @@ public partial class DocReaderView : UserControl
         // тянут плавно, и рисовать страницу на каждый пиксель движения незачем.
         PagesList.PropertyChanged += (_, e) =>
         {
-            if (e.Property != BoundsProperty || _mode != ReadMode.Document) return;
+            if (e.Property != BoundsProperty || _mode != ReadMode.Document || Document is null) return;
             _widthDebounce.Stop();
             _widthDebounce.Start();
         };
@@ -290,19 +301,30 @@ public partial class DocReaderView : UserControl
         FindBox.TextChanged += (_, _) =>
         {
             _findDebounce.Stop();
+            if (Document is null) return;
             // Свое же вписанное (Show, SetQuery) второй раз не пересчитываем — см. _query.
             if ((FindBox.Text ?? "") != _query) _findDebounce.Start();
         };
-        FindBox.KeyDown     += (_, e) =>
-        {
-            if (e.Key != Key.Enter) return;
-            e.Handled = true;
-            // Enter — «дальше», как в любом поиске по тексту. Пересчет мог еще не случиться по
-            // дебаунсу, поэтому сперва догоняем его.
-            if (_findDebounce.IsEnabled) { _findDebounce.Stop(); Rehighlight(); }
-            else Step(+1);
-        };
+        AddHandler(KeyDownEvent, OnReaderKeyDown, Avalonia.Interactivity.RoutingStrategies.Tunnel);
         _findDebounce.Tick += (_, _) => { _findDebounce.Stop(); Rehighlight(); };
+    }
+
+    private void OnReaderKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (ShortcutSettings.Matches("library.readerFind", e))
+        {
+            FindBox.Focus();
+            FindBox.SelectAll();
+        }
+        else if (ShortcutSettings.Matches("library.closeReader", e)) CloseRequested?.Invoke(this, EventArgs.Empty);
+        else if (ShortcutSettings.Matches("library.nextMatch", e) || ShortcutSettings.Matches("library.previousMatch", e))
+        {
+            var direction = ShortcutSettings.Matches("library.previousMatch", e) ? -1 : 1;
+            if (_findDebounce.IsEnabled) { _findDebounce.Stop(); Rehighlight(); }
+            else Step(direction);
+        }
+        else return;
+        e.Handled = true;
     }
 
     // ── Открытие и закрытие ───────────────────────────────────────────────────
@@ -351,6 +373,8 @@ public partial class DocReaderView : UserControl
     /// <summary>Закрыть панель и отпустить документ — текст мегабайтами в памяти не держим.</summary>
     public void Clear()
     {
+        _findDebounce.Stop();
+        _widthDebounce.Stop();
         Restart();
         Document = null;
         Reset();
@@ -366,24 +390,40 @@ public partial class DocReaderView : UserControl
     private CancellationToken Restart()
     {
         _gen++;
+        _sheetScanGen++;
+        _sheetScanCts?.Cancel();
         _docCts.Cancel();
+        _renderCts.Cancel();
+        _renderCts.Dispose();
+        _docCts.Dispose();
         _docCts    = new CancellationTokenSource();
         _renderCts = CancellationTokenSource.CreateLinkedTokenSource(_docCts.Token);
         return _docCts.Token;
+    }
+
+    protected override void OnDetachedFromVisualTree(Avalonia.VisualTreeAttachmentEventArgs e)
+    {
+        Clear();
+        base.OnDetachedFromVisualTree(e);
     }
 
     private void Reset()
     {
         _lines.Clear();
         _hits.Clear();
+        foreach (var page in _pages) page.SetBitmap(null);
         _pages.Clear();
         _pageHits.Clear();
         _rendered.Clear();
         _sheets     = [];
         _sheetRows.Clear();
+        _scrollRows.Clear();
+        FrozenRows.Children.Clear();
+        _frozenRowCount = _frozenColumns = 0;
         _sheetHits.Clear();
         _sheetIndex = 0;
         _read         = default;
+        _textHighlightsStale = false;
         _textState    = "";
         _hiddenSheets = 0;
         CutLabel.Text      = "";
@@ -428,7 +468,7 @@ public partial class DocReaderView : UserControl
         DocReadResult result;
         try
         {
-            result = await DocReadText.ReadAsync(doc.Path, LibrarySettings.IndexMaxMb, token);
+            result = await _readText(doc.Path, LibrarySettings.IndexMaxMb, token);
         }
         catch (OperationCanceledException) { return; }
         catch (Exception ex)
@@ -676,7 +716,15 @@ public partial class DocReaderView : UserControl
             _sheetRows.Clear();
             for (var i = 0; i < sheet.Rows.Count; i++)
                 _sheetRows.Add(new SheetRowVm(sheet.Rows[i], heights[i], spans[i]));
-            SheetRows.ItemsSource = _sheetRows;
+            _frozenRowCount = sheet.Rows.TakeWhile(r => r.Index < sheet.FrozenRows).Count();
+            _frozenColumns = sheet.FrozenColumns;
+            FrozenRows.Children.Clear();
+            _scrollRows.Clear();
+            for (var i = 0; i < _sheetRows.Count; i++)
+                if (i < _frozenRowCount) FrozenRows.Children.Add(new SheetRowView(this, pinned: true) { DataContext = _sheetRows[i] });
+                else _scrollRows.Add(_sheetRows[i]);
+            SheetRows.ItemsSource = _scrollRows;
+            if (_sheetScroll is { } scroll) scroll.Offset = default;
 
             SheetHead.Child?.InvalidateMeasure();
             SheetHead.Child?.InvalidateVisual();
@@ -705,6 +753,7 @@ public partial class DocReaderView : UserControl
         if (!ShowsSheet || _columns.Length == 0) return;
 
         var width  = SheetRows.Bounds.Width;
+        FrozenRowsBox.Width = Math.Max(0, width);
         var height = SheetRows.Bounds.Height;
         if (width <= 1 || height <= 1) return;
 
@@ -732,7 +781,9 @@ public partial class DocReaderView : UserControl
         var next = _sheetRows.Count > 0 ? _sheetRows[^1].Row.Index + 1 : 0;
         while (total < height - FillEdge && _sheetRows.Count < FillCap)
         {
-            _sheetRows.Add(new SheetRowVm(new DocSheetRow(next++, []), _fillHeight));
+            var filler = new SheetRowVm(new DocSheetRow(next++, []), _fillHeight);
+            _sheetRows.Add(filler);
+            _scrollRows.Add(filler);
             total += _fillHeight;
         }
     }
@@ -953,35 +1004,43 @@ public partial class DocReaderView : UserControl
     {
         var scan = ++_sheetScanGen;
         _sheetScanCts?.Cancel();
-        var cts = CancellationTokenSource.CreateLinkedTokenSource(_docCts.Token);
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(_docCts.Token);
         _sheetScanCts = cts;
+        var token = cts.Token;
 
-        // Прежние совпадения снимаем сразу: пока идет обход, на листе не должно стоять
-        // подсветки по старому запросу, а в счетчике — ни старого «3 из 17», ни «нет».
-        _sheetHits.Clear();
-        _sheetsScanned = false;
-        ApplySheetHits();
-        UpdateCounter();
-
-        var tokens = DocHighlight.Tokens(FindBox.Text);
-        var sheets = _sheets;
-        List<(int Sheet, int Row, int Cell)> found = [];
-        if (tokens.Count > 0)
+        try
         {
-            try { found = await Task.Run(() => FindInBook(sheets, tokens, cts.Token), cts.Token); }
-            catch (OperationCanceledException) { return; }
-            if (gen != _gen || scan != _sheetScanGen) return;
-        }
+            // Прежние совпадения снимаем сразу: пока идет обход, на листе не должно стоять
+            // подсветки по старому запросу, а в счетчике — ни старого «3 из 17», ни «нет».
+            _sheetHits.Clear();
+            _sheetsScanned = false;
+            ApplySheetHits();
+            UpdateCounter();
 
-        _sheetHits.AddRange(found);
-        _sheetsScanned = true;
-        ApplySheetHits();
-        if (_mode == ReadMode.Document && ShowsSheet)
-        {
-            _current = _sheetHits.Count > 0 ? 0 : -1;
-            ApplyCurrent(scroll: true);
+            var tokens = DocHighlight.Tokens(FindBox.Text);
+            var sheets = _sheets;
+            List<(int Sheet, int Row, int Cell)> found = [];
+            if (tokens.Count > 0)
+            {
+                try { found = await Task.Run(() => FindInBook(sheets, tokens, token), token); }
+                catch (OperationCanceledException) { return; }
+                if (gen != _gen || scan != _sheetScanGen) return;
+            }
+
+            _sheetHits.AddRange(found);
+            _sheetsScanned = true;
+            ApplySheetHits();
+            if (_mode == ReadMode.Document && ShowsSheet)
+            {
+                _current = _sheetHits.Count > 0 ? 0 : -1;
+                ApplyCurrent(scroll: true);
+            }
+            else UpdateCounter();
         }
-        else UpdateCounter();
+        finally
+        {
+            if (ReferenceEquals(_sheetScanCts, cts)) _sheetScanCts = null;
+        }
     }
 
     /// <summary>Совпадения книги — лист, строка в нем и ячейка — в порядке чтения.</summary>
@@ -1024,6 +1083,7 @@ public partial class DocReaderView : UserControl
         if (mode == ReadMode.Document && _source is null && !ShowsSheet) { TextModeBtn.IsChecked = true; return; }
 
         _mode = mode;
+        if (mode == ReadMode.Text && _textHighlightsStale) HighlightLines();
         TextModeBtn.IsChecked  = mode == ReadMode.Text;
         DocModeBtn.IsChecked = mode == ReadMode.Document;
 
@@ -1061,6 +1121,7 @@ public partial class DocReaderView : UserControl
         _pageWidth = width;
         // Картинки под прежнюю ширину не нужны — и те, что еще только ждут очереди: их бросаем.
         _renderCts.Cancel();
+        _renderCts.Dispose();
         _renderCts = CancellationTokenSource.CreateLinkedTokenSource(_docCts.Token);
         foreach (var page in _rendered.ToList()) _pages[page].SetBitmap(null);
         _rendered.Clear();
@@ -1243,7 +1304,8 @@ public partial class DocReaderView : UserControl
     private void Rehighlight()
     {
         _query = FindBox.Text ?? "";
-        HighlightLines();
+        _textHighlightsStale = true;
+        if (_mode == ReadMode.Text) HighlightLines();
 
         // Текущее совпадение — первое в ОТКРЫТОМ режиме. У страниц и листа его назначит их
         // обход: совпадения по новому запросу там еще не сосчитаны, а номер из строк текста
@@ -1266,8 +1328,10 @@ public partial class DocReaderView : UserControl
     /// </summary>
     private void HighlightLoadedText()
     {
-        HighlightLines();
+        _textHighlightsStale = true;
         if (_mode != ReadMode.Text) return;
+
+        HighlightLines();
 
         _current = _hits.Count > 0 ? 0 : -1;
         ApplyCurrent(scroll: true);
@@ -1276,6 +1340,7 @@ public partial class DocReaderView : UserControl
     /// <summary>Совпадения в строках текста: подсветка строк и список для стрелок.</summary>
     private void HighlightLines()
     {
+        _textHighlightsStale = false;
         _hits.Clear();
         var tokens = DocHighlight.Tokens(FindBox.Text);
 
@@ -1376,7 +1441,7 @@ public partial class DocReaderView : UserControl
         var (sheet, row, _) = _sheetHits[_current];
         if (sheet != _sheetIndex || row < 0 || row >= _sheetRows.Count) return;
 
-        SheetRows.ScrollIntoView(row);
+        if (row >= _frozenRowCount) SheetRows.ScrollIntoView(row - _frozenRowCount);
         ShowSheetHitSide();
     }
 
@@ -1402,17 +1467,18 @@ public partial class DocReaderView : UserControl
         // Левый край окна занят полосой номеров строк: она прибита к месту, и ячейка под ней
         // не видна, сколько бы формально ни попадала в окно.
         var window = scroll.Viewport.Width;
-        var usable = window - _gutter;
+        if (from < _frozenColumns) return;
+        var usable = window - _gutter - FrozenWidth;
         if (usable <= 0) return;
 
         var x = scroll.Offset.X;
-        if (_columns[from] >= x && _gutter + _columns[to] - x <= window) return;
+        if (_columns[from] >= x + FrozenWidth && _gutter + _columns[to] - x <= window) return;
 
         // Ячейка шире окна или ушла влево — ставим ее к левому краю; ушла вправо — подтягиваем
         // ровно настолько, чтобы влезла. Двигать больше нужного нельзя: человек потеряет место,
         // на котором стоял.
-        var next = _columns[to] - _columns[from] > usable || _columns[from] < x
-                 ? _columns[from] - HitEdge
+        var next = _columns[to] - _columns[from] > usable || _columns[from] < x + FrozenWidth
+                 ? _columns[from] - FrozenWidth - HitEdge
                  : _gutter + _columns[to] - window + HitEdge;
 
         var span = Math.Max(0, scroll.Extent.Width - window);
@@ -1643,17 +1709,16 @@ public partial class DocReaderView : UserControl
     /// тысячу строк контролы на каждую ячейку означали бы десятки тысяч элементов дерева, а
     /// нарисовать надо всего-то текст, линии сетки и заливку совпадений.
     ///
-    /// Объединение по ГОРИЗОНТАЛИ отрабатывается честно: шапка «Смета работ» идет во всю ширину
-    /// таблицы, как в книге. Объединение по вертикали показывается только своей первой строкой:
-    /// строка списка не умеет залезать на соседнюю, а ради редкого случая ломать виртуализацию
-    /// (на ней держится прокрутка тысячи строк) не стоит.
+    /// Объединения разложены по строкам в SpansOf: каждая строка рисует свою полосу
+    /// общего текста, заливки и рамки. Закрепленные строки используют ту же отрисовку.
     /// </summary>
     private sealed class SheetRowView : Control
     {
         private readonly DocReaderView _owner;
         private SheetRowVm? _row;
 
-        public SheetRowView(DocReaderView owner) => _owner = owner;
+        private readonly bool _pinned;
+        public SheetRowView(DocReaderView owner, bool pinned = false) { _owner = owner; _pinned = pinned; }
 
         protected override Size MeasureOverride(Size availableSize)
         {
@@ -1663,6 +1728,50 @@ public partial class DocReaderView : UserControl
         }
 
         public override void Render(DrawingContext context)
+        {
+            if (_pinned)
+            {
+                using (context.PushTransform(Matrix.CreateTranslation(-_owner._scrollX, 0))) PaintRow(context);
+            }
+            else PaintRow(context);
+        }
+
+        private void PaintRow(DrawingContext context)
+        {
+            if (_row is not { } row || _owner._columns.Length < 2) return;
+            PaintCells(context);
+            var gutter = _owner._gutter;
+            var height = Bounds.Height;
+            var fixedWidth = _owner.FrozenWidth;
+            if (fixedWidth > 0)
+            {
+                using (context.PushClip(new Rect(_owner._scrollX + gutter, 0, fixedWidth, height)))
+                using (context.PushTransform(Matrix.CreateTranslation(_owner._scrollX, 0)))
+                {
+                    context.FillRectangle(_owner.Brush("BrushPrimaryBg", "#FFFFFF"), new Rect(gutter, 0, fixedWidth, height));
+                    PaintCells(context);
+                }
+            }
+            var strip = _owner.Brush("BrushSecondaryBg", "#F2F2F7");
+            var muted = _owner.Brush("BrushSecondaryText", "#8E8E93");
+            var pen = new Pen(_owner.Brush("BrushSeparator", "#D1D1D6"), 1);
+            var font = _owner.Size("FontSizeMedium", 14);
+            var face = new Typeface(TextElement.GetFontFamily(this));
+            // Полоса с номером строки стоит на месте, как в Excel: таблицу увозят вбок, а номера
+            // остаются у левого края. Рисуется ПОСЛЕДНЕЙ — уехавшие ячейки прячутся под ней.
+            var box = new Rect(_owner._scrollX, 0, gutter, height);
+            context.FillRectangle(strip, box);
+            context.DrawLine(pen, new Point(box.Right - 0.5, 0), new Point(box.Right - 0.5, height));
+            context.DrawLine(pen, new Point(box.X, height - 0.5), new Point(box.Right, height - 0.5));
+
+            var number = new FormattedText(row.Number.ToString(CultureInfo.InvariantCulture),
+                                           CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
+                                           face, font * 0.85, muted);
+            context.DrawText(number, new Point(box.Right - 6 - number.Width,
+                                               Math.Max(0, (height - number.Height) / 2)));
+        }
+
+        private void PaintCells(DrawingContext context)
         {
             if (_row is not { } row || _owner._columns.Length < 2) return;
 
@@ -1765,18 +1874,6 @@ public partial class DocReaderView : UserControl
                     Write(context, cell, paint, font, area);
             }
 
-            // Полоса с номером строки стоит на месте, как в Excel: таблицу увозят вбок, а номера
-            // остаются у левого края. Рисуется ПОСЛЕДНЕЙ — уехавшие ячейки прячутся под ней.
-            var box = new Rect(_owner._scrollX, 0, gutter, height);
-            context.FillRectangle(strip, box);
-            context.DrawLine(pen, new Point(box.Right - 0.5, 0), new Point(box.Right - 0.5, height));
-            context.DrawLine(pen, new Point(box.X, height - 0.5), new Point(box.Right, height - 0.5));
-
-            var number = new FormattedText(row.Number.ToString(CultureInfo.InvariantCulture),
-                                           CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
-                                           face, font * 0.85, muted);
-            context.DrawText(number, new Point(box.Right - 6 - number.Width,
-                                               Math.Max(0, (height - number.Height) / 2)));
         }
 
         /// <summary>
@@ -2014,15 +2111,31 @@ public partial class DocReaderView : UserControl
 
             // Полоса кончается там же, где таблица: пустая серая лента до края панели говорила бы
             // о колонках, которых в листе нет.
-            var edge = Math.Min(width, gutter + columns[^1] - owner._scrollX);
+            var edge = Math.Min(width, Math.Max(gutter + owner.FrozenWidth, gutter + columns[^1] - owner._scrollX));
             context.FillRectangle(strip, new Rect(0, 0, edge, height));
             context.DrawLine(pen, new Point(0, height - 0.5), new Point(edge, height - 0.5));
 
-            using (context.PushClip(new Rect(gutter, 0, Math.Max(0, width - gutter), height)))
+            using (context.PushClip(new Rect(gutter + owner.FrozenWidth, 0, Math.Max(0, width - gutter - owner.FrozenWidth), height)))
                 for (var i = 0; i + 1 < columns.Length; i++)
                 {
                     var left  = gutter + columns[i]     - owner._scrollX;
                     var right = gutter + columns[i + 1] - owner._scrollX;
+                    if (right - left <= 0 || right <= gutter || left >= width) continue;
+
+                    context.DrawLine(pen, new Point(right - 0.5, 0), new Point(right - 0.5, height));
+
+                    var label = new FormattedText(DocSheetSource.NameOf(i), CultureInfo.InvariantCulture,
+                                                  FlowDirection.LeftToRight, face, font, muted);
+                    context.DrawText(label, new Point(left + (right - left - label.Width) / 2,
+                                                      (height - label.Height) / 2));
+                }
+
+            if (owner.FrozenWidth > 0)
+            using (context.PushClip(new Rect(gutter, 0, Math.Min(owner.FrozenWidth, Math.Max(0, width - gutter)), height)))
+                for (var i = 0; i < owner._frozenColumns && i + 1 < columns.Length; i++)
+                {
+                    var left  = gutter + columns[i]     ;
+                    var right = gutter + columns[i + 1] ;
                     if (right - left <= 0 || right <= gutter || left >= width) continue;
 
                     context.DrawLine(pen, new Point(right - 0.5, 0), new Point(right - 0.5, height));

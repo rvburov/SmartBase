@@ -12,6 +12,9 @@ namespace SmartBase.Utils;
 /// </summary>
 public static class LibrarySettings
 {
+    /// <summary>Общая сортировка; по умолчанию сохраняется порядок коллекций.</summary>
+    public static DocSort Sort { get; private set; } = DocSort.Collections;
+
     /// <summary>Боковая панель показывает только коллекции с файловым свойством библиотеки
     /// (false — все коллекции).</summary>
     public static bool SidebarOnlyInSection { get; private set; } =
@@ -36,12 +39,13 @@ public static class LibrarySettings
     /// <summary>
     /// Сколько документов считать «многими», пока скорость не измерена.
     ///
-    /// Число взято из замера (<c>Tests/Benchmarks/DocReadBench.cs</c>): на сгенерированном
-    /// наборе разбор идет ~19 мс на документ, у PDF с текстовым слоем ~27 мс. Настоящие ГОСТы и
-    /// СП тяжелее в разы, поэтому в первый раз считаем по пессимистичным 100 мс — минута выходит
-    /// примерно на шестистах документах.
+    /// Начальная оценка — 1 с на документ: прогретый разбор большого официального
+    /// руководства RISC-V с записью FTS занял около 0,7 с, округляем вверх. До собственного
+    /// замера предупреждаем с 60 документов; после разогрева действует скорость человека.
+    /// Набор и результаты: docs/developer/architecture/performance/library-calibration.md.
     /// </summary>
-    public const int ConfirmReadFromCount = 600;
+    public const double InitialSecondsPerDocument = 1;
+    public const int ConfirmReadFromCount = (int)(60 / InitialSecondsPerDocument);
 
     /// <summary>
     /// Спрашивать ли подтверждение перед чтением <paramref name="count"/> документов.
@@ -83,11 +87,21 @@ public static class LibrarySettings
     /// <summary>Старт: считать сохраненные значения. Вызывать после AppSettings.AttachStore.</summary>
     public static void Init()
     {
+        Sort = Enum.TryParse<DocSort>(AppSettings.LoadLibrarySort(), out var sort) && Enum.IsDefined(sort)
+            ? sort : DocSort.Collections;
         SidebarOnlyInSection = AppSettings.LoadLibrarySidebarOnlyInSection();
         IndexMaxMb           = ParseMaxMb(AppSettings.LoadLibraryIndexMaxMb());
         Thumbnails           = AppSettings.LoadLibraryThumbnails();
         CardSize             = DocTiles.Parse(AppSettings.LoadLibraryCardSize());
         SecondsPerDocument   = AppSettings.LoadLibrarySecondsPerDoc();
+    }
+
+    public static void SetSort(DocSort sort)
+    {
+        if (!Enum.IsDefined(sort) || Sort == sort) return;
+        Sort = sort;
+        AppSettings.SaveLibrarySort(sort.ToString());
+        Publish();
     }
 
     public static void SetSidebarOnlyInSection(bool on)

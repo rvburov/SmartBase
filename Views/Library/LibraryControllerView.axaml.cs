@@ -44,19 +44,21 @@ public partial class LibraryControllerView : UserControl
     /// <summary>Запрос поиска сменился — открытая панель чтения подсвечивает новое слово.</summary>
     public event EventHandler<string>? SearchQueryChanged;
 
-    /// <summary>Сколько документов на базу читаем в память; больше — страницами.</summary>
-    private const int DocLoadCap = 10_000;
+    /// <summary>Сколько документов раздела читаем в память; больше — страницами.</summary>
+    private const int DocLoadCap = DocLibraryLimits.InMemoryDocuments;
 
     /// <summary>Потолок выдачи поиска: и по кешу текста, и по базе.</summary>
-    private const int SearchLimit = 500;
+    private const int SearchLimit = DocLibraryLimits.SearchResults;
 
     private readonly List<(int DbId, string Name, ConstructorRepository Repo)> _dbs = [];
 
     private Dictionary<int, HashSet<int>>? _activeByDb;
     private IReadOnlySet<string>? _types;
     private string _searchQuery = "";
+    private DocSort _lastSort = LibrarySettings.Sort;
 
     private int _gen;
+    private CancellationTokenSource? _loadCts;
     private DocVirtualList? _virtual;
 
     // Отдельный ограничитель для миниатюр: рендер PDF упирается в процессор, и пускать его на
@@ -102,9 +104,34 @@ public partial class LibraryControllerView : UserControl
     public LibraryControllerView()
     {
         InitializeComponent();
+    }
 
+    private bool _detached;
+    private IDisposable? _remoteRefresh;
+
+    protected override void OnAttachedToVisualTree(Avalonia.VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        _detached = false;
         LibrarySettings.Changed += OnLibrarySettingsChanged;
         FontScale.Changed       += OnFontScaleChanged;
+        Follow(DocIndexService.Current);
+        if (_dbs.Count > 0) RefreshCurrent(quiet: true);
+    }
+
+    protected override void OnDetachedFromVisualTree(Avalonia.VisualTreeAttachmentEventArgs e)
+    {
+        _detached = true;
+        _loadCts?.Cancel();
+        _gen++;
+        LibrarySettings.Changed -= OnLibrarySettingsChanged;
+        FontScale.Changed -= OnFontScaleChanged;
+        Follow(null);
+        _virtual?.Cancel();
+        _remoteRefresh?.Dispose();
+        _remoteRefresh = null;
+        _remotePending = false;
+        base.OnDetachedFromVisualTree(e);
     }
 
     /// <summary>Момент последнего чтения данных (<see cref="ChangeBus.Now"/>): главное окно
@@ -122,6 +149,7 @@ public partial class LibraryControllerView : UserControl
         NavbarControl.TypesChanged += (_, types) => { _types = types; RefreshCurrent(); };
         NavbarControl.ReaderToggled += (_, open) => ReaderToggled?.Invoke(this, open);
 
+        DocList.RefreshRequested += (_, _) => Refresh();
         DocList.DocActivated     += (_, d) => OpenDocument(d);
         DocList.DocReadRequested += (_, d) => ReadRequested?.Invoke(this, d);
         // Запрос поиска и панель чтения связаны: панель подсвечивает то, что искали в разделе.
@@ -136,7 +164,7 @@ public partial class LibraryControllerView : UserControl
         };
         DocList.SearchCleared   += (_, _) => { _searchQuery = ""; RefreshCurrent(); RaiseQuery(); };
 
-        Follow(DocIndexService.Current);
+        if (VisualRoot is not null) Follow(DocIndexService.Current);
 
         RefreshCurrent();
     }
@@ -203,7 +231,12 @@ public partial class LibraryControllerView : UserControl
         if (wait <= TimeSpan.Zero) { RefreshRemoteNow(); return; }
 
         _remotePending = true;
-        DispatcherTimer.RunOnce(() => { _remotePending = false; RefreshRemoteNow(); }, wait);
+        _remoteRefresh = DispatcherTimer.RunOnce(() =>
+        {
+            _remotePending = false;
+            _remoteRefresh = null;
+            if (!_detached) RefreshRemoteNow();
+        }, wait);
     }
 
     /// <summary>Не чаще одного легкого перечитывания по чужим правкам за этот промежуток.</summary>
@@ -242,15 +275,19 @@ public partial class LibraryControllerView : UserControl
 
     private void OnLibrarySettingsChanged()
     {
+        NavbarControl.SyncSort();
+        var sortChanged = _lastSort != LibrarySettings.Sort;
+        _lastSort = LibrarySettings.Sort;
+        if (sortChanged) DocList.ScrollOffset = default;
         if (DocIndexService.Current is { } s) s.MaxFileMb = LibrarySettings.IndexMaxMb;
 
-        // Все настройки перечитывают ленту тихо, и она остается на том же документе — и после
+        // Настройки оформления перечитывают ленту тихо и сохраняют место — в том числе после
         // смены размера карточки, когда высота каждой строки другая (так решил пользователь).
         // Прежнее смещение в пикселях при этом не врет: виртуальная панель переводит его в номер
         // строки своей оценкой высоты, а оценка до перестройки — прежняя. Раньше размер
         // перечитывал ленту громко «с начала» — так было написано, а на деле лента и тогда
         // оставалась на месте. Сторож — стенд разделов («шрифт и размер карточки держат место»).
-        if (_dbs.Count > 0) RefreshCurrent(quiet: true);
+        if (_dbs.Count > 0) RefreshCurrent(quiet: !sortChanged);
     }
 
     private void OnFontScaleChanged()
@@ -329,13 +366,25 @@ public partial class LibraryControllerView : UserControl
     protected override void OnPropertyChanged(Avalonia.AvaloniaPropertyChangedEventArgs change)
     {
         base.OnPropertyChanged(change);
-        if (change.Property == IsVisibleProperty && IsVisible && _loadDeferred)
+        if (change.Property != IsVisibleProperty) return;
+        if (!IsVisible && _loadCts is { } loadCts)
+        {
+            // Главное окно кеширует разделы скрытыми: снятия с дерева при переходе нет.
+            _gen++;
+            loadCts.Cancel();
+            _loading = false;
+            _loadDeferred = true;
+            _deferredQuiet = false;
+        }
+        else if (IsVisible && _loadDeferred)
             Dispatcher.UIThread.Post(() => { if (_loadDeferred && IsVisible) RefreshCurrent(); },
                                      DispatcherPriority.Background);
     }
 
     private async Task LoadAsync(bool quiet = false, bool light = false)
     {
+        if (_detached) return;
+        _loadCts?.Cancel();
         DataStamp = ChangeBus.Now();
         if (_dbs.Count == 0)
         {
@@ -349,50 +398,56 @@ public partial class LibraryControllerView : UserControl
         }
 
         var gen       = ++_gen;
-        var oldOffset = DocList.ScrollOffset;
-        using var slow = Logging.Diag.Measure("загрузка раздела «Библиотека документов»",
-                                              Logging.Diag.UiOpen, $"баз {_dbs.Count}");
-
-        // Прежний виртуальный список выбрасываем: его фоновые страницы больше никто не покажет,
-        // а подключения они занимать продолжали бы.
-        _virtual?.Cancel();
-        _virtual = null;
-        _thumbAsked.Clear();
-
-        var work = _searchQuery.Trim().Length > 0 ? LoadSearchAsync(gen) : LoadFeedAsync(gen, light);
-
-        // Оверлей — только если не успели за 400 мс И эта загрузка все еще актуальна: правило
-        // целиком в DocLoadPlan, там же его «почему» и тесты.
-        var timedOut = await Task.WhenAny(work, Task.Delay(400)) != work;
-        if (DocLoadPlan.ShouldShowLoading(quiet, timedOut, gen, _gen))
+        using var loadCts = new CancellationTokenSource();
+        _loadCts = loadCts;
+        try
         {
-            _loading = true;
-            RefreshStatus();
-        }
+            var oldOffset = DocList.ScrollOffset;
+            using var slow = Logging.Diag.Measure("загрузка раздела «Библиотека документов»",
+                                                  Logging.Diag.UiOpen, $"баз {_dbs.Count}");
 
-        try { await work; }
-        catch (Exception ex)
-        {
+            // Прежний виртуальный список выбрасываем: его фоновые страницы больше никто не покажет,
+            // а подключения они занимать продолжали бы.
+            _virtual?.Cancel();
+            _virtual = null;
+            _thumbAsked.Clear();
+
+            var work = _searchQuery.Trim().Length > 0 ? LoadSearchAsync(gen) : LoadFeedAsync(gen, light, loadCts.Token);
+
+            // Оверлей — только если не успели за 400 мс И эта загрузка все еще актуальна: правило
+            // целиком в DocLoadPlan, там же его «почему» и тесты.
+            var timedOut = await Task.WhenAny(work, Task.Delay(400)) != work;
+            if (DocLoadPlan.ShouldShowLoading(quiet, timedOut, gen, _gen))
+            {
+                _loading = true;
+                RefreshStatus();
+            }
+
+            try { await work; }
+            catch (Exception ex)
+            {
+                if (!DocLoadPlan.IsCurrent(gen, _gen)) return;
+                if (Logging.Diag.Throttle("library-load-fail", TimeSpan.FromMinutes(1)))
+                    Serilog.Log.Warning(ex, "Библиотека: лента не прочитана");
+                DocList.ShowNotice("Документы не прочитались: база занята или недоступна.");
+            }
+            finally
+            {
+                if (DocLoadPlan.ShouldHideLoading(gen, _gen)) { _loading = false; RefreshStatus(); }
+            }
+
             if (!DocLoadPlan.IsCurrent(gen, _gen)) return;
-            if (Logging.Diag.Throttle("library-load-fail", TimeSpan.FromMinutes(1)))
-                Serilog.Log.Warning(ex, "Библиотека: лента не прочитана");
-            DocList.ShowNotice("Документы не прочитались: база занята или недоступна.");
-        }
-        finally
-        {
-            if (DocLoadPlan.ShouldHideLoading(gen, _gen)) { _loading = false; RefreshStatus(); }
-        }
+            if (quiet) DocList.ScrollOffset = oldOffset;
 
-        if (!DocLoadPlan.IsCurrent(gen, _gen)) return;
-        if (quiet) DocList.ScrollOffset = oldOffset;
-
-        // Подвал показывает то, что известно СЕЙЧАС, и обновится сам, когда досчитается перепись.
-        RefreshStatus();
-        _ = light ? RefreshCensusLightAsync() : RefreshCensusAsync();
+            // Подвал показывает то, что известно СЕЙЧАС, и обновится сам, когда досчитается перепись.
+            RefreshStatus();
+            _ = light ? RefreshCensusLightAsync() : RefreshCensusAsync();
+        }
+        finally { if (ReferenceEquals(_loadCts, loadCts)) _loadCts = null; }
     }
 
     // Обычная лента: размеры потоков считаются в фоне, дальше — либо все в память, либо страницы.
-    private async Task LoadFeedAsync(int gen, bool light = false)
+    private async Task LoadFeedAsync(int gen, bool light = false, CancellationToken ct = default)
     {
         // Легкое перечитывание берет отметки файлов у карточек на экране: чужая правка меняет
         // базу, а не файлы, и спрашивать диск заново о тех же путях незачем. Это касается ленты
@@ -457,11 +512,20 @@ public partial class LibraryControllerView : UserControl
                     RequestThumbnail(card);
                 }
             }
+            if (LibrarySettings.Sort != DocSort.Collections)
+                cards.Sort((a, b) => DocOrderPlan.Compare(((DocCardVm)a).Doc, ((DocCardVm)b).Doc, LibrarySettings.Sort));
             DocList.Show(cards);
             return;
         }
 
-        var list = new DocVirtualList(entries, DocList.Selection.Keys);
+        DocOrderKey[]? order = null;
+        if (LibrarySettings.Sort != DocSort.Collections)
+        {
+            order = await DocVirtualList.BuildOrderAsync(entries, LibrarySettings.Sort, ct);
+        }
+        if (gen != _gen) return;
+        var list = new DocVirtualList(entries, DocList.Selection.Keys, order);
+        list.OrderInvalidated += () => { if (ReferenceEquals(_virtual, list)) RefreshCurrent(quiet: true); };
         list.CardRealized += RequestThumbnail;
         list.TextState     = ApplyTextState;
         _virtual = list;
@@ -581,6 +645,8 @@ public partial class LibraryControllerView : UserControl
         _foundCapped  = budget.Capped;
         _textFailed   = textFailed;
 
+        if (LibrarySettings.Sort != DocSort.Collections)
+            found.Sort((a, b) => DocOrderPlan.Compare(((DocCardVm)a).Doc, ((DocCardVm)b).Doc, LibrarySettings.Sort));
         DocList.Show(found, EmptySearchText());
         // Про потолок выдачи говорит подвал блока — общий баннер ошибок для этого не нужен:
         // обрезанный список это не ошибка.
@@ -681,6 +747,7 @@ public partial class LibraryControllerView : UserControl
             await _thumbGate.WaitAsync();
             try
             {
+                if (gen != _gen) return;
                 var file = DocThumbnail.Render(AppSettings.DocThumbsDir, path);
                 if (file is null || gen != _gen) return;
                 Dispatcher.UIThread.Post(() =>
@@ -800,6 +867,7 @@ public partial class LibraryControllerView : UserControl
 
     private async Task CensusOnceAsync()
     {
+        if (_detached) return;
         if (DocIndexService.Current is not { } service) { RefreshStatus(); return; }
 
         var gen    = _gen;
@@ -1027,6 +1095,7 @@ public partial class LibraryControllerView : UserControl
 
         Dispatcher.UIThread.Post(() =>
         {
+            if (_detached || !ReferenceEquals(sender, _service)) return;
             _readDone  = p.Done;
             _readTotal = p.Total;
             _readLeft  = p.Left;
@@ -1048,6 +1117,7 @@ public partial class LibraryControllerView : UserControl
 
         Dispatcher.UIThread.Post(() =>
         {
+            if (_detached || !ReferenceEquals(sender, _service)) return;
             DocList.SetProgress(0, 0);
             // Подвал — сразу, а не после переписи: сорвавшееся чтение часто значит, что и кеш не
             // отвечает, перепись тогда не досчитается, и подвал остался бы на «Читаю документы»
@@ -1073,11 +1143,6 @@ public partial class LibraryControllerView : UserControl
 
     // ── Открытие документа ───────────────────────────────────────────────────
 
-    /// <summary>
-    /// Открыть документ системой — тем же способом, что ячейка типа «Файл»
-    /// (<c>Controls/Widgets/FileEditor.axaml.cs</c>). Запрет <c>BannedSymbols.txt</c> действует
-    /// на путь ВХОДЯЩИХ данных («наружу одна дверь»); открытие по клику человека — не он.
-    /// </summary>
     /// <summary>Текущий запрос поиска — панель чтения открывается сразу на нем.</summary>
     public string SearchQuery => _searchQuery;
 
