@@ -18,6 +18,8 @@ dotnet run -c Release --project Tests/Benchmarks -- bloat   [--count N] [--dir P
 dotnet run -c Release --project Tests/Benchmarks -- delete  --db PATH [--batch N] [--col ИМЯ]
 dotnet run -c Release --project Tests/Benchmarks -- pgdelete [--rows N] [--db ИМЯ]
 dotnet run -c Release --project Tests/Benchmarks -- wide    --db PATH [--columns N]
+dotnet run -c Release --project Tests/Benchmarks -- backup  --db PATH [--network]
+dotnet run -c Release --project Tests/Benchmarks -- pgmove  --db PATH [--pg ИМЯ] [--col ИМЯ]
 ```
 
 Цена широкой таблицы в НАСТОЯЩЕМ UI-дереве (а не в ядре) меряется отдельным стендом —
@@ -40,6 +42,8 @@ dotnet run -c Release --project Tests/WideGui -- --db PATH
 
 | **delete** | удаление большой коллекции (`DeleteCollectionIsolated`): время целиком, темп по пакетам, размеры `.db` и `-wal` до/во время/после, память процесса; `--batch` сравнивает размеры пакета | стенд из `Tests/DbGenerator` |
 | **pgdelete** | то же удаление на PostgreSQL: время, мертвые кортежи, что дает `VACUUM ANALYZE` | стенд `sb-pg` (порт 5455) |
+| **backup** | резервная копия SQLite: копия файла (как проводником) против прежней копии программы (`VACUUM INTO` + `integrity_check` в один поток) и нынешней `BackupTo` по фазам; `--network` — источник считается сетевым (снимок на своем диске). Копии пишутся рядом с файлом и удаляются | любой файл `.db` |
+| **pgmove** | перенос коллекции SQLite → PostgreSQL и обратно (generic-путь `ConstructorRepository.CrossMove`): время и темп каждого направления; источник — копия файла, схема `public` базы стенда сбрасывается | стенд из `Tests/DbGenerator`, стенд `sb-pg` (порт 5455) |
 | **wide** | цена ШИРОКОЙ коллекции в ядре: снимок открытия, страницы записей, значения, список значений колонки — против узкой для сравнения | стенд профиля `wide` из `Tests/DbGenerator` |
 | **WideGui** (отдельный проект) | цена широкой таблицы в живом UI: время и аллокации на построение колонок и первую раскладку, куча и рабочий набор после открытия | стенд профиля `wide`, Avalonia.Headless |
 
@@ -377,6 +381,22 @@ colima-VM**: каждая операция репозитория — неско
 (`PRAGMA auto_vacuum=INCREMENTAL` перед `VACUUM`), после пакетных удалений —
 `incremental_vacuum` порциями в той же фоновой операции. Файлы стенда (`bloat_none.db`,
 `bloat_incr.db`) после проверки удалить.
+
+### Что показали `sidebar`, `backup` и `pgmove` (19.10.2026, облачная Linux-машина, 16 ядер, локальный диск)
+
+- **Дубль коллекции на 2 млн записей** (16 млн строк значений, 6 млн строк проекции) —
+  5 мин 25 с, дубль группы с двумя такими коллекциями — 12 мин 50 с. Время уходит на вставку
+  в индексы: `IX_db_field_values_FieldId_Value` и четыре индекса `calendar_index` с
+  построчным триггером сводки дней (на 300 тыс. записей: значения 7 с, проекция 8,7 с, сами
+  записи 0,5 с). Одной транзакцией такой дубль раздувал `-wal` до 9,4 ГБ при базе 2,7 ГБ —
+  теперь транзакция на пакет (см. `CopyCollectionData`).
+- **Резервная копия** базы 1,36 ГБ: копия файла 1,6–4 с; прежняя копия программой ≈ 23,5 с
+  (`VACUUM INTO` 7 с + `integrity_check` 16–17 с); нынешняя ≈ 20,5 с (сжатие 7,4 с + проверка
+  частями 12,2–12,7 с — ее держит `calendar_index`, ≈ 8 с в одном потоке).
+- **Перенос 300 тыс. записей SQLite ↔ PostgreSQL** (сервер на той же машине): было 3 мин 24 с
+  в PG и 3 мин 37 с обратно (копия обратно — 136 с); стало 2 мин 17 с и 1 мин 37 с (копия
+  обратно — 35 с). Остаток: в PG 84 с из 124 с копии — построчные триггеры `calendar_index`
+  на сервере, удаление 300 тыс. записей из PG — 65 с.
 
 Функциональная корректность импорта/экспорта/PG проверяется автотестами (см.
 [automated-tests.md](automated-tests.md)); здесь только скорость.

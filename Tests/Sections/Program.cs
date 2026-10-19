@@ -1703,6 +1703,7 @@ async Task SidebarOps()
     var faults    = 0;
     int? targetGroup = null;   // куда окно «Расположение» переносит коллекцию (null — корень базы)
     int? targetDb    = null;   // в какую базу (null — в ту же)
+    var  noteTarget  = "";     // папка заметок, куда переносит окно (относительный путь)
     var collapsed = (HashSet<int>)Get(sidebar, "_collapsedDbRoots")!;
 
     var dialogs = 0;   // окна, открытые за сценарий: по ним видно, что клик по заглушке объяснен
@@ -1898,6 +1899,36 @@ async Task SidebarOps()
                   () => other.Constructor.GetAllCollections().All(c => c.Id != moved.Id), cap);
     }
 
+    // Дерево заметок: дубль, перенос и удаление большой папки (тысячи файлов) — тоже в фоне.
+    var vault = Path.Combine(runDir, "vault");
+    if (Directory.Exists(vault)) Directory.Delete(vault, recursive: true);
+    var bigFolder = Path.Combine(vault, "Большая");
+    Directory.CreateDirectory(Path.Combine(vault, "Архив"));
+    for (var d = 0; d < 20; d++)
+    {
+        var sub = Path.Combine(bigFolder, $"раздел {d:D2}");
+        Directory.CreateDirectory(sub);
+        for (var f = 0; f < 100; f++) File.WriteAllText(Path.Combine(sub, $"заметка {f:D3}.md"), $"# {d}-{f}\n\nтекст заметки");
+    }
+    ShowModule("notes");
+    await Settle(0.5, 30);
+    var notes = main!.FindControl<SmartBase.Controls.Components.SidebarFiles>("NotesSidebar")!;
+    notes.SetVault(vault);
+    await Settle(0.5, 30);
+    SmartBase.Core.Notes.NoteNode Note(string rel) =>
+        ((List<SmartBase.Core.Notes.NoteNode>)Get(notes, "_roots")!).First(n => n.RelativePath == rel);
+    int Files(string dir) => Directory.Exists(dir) ? Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories).Count() : -1;
+
+    noteTarget = "Архив";
+    await SOp("заметки: дубль папки на 2000 файлов", () => Call(notes, "DuplicateSelection", Note("Большая")),
+              () => Files(Path.Combine(vault, "Большая (копия)")) == 2000, 120);
+    await SOp("заметки: перенос копии в «Архив»", () => Call(notes, "MoveSelection", Note("Большая (копия)")),
+              () => Files(Path.Combine(vault, "Архив", "Большая (копия)")) == 2000, 120);
+    await SOp("заметки: удаление папки на 2000 файлов", () => Call(notes, "DeleteSelection", Note("Большая")),
+              () => !Directory.Exists(bigFolder), 120);
+    ShowModule("constructor");
+    await Settle(0.5, 30);
+
     Console.WriteLine(faults == 0 ? "Боковая панель: все проверки прошли" : $"Боковая панель: НЕ ПРОШЛО {faults}");
 
     List<SmartBase.Controls.Components.SidebarNode> Roots() =>
@@ -1949,6 +1980,13 @@ async Task SidebarOps()
             return;
         }
         if (w is SmartBase.Controls.Dialogs.ProgressDialog) return;   // закроется само по готовности
+        if (w is SmartBase.Controls.Dialogs.NoteItemDialog)
+        {
+            var locations = (List<(string Label, string RelativePath)>)Get(w, "_locations")!;
+            w.FindControl<ComboBox>("LocationCombo")!.SelectedIndex = Math.Max(0, locations.FindIndex(l => l.RelativePath == noteTarget));
+            w.FindControl<Button>("ConfirmBtn")!.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            return;
+        }
         if (w is SmartBase.Controls.Dialogs.LocationDialog)
         {
             if (targetDb is { } db)
