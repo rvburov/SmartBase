@@ -1,3 +1,5 @@
+using SmartBase.Core.Models;
+
 namespace SmartBase.Extensions.DocRegistry;
 
 /// <summary>
@@ -54,11 +56,12 @@ public sealed class RegisterMessageAction : IExtensionAction
     public string Key         => ActionKey;
     public string Name        => "Зарегистрировать по сообщению";
     public string Description =>
-        "Разбирает сообщение «Действие / Номер / Наименование / Проект / ФИО», проверяет все "
-      + "строки сразу, выдает номер или исполнение по ГОСТ 2.201-80 и отвечает отправителю. "
-      + "Регистрирует только тех, кто назван в настройке «Кто регистрирует по сообщениям».";
+        "Обрабатывает действия Регистрация, Просмотр, Удаление и Изменение. При регистрации "
+      + "выдает номер или исполнение по ГОСТ 2.201-80. Удаление и изменение выполняет после "
+      + "ответа Да, ответ Нет отменяет операцию. Доступ — по настройке «Кто регистрирует по сообщениям».";
 
     public ExtensionActionKind Kind => ExtensionActionKind.Operation;
+    public bool ChecksPermissions => true;
 
     public IReadOnlyList<ExtensionActionField> Fields =>
     [
@@ -101,6 +104,9 @@ public sealed class RegisterMessageAction : IExtensionAction
         var orgs = DocRegistryExtension.ParseOrgCodes(context.Setting(DocRegistryExtension.OrgCodesKey));
 
         var text = input.Value(TextField);
+
+        if (DocumentMessages.Run(context, text, sender) is { } documentResult)
+            return documentResult;
 
         var (request, problems) = MessageRegistration.Read(text, orgs);
 
@@ -151,7 +157,9 @@ public sealed class RegisterMessageAction : IExtensionAction
 
         try
         {
-            var done = DocRegistrar.Register(repo, shape,
+            repo.Permissions?.Demand(PermAction.CreateRecord, context.CollectionId);
+            repo.Permissions?.Demand(PermAction.EditRecord, context.CollectionId);
+            var done = repo.InWriteTransaction(() => DocRegistrar.Register(repo, shape,
                 new RegistrationInput(
                     Name:      request.Name,
                     Org:       request.Org,
@@ -160,7 +168,7 @@ public sealed class RegisterMessageAction : IExtensionAction
                     Project:   request.Project,
                     Execution: execution,
                     Number:    request.Number),
-                context.Now.LocalDateTime);
+                context.Now.LocalDateTime));
 
             // В журнал — одной строкой, отправителю — строками: ответ читается тем же взглядом,
             // что и сообщение, и сверяется с ним построчно.
@@ -174,6 +182,7 @@ public sealed class RegisterMessageAction : IExtensionAction
             // отправитель может назвать другой.
             return ActionResult.Refused($"{MessageRegistration.NumberKey}: {failure.Message}");
         }
+        catch (PermissionDeniedException failure) { return ActionResult.Refused(failure.Message); }
     }
 
     /// <summary>

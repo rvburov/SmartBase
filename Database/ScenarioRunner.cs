@@ -416,7 +416,8 @@ public static partial class ScenarioRunner
                     ScenarioStepKind.Request => await RequestStepAsync(step, registry, databases,
                                                                        carry, scenario.Name, mark, now, ct),
                     ScenarioStepKind.Action  => await ActionStepAsync(step, databases, extensions,
-                                                                      table, text, scenario.Name, now, ct),
+                                                                      table, text, scenario.Name,
+                                                                      $"{scenario.Id}:{scenario.Trigger.StreamId}", now, ct),
                     ScenarioStepKind.Intake  => IntakeStep(step, scenario.Name, mark, now, ref taken),
                     ScenarioStepKind.Filter  => FilterStep(step, table),
                     ScenarioStepKind.Compute => ComputeStep(step, table, now),
@@ -640,6 +641,7 @@ public static partial class ScenarioRunner
                                                            StepTable?                     incoming,
                                                            string                         text,
                                                            string                         scenario,
+                                                           string                         channel,
                                                            DateTimeOffset                 now,
                                                            CancellationToken              ct)
     {
@@ -690,7 +692,7 @@ public static partial class ScenarioRunner
         {
             await Task.Run(() => target.Constructor.UseIsolated(step.CollectionId, repo =>
             {
-                var context = new ActionContext(repo, step.DbId, step.CollectionId, now, settings);
+                var context = new ActionContext(repo, step.DbId, step.CollectionId, now, settings, target.Constructor, channel);
 
                 foreach (var input in inputs)
                 {
@@ -715,7 +717,7 @@ public static partial class ScenarioRunner
                 }
 
                 return true;
-            }), ct);
+            }, checkInside: action.ChecksPermissions), ct);
         }
         catch (OperationCanceledException)
         {

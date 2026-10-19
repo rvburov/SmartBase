@@ -6,6 +6,19 @@ namespace SmartBase.Database.Repositories;
 public partial class ConstructorRepository
 {
     /// <summary>
+    /// Составная операция репозитория: проверка свежих данных и все записи выполняются вместе.
+    /// Serializable не дает двум клиентам подтвердить правку одного снимка поверх друг друга.
+    /// Исключение откатывает и данные, и журнал изменений.
+    /// </summary>
+    public T InWriteTransaction<T>(Func<T> operation)
+    {
+        using var scope = new WriteScope(db, System.Data.IsolationLevel.Serializable);
+        var result = operation();
+        scope.Commit();
+        return result;
+    }
+
+    /// <summary>
     /// Открывает транзакцию записи — но только если своей еще нет. Нужна там, где составная
     /// операция собрана из шагов, каждый из которых умеет коммитить сам.
     ///
@@ -34,10 +47,12 @@ public partial class ConstructorRepository
         private readonly IDbContextTransaction? _own;   // null — транзакцию держит внешний вызов
         private bool _committed;
 
-        public WriteScope(AppDbContext ctx)
+        public WriteScope(AppDbContext ctx, System.Data.IsolationLevel? isolation = null)
         {
             _ctx = ctx;
-            _own = ctx.Database.CurrentTransaction is null ? ctx.Database.BeginTransaction() : null;
+            _own = ctx.Database.CurrentTransaction is not null ? null
+                : isolation is { } level ? ctx.Database.BeginTransaction(level)
+                : ctx.Database.BeginTransaction();
         }
 
         public void Commit()

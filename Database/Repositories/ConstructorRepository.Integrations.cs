@@ -178,17 +178,19 @@ public partial class ConstructorRepository
     ///
     /// Права спрашиваются ЗДЕСЬ, на публичной точке входа, — как и у
     /// <see cref="ApplyRowsIsolated"/>: изолированный клон репозитория прав не несет, и внутри
-    /// проверять их уже нечем. Спрашивается право заводить записи: действие-операция затем и
-    /// зовется, чтобы завести запись, а действий, которые только читают, в контракте нет.
+    /// проверять их уже нечем. По умолчанию спрашивается право заводить записи.
+    /// Для операции, выбирающей права по входным данным, checkInside передает живой кеш прав
+    /// клону: его мутаторы проверяют свои права, а чтение проверяет само действие.
     /// </summary>
     /// <param name="collectionId">Коллекция, с которой будет работать вызванная работа.</param>
     /// <param name="work">Что сделать на отдельном подключении.</param>
-    public T UseIsolated<T>(int collectionId, Func<ConstructorRepository, T> work)
+    /// <param name="checkInside">Проверять права внутри операции вместо общего CreateRecord.</param>
+    public T UseIsolated<T>(int collectionId, Func<ConstructorRepository, T> work, bool checkInside = false)
     {
-        Demand(PermAction.CreateRecord, collectionId);
+        if (!checkInside) Demand(PermAction.CreateRecord, collectionId);
 
         using var ctx = new AppDbContext(db.DbPath);
-        return work(new ConstructorRepository(ctx));
+        return work(new ConstructorRepository(ctx) { Permissions = checkInside ? Permissions : null });
     }
 
     /// <summary>

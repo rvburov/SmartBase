@@ -1,4 +1,5 @@
 using SmartBase.Database;
+using SmartBase.Core.Models;
 using SmartBase.Extensions;
 using SmartBase.Extensions.DocRegistry;
 using SmartBase.Integrations;
@@ -454,6 +455,56 @@ public sealed class MessageScenarioTests : IDisposable
         // В отчете шагов — одна строка: отчет читает тот, кто настраивал обмен.
         Assert.Contains(outcome.Lines, line => line.Contains(
             "Зарегистрировано АБВГ.301121.001 Машина Иванов Иван Иванович", StringComparison.Ordinal));
+    }
+
+    /// <summary>Каждое сообщение проходит новый сценарий; ожидание ответа между ними живет.</summary>
+    [Theory]
+    [InlineData("Удаление")]
+    [InlineData("Изменение")]
+    public async Task A_followup_message_confirms_the_operation_and_returns_its_reply(string action)
+    {
+        var journal = JournalStand.Create(_db.Constructor);
+        var scenario = Scenario(journal);
+        Assert.True((await Run(scenario, Event(Message))).Ok);
+        var request = $"Действие: {action}\nНомер: АБВГ.301121.001"
+                    + (action == "Изменение" ? "\nПроект: Станок" : "");
+        var preview = await Run(scenario, Event(request));
+        Assert.True(preview.Ok, preview.Problem);
+        Assert.Contains("Подтвердите", preview.Reply, StringComparison.Ordinal);
+        Assert.Single(_db.Constructor.GetRecords(journal));
+
+        var otherSource = await Run(Scenario(journal), Event("Да"));
+        Assert.False(otherSource.Ok);
+        Assert.Single(_db.Constructor.GetRecords(journal));
+        var confirmed = await Run(scenario, Event("Да"));
+        Assert.True(confirmed.Ok, confirmed.Problem);
+        Assert.StartsWith(action == "Удаление" ? "Удалено\n" : "Изменено\n", confirmed.Reply, StringComparison.Ordinal);
+        if (action == "Удаление") Assert.Empty(_db.Constructor.GetRecords(journal));
+        else Assert.Contains("Проект: Станок", confirmed.Reply, StringComparison.Ordinal);
+        Assert.False((await Run(scenario, Event("Да"))).Ok);
+    }
+
+    [Fact]
+    public async Task A_readonly_connection_can_view_but_cannot_confirm_deletion()
+    {
+        var journal = JournalStand.Create(_db.Constructor);
+        var scenario = Scenario(journal);
+        Assert.True((await Run(scenario, Event(Message))).Ok);
+        Assert.True((await Run(scenario, Event("Действие: Удаление\nНомер: АБВГ.301121.001"))).Ok);
+        var userId = _db.Permissions.CurrentUserId;
+        _db.Permissions.SetMask(userId, null, (int)PermAction.ViewCollection);
+        var me = _db.Context.DbUsers.Single(u => u.Id == userId);
+        me.IsAdmin = false;
+        _db.Context.SaveChanges();
+        _db.Permissions.Reload(notify: false);
+
+        var viewed = await Run(scenario, Event("Действие: Просмотр\nНомер: АБВГ.301121.001"));
+        Assert.True(viewed.Ok, viewed.Problem);
+        Assert.Contains("Наименование: Кронштейн", viewed.Reply, StringComparison.Ordinal);
+        var denied = await Run(scenario, Event("Да"));
+        Assert.False(denied.Ok);
+        Assert.Contains("Недостаточно прав", denied.Reply, StringComparison.Ordinal);
+        Assert.Single(_db.Constructor.GetRecords(journal));
     }
 
     /// <summary>Ошибки сообщения доезжают до ответа словами действия, без приставок оболочки.</summary>

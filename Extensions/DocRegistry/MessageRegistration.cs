@@ -294,7 +294,7 @@ public static class MessageRegistration
     /// Строки «Ключ: значение». Первое упоминание побеждает — по тому же правилу, что у разбора
     /// сообщения из папки: во втором обычно цитата, а не поправка.
     /// </summary>
-    private static List<(string Key, string Value)> Lines(string? text)
+    internal static List<(string Key, string Value)> Lines(string? text)
     {
         var values = new List<(string Key, string Value)>();
 
@@ -312,6 +312,6 @@ public static class MessageRegistration
         return values;
     }
 
-    private static string Value(List<(string Key, string Value)> values, string key) =>
+    internal static string Value(List<(string Key, string Value)> values, string key) =>
         values.FirstOrDefault(v => RegistrySchema.SameName(v.Key, key)).Value ?? "";
 }

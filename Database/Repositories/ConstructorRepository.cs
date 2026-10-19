@@ -3738,9 +3738,14 @@ public partial class ConstructorRepository(AppDbContext db)
         finally { if (opened) conn.Close(); }
     }
 
-    public DbRecord? GetRecord(int recordId)
+    public DbRecord? GetRecord(int recordId, bool refresh = false)
     {
         var r = db.DbRecords.Find(recordId);
+        if (r is not null && refresh)
+        {
+            db.Entry(r).Reload();
+            if (db.Entry(r).State == EntityState.Detached) return null;
+        }
         if (r is null) return null;
         return new DbRecord
         {
