@@ -44,7 +44,8 @@
   [overview](developer/architecture/performance/overview.md) (принципы, индексы, узкие места) ·
   [hot-paths](developer/architecture/performance/hot-paths.md) (таблица, фильтр, импорт, экспорт) ·
   [calendar](developer/architecture/performance/calendar.md) ·
-  [changelog](developer/architecture/performance/changelog.md).
+  [changelog](developer/architecture/performance/changelog.md) ·
+  [library-calibration](developer/architecture/performance/library-calibration.md) (калибровка чтения документов).
 
 ### Фичи ([developer/features/](developer/features/))
 
