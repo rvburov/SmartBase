@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Controls;
@@ -12,17 +13,26 @@ using SmartBase.Utils;
 namespace SmartBase.Extensions.ProductCompare;
 
 /// <summary>
-/// Окно расширения «Сравнение составов изделий» (в основном стиле приложения): выбор
-/// шаблона, старого и нового файлов и папки результата, затем «Сравнить файлы».
-/// Логика — в <see cref="ProductCompareEngine"/>; сам прогон идет в фоне (<see cref="Task.Run"/>)
-/// с прогрессом и отменой при закрытии окна.
+/// Окно расширения «Сравнение составов изделий» (в основном стиле приложения). Два режима:
+/// «заключение» — шаблон, старый и новый файлы, папка результата
+/// (<see cref="ProductCompareEngine"/>); «расшифровка» — свой шаблон, папка с расшифровками и
+/// папка результата (<see cref="BreakdownCompareEngine"/>), с журналом внизу окна. Прогон идет
+/// в фоне (<see cref="Task.Run"/>) с прогрессом и отменой при закрытии окна.
 /// </summary>
 public partial class ProductCompareWindow : Window
 {
     private static readonly FilePickerFileType ExcelType =
         new("Excel (*.xlsx, *.xlsm, *.xls)") { Patterns = ["*.xlsx", "*.xlsm", "*.xls"] };
 
-    private string? _template, _old, _new, _output;
+    /// <summary>Пункты списка режимов (индекс пункта = режим).</summary>
+    private const int ModeConclusion = 0;
+    private const int ModeBreakdown  = 1;
+
+    /// <summary>Значение памяти о режиме для «расшифровки» (пусто — «заключение»).</summary>
+    private const string BreakdownModeValue = "breakdown";
+
+    private string? _template, _breakdownTemplate, _old, _new, _folder, _output;
+    private readonly StringBuilder _log = new();
     private CancellationTokenSource? _cts;
     private bool _running;
 
@@ -30,20 +40,65 @@ public partial class ProductCompareWindow : Window
     {
         InitializeComponent();
 
-        // Путь к шаблону — из настроек расширения (объявлены в ProductCompareExtension,
-        // экран — «Настройки → Расширения»): у каждой машины свой смонтированный диск,
-        // поэтому в коде пути нет. Не задан — поле пустое, шаблон выбирают «Обзором».
-        // Доступность файла проверяется при запуске сравнения: недоступен — движок
-        // вернет «Файл-шаблон не найден».
-        var template = AppSettings.LoadExtensionSetting(
-            ProductCompareExtension.ExtensionId, ProductCompareExtension.TemplateKey);
-        if (template.Length > 0)
-        {
-            _template = template;
-            TemplateBox.Text = template;
-            ToolTip.SetTip(TemplateBox, template);
-        }
+        // Пути — из настроек расширения (объявлены в ProductCompareExtension, экран —
+        // «Настройки → Расширения»): у каждой машины свой смонтированный диск, поэтому в коде
+        // путей нет. Не задан — поле пустое, файл выбирают «Обзором». Доступность проверяется
+        // при запуске сравнения: недоступен шаблон — движок вернет «Файл-шаблон не найден».
+        _template          = Load(ProductCompareExtension.TemplateKey);
+        _breakdownTemplate = Load(ProductCompareExtension.BreakdownTemplateKey);
+        _folder            = Load(ProductCompareExtension.BreakdownFolderKey);
+        Display(FolderBox, _folder);
 
+        ModeCombo.ItemsSource   = new[] { "Сравнение составов изделий заключение",
+                                          "Сравнение составов изделий расшифровка" };
+        ModeCombo.SelectedIndex = Load(ProductCompareExtension.ModeKey) == BreakdownModeValue
+            ? ModeBreakdown : ModeConclusion;
+
+        ApplyMode();
+    }
+
+    private static string? Load(string key)
+    {
+        var value = AppSettings.LoadExtensionSetting(ProductCompareExtension.ExtensionId, key);
+        return value.Length > 0 ? value : null;
+    }
+
+    private static void Remember(string key, string value) =>
+        AppSettings.SaveExtensionSetting(ProductCompareExtension.ExtensionId, key, value);
+
+    private static void Display(TextBox box, string? path)
+    {
+        box.Text = path ?? "";
+        ToolTip.SetTip(box, string.IsNullOrEmpty(path) ? null : path);
+    }
+
+    /// <summary>Выбран режим «расшифровка».</summary>
+    private bool Breakdown => ModeCombo.SelectedIndex == ModeBreakdown;
+
+    /// <summary>Шаблон выбранного режима.</summary>
+    private string? ModeTemplate => Breakdown ? _breakdownTemplate : _template;
+
+    // ── Режим ─────────────────────────────────────────────────────────────────
+
+    private void OnModeChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (!IsInitialized) return;   // событие прилетает и во время построения окна
+        Remember(ProductCompareExtension.ModeKey, Breakdown ? BreakdownModeValue : "");
+        ApplyMode();
+    }
+
+    // Блоки 2–3 и журнал принадлежат режиму; у каждого режима свой шаблон в блоке 1, поэтому
+    // поле шаблона перезаполняется. Нумерация подписей идет подряд в обоих режимах.
+    private void ApplyMode()
+    {
+        var breakdown = Breakdown;
+        TemplateLabel.Text    = breakdown ? "1. Файл-шаблон расшифровки (.xlsm)" : "1. Файл-шаблон заключения (.xlsm)";
+        OldPanel.IsVisible    = !breakdown;
+        NewPanel.IsVisible    = !breakdown;
+        FolderPanel.IsVisible = breakdown;
+        LogPanel.IsVisible    = breakdown;
+        OutputLabel.Text      = breakdown ? "3. Папка для сохранения результата" : "4. Папка для сохранения результата";
+        Display(TemplateBox, ModeTemplate);
         UpdateState();
     }
 
@@ -53,10 +108,10 @@ public partial class ProductCompareWindow : Window
     {
         var path = await PickFile("Выберите файл-шаблон");
         if (path is null) return;
-        _template = path; TemplateBox.Text = path; ToolTip.SetTip(TemplateBox, path);
+        if (Breakdown) _breakdownTemplate = path; else _template = path;
+        Display(TemplateBox, path);
         // Запоминаем выбор: следующий запуск подставит шаблон сам.
-        AppSettings.SaveExtensionSetting(
-            ProductCompareExtension.ExtensionId, ProductCompareExtension.TemplateKey, path);
+        Remember(Breakdown ? ProductCompareExtension.BreakdownTemplateKey : ProductCompareExtension.TemplateKey, path);
         UpdateState();
     }
 
@@ -76,18 +131,31 @@ public partial class ProductCompareWindow : Window
         UpdateState();
     }
 
+    private async void OnBrowseFolder(object? sender, RoutedEventArgs e)
+    {
+        var path = await PickFolder("Выберите папку с расшифровками");
+        if (path is null) return;
+        _folder = path; Display(FolderBox, path);
+        Remember(ProductCompareExtension.BreakdownFolderKey, path);
+        UpdateState();
+    }
+
     private async void OnBrowseOutput(object? sender, RoutedEventArgs e)
+    {
+        var path = await PickFolder("Выберите папку для сохранения результата");
+        if (path is null) return;
+        _output = path; Display(OutputBox, path);
+        UpdateState();
+    }
+
+    private async Task<string?> PickFolder(string title)
     {
         var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
         {
-            Title         = "Выберите папку для сохранения результата",
+            Title         = title,
             AllowMultiple = false,
         });
-        var folder = folders.FirstOrDefault();
-        if (folder is null) return;
-
-        _output = folder.Path.LocalPath; OutputBox.Text = _output; ToolTip.SetTip(OutputBox, _output);
-        UpdateState();
+        return folders.FirstOrDefault()?.Path.LocalPath;
     }
 
     private async Task<string?> PickFile(string title)
@@ -103,10 +171,15 @@ public partial class ProductCompareWindow : Window
 
     // ── Сравнение ─────────────────────────────────────────────────────────────
 
-    private async void OnExecuteClick(object? sender, RoutedEventArgs e)
+    private void OnExecuteClick(object? sender, RoutedEventArgs e)
     {
         if (_running || !AllReady()) return;
+        if (Breakdown) RunBreakdown();
+        else           RunConclusion();
+    }
 
+    private async void RunConclusion()
+    {
         SetRunning(true);
         SetStatus("Сравнение…", "BrushAccent");
         Progress.SetProgress(0);
@@ -144,6 +217,75 @@ public partial class ProductCompareWindow : Window
         }
     }
 
+    private async void RunBreakdown()
+    {
+        SetRunning(true);
+        SetStatus("Сравнение расшифровок…", "BrushAccent");
+        Progress.SetProgress(0);
+        ClearLog();
+        LogLine($"📂 Папка: {_folder}");
+        LogLine($"📄 Шаблон: {_breakdownTemplate}");
+
+        _cts = new CancellationTokenSource();
+        var ct = _cts.Token;
+        var progress = new Progress<int>(p => Progress.SetProgress(p / 100.0));
+        var log      = new Progress<string>(LogLine);
+
+        try
+        {
+            var result = await Task.Run(
+                () => BreakdownCompareEngine.Run(_breakdownTemplate!, _folder!, _output!, progress, log, ct), ct);
+
+            Progress.SetProgress(1);
+            LogLine("");
+            LogLine($"📊 Строк в сравнении: {result.TotalRows} (изделий {result.Products}, операций {result.Operations})");
+            LogLine($"💾 Результат: {result.OutputPath}");
+            SetStatus($"Готово: {Path.GetFileName(result.OutputPath)} (дат: {result.Files.Count}, строк: {result.TotalRows})",
+                      "BrushAccent");
+            await OfferOpenFolder(result.OutputPath);
+        }
+        catch (OperationCanceledException)
+        {
+            LogLine("⏹️ Отменено");
+            SetStatus("Отменено", "BrushSecondaryText");
+        }
+        catch (ProductCompareException ex)
+        {
+            Fail(ex.Message);
+        }
+        catch (Exception ex)
+        {
+            Fail($"Ошибка: {ex.Message}");
+        }
+        finally
+        {
+            SetRunning(false);
+        }
+    }
+
+    // Причина отказа бывает списком файлов — целиком она идет в журнал, в статус — первая строка.
+    private void Fail(string message)
+    {
+        LogLine("");
+        LogLine($"❌ {message}");
+        var first = message.Split('\n')[0].TrimEnd(':');
+        SetStatus(message.Contains('\n') ? $"{first} — подробности в журнале" : first, "BrushRed");
+    }
+
+    private void LogLine(string text)
+    {
+        if (_log.Length > 0) _log.Append('\n');
+        _log.Append(text);
+        LogBox.Text       = _log.ToString();
+        LogBox.CaretIndex = LogBox.Text.Length;   // прокрутка к последней строке
+    }
+
+    private void ClearLog()
+    {
+        _log.Clear();
+        LogBox.Text = "";
+    }
+
     private async Task OfferOpenFolder(string path)
     {
         var open = await new ConfirmDialog(
@@ -166,9 +308,11 @@ public partial class ProductCompareWindow : Window
 
     // ── Состояние ─────────────────────────────────────────────────────────────
 
-    private bool AllReady() =>
-        !string.IsNullOrEmpty(_template) && !string.IsNullOrEmpty(_old) &&
-        !string.IsNullOrEmpty(_new)      && !string.IsNullOrEmpty(_output);
+    private bool AllReady() => Breakdown
+        ? !string.IsNullOrEmpty(_breakdownTemplate) && !string.IsNullOrEmpty(_folder) &&
+          !string.IsNullOrEmpty(_output)
+        : !string.IsNullOrEmpty(_template) && !string.IsNullOrEmpty(_old) &&
+          !string.IsNullOrEmpty(_new)      && !string.IsNullOrEmpty(_output);
 
     private void UpdateState()
     {
@@ -182,9 +326,16 @@ public partial class ProductCompareWindow : Window
         }
 
         var missing = new List<string>();
-        if (string.IsNullOrEmpty(_template)) missing.Add("шаблон");
-        if (string.IsNullOrEmpty(_old))      missing.Add("старый файл");
-        if (string.IsNullOrEmpty(_new))      missing.Add("новый файл");
+        if (string.IsNullOrEmpty(ModeTemplate)) missing.Add("шаблон");
+        if (Breakdown)
+        {
+            if (string.IsNullOrEmpty(_folder)) missing.Add("папка с расшифровками");
+        }
+        else
+        {
+            if (string.IsNullOrEmpty(_old)) missing.Add("старый файл");
+            if (string.IsNullOrEmpty(_new)) missing.Add("новый файл");
+        }
         if (string.IsNullOrEmpty(_output))   missing.Add("папка для сохранения");
         SetStatus($"Ожидание: {string.Join(", ", missing)}", "BrushSecondaryText");
     }
@@ -192,7 +343,8 @@ public partial class ProductCompareWindow : Window
     private void SetRunning(bool running)
     {
         _running = running;
-        TemplateBtn.IsEnabled = OldBtn.IsEnabled = NewBtn.IsEnabled = OutputBtn.IsEnabled = !running;
+        ModeCombo.IsEnabled   = TemplateBtn.IsEnabled = OldBtn.IsEnabled = NewBtn.IsEnabled =
+            FolderBtn.IsEnabled = OutputBtn.IsEnabled = !running;
         ExecuteBtn.IsEnabled  = !running && AllReady();
     }
 

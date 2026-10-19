@@ -12,9 +12,19 @@
 
     <StackPanel Margin="24" Spacing="14">
 
-        <!-- 1. Файл-шаблон -->
+        <!-- Режим: от него зависят блоки 1–3 и журнал. У заключения — шаблон, старый и новый
+             файлы; у расшифровки — свой шаблон и папка с расшифровками. -->
         <StackPanel Spacing="6">
-            <TextBlock Text="1. Файл-шаблон (.xlsm)"
+            <TextBlock Text="Режим"
+                       FontWeight="{StaticResource FontWeightBold}" />
+            <ComboBox x:Name="ModeCombo" Height="30" HorizontalAlignment="Stretch"
+                      SelectionChanged="OnModeChanged" />
+        </StackPanel>
+
+        <!-- 1. Файл-шаблон (у каждого режима свой) -->
+        <StackPanel Spacing="6">
+            <TextBlock x:Name="TemplateLabel"
+                       Text="1. Файл-шаблон заключения (.xlsm)"
                        FontWeight="{StaticResource FontWeightBold}"
  />
             <Grid ColumnDefinitions="*,10,Auto">
@@ -29,8 +39,8 @@
             </Grid>
         </StackPanel>
 
-        <!-- 2. Старый файл -->
-        <StackPanel Spacing="6">
+        <!-- 2. Старый файл (заключение) -->
+        <StackPanel x:Name="OldPanel" Spacing="6">
             <TextBlock Text="2. Старый файл (.xlsx / .xlsm)"
                        FontWeight="{StaticResource FontWeightBold}"
  />
@@ -46,8 +56,8 @@
             </Grid>
         </StackPanel>
 
-        <!-- 3. Новый файл -->
-        <StackPanel Spacing="6">
+        <!-- 3. Новый файл (заключение) -->
+        <StackPanel x:Name="NewPanel" Spacing="6">
             <TextBlock Text="3. Новый файл (.xlsx / .xlsm)"
                        FontWeight="{StaticResource FontWeightBold}"
  />
@@ -63,9 +73,28 @@
             </Grid>
         </StackPanel>
 
-        <!-- 4. Папка для сохранения -->
+        <!-- 2. Папка с расшифровками (расшифровка) -->
+        <StackPanel x:Name="FolderPanel" Spacing="6" IsVisible="False">
+            <TextBlock Text="2. Папка с расшифровками (файлы «Проект_ГГГГ.ММ.ДД_ФИО»)"
+                       TextWrapping="Wrap"
+                       FontWeight="{StaticResource FontWeightBold}"
+ />
+            <Grid ColumnDefinitions="*,10,Auto">
+                <TextBox Grid.Column="0" x:Name="FolderBox"
+                         IsReadOnly="True"
+                         VerticalContentAlignment="Center"
+                         Watermark="Папка не выбрана" />
+                <Button Grid.Column="2" x:Name="FolderBtn"
+                        Classes="dialog"
+                        Content="Обзор"
+                        Click="OnBrowseFolder" />
+            </Grid>
+        </StackPanel>
+
+        <!-- Папка для сохранения (номер подписи — по режиму) -->
         <StackPanel Spacing="6">
-            <TextBlock Text="4. Папка для сохранения результата"
+            <TextBlock x:Name="OutputLabel"
+                       Text="4. Папка для сохранения результата"
                        FontWeight="{StaticResource FontWeightBold}"
  />
             <Grid ColumnDefinitions="*,10,Auto">
@@ -105,6 +134,21 @@
                 IsEnabled="False"
                 Content="Запустить"
                 Click="OnExecuteClick" />
+
+        <!-- Журнал (расшифровка): найденные файлы, порядок дат, ход работы и причины отказа.
+             Класс multiline (Controls.axaml): полоса прокрутки во всю высоту поля. -->
+        <StackPanel x:Name="LogPanel" Spacing="8" IsVisible="False">
+            <TextBlock Text="Журнал:"
+                       FontWeight="{StaticResource FontWeightBold}" />
+            <TextBox x:Name="LogBox"
+                     Classes="multiline"
+                     Height="220"
+                     IsReadOnly="True"
+                     AcceptsReturn="True"
+                     TextWrapping="Wrap"
+                     FontFamily="{StaticResource FontFamilyBase}"
+                     FontSize="{DynamicResource FontSizeSmall}" />
+        </StackPanel>
 
     </StackPanel>
 
