@@ -206,13 +206,13 @@ public sealed class MessageRegistrationTests
     public void All_problems_come_at_once()
     {
         var (request, problems) = MessageRegistration.Read(
-            "Действие: Регистрация\nНомер: АБВГ.301121.001\nНаименование: Кронштейн\nФИО: Иванов И.И.",
+            "Действие: Регистрация\nНомер: АБВГ.301121.000\nНаименование: Кронштейн\nФИО: Иванов И.И.",
             Orgs);
 
         Assert.Null(request);
         Assert.Equal(
         [
-            "Номер: неправильный номер (Пример: АААА.000000.ХХХ или АААА.000000.001-ХХ)",
+            "Номер: неправильный номер (Пример: АААА.000000.ХХХ, АААА.000000.001 или АААА.000000.001-ХХ)",
             "Проект: не указан проект",
             "ФИО: не полное ФИО (Пример: Иванов Иван Иванович)",
         ], problems);
@@ -234,11 +234,10 @@ public sealed class MessageRegistrationTests
     }
 
     /// <summary>
-    /// Готовый номер и готовое исполнение не принимаются: их выдает журнал, и названный руками
-    /// номер бывает уже занят.
+    /// Готовое исполнение и неверная форма номера не принимаются; занятость полного номера
+    /// проверяет действие с доступом к журналу.
     /// </summary>
     [Theory]
-    [InlineData("АБВГ.301121.014")]
     [InlineData("АБВГ.301121.014-01")]
     [InlineData("АБВГ.301121.ХХХ-ХХ")]
     [InlineData("АБВГ.301121")]
@@ -265,13 +264,14 @@ public sealed class MessageRegistrationTests
         Assert.Contains("АБВГ, ГМБВ", problem, StringComparison.Ordinal);
     }
 
-    /// <summary>Кода ЕСКД, которого нет в классификаторе, не бывает — и серии по нему тоже.</summary>
+    /// <summary>Отсутствие кода в справочнике проверяет действие с подтверждением, а не разбор.</summary>
     [Fact]
-    public void An_eskd_code_outside_the_catalog_is_refused()
+    public void An_eskd_code_outside_the_catalog_is_deferred_to_confirmation()
     {
-        var (_, problems) = MessageRegistration.Read(Message("АБВГ.000000.ХХХ"), Orgs);
+        var (request, problems) = MessageRegistration.Read(Message("АБВГ.000000.ХХХ"), Orgs);
 
-        Assert.Contains("000000", Assert.Single(problems), StringComparison.Ordinal);
+        Assert.Empty(problems);
+        Assert.Equal("000000", request!.Eskd);
     }
 
     [Fact]

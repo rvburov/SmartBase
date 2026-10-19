@@ -8,15 +8,16 @@ namespace SmartBase.Extensions.DocRegistry;
 /// <param name="Org">Код организации — заглавными русскими буквами.</param>
 /// <param name="Eskd">Шестизначный код ЕСКД.</param>
 /// <param name="Number">Номер документа, исполнение которого заводится; <c>null</c> — новый
-/// документ, номер подберется первым свободным.</param>
+/// документ, номер подберется первым свободным. При <c>Exact</c> — полный заданный номер.</param>
 /// <param name="Name">Наименование документа.</param>
 /// <param name="Project">Проект.</param>
 /// <param name="Fio">ФИО регистрирующего — как написано в сообщении.</param>
+/// <param name="Exact">Передан полный номер документа без исполнения, а не маска.</param>
 public sealed record RegistrationRequest(string Org, string Eskd, int? Number,
-                                         string Name, string Project, string Fio)
+                                         string Name, string Project, string Fio, bool Exact = false)
 {
     /// <summary>Заводится исполнение уже выданного документа, а не новый документ.</summary>
-    public bool NewExecution => Number is not null;
+    public bool NewExecution => Number is not null && !Exact;
 }
 
 /// <summary>
@@ -39,8 +40,8 @@ public sealed record RegistrationRequest(string Org, string Eskd, int? Number,
 /// <b>Номер пишут по маске, а не выбирают из списка.</b> В окне номер выбирают из выданных; в
 /// сообщении выбирать не из чего, поэтому то, что должна подобрать программа, пишется буквами
 /// «Х»: <c>ХХХ</c> — следующий свободный номер серии, <c>001-ХХ</c> — следующее свободное
-/// исполнение документа 001. Явный номер в сообщении не принимается: подобранный руками номер
-/// бывает уже занят, и узнать об этом отправитель мог бы только из испорченного журнала.
+/// исполнение документа 001. Полный номер без исполнения также принимается, но его занятость
+/// проверяется перед записью; первый документ серии может требовать подтверждения.
 ///
 /// <b>Латиница, похожая на кириллицу, прощается.</b> Код организации и буквы «Х» с клавиатуры
 /// набирают то в одной раскладке, то в другой, а на экране они неразличимы. Для программы же
@@ -75,7 +76,7 @@ public static class MessageRegistration
     public const string RegisterWord = "Регистрация";
 
     /// <summary>Образцы для ответа с ошибкой — отправитель исправляет по ним.</summary>
-    public const string NumberExample = "АААА.000000.ХХХ или АААА.000000.001-ХХ";
+    public const string NumberExample = "АААА.000000.ХХХ, АААА.000000.001 или АААА.000000.001-ХХ";
 
     /// <inheritdoc cref="NumberExample"/>
     public const string FioExample = "Иванов Иван Иванович";
@@ -119,6 +120,13 @@ public static class MessageRegistration
 
         var number = Value(values, NumberKey);
         var parsed = number.Length == 0 ? null : Number(number);
+        var exact = false;
+        if (parsed is null && DocumentMessages.ExactNumber(number) is { } full && !full.Contains('-'))
+        {
+            var parts = full.Split('.');
+            parsed = (parts[0], parts[1], int.Parse(parts[2], System.Globalization.CultureInfo.InvariantCulture));
+            exact = true;
+        }
 
         if (number.Length == 0)
             problems.Add($"{NumberKey}: не указан номер (Пример: {NumberExample})");
@@ -127,8 +135,6 @@ public static class MessageRegistration
         else if (Listed(parsed.Value.Org, orgCodes) is null)
             problems.Add($"{NumberKey}: неизвестный код организации {parsed.Value.Org} "
                        + $"(Можно: {string.Join(", ", orgCodes)})");
-        else if (EskdCatalog.Find(parsed.Value.Eskd) is null)
-            problems.Add($"{NumberKey}: код ЕСКД {parsed.Value.Eskd} не найден в классификаторе");
 
         var name = Value(values, NameKey);
         if (name.Length == 0)
@@ -150,7 +156,7 @@ public static class MessageRegistration
         // выглядеть одинаково, откуда бы строка в него ни пришла.
         var org = Listed(done.Org, orgCodes) ?? done.Org;
 
-        return (new RegistrationRequest(org, done.Eskd, done.Number, name, project, fio), []);
+        return (new RegistrationRequest(org, done.Eskd, done.Number, name, project, fio, exact), []);
     }
 
     /// <summary>

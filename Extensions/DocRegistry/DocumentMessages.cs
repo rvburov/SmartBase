@@ -35,7 +35,8 @@ internal static class DocumentMessages
     }
 
     private sealed record Pending(string Action, Card Before, RegistryShape Shape,
-                                  IReadOnlyDictionary<string, string> Changes, DateTimeOffset Expires);
+                                  IReadOnlyDictionary<string, string> Changes, DateTimeOffset Expires,
+                                  RegistrationInput? Registration = null, string[]? Series = null);
 
     /// <summary>Null — обычная регистрация: ее продолжает существующее действие.</summary>
     public static ActionResult? Run(ActionContext context, string text, string sender)
@@ -142,15 +143,105 @@ internal static class DocumentMessages
         }
     }
 
+    /// <summary>Подбор номера и решение о подтверждении — в той же транзакции, что и запись.</summary>
+    public static ActionResult Register(ActionContext context, RegistrationRequest request, string sender,
+                                        RegistryShape shape)
+    {
+        var repo = context.Repo!;
+        var waiting = WaitingByRepo.GetValue(context.Session ?? repo, _ => new Waiting());
+        var key = (context.DbId, context.CollectionId, context.Channel, sender.ToUpperInvariant());
+        lock (waiting)
+        {
+            if (waiting.Items.TryGetValue(key, out var active) && active.Expires > context.Now)
+                return ActionResult.Refused("Ожидается подтверждение. Для нового запроса сначала ответьте Нет");
+            try
+            {
+                DemandRegistration(repo, shape.CollectionId);
+                return repo.InWriteTransaction(() =>
+                {
+                    var series = Series(repo, shape, request.Org, request.Eskd);
+                    var number = request.Number ?? Designation.FirstFree(series, request.Org, request.Eskd);
+                    if (number is null)
+                        return ActionResult.Refused("Номер: в серии заняты все номера 001–999");
+                    int? execution = null;
+                    if (request.NewExecution)
+                    {
+                        execution = Designation.FirstFreeExecution(series, request.Org, request.Eskd, number.Value);
+                        if (execution is null)
+                            return ActionResult.Refused("Номер: у документа заняты все исполнения 01–99");
+                    }
+                    else if (series.Any(d => Designation.NumberIn(d, request.Org, request.Eskd) == number))
+                        return ActionResult.Refused($"Номер: документ {Designation.Format(request.Org, request.Eskd, number.Value)} уже зарегистрирован");
+
+                    var input = new RegistrationInput(request.Name, request.Org, request.Eskd, request.Fio,
+                        request.Project, Execution: execution, Number: number);
+                    var missing = EskdCatalog.Find(request.Eskd) is null;
+                    if (series.Length == 0 && (missing || (number == 1 && !request.NewExecution)))
+                    {
+                        foreach (var expired in waiting.Items.Where(p => p.Value.Expires <= context.Now).Select(p => p.Key).ToArray())
+                            waiting.Items.Remove(expired);
+                        if (waiting.Items.Count >= 256)
+                            return ActionResult.Refused("Подтверждение: слишком много ожидающих операций. Повторите запрос позже");
+                        var designation = execution is { } e
+                            ? Designation.FormatExecution(request.Org, request.Eskd, number.Value, e)
+                            : Designation.Format(request.Org, request.Eskd, number.Value);
+                        var card = new Card(0, designation, request.Name, request.Fio, "", request.Project, "", "", "", null);
+                        waiting.Items[key] = new Pending(MessageRegistration.RegisterWord, card, shape,
+                            new Dictionary<string, string>(), context.Now + Lifetime, input, series);
+                        var warning = missing
+                            ? "Код классификации не найден в доступном справочнике ЕСКД. Возможно, он относится к закрытому классификатору. Вы уверены, что номер указан верно?"
+                            : "Это первый номер в данной серии классификатора. Вы уверены, что номер верный?\n\n"
+                              + string.Join("\n", EskdCatalog.Chain(request.Eskd).Select(n => $"{n.Code} — {(n.Name.Length == 0 ? "наименование отсутствует в справочнике" : n.Name)}"));
+                        return Reply($"{RegisterMessageAction.Registered(designation, request, "Заявка на регистрацию")}\n\n{warning}\n\nНапишите Да для регистрации или Нет для отмены\nПодтверждение действует 10 минут", 0);
+                    }
+                    return WriteRegistration(context, repo, shape, input);
+                });
+            }
+            catch (PermissionDeniedException error) { return ActionResult.Refused(error.Message); }
+            catch (DocRegistryException error) { return ActionResult.Refused($"Номер: {error.Message}"); }
+        }
+    }
+
+    private static string[] Series(ConstructorRepository repo, RegistryShape shape, string org, string eskd) =>
+        DocRegistrar.Designations(repo, shape).Where(d => Designation.NumberIn(d, org, eskd) is not null)
+            .OrderBy(d => d, StringComparer.Ordinal).ToArray();
+
+    private static void DemandRegistration(ConstructorRepository repo, int collection)
+    {
+        repo.Permissions?.Demand(PermAction.ViewCollection, collection);
+        repo.Permissions?.Demand(PermAction.CreateRecord, collection);
+        repo.Permissions?.Demand(PermAction.EditRecord, collection);
+    }
+
+    private static ActionResult WriteRegistration(ActionContext context, ConstructorRepository repo,
+                                                   RegistryShape shape, RegistrationInput input)
+    {
+        var done = DocRegistrar.Register(repo, shape, input, context.Now.LocalDateTime);
+        var request = new RegistrationRequest(input.Org, input.Eskd, input.Number, input.Name, input.Project, input.Fio);
+        return new ActionResult(true, $"Зарегистрировано {done.Designation} {input.Project} {input.Fio}",
+            Rows: 1, Reply: RegisterMessageAction.Registered(done.Designation, request));
+    }
+
     private static ActionResult Confirm(ActionContext context, ConstructorRepository repo, Pending pending)
     {
         try
         {
-            Demand(repo, context.CollectionId, pending.Action);
+            if (pending.Registration is not null) DemandRegistration(repo, context.CollectionId);
+            else Demand(repo, context.CollectionId, pending.Action);
             return repo.InWriteTransaction(() =>
             {
                 var check = Shape(repo, context.CollectionId);
                 if (check.Shape is not { } shape) return ActionResult.Failed(check.Problem!);
+                if (pending.Registration is { } registration)
+                {
+                    var orgs = DocRegistryExtension.ParseOrgCodes(context.Setting(DocRegistryExtension.OrgCodesKey));
+                    if (orgs.Count > 0 && !orgs.Any(o => MessageRegistration.Org(o) == MessageRegistration.Org(registration.Org)))
+                        return ActionResult.Refused("Номер: код организации больше не разрешен. Отправьте запрос заново");
+                    if (shape != pending.Shape || !Series(repo, shape, registration.Org, registration.Eskd)
+                            .SequenceEqual(pending.Series ?? [], StringComparer.Ordinal))
+                        return ActionResult.Refused("Серия изменилась после запроса подтверждения. Регистрация не выполнена. Отправьте запрос заново");
+                    return WriteRegistration(context, repo, shape, registration);
+                }
                 var (current, problem) = Find(repo, shape, pending.Before.Number, context);
                 if (current is null) return ActionResult.Refused(problem);
                 if (shape != pending.Shape || current != pending.Before)
@@ -170,6 +261,7 @@ internal static class DocumentMessages
             });
         }
         catch (PermissionDeniedException error) { return ActionResult.Refused(error.Message); }
+        catch (DocRegistryException error) { return ActionResult.Refused($"Номер: {error.Message}"); }
     }
 
     private static void Demand(ConstructorRepository repo, int collection, string action)
@@ -224,7 +316,7 @@ internal static class DocumentMessages
 
     private static ActionResult Reply(string text, int rows) => new(true, text.Split('\n')[0], rows, Reply: text);
 
-    private static string? ExactNumber(string text)
+    internal static string? ExactNumber(string text)
     {
         var parts = string.Concat(text.Where(c => !char.IsWhiteSpace(c))).Split('.');
         if (parts.Length != 3) return null;

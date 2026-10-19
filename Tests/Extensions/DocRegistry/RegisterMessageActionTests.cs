@@ -82,6 +82,10 @@ public sealed class RegisterMessageActionTests
 
         var result = Action.Run(Context(db, journal), Input(Message()));
 
+        Assert.Empty(db.Constructor.GetRecords(journal));
+        Assert.Contains("первый номер", result.Answer, StringComparison.Ordinal);
+        result = Action.Run(Context(db, journal), Input("Да"));
+
         Assert.True(result.Ok, result.Explanation);
         Assert.Equal(
             "Зарегистрировано\n"
@@ -106,6 +110,7 @@ public sealed class RegisterMessageActionTests
         var context = Context(db, journal);
 
         Action.Run(context, Input(Message()));
+        Action.Run(context, Input("Да"));
         var second = Action.Run(context, Input(Message()));
 
         Assert.True(second.Ok, second.Explanation);
@@ -124,7 +129,8 @@ public sealed class RegisterMessageActionTests
         var journal = JournalStand.Create(db.Constructor);
         var context = Context(db, journal);
 
-        Action.Run(context, Input(Message()));   // АБВГ.301121.001
+        Action.Run(context, Input(Message()));
+        Action.Run(context, Input("Да"));   // АБВГ.301121.001
 
         var first  = Action.Run(context, Input(Message("АБВГ.301121.001-ХХ")));
         var second = Action.Run(context, Input(Message("АБВГ.301121.001-ХХ")));
@@ -303,11 +309,11 @@ public sealed class RegisterMessageActionTests
         using var db = new TempDatabase();
         var journal = JournalStand.Create(db.Constructor);
 
-        var result = Action.Run(Context(db, journal), Input(Message("АБВГ.301121.014", project: "")));
+        var result = Action.Run(Context(db, journal), Input(Message("АБВГ.301121.000", project: "")));
 
         Assert.False(result.Ok);
         Assert.Equal(
-            "Номер: неправильный номер (Пример: АААА.000000.ХХХ или АААА.000000.001-ХХ)\n"
+            "Номер: неправильный номер (Пример: АААА.000000.ХХХ, АААА.000000.001 или АААА.000000.001-ХХ)\n"
             + "Проект: не указан проект",
             result.Answer);
         Assert.Empty(db.Constructor.GetRecords(journal));
@@ -458,10 +464,13 @@ public sealed class MessageScenarioTests : IDisposable
     {
         var journal = JournalStand.Create(_db.Constructor);
 
-        var outcome = await Run(Scenario(journal),
+        var scenario = Scenario(journal);
+        var outcome = await Run(scenario,
                                 Event("<span>" + Message.Replace("\n", "<br>") + "</span>"));
 
         Assert.True(outcome.Ok, outcome.Problem);
+        Assert.Empty(_db.Constructor.GetRecords(journal));
+        outcome = await Run(scenario, Event("Да"));
         Assert.Equal(Registered, outcome.Reply);
         Assert.Single(_db.Constructor.GetRecords(journal));
     }
@@ -471,9 +480,12 @@ public sealed class MessageScenarioTests : IDisposable
     {
         var journal = JournalStand.Create(_db.Constructor);
 
-        var outcome = await Run(Scenario(journal), Event(Message));
+        var scenario = Scenario(journal);
+        var outcome = await Run(scenario, Event(Message));
 
         Assert.True(outcome.Ok, outcome.Problem);
+        Assert.Empty(_db.Constructor.GetRecords(journal));
+        outcome = await Run(scenario, Event("Да"));
         Assert.Equal(Registered, outcome.Reply);
         Assert.Single(_db.Constructor.GetRecords(journal));
 
@@ -491,6 +503,7 @@ public sealed class MessageScenarioTests : IDisposable
         var journal = JournalStand.Create(_db.Constructor);
         var scenario = Scenario(journal);
         Assert.True((await Run(scenario, Event(Message))).Ok);
+        Assert.True((await Run(scenario, Event("Да"))).Ok);
         var request = $"Действие: {action}\nНомер: АБВГ.301121.001"
                     + (action == "Изменение" ? "\nПроект: Станок" : "");
         var preview = await Run(scenario, Event(request));
@@ -515,6 +528,7 @@ public sealed class MessageScenarioTests : IDisposable
         var journal = JournalStand.Create(_db.Constructor);
         var scenario = Scenario(journal);
         Assert.True((await Run(scenario, Event(Message))).Ok);
+        Assert.True((await Run(scenario, Event("Да"))).Ok);
         Assert.True((await Run(scenario, Event("Действие: Удаление\nНомер: АБВГ.301121.001"))).Ok);
         var help = await Run(scenario, Event("Инструкция"));
         Assert.True(help.Ok, help.Problem);
@@ -530,6 +544,7 @@ public sealed class MessageScenarioTests : IDisposable
         var journal = JournalStand.Create(_db.Constructor);
         var scenario = Scenario(journal);
         Assert.True((await Run(scenario, Event(Message))).Ok);
+        Assert.True((await Run(scenario, Event("Да"))).Ok);
         Assert.True((await Run(scenario, Event("Действие: Удаление\nНомер: АБВГ.301121.001"))).Ok);
         var userId = _db.Permissions.CurrentUserId;
         _db.Permissions.SetMask(userId, null, (int)PermAction.ViewCollection);

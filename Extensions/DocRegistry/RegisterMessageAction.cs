@@ -142,60 +142,17 @@ public sealed class RegisterMessageAction : IExtensionAction
             return ActionResult.Failed(
                 $"коллекция «{collection.Name}» не подходит под журнал регистрации: {check.Problem}");
 
-        int? execution = null;
-
-        if (request.Number is { } number)
-        {
-            // Самого документа в журнале может не быть — правило то же, что у загрузки из файла:
-            // старые документы туда часто не заносились, и запрет означал бы, что их исполнения
-            // внести нельзя. Исполнение выдается первое свободное у этого номера.
-            execution = Designation.FirstFreeExecution(DocRegistrar.Designations(repo, shape),
-                                                       request.Org, request.Eskd, number);
-
-            if (execution is null)
-                return ActionResult.Refused(
-                    $"{MessageRegistration.NumberKey}: у документа "
-                    + $"{Designation.Format(request.Org, request.Eskd, number)} заняты все исполнения "
-                    + $"{Designation.MinExecution:D2}–{Designation.MaxExecution:D2}");
-        }
-
-        try
-        {
-            repo.Permissions?.Demand(PermAction.CreateRecord, context.CollectionId);
-            repo.Permissions?.Demand(PermAction.EditRecord, context.CollectionId);
-            var done = repo.InWriteTransaction(() => DocRegistrar.Register(repo, shape,
-                new RegistrationInput(
-                    Name:      request.Name,
-                    Org:       request.Org,
-                    Eskd:      request.Eskd,
-                    Fio:       request.Fio,
-                    Project:   request.Project,
-                    Execution: execution,
-                    Number:    request.Number),
-                context.Now.LocalDateTime));
-
-            // В журнал — одной строкой, отправителю — строками: ответ читается тем же взглядом,
-            // что и сообщение, и сверяется с ним построчно.
-            return new ActionResult(true,
-                $"{RegisteredWord} {done.Designation} {request.Project} {request.Fio}",
-                Rows: 1, Reply: Registered(done.Designation, request));
-        }
-        catch (DocRegistryException failure)
-        {
-            // Исчерпанная серия, занятое за это мгновение исполнение — причина в номере, и
-            // отправитель может назвать другой.
-            return ActionResult.Refused($"{MessageRegistration.NumberKey}: {failure.Message}");
-        }
-        catch (PermissionDeniedException failure) { return ActionResult.Refused(failure.Message); }
+        return DocumentMessages.Register(context, request, sender, shape);
     }
 
     /// <summary>
     /// Ответ об удаче: что зарегистрировано — теми же строками и в том же порядке, что в
     /// сообщении. На месте метки стоит выданный номер, остальное — как записано в журнал.
     /// </summary>
-    private static string Registered(string designation, RegistrationRequest request) =>
+    internal static string Registered(string designation, RegistrationRequest request,
+                                      string heading = RegisteredWord) =>
         string.Join("\n",
-            RegisteredWord,
+            heading,
             $"{MessageRegistration.NumberKey}: {designation}",
             $"{MessageRegistration.NameKey}: {request.Name}",
             $"{MessageRegistration.ProjectKey}: {request.Project}",
