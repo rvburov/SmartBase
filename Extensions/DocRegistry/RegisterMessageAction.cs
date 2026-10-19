@@ -105,6 +105,10 @@ public sealed class RegisterMessageAction : IExtensionAction
 
         var text = input.Value(TextField);
 
+        if (RegistrySchema.SameName(MessageRegistration.Plain(text).Trim(), "Инструкция"))
+            return new ActionResult(true, "Выдана инструкция по работе с журналом КД",
+                                    Rows: 0, Reply: MessageInstructions.Text);
+
         if (DocumentMessages.Run(context, text, sender) is { } documentResult)
             return documentResult;
 

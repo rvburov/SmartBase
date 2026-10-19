@@ -43,6 +43,31 @@ public sealed class RegisterMessageActionTests
     private static ActionContext Context(TempDatabase db, int collectionId, string senders = "1001 Иванов; 1002") =>
         new(db.Constructor, 1, collectionId, Now, Settings(senders));
 
+    [Theory]
+    [InlineData("Инструкция")]
+    [InlineData("  ИНСТРУКЦИЯ  ")]
+    [InlineData("<p>Инструкция</p>")]
+    public void Instructions_need_no_database_and_explain_all_operations(string command)
+    {
+        var result = Action.Run(new ActionContext(null, 1, 1, Now, Settings()), Input(command));
+        Assert.True(result.Ok, result.Explanation);
+        Assert.Equal(0, result.Rows);
+        foreach (var action in new[] { "Регистрация", "Просмотр", "Удаление", "Изменение" })
+            Assert.Contains($"Действие: {action}\nНомер:", result.Answer, StringComparison.Ordinal);
+        Assert.Contains("не найден", result.Answer, StringComparison.Ordinal);
+        Assert.Contains("10 минут", result.Answer, StringComparison.Ordinal);
+        Assert.DoesNotContain("```", result.Answer, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Instructions_require_an_allowed_sender()
+    {
+        var result = Action.Run(new ActionContext(null, 1, 1, Now, Settings()),
+                                Input("Инструкция", "unknown"));
+        Assert.False(result.Ok);
+        Assert.Equal(RegisterMessageAction.NotListed, result.Answer);
+    }
+
     // ── Регистрация ───────────────────────────────────────────────────────────
 
     /// <summary>
@@ -482,6 +507,21 @@ public sealed class MessageScenarioTests : IDisposable
         if (action == "Удаление") Assert.Empty(_db.Constructor.GetRecords(journal));
         else Assert.Contains("Проект: Станок", confirmed.Reply, StringComparison.Ordinal);
         Assert.False((await Run(scenario, Event("Да"))).Ok);
+    }
+
+    [Fact]
+    public async Task Instructions_leave_a_pending_confirmation_unchanged()
+    {
+        var journal = JournalStand.Create(_db.Constructor);
+        var scenario = Scenario(journal);
+        Assert.True((await Run(scenario, Event(Message))).Ok);
+        Assert.True((await Run(scenario, Event("Действие: Удаление\nНомер: АБВГ.301121.001"))).Ok);
+        var help = await Run(scenario, Event("Инструкция"));
+        Assert.True(help.Ok, help.Problem);
+        Assert.StartsWith("Инструкция по работе с журналом КД", help.Reply, StringComparison.Ordinal);
+        Assert.Single(_db.Constructor.GetRecords(journal));
+        Assert.True((await Run(scenario, Event("Да"))).Ok);
+        Assert.Empty(_db.Constructor.GetRecords(journal));
     }
 
     [Fact]
