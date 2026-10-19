@@ -536,8 +536,9 @@ public partial class SidebarFiles : UserControl
         var renamed = 0;
         foreach (var node in nodes)
         {
-            var result = VaultOperations.Move(node.FullPath, targetFull, node.IsFolder);
-            if (!Applied(result, this)) return;
+            var result = await OffUiThread("Перемещение", "Перемещение…",
+                _ => VaultOperations.Move(node.FullPath, targetFull, node.IsFolder));
+            if (!Applied(result, this)) break;
 
             var newRel = VaultRules.Combine(res.ParentRelativePath, Path.GetFileName(result.Path!));
             if (!string.Equals(Path.GetFileName(result.Path!), node.Name, StringComparison.Ordinal)) renamed++;
@@ -545,6 +546,7 @@ public partial class SidebarFiles : UserControl
             NoteMoved?.Invoke(this, new NoteMove(node.RelativePath, newRel));
         }
 
+        // Дерево перечитываем и после сбоя посреди набора: перенесенное до сбоя уже на новом месте.
         Refresh();
         VaultChanged?.Invoke(this, EventArgs.Empty);
 
@@ -552,56 +554,69 @@ public partial class SidebarFiles : UserControl
         if (renamed > 0) Toast.Error(this, "Имя в целевой папке было занято — добавлено «(копия)».");
     }
 
-    // Порог показа окна прогресса. Копирование сотни файлов — доли секунды, ради них окно мигать
-    // не должно; тысячи — уже заметная пауза, и молчаливая заморозка читалась бы как зависание.
-    private const int BulkProgressThreshold = 500;
+    // Файловые операции дерева заметок — в фоне: перенос между томами, дубль большой папки и
+    // удаление в корзину (на Linux корзина другого тома — копирование) на сетевом диске идут
+    // секунды, и на потоке интерфейса это было «зависшее» окно. Окно прогресса — если работа не
+    // уложилась в ProgressDelay (как у действий дерева баз): короткая не мелькает окном.
+    private static readonly TimeSpan ProgressDelay = TimeSpan.FromMilliseconds(400);
+
+    // Работа получает IProgress долей 0..1; без сообщений о ходе окно показывает бегущую полосу.
+    private async Task<T> OffUiThread<T>(string title, string phase, Func<IProgress<double>, T> work)
+    {
+        ProgressDialog? dlg = null;   // только UI-поток
+        var lastPct = -1;
+        IProgress<double> progress = new FractionProgress(f =>
+        {
+            var pct = (int)(Math.Clamp(f, 0, 1) * 100);
+            if (Interlocked.Exchange(ref lastPct, pct) == pct) return;
+            Dispatcher.UIThread.Post(() => dlg?.SetProgress(pct / 100.0, phase));
+        });
+
+        var bg = Task.Run(() => work(progress));
+        if (await Task.WhenAny(bg, Task.Delay(ProgressDelay)) != bg && OwnerWindow is not null)
+        {
+            dlg = new ProgressDialog { Title = title };
+            if (Volatile.Read(ref lastPct) is var pct and >= 0) dlg.SetProgress(pct / 100.0, phase);
+            else dlg.SetSaving(phase);
+            var closed = dlg.ShowDialog(OwnerWindow);
+            try { await bg; } catch { /* разбирает вызывающий: await ниже пробросит */ }
+            dlg.Done();
+            await closed;
+        }
+        return await bg;
+    }
+
+    // IProgress без захвата контекста синхронизации (Progress<T>, созданный в Task.Run, захватил бы
+    // фоновый): вызывается с потока работы, показ сам переносит на UI-поток.
+    private sealed class FractionProgress(Action<double> report) : IProgress<double>
+    {
+        public void Report(double value) => report(value);
+    }
 
     private async Task DuplicateSelection(NoteNode anchorNode)
     {
         if (!Ready()) return;
 
         var nodes = SelectedNodes(anchorNode);
-        var total = nodes.Where(n => n.IsFolder)
-                         .Sum(n => VaultOperations.CountEntries(n.FullPath, BulkProgressThreshold + 1));
-
-        // Малый объем — сразу, без окна.
-        if (total <= BulkProgressThreshold || OwnerWindow is null)
-        {
-            foreach (var node in nodes)
-                if (!Applied(VaultOperations.Duplicate(node.FullPath, node.IsFolder), this)) return;
-
-            Refresh();
-            VaultChanged?.Invoke(this, EventArgs.Empty);
-            return;
-        }
-
-        // Большая папка — окно прогресса, копирование в фоне (как дубль коллекции в конструкторе).
-        var dlg = new ProgressDialog { Title = "Дублирование" };
-        dlg.SetInfo($"Копируется больше {BulkProgressThreshold} файлов.");
-        dlg.SetProgress(0, "Дублирование…");
-        var dlgClosed = dlg.ShowDialog(OwnerWindow);
-
-        string? error = null;
-        var lastPct = -1;
+        string? error;
         try
         {
-            await Task.Run(() =>
+            error = await OffUiThread("Дублирование", "Дублирование…", p =>
             {
-                IProgress<int> p = new Progress<int>(copied =>
+                // Число файлов — для процентов; считается тут же, в фоне: на сетевом диске и сам
+                // обход большой папки заметен.
+                var counts = nodes.Select(n => n.IsFolder ? VaultOperations.CountEntries(n.FullPath, int.MaxValue) : 0).ToList();
+                var total  = counts.Sum();
+                var basis  = 0;
+                for (var i = 0; i < nodes.Count; i++)
                 {
-                    var pct = Math.Min(100, (int)(copied * 100L / Math.Max(1, total)));
-                    if (pct == lastPct) return;
-                    lastPct = pct;
-                    Dispatcher.UIThread.Post(() => dlg.SetProgress(pct / 100.0, "Дублирование…"));
-                });
-
-                foreach (var node in nodes)
-                {
-                    var result = VaultOperations.Duplicate(node.FullPath, node.IsFolder, p);
-                    if (result.Ok) continue;
-                    error = result.Error;
-                    return;
+                    var b = basis;
+                    var result = VaultOperations.Duplicate(nodes[i].FullPath, nodes[i].IsFolder,
+                        new IntProgress(copied => p.Report(total == 0 ? 1 : (b + copied) / (double)total)));
+                    if (!result.Ok) return result.Error;
+                    basis += counts[i];
                 }
+                return (string?)null;
             });
         }
         catch (Exception ex)
@@ -609,12 +624,14 @@ public partial class SidebarFiles : UserControl
             error = VaultErrors.Describe(ex, _vault);
         }
 
-        dlg.Done();
-        await dlgClosed;
-
         if (error is not null) Toast.Error(this, error);
         Refresh();
         VaultChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private sealed class IntProgress(Action<int> report) : IProgress<int>
+    {
+        public void Report(int value) => report(value);
     }
 
     private async Task DeleteSelection(NoteNode anchorNode)
@@ -626,7 +643,7 @@ public partial class SidebarFiles : UserControl
 
         foreach (var node in nodes)
         {
-            var result = VaultOperations.Delete(node.FullPath);
+            var result = await OffUiThread("Удаление", "Удаление…", _ => VaultOperations.Delete(node.FullPath));
 
             // Корзина недоступна (сетевой диск, урезанные права) — спрашиваем отдельно.
             // Безвозвратно стирать чужие файлы без второго «да» нельзя.
@@ -640,14 +657,16 @@ public partial class SidebarFiles : UserControl
                     .ShowDialog<bool>(OwnerWindow);
                 if (!ok) continue;
 
-                result = VaultOperations.DeletePermanently(node.FullPath, node.IsFolder);
-                if (!Applied(result, this)) return;
+                result = await OffUiThread("Удаление", "Удаление…",
+                    _ => VaultOperations.DeletePermanently(node.FullPath, node.IsFolder));
+                if (!Applied(result, this)) break;
             }
 
             ForgetState(node.RelativePath);
             NoteRemoved?.Invoke(this, node.RelativePath);
         }
 
+        // Дерево перечитываем и после сбоя посреди набора: удаленное до сбоя уже ушло.
         _selected.Clear();
         Refresh();
         VaultChanged?.Invoke(this, EventArgs.Empty);

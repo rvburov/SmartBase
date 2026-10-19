@@ -165,6 +165,11 @@ public sealed class PgProviderTests
             repo.SetFieldValue(rec.Id!.Value, text.Id!.Value, tricky[(i + 3) % tricky.Length]);
             if (i % 2 == 0) repo.SetFieldValue(rec.Id!.Value, date.Id!.Value, new DateTime(2026, 3, 1).AddDays(i).ToString("yyyy-MM-dd"));
         }
+        // Оформление строки и ячейки и высота строки: у этих таблиц половина столбцов пустая (\N).
+        var styled = repo.GetRecordsPage(col.Id!.Value, 0, 3).Select(r => r.Id!.Value).ToList();
+        repo.SetRowStyle(col.Id!.Value, [styled[0]], StyleAspect.Background, "#FF0000");
+        repo.SetCellStyle(col.Id!.Value, [(styled[1], text.Id!.Value.ToString())], StyleAspect.Text, "#00AA00");
+        repo.SaveRowHeights(col.Id!.Value, new Dictionary<int, int> { [styled[2]] = 48 });
         var expected = Snapshot(repo, col.Id!.Value);
         var calendar = Convert.ToInt64(lite.Context.CalendarIndex.Count(c => c.CollectionId == col.Id!.Value));
 
@@ -173,10 +178,15 @@ public sealed class PgProviderTests
                                                           sourceDbId: 1, targetDbId: 102);
         Assert.Equal(expected, Snapshot(pg.Constructor, pgCol));
         Assert.Equal(calendar, PgScalar(cs, $"SELECT COUNT(*) FROM calendar_index WHERE collectionid = {pgCol}"));
+        Assert.Equal(1, PgScalar(cs, $"SELECT COUNT(*) FROM record_display WHERE collectionid = {pgCol} AND bg = '#FF0000'"));
+        Assert.Equal(1, PgScalar(cs, $"SELECT COUNT(*) FROM cell_style WHERE collectionid = {pgCol} AND fg = '#00AA00'"));
+        Assert.Equal(1, PgScalar(cs, $"SELECT COUNT(*) FROM ui_row_heights WHERE collectionid = {pgCol} AND height = 48"));
 
         var back = repo.MoveCollectionIsolated(cs, pgCol, targetGroupId: null, batchSize: 7, sourceDbId: 102, targetDbId: 1);
         Assert.Equal(expected, Snapshot(repo, back));
         Assert.Equal(0, PgScalar(cs, $"SELECT COUNT(*) FROM db_records WHERE collectionid = {pgCol}"));
+        Assert.Equal("#FF0000", Assert.Single(repo.GetRowStyles(back)).Value.Bg);
+        Assert.Equal([48], repo.GetRowHeights(back).Values);
     }
 
     // Записи коллекции в порядке (Position, Id): название и значение каждого поля по имени поля.
