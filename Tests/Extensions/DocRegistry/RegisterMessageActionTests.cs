@@ -58,6 +58,8 @@ public sealed class RegisterMessageActionTests
         Assert.Contains("не найден", instruction, StringComparison.Ordinal);
         Assert.Contains("10 минут", instruction, StringComparison.Ordinal);
         Assert.DoesNotContain("```", instruction, StringComparison.Ordinal);
+        // Переводы строк — как у остальных ответов, на любой ОС и при любом git-выписывании.
+        Assert.DoesNotContain('\r', result.Answer);
     }
 
     [Fact]
@@ -146,18 +148,25 @@ public sealed class RegisterMessageActionTests
 
     /// <summary>
     /// Исполнение документа, которого в журнале нет, заводится: старые документы в журнал часто
-    /// не заносились — правило то же, что у загрузки списком из файла.
+    /// не заносились — правило то же, что у загрузки списком из файла. В пустой серии оно, как
+    /// любой первый документ, ждет подтверждения.
     /// </summary>
     [Fact]
     public void An_execution_of_an_unlisted_document_is_registered()
     {
         using var db = new TempDatabase();
         var journal = JournalStand.Create(db.Constructor);
+        var context = Context(db, journal);
 
-        var result = Action.Run(Context(db, journal), Input(Message("АБВГ.301121.007-ХХ")));
+        var preview = Action.Run(context, Input(Message("АБВГ.301121.007-ХХ")));
+        Assert.Contains("первый номер", preview.Answer, StringComparison.Ordinal);
+        Assert.Empty(db.Constructor.GetRecords(journal));
+
+        var result = Action.Run(context, Input("Да"));
 
         Assert.True(result.Ok, result.Explanation);
         Assert.Contains("АБВГ.301121.007-01", result.Answer, StringComparison.Ordinal);
+        Assert.Single(db.Constructor.GetRecords(journal));
     }
 
     // ── Допуск ────────────────────────────────────────────────────────────────

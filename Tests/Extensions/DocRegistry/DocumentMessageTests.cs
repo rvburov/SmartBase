@@ -115,6 +115,21 @@ public sealed class DocumentMessageTests : IDisposable
         Assert.Equal(answer == "Да" ? "Петров Петр Петрович" : "Иванов Иван Иванович", after[_shape.FioFieldId]);
     }
 
+    /// <summary>ФИО при изменении ложится тем же видом, что при регистрации: слова через один пробел.</summary>
+    [Fact]
+    public void An_edited_full_name_is_collapsed_like_a_registered_one()
+    {
+        var preview = Call(Request("Изменение") + "\nФИО: Петров   Петр \t Петрович");
+        Assert.True(preview.Ok, preview.Explanation);
+        Assert.Contains("ФИО: Иванов Иван Иванович → Петров Петр Петрович", preview.Answer, StringComparison.Ordinal);
+        Assert.True(Call("Да").Ok);
+        Assert.Equal("Петров Петр Петрович", _db.Constructor.GetFieldValues(_id)[_shape.FioFieldId]);
+
+        var same = Call(Request("Изменение") + "\nФИО: Петров  Петр  Петрович");
+        Assert.False(same.Ok);
+        Assert.Contains("Изменений нет", same.Answer, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void A_patch_does_not_require_or_clear_other_fields()
     {

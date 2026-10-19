@@ -108,8 +108,8 @@
 ## 4. Кроссплатформенность
 
 - [ ] Linux/Windows: CI (job `postgres`) гоняет `PgProviderTests`, `PgBulkWriteTests`,
-      `PgCreateDatabaseTests`, `PgLibraryTests` и `PgSearchTests` на живом сервере — зеленый
-      прогон с «Skipped: 0».
+      `PgCreateDatabaseTests`, `PgLibraryTests`, `PgSearchTests` и `PgWriteTransactionTests`
+      на живом сервере — зеленый прогон с «Skipped: 0».
 - [ ] Поиск по названию на базе PostgreSQL не различает регистр латиницы — в задачах, календаре,
       библиотеке документов и окне выбора связи: «gost» находит «GoSt-отчет», как на файловой
       базе.

@@ -6,7 +6,8 @@ namespace SmartBase.Extensions.DocRegistry;
 
 /// <summary>
 /// Просмотр и правка журнала из переписки. Ожидание подтверждения принадлежит открытому
-/// репозиторию, базе, коллекции и отправителю. После закрытия базы или перезапуска оно исчезает.
+/// репозиторию, базе, коллекции, отправителю и сценарию с его источником (ActionContext.Channel).
+/// После закрытия базы или перезапуска оно исчезает.
 /// Данные не меняются до «Да»; подтверждается именно показанный человеку снимок.
 /// </summary>
 internal static class DocumentMessages
@@ -99,11 +100,13 @@ internal static class DocumentMessages
                     if (RegistrySchema.SameName(field, "Действие") || RegistrySchema.SameName(field, "Номер")) continue;
                     var editable = new[] { "Наименование", "Проект", "ФИО" }
                         .FirstOrDefault(f => RegistrySchema.SameName(f, field));
+                    // ФИО ложится в журнал тем же видом, что при регистрации: слова через один пробел.
+                    var entered = editable == "ФИО" ? MessageRegistration.Collapse(value) : value;
                     if (editable is null) problems.Add($"{field}: изменение этого поля не поддерживается");
-                    else if (value.Length == 0) problems.Add($"{editable}: не указано значение");
-                    else if (editable == "ФИО" && !RegistryImport.IsFullName(value))
+                    else if (entered.Length == 0) problems.Add($"{editable}: не указано значение");
+                    else if (editable == "ФИО" && !RegistryImport.IsFullName(entered))
                         problems.Add($"ФИО: не полное ФИО (Пример: {MessageRegistration.FioExample})");
-                    else changes[editable] = value;
+                    else changes[editable] = entered;
                 }
                 if (changes.Count == 0 && problems.Count == 0)
                     problems.Add("Изменение: укажите хотя бы одно поле — Наименование, Проект или ФИО");
@@ -175,9 +178,11 @@ internal static class DocumentMessages
 
                     var input = new RegistrationInput(request.Name, request.Org, request.Eskd, request.Fio,
                         request.Project, Execution: execution, Number: number);
-                    var missing = EskdCatalog.Find(request.Eskd) is null;
-                    if (series.Length == 0 && (missing || (number == 1 && !request.NewExecution)))
+                    // Пустая серия — любой первый документ, по маске, полным номером или
+                    // исполнением: опечатка в коде классификации открыла бы новую серию молча.
+                    if (series.Length == 0)
                     {
+                        var missing = EskdCatalog.Find(request.Eskd) is null;
                         foreach (var expired in waiting.Items.Where(p => p.Value.Expires <= context.Now).Select(p => p.Key).ToArray())
                             waiting.Items.Remove(expired);
                         if (waiting.Items.Count >= 256)
@@ -188,11 +193,12 @@ internal static class DocumentMessages
                         var card = new Card(0, designation, request.Name, request.Fio, "", request.Project, "", "", "", null);
                         waiting.Items[key] = new Pending(MessageRegistration.RegisterWord, card, shape,
                             new Dictionary<string, string>(), context.Now + Lifetime, input, series);
+                        // Порядок ответа — как в плане: номер, расшифровка кода по уровням, вопрос.
                         var warning = missing
                             ? "Код классификации не найден в доступном справочнике ЕСКД. Возможно, он относится к закрытому классификатору. Вы уверены, что номер указан верно?"
-                            : "Это первый номер в данной серии классификатора. Вы уверены, что номер верный?\n\n"
-                              + string.Join("\n", EskdCatalog.Chain(request.Eskd).Select(n => $"{n.Code} — {(n.Name.Length == 0 ? "наименование отсутствует в справочнике" : n.Name)}"));
-                        return Reply($"{RegisterMessageAction.Registered(designation, request, "Заявка на регистрацию")}\n\n{warning}\n\nНапишите Да для регистрации или Нет для отмены\nПодтверждение действует 10 минут", 0);
+                            : string.Join("\n", EskdCatalog.Chain(request.Eskd).Select(n => $"{n.Code} — {(n.Name.Length == 0 ? "наименование отсутствует в справочнике" : n.Name)}"))
+                              + "\n\nЭто первый номер в данной серии классификатора. Вы уверены, что номер верный?";
+                        return Reply($"{RegisterMessageAction.Registered(designation, request, "Заявка на регистрацию")}\n\n{warning}\n\n{AnswerPrompt}\nПодтверждение действует 10 минут", 0);
                     }
                     return WriteRegistration(context, repo, shape, input);
                 });
@@ -218,7 +224,7 @@ internal static class DocumentMessages
     {
         var done = DocRegistrar.Register(repo, shape, input, context.Now.LocalDateTime);
         var request = new RegistrationRequest(input.Org, input.Eskd, input.Number, input.Name, input.Project, input.Fio);
-        return new ActionResult(true, $"Зарегистрировано {done.Designation} {input.Project} {input.Fio}",
+        return new ActionResult(true, $"{RegisterMessageAction.RegisteredWord} {done.Designation} {input.Project} {input.Fio}",
             Rows: 1, Reply: RegisterMessageAction.Registered(done.Designation, request));
     }
 

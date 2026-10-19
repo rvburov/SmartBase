@@ -564,7 +564,9 @@ SQLite против 145 МБ у PostgreSQL, который те же данны�
 Skipped): `PgProviderTests` — монтирование/CRUD/гонки/дубли/переносы во всех
 направлениях/свип, `PgBulkWriteTests` — сырые массовые пути (заливка + раскраска
 свода, prepared-правки значений при смене настроек поля, сортированный CSV журнала,
-капнутый счет пилюль задач) на docker-стенде `sb-pg` (порт 5455) — как поднять, см.
+капнутый счет пилюль задач), `PgWriteTransactionTests` — повтор `InWriteTransaction` после
+отказа сериализации 40001 (сосед правит ту же запись, сосед выдает тот же номер серии)
+на docker-стенде `sb-pg` (порт 5455) — как поднять, см.
 [testing/automated-tests.md → PostgreSQL](../../testing/automated-tests.md#postgresql).
 Нагрузочный режим — команда `pgload` в `Tests/Benchmarks`
 (`dotnet run -c Release --project Tests/Benchmarks -- pgload [клиентов] [секунд]`): каждый

@@ -79,8 +79,8 @@ public sealed record ActionContext(
     int                                  CollectionId,
     DateTimeOffset                       Now,
     IReadOnlyDictionary<string, string>? Settings = null,
-    object?                             Session = null,
-    string                              Channel = "")
+    object?                              Session  = null,
+    string                               Channel  = "")
 {
     /// <summary>Значение настройки расширения; не задано — пустая строка.</summary>
     public string Setting(string key) =>

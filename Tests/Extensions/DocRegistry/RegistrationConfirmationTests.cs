@@ -78,6 +78,40 @@ public sealed class RegistrationConfirmationTests : IDisposable
         Assert.Equal(2, _db.Constructor.GetRecords(_journal).Count);
     }
 
+    /// <summary>
+    /// Пустую серию открывает любой первый документ, а не только 001: опечатка в коде
+    /// классификации с явным номером или исполнением открыла бы ее так же молча.
+    /// </summary>
+    [Theory]
+    [InlineData("005", "АБВГ.301121.005")]
+    [InlineData("007-ХХ", "АБВГ.301121.007-01")]
+    public void Any_first_document_of_an_empty_series_waits_for_confirmation(string tail, string designation)
+    {
+        var preview = Call(Request(tail));
+        Assert.True(preview.Ok, preview.Explanation);
+        Assert.Contains($"Номер: {designation}\n", preview.Answer, StringComparison.Ordinal);
+        Assert.Contains("Это первый номер", preview.Answer, StringComparison.Ordinal);
+        Assert.Empty(_db.Constructor.GetRecords(_journal));
+
+        var done = Call("Да");
+        Assert.True(done.Ok, done.Explanation);
+        Assert.StartsWith($"Зарегистрировано\nНомер: {designation}\n", done.Answer, StringComparison.Ordinal);
+        Assert.Single(_db.Constructor.GetRecords(_journal));
+    }
+
+    /// <summary>Ответ — в порядке плана: номер, расшифровка кода по уровням, вопрос и «Да или Нет».</summary>
+    [Fact]
+    public void The_first_number_question_follows_the_number_and_the_catalog_chain()
+    {
+        var answer = Call(Request()).Answer;
+        var number   = answer.IndexOf("Номер: АБВГ.301121.001", StringComparison.Ordinal);
+        var chain    = answer.IndexOf($"{EskdCatalog.Chain("301121").Last().Code} — ", StringComparison.Ordinal);
+        var question = answer.IndexOf("Это первый номер в данной серии классификатора. Вы уверены, что номер верный?", StringComparison.Ordinal);
+        var prompt   = answer.IndexOf("Подтвердите: Да или Нет", StringComparison.Ordinal);
+
+        Assert.True(number >= 0 && number < chain && chain < question && question < prompt, answer);
+    }
+
     [Theory]
     [InlineData("301121")]
     [InlineData("000000")]

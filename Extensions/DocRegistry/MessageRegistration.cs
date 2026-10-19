@@ -239,7 +239,8 @@ public static class MessageRegistration
 
     // ── ФИО ───────────────────────────────────────────────────────────────────
 
-    private static string Collapse(string text) =>
+    /// <summary>ФИО к одному виду: слова через один пробел — и при регистрации, и при изменении.</summary>
+    internal static string Collapse(string text) =>
         string.Join(" ", text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
 
     // ── Разметка ──────────────────────────────────────────────────────────────
