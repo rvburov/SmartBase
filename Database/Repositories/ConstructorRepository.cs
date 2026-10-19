@@ -1372,17 +1372,34 @@ public partial class ConstructorRepository(AppDbContext db)
         return new CollectionShell(dto, recCount);
     }
 
+    /// <summary>Маркер незавершенного дубля коллекции в db_meta: ставится до заливки данных и
+    /// снимается по завершении. Оборванный дубль (выход из программы посреди копии) доудаляется
+    /// при монтировании (<see cref="SweepUnfinishedCrossMove"/>) — копия с половиной значений
+    /// не остается в базе под видом настоящей.</summary>
+    internal const string PendingDuplicateKey = "duplicate.pending.collection";
+
     /// <summary>
     /// Скопировать записи и значения из исходной коллекции в уже созданный «скелет» (newCollectionId).
     /// Только bulk-SQL без материализации в EF. Карта полей old→new — по Position (скелет копирует
-    /// Position дословно). Все в ОДНОЙ транзакции (атомарно, без частичной копии при ошибке):
-    ///  1) ВСЕ записи одним `INSERT … SELECT … ORDER BY Position, Id` (id новых записей — непрерывный
-    ///     блок в этом порядке: firstNew = last_insert_rowid − recCount + 1);
-    ///  2) значения — КРУПНЫМИ пакетами (по batchSize записей), но ВСЕ поля за один `INSERT` через
-    ///     временную карту полей `_dup_fmap` (а не по одному полю с `ROW_NUMBER` на каждом — это было
-    ///     в ~3.4× медленнее). Пакеты нужны лишь для гранулярности прогресса (окно с %); внутри
-    ///     пакета новый RecordId = (firstNew + processed) + локальный ранг − 1. Тем же пакетом
-    ///     копируются строки проекции `calendar_index` (1:1 c перемэппингом id, без пересборки).
+    /// Position дословно).
+    ///  1) Карта записей <c>_dup_rmap(rn, old_id)</c> — ранг записи источника в порядке (Position, Id)
+    ///     — и ВСЕ записи одним <c>INSERT … SELECT</c> в этом порядке, в одной транзакции: id новых
+    ///     записей — непрерывный блок (firstNew = last_insert_rowid − recCount + 1), новый id записи
+    ///     ранга rn = firstNew + rn − 1. Карта снимается в той же транзакции, что и вставка, и дальше
+    ///     не зависит от правок источника.
+    ///  2) Значения и проекция календаря — пакетами по рангу (batchSize записей), у каждого пакета СВОЯ
+    ///     транзакция: на пакет один INSERT значений по всем полям (через временную карту полей
+    ///     <c>_dup_fmap</c>) и один INSERT строк <c>calendar_index</c> (1:1 с перемэппингом id, без
+    ///     пересборки).
+    ///  3) UI-настройки коллекции — последней транзакцией.
+    ///
+    /// Почему пакеты, а не одна транзакция, как раньше. Дубль на 2 млн записей одной транзакцией
+    /// раздувал журнал WAL до 9,4 ГБ (данные успевают переписаться дважды, место на диске нужно
+    /// сверх самой базы), а у общей базы в сетевой папке (журнал DELETE) долгая транзакция, вытеснив
+    /// страницы из кеша, берет исключительный замок — и до конца копии базу не могли читать ни
+    /// интерфейс, ни соседи по базе. Между пакетами замок отпускается, журнал переносится в файл.
+    /// Сбой посреди копии — копия удаляется здесь же; выход из программы — маркер
+    /// <see cref="PendingDuplicateKey"/>, ее доудалит монтирование.
     /// <paramref name="progress"/> — нарастающее число скопированных записей (для процентов в окне).
     /// </summary>
     public void CopyCollectionData(int srcCollectionId, int newCollectionId,
@@ -1396,104 +1413,133 @@ public partial class ConstructorRepository(AppDbContext db)
             return;
         }
 
-        var recCount = db.DbRecords.Count(r => r.CollectionId == srcCollectionId);
-
         // old FieldId → new FieldId по Position (см. BuildFieldMap). Карта нужна и для значений,
         // и для перемэппинга ключей UI-колонок (ширины/порядок/видимость).
         var fieldMap = BuildFieldMap(srcCollectionId, newCollectionId);
 
-        using var tx = db.Database.BeginTransaction();
-
-        // Временная карта полей (old_fid → new_fid) — чтобы копировать значения ВСЕХ полей за один
-        // INSERT (JOIN _dup_fmap), а не по одному полю; та же карта перемэппливает ключи UI-колонок.
-        // Создаем заранее (нужна и при пустой коллекции — UI колонок копируем без записей). Живет на
-        // этом подключении; пересоздаем.
-        db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS temp._dup_fmap");
-        db.Database.ExecuteSqlRaw("CREATE TEMP TABLE _dup_fmap(old_fid INTEGER PRIMARY KEY, new_fid INTEGER)");
-        foreach (var (oldFid, newFid) in fieldMap)
-            db.Database.ExecuteSqlInterpolated($"INSERT INTO _dup_fmap(old_fid, new_fid) VALUES ({oldFid}, {newFid})");
-
-        long firstNew = 0;
-        if (recCount > 0)
+        // Временные карты живут на подключении, а копия идет несколькими транзакциями: вне
+        // транзакции EF закрывает подключение после каждой команды, и карты пропадали бы.
+        db.Database.OpenConnection();
+        var started = false;
+        try
         {
-            var createdAt = DateTime.Now.ToString("o");
-            var createdBy = CurrentUser.DisplayName;   // дубль коллекции = новые записи (свой автор/время)
-
-            // 1) Все записи одним INSERT … SELECT в порядке (Position, Id). Новые id — непрерывный блок
-            //    в этом порядке (SQLite присваивает rowid по порядку SELECT, мы единственный писатель).
-            db.Database.ExecuteSqlInterpolated($@"
-                INSERT INTO db_records (CollectionId, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, StartDt, EndDt, AllDay, Title, Color)
-                SELECT {newCollectionId}, {createdAt}, {createdAt}, {createdBy}, {createdBy}, Position, StartDt, EndDt, AllDay, Title, Color
-                FROM db_records WHERE CollectionId = {srcCollectionId} ORDER BY Position, Id");
-            firstNew = LastInsertRowid() - recCount + 1;
-
-            // 2) Значения и проекция календаря крупными пакетами по (Position, Id): на пакет — один
-            //    INSERT значений по всем полям и один INSERT строк calendar_index. Проекция источника
-            //    всегда полная (видимость поля — фильтр чтения, см. SetDateFieldVisible), поэтому дубль
-            //    копирует ее 1:1 с перемэппингом id — прежняя пересборка (RebuildCalendarIndexForCollection:
-            //    чтение значений EF-страницами + парсинг дат + по-строчный INSERT) на больших коллекциях
-            //    добавляла минуты «висящего» на 100% прогресса ПОСЛЕ копии данных. Числа в SQL — int/long,
-            //    которые мы формируем сами, поэтому интерполяция в Raw безопасна (как в attached-переносе).
-            void CopySlice(long bbase, int fromPos, int fromId, (int Pos, int Id)? upper)
+            long recCount, firstNew = 0;
+            using (var tx = db.Database.BeginTransaction())
             {
-                var slice = $"(Position > {fromPos} OR (Position = {fromPos} AND Id > {fromId}))" +
-                            (upper is { } u ? $" AND (Position < {u.Pos} OR (Position = {u.Pos} AND Id <= {u.Id}))" : "");
-                var rank = $@"(SELECT Id AS old_id, ROW_NUMBER() OVER (ORDER BY Position, Id) AS rn
-                              FROM db_records WHERE CollectionId = {srcCollectionId} AND {slice}) r";
-                // EF1002 «возможная SQL-инъекция»: в строку подставляются только целые идентификаторы
-                // и имена таблиц, заданные здесь же в коде. Значений от пользователя в ней нет — те
-                // уходят параметрами. Сырой SQL намеренно: пакетные DELETE и INSERT…SELECT на тысячах
-                // строк параметрами не выражаются.
-                #pragma warning disable EF1002
-                db.Database.ExecuteSqlRaw($@"
-                    INSERT INTO db_field_values (RecordId, FieldId, Value)
-                    SELECT {bbase} + r.rn - 1, fm.new_fid, fv.Value
-                    FROM db_field_values fv
-                    JOIN {rank} ON r.old_id = fv.RecordId
-                    JOIN _dup_fmap fm ON fm.old_fid = fv.FieldId");
-                db.Database.ExecuteSqlRaw($@"
-                    INSERT INTO calendar_index (RecordId, FieldId, CollectionId, StartIso, EndIso, AllDay)
-                    SELECT {bbase} + r.rn - 1, fm.new_fid, {newCollectionId}, ci.StartIso, ci.EndIso, ci.AllDay
-                    FROM calendar_index ci
-                    JOIN {rank} ON r.old_id = ci.RecordId
-                    JOIN _dup_fmap fm ON fm.old_fid = ci.FieldId");
-                #pragma warning restore EF1002
-            }
+                // Временная карта полей (old_fid → new_fid) — чтобы копировать значения ВСЕХ полей за
+                // один INSERT (JOIN _dup_fmap), а не по одному полю; та же карта перемэппливает ключи
+                // UI-колонок. Нужна и при пустой коллекции — UI колонок копируем без записей.
+                db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS temp._dup_fmap");
+                db.Database.ExecuteSqlRaw("CREATE TEMP TABLE _dup_fmap(old_fid INTEGER PRIMARY KEY, new_fid INTEGER)");
+                foreach (var (oldFid, newFid) in fieldMap)
+                    db.Database.ExecuteSqlInterpolated($"INSERT INTO _dup_fmap(old_fid, new_fid) VALUES ({oldFid}, {newFid})");
 
-            int prevPos = int.MinValue, prevId = 0, processed = 0;
+                db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS temp._dup_rmap");
+                db.Database.ExecuteSqlRaw("CREATE TEMP TABLE _dup_rmap(rn INTEGER PRIMARY KEY, old_id INTEGER NOT NULL)");
+                recCount = db.Database.ExecuteSqlInterpolated($@"
+                    INSERT INTO _dup_rmap(rn, old_id)
+                    SELECT ROW_NUMBER() OVER (ORDER BY Position, Id), Id
+                    FROM db_records WHERE CollectionId = {srcCollectionId}");
+
+                if (recCount > 0)
+                {
+                    var createdAt = DateTime.Now.ToString("o");
+                    var createdBy = CurrentUser.DisplayName;   // дубль коллекции = новые записи (свой автор/время)
+
+                    // Все записи одним INSERT … SELECT в порядке ранга. Новые id — непрерывный блок в
+                    // этом порядке (SQLite присваивает rowid по порядку SELECT, транзакция — единственный
+                    // писатель).
+                    db.Database.ExecuteSqlInterpolated($@"
+                        INSERT INTO db_records (CollectionId, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, StartDt, EndDt, AllDay, Title, Color)
+                        SELECT {newCollectionId}, {createdAt}, {createdAt}, {createdBy}, {createdBy}, r.Position, r.StartDt, r.EndDt, r.AllDay, r.Title, r.Color
+                        FROM _dup_rmap m JOIN db_records r ON r.Id = m.old_id ORDER BY m.rn");
+                    firstNew = LastInsertRowid() - recCount + 1;
+                }
+                SetMeta(db, PendingDuplicateKey, newCollectionId.ToString());
+                tx.Commit();
+            }
+            started = true;
+
+            // Значения и проекция календаря пакетами по рангу, транзакция на пакет. Проекция
+            // источника всегда полная (видимость поля — фильтр чтения, см. SetDateFieldVisible),
+            // поэтому дубль копирует ее 1:1 с перемэппингом id — прежняя пересборка
+            // (RebuildCalendarIndexForCollection) на больших коллекциях добавляла минуты «висящего»
+            // на 100% прогресса ПОСЛЕ копии данных. Числа в SQL — long, которые мы формируем сами,
+            // поэтому интерполяция в Raw безопасна (как в attached-переносе).
+            long processed = 0;
+            if (recCount == 0) progress?.Report(0);
             while (processed < recCount)
             {
-                var bbase = firstNew + processed;   // новый RecordId первой записи пакета = bbase
-                var end   = BatchEndCursor(srcCollectionId, prevPos, prevId, batchSize);
-                CopySlice(bbase, prevPos, prevId, end);
-                if (end is { } e)
+                var upTo  = Math.Min(recCount, processed + batchSize);
+                var slice = $"m.rn > {processed} AND m.rn <= {upTo}";
+                using (var tx = db.Database.BeginTransaction())
                 {
-                    processed += batchSize;
-                    prevPos = e.Pos; prevId = e.Id;
+                    // EF1002 «возможная SQL-инъекция»: в строку подставляются только целые
+                    // идентификаторы и имена таблиц, заданные здесь же в коде. Значений от
+                    // пользователя в ней нет. Сырой SQL намеренно: пакетные INSERT…SELECT на тысячах
+                    // строк параметрами не выражаются.
+                    #pragma warning disable EF1002
+                    db.Database.ExecuteSqlRaw($@"
+                        INSERT INTO db_field_values (RecordId, FieldId, Value)
+                        SELECT {firstNew} + m.rn - 1, fm.new_fid, fv.Value
+                        FROM _dup_rmap m
+                        JOIN db_field_values fv ON fv.RecordId = m.old_id
+                        JOIN _dup_fmap fm ON fm.old_fid = fv.FieldId
+                        WHERE {slice}");
+                    db.Database.ExecuteSqlRaw($@"
+                        INSERT INTO calendar_index (RecordId, FieldId, CollectionId, StartIso, EndIso, AllDay)
+                        SELECT {firstNew} + m.rn - 1, fm.new_fid, {newCollectionId}, ci.StartIso, ci.EndIso, ci.AllDay
+                        FROM _dup_rmap m
+                        JOIN calendar_index ci ON ci.RecordId = m.old_id
+                        JOIN _dup_fmap fm ON fm.old_fid = ci.FieldId
+                        WHERE {slice}");
+                    #pragma warning restore EF1002
+                    tx.Commit();
                 }
-                else
-                {
-                    processed = recCount;   // последний (неполный) пакет: без верхней границы
-                }
-                progress?.Report(Math.Min(processed, recCount));
+                processed = upTo;
+                progress?.Report((int)processed);
+            }
+
+            // UI-настройки коллекции (ширины/порядок/видимость колонок, высоты/видимость строк, режим
+            // просмотра, подписи системных колонок) — чтобы дубль был ПОЛНОЙ копией, как перенос в
+            // другую БД (см. CopyMovedUi). Поле-/коллекция-level копируем всегда, строки — только при
+            // наличии записей.
+            using (var tx = db.Database.BeginTransaction())
+            {
+                CopyDuplicatedUi(srcCollectionId, newCollectionId, firstNew, recCount);
+                RemoveMeta(db, PendingDuplicateKey);
+                tx.Commit();
             }
         }
-        else
+        catch
         {
-            progress?.Report(0);
+            // Сбой посреди копии (диск, занятая база): недописанная копия не должна остаться под
+            // видом настоящей. Не вышло убрать — уберет монтирование по маркеру.
+            if (started)
+            {
+                try
+                {
+                    DeleteCollectionData(newCollectionId, log: false);
+                    RemoveMeta(db, PendingDuplicateKey);
+                }
+                catch { /* маркер остался — доудалит SweepUnfinishedCrossMove */ }
+            }
+            throw;
         }
-
-        // 3) UI-настройки коллекции (ширины/порядок/видимость колонок, высоты/видимость строк, режим
-        //    просмотра, подписи системных колонок) — чтобы дубль был ПОЛНОЙ копией, как перенос в другую
-        //    БД (см. CopyMovedUi). Поле-/коллекция-level копируем всегда, строки — только при наличии записей.
-        CopyDuplicatedUi(srcCollectionId, newCollectionId, firstNew, recCount);
-
-        db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS temp._dup_fmap");
-        tx.Commit();
+        finally
+        {
+            try
+            {
+                db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS temp._dup_fmap");
+                db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS temp._dup_rmap");
+            }
+            catch { /* временные таблицы уйдут вместе с подключением */ }
+            db.Database.CloseConnection();
+        }
     }
 
     // UI-настройки коллекции при дубле В ТОЙ ЖЕ БД: ключи-id полей перемэппливаются через временную
-    // карту _dup_fmap (та же, что для значений), записи — по рангу (Position, Id) → firstNew + ранг − 1
+    // карту _dup_fmap (та же, что для значений), записи — по карте рангов _dup_rmap → firstNew + ранг − 1
     // (новые id непрерывны). Ключи column_meta: числовой id поля → новый, системный
     // «__title__» — как есть. Поле-/коллекция-level копируем всегда; строки (row_heights,
     // record_display) — только при наличии записей. Зеркало CopyMovedUi для одной БД (без ATTACH).
@@ -1524,8 +1570,7 @@ public partial class ConstructorRepository(AppDbContext db)
             db.Database.ExecuteSqlInterpolated($@"
                 INSERT INTO ui_row_heights (CollectionId, RecordId, Height)
                 SELECT {newCol}, {firstNew} + r.rn - 1, h.Height FROM ui_row_heights h
-                JOIN (SELECT Id AS old_id, ROW_NUMBER() OVER (ORDER BY Position, Id) AS rn
-                      FROM db_records WHERE CollectionId = {srcCol}) r ON r.old_id = h.RecordId
+                JOIN _dup_rmap r ON r.old_id = h.RecordId
                 WHERE h.CollectionId = {srcCol}");
 
             db.Database.ExecuteSqlInterpolated($@"
@@ -1533,8 +1578,7 @@ public partial class ConstructorRepository(AppDbContext db)
                                             BgAt, FgAt, HAlignAt, VAlignAt)
                 SELECT {newCol}, {firstNew} + r.rn - 1, d.Visible, d.Level, d.Bg, d.Fg, d.HAlign, d.VAlign,
                        d.BgAt, d.FgAt, d.HAlignAt, d.VAlignAt FROM record_display d
-                JOIN (SELECT Id AS old_id, ROW_NUMBER() OVER (ORDER BY Position, Id) AS rn
-                      FROM db_records WHERE CollectionId = {srcCol}) r ON r.old_id = d.RecordId
+                JOIN _dup_rmap r ON r.old_id = d.RecordId
                 WHERE d.CollectionId = {srcCol}");
 
             // Оформление ячеек: запись — по рангу (как выше), колонка — по карте полей
@@ -1545,8 +1589,7 @@ public partial class ConstructorRepository(AppDbContext db)
                        CASE WHEN fm.new_fid IS NOT NULL THEN CAST(fm.new_fid AS TEXT) ELSE cs.Key END,
                        cs.Bg, cs.Fg, cs.HAlign, cs.VAlign
                 FROM cell_style cs
-                JOIN (SELECT Id AS old_id, ROW_NUMBER() OVER (ORDER BY Position, Id) AS rn
-                      FROM db_records WHERE CollectionId = {srcCol}) r ON r.old_id = cs.RecordId
+                JOIN _dup_rmap r ON r.old_id = cs.RecordId
                 LEFT JOIN _dup_fmap fm ON cs.Key GLOB '[0-9]*' AND CAST(cs.Key AS INTEGER) = fm.old_fid
                 WHERE cs.CollectionId = {srcCol}");
         }
@@ -1715,23 +1758,6 @@ public partial class ConstructorRepository(AppDbContext db)
         if (type is { } t) p.DbType = t;
         cmd.Parameters.Add(p);
         return p;
-    }
-
-    // (Position, Id) записи на позиции offset−1 в keyset-срезе источника после курсора — т.е.
-    // граница пакета из batchSize записей. null, если записей меньше (последний неполный пакет).
-    // Параметры — int, не строки.
-    private (int Pos, int Id)? BatchEndCursor(int srcCollectionId, int prevPos, int prevId, int offset)
-    {
-        using var c = db.Database.GetDbConnection().CreateCommand();
-        c.Transaction = db.Database.CurrentTransaction!.GetDbTransaction();
-        c.CommandText = $@"
-            SELECT Position, Id FROM db_records
-            WHERE CollectionId = {srcCollectionId}
-              AND (Position > {prevPos} OR (Position = {prevPos} AND Id > {prevId}))
-            ORDER BY Position, Id
-            LIMIT 1 OFFSET {offset - 1}";
-        using var rdr = c.ExecuteReader();
-        return rdr.Read() ? (rdr.GetInt32(0), rdr.GetInt32(1)) : null;
     }
 
     /// <summary>

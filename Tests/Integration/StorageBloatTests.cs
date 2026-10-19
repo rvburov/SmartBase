@@ -342,6 +342,113 @@ public sealed class StorageBloatTests
         finally { TempDatabase.Cleanup(path); TempDatabase.Cleanup(target); }
     }
 
+    /// <summary>Сетевая база копируется через снимок на своем диске: сначала подряд, страница за
+    /// страницей, потом сжатие уже локального снимка. Копия та же — компактная и целая, источник
+    /// не тронут, промежуточных файлов не остается.</summary>
+    [Fact]
+    public void Backup_of_network_database_goes_through_local_snapshot()
+    {
+        var path   = TempDatabase.NewTempPath();
+        var target = TempDatabase.NewTempPath();
+        try
+        {
+            var live = Bloat(path, rows: 5_000, valueLength: 500, keepSecond: true);
+            var srcBefore = FreeSpace(path);
+            NetworkPath.ForceNetwork(path);
+            var scratch = ScratchFiles();
+
+            var phases = new List<string>();
+            DatabaseManager.BackupTo(path, "src", target, (msg, _) => { lock (phases) phases.Add(msg); });
+
+            Assert.Contains(phases, p => p.StartsWith("Читаю «src»"));
+            Assert.Equal(srcBefore.FreeBytes, FreeSpace(path).FreeBytes);
+            Assert.Equal(0, FreeSpace(target).FreeBytes);
+            Assert.Equal("ok", Integrity(target));
+            Assert.False(File.Exists(target + DatabaseManager.BackupPartSuffix));
+            Assert.Equal(scratch, ScratchFiles());
+
+            using var copy = DatabaseManager.Open(7, "copy", target);
+            Assert.Equal(live.Rows, copy.Constructor.CountRecords(live.CollectionId));
+        }
+        finally { NetworkPath.Forget(path); TempDatabase.Cleanup(path); TempDatabase.Cleanup(target); }
+    }
+
+    /// <summary>Папка копий на сетевом диске: копия собирается и проверяется на своем диске и
+    /// уходит туда одним последовательным копированием, под своим именем — только целой.</summary>
+    [Fact]
+    public void Backup_to_network_folder_is_built_locally_and_saved_whole()
+    {
+        var path   = TempDatabase.NewTempPath();
+        var target = TempDatabase.NewTempPath();
+        try
+        {
+            var live = Bloat(path, rows: 2_000, valueLength: 200, keepSecond: true);
+            NetworkPath.ForceNetwork(target);
+            var scratch = ScratchFiles();
+
+            var phases = new List<string>();
+            DatabaseManager.BackupTo(path, "src", target, (msg, _) => { lock (phases) phases.Add(msg); });
+
+            Assert.Contains(phases, p => p.StartsWith("Сохраняю копию «src»"));
+            Assert.Equal("ok", Integrity(target));
+            Assert.False(File.Exists(target + DatabaseManager.BackupPartSuffix));
+            Assert.Equal(scratch, ScratchFiles());
+            NetworkPath.Forget(target);
+
+            using var copy = DatabaseManager.Open(7, "copy", target);
+            Assert.Equal(live.Rows, copy.Constructor.CountRecords(live.CollectionId));
+        }
+        finally { NetworkPath.Forget(target); TempDatabase.Cleanup(path); TempDatabase.Cleanup(target); }
+    }
+
+    /// <summary>Испорченный индекс источника VACUUM INTO переносит в копию дословно, а быстрая
+    /// проверка (quick_check) его не видит. Проверка копии обязана его найти: копия не
+    /// сохраняется, ни файла копии, ни недописанного файла не остается.</summary>
+    [Fact]
+    public void Backup_with_broken_index_is_rejected_and_leaves_no_files()
+    {
+        var path   = TempDatabase.NewTempPath();
+        var target = TempDatabase.NewTempPath();
+        try
+        {
+            using (var m = DatabaseManager.Open(2, "broken", path))
+            {
+                var (colId, fid) = Shell(m.Constructor, "Свод");
+                m.Constructor.BulkAddRecords(colId, [fid], Rows(500, 50), 500, CancellationToken.None);
+                // Названия по убыванию, позиции по возрастанию: индекс по позиции и индекс по
+                // названию расходятся в порядке строк.
+                using var c = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString());
+                c.Open();
+                Exec(c, "UPDATE db_records SET Title = printf('%08d', 1000000 - Id);");
+            }
+            AppDbContext.ResetPool(path);
+            using (var c = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString()))
+            {
+                c.Open();
+                // Индекс по (CollectionId, Position) объявляем индексом по (CollectionId, Title):
+                // содержимое старое, схема новая — индекс больше не соответствует таблице.
+                Exec(c, "PRAGMA writable_schema=ON;");
+                Exec(c, "UPDATE sqlite_schema SET sql = replace(sql, '\"Position\")', '\"Title\")') " +
+                        "WHERE name = 'IX_db_records_CollectionId_Position';");
+                Exec(c, "PRAGMA writable_schema=OFF;");
+            }
+            AppDbContext.ResetPool(path);
+
+            var ex = Assert.Throws<InvalidOperationException>(() => DatabaseManager.BackupTo(path, "broken", target, null));
+            Assert.Contains("целостности", ex.Message);
+            Assert.False(File.Exists(target));
+            Assert.False(File.Exists(target + DatabaseManager.BackupPartSuffix));
+        }
+        finally { TempDatabase.Cleanup(path); TempDatabase.Cleanup(target); }
+    }
+
+    // Промежуточные файлы копий на своем диске (папка SmartBase-backup во временной).
+    private static string[] ScratchFiles()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "SmartBase-backup");
+        return Directory.Exists(dir) ? [.. Directory.GetFiles(dir).Order()] : [];
+    }
+
     // ── Стенд ─────────────────────────────────────────────────────────────────
 
     private sealed record Live(int CollectionId, int Rows);

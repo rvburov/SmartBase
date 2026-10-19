@@ -264,6 +264,12 @@ foreach (var name in new[] { "app.db", "main.db", "security.db", "integrations.d
         if (File.Exists(Path.Combine(runDir, name + suffix))) File.Delete(Path.Combine(runDir, name + suffix));
 var mainPath   = Path.Combine(runDir, "main.db");
 var secondPath = Path.Combine(runDir, "second.db");
+// --shared: базы стенда — как общие базы в сетевой папке (журнал DELETE, synchronous=FULL, без
+// mmap): так работают рабочие базы пользователей, и паузы UI там другие, чем у локального WAL.
+var shared = args.Contains("--shared");
+if (shared)
+    foreach (var p in new[] { mainPath, secondPath, Path.Combine(runDir, "extra.db") })
+        NetworkPath.ForceNetwork(p);
 File.Copy(Path.Combine(srcDir, "main.db"), mainPath);
 if (fresh || !File.Exists(secondPath))
 {
@@ -298,7 +304,8 @@ Dispatcher.UIThread.UnhandledException += (_, e) =>
     Console.WriteLine($"    [исключение UI] {e.Exception.GetType().Name}: {e.Exception.Message}");
     e.Handled = true;
 };
-var uiThread = Native.GetCurrentThreadId();
+// Номер потока ОС нужен только разбору стеков EventPipe (Windows); проба пауз работает везде.
+var uiThread = OperatingSystem.IsWindows() ? Native.GetCurrentThreadId() : 0u;
 Boot("платформа Avalonia и стили приложения");
 
 // Реестр и настройки — в папке стенда (как у App, но без путей AppSettings: они смотрят в
@@ -1695,13 +1702,20 @@ async Task SidebarOps()
     var sidebar   = main!.FindControl<Control>("ConstructorSidebar")!;
     var faults    = 0;
     int? targetGroup = null;   // куда окно «Расположение» переносит коллекцию (null — корень базы)
+    int? targetDb    = null;   // в какую базу (null — в ту же)
     var collapsed = (HashSet<int>)Get(sidebar, "_collapsedDbRoots")!;
 
     var dialogs = 0;   // окна, открытые за сценарий: по ним видно, что клик по заглушке объяснен
+    var busy    = 0;   // открытые окна прогресса: действие не кончилось, пока окно на экране
     Window.WindowOpenedEvent.AddClassHandler<Window>((w, _) =>
     {
         if (w is MainWindow) return;
         dialogs++;
+        if (w is SmartBase.Controls.Dialogs.ProgressDialog)
+        {
+            busy++;
+            w.Closed += (_, _) => busy--;
+        }
         Dispatcher.UIThread.Post(() => AnswerSidebar(w), DispatcherPriority.Background);
     });
 
@@ -1845,6 +1859,45 @@ async Task SidebarOps()
     await SOp("удаление коллекции", () => Call(sidebar, "DeleteSelectionOrNode", Node(extra.DbId, temp.Id!.Value)),
               () => repo.GetAllCollections().All(c => c.Id != temp.Id));
 
+    // Тяжелые действия на большой коллекции и на малой (до порога окна прогресса): дубль, перенос
+    // в другую базу окном «Расположение», удаление. Пауза UI здесь — то, что пользователь видит
+    // как «программа зависла»: работа обязана идти в фоне, а поток интерфейса — отвечать.
+    var big     = repo.GetAllCollections().OrderByDescending(c => repo.CountRecords(c.Id!.Value)).First();
+    var bigRecs = repo.CountRecords(big.Id!.Value);
+    var other   = workspace.Mounted.First(d => d.DbId != extra.DbId);
+    var small   = repo.AddCollection(new SmartBase.Core.Models.DbCollection { Name = "Стенд: малая" });
+    var smallF  = repo.AddField(new SmartBase.Core.Models.DbField { CollectionId = small.Id!.Value, Name = "Текст", FieldType = "text", Position = 1000 });
+    repo.BulkAddRecords(small.Id!.Value, [smallF.Id!.Value],
+        Enumerable.Range(0, 1500).Select(i => new SmartBase.Database.Repositories.BulkRecordRow($"Запись {i}", [$"значение {i}"])), 1500, CancellationToken.None);
+    Call(sidebar, "Refresh");
+    await Settle(0.5, 30);
+    Console.WriteLine($"  тяжелые действия: «{big.Name}» — {bigRecs:N0} записей, «{small.Name}» — 1 500; перенос в «{other.Name}»");
+
+    foreach (var (src, cap) in new[] { (small, 60.0), (big, 900.0) })
+    {
+        var copyName = $"{src.Name} (копия)";
+        var srcRecs = repo.CountRecords(src.Id!.Value);
+        await SOp($"дубль «{src.Name}»", () => Call(sidebar, "DuplicateSelectionOrNode", Node(extra.DbId, src.Id!.Value)),
+                  () => repo.GetAllCollections().FirstOrDefault(c => c.Name == copyName) is { } c
+                        && repo.CountRecords(c.Id!.Value) == srcRecs, cap);
+        var copy = repo.GetAllCollections().FirstOrDefault(c => c.Name == copyName);
+        if (copy is null) continue;
+        Call(sidebar, "Refresh");
+        await Settle(0.5, 30);
+
+        targetDb = other.DbId;
+        await SOp($"перенос «{copyName}» в «{other.Name}»", () => Call(sidebar, "RelocateSelectionOrNode", Node(extra.DbId, copy.Id!.Value)),
+                  () => other.Constructor.GetAllCollections().Any(c => c.Name == copyName), cap);
+        targetDb = null;
+        var moved = other.Constructor.GetAllCollections().FirstOrDefault(c => c.Name == copyName);
+        if (moved is null) continue;
+        Call(sidebar, "Refresh");
+        await Settle(0.5, 30);
+
+        await SOp($"удаление «{copyName}»", () => Call(sidebar, "DeleteSelectionOrNode", Node(other.DbId, moved.Id!.Value)),
+                  () => other.Constructor.GetAllCollections().All(c => c.Id != moved.Id), cap);
+    }
+
     Console.WriteLine(faults == 0 ? "Боковая панель: все проверки прошли" : $"Боковая панель: НЕ ПРОШЛО {faults}");
 
     List<SmartBase.Controls.Components.SidebarNode> Roots() =>
@@ -1869,15 +1922,18 @@ async Task SidebarOps()
         Console.WriteLine(f.Count == 0 ? $"  {when}: строки разложены по своим данным" : $"  {when}: НЕ ПРОШЛО: {string.Join("; ", f)}");
     }
 
-    async Task SOp(string name, Action act, Func<bool> done)
+    async Task SOp(string name, Action act, Func<bool> done, double capSec = 30)
     {
         Step($"боковая панель: {name}");
         var stepName = probe.Step;
         var sw = Stopwatch.StartNew();
         act();
-        while (!done() && sw.Elapsed.TotalSeconds < 30) await Task.Delay(20);
+        // Окно прогресса открывается не сразу (короткая работа идет без окна): ждем дольше этой
+        // задержки, чтобы оно успело показаться.
+        await Task.Delay(600);
+        while ((busy > 0 || !done()) && sw.Elapsed.TotalSeconds < capSec) await Task.Delay(20);
         var ms = sw.Elapsed.TotalMilliseconds;
-        var ok = done();
+        var ok = busy == 0 && done();
         await Settle(0.5, 30);
         var stall = probe.Stalls.ToList().Where(s => s.Step == stepName).Select(s => s.Ms).DefaultIfEmpty(0).Max();
         Console.WriteLine($"  {name}: {(ok ? "готово" : "НЕ ВЫШЛО")} за {ms:N0} мс; пауза UI макс {stall:N0} мс");
@@ -1892,8 +1948,15 @@ async Task SidebarOps()
             w.FindControl<Button>("ConfirmBtn")!.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
             return;
         }
+        if (w is SmartBase.Controls.Dialogs.ProgressDialog) return;   // закроется само по готовности
         if (w is SmartBase.Controls.Dialogs.LocationDialog)
         {
+            if (targetDb is { } db)
+            {
+                var dbs = (System.Collections.IList)Get(w, "_dbs")!;
+                var at  = dbs.Cast<object>().Select((o, i) => (o, i)).First(x => (int)x.o.GetType().GetProperty("Id")!.GetValue(x.o)! == db).i;
+                w.FindControl<ComboBox>("DbCombo")!.SelectedIndex = at;
+            }
             var groups = (List<(string Label, int? Id)>)Get(w, "_groups")!;
             var index  = groups.FindIndex(g => g.Id == targetGroup);
             w.FindControl<ComboBox>("LocationCombo")!.SelectedIndex = Math.Max(0, index);

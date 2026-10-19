@@ -125,6 +125,31 @@ public sealed class BackupServiceTests
     }
 
     [Fact]
+    public async Task Stale_unfinished_copies_of_this_database_are_removed()
+    {
+        using var db       = new TempDatabase();
+        using var dir      = new TempDir();
+        using var registry = DatabaseRegistry.Open(db.Path, dir.File("app.db"));
+        AppSettings.AttachStore(registry);
+
+        var folder = dir.File("copies");
+        Directory.CreateDirectory(folder);
+        AppSettings.SaveBackupFolder(folder);
+
+        // Брошенные оборванным запуском недописанные копии: своей базы и соседней.
+        File.WriteAllText(Path.Combine(folder, "Основная (копия 2020-01-01_03-00).db.part"), "x");
+        File.WriteAllText(Path.Combine(folder, "Соседняя (копия 2020-01-01_03-00).db.part"), "x");
+
+        var service = new BackupService(registry);
+        await service.RunNowAsync(registry.GetAll().Single().Id);
+
+        var names = Directory.GetFiles(folder).Select(Path.GetFileName).ToList();
+        Assert.DoesNotContain("Основная (копия 2020-01-01_03-00).db.part", names);
+        Assert.Contains("Соседняя (копия 2020-01-01_03-00).db.part", names);
+        Assert.Single(names, n => BackupRotation.IsCopyOf(n!, "Основная", "db"));
+    }
+
+    [Fact]
     public async Task Missing_source_file_reports_error_and_keeps_no_last_run()
     {
         using var dir      = new TempDir();

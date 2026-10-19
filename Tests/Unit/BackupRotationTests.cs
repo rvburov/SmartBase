@@ -94,6 +94,19 @@ public sealed class BackupRotationTests
     }
 
     [Fact]
+    public void Unfinished_copy_is_recognized_and_never_counted_as_a_copy()
+    {
+        // Недописанная копия лежит под именем копии с суффиксом .part: уборка ее находит, а
+        // ротация не считает копией — иначе оборванный файл вытеснял бы целую копию.
+        const string part = "base (копия 2026-09-05_03-00).db.part";
+        Assert.True(BackupRotation.IsPartOf(part, "base", "db"));
+        Assert.False(BackupRotation.IsCopyOf(part, "base", "db"));
+        Assert.False(BackupRotation.IsPartOf("base2 (копия 2026-09-05_03-00).db.part", "base", "db"));
+        Assert.False(BackupRotation.IsPartOf("base (копия 2026-09-05_03-00).db", "base", "db"));
+        Assert.False(BackupRotation.IsPartOf("заметки.part", "base", "db"));
+    }
+
+    [Fact]
     public void Extension_follows_provider()
     {
         Assert.Equal("db",   BackupRotation.Extension(isPostgres: false));

@@ -2275,8 +2275,7 @@ public partial class SidebarTree : UserControl
         // копирует его как есть) — применяем выбранное после переноса.
         if (res.DbId != dbId && RepoFor(res.DbId) is { } target)
         {
-            var (gcols, grecs) = await repo.CountGroupSubtreeAsync(groupId);
-            var move  = new CrossMove(dbId, repo, IsGroup: true, groupId, grecs, gcols);
+            var move  = new CrossMove(dbId, repo, IsGroup: true, groupId);
             // Отказ отменяет всю правку (в т.ч. переименование) — ничего не тронуто.
             if (!await ConfirmCrossDbLinkBreak(target, [move])) return;
             var moved = await MoveNodesCrossDb(target, res.DbId, res.ParentId, [move], "Перемещение");
@@ -2324,7 +2323,7 @@ public partial class SidebarTree : UserControl
         // есть) — применяем выбранное после переноса.
         if (res.DbId != dbId && RepoFor(res.DbId) is { } target)
         {
-            var move  = new CrossMove(dbId, repo, IsGroup: false, collectionId, await repo.CountRecordsAsync(collectionId), Collections: 1);
+            var move  = new CrossMove(dbId, repo, IsGroup: false, collectionId);
             // Отказ отменяет всю правку (в т.ч. переименование) — ничего не тронуто.
             if (!await ConfirmCrossDbLinkBreak(target, [move])) return;
             var moved = await MoveNodesCrossDb(target, res.DbId, res.GroupId, [move], "Перемещение");
@@ -2355,105 +2354,134 @@ public partial class SidebarTree : UserControl
         ReloadAndNotify();
     }
 
-    // Порог записей (суммарно по выделению) для дублирования/удаления/переноса: меньше — операция
-    // идет мгновенно синхронно без окна; больше — окно прогресса с % (как импорт) и работа в фоне.
+    // Дублирование, удаление и перенос узлов — ВСЕГДА в фоне, на отдельных подключениях
+    // (Duplicate*/Delete*/Move*Isolated), при любом объеме: поток интерфейса не ждет базу ни на
+    // подсчете, ни на самой работе. Окно прогресса появляется, только если работа не уложилась в
+    // ProgressDelay, — короткая операция не мелькает окном (тот же прием у заливки проекции даты).
     //
-    // 2000, а не 20 000: «мгновенно» — это про машину разработчика. Замер удаления ровно на
-    // прежнем пороге (20 000 записей = 240 тыс. строк значений) дал 711 мс на быстром SSD — а
-    // на слабом ноутбуке пользователя это секунды намертво замерзшего окна без единого
-    // индикатора, ровно та жалоба, с которой начался разбор. На 2000 записях синхронный путь
-    // остается по-настоящему мгновенным, а все, что дольше, честно показывает прогресс.
-    private const int BulkProgressThreshold = 2000;
+    // Раньше малый объем (до 2000 записей) шел синхронно на UI-потоке: на быстром SSD это
+    // мгновенно, а на сетевом диске пользователя — секунды «зависшего» окна без индикатора, да
+    // и перед окном прогресса большого объема поток ждал счетчики узлов по очереди.
+    private static readonly TimeSpan ProgressDelay = TimeSpan.FromMilliseconds(400);
+
+    // Объем, начиная с которого итог операции пишется в журнал (малые операции его не засоряют).
+    private const long BulkLogRecords = 2000;
 
     // Записей в узле и сколько коллекций он несет: коллекция — ее записи и 1; группа — сумма по всей
-    // ветке (подгруппы + коллекции) и число коллекций в ветке. Для порога, % и текста индикатора.
-    // Асинхронно на ОТДЕЛЬНОМ подключении: COUNT по коллекции в 10 млн — сотни мс, на UI-потоке это
-    // был фриз между кликом по меню и окном прогресса (умножался при мультивыборе).
-    private async Task<(long Records, int Collections)> CountNodeAsync(SidebarNode n)
+    // ветке (подгруппы + коллекции) и число коллекций в ветке. Для % и текста индикатора. На
+    // ОТДЕЛЬНОМ подключении (COUNT по коллекции в 10 млн — сотни мс); репозиторий передается
+    // готовым, потому что зовется и из фона, где общий список баз трогать нельзя.
+    private static async Task<(long Records, int Collections)> CountNodeAsync(ConstructorRepository r, bool isGroup, int id)
     {
-        var r = RepoFor(n.DbId);
-        if (r is null || !n.Id.HasValue || n.IsDatabase) return (0, 0);
-        if (n.IsGroup) { var (c, rec) = await r.CountGroupSubtreeAsync(n.Id.Value); return (rec, c); }
-        return (await r.CountRecordsAsync(n.Id.Value), 1);
+        if (isGroup) { var (c, rec) = await r.CountGroupSubtreeAsync(id); return (rec, c); }
+        return (await r.CountRecordsAsync(id), 1);
     }
 
     // Текст индикатора: для операций с группами — «Коллекций: X · Записей: Y»; иначе только записи.
     private static string BulkInfo(int collections, long records, bool withCollections) =>
         withCollections ? $"Коллекций: {collections} · Записей: {records}" : $"Количество записей: {records}";
 
+    // Фаза индикатора: «Дублирование… (2/3)» при нескольких целях, иначе «Дублирование группы…».
+    private static string PhaseText(string title, int count, int index, bool isGroup) =>
+        count > 1 ? $"{title}… ({index + 1}/{count})"
+                  : isGroup ? $"{title} группы…" : $"{title} коллекции…";
+
+    // Ход фоновой работы узлов. Report/Info зовутся с фонового потока и сами переносят показ на
+    // UI-поток; окно может появиться позже первых сообщений — тогда оно сразу получает последнее.
+    private sealed class NodeWorkProgress(string phase)
+    {
+        private readonly object _lock = new();
+        private (double Frac, string Phase) _last = (0, phase);
+        private string _info = "";
+        private int _lastPct = -1;
+        private ProgressDialog? _dlg;   // только UI-поток
+
+        public void Report(double fraction, string phase)
+        {
+            var pct = (int)(Math.Clamp(fraction, 0, 1) * 100);
+            lock (_lock)
+            {
+                if (pct == _lastPct && phase == _last.Phase) return;   // фаза могла смениться при том же %
+                _lastPct = pct;
+                _last    = (pct / 100.0, phase);
+            }
+            Dispatcher.UIThread.Post(() => _dlg?.SetProgress(pct / 100.0, phase));
+        }
+
+        public void Info(string text)
+        {
+            lock (_lock) _info = text;
+            Dispatcher.UIThread.Post(() => _dlg?.SetInfo(text));
+        }
+
+        // Фаза и сводка — ДО показа: окно с SizeToContent не меняет высоту с первым процентом
+        // (иначе выглядело «вторым окном»).
+        public void Attach(ProgressDialog dlg)
+        {
+            lock (_lock)
+            {
+                dlg.SetInfo(_info);
+                dlg.SetProgress(_last.Frac, _last.Phase);
+            }
+            _dlg = dlg;
+        }
+    }
+
+    // Запустить работу узлов в фоне; если она длится дольше ProgressDelay — окно прогресса до ее
+    // конца. Исключение работы пробрасывается вызывающему (у каждой операции своя политика ошибок).
+    private async Task RunNodeWork(string title, NodeWorkProgress progress, Func<Task> work)
+    {
+        var bg = Task.Run(work);
+        if (await Task.WhenAny(bg, Task.Delay(ProgressDelay)) != bg && OwnerWindow is not null)
+        {
+            var dlg = new ProgressDialog { Title = title };
+            progress.Attach(dlg);
+            var closed = dlg.ShowDialog(OwnerWindow);
+            try { await bg; } catch { /* разбирает вызывающий: await ниже пробросит */ }
+            dlg.Done();
+            await closed;
+        }
+        await bg;
+    }
+
     // Дублирование через контекстное меню: если клик по узлу из мультивыделения — дублируем ВЕСЬ
-    // набор (коллекции И группы со всей веткой); иначе только этот узел. Большие (суммарно много
-    // записей) — с окном прогресса и копированием в фоне на отдельных подключениях; малые — мгновенно.
+    // набор (коллекции И группы со всей веткой); иначе только этот узел. Копии идут ПО ОЧЕРЕДИ в
+    // фоне на отдельных подключениях, проценты — общий прогресс по всем целям.
     private async void DuplicateSelectionOrNode(SidebarNode node)
     {
-        // Репозитории резолвим здесь, на UI-потоке (общий список _dbs не трогаем из Task.Run);
-        // счетчики — в фоне на отдельных подключениях (CountNodeAsync), UI не фризится.
+        // Репозитории резолвим здесь, на UI-потоке (общий список _dbs не трогаем из Task.Run).
         var sel     = _selectedNodes.Contains(node) ? _selectedNodes.ToList() : [node];
-        var targets = new List<(int DbId, ConstructorRepository Repo, bool IsGroup, int Id, long Records)>();
-        long total = 0; int totalCollections = 0; bool anyGroup = false;
+        var targets = new List<(int DbId, ConstructorRepository Repo, bool IsGroup, int Id)>();
         foreach (var n in sel.Where(n => n.Id.HasValue && !n.IsDatabase))
-        {
-            var r = RepoFor(n.DbId);
-            if (r is null) continue;
-            var (rec, cols) = await CountNodeAsync(n);
-            targets.Add((n.DbId, r, n.IsGroup, n.Id!.Value, rec));
-            total += rec; totalCollections += cols; anyGroup |= n.IsGroup;
-        }
+            if (RepoFor(n.DbId) is { } r) targets.Add((n.DbId, r, n.IsGroup, n.Id!.Value));
         if (targets.Count == 0) return;
-        var single = targets.Count == 1;
+        var single   = targets.Count == 1;
+        var anyGroup = targets.Any(t => t.IsGroup);
 
-        // Малый объем — мгновенно, синхронно (без окна): bulk-копия быстрая.
-        if (total <= BulkProgressThreshold)
-        {
-            (int DbId, int Id, bool IsGroup)? made = null;
-            foreach (var t in targets)
-            {
-                if (t.IsGroup) made = (t.DbId, t.Repo.DuplicateGroupCore(t.Id), true);
-                else { var copy = t.Repo.DuplicateCollection(t.Id); if (copy.Id is int nid) made = (t.DbId, nid, false); }
-            }
-            ReloadAndNotify();
-            RevealDuplicate(single, made);
-            return;
-        }
-
-        // Большой объем — окно прогресса. Копии идут ПО ОЧЕРЕДИ в фоне на отдельных подключениях
-        // (DuplicateCollectionIsolated/DuplicateGroupIsolated) — не трогаем общий Context с фона.
-        if (OwnerWindow is null) return;
-        var dlg = new ProgressDialog { Title = "Дублирование" };
-        dlg.SetInfo(BulkInfo(totalCollections, total, anyGroup));
-        // Фаза — ДО показа, тем же текстом, что даст первый процент: иначе жирная строка появлялась
-        // с первым колбэком, окно с SizeToContent меняло высоту и выглядело «вторым окном».
-        dlg.SetProgress(0, targets.Count > 1
-            ? $"Дублирование… (1/{targets.Count})"
-            : targets[0].IsGroup ? "Дублирование группы…" : "Дублирование коллекции…");
-        var dlgClosed = dlg.ShowDialog(OwnerWindow);
-
-        (int DbId, int Id, bool IsGroup)? madeBig = null;
-        var lastPct = -1;
-        var bulkWatch = System.Diagnostics.Stopwatch.StartNew();
+        var progress = new NodeWorkProgress(PhaseText("Дублирование", targets.Count, 0, targets[0].IsGroup));
+        (int DbId, int Id, bool IsGroup)? made = null;
+        long total = 0;
+        var watch = System.Diagnostics.Stopwatch.StartNew();
         try
         {
-            await Task.Run(() =>
+            await RunNodeWork("Дублирование", progress, async () =>
             {
+                var counts = await Task.WhenAll(targets.Select(t => CountNodeAsync(t.Repo, t.IsGroup, t.Id)));
+                total = counts.Sum(c => c.Records);
+                progress.Info(BulkInfo(counts.Sum(c => c.Collections), total, anyGroup));
+
                 long basis = 0;
                 for (var i = 0; i < targets.Count; i++)
                 {
                     var t    = targets[i];
                     var b    = basis;
-                    var step = i + 1;
-                    var text = targets.Count > 1
-                        ? $"Дублирование… ({step}/{targets.Count})"
-                        : t.IsGroup ? "Дублирование группы…" : "Дублирование коллекции…";
+                    var text = PhaseText("Дублирование", targets.Count, i, t.IsGroup);
+                    progress.Report(total == 0 ? 0 : b / (double)total, text);
                     IProgress<int> p = new IntProgress(copied =>
-                    {
-                        var pct = total == 0 ? 100 : (int)((b + copied) * 100 / total);
-                        if (pct == lastPct) return;
-                        lastPct = pct;
-                        Dispatcher.UIThread.Post(() => dlg.SetProgress(pct / 100.0, text));
-                    });
-                    if (t.IsGroup) madeBig = (t.DbId, t.Repo.DuplicateGroupIsolated(t.Id, p), true);
-                    else { var nid = t.Repo.DuplicateCollectionIsolated(t.Id, p); if (nid != 0) madeBig = (t.DbId, nid, false); }
-                    basis += t.Records;
+                        progress.Report(total == 0 ? 1 : (b + copied) / (double)total, text));
+                    if (t.IsGroup) made = (t.DbId, t.Repo.DuplicateGroupIsolated(t.Id, p), true);
+                    else { var nid = t.Repo.DuplicateCollectionIsolated(t.Id, p); if (nid != 0) made = (t.DbId, nid, false); }
+                    basis += counts[i].Records;
                 }
             });
         }
@@ -2462,15 +2490,12 @@ public partial class SidebarTree : UserControl
             // Ошибку фона проглатываем: узел либо скопирован, либо нет — UI не валим.
             Log.Warning(ex, "Сбой фонового копирования узла (дублирование)");
         }
-        // Итог массовой операции — в журнал (сюда попадают только большие объемы, см. порог выше).
-        Log.Information("Дублирование в фоне: целей {Targets}, записей {Records:N0} за {Ms:N0} мс",
-                        targets.Count, total, bulkWatch.Elapsed.TotalMilliseconds);
-
-        dlg.Done();
-        await dlgClosed;
+        if (total > BulkLogRecords)
+            Log.Information("Дублирование в фоне: целей {Targets}, записей {Records:N0} за {Ms:N0} мс",
+                            targets.Count, total, watch.Elapsed.TotalMilliseconds);
 
         ReloadAndNotify();
-        RevealDuplicate(single, madeBig);
+        RevealDuplicate(single, made);
     }
 
     // Показать результат единичного дубля: коллекцию открыть, группу — раскрыть (в конструкторе).
@@ -2488,9 +2513,9 @@ public partial class SidebarTree : UserControl
         public void Report(int value) => report(value);
     }
 
-    // Одна цель кросс-БД переноса: репозиторий-ИСТОЧНИК, что переносим (группа/коллекция), его id,
-    // и счетчики (записей в ветке/коллекции и число коллекций — для порога, % и текста индикатора).
-    private sealed record CrossMove(int SrcDbId, ConstructorRepository SrcRepo, bool IsGroup, int Id, long Records, int Collections);
+    // Одна цель кросс-БД переноса: репозиторий-ИСТОЧНИК, что переносим (группа/коллекция) и его id.
+    // Счетчики (для % и текста индикатора) переноса считает сам, в фоне.
+    private sealed record CrossMove(int SrcDbId, ConstructorRepository SrcRepo, bool IsGroup, int Id);
 
     // Межбазовый перенос = новые id у записей → ВХОДЯЩИЕ связи на переносимое обрываются (за объектом
     // не следуют). Для КОЛЛЕКЦИИ теряются лишь ВНЕШНИЕ входящие (само-связи внутри переписываются);
@@ -2541,86 +2566,55 @@ public partial class SidebarTree : UserControl
 
     // Перенести набор узлов в ДРУГУЮ БД быстрым путем (Move*Isolated: ATTACH + bulk INSERT…SELECT на
     // отдельных подключениях, не трогая общий Context). targetLocation — расположение в целевой БД:
-    // для коллекции это ее группа, для группы — родитель. Малый суммарный объем (≤ порога) — синхронно
-    // мгновенно без окна; больше — окно прогресса (title) + перенос по очереди в фоне с общим %. Ошибки
-    // переноса не валят UI (как дубль/удаление). Возвращает (целевая БД, новый id, IsGroup) последнего
-    // успешно перенесенного узла (для reveal) либо null, если ничего не перенеслось/была ошибка.
+    // для коллекции это ее группа, для группы — родитель. Перенос по очереди в фоне с общим %
+    // (окно прогресса — если дольше ProgressDelay, см. RunNodeWork). Ошибки переноса не валят UI
+    // (как дубль/удаление). Возвращает (целевая БД, новый id, IsGroup) последнего успешно
+    // перенесенного узла (для reveal) либо null, если ничего не перенеслось/была ошибка.
     private async Task<(int DbId, int Id, bool IsGroup)?> MoveNodesCrossDb(
         ConstructorRepository targetRepo, int targetDbId, int? targetLocation,
         IReadOnlyList<CrossMove> crossDb, string title)
     {
-        if (crossDb.Count == 0 || OwnerWindow is null) return null;
+        if (crossDb.Count == 0) return null;
 
-        long total       = crossDb.Sum(t => t.Records);
-        int  collections = crossDb.Sum(t => t.Collections);
-        bool anyGroup    = crossDb.Any(t => t.IsGroup);
+        var anyGroup = crossDb.Any(t => t.IsGroup);
 
         int MoveOne(CrossMove t, IProgress<int>? p) => t.IsGroup
             ? targetRepo.MoveGroupIsolated(t.SrcRepo.DbPath, t.Id, targetLocation, p, sourceDbId: t.SrcDbId, targetDbId: targetDbId)
             : targetRepo.MoveCollectionIsolated(t.SrcRepo.DbPath, t.Id, targetLocation, p, sourceDbId: t.SrcDbId, targetDbId: targetDbId);
 
         (int DbId, int Id, bool IsGroup)? reveal = null;
-
-        // Малый объем — перенос синхронно, мгновенно (bulk-копия быстрая).
-        if (total <= BulkProgressThreshold)
-        {
-            try
-            {
-                foreach (var t in crossDb)
-                {
-                    var nid = MoveOne(t, null);
-                    if (nid != 0) reveal = (targetDbId, nid, t.IsGroup);
-                }
-            }
-            catch { /* узел либо перенесен, либо нет — UI не валим */ }
-            return reveal;
-        }
-
-        // Большой объем — окно прогресса. Перенос ПО ОЧЕРЕДИ в фоне на отдельных подключениях;
-        // проценты — общий прогресс по всем целям.
-        var dlg = new ProgressDialog { Title = title };
-        dlg.SetInfo(BulkInfo(collections, total, anyGroup));
-        // Фаза — ДО показа (см. дубль): окно не меняет высоту с первым процентом.
-        dlg.SetProgress(0, crossDb.Count > 1
-            ? $"{title}… (1/{crossDb.Count})"
-            : crossDb[0].IsGroup ? $"{title} группы…" : $"{title} коллекции…");
-        var closed = dlg.ShowDialog(OwnerWindow);
-
-        // Прогресс покрывает И копию, И удаление исходника: на каждую цель 2× записей (копия — первая
-        // половина 0..Records, удаление исходной БД — вторая Records..2·Records). Иначе бар замирал на
-        // 100% на все время удаления (каскад записей/значений — минуты на больших коллекциях/ветках).
-        long workTotal = 2 * total;
-        var lastPct = -1;
-        var lastText = "";
-        var bulkWatch = System.Diagnostics.Stopwatch.StartNew();
+        var progress = new NodeWorkProgress(PhaseText(title, crossDb.Count, 0, crossDb[0].IsGroup));
+        long total = 0;
+        var watch = System.Diagnostics.Stopwatch.StartNew();
         try
         {
-            await Task.Run(() =>
+            await RunNodeWork(title, progress, async () =>
             {
+                var counts = await Task.WhenAll(crossDb.Select(t => CountNodeAsync(t.SrcRepo, t.IsGroup, t.Id)));
+                total = counts.Sum(c => c.Records);
+                progress.Info(BulkInfo(counts.Sum(c => c.Collections), total, anyGroup));
+
+                // Прогресс покрывает И копию, И удаление исходника: на каждую цель 2× записей (копия —
+                // первая половина 0..Records, удаление исходной БД — вторая Records..2·Records). Иначе
+                // бар замирал на 100% на все время удаления (каскад записей/значений — минуты на больших).
+                var workTotal = 2 * total;
                 long basis = 0;
                 for (var i = 0; i < crossDb.Count; i++)
                 {
-                    var t    = crossDb[i];
-                    var b    = basis;
-                    var step = i + 1;
-                    var moving = crossDb.Count > 1
-                        ? $"{title}… ({step}/{crossDb.Count})"
-                        : t.IsGroup ? $"{title} группы…" : $"{title} коллекции…";
+                    var t       = crossDb[i];
+                    var records = counts[i].Records;
+                    var b       = basis;
+                    var moving  = PhaseText(title, crossDb.Count, i, t.IsGroup);
                     var deleting = crossDb.Count > 1
-                        ? $"Удаление из исходной базы… ({step}/{crossDb.Count})"
+                        ? $"Удаление из исходной базы… ({i + 1}/{crossDb.Count})"
                         : "Удаление из исходной базы…";
+                    progress.Report(workTotal == 0 ? 0 : b / (double)workTotal, moving);
                     IProgress<int> p = new IntProgress(done =>
-                    {
-                        // done: 0..Records — копия, Records..2·Records — удаление исходника.
-                        var text = done < t.Records ? moving : deleting;
-                        var pct  = workTotal == 0 ? 100 : (int)((b + done) * 100 / workTotal);
-                        if (pct == lastPct && text == lastText) return;   // фаза могла смениться при том же %
-                        lastPct = pct; lastText = text;
-                        Dispatcher.UIThread.Post(() => dlg.SetProgress(pct / 100.0, text));
-                    });
+                        progress.Report(workTotal == 0 ? 1 : (b + done) / (double)workTotal,
+                                        done < records ? moving : deleting));
                     var nid = MoveOne(t, p);
                     if (nid != 0) reveal = (targetDbId, nid, t.IsGroup);
-                    basis += 2 * t.Records;
+                    basis += 2 * records;
                 }
             });
         }
@@ -2629,12 +2623,9 @@ public partial class SidebarTree : UserControl
             // Ошибку фона проглатываем: узел либо перенесен, либо нет — UI не валим.
             Log.Warning(ex, "Сбой фонового переноса узла");
         }
-        // Итог массовой операции — в журнал (большие объемы: копия плюс удаление исходника).
-        Log.Information("Перенос между базами в фоне: целей {Targets}, записей {Records:N0} за {Ms:N0} мс",
-                        crossDb.Count, total, bulkWatch.Elapsed.TotalMilliseconds);
-
-        dlg.Done();
-        await closed;
+        if (total > BulkLogRecords)
+            Log.Information("Перенос между базами в фоне: целей {Targets}, записей {Records:N0} за {Ms:N0} мс",
+                            crossDb.Count, total, watch.Elapsed.TotalMilliseconds);
         return reveal;
     }
 
@@ -2642,7 +2633,7 @@ public partial class SidebarTree : UserControl
     // набор (коллекции И группы со всей веткой); иначе только этот узел. Окно (как «Изменение», но без
     // названия) выбирает целевую БД и расположение (для коллекции — ее группа, для группы — родитель).
     // В той же БД — мгновенно (смена GroupId/ParentId, данные на месте); в другую БД — bulk-перенос
-    // (как дубль): малый объем синхронно, большой — окно прогресса и фон (Move*Isolated).
+    // в фоне (как дубль, Move*Isolated).
     private async void RelocateSelectionOrNode(SidebarNode node)
     {
         if (OwnerWindow is null) return;
@@ -2674,11 +2665,7 @@ public partial class SidebarTree : UserControl
             var r = RepoFor(n.DbId);
             if (r is null) continue;
             if (n.DbId == res.DbId) sameDb.Add((r, n.IsGroup, n.Id!.Value));
-            else
-            {
-                var (rec, cols) = await CountNodeAsync(n);
-                crossDb.Add(new CrossMove(n.DbId, r, n.IsGroup, n.Id!.Value, rec, cols));
-            }
+            else                    crossDb.Add(new CrossMove(n.DbId, r, n.IsGroup, n.Id!.Value));
         }
 
         // Спрашиваем ДО переносов внутри той же БД ниже: отказ должен оставить все как было.
@@ -2763,66 +2750,36 @@ public partial class SidebarTree : UserControl
 
         // Цели: группа (удаляем ВСЮ ветку) или коллекция. Репозитории резолвим здесь, на UI-потоке
         // (общий список не трогаем из Task.Run); счетчики (для группы — число коллекций и записей по
-        // всей ветке) — в фоне на отдельных подключениях (CountNodeAsync). Порог и % — по суммарному
-        // числу записей; в индикаторе при группах показываем и число коллекций.
-        var targets = new List<(ConstructorRepository Repo, bool IsGroup, int Id, long Records)>();
-        long total = 0; int totalCollections = 0;
+        // всей ветке) и само удаление — в фоне на отдельных подключениях (Delete*Isolated). Проценты —
+        // по суммарному числу записей; в индикаторе при группах показываем и число коллекций.
+        var targets = new List<(ConstructorRepository Repo, bool IsGroup, int Id)>();
         foreach (var n in groups.Concat(colls))
-        {
-            var r = RepoOf(n);
-            if (r is null) continue;
-            var (rec, cols) = await CountNodeAsync(n);
-            targets.Add((r, n.IsGroup, n.Id!.Value, rec));
-            total += rec; totalCollections += cols;
-        }
+            if (RepoOf(n) is { } r) targets.Add((r, n.IsGroup, n.Id!.Value));
 
-        if (total <= BulkProgressThreshold)
+        if (targets.Count > 0)
         {
-            // Малый объем — мгновенно, синхронно (без окна): каскадный DELETE быстрый.
-            // Файл занят чужим писателем/пропал — тост (DbErrors), UI не валим.
+            var progress = new NodeWorkProgress(PhaseText("Удаление", targets.Count, 0, targets[0].IsGroup));
+            long total = 0;
+            var watch = System.Diagnostics.Stopwatch.StartNew();
             try
             {
-                foreach (var t in targets)
-                    if (t.IsGroup) t.Repo.DeleteGroup(t.Id); else t.Repo.DeleteCollection(t.Id);
-            }
-            catch (Exception ex) when (DbErrors.Handle(ex, targets.FirstOrDefault().Repo?.DbPath)) { }
-        }
-        else
-        {
-            // Большой объем — окно прогресса (как дубль/импорт). Удаление ПО ОЧЕРЕДИ в фоне на
-            // отдельных подключениях (Delete*Isolated), проценты — общий прогресс по всем целям.
-            var dlg = new ProgressDialog { Title = "Удаление" };
-            dlg.SetInfo(BulkInfo(totalCollections, total, groups.Count > 0));
-            // Фаза — ДО показа (см. дубль): окно не меняет высоту с первым процентом.
-            dlg.SetProgress(0, targets.Count > 1
-                ? $"Удаление… (1/{targets.Count})"
-                : targets[0].IsGroup ? "Удаление группы…" : "Удаление коллекции…");
-            var dlgClosed = dlg.ShowDialog(OwnerWindow);
-
-            var lastPct = -1;
-            var bulkWatch = System.Diagnostics.Stopwatch.StartNew();
-            try
-            {
-                await Task.Run(() =>
+                await RunNodeWork("Удаление", progress, async () =>
                 {
+                    var counts = await Task.WhenAll(targets.Select(t => CountNodeAsync(t.Repo, t.IsGroup, t.Id)));
+                    total = counts.Sum(c => c.Records);
+                    progress.Info(BulkInfo(counts.Sum(c => c.Collections), total, groups.Count > 0));
+
                     long basis = 0;
                     for (var i = 0; i < targets.Count; i++)
                     {
                         var t    = targets[i];
                         var b    = basis;
-                        var step = i + 1;
-                        var text = targets.Count > 1
-                            ? $"Удаление… ({step}/{targets.Count})"
-                            : t.IsGroup ? "Удаление группы…" : "Удаление коллекции…";
+                        var text = PhaseText("Удаление", targets.Count, i, t.IsGroup);
+                        progress.Report(total == 0 ? 0 : b / (double)total, text);
                         IProgress<int> p = new IntProgress(done =>
-                        {
-                            var pct = total == 0 ? 100 : (int)((b + done) * 100 / total);
-                            if (pct == lastPct) return;
-                            lastPct = pct;
-                            Dispatcher.UIThread.Post(() => dlg.SetProgress(pct / 100.0, text));
-                        });
+                            progress.Report(total == 0 ? 1 : (b + done) / (double)total, text));
                         if (t.IsGroup) t.Repo.DeleteGroupIsolated(t.Id, p); else t.Repo.DeleteCollectionIsolated(t.Id, p);
-                        basis += t.Records;
+                        basis += counts[i].Records;
                     }
                 });
             }
@@ -2831,15 +2788,12 @@ public partial class SidebarTree : UserControl
                 // Ошибку фона проглатываем: узел либо удален, либо нет — UI не валим.
                 // Известные ошибки БД (занята/пропала) дают тост, сигнал монитору и лог внутри
                 // Handle; непредвиденное (Handle вернет false) логируем здесь, иначе — тишина.
-                if (!DbErrors.Handle(ex, targets.FirstOrDefault().Repo?.DbPath))
+                if (!DbErrors.Handle(ex, targets[0].Repo.DbPath))
                     Log.Warning(ex, "Сбой фонового удаления узла");
             }
-            // Итог массовой операции — в журнал (сюда попадают только большие объемы).
-            Log.Information("Удаление в фоне: целей {Targets}, записей {Records:N0} за {Ms:N0} мс",
-                            targets.Count, total, bulkWatch.Elapsed.TotalMilliseconds);
-
-            dlg.Done();
-            await dlgClosed;
+            if (total > BulkLogRecords)
+                Log.Information("Удаление в фоне: целей {Targets}, записей {Records:N0} за {Ms:N0} мс",
+                                targets.Count, total, watch.Elapsed.TotalMilliseconds);
         }
 
         _selectedNodes.Clear();

@@ -17,6 +17,8 @@ if (args.Length == 0)
     Console.WriteLine("  wide    --db PATH [--columns N]                — цена широкой таблицы в ядре: снимок открытия, страницы, значения");
     Console.WriteLine("  docread [--count N] [--pages N] [--dir PATH]  — скорость чтения текста документов (библиотека документов)");
     Console.WriteLine("  docfeed [--docs N] [--cols N] [--files N] [--root DIR] [--db PATH] — лента библиотеки: счет, страницы, перепись кеша");
+    Console.WriteLine("  backup  --db PATH [--network]                  — резервная копия: файл проводником, прежняя и нынешняя копия");
+    Console.WriteLine("  pgmove  --db PATH [--pg ИМЯ] [--col ИМЯ]       — перенос коллекции SQLite → PostgreSQL и обратно (стенд sb-pg)");
     return 1;
 }
 
@@ -36,12 +38,14 @@ return args[0] switch
     "wide"    => WideBench.Run(rest),
     "docread" => DocReadBench.Run(rest),
     "docfeed" => DocFeedBench.Run(rest),
+    "backup"  => BackupBench.Run(rest),
+    "pgmove"  => PgCrossMoveBench.Run(rest),
     _         => Unknown(args[0]),
 };
 
 static int Unknown(string cmd)
 {
     Console.WriteLine($"Неизвестная команда: {cmd}. Доступно: sidebar | import | export | pgload | pgperf | " +
-                      "csvlog | dbsize | bloat | delete | pgdelete | wide | docread | docfeed.");
+                      "csvlog | dbsize | bloat | delete | pgdelete | wide | docread | docfeed | backup | pgmove.");
     return 1;
 }

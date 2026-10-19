@@ -803,61 +803,6 @@ public sealed partial class DatabaseManager : IDisposable
         AppDbContext.ResetPool(path);
     }
 
-    /// <summary>
-    /// Резервная копия: <c>VACUUM INTO</c> в файл <paramref name="targetPath"/> — компактная
-    /// (без свободных страниц) и консистентная копия на момент начала; писателей не блокирует
-    /// (держит только снимок чтения), базу отцеплять не нужно. Существующий файл-цель — ошибка
-    /// (VACUUM INTO требует пустой/несуществующий файл). Прогресс — по росту файла-копии
-    /// относительно живых данных источника. После копирования — <c>integrity_check</c> копии;
-    /// сбой проверки — InvalidOperationException, битая копия удаляется.
-    /// </summary>
-    public static void BackupTo(string path, string name, string targetPath, Action<string, double?>? stage)
-    {
-        if (File.Exists(targetPath)) File.Delete(targetPath);   // VACUUM INTO не перезаписывает
-
-        var watch = Stopwatch.StartNew();
-        using var db = new AppDbContext(path);
-        db.ApplyPerformancePragmas();
-        var liveBytes = Math.Max(1, new FileInfo(path).Length - SqliteMaintenance.ReadFreeSpace(db).FreeBytes);
-
-        using var timer = stage is null ? null : new System.Threading.Timer(_ =>
-        {
-            var done = Len(targetPath);
-            var frac = Math.Min(0.99, done / (double)liveBytes);
-            stage($"Копирую «{name}»\n{done / 1048576.0:N0} из ≈ {liveBytes / 1048576.0:N0} МБ", frac);
-        }, null, 0, 500);
-
-        // Путь — параметром: VACUUM INTO принимает выражение, апострофы в имени файла не ломают SQL.
-        db.Database.ExecuteSqlRaw("VACUUM INTO {0};", targetPath);
-        timer?.Dispose();
-
-        stage?.Invoke($"Проверяю копию «{name}»…", null);
-        using var check = new AppDbContext(targetPath);
-        var conn = check.Database.GetDbConnection();
-        conn.Open();
-        try
-        {
-            using var cmd = conn.CreateCommand();
-            cmd.CommandText = "PRAGMA integrity_check;";
-            cmd.CommandTimeout = 24 * 3600;
-            var result = cmd.ExecuteScalar()?.ToString();
-            if (result != "ok")
-            {
-                conn.Close();
-                AppDbContext.ResetPool(targetPath);
-                try { File.Delete(targetPath); } catch { /* best-effort */ }
-                throw new InvalidOperationException($"Копия не прошла проверку целостности: {result}");
-            }
-        }
-        finally
-        {
-            if (conn.State == System.Data.ConnectionState.Open) conn.Close();
-            AppDbContext.ResetPool(targetPath);
-        }
-        Log.Information("Резервная копия базы «{Name:l}» сохранена: {Target:l} ({Size:l}) за {Ms:N0} мс",
-                        name, targetPath, Diag.Size(Len(targetPath)), watch.Elapsed.TotalMilliseconds);
-    }
-
     // Замок миграций EF 9 (__EFMigrationsLock): Migrate() вставляет строку на время работы и
     // удаляет по завершении, а убитый посреди миграции процесс (kill, свет) оставляет ее
     // НАВСЕГДА — и каждый следующий запуск бесконечно ждет освобождения: тихо, без ошибки,

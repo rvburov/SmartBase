@@ -47,6 +47,12 @@ public static class BackupRotation
                                       DateTimeStyles.None, out _);
     }
 
+    /// <summary>Недописанная копия этой базы: имя копии с суффиксом
+    /// <see cref="DatabaseManager.BackupPartSuffix"/> (так копия лежит, пока не проверена).</summary>
+    public static bool IsPartOf(string fileName, string dbName, string extension) =>
+        fileName.EndsWith(DatabaseManager.BackupPartSuffix, StringComparison.Ordinal)
+        && IsCopyOf(fileName[..^DatabaseManager.BackupPartSuffix.Length], dbName, extension);
+
     /// <summary>Что удалить, чтобы осталось не больше <paramref name="keep"/> новейших копий.
     /// Новизна — по штампу в имени, а не по mtime файла: копирование/перенос папки сбивает
     /// файловые даты, а штамп — нет. Список на входе — уже отфильтрованные
