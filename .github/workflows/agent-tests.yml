@@ -1,0 +1,68 @@
+# Проверка веток ИИ-агентов и PR: модульные тесты и тесты расширений на Linux.
+#
+# Агенты (облачные копии и рабочие папки на компьютерах) отправляют на GitHub свои ветки, а в main
+# идут только перемоткой (AGENTS.md, «Облачная копия» и «Задача „сделай и отправь“»). Этот прогон
+# дает серверное подтверждение: агент перед отправкой в main смотрит, что проверка его ветки
+# зеленая, а у PR («сделай через PR») она видна прямо в PR.
+#
+# Триггеры:
+#   • push любой ветки, кроме main и ci: main получает уже проверенные коммиты, ci — ветка полной
+#     проверки по команде (отдельный модуль); теги сюда не попадают — при одном фильтре веток
+#     GitHub пуш тега не запускает;
+#   • PR в main;
+#   • кнопка на вкладке Actions.
+#
+# С выпуском релиза (тег v*, push main) и полной проверкой (ветка ci) не пересекается ни по
+# триггерам, ни по файлам: удаляется вместе с docs/developer/guides/agent-tests.md, не задевая их.
+name: Agent tests
+
+on:
+  push:
+    branches-ignore: [main, ci]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Push ветки и ее PR приходят двумя событиями на один и тот же код — группа по имени ветки
+# оставляет один прогон, а новый push отменяет недоделанный старый.
+concurrency:
+  group: agent-tests-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 'true'
+  # Культура как у пользователей: тесты форматирования ждут запятую в числах (SizesTests).
+  # .NET берет культуру из LANG через ICU, системная локаль раннеру для этого не нужна.
+  LANG: ru_RU.UTF-8
+
+# bash -eo pipefail: без pipefail код возврата конвейера брался бы от последней команды.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  test:
+    name: Unit и расширения (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      # cache не включаем — по той же причине, что в build.yml: он перебивает globalPackagesFolder
+      # из nuget.config, и поведение разошлось бы с локальным.
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Модульные тесты
+        run: dotnet test Tests/Unit --configuration Release --logger 'console;verbosity=minimal'
+
+      # Список наборов скрипт берет глобом (Tests/Extensions/*): заведение и удаление расширения
+      # этот файл не задевают.
+      - name: Тесты расширений
+        run: bash Tests/run-extensions.sh --configuration Release --logger 'console;verbosity=minimal'

@@ -66,11 +66,12 @@
 
 - [build-and-run.md](developer/guides/build-and-run.md) — сборка и запуск: dev-режим, релиз по ОС, версия/дата.
 - [developer-guide.md](developer/guides/developer-guide.md) — миграции, соглашения, раскладка вывода.
-- [AGENTS.md](../AGENTS.md) — указания ИИ-агентам: правила проекта и параллельная работа в рабочих
-  папках (git worktree, `Scripts/worktree.sh`).
+- [AGENTS.md](../AGENTS.md) — указания ИИ-агентам: правила проекта, параллельная работа в рабочих
+  папках (git worktree, `Scripts/worktree.sh`) и облачных копиях, отправка в `main` и PR.
 - [postgresql-setup.md](developer/guides/postgresql-setup.md) — PostgreSQL: сервер, база, подключение.
 - [auto-update.md](developer/guides/auto-update.md) — автообновление (сетевая папка + установщик).
 - [ci.md](developer/guides/ci.md) — что и где гоняет CI: матрица ОС, стенд PostgreSQL, guard-проверки.
+- [agent-tests.md](developer/guides/agent-tests.md) — проверка веток ИИ-агентов и PR на GitHub: Unit и расширения на Linux.
 - [release.md](developer/guides/release.md) — сборка релиза: артефакты по ОС, подпись, публикация.
 
 ### Тестирование ([developer/testing/](developer/testing/))
