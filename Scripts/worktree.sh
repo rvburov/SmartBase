@@ -31,6 +31,10 @@
 # В облачной копии (CLAUDE_CODE_REMOTE=true) рабочих папок нет: check не считает ветку основной
 # папки ошибкой и показывает, что не отправлено на GitHub и не влито в main на GitHub.
 #
+# Чужая работа: check показывает ветки на GitHub, еще не влитые в main (облачные копии и другие
+# компьютеры отправляют свои ветки сразу), и файлы, которые они меняют вместе с нашей работой, —
+# чтобы о будущем конфликте узнать в начале задачи, а не при отправке.
+#
 # Ни одна команда не удаляет незакоммиченное и не влитое в main: такие случаи скрипт
 # называет и останавливается. push сюда не входит — только по просьбе пользователя.
 # На Windows запускать из Git Bash.
@@ -132,6 +136,58 @@ newest_base() {
 
 cloud() { [[ "${CLAUDE_CODE_REMOTE:-}" == true ]]; }
 
+# Есть ли $1 среди остальных аргументов (без конвейера: grep -q под pipefail ловит SIGPIPE).
+in_list() {
+  local x="$1" y
+  shift
+  for y in "$@"; do [[ "$y" != "$x" ]] || return 0; done
+  return 1
+}
+
+OTHERS_MAX=10        # сколько чужих веток показывать подробно
+OTHERS_DAYS=30       # ветки без коммитов дольше — только счетчиком
+
+# Чужие ветки на GitHub, не влитые в main. $1 — файл со списком файлов нашей работы, дальше —
+# имена веток, которые наши (их не показываем). Печатает отчет; код возврата 1 — есть пересечение
+# по файлам с нашей работой.
+others_report() {
+  local mine="$1" remote="$REMOTE/$BASE" ref name n shown=0 stale=0 cross=0 when subject who files common
+  shift
+  git remote get-url "$REMOTE" > /dev/null 2>&1 || return 0
+  git fetch --quiet --prune "$REMOTE" "+refs/heads/*:refs/remotes/$REMOTE/*" 2> /dev/null \
+    || note "нет связи с $REMOTE — чужие ветки по последнему полученному состоянию"
+  git rev-parse -q --verify "$remote" > /dev/null || return 0
+
+  while IFS="$SEP" read -r ref when; do
+    name=${ref#"$REMOTE"/}
+    [[ "$name" != "$BASE" && "$name" != HEAD ]] || continue
+    if in_list "$name" "$@"; then continue; fi
+    n=$(git rev-list --count "$remote..$ref")
+    [[ "$n" != 0 ]] || continue
+    if (( when < $(date +%s) - OTHERS_DAYS * 86400 )); then stale=$((stale + 1)); continue; fi
+    if (( shown == OTHERS_MAX )); then stale=$((stale + 1)); continue; fi
+    shown=$((shown + 1))
+
+    subject=$(git log -1 --format='%s' "$ref")
+    who=$(git log -1 --format='%an, %cr' "$ref")
+    if (( shown == 1 )); then echo; echo "[чужая работа на GitHub — ветки, еще не влитые в $BASE]"; fi
+    echo "  $name — коммитов $n ($who): $subject"
+    files=$(git log --name-only --format= "$remote..$ref" | sed '/^$/d' | sort -u)
+    common=$(comm -12 <(printf '%s\n' "$files") <(sort -u "$mine" | sed '/^$/d'))
+    if [[ -n "$common" ]]; then
+      note "ПЕРЕСЕЧЕНИЕ с нашей работой — возможен конфликт при отправке; сказать пользователю:"
+      printf '%s\n' "$common" | first 10
+      cross=$((cross + 1))
+    fi
+  done < <(git for-each-ref "refs/remotes/$REMOTE" --sort=-committerdate \
+             --format="%(refname:short)$SEP%(committerdate:unix)")
+
+  if (( stale > 0 )); then
+    note "и еще веток, не влитых в $BASE: $stale (старше $OTHERS_DAYS дней или сверх $OTHERS_MAX) — git branch -r --no-merged $remote"
+  fi
+  (( cross == 0 ))
+}
+
 # Облачная копия: одна папка, работа уходит только через GitHub (AGENTS.md, «Облачная копия»).
 cmd_check_cloud() {
   local problems=0 branch dirty a u remote="$REMOTE/$BASE"
@@ -167,6 +223,15 @@ cmd_check_cloud() {
       note "$BASE на GitHub ушел вперед на $a — перед отправкой в $BASE: git rebase $remote, тесты"
     fi
   fi
+
+  # Наша работа — коммиты вне main на GitHub и незакоммиченное.
+  local mine
+  mine=$(mktemp)
+  { git log --name-only --format= "$remote..HEAD" 2> /dev/null || true
+    git diff --name-only HEAD; git ls-files --others --exclude-standard; } > "$mine"
+  others_report "$mine" "$branch" || problems=$((problems + 1))
+  rm -f "$mine"
+
   echo
   if [[ "$problems" == 0 ]]; then
     echo "ИТОГ: все закоммичено и отправлено на GitHub."
@@ -272,6 +337,21 @@ cmd_check() {
     git log -n 10 --format='%h %s' "$BASE..$branch" | first 10
     problems=$((problems + 1))
   done < <(git for-each-ref refs/heads --format='%(refname:short)')
+
+  # Чужие ветки на GitHub против нашей работы: всех локальных веток вне main и правок в папках.
+  local mine
+  mine=$(mktemp)
+  while IFS="$SEP" read -r path branch flags; do
+    [[ "$flags" != *prunable* ]] || continue
+    { git -C "$path" diff --name-only HEAD; git -C "$path" ls-files --others --exclude-standard; } >> "$mine"
+  done < <(worktrees)
+  while read -r branch; do
+    [[ "$branch" != "$BASE" ]] || continue
+    git log --name-only --format= "$BASE..$branch" >> "$mine"
+  done < <(git for-each-ref refs/heads --format='%(refname:short)')
+  # Свои ветки — локальные с тем же именем: их копия на GitHub — это наша же работа.
+  others_report "$mine" $(git for-each-ref refs/heads --format='%(refname:short)') || problems=$((problems + 1))
+  rm -f "$mine"
 
   echo
   if [[ "$problems" == 0 ]]; then
