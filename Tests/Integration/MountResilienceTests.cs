@@ -146,6 +146,43 @@ public sealed class MountResilienceTests
         }
     }
 
+    /// <summary>
+    /// База в папке, которую компьютер раздает коллегам (wide10m в общей папке на своем ПК): у
+    /// хозяина путь локальный, но файл он открывает как общий — в журнале DELETE, а не WAL. Иначе
+    /// коллеги, подключенные по сети, получали «недоступна (файл в режиме WAL, его держит другой
+    /// компьютер)», пока хозяин не закроет базу. Здесь хозяин и коллега работают одновременно, и
+    /// запись одного видна другому.
+    /// </summary>
+    [Fact]
+    public void Base_in_folder_shared_by_this_computer_opens_for_host_and_colleague_together()
+    {
+        var dir  = Path.Combine(Path.GetTempPath(), "sb-share-" + Guid.NewGuid().ToString("N")[..8]);
+        var path = Path.Combine(dir, "wide10m.db");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            NetworkPath.LocalSharesOverride = () => [dir];
+            NetworkPath.Forget(path);
+
+            using var host = DatabaseManager.Open(1, "wide10m", path);
+            Assert.True(host.IsShared);
+            Assert.Equal("delete", host.JournalMode);
+            var col = host.Constructor.AddCollection(new SmartBase.Core.Models.DbCollection { Name = "Свод" });
+
+            // Коллега открывает тот же файл по сети, пока он открыт у хозяина.
+            using var colleague = DatabaseManager.Open(2, "wide10m", path);
+            Assert.Equal("delete", colleague.JournalMode);
+            Assert.Contains(colleague.Constructor.GetAllCollections(), c => c.Id == col.Id);
+        }
+        finally
+        {
+            NetworkPath.LocalSharesOverride = null;
+            NetworkPath.Forget(path);
+            TempDatabase.Cleanup(path);
+            try { Directory.Delete(dir, recursive: true); } catch { /* занят — уберет система */ }
+        }
+    }
+
     // ── 4. Очередь: папка не ответила на пробу — монтирование не начинается ───────
 
     [Fact]

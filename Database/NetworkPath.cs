@@ -110,6 +110,13 @@ public static class NetworkPath
     {
         try
         {
+            // Файл в папке, которую этот компьютер раздает в общий доступ, — общая база и для
+            // самого компьютера-хозяина, хотя путь у него локальный: коллеги открывают тот же
+            // файл по сети. Открой его хозяин как локальный, файл ушел бы в WAL, а у остальных
+            // база была бы «недоступна (файл в режиме WAL, его держит другой компьютер)», пока
+            // хозяин ее не закроет. Так и было с общей папкой на своем компьютере.
+            if (!IsUnc(full) && IsInside(full, LocalShares())) return (true, true);
+
             if (OperatingSystem.IsWindows())
             {
                 // UNC-путь или подключенный сетевой диск.
@@ -167,6 +174,73 @@ public static class NetworkPath
         {
             return false;
         }
+    }
+
+    /// <summary>Папки, которые этот компьютер раздает в общий доступ. Подменяется стендами и
+    /// тестами (общей папки там нет); null — настоящие общие папки системы.</summary>
+    internal static Func<IReadOnlyList<string>>? LocalSharesOverride;
+
+    private static IReadOnlyList<string> LocalShares()
+    {
+        if (LocalSharesOverride is { } fake) return fake();
+        return OperatingSystem.IsWindows() ? WindowsShares() : [];
+    }
+
+    // Общие папки Windows лежат в HKLM\SYSTEM\CurrentControlSet\Services\LanmanServer\Shares:
+    // значение на папку, строки «Path=D:\Общая», «Type=0» и другие. Читается без прав
+    // администратора. Служебных C$ и ADMIN$ там нет — их система заводит сама, и «раздан весь
+    // диск» по ним не выходит.
+    private static IReadOnlyList<string> WindowsShares()
+    {
+        if (!OperatingSystem.IsWindows()) return [];
+        try
+        {
+            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
+                @"SYSTEM\CurrentControlSet\Services\LanmanServer\Shares");
+            if (key is null) return [];
+            return ShareFolders(key.GetValueNames().Select(n => key.GetValue(n) as string[] ?? []));
+        }
+        catch
+        {
+            return [];   // нет прав или службы — как раньше, по типу диска
+        }
+    }
+
+    /// <summary>Папки общих ресурсов из записей реестра (строки «Ключ=значение»): только диски
+    /// (<c>Type=0</c> или без типа), принтеры и прочее — мимо. Чистая функция — под юнит-тестом.</summary>
+    public static IReadOnlyList<string> ShareFolders(IEnumerable<string[]> entries)
+    {
+        var folders = new List<string>();
+        foreach (var lines in entries)
+        {
+            string? path = null;
+            var disk = true;
+            foreach (var line in lines)
+            {
+                var eq = line.IndexOf('=');
+                if (eq <= 0) continue;
+                var name  = line[..eq].Trim();
+                var value = line[(eq + 1)..].Trim();
+                if (name.Equals("Path", StringComparison.OrdinalIgnoreCase)) path = value;
+                else if (name.Equals("Type", StringComparison.OrdinalIgnoreCase)) disk = value == "0";
+            }
+            if (disk && !string.IsNullOrEmpty(path)) folders.Add(path);
+        }
+        return folders;
+    }
+
+    /// <summary>Путь лежит в одной из папок (или это она сама); сравнение без учета регистра,
+    /// по целым частям пути: «D:\Общая2» в «D:\Общая» не входит. Чистая функция.</summary>
+    public static bool IsInside(string full, IReadOnlyList<string> folders)
+    {
+        foreach (var folder in folders)
+        {
+            var root = folder.TrimEnd('\\', '/');
+            if (root.Length == 0) continue;
+            if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase)) continue;
+            if (full.Length == root.Length || full[root.Length] is '\\' or '/') return true;
+        }
+        return false;
     }
 
     // /proc/mounts: «device mountpoint fstype opts …». Ищем точку монтирования с самым

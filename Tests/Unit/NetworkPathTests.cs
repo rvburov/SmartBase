@@ -43,4 +43,59 @@ public sealed class NetworkPathTests
         NetworkPath.Forget(local);
         Assert.False(NetworkPath.IsNetwork(local));   // временная папка — локальный диск
     }
+
+    // ── Общая папка на самом компьютере ───────────────────────────────────────
+
+    /// <summary>
+    /// Папки общих ресурсов Windows из реестра: только диски, путь из строки «Path=». Принтер
+    /// (Type=1) и запись без пути — мимо.
+    /// </summary>
+    [Fact]
+    public void Share_folders_are_read_from_registry_entries()
+    {
+        var folders = NetworkPath.ShareFolders(
+        [
+            ["CATimeout=0", "CSCFlags=0", "MaxUses=4294967295", @"Path=D:\Общая", "Permissions=0", "Remark=", "Type=0"],
+            [@"Path=C:\Users\rv\Стенд", "Type=0"],
+            [@"Path=C:\Windows\system32\spool\drivers", "Type=1"],
+            ["Remark=без пути", "Type=0"],
+        ]);
+        Assert.Equal([@"D:\Общая", @"C:\Users\rv\Стенд"], folders);
+    }
+
+    [Theory]
+    [InlineData(@"D:\Общая\wide10m.db",       true)]
+    [InlineData(@"d:\общая\база\wide10m.db",  true)]    // регистр не важен
+    [InlineData(@"D:\Общая2\wide10m.db",      false)]   // соседняя папка с тем же началом
+    [InlineData(@"D:\Прочее\wide10m.db",      false)]
+    [InlineData(@"E:\wide10m.db",              true)]    // раздан весь диск E:\
+    public void Path_inside_a_shared_folder_is_recognized(string path, bool inside) =>
+        Assert.Equal(inside, NetworkPath.IsInside(path, [@"D:\Общая\", @"E:\"]));
+
+    /// <summary>
+    /// Файл в папке, которую этот компьютер раздает другим, — общая база и для него самого:
+    /// путь локальный, а файл открывают по сети коллеги. Иначе компьютер-хозяин переводил файл в
+    /// WAL, и у остальных база стояла «недоступна (файл в режиме WAL, его держит другой компьютер)».
+    /// </summary>
+    [Fact]
+    public void File_in_folder_shared_by_this_computer_is_network()
+    {
+        var dir  = Path.Combine(Path.GetTempPath(), "np-share-" + Guid.NewGuid().ToString("N")[..8]);
+        var file = Path.Combine(dir, "wide10m.db");
+        var other = Path.Combine(Path.GetTempPath(), "np-share-other.db");
+        try
+        {
+            NetworkPath.LocalSharesOverride = () => [dir];
+            NetworkPath.Forget(file);
+            NetworkPath.Forget(other);
+            Assert.True(NetworkPath.IsNetwork(file));
+            Assert.False(NetworkPath.IsNetwork(other));
+        }
+        finally
+        {
+            NetworkPath.LocalSharesOverride = null;
+            NetworkPath.Forget(file);
+            NetworkPath.Forget(other);
+        }
+    }
 }
