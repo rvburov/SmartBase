@@ -35,6 +35,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Большой стенд запускается отдельно от быстрых автотестов. -->
+    <Compile Remove="Scale/**/*.cs" />
     <ProjectReference Include="..\..\..\SmartBase.csproj" />
     <ProjectReference Include="..\..\ExtensionsShared\ExtensionsShared.csproj" />
   </ItemGroup>
