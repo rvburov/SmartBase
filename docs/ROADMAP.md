@@ -1322,6 +1322,43 @@ lookup и rollup, атрибуты на ребре (количество в сп
       у обычной колонки. Самый объемный: четыре независимых пути + решение по экспорту.
       Тест: `UserValueTests.Author_column_is_filterable_sortable_and_exported`.
 
+### Найдено по снимкам экрана пользователя (20.10.2026) — исправлено 20.10.2026, кроме одного
+
+- [x] **Фильтр чекбокса: три строки «—» рядом с «(Пусто)».** Снятая в таблице галочка пишется
+      `0`, нетронутая ячейка пуста, после смены типа остается текст — окно фильтра показывало
+      каждое значение своей строкой. Теперь две строки, «✓» и «(Не отмечено)», отбор по группе
+      (`CheckboxCounts`/`CheckboxFilter`, `CheckboxValue`) — [table.md](developer/features/constructor/table.md),
+      `ColumnFilterCascadeTests.Checkbox_column_filters_by_two_groups`.
+- [x] **Запуск ждал минуты сжатия основной базы.** Самосжатие при подключении — только до 256 МБ
+      живых данных (было 4 ГБ); основную базу больше порога сжимает «Сжать файл» при следующем
+      запуске (`RequestCompactOnNextStart`) — [storage-and-migrations.md](developer/architecture/database/storage-and-migrations.md),
+      `StorageBloatTests`.
+- [x] **Тумблер «Отображать в календаре» включался сам** у первой даты коллекции при каждом
+      подключении базы (`MigrateAndBackfillCalendarDates`) — у свода трудоемкости и любой новой
+      даты; текстовый «Дата» пользователя переводился в дату. Убрано —
+      [calendar/overview.md](developer/features/calendar/overview.md),
+      `CalendarProjectionTests.Remount_keeps_calendar_toggle_off_and_text_date_column_as_text`.
+- [x] **Чтение библиотеки держало 1,6 ГБ памяти** на больших книгах Excel: лист разбирался деревом
+      целиком (287 МБ на 200 тыс. строк). Теперь потоком (`SheetStream`): индекс — 23 МБ, панель —
+      3 МБ; медленный документ пишется в журнал — [library.md](developer/features/library.md),
+      `BigBookMemoryTests`.
+- [x] **Диаграмма при 5-дневке показывала выходные колонками.** На месяце колонки — только рабочие
+      дни (`DiagramColumns`) — [calendar/diagram.md](developer/features/calendar/diagram.md),
+      `DiagramColumnsTests`.
+- [x] **Общая база в папке на своем компьютере недоступна коллегам** («файл в режиме WAL, его
+      держит другой компьютер»): компьютер-хозяин открывал файл как локальный. Теперь файл в
+      папке, которую компьютер раздает, — общая база и для хозяина — [network-shares.md](developer/architecture/database/network-shares.md),
+      `NetworkPathTests`, `MountResilienceTests.Base_in_folder_shared_by_this_computer_opens_for_host_and_colleague_together`.
+- [x] **«Месяц»: записи «весь день» только в первых днях**, дальше одно «+N еще»: такие записи
+      читались одним запросом на окно с общим cap. Теперь по дням, как timed —
+      [calendar/month.md](developer/features/calendar/month.md),
+      `CalendarSpansTests.Month_read_gives_every_crowded_day_its_all_day_records`.
+- [ ] **«Неделя» и «День»: та же болезнь у панели «весь день».** Чтение отдает записи «весь день»
+      окну с общим cap (2000 на коллекцию, по дате конца), а `AllDayBar` рисует первые 300 по
+      началу — при тысячах таких записей в день плашки достаются первому дню недели, остальные
+      показывают только «+N еще». Решить вместе: чтение по дням (`allDayPerDay`) и раскладку
+      лимита отрисовки по дням.
+
 ### Найдено сверкой типа «Связь» (06.08.2026) — открыто, тестов пока нет
 
 Всплыло при сверке нашей реализации связей с аналогами (см. «План развития» в
