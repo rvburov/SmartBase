@@ -8,7 +8,7 @@ namespace SmartBase.Extensions.DocsCollection;
 
 /// <summary>Найденный документ — будущая запись коллекции.</summary>
 /// <param name="Name">Имя файла без расширения — «Наименование» (оно же название записи).</param>
-/// <param name="FolderName">Имя папки, в которой лежит файл — «Название папки» (описание записи).</param>
+/// <param name="FolderName">Имя папки, в которой лежит файл — «Название папки».</param>
 /// <param name="Format">Расширение без точки, в нижнем регистре («pdf»); пусто — файл без расширения.</param>
 /// <param name="FullPath">Абсолютный путь — значение поля «Файл» (тип «файл» хранит путь как есть).</param>
 public sealed record DocEntry(string Name, string FolderName, string Format, string FullPath);
@@ -16,7 +16,7 @@ public sealed record DocEntry(string Name, string FolderName, string Format, str
 /// <summary>Прогресс наполнения: сколько записей создано из скольких + имя текущего документа.</summary>
 public sealed record DocsProgress(int Current, int Total, string File);
 
-/// <summary>Каркас созданной коллекции: ее id и id двух пользовательских полей.</summary>
+/// <summary>Каркас созданной коллекции: ее id и id трех пользовательских полей.</summary>
 public sealed record DocsShell(int CollectionId, string CollectionName,
                               int FolderFieldId, int FormatFieldId, int FileFieldId);
 
@@ -47,9 +47,9 @@ public static class DocsCollectionBuilder
     public const string FormatFieldName  = "Формат файла";
     public const string FileFieldName    = "Файл";
 
-    // Прогресс постится в UI-поток, поэтому не на каждую запись: на тысячах документов
-    // поток сообщений сам по себе тормозит диспетчер сильнее, чем сама вставка.
-    private const int ProgressEvery = 25;
+    // Одна транзакция на пакет, как у свода трудоемкости: вместо четырех сохранений на
+    // документ — одно на 10 тыс. документов. Прогресс отправляется после коммита пакета.
+    private const int RecordBatch = 10_000;
 
     // ── 1. Обход папки ────────────────────────────────────────────────────────
 
@@ -207,37 +207,49 @@ public static class DocsCollectionBuilder
     public static int FillRecords(string dbPath, DocsShell shell, IReadOnlyList<DocEntry> docs,
                                   IProgress<DocsProgress>? progress, CancellationToken ct)
     {
+        ct.ThrowIfCancellationRequested();
+        if (docs.Count == 0) return 0;
+
         using var ctx = new AppDbContext(dbPath);
         ctx.ApplyBulkPerformancePragmas();
         var repo = new ConstructorRepository(ctx);
 
-        // Шаг позиции 1000 оставляет место для вставки строк между документами; на неправдоподобно
-        // больших объемах падаем до 1, чтобы (i+1)*step не переполнил int (как в импорте).
-        var step = docs.Count > 2_000_000 ? 1 : 1000;
+        // Тот же публичный массовый путь, что у свода трудоемкости: подготовленные команды,
+        // без запросов метаданных и трекера EF на каждое значение. Порядок полей совпадает
+        // с Values в Stream; пустые значения, позиции и аудит ведет BulkAddRecords.
+        var reported = 0;
+        var ids = repo.BulkAddRecords(shell.CollectionId,
+            [shell.FolderFieldId, shell.FormatFieldId, shell.FileFieldId],
+            Stream(docs, ct), docs.Count, ct,
+            new SyncProgress<long>(written =>
+            {
+                var current = checked((int)written);
+                if (current > reported)
+                {
+                    reported = current;
+                    progress?.Report(new DocsProgress(current, docs.Count, docs[current - 1].Name));
+                }
+                // Отмена после последнего коммита тоже должна дойти до окна и его отката.
+                ct.ThrowIfCancellationRequested();
+            }), RecordBatch);
 
-        var created = 0;
-        for (var i = 0; i < docs.Count; i++)
+        return ids.Count;
+    }
+
+    // Ленивая проекция: не создаем вторую копию всего списка документов в памяти.
+    private static IEnumerable<BulkRecordRow> Stream(IReadOnlyList<DocEntry> docs, CancellationToken ct)
+    {
+        foreach (var doc in docs)
         {
             ct.ThrowIfCancellationRequested();
-            var doc = docs[i];
-
-            var record = repo.AddRecord(new DbRecord
-            {
-                CollectionId = shell.CollectionId,
-                Title        = doc.Name,
-                Position     = (i + 1) * step,
-            });
-            var recordId = record.Id!.Value;
-
-            if (doc.FolderName.Length > 0) repo.SetFieldValue(recordId, shell.FolderFieldId, doc.FolderName);
-            if (doc.Format.Length > 0)     repo.SetFieldValue(recordId, shell.FormatFieldId, doc.Format);
-            repo.SetFieldValue(recordId, shell.FileFieldId, doc.FullPath);
-            created++;
-
-            if (i % ProgressEvery == 0 || i == docs.Count - 1)
-                progress?.Report(new DocsProgress(created, docs.Count, doc.Name));
+            yield return new BulkRecordRow(doc.Name, [doc.FolderName, doc.Format, doc.FullPath]);
         }
+    }
 
-        return created;
+    // Синхронный адаптер: Progress<T> отложил бы callback до конца фоновой работы.
+    // Сам прогресс окна уже маршалит DocsProgress в UI-поток.
+    private sealed class SyncProgress<T>(Action<T> report) : IProgress<T>
+    {
+        public void Report(T value) => report(value);
     }
 }

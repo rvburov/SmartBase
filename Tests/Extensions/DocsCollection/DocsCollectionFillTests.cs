@@ -1,4 +1,8 @@
+using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
+using SmartBase.Database;
 using SmartBase.Extensions.DocsCollection;
+using SmartBase.Utils;
 
 namespace SmartBase.Tests.Extensions.DocsCollection;
 
@@ -156,5 +160,93 @@ public sealed class DocsCollectionFillTests
 
         var record = Assert.Single(db.Constructor.GetRecords(shell.CollectionId));
         Assert.Equal("договор", record.Title);
+    }
+
+    /// <summary>Защита от возврата к поштучной записи: история и оповещения разделов не
+    /// должны расти на каждое поле. Проверяем число событий, а не скорость машины.</summary>
+    [Fact]
+    public void Fill_writes_one_summary_and_one_change_notification()
+    {
+        using var db = new TempDatabase();
+        var shell = DocsCollectionBuilder.CreateShell(db.Constructor, "Документы");
+        var docs = Documents(100);
+        var lastLog = db.Context.ChangeLog.Max(l => l.Id);
+        var notifications = 0;
+        void OnCommitted(string path, IReadOnlyList<ChangeBus.Change> changes)
+        {
+            if (path == db.Path) notifications++;
+        }
+
+        ChangeBus.Committed += OnCommitted;
+        try { DocsCollectionBuilder.FillRecords(db.Path, shell, docs, null, None); }
+        finally { ChangeBus.Committed -= OnCommitted; }
+
+        var log = Assert.Single(db.Context.ChangeLog.AsNoTracking().Where(l => l.Id > lastLog));
+        Assert.Equal("create", log.Action);
+        Assert.Equal("record", log.TargetType);
+        Assert.Equal(shell.CollectionName, log.CollectionName);
+        Assert.Equal(docs.Count, log.Count);
+        Assert.Equal(1, notifications);
+        var record = db.Context.DbRecords.AsNoTracking().First(r => r.CollectionId == shell.CollectionId);
+        Assert.Equal(CurrentUser.DisplayName, record.CreatedBy);
+        Assert.Equal(record.CreatedBy, record.UpdatedBy);
+        Assert.False(string.IsNullOrEmpty(record.CreatedAt));
+        Assert.Equal(record.CreatedAt, record.UpdatedAt);
+    }
+
+    /// <summary>Отмена после коммита, в том числе последнего неполного пакета: окно получает
+    /// исключение и может убрать ВСЕ уже записанные строки и значения вместе с каркасом.</summary>
+    [Theory]
+    [InlineData(8000)]
+    [InlineData(10001)]
+    public void Cancellation_after_a_committed_batch_allows_complete_cleanup(int count)
+    {
+        using var db = new TempDatabase();
+        var shell = DocsCollectionBuilder.CreateShell(db.Constructor, "Документы");
+        using var cts = new CancellationTokenSource();
+        var reported = new List<DocsProgress>();
+        var progress = new SyncProgress<DocsProgress>(p => { reported.Add(p); cts.Cancel(); });
+
+        Assert.Throws<OperationCanceledException>(() =>
+            DocsCollectionBuilder.FillRecords(db.Path, shell, Documents(count), progress, cts.Token));
+
+        var first = Assert.Single(reported);
+        Assert.Equal(Math.Min(count, 10_000), first.Current);
+        Assert.Equal(first.Current, db.Constructor.CountRecords(shell.CollectionId));
+        Assert.Equal(count, first.Total);
+        DocsCollectionBuilder.TryDelete(db.Constructor, shell.CollectionId);
+        AssertClean(db, shell);
+    }
+
+    [Fact]
+    public void Failure_in_the_next_batch_allows_cleanup_of_the_committed_batch()
+    {
+        using var db = new TempDatabase();
+        var shell = DocsCollectionBuilder.CreateShell(db.Constructor, "Документы");
+        var docs = Documents(10_001);
+        docs[^1] = docs[^1] with { Name = "Отказ" };
+        db.Context.Database.ExecuteSqlRaw("""
+            CREATE TRIGGER docs_fail BEFORE INSERT ON db_records
+            WHEN NEW.Title = 'Отказ'
+            BEGIN SELECT RAISE(ABORT, 'test failure'); END;
+            """);
+
+        Assert.Throws<SqliteException>(() => DocsCollectionBuilder.FillRecords(db.Path, shell, docs, null, None));
+        Assert.Equal(10_000, db.Constructor.CountRecords(shell.CollectionId));
+
+        DocsCollectionBuilder.TryDelete(db.Constructor, shell.CollectionId);
+        AssertClean(db, shell);
+    }
+
+    private static List<DocEntry> Documents(int count) => Enumerable.Range(0, count)
+        .Select(i => new DocEntry($"Документ{i:00000}", "Папка", "pdf",
+                                 Path.GetFullPath($"Папка/Документ{i:00000}.pdf"))).ToList();
+
+    private static void AssertClean(TempDatabase db, DocsShell shell)
+    {
+        Assert.DoesNotContain(db.Constructor.GetAllCollections(), c => c.Id == shell.CollectionId);
+        Assert.False(db.Context.DbRecords.AsNoTracking().Any(r => r.CollectionId == shell.CollectionId));
+        Assert.False(db.Context.DbFields.AsNoTracking().Any(f => f.CollectionId == shell.CollectionId));
+        Assert.False(db.Context.DbFieldValues.AsNoTracking().Any());
     }
 }
