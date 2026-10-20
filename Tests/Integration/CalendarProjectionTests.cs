@@ -71,4 +71,45 @@ public sealed class CalendarProjectionTests
         Assert.DoesNotContain(hidden, r => r.Id == rec.Id);
         Assert.Equal(1, ProjectionRows(db, rec.Id!.Value, date.Id!.Value));
     }
+
+    /// <summary>
+    /// Тумблер «Отображать в календаре» включает только человек: выключенная дата коллекции
+    /// (новое свойство, свод трудоемкости, импорт) остается выключенной после переподключения
+    /// базы, и выключенная им самим — тоже. Раньше подключение включало первую дату каждой
+    /// коллекции, где ни одна не была включена. Текстовый столбец «Дата» остается текстом.
+    /// </summary>
+    [Fact]
+    public void Remount_keeps_calendar_toggle_off_and_text_date_column_as_text()
+    {
+        var path = TempDatabase.NewTempPath();
+        try
+        {
+            int date, turnedOff, text;
+            using (var first = SmartBase.Database.DatabaseManager.Open(1, "test", path))
+            {
+                var repo = first.Constructor;
+                var col  = SampleData.AddCollection(repo, "трудоемкость").Id!.Value;
+                date     = SampleData.AddField(repo, col, "Дата", "date").Id!.Value;
+                var rec  = SampleData.AddRecord(repo, col, "Запись");
+                repo.SetFieldValue(rec.Id!.Value, date, TimedValue);
+
+                var other = SampleData.AddCollection(repo, "События").Id!.Value;
+                turnedOff = SampleData.AddCalendarDateField(repo, other, "Когда").Id!.Value;
+                repo.SetDateFieldVisible(turnedOff, visible: false);
+                text = SampleData.AddField(repo, other, "Дата", "text", position: 2000).Id!.Value;
+            }
+
+            using var again = SmartBase.Database.DatabaseManager.Open(1, "test", path);
+            var fields = again.Context.DbFields.AsNoTracking().ToDictionary(f => f.Id);
+            Assert.False(fields[date].IsCalStart);
+            Assert.False(fields[turnedOff].IsCalStart);
+            Assert.Equal("text", fields[text].FieldType);
+            Assert.False(fields[text].IsCalStart);
+            Assert.False(again.Constructor.HasAnyCalendarDateField());
+        }
+        finally
+        {
+            TempDatabase.Cleanup(path);
+        }
+    }
 }

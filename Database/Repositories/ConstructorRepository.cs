@@ -8364,13 +8364,20 @@ public partial class ConstructorRepository(AppDbContext db)
     ///    и помечает источником календаря. 2) Бэкафилл: для записей с заполненным
     ///    календарным полем-датой, но пустыми StartDt — проецирует значение на колонки,
     ///    чтобы такие записи появились в календаре. Идемпотентно и дешево.
+    ///
+    /// Тумблер «Отображать в календаре» у полей пользователя здесь не трогается: раньше
+    /// коллекции, где ни одна дата не включена, получали включенной первую дату при КАЖДОМ
+    /// подключении — новая дата (свойство, импорт, свод трудоемкости) снова оказывалась в
+    /// календаре после перезапуска, а выключить единственную дату коллекции было нельзя.
+    /// Текстовое поле пользователя с именем «Дата» тоже остается текстом: переводится только
+    /// системное.
     /// </summary>
     /// <param name="progress">Прогресс тяжелой фазы (первое открытие старой базы): (обработано,
     /// всего) строк-значений дат; (0, 0) — фаза началась, объем еще не посчитан. Быстрый путь
     /// (индекс уже построен) колбэк не дергает — на обычных запусках этап не мелькает.</param>
     public void MigrateAndBackfillCalendarDates(Action<long, long>? progress = null)
     {
-        var legacy = db.DbFields.Where(f => f.Name == FieldDate && f.FieldType == "text").ToList();
+        var legacy = db.DbFields.Where(f => f.Name == FieldDate && f.FieldType == "text" && f.IsSystem).ToList();
         foreach (var f in legacy)
         {
             f.FieldType = "date";
@@ -8379,25 +8386,6 @@ public partial class ConstructorRepository(AppDbContext db)
             if (!hasOther) f.IsCalStart = true;
         }
         if (legacy.Count > 0) db.SaveChanges();
-
-        // Коллекции, где есть поля-даты, но ни одно не назначено календарным: первое
-        // (по позиции) становится источником календаря — чтобы существующие даты тоже
-        // попали в календарь.
-        var calCollections = db.DbFields
-            .Where(f => f.FieldType == "date" && f.IsCalStart)
-            .Select(f => f.CollectionId)
-            .Distinct()
-            .ToHashSet();
-
-        var orphanDateFields = db.DbFields
-            .Where(f => f.FieldType == "date" && !calCollections.Contains(f.CollectionId))
-            .OrderBy(f => f.CollectionId).ThenBy(f => f.Position)
-            .ToList();
-
-        var assigned = new HashSet<int>();
-        foreach (var f in orphanDateFields)
-            if (assigned.Add(f.CollectionId)) f.IsCalStart = true;
-        if (assigned.Count > 0) db.SaveChanges();
 
         var calFieldIds = db.DbFields
             .Where(f => f.FieldType == "date" && f.IsCalStart)
