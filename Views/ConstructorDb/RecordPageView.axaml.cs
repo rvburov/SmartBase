@@ -5,6 +5,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Threading;
 using Avalonia.VisualTree;
 using SmartBase.Controls.Components;
 using SmartBase.Controls.Behaviors;
@@ -195,6 +196,7 @@ public partial class RecordPageView : UserControl
     private readonly Dictionary<int, PropertyRowVm> _rowsByField = new();
     // Текст связи по id поля — названия целей считаются один раз на сборку панели и после правки связи.
     private readonly Dictionary<int, string> _relationText = new();
+    private readonly Dictionary<int, bool> _relationHasValues = new();
     private bool _focusBottomAfterReload;       // описание только что создано — поставить каретку в редактор
     private bool _suppressBottomSync;            // гасит обратную синхронизацию инлайн↔нижний при программной установке
 
@@ -219,6 +221,11 @@ public partial class RecordPageView : UserControl
         PropertiesHost.NameColumnWidth        = _nameColWidth;
 
         FooterBar.PreviewToggled += (_, _) => UpdatePreviewVisibility();
+        FooterBar.HideEmptyPropertiesToggled += (_, _) =>
+        {
+            PropertiesHost.CloseEditor();
+            UpdatePropertyCards();
+        };
 
         MarkdownEditor.TemplateApplied += (_, e) =>
         {
@@ -350,6 +357,7 @@ public partial class RecordPageView : UserControl
         _cardIndexByField.Clear();
         _rowsByField.Clear();
         _relationText.Clear();
+        _relationHasValues.Clear();
         _selectedFieldIds.Clear();
     }
 
@@ -533,6 +541,7 @@ public partial class RecordPageView : UserControl
         _cardIndexByField.Clear();
         _rowsByField.Clear();
         _relationText.Clear();
+        _relationHasValues.Clear();
         _selectedFieldIds.Clear();
         _cards         = [];
         _descTarget    = null;
@@ -574,23 +583,43 @@ public partial class RecordPageView : UserControl
         _descTarget = _vm.DescriptionFieldId is int did && _fieldTargets.TryGetValue(did, out var dt)
             ? dt : null;
 
+        UpdatePropertyCards();
+    }
+
+    // Перестраивается только показ: цели нижнего редактора и значения скрытых полей остаются.
+    // Индексы карточек меняются вместе с фильтром; редактор снимаем, пока действуют старые индексы.
+    private void UpdatePropertyCards()
+    {
+        if (_vm is null) return;
+        var items = _vm.OrderedItems.Where(item => item is not FieldItem fi ||
+            !FooterBar.HideEmptyProperties || !IsEmptyProperty(fi.Row)).ToList();
+        // Набор текста обычно не меняет состав списка: не создаем карточки и их делегаты заново.
+        if (_cards.Count == items.Count + 1 && items.Select((item, index) => item switch
+            {
+                FieldItem fi => ReferenceEquals(_cards[index].Tag, fi.Row),
+                _ => _cards[index].Kind == PropertyCardKind.Title,
+            }).All(same => same)) return;
+
+        var cards = new List<PropertyCard>(items.Count + 1);
+        var indices = new Dictionary<int, int>();
+        var titleIndex = -1;
+
         // Порядок строго как в таблице: VM уже отсортировала элементы по эффективной позиции
         // колонки. «Описание» — обычное поле и идет в этом же списке, отдельной карточки у него
         // нет; «Название» — системная колонка, у него своя карточка на ее месте. «Добавить
         // свойство» — единственная карточка с фиксированным местом (всегда внизу); тоже входит в
         // общий ресайз колонки названий (ручка ⋮). Карточки — описания для рисованного списка;
         // контролы значений строятся только под указателем (BuildEditor).
-        var cards = new List<PropertyCard>(_vm.OrderedItems.Count + 1);
-        foreach (var item in _vm.OrderedItems)
+        foreach (var item in items)
         {
             switch (item)
             {
                 case FieldItem fi:
-                    if (fi.Row.Field.Id is int cardFid) _cardIndexByField[cardFid] = cards.Count;
+                    if (fi.Row.Field.Id is int cardFid) indices[cardFid] = cards.Count;
                     cards.Add(CardFor(fi.Row));
                     break;
                 case TitleItem:
-                    _titleIndex = cards.Count;
+                    titleIndex = cards.Count;
                     cards.Add(new PropertyCard
                     {
                         Name        = _vm.TitleLabel,
@@ -603,10 +632,45 @@ public partial class RecordPageView : UserControl
             }
         }
         cards.Add(new PropertyCard { Name = "Добавить свойство", IconKey = "IconPlus", Kind = PropertyCardKind.Add });
+        PropertiesHost.CloseEditor();
         _cards = cards;
-        _titleTarget.Index = _titleIndex;
+        _titleIndex = titleIndex;
+        _cardIndexByField.Clear();
+        foreach (var (fid, index) in indices) _cardIndexByField[fid] = index;
+        _selectedFieldIds.RemoveAll(fid => !indices.ContainsKey(fid));
+        if (_titleTarget is not null) _titleTarget.Index = _titleIndex;
         foreach (var (fid, target) in _fieldTargets) target.Index = _cardIndexByField.GetValueOrDefault(fid, -1);
         PropertiesHost.SetCards(cards);
+    }
+
+    private bool IsEmptyProperty(PropertyRowVm row)
+    {
+        if (row.Field.FieldType == "relation" && row.Field.Id is int fid && _repo is not null && _vm is not null)
+        {
+            // У связанной записи название может быть пустым: заполненность задают ребра связи.
+            if (!_relationHasValues.TryGetValue(fid, out var hasValues))
+                _relationHasValues[fid] = hasValues = _repo.GetLinkEdges(fid, _vm.RecordId).Count > 0;
+            return !hasValues;
+        }
+        if (row.Field.FieldType == "multiselect")
+            return MultiSelectValue.Parse(row.Value).All(string.IsNullOrWhiteSpace);
+        return string.IsNullOrWhiteSpace(row.Value);
+    }
+
+    private bool _propertyFilterScheduled;
+
+    private void SchedulePropertyFilter()
+    {
+        if (!FooterBar.HideEmptyProperties || _vm is null || _propertyFilterScheduled) return;
+        _propertyFilterScheduled = true;
+        Dispatcher.UIThread.Post(() =>
+        {
+            _propertyFilterScheduled = false;
+            // Инлайн-поле не исчезает из-под каретки при очистке перед новым набором. Его закрытие
+            // запустит проверку снова. Нижний редактор фильтр не перестраивает и фокус не теряет.
+            if (FooterBar.HideEmptyProperties && !PropertiesHost.IsEditorBusy)
+                UpdatePropertyCards();
+        }, DispatcherPriority.Background);
     }
 
     // Описание карточки свойства для рисованного списка: что показывать без контрола. Значение
@@ -691,17 +755,22 @@ public partial class RecordPageView : UserControl
     // с большим редактором в обе стороны).
     private void OnEditorOpened(int index, Control editor)
     {
+        editor.LostFocus += OnPropertyEditorLostFocus;
         if (TargetAt(index) is { } target && editor is TextBox tb) target.Inline = tb;
     }
+
+    private void OnPropertyEditorLostFocus(object? sender, RoutedEventArgs e) => SchedulePropertyFilter();
 
     // Редактор снят: ссылки на него отпускаются, карточка снова рисуется из модели.
     private void OnEditorClosed(int index, Control editor)
     {
+        editor.LostFocus -= OnPropertyEditorLostFocus;
         if (TargetAt(index) is { } target && ReferenceEquals(target.Inline, editor)) target.Inline = null;
         if (index >= 0 && index < _cards.Count && _cards[index].Tag is PropertyRowVm { Field.Id: int fid }
             && _fileEditors.TryGetValue(fid, out var fe) && ReferenceEquals(fe, editor))
             _fileEditors.Remove(fid);
         PropertiesHost.RefreshValues();
+        SchedulePropertyFilter();
     }
 
     private BottomTextTarget? TargetAt(int index)
@@ -1231,6 +1300,7 @@ public partial class RecordPageView : UserControl
     // Выделить цель нижнего блока по модели — карточка может быть и не в окне.
     private void HighlightTarget(BottomTextTarget target, bool focus)
     {
+        if (target.Index < 0) return;   // пустое свойство может быть открыто снизу, но скрыто в списке
         if (target.IsTitle) { HighlightIndex(_titleIndex, focus); return; }
         if (target.FieldId is int fid) SelectProperty(fid, shift: false, focus);
     }
@@ -1408,6 +1478,7 @@ public partial class RecordPageView : UserControl
             if (_fileEditors.TryGetValue(fid, out var ed)) ed.SyncStorage(val);
         }
         PropertiesHost.RefreshValues();
+        SchedulePropertyFilter();
     }
 
     // Безбордерное текстовое поле значения внутри карточки. Класс propValue убирает рамку/фон
@@ -1619,7 +1690,14 @@ public partial class RecordPageView : UserControl
                     if (db > 0) CrossDbRelatedRecordRequested?.Invoke(this, (db, t.RecordId));
                     else RelatedRecordRequested?.Invoke(this, t.RecordId);            // панель в активной БД
                 };
-                rel.Changed  += (_, _) => { _relationText.Remove(relFid); NotifyRecordChanged(); PropertiesHost.RefreshValues(); };
+                rel.Changed += (_, _) =>
+                {
+                    _relationText.Remove(relFid);
+                    _relationHasValues.Remove(relFid);
+                    NotifyRecordChanged();
+                    PropertiesHost.RefreshValues();
+                    SchedulePropertyFilter();
+                };
                 input = rel;
                 break;
             }

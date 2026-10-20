@@ -10,7 +10,7 @@
 // Карточки — индексы рисованного списка (PropertyList): их прямоугольники считает поверхность,
 // редактор над карточкой появляется под указателем.
 //
-//   dotnet run -c Release --project Tests/RecordPage -- [--db PATH] [--wide PATH] [--out DIR] [--ref DIR] [--only frames|behave|perf] [--gate]
+//   dotnet run -c Release --project Tests/RecordPage -- [--db PATH] [--wide PATH] [--out DIR] [--ref DIR] [--only frames|behave|perf|empty] [--gate]
 
 using System.Diagnostics;
 using System.Reflection;
@@ -40,7 +40,7 @@ var gate    = args.Contains("--gate");
 Directory.CreateDirectory(outDir);
 Directory.CreateDirectory(refDir);
 Console.OutputEncoding = System.Text.Encoding.UTF8;
-if (!File.Exists(dbPath)) { Console.WriteLine($"Нет базы стенда: {dbPath}"); return 1; }
+if (only != "empty" && !File.Exists(dbPath)) { Console.WriteLine($"Нет базы стенда: {dbPath}"); return 1; }
 
 // Порядок важен: UseSkia ДО UseHeadless (как в Tests/GridProto).
 AppBuilder.Configure<SmartBase.App>()
@@ -51,6 +51,9 @@ SQLitePCL.Batteries_V2.Init();
 SmartBase.Utils.FontScale.Init();
 AppSettings.AttachStore(new MemoryStore());
 Dispatcher.UIThread.UnhandledException += (_, e) => Console.WriteLine($"    [исключение UI] {e.Exception}");
+
+// Самодостаточная проверка фильтра пустых свойств: собственная малая база, wide20 не требуется.
+if (only == "empty") return EmptyPropertiesChecks.Run(outDir);
 
 // Копия базы: стенд пишет значения свойств.
 var copy = Path.Combine(outDir, "page-" + Path.GetFileName(dbPath));
@@ -113,6 +116,8 @@ if (only is null or "behave")
     Behave(repo, rid, cid, fields);
     Console.WriteLine();
 }
+
+if (only is null && EmptyPropertiesChecks.Run(outDir) != 0) failed++;
 
 if (only is null or "perf")
 {

@@ -132,6 +132,9 @@ public sealed class PropertyList : Panel, ILogicalScrollable
     /// <summary>Открытый редактор; null — нет.</summary>
     public Control? CurrentEditor => _editor;
 
+    /// <summary>В редакторе идет ввод или открыт список; одно наведение не считается правкой.</summary>
+    public bool IsEditorBusy => _editor is not null && IsBusy(_editor);
+
     /// <summary>Поставить редактор над карточкой (если его там еще нет) и вернуть его. Занятый
     /// редактор другой карточки (фокус, раскрытый список) не снимается — тогда null.</summary>
     public Control? OpenEditor(int index)

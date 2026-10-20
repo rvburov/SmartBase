@@ -8,7 +8,7 @@
         <!-- Линия-разделитель сверху -->
         <Border DockPanel.Dock="Top" Classes="separator h" />
 
-        <Grid Margin="16,0">
+        <StackPanel Margin="16,0" Orientation="Horizontal" Spacing="8">
             <ToggleButton x:Name="PreviewToggle" Classes="navbtn"
                           Width="30" Height="30"
                           HorizontalAlignment="Left"
@@ -34,11 +34,34 @@
                 </Viewbox>
             </ToggleButton>
 
+            <ToggleButton x:Name="HideEmptyToggle" Classes="navbtn"
+                          Width="30" Height="30"
+                          Focusable="False"
+                          VerticalAlignment="Center"
+                          CornerRadius="{StaticResource RadiusMedium}"
+                          ToolTip.Tip="Скрыть пустые свойства">
+                <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}">
+                    <Canvas Width="24" Height="24">
+                        <Path x:Name="IconAllProperties"
+                              Data="{StaticResource IconEye}"
+                              Stroke="{Binding $parent[ToggleButton].Foreground}"
+                              StrokeThickness="{StaticResource IconStrokeMedium}"
+                              StrokeLineCap="Round" StrokeJoin="Round" />
+                        <Path x:Name="IconFilledProperties"
+                              IsVisible="False"
+                              Data="{StaticResource IconEyeClosed}"
+                              Stroke="{Binding $parent[ToggleButton].Foreground}"
+                              StrokeThickness="{StaticResource IconStrokeMedium}"
+                              StrokeLineCap="Round" StrokeJoin="Round" />
+                    </Canvas>
+                </Viewbox>
+            </ToggleButton>
+
             <!-- Действия обмена над этой записью. Внизу, рядом с переключателем режима, а не в
                  шапке: наверху живет имя записи и сворачивание панели, а здесь — то, что с
                  записью делают. Видна, только когда для коллекции что-то настроено. -->
             <Button x:Name="ActionsBtn" Classes="navbtn"
-                    Width="30" Height="30" Margin="38,0,0,0"
+                    Width="30" Height="30"
                     IsVisible="False"
                     HorizontalAlignment="Left"
                     VerticalAlignment="Center"
@@ -53,7 +76,7 @@
                     </Canvas>
                 </Viewbox>
             </Button>
-        </Grid>
+        </StackPanel>
     </DockPanel>
 
 </UserControl>
