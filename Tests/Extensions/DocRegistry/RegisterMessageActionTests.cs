@@ -522,6 +522,64 @@ public sealed class MessageScenarioTests : IDisposable
         Assert.False((await Run(scenario, Event("Да"))).Ok);
     }
 
+    /// <summary>Регистр ответа проверяется через события сценария, а не только разбор строки.</summary>
+    [Theory]
+    [InlineData("Регистрация", "да", true)]
+    [InlineData("Регистрация", "нет", false)]
+    [InlineData("Регистрация", "ДА", true)]
+    [InlineData("Регистрация", "НЕТ", false)]
+    [InlineData("Регистрация", "дА", true)]
+    [InlineData("Регистрация", "нЕт", false)]
+    [InlineData("Закрытый код", "да", true)]
+    [InlineData("Закрытый код", "нет", false)]
+    [InlineData("Удаление", "да", true)]
+    [InlineData("Удаление", "нет", false)]
+    [InlineData("Удаление", "ДА", true)]
+    [InlineData("Удаление", "НЕТ", false)]
+    [InlineData("Изменение", "да", true)]
+    [InlineData("Изменение", "нет", false)]
+    [InlineData("Изменение", "ДА", true)]
+    [InlineData("Изменение", "НЕТ", false)]
+    [InlineData("Регистрация", "<p>да</p>", true)]
+    [InlineData("Регистрация", "<p>нет</p>", false)]
+    [InlineData("Регистрация", "\u200bда", true)]
+    [InlineData("Регистрация", "нет\ufeff", false)]
+    [InlineData("Закрытый код", "д\u200bа", true)]
+    [InlineData("Закрытый код", "<p>нет&#8203;</p>", false)]
+    [InlineData("Удаление", "да\u2060", true)]
+    [InlineData("Изменение", "\u200bнет", false)]
+    public async Task Confirmation_case_does_not_change_the_outcome(string action, string answer, bool yes)
+    {
+        var journal = JournalStand.Create(_db.Constructor);
+        var scenario = Scenario(journal);
+        if (action is "Удаление" or "Изменение")
+        {
+            Assert.True((await Run(scenario, Event(Message))).Ok);
+            Assert.True((await Run(scenario, Event("Да"))).Ok);
+        }
+        var request = action switch
+        {
+            "Регистрация" => Message,
+            "Закрытый код" => Message.Replace("301121", "000000", StringComparison.Ordinal),
+            _ => $"Действие: {action}\nНомер: АБВГ.301121.001"
+               + (action == "Изменение" ? "\nПроект: Станок" : ""),
+        };
+        Assert.True((await Run(scenario, Event(request))).Ok);
+        var result = await Run(scenario, Event(answer));
+        Assert.True(result.Ok, result.Problem);
+        if (!yes) Assert.Equal("Операция отменена", result.Reply);
+        var records = _db.Constructor.GetRecords(journal);
+        if (action is "Регистрация" or "Закрытый код") Assert.Equal(yes ? 1 : 0, records.Count);
+        else if (action == "Удаление") Assert.Equal(yes ? 0 : 1, records.Count);
+        else
+        {
+            var record = Assert.Single(records);
+            var shape = JournalStand.Shape(_db.Constructor, journal);
+            Assert.Equal(yes ? "Станок" : "Машина", _db.Constructor.GetFieldValues(record.Id!.Value)[shape.ProjectFieldId]);
+        }
+        Assert.False((await Run(scenario, Event(answer))).Ok);
+    }
+
     [Fact]
     public async Task Instructions_leave_a_pending_confirmation_unchanged()
     {

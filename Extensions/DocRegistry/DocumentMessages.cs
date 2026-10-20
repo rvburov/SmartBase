@@ -43,9 +43,9 @@ internal static class DocumentMessages
     {
         var lines = MessageRegistration.Lines(text);
         var action = MessageRegistration.Value(lines, MessageRegistration.ActionKey);
-        var plain = MessageRegistration.Plain(text).Trim();
-        var yes = RegistrySchema.SameName(plain, "Да");
-        var no = RegistrySchema.SameName(plain, "Нет");
+        var answer = MessageRegistration.Confirmation(text);
+        var yes = answer is true;
+        var no = answer is false;
         var known = new[] { View, Delete, Edit }.FirstOrDefault(a => RegistrySchema.SameName(a, action));
         var registration = RegistrySchema.SameName(action, MessageRegistration.RegisterWord);
 

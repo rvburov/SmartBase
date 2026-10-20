@@ -275,6 +275,20 @@ public static class MessageRegistration
         return System.Net.WebUtility.HtmlDecode(bare).Replace('\u00A0', ' ');
     }
 
+    /// <summary>
+    /// Ответ на подтверждение: только целое «да» или «нет», без учета регистра.
+    /// Невидимые управляющие знаки форматирования из программы-мессенджера не меняют ответ;
+    /// пробелы внутри слова, другие слова и знаки препинания подтверждением не считаются.
+    /// </summary>
+    internal static bool? Confirmation(string? text)
+    {
+        var answer = string.Concat(Plain(text).Where(c =>
+            char.GetUnicodeCategory(c) != System.Globalization.UnicodeCategory.Format)).Trim();
+        if (answer.Equals("да", StringComparison.OrdinalIgnoreCase)) return true;
+        if (answer.Equals("нет", StringComparison.OrdinalIgnoreCase)) return false;
+        return null;
+    }
+
     // ── Строки сообщения ──────────────────────────────────────────────────────
 
     /// <summary>

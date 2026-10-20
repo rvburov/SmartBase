@@ -60,6 +60,20 @@ public sealed class DocumentMessageTests : IDisposable
     }
 
     [Theory]
+    [InlineData("да нет")]
+    [InlineData("д а")]
+    [InlineData("да, удалите")]
+    [InlineData("не да")]
+    public void Confirmation_requires_a_whole_answer_and_does_not_guess_intent(string answer)
+    {
+        Assert.True(Call(Request("Удаление")).Ok);
+        Assert.False(Call(answer).Ok);
+        Assert.NotNull(_db.Constructor.GetRecord(_id));
+        Assert.Equal("Операция отменена", Call("нет").Answer);
+        Assert.NotNull(_db.Constructor.GetRecord(_id));
+    }
+
+    [Theory]
     [InlineData("Да")]
     [InlineData("Нет")]
     public void Deletion_waits_for_the_same_sender_and_is_consumed_once(string answer)

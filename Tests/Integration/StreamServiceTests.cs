@@ -458,6 +458,31 @@ public sealed class StreamServiceTests : IDisposable
         Assert.Single(_db.Constructor.GetRecords(collection));
     }
 
+    /// <summary>Одинаковый текст разных сообщений не означает повтор доставки одного события.</summary>
+    [Fact]
+    public async Task Identical_message_texts_with_distinct_ids_each_get_a_reply()
+    {
+        using var stand = new StreamStand();
+        var (stream, reply) = Cabling(stand);
+        Save(stream, reply, Collection());
+        var clerk = new Clerk { Answer = _ => ActionResult.Done("Ответ получен") };
+        using var service = Service(clerk);
+        service.Begin();
+        await stand.WaitConnectedAsync(Patience);
+
+        await stand.SendAsync(Event(1, "да"));
+        await stand.SendAsync(Event(2, "да"));
+        await stand.SendAsync(Event(3, "нет"));
+        await stand.SendAsync(Event(4, "нет"));
+        await stand.SendAsync(Event(4, "нет")); // повтор доставки последнего сообщения
+        await Until(() => stand.Requests.Count >= 4, "ответы на четыре разных сообщения");
+        await service.SettleAsync(Patience);
+
+        Assert.Equal(new[] { "да", "да", "нет", "нет" }, clerk.Seen.Select(s => s.Text));
+        Assert.Equal(4, stand.Requests.Count);
+        Assert.Equal(4, Journal(RunChannel.Scenario).Count);
+    }
+
     /// <summary>
     /// Неподтвержденный ответ не доходит до сокета — замок на нем держит так же, как на любой
     /// отправке. Запись при этом сделана: событие обработано, не ушел только ответ, и человеку
