@@ -53,8 +53,9 @@ public partial class CalendarControllerView : UserControl
     // значило тянуть в окно месяца до 84 тысяч событий на днях-гигантах и строить по ним
     // раскладку. Столько же на день читаются многодневные timed, начинающиеся в этот день
     // (отдельным проходом по концам): раньше они шли вместе с однодневными и в переполненном
-    // дне, начавшись поздно, отсекались тем же cap. Полосы «весь день» месяц читает с общим
-    // cap — они нужны все.
+    // дне, начавшись поздно, отсекались тем же cap. Записи «весь день» — так же по дням: с общим
+    // cap на окно месяц с тысячами таких записей в день отдавал их двум-трем первым дням, а в
+    // остальных ячейках оставалось одно «+N еще». Общий cap — только начатым до окна.
     private const int MonthDayCap = 24;
     private long _gridGen;          // текущее поколение загрузки сетки
     private long _gridAppliedGen;   // последнее примененное поколение (для оверлея «Загрузка…»)
@@ -625,7 +626,8 @@ public partial class CalendarControllerView : UserControl
                     ? repo.LoadDiagramWindowAsync(startDt, endDt, active, DiagramView.MaxRecordsPerCollection)
                     : viewIdx == 4
                         ? repo.LoadCalendarGridRangeAsync(startDt, endDt, active, MonthDayCap,
-                                                          allDayCap: GridDayCap, multiDayPerDay: MonthDayCap)
+                                                          allDayCap: GridDayCap, multiDayPerDay: MonthDayCap,
+                                                          allDayPerDay: MonthDayCap)
                         : repo.LoadCalendarGridRangeAsync(startDt, endDt, active, GridDayCap), clock);
             foreach (var (dbId, repo, task) in jobs)
             {

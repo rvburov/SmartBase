@@ -187,7 +187,8 @@ if (only == "readbench")
         {
             var sw = Stopwatch.StartNew();
             return (d.Name, Task: d.Repo.LoadCalendarGridRangeAsync(new DateTime(2026, 8, 31), new DateTime(2026, 10, 12), null, 24,
-                                                                    allDayCap: 2000, multiDayPerDay: 24)
+                                                                    allDayCap: 2000, multiDayPerDay: 24,
+                                                                    allDayPerDay: 24)
                                         .ContinueWith(t => (Rows: t.Result.Count, Ms: sw.Elapsed.TotalMilliseconds)));
         }).ToList();
         Task.WaitAll(jobs.Select(j => (Task)j.Task).ToArray());

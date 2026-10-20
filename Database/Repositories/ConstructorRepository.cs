@@ -7591,12 +7591,16 @@ public partial class ConstructorRepository(AppDbContext db)
     /// по буферу CalendarTimedBufferDays, как в <see cref="ReadCalendarEvents"/>; all-day — тоже
     /// per-collection с cap (обычно их мало, но импорт дат «без времени» может дать миллионы).
     /// <paramref name="allDayCap"/> — свой cap all-day прохода (он один на все окно, а не на
-    /// день): Месяц берет timed по нескольку десятков на день — больше ячейка не показывает, —
-    /// но полосы «весь день» ему нужны все, как и прежде.
+    /// день): Месяц берет timed по нескольку десятков на день — больше ячейка не показывает.
+    /// <paramref name="allDayPerDay"/> задан — «весь день» тоже читается по дням окна, не больше
+    /// стольких на день и коллекцию (плюс многодневные, начатые в дне, тем же cap), а общий
+    /// <paramref name="allDayCap"/> остается только начатым до окна. Без этого месяц с тысячами
+    /// записей «весь день» в день получал первые allDayCap по дате конца: записи доставались двум-трем
+    /// первым дням, в остальных ячейках было одно «+N еще».
     /// </summary>
     public List<CalendarRecord> GetCalendarRecordsByRangeCapped(
         DateTime rangeStart, DateTime rangeEnd, ISet<int>? activeIds, int perDayCap, int? allDayCap = null,
-        int? multiDayPerDay = null)
+        int? multiDayPerDay = null, int? allDayPerDay = null)
     {
         // Per-collection запросы — нужны явные id: null — все коллекции БД, ПУСТОЙ набор —
         // ни одной (циклы не выполняются). Коллекции, у которых ВСЕ поля-даты скрыты,
@@ -7687,13 +7691,54 @@ public partial class ConstructorRepository(AppDbContext db)
             // 0 мс). EndIso >= start отсекает прошлое сиком, граница сверху — конец окна + M
             // all-day коллекции (без сводки — все будущее). Cap тем же LIMIT: сетке и панели
             // «весь день» больше все равно не отрисовать.
-            foreach (var colId in colIds.Where(c => spans.Has(c, true)))
+            var allDayCols = colIds.Where(c => spans.Has(c, true)).ToList();
+            if (allDayPerDay is not { } dayCap)
             {
-                var (band, args) = NearEdge(spans.Max(colId, true), rangeStart, rangeEnd);
-                ReadCalendarRows(conn, result,
-                    $"ci.CollectionId = {colId} AND ci.AllDay = 1{hidden}" +
-                    " AND ci.EndIso >= @start AND ci.StartIso < @end" + band,
-                    [("@start", startIso), ("@end", endIso), .. args], allDayCap ?? perDayCap, "ci.EndIso", desc(colId));
+                foreach (var colId in allDayCols)
+                {
+                    var (band, args) = NearEdge(spans.Max(colId, true), rangeStart, rangeEnd);
+                    ReadCalendarRows(conn, result,
+                        $"ci.CollectionId = {colId} AND ci.AllDay = 1{hidden}" +
+                        " AND ci.EndIso >= @start AND ci.StartIso < @end" + band,
+                        [("@start", startIso), ("@end", endIso), .. args], allDayCap ?? perDayCap, "ci.EndIso", desc(colId));
+                }
+            }
+            else
+            {
+                // По дням окна, как timed: каждый день получает свои записи, сколько бы их ни было
+                // в соседних. Многодневные, начатые в дне, — отдельным проходом по концам (в
+                // переполненном дне начало у всех одно, и cap отдал бы однодневные вперемешку с ними).
+                static long Key(CalendarRecord r) => ((long)(r.Id ?? 0) << 32) | (uint)r.FieldId;
+                var seen = new HashSet<long>();
+                var allDay = new List<CalendarRecord>();
+                for (var day = rangeStart.Date; day < rangeEnd; day = day.AddDays(1))
+                {
+                    var dayIso  = Iso(day);
+                    var nextIso = Iso(day.AddDays(1));
+                    foreach (var colId in allDayCols)
+                    {
+                        rows.Read(allDay,
+                            $"ci.CollectionId = {colId} AND ci.AllDay = 1{hidden}" +
+                            " AND ci.StartIso >= @d AND ci.StartIso < @d2",
+                            [("@d", dayIso), ("@d2", nextIso)], dayCap, desc: desc(colId));
+                        var (band, args) = NearEdge(spans.Max(colId, true), day, day.AddDays(1));
+                        rows.Read(allDay,
+                            $"ci.CollectionId = {colId} AND ci.AllDay = 1{hidden}" +
+                            " AND ci.EndIso >= @d2 AND ci.StartIso >= @d AND ci.StartIso < @d2" + band,
+                            [("@d", dayIso), ("@d2", nextIso), .. args], dayCap, "ci.EndIso", desc(colId));
+                    }
+                }
+
+                // Начатые до окна и пересекающие его — полоса у начала окна по EndIso-индексу.
+                foreach (var colId in allDayCols)
+                {
+                    var (band, args) = NearEdge(spans.Max(colId, true), rangeStart, rangeStart);
+                    ReadCalendarRows(conn, allDay,
+                        $"ci.CollectionId = {colId} AND ci.AllDay = 1{hidden}" +
+                        " AND ci.EndIso >= @start AND ci.StartIso < @start" + band,
+                        [("@start", startIso), .. args], allDayCap ?? perDayCap, "ci.EndIso", desc(colId));
+                }
+                foreach (var r in allDay) if (seen.Add(Key(r))) result.Add(r);
             }
         }
         finally { if (opened) conn.Close(); }
@@ -7709,13 +7754,14 @@ public partial class ConstructorRepository(AppDbContext db)
     /// и тихо уточняет уже показанную сетку.</summary>
     public Task<List<CalendarRecord>> LoadCalendarGridRangeAsync(
         DateTime rangeStart, DateTime rangeEnd, ISet<int>? activeIds, int perDayCap, int? allDayCap = null,
-        int? multiDayPerDay = null) =>
+        int? multiDayPerDay = null, int? allDayPerDay = null) =>
         Task.Run(() =>
         {
             using var ctx = new AppDbContext(db.DbPath);
             ctx.ApplyPerformancePragmas();
             return new ConstructorRepository(ctx)
-                .GetCalendarRecordsByRangeCapped(rangeStart, rangeEnd, activeIds, perDayCap, allDayCap, multiDayPerDay);
+                .GetCalendarRecordsByRangeCapped(rangeStart, rangeEnd, activeIds, perDayCap, allDayCap, multiDayPerDay,
+                                                 allDayPerDay);
         });
 
     /// <summary>

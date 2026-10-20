@@ -144,6 +144,45 @@ public sealed class CalendarSpansTests
         Assert.Equal(25, month.Count(r => r.StartDt.Date == d));
     }
 
+    [Fact]
+    public void Month_read_gives_every_crowded_day_its_all_day_records()
+    {
+        // Записи «весь день» Месяц раньше читал одним запросом на все окно с общим cap: при
+        // сотнях таких записей в день cap заканчивался на первом дне, остальные ячейки получали
+        // только «+N еще». Теперь — по дням, как timed: каждый день свои записи до cap ячейки,
+        // многодневное из переполненного дня и начатое до окна тоже приходят, без повторов.
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+        var col  = SampleData.AddCollection(repo).Id!.Value;
+        var date = SampleData.AddCalendarDateField(repo, col).Id!.Value;
+        var days = new[] { new DateTime(2026, 9, 1), new DateTime(2026, 9, 2), new DateTime(2026, 9, 15) };
+        foreach (var d in days)
+            for (var i = 0; i < 60; i++)
+            {
+                var rec = SampleData.AddRecord(repo, col, $"{d:dd} {i}").Id!.Value;
+                repo.SetFieldValue(rec, date, AllDay(d, d));
+            }
+        var bar = SampleData.AddRecord(repo, col, "три дня").Id!.Value;
+        repo.SetFieldValue(bar, date, AllDay(days[2], days[2].AddDays(2)));
+        var before = SampleData.AddRecord(repo, col, "с прошлого месяца").Id!.Value;
+        repo.SetFieldValue(before, date, AllDay(new DateTime(2026, 8, 20), new DateTime(2026, 9, 3)));
+
+        var start = new DateTime(2026, 8, 31);
+        var end   = new DateTime(2026, 10, 12);
+        var month = repo.GetCalendarRecordsByRangeCapped(start, end, null, perDayCap: 24, allDayCap: 50,
+                                                         multiDayPerDay: 24, allDayPerDay: 24);
+
+        foreach (var d in days)
+            Assert.True(month.Count(r => r.StartDt.Date == d) >= 24, $"день {d:dd.MM}");
+        Assert.Contains(month, r => r.Title == "три дня");
+        Assert.Contains(month, r => r.Title == "с прошлого месяца");
+        Assert.Equal(month.Count, month.Select(r => (r.Id, r.FieldId)).Distinct().Count());
+
+        // Прежнее чтение с тем же общим cap отдавало записи только первому дню — дефект со скрина.
+        var old = repo.GetCalendarRecordsByRangeCapped(start, end, null, perDayCap: 24, allDayCap: 50, multiDayPerDay: 24);
+        Assert.DoesNotContain(old, r => r.StartDt.Date == days[2]);
+    }
+
     // ── агрегаты Диаграммы против прямого определения ───────────────────────
 
     private static Dictionary<int, DiagramGroupStat> ExpectedStats(TempDatabase db, DateTime start, DateTime end, ISet<int>? active)
