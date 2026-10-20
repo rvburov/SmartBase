@@ -88,6 +88,9 @@ public partial class DiagramView : UserControl
     // и отступы блоков.
     private DateTime _rangeStart;
     private int      _rangeDays;
+    // Колонки оси: каждый день периода, а при 5-дневке на масштабе месяца — только рабочие
+    // (DiagramColumns). Пересчитываются каждой сборкой: от масштаба и настройки зависят обе.
+    private DiagramColumns _columns = new(DateTime.Today, 0, false);
 
     // ── масштаб: API для контроллера (окно данных, навигация, заголовок) ────────
 
@@ -507,8 +510,9 @@ public partial class DiagramView : UserControl
         // последний день ПОД полосой (шкала обрывалась на полуцифре). Как в таблице
         // конструктора: ячейки заканчиваются там, где начинается полоса.
         var timelineW = _timelineW;
-        if (timelineW <= 0 || _rangeDays <= 0) { _restoreSelection = keep; return; }
-        var dayW = timelineW / _rangeDays;
+        _columns = new DiagramColumns(_rangeStart, _rangeDays, CalendarSettings.FiveDayWeek && ScaleYears == 0);
+        if (timelineW <= 0 || _columns.Count <= 0) { _restoreSelection = keep; return; }
+        var dayW = timelineW / _columns.Count;
         _lastTimelineW = timelineW;
 
         BuildDayHeader(dayW);
@@ -570,9 +574,10 @@ public partial class DiagramView : UserControl
         var red       = BrushOf("BrushRed");
         var accent    = BrushOf("BrushAccent");
 
-        for (var i = 0; i < _rangeDays; i++)
+        // Колонки — дни оси: при 5-дневке выходных среди них нет (см. DiagramColumns).
+        for (var i = 0; i < _columns.Count; i++)
         {
-            var d         = _rangeStart.AddDays(i);
+            var d         = _columns.DayOf(i);
             var isToday   = d.Date == DateTime.Today;   // синим и жирным — как шапка Недели
             var isWeekend = d.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday;
 
@@ -685,9 +690,9 @@ public partial class DiagramView : UserControl
         if (ScaleYears == 0)
         {
             var weekendBg = BrushOf("BrushSecondaryBg");
-            for (var i = 0; i < _rangeDays; i++)
+            for (var i = 0; i < _columns.Count; i++)
             {
-                var d = _rangeStart.AddDays(i);
+                var d = _columns.DayOf(i);
                 if (d.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday)) continue;
                 var fill = new Border { Width = dayW, Height = contentH, Background = weekendBg };
                 Canvas.SetLeft(fill, i * dayW);
@@ -725,7 +730,7 @@ public partial class DiagramView : UserControl
         // там разделитель левой панели.
         var vlines = ScaleYears switch
         {
-            0 => Enumerable.Range(1, _rangeDays - 1),
+            0 => Enumerable.Range(1, _columns.Count - 1),
             1 => BoundaryIndices(byYear: false),
             _ => BoundaryIndices(byYear: true),
         };
@@ -996,13 +1001,14 @@ public partial class DiagramView : UserControl
         // первого до последнего дня события целиком, время суток на позицию не
         // влияет. Все, что уже круга (однодневное событие и любой короткий диапазон
         // на крупном масштабе), — сплошной круг диаметром в высоту блока.
-        var startIdx = (int)(start.Date - _rangeStart).TotalDays;
-        var endIdx   = (int)(LastIncludedDay(start, end, allDay) - _rangeStart).TotalDays;
-        if (endIdx < startIdx) endIdx = startIdx;
+        // Колонки — по DiagramColumns: при 5-дневке выходной край события прижимается к
+        // соседнему рабочему дню, а событие целиком в выходных — круг на стыке недель.
+        var cols     = _columns.Count;
+        var (startIdx, endIdx, inWeekend) = _columns.Span(start, LastIncludedDay(start, end, allDay));
         var clipL = startIdx < 0;
-        var clipR = endIdx > _rangeDays - 1;
-        var i1    = Math.Clamp(startIdx, 0, _rangeDays - 1);
-        var i2    = Math.Clamp(endIdx,   0, _rangeDays - 1);
+        var clipR = endIdx > cols - 1;
+        var i1    = Math.Clamp(startIdx, 0, cols - 1);
+        var i2    = Math.Clamp(endIdx,   0, cols - 1);
         // Небольшие отступы блока от границ ячеек — только на реальных краях события
         // (insetL/insetR как у баров Месяца) и только при широкой ячейке: на годовом
         // масштабе (ячейка ~3 px) отступы съедали бы целые дни. Обрезанный краем
@@ -1013,7 +1019,8 @@ public partial class DiagramView : UserControl
         var x2     = (i2 + 1) * dayW - (clipR ? 0 : insetR);
         // Круг — однодневное событие или блок не шире круга (см. RenderEventVisual).
         var isDot = startIdx == endIdx || x2 - x1 < BarH;
-        return (x1, x2, i1, i2, clipL, clipR, isDot, (i1 + i2 + 1) / 2.0 * dayW);
+        var cx    = inWeekend ? Math.Clamp(startIdx, 0, cols) * dayW : (i1 + i2 + 1) / 2.0 * dayW;
+        return (x1, x2, i1, i2, clipL, clipR, isDot, cx);
     }
 
     // Рисует событие (блок или круг) в строке y и возвращает геометрию + слои
@@ -1149,10 +1156,10 @@ public partial class DiagramView : UserControl
     {
         TodayOverlay.Children.Clear();
         var now = DateTime.Now;
-        if (_rangeDays <= 0 || now < _rangeStart || now >= RangeEnd) return;
+        if (_columns.Count <= 0 || now < _rangeStart || now >= RangeEnd) return;
         if (_lastTimelineW <= 0) return;
 
-        var x    = (now - _rangeStart).TotalDays * (_lastTimelineW / _rangeDays);
+        var x    = _columns.X(now) * (_lastTimelineW / _columns.Count);
         var line = new Border { Width = 2, Height = _lastBgH, Background = BrushOf("BrushRed") };
         Canvas.SetLeft(line, x - 1);
         TodayOverlay.Children.Add(line);
@@ -1209,7 +1216,7 @@ public partial class DiagramView : UserControl
         var p = e.GetPosition(TimelinePane);
         if (_pressEntry is null) { UpdateCursor(p); return; }
 
-        var dayW = _rangeDays > 0 ? _lastTimelineW / _rangeDays : 0;
+        var dayW = _columns.Count > 0 ? _lastTimelineW / _columns.Count : 0;
         if (dayW <= 0) return;
 
         if (!_isDragging)
@@ -1226,13 +1233,14 @@ public partial class DiagramView : UserControl
         // 5-дневка: край растягивания и старт переноса на Сб/Вс не встают —
         // перепрыгивают по направлению жеста (за пятницу — понедельник, назад —
         // пятница). Направление считается от ИСХОДНОГО положения (стабильно в
-        // течение жеста). Полосы через выходные при этом не обрезаются, событие
-        // с исходным краем на выходном без движения не трогается (direction 0).
+        // течение жеста), событие с исходным краем на выходном без движения не
+        // трогается (direction 0). На месяце выходных на оси нет вовсе
+        // (DiagramColumns), и перенос считается колонками рабочих дней.
         var fiveDay = CalendarSettings.FiveDayWeek;
         if (_resizeLeft || _resizeRight)
         {
-            var dayIdx = Math.Clamp((int)(p.X / dayW), 0, _rangeDays - 1);
-            var day    = _rangeStart.AddDays(dayIdx);
+            var dayIdx = Math.Clamp((int)(p.X / dayW), 0, _columns.Count - 1);
+            var day    = _columns.DayOf(dayIdx);
             if (_resizeRight)
             {
                 if (fiveDay)
@@ -1247,6 +1255,26 @@ public partial class DiagramView : UserControl
                     day = CalendarMath.SnapToWorkday(day, Math.Sign((day - _origStart.Date).Ticks), true);
                 var candidate = day + _origStart.TimeOfDay;
                 if (candidate < _newEnd) _newStart = candidate;
+            }
+        }
+        else if (_columns.WorkdaysOnly)
+        {
+            // 5-дневка на месяце: ось — рабочие дни, и сдвиг считается в них же. Старт на
+            // выходном стоит на оси в колонке понедельника — от нее и считаем; конец — по
+            // числу видимых дней исходной записи, как ниже.
+            var delta   = (int)Math.Round((p.X - _pressPos.X) / dayW);
+            var center0 = _columns.X(_origStart + (_origEnd - _origStart) / 2);
+            var minD    = Math.Min(0, (int)Math.Ceiling(-center0));
+            var maxD    = Math.Max(0, (int)Math.Floor(_columns.Count - center0));
+            delta       = Math.Clamp(delta, minD, maxD);
+            if (delta == 0) { _newStart = _origStart; _newEnd = _origEnd; }
+            else
+            {
+                var from    = CalendarMath.SnapToWorkday(_origStart, +1, true);
+                var started = CalendarMath.AddVisibleDays(from, delta, true);
+                var span    = CalendarMath.VisibleDaysBetween(_origStart, _origEnd, true);
+                _newStart   = started + _origStart.TimeOfDay;
+                _newEnd     = CalendarMath.AddVisibleDays(started, span, true) + _origEnd.TimeOfDay;
             }
         }
         else
@@ -1496,9 +1524,9 @@ public partial class DiagramView : UserControl
     private static string RuDuration(DateTime start, DateTime end, bool allDay)
     {
         // 5-дневка: суббота и воскресенье в расчет дней и часов не идут (Пт–Пн
-        // «весь день» — 2 дня, Пт 23:00 – Пн 01:00 — 2 часа). Сами полосы и ось
-        // дней не меняются — выходные на диаграмме видимы. Охват целиком из
-        // выходных считается как есть, иначе подпись была бы пустой.
+        // «весь день» — 2 дня, Пт 23:00 – Пн 01:00 — 2 часа) — как и на оси месяца,
+        // где их колонок нет (DiagramColumns). Охват целиком из выходных считается
+        // как есть, иначе подпись была бы пустой.
         var fiveDay = CalendarSettings.FiveDayWeek;
         if (allDay)
         {
