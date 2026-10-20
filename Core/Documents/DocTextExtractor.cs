@@ -253,16 +253,13 @@ public static class DocTextExtractor
         if (book is null) return "";
 
         // Общая таблица строк — в книге весь повторяющийся текст лежит именно там, и без нее
-        // в ячейках видны одни индексы.
-        var shared = book.SharedStringTablePart?.SharedStringTable;
-        if (shared is not null)
+        // в ячейках видны одни индексы. Таблица и листы читаются потоком (SheetStream): дерево
+        // листа на сотни тысяч строк занимало гигабайты памяти ради текста, который пишется
+        // строка за строкой.
+        foreach (var text in SheetStream.SharedStrings(book.SharedStringTablePart, ct))
         {
-            foreach (var item in shared.Elements<DocumentFormat.OpenXml.Spreadsheet.SharedStringItem>())
-            {
-                ct.ThrowIfCancellationRequested();
-                if (sb.Length >= MaxChars) break;
-                sb.Append(item.InnerText).Append('\n');
-            }
+            if (sb.Length >= MaxChars) break;
+            sb.Append(text).Append('\n');
         }
 
         // Плюс то, что лежит в ячейках напрямую: числа, даты, логические значения, строки внутри
@@ -285,16 +282,18 @@ public static class DocTextExtractor
         {
             ct.ThrowIfCancellationRequested();
             if (sb.Length >= MaxChars) break;
-            var data = sheet.Worksheet?.Elements<DocumentFormat.OpenXml.Spreadsheet.SheetData>().FirstOrDefault();
-            if (data is null) continue;
-            foreach (var cell in data.Descendants<DocumentFormat.OpenXml.Spreadsheet.Cell>())
+            foreach (var row in SheetStream.Rows(sheet, ct))
             {
                 if (sb.Length >= MaxChars) break;
-                // Ссылки в общую таблицу уже добавлены выше — второй раз не пишем.
-                if (cell.DataType?.Value == DocumentFormat.OpenXml.Spreadsheet.CellValues.SharedString) continue;
-                var format = cell.StyleIndex?.Value is { } id && id < formats.Length ? formats[id] : null;
-                var value  = DocSheetSource.Text(cell, [], format, date1904).Text;
-                if (value.Length > 0) sb.Append(value).Append(' ');
+                foreach (var cell in row.Elements<DocumentFormat.OpenXml.Spreadsheet.Cell>())
+                {
+                    if (sb.Length >= MaxChars) break;
+                    // Ссылки в общую таблицу уже добавлены выше — второй раз не пишем.
+                    if (cell.DataType?.Value == DocumentFormat.OpenXml.Spreadsheet.CellValues.SharedString) continue;
+                    var format = cell.StyleIndex?.Value is { } id && id < formats.Length ? formats[id] : null;
+                    var value  = DocSheetSource.Text(cell, [], format, date1904).Text;
+                    if (value.Length > 0) sb.Append(value).Append(' ');
+                }
             }
             sb.Append('\n');
         }

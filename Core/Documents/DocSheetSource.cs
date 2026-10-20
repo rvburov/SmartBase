@@ -285,9 +285,6 @@ public static class DocSheetSource
         var book = doc.WorkbookPart;
         if (book is null) return DocBookView.Empty;
 
-        var shared = book.SharedStringTablePart?.SharedStringTable
-                         ?.Elements<SharedStringItem>().Select(i => i.InnerText).ToArray() ?? [];
-
         // Сломанная таблица оформления не повод терять содержимое: значения покажутся без
         // заливок и форматов, но покажутся.
         BookStyles styles;
@@ -297,8 +294,11 @@ public static class DocSheetSource
 
         var date1904 = Date1904(book);
 
-        var sheets = new List<DocSheet>();
-        var hidden = 0;
+        // Листы читаются потоком и только до потолка показа (SheetStream.LightWorksheet): дерево
+        // всего листа на сотни тысяч строк ради двух тысяч на экране стоило гигабайты памяти.
+        // Общие строки — тоже потоком и только те, на которые ссылаются прочитанные ячейки.
+        var visible = new List<(string Name, Worksheet Sheet)>();
+        var hidden  = 0;
         foreach (var (entry, part) in Worksheets(book))
         {
             ct.ThrowIfCancellationRequested();
@@ -307,9 +307,18 @@ public static class DocSheetSource
                 hidden++;
                 continue;
             }
+            visible.Add((entry.Name?.Value is { Length: > 0 } name ? name : "Лист",
+                         SheetStream.LightWorksheet(part, MaxRows, ct)));
+        }
 
-            var sheet = ReadSheet(entry.Name?.Value is { Length: > 0 } name ? name : "Лист",
-                                  part, shared, styles, date1904, ct);
+        var used = new HashSet<int>();
+        foreach (var (_, sheet) in visible) SheetStream.CollectSharedIndices(sheet, used);
+        var shared = SheetStream.SharedStrings(book.SharedStringTablePart, used, ct);
+
+        var sheets = new List<DocSheet>();
+        foreach (var (name, light) in visible)
+        {
+            var sheet = ReadSheet(name, light, shared, styles, date1904, ct);
             if (sheet.Rows.Count > 0) sheets.Add(sheet);
         }
         return new DocBookView(sheets, hidden);
@@ -340,10 +349,9 @@ public static class DocSheetSource
 
     // ── Разбор листа ──────────────────────────────────────────────────────────
 
-    private static DocSheet ReadSheet(string name, WorksheetPart part, string[] shared,
+    private static DocSheet ReadSheet(string name, Worksheet? sheet, string[] shared,
                                       BookStyles styles, bool date1904, CancellationToken ct)
     {
-        var sheet  = part.Worksheet;
         var pane = sheet?.Descendants<Pane>().FirstOrDefault();
         var frozen = pane?.State?.Value == PaneStateValues.Frozen || pane?.State?.Value == PaneStateValues.FrozenSplit;
         static int Split(double? value, int cap) => value is { } n && double.IsFinite(n) && n > 0 ? (int)Math.Min(n, cap) : 0;
@@ -588,7 +596,7 @@ public static class DocSheetSource
         var type = cell.DataType?.Value;
 
         if (type == CellValues.SharedString)
-            return (int.TryParse(raw, out var idx) && idx >= 0 && idx < shared.Length ? shared[idx] : "", false);
+            return (int.TryParse(raw, out var idx) && idx >= 0 && idx < shared.Length ? shared[idx] ?? "" : "", false);
 
         if (type == CellValues.InlineString) return (cell.InnerText, false);
         if (type == CellValues.Boolean)      return (raw == "1" ? "ИСТИНА" : "ЛОЖЬ", false);

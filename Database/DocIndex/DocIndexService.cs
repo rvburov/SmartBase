@@ -379,11 +379,17 @@ public sealed class DocIndexService : IAsyncDisposable
             }
 
             DocText text;
+            // Документ, который читался дольше фонового порога, — строка в журнале диагностики с
+            // именем, размером и итогом: тяжелый файл (книга на сотни тысяч строк, том чертежей)
+            // виден по журналу, а не угадывается по диспетчеру задач.
+            using var slow = SmartBase.Logging.Diag.Measure("чтение документа библиотеки",
+                                                            SmartBase.Logging.Diag.Background, FileNameOf(path));
             try
             {
                 text = DocTextExtractor.Extract(path, MaxFileMb, ct);
+                slow.Context += $", {SizeOf(path)}, {text.Status}" + (text.Pages > 0 ? $", страниц {text.Pages}" : "");
             }
-            catch (OperationCanceledException) { return; }
+            catch (OperationCanceledException) { slow.Discard(); return; }
             catch
             {
                 // Разборщик не должен ронять очередь: один битый файл — это одна строка
@@ -413,6 +419,12 @@ public sealed class DocIndexService : IAsyncDisposable
             _pace.Done(done, System.Diagnostics.Stopwatch.GetElapsedTime(_startedTicks));
             Progress?.Invoke(this, new DocIndexProgress(done, total, FileNameOf(path), _pace.Left(total)));
         }
+    }
+
+    private static string SizeOf(string path)
+    {
+        try { return SmartBase.Utils.Sizes.Text(new System.IO.FileInfo(path).Length); }
+        catch { return "размер неизвестен"; }
     }
 
     private static string FileNameOf(string path)
