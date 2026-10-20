@@ -238,7 +238,7 @@ internal sealed class DocVirtualList : IList<object>, IList, INotifyCollectionCh
     {
         var start = page * PageSize;
         var keys = _order!.Skip(start).Take(PageSize).ToArray();
-        var records = new Dictionary<(int Entry, int Record, int Field), DocRecord>();
+        var records = new Dictionary<(int Entry, int Record, int Field, int File), DocRecord>();
         foreach (var group in keys.GroupBy(k => k.Entry))
         {
             if (gen != _generation) return;
@@ -249,7 +249,7 @@ internal sealed class DocVirtualList : IList<object>, IList, INotifyCollectionCh
             {
                 doc.DbId = entry.DbId;
                 doc.DbName = entry.DbName;
-                records[(group.Key, doc.Id!.Value, doc.FileFieldId)] = doc;
+                records[(group.Key, doc.Id!.Value, doc.FileFieldId, doc.FileIndex)] = doc;
             }
         }
         Dispatcher.UIThread.Post(() =>
@@ -258,7 +258,7 @@ internal sealed class DocVirtualList : IList<object>, IList, INotifyCollectionCh
             for (var i = 0; i < keys.Length && i < rows.Length; i++)
             {
                 var key = keys[i];
-                if (!records.TryGetValue((key.Entry, key.RecordId, key.FieldId), out var doc))
+                if (!records.TryGetValue((key.Entry, key.RecordId, key.FieldId, key.FileIndex), out var doc))
                 {
                     if (!_orderInvalidated) { _orderInvalidated = true; OrderInvalidated?.Invoke(); }
                     continue;

@@ -6,7 +6,8 @@ namespace SmartBase.Core.Models;
 /// Правило авто-привязки файлов для поля типа «файл»: файл берется не выбором пользователя, а
 /// сопоставлением по имени. Для каждой записи имя = значение столбца-источника
 /// (<see cref="SourceKey"/>) + «.» + <see cref="Format"/>; ищется в <see cref="Folder"/>
-/// (регистр учитывается). <see cref="Recursive"/> = искать и во вложенных папках.
+/// (регистр учитывается). <see cref="PartialMatch"/> — значение входит в имя без расширения,
+/// привязываются все совпадения. <see cref="Recursive"/> = искать и во вложенных папках.
 /// Найденный путь материализуется в db_field_values (чтобы работали фильтр/сортировка),
 /// сам столбец становится read-only.
 ///
@@ -16,7 +17,7 @@ namespace SmartBase.Core.Models;
 /// вторым путем, по своему Id.
 ///
 /// Хранится в ConfigJson поля:
-/// <c>{ "auto": { "source": "…", "folder": "…", "format": "pdf", "recursive": true } }</c>.
+/// <c>{ "auto": { "source": "…", "folder": "…", "format": "pdf", "recursive": true, "partialMatch": false } }</c>.
 /// null (правила нет) — поле работает как обычный ручной «файл».
 /// </summary>
 /// <param name="Recursive">
@@ -25,7 +26,10 @@ namespace SmartBase.Core.Models;
 /// у поля разом поменялись бы значения. Новые правила диалог создает с включенной галочкой
 /// (<see cref="DefaultRecursive"/>).
 /// </param>
-public sealed record FileAutoRule(string SourceKey, string Folder, string Format, bool Recursive = false)
+/// <param name="PartialMatch">Искать значение внутри имени файла. По умолчанию выключено:
+/// существующие правила сохраняют точное сопоставление.</param>
+public sealed record FileAutoRule(string SourceKey, string Folder, string Format, bool Recursive = false,
+                                  bool PartialMatch = false)
 {
     /// <summary>Состояние галочки «Искать во вложенных папках» у нового свойства.</summary>
     public const bool DefaultRecursive = true;
@@ -63,6 +67,7 @@ public sealed record FileAutoRule(string SourceKey, string Folder, string Format
             // Ключа нет — правило из баз, где настройки еще не было: там искали только по
             // верхнему уровню, таким и оставляем (см. комментарий к Recursive).
             var recursive = a.TryGetProperty("recursive", out var r) && r.ValueKind == JsonValueKind.True;
+            var partialMatch = a.TryGetProperty("partialMatch", out var p) && p.ValueKind == JsonValueKind.True;
 
             source = source.Trim();
             // Нераспознанный ключ (например, «__desc__» из баз, где описание было системной
@@ -72,7 +77,7 @@ public sealed record FileAutoRule(string SourceKey, string Folder, string Format
             folder = folder.Trim();
             format = NormalizeFormat(format);
             if (source.Length == 0 || folder.Length == 0 || format.Length == 0) return null;
-            return new FileAutoRule(source, folder, format, recursive);
+            return new FileAutoRule(source, folder, format, recursive, partialMatch);
         }
         catch (JsonException ex)
         {
@@ -84,7 +89,8 @@ public sealed record FileAutoRule(string SourceKey, string Folder, string Format
     /// <summary>Объект для сериализации в ConfigJson (под ключом «auto»).</summary>
     public static object ToConfigObject(FileAutoRule rule) => new
     {
-        auto = new { source = rule.SourceKey, folder = rule.Folder, format = rule.Format, recursive = rule.Recursive },
+        auto = new { source = rule.SourceKey, folder = rule.Folder, format = rule.Format,
+                     recursive = rule.Recursive, partialMatch = rule.PartialMatch },
     };
 
     /// <summary>ConfigJson-строка целиком (у поля «файл» иных настроек нет).</summary>
@@ -96,6 +102,20 @@ public sealed record FileAutoRule(string SourceKey, string Folder, string Format
     {
         var v = sourceValue ?? "";
         return v.Length == 0 ? "" : $"{v}.{Format}";
+    }
+
+    /// <summary>Сопоставление базового имени файла с источником: точное либо подстрока без
+    /// расширения. Формат и регистр проверяются в обоих режимах; шаблонов с * или ? нет.</summary>
+    public bool MatchesFileName(string? sourceValue, string fileName)
+    {
+        if (!PartialMatch)
+            return !string.IsNullOrEmpty(sourceValue)
+                && string.Equals(fileName, TargetFileName(sourceValue), StringComparison.Ordinal);
+        if (string.IsNullOrWhiteSpace(sourceValue)) return false;
+        var suffix = "." + Format;
+        return fileName.EndsWith(suffix, StringComparison.Ordinal)
+            && fileName.AsSpan(0, fileName.Length - suffix.Length)
+                .Contains(sourceValue.AsSpan(), StringComparison.Ordinal);
     }
 
     // Нормализуем формат: без ведущей точки и пробелов, нижний регистр расширения не форсируем —

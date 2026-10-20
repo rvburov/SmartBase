@@ -12,8 +12,8 @@ using Avalonia.Threading;
 namespace SmartBase.Controls.Widgets;
 
 /// <summary>
-/// Редактор свойства типа «файл». Значение — <b>абсолютный путь</b> к файлу на диске
-/// (ничего не копируется). Показ: имя файла синей ссылкой (клик — открыть через ОС),
+/// Редактор свойства типа «файл». Значение — абсолютный путь либо список путей авто-привязки
+/// (ничего не копируется). Показ: имена файлов отдельными ссылками (клик — открыть через ОС),
 /// «имя — файл не найден», если пути нет, и серое «Выбрать файл…» для пустого значения.
 /// Правка — по аналогии с датой: ручной ввод пути в поле + правая иконка-скрепка,
 /// открывающая системный выбор файла. Неверный путь при ручном вводе — красный текст и
@@ -21,7 +21,9 @@ namespace SmartBase.Controls.Widgets;
 /// </summary>
 public partial class FileEditor : UserControl
 {
-    private string _path = "";        // хранимое значение: полный путь или ""
+    private string _path = "";        // хранимое значение: путь, список путей или ""
+    private IReadOnlyList<string> _paths = [];
+    private string? _pendingPath;      // путь именно той ссылки, по которой нажали
     private string _autoFolder = "";  // непусто → авто-режим (read-only, значения ведет правило)
     private bool   _editing;
     private bool   _suppress;
@@ -43,18 +45,25 @@ public partial class FileEditor : UserControl
         // Одиночный клик по имени файла обрабатываем с задержкой, чтобы двойной успел
         // его отменить (двойной — ручная правка пути, одиночный — открыть/поправить).
         _clickTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
-        _clickTimer.Tick += (_, _) => { _clickTimer.Stop(); OnSingleClick(); };
+        _clickTimer.Tick += (_, _) =>
+        {
+            _clickTimer.Stop();
+            var path = _pendingPath;
+            _pendingPath = null;
+            OnSingleClick(path);
+        };
 
         Pick.Click += async (_, _) => await PickFileAsync();
 
         LinkHost.PointerPressed += (_, e) =>
         {
             if (!e.GetCurrentPoint(LinkHost).Properties.IsLeftButtonPressed) return;
+            // У списка каждая ссылка обрабатывает свое нажатие; разделители и пустое место — нет.
+            if (MultiLinks.IsVisible) return;
             e.Handled = true;
             // Авто-режим: ручной правки нет (двойной клик не редактирует), только одиночное действие.
             if (!IsAuto && e.ClickCount >= 2) { _clickTimer.Stop(); BeginEdit(); return; }
-            _clickTimer.Stop();
-            _clickTimer.Start();
+            QueueClick(null);
         };
 
         Input.KeyDown += (_, e) =>
@@ -92,11 +101,19 @@ public partial class FileEditor : UserControl
         UpdateVisual();
     }
 
-    /// <summary>Полный путь к файлу для db_field_values. null/"" — файл не выбран.</summary>
+    /// <summary>Путь или список путей для db_field_values. null/"" — файл не выбран.</summary>
     public string? Storage
     {
         get => _path;
-        set { _path = value?.Trim() ?? ""; EndEdit(); UpdateVisual(); }
+        set
+        {
+            _path = value ?? "";
+            _paths = Core.Models.FileValue.ReadPaths(_path);
+            _clickTimer.Stop();
+            _pendingPath = null;
+            EndEdit();
+            UpdateVisual();
+        }
     }
 
     /// <summary>Папка авто-привязки. Непусто → ячейка read-only (правило ведет значения): скрепки
@@ -107,6 +124,8 @@ public partial class FileEditor : UserControl
         set
         {
             _autoFolder = value ?? "";
+            _clickTimer.Stop();
+            _pendingPath = null;
             Pick.IsVisible = _autoFolder.Length == 0;   // в авто-режиме скрепки нет
             EndEdit();
             UpdateVisual();
@@ -120,9 +139,12 @@ public partial class FileEditor : UserControl
     public void SyncStorage(string? path)
     {
         if (_editing) return;                 // не мешаем ручному вводу
-        var v = path?.Trim() ?? "";
+        var v = path ?? "";
         if (v == _path) return;               // значение не изменилось
         _path = v;
+        _paths = Core.Models.FileValue.ReadPaths(_path);
+        _clickTimer.Stop();
+        _pendingPath = null;
         UpdateVisual();
     }
 
@@ -155,21 +177,27 @@ public partial class FileEditor : UserControl
 
     // ── Клики/действия показа ───────────────────────────────────────────────────
 
-    private void OnSingleClick()
+    private void QueueClick(string? path)
     {
+        _clickTimer.Stop();
+        _pendingPath = path;
+        _clickTimer.Start();
+    }
+
+    private void OnSingleClick(string? selectedPath)
+    {
+        var path = selectedPath ?? (_paths.Count == 1 ? _paths[0] : "");
         if (IsAuto)
         {
             // Авто-режим read-only: папка недоступна → плашка; файл есть → открыть; иначе — ничего.
             if (!System.IO.Directory.Exists(_autoFolder)) { FlashError("Папка недоступна"); return; }
-            if (_path.Length > 0 && File.Exists(_path)) OpenFile();
+            if (path.Length > 0 && File.Exists(path)) OpenWithSystem(path);
             return;
         }
-        if (_path.Length == 0) return;              // «Выбрать файл…» — не кликабельно
-        if (File.Exists(_path)) OpenFile();
-        else BeginEdit();                           // файла нет — даем поправить путь руками
+        if (path.Length == 0) return;              // «Выбрать файл…» — не кликабельно
+        if (File.Exists(path)) OpenWithSystem(path);
+        else if (_paths.Count == 1) BeginEdit();    // одиночный отсутствующий путь можно поправить
     }
-
-    private void OpenFile() => OpenWithSystem(_path);
 
     /// <summary>Открыть файл штатным приложением ОС. UseShellExecute=true делегирует системе:
     /// open (macOS), explorer/ассоциация (Windows), xdg-open (Linux). Общее с ячейкой «Файла»
@@ -220,6 +248,7 @@ public partial class FileEditor : UserControl
 
     private void BeginEdit()
     {
+        if (IsAuto || _paths.Count > 1) return;
         _editing = true;
         _suppress = true;
         Input.Text = _path;
@@ -277,6 +306,9 @@ public partial class FileEditor : UserControl
         var v       = p?.Trim() ?? "";
         var changed = v != _path;
         _path = v;
+        _paths = Core.Models.FileValue.ReadPaths(_path);
+        _clickTimer.Stop();
+        _pendingPath = null;
         if (raise && changed) Changed?.Invoke(this, EventArgs.Empty);
     }
 
@@ -285,6 +317,17 @@ public partial class FileEditor : UserControl
     private void UpdateVisual()
     {
         if (_editing) return;
+        Link.IsVisible = true;
+        MultiLinks.IsVisible = false;
+        MultiLinks.Children.Clear();
+
+        if (_paths.Count > 1 && (!IsAuto || System.IO.Directory.Exists(_autoFolder)))
+        {
+            ShowMultipleFiles();
+            return;
+        }
+
+        var path = _paths.Count == 1 ? _paths[0] : "";
 
         // Авто-режим (read-only): «папка недоступна» / имя-ссылка / «файл не найден».
         if (IsAuto)
@@ -296,16 +339,16 @@ public partial class FileEditor : UserControl
                 Link.TextDecorations = null;
                 LinkHost.Cursor      = new Cursor(StandardCursorType.Hand);
             }
-            else if (_path.Length > 0 && File.Exists(_path))
+            else if (path.Length > 0 && File.Exists(path))
             {
-                Link.Text            = SafeFileName(_path);
+                Link.Text            = SafeFileName(path);
                 Link.Foreground      = Accent();
                 Link.TextDecorations = TextDecorations.Underline;
                 LinkHost.Cursor      = new Cursor(StandardCursorType.Hand);
             }
             else
             {
-                Link.Text            = _path.Length > 0 ? SafeFileName(_path) + " — файл не найден" : "файл не найден";
+                Link.Text            = path.Length > 0 ? SafeFileName(path) + " — файл не найден" : "файл не найден";
                 Link.Foreground      = Secondary();
                 Link.TextDecorations = null;
                 LinkHost.Cursor      = Cursor.Default;
@@ -313,7 +356,7 @@ public partial class FileEditor : UserControl
             return;
         }
 
-        if (_path.Length == 0)
+        if (path.Length == 0)
         {
             Link.Text            = "Выбрать файл…";     // серое, некликабельное
             Link.Foreground      = Secondary();
@@ -322,8 +365,8 @@ public partial class FileEditor : UserControl
             return;
         }
 
-        var name = SafeFileName(_path);
-        if (File.Exists(_path))
+        var name = SafeFileName(path);
+        if (File.Exists(path))
         {
             Link.Text            = name;                 // синяя подчеркнутая ссылка
             Link.Foreground      = Accent();
@@ -336,6 +379,36 @@ public partial class FileEditor : UserControl
             Link.Foreground      = Secondary();
             Link.TextDecorations = null;
             LinkHost.Cursor      = new Cursor(StandardCursorType.Hand);
+        }
+    }
+
+    // Разделители — отдельные элементы: запятая внутри имени остается частью своей ссылки.
+    // Весь список обрезается границами LinkHost, поэтому невидимый хвост не получает нажатий.
+    private void ShowMultipleFiles()
+    {
+        Link.IsVisible = false;
+        MultiLinks.IsVisible = true;
+        LinkHost.Cursor = Cursor.Default;
+        foreach (var path in _paths)
+        {
+            if (MultiLinks.Children.Count > 0)
+                MultiLinks.Children.Add(new TextBlock { Text = ", ", Foreground = Secondary() });
+
+            var exists = File.Exists(path);
+            var link = new TextBlock
+            {
+                Text = SafeFileName(path) + (exists ? "" : " — файл не найден"),
+                Foreground = exists ? Accent() : Secondary(),
+                TextDecorations = exists ? TextDecorations.Underline : null,
+                Cursor = exists ? new Cursor(StandardCursorType.Hand) : Cursor.Default,
+            };
+            link.PointerPressed += (_, e) =>
+            {
+                if (!e.GetCurrentPoint(link).Properties.IsLeftButtonPressed) return;
+                e.Handled = true;
+                QueueClick(path);
+            };
+            MultiLinks.Children.Add(link);
         }
     }
 

@@ -102,6 +102,99 @@ public sealed class DocPagingTests
             Enumerable.Repeat(new DocOrderKey(0, a, shell.FileId), 201).ToArray()));
     }
 
+    [Fact]
+    public void Multiple_paths_have_separate_counts_pages_and_keyset_positions()
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+        var shell = Library(repo);
+        var scan = SampleData.AddField(repo, shell.ColId, "Скан", "file", 3000).Id!.Value;
+        repo.SetFileFieldInLibrary(scan, true);
+        var first = AddDoc(repo, shell, "Комплект", FileValue.Serialize([
+            "/files/part, one.pdf", "/files/part two.txt", "/files/part-three.pdf"]), "Паспорт");
+        repo.SetFieldValue(first, scan, "/files/scan.pdf");
+        AddDoc(repo, shell, "Одиночный", "/files/legacy, source.pdf", "Чертеж", position: 2000);
+        var all = ConstructorRepository.DocView.All;
+        string[] expected = ["/files/part, one.pdf", "/files/part two.txt", "/files/part-three.pdf",
+                             "/files/scan.pdf", "/files/legacy, source.pdf"];
+
+        Assert.Equal(5, repo.CountDocs(shell.ColId, shell.TypeId, all));
+        Assert.Equal(3, repo.CountDocs(shell.ColId, shell.TypeId, all, cap: 3));
+        Assert.Equal(5, repo.GetDocCollectionStats()[shell.ColId].Total);
+        var histogram = repo.GetDocTypeHistograms()[shell.ColId];
+        Assert.Equal(4, histogram.Counts["Паспорт"]);
+        Assert.Equal(1, histogram.Counts["Чертеж"]);
+        Assert.Equal(4, histogram.CountFor(Types("Паспорт")));
+        Assert.Equal(expected.Order(StringComparer.Ordinal), repo.GetDocPaths().Order(StringComparer.Ordinal));
+
+        var whole = repo.GetDocPage(shell.ColId, shell.TypeId, all, 0, 10);
+        Assert.Equal(expected, Paths(whole));
+        Assert.Equal(new[] { 0, 1, 2, 0, 0 }, whole.Select(d => d.FileIndex).ToArray());
+        Assert.Equal(whole.Count, whole.Select(d => d.Cursor).Distinct().Count());
+        var pages = Enumerable.Range(0, 3)
+            .SelectMany(i => repo.GetDocPage(shell.ColId, shell.TypeId, all, i * 2, 2));
+        Assert.Equal(expected, Paths(pages));
+        for (var i = 0; i < whole.Count; i++)
+        {
+            Assert.Equal(expected.Skip(i + 1).Take(2), Paths(repo.GetDocPage(
+                shell.ColId, shell.TypeId, all, After(whole[i]), 2)));
+            Assert.Equal(expected.Take(i).TakeLast(2), Paths(repo.GetDocPage(
+                shell.ColId, shell.TypeId, all, Before(whole[i]), 2)));
+        }
+        Assert.Equal(expected.TakeLast(2), Paths(repo.GetDocPage(shell.ColId, shell.TypeId, all, FromEnd(0), 2)));
+    }
+
+    [Fact]
+    public void Multiple_paths_search_and_order_keys_address_one_file_without_its_siblings()
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+        var shell = Library(repo);
+        string[] paths = ["/files/zulu.pdf", "/files/needle, report.txt", "/files/alpha.pdf"];
+        var record = AddDoc(repo, shell, "", FileValue.Serialize(paths), "Паспорт");
+        var active = new HashSet<int> { shell.ColId };
+
+        Assert.Equal([paths[1]], Paths(repo.SearchDocs(active, "needle", [])));
+        Assert.Equal([paths[1]], Paths(repo.SearchDocs(active, "", [paths[1]])));
+        Assert.Equal([paths[1]], Paths(repo.SearchDocs(active, "needle", [], Types("Паспорт"))));
+        Assert.Empty(repo.SearchDocs(active, "needle", [], Types("Чертеж")));
+        Assert.Equal([paths[0]], Paths(repo.SearchDocs(active, "files", [], limit: 1)));
+        Assert.Empty(repo.SearchDocs(new HashSet<int>(), "files", []));
+
+        var keys = repo.GetDocOrderKeys(shell.ColId, shell.TypeId, ConstructorRepository.DocView.All, DocSort.Title);
+        Assert.Equal(3, keys.Count);
+        Assert.All(keys, k => Assert.Equal(record, k.RecordId));
+        var order = DocOrderPlan.Merge([new(1, shell.ColId, keys)], DocSort.Title);
+        Assert.Equal(new[] { 2, 1, 0 }, order.Select(k => k.FileIndex).ToArray());
+        var selected = repo.GetDocsByOrderKeys(shell.ColId, shell.TypeId, [order[1]]);
+        Assert.Equal(paths[1], Assert.Single(selected).Path);
+        Assert.Equal(1, selected[0].FileIndex);
+    }
+
+    [Fact]
+    public void Path_expansion_preserves_original_indices_and_legacy_payloads()
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+        var shell = Library(repo);
+        var first = AddDoc(repo, shell, "Набор", "{\"paths\":[\"/a.pdf\",\"\",\"/b.txt\"]}", position: 1000);
+        AddDoc(repo, shell, "Пустой", "{\"paths\":[]}", position: 2000);
+        string[] legacy = ["{\"paths\":not-json}", "{\"paths\":[\"/a.pdf\",42]}", "{\"paths\":{}}",
+                           " {\"paths\":[\"/leading-space.pdf\"]}", "/files/legacy, name.pdf"];
+        for (var i = 0; i < legacy.Length; i++)
+            AddDoc(repo, shell, $"Прежний {i}", legacy[i], position: 3000 + i);
+
+        var duplicateKey = AddDoc(repo, shell, "Повтор ключа",
+            "{\"paths\":[\"/ignored.pdf\"],\"paths\":[\"/last.pdf\"]}", position: 9000);
+        var docs = repo.GetDocPage(shell.ColId, shell.TypeId, ConstructorRepository.DocView.All, 0, 20);
+        Assert.Equal("/last.pdf", Assert.Single(docs.Where(d => d.Id == duplicateKey)).Path);
+        Assert.Equal(3 + legacy.Length, repo.CountDocs(shell.ColId, shell.TypeId, ConstructorRepository.DocView.All));
+        Assert.Equal(new[] { 0, 2 }, docs.Where(d => d.Id == first).Select(d => d.FileIndex).ToArray());
+        Assert.Equal(new[] { "/a.pdf", "/b.txt" }.Concat(legacy).Append("/last.pdf"), Paths(docs));
+        Assert.Equal(new[] { "/a.pdf", "/b.txt" }.Concat(legacy).Append("/last.pdf").Order(StringComparer.Ordinal),
+            repo.GetDocPaths().Order(StringComparer.Ordinal));
+    }
+
     // ── Размеры ──────────────────────────────────────────────────────────────
 
     [Fact]

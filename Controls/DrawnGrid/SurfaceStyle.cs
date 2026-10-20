@@ -202,6 +202,9 @@ internal sealed class SurfaceStyle
     /// </summary>
     public (string Text, IBrush Brush, string Id, bool Underline) FileLook(string path, string autoFolder, IBrush? fg = null, string fgId = "")
     {
+        var paths = FileValue.ReadPaths(path);
+        if (paths.Count == 1) path = paths[0];
+        else if (paths.Count == 0) path = "";
         var name = FileValue.DisplayName(path);
         var auto = autoFolder.Length > 0;
         if (auto && FileProbe.FolderExists(autoFolder) == false) return ("папка недоступна", Secondary, "s", false);
@@ -209,6 +212,12 @@ internal sealed class SurfaceStyle
         if (FileProbe.FileExists(path) != false) return (name, fg ?? Accent, fg is null ? "a" : fgId, true);
         return (name + " — файл не найден", Secondary, "s", false);
     }
+
+    /// <summary>Несколько имен файлов и точные области их ссылок; запятые и многоточие — обычный текст.</summary>
+    public FileLinksLayout FileLinks(string storage, string autoFolder, Rect area, TextAlignment align,
+                                     CellVAlign valign, double pad, double scale, bool label = false,
+                                     IBrush? fg = null, string fgId = "") =>
+        FileLinksLayout.Create(this, storage, autoFolder, area, align, valign, pad, scale, label, fg, fgId);
 
     /// <summary>Перо иконки: обводка IconStrokeSmall со скругленными концами и углами (как Path в
     /// Viewbox реестра иконок).</summary>

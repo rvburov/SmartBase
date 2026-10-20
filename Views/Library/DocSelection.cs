@@ -3,11 +3,11 @@ using SmartBase.Core.Models;
 namespace SmartBase.Views.Library;
 
 /// <summary>
-/// Ключ документа: база, запись и файловое свойство. Одной записи мало — запись с двумя
-/// включенными файловыми столбцами дает в ленте ДВЕ карточки, и выделить нужно уметь каждую
-/// по отдельности (та же причина, по которой задача опознается парой с полем-исполнителем).
+/// Ключ документа: база, запись, файловое свойство и путь. Одной записи мало — запись с двумя
+/// включенными файловыми столбцами или несколькими путями дает несколько карточек, каждую нужно выделять
+/// по отдельности. Путь сохраняет выделение, когда перескан добавил файл перед выбранным.
 /// </summary>
-public readonly record struct DocKey(int DbId, int RecordId, int FileFieldId);
+public readonly record struct DocKey(int DbId, int RecordId, int FileFieldId, string Path = "");
 
 /// <summary>
 /// Выделение в ленте документов — чистая логика без Avalonia, ради тестов
@@ -20,7 +20,7 @@ public sealed class DocSelection
 
     /// <summary>Ключ документа; null — у записи нет id (такой в ленте не бывает, но проверка дешевая).</summary>
     public static DocKey? KeyOf(DocRecord d) =>
-        d.Id is int id ? new DocKey(d.DbId, id, d.FileFieldId) : null;
+        d.Id is int id ? new DocKey(d.DbId, id, d.FileFieldId, d.Path) : null;
 
     public int Count => _keys.Count;
 

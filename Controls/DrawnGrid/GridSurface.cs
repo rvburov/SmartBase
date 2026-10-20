@@ -329,6 +329,27 @@ public sealed class GridSurface : Control, IEditorSurface
         return new Rect(inner.Right - w, inner.Y, w, inner.Height);
     }
 
+    /// <summary>Файл под видимым именем. null — пустое место, разделитель или многоточие;
+    /// пустая строка — плашка недоступной папки авто-привязки.</summary>
+    public string? FilePathAt(GridHit hit, Point point)
+    {
+        EnsureTokens();
+        if (!IsFileCell(hit) || !hit.Bounds.Contains(point)) return null;
+        var def = hit.Def!;
+        if (FileButtonRect(hit.Bounds, def) is { } button && button.Contains(point)) return null;
+        if (def.FileAutoFolder.Length > 0 && FileProbe.FolderExists(def.FileAutoFolder) == false) return "";
+        var row = _rows![hit.Row];
+        var style = ResolveStyle(row, def.Key, _rowStyle(row.RecordId));
+        var fg = style.Fg is not null ? ColorTools.Text(style.Fg) : null;
+        var inner = ContentRect(hit.Bounds, hit.Column);
+        var clipWidth = def.FileAutoFolder.Length > 0 ? 0 : ClipPadLeft + IconSize + ClipPadRight;
+        var area = new Rect(inner.X, inner.Y, Math.Max(1, inner.Width - clipWidth), inner.Height);
+        return _s.FileLinks(row[def.Key], def.FileAutoFolder, area,
+                            ToTextAlignment(style.HAlign ?? CellAlign.DefaultH(def.FieldType)),
+                            style.VAlign ?? CellVAlign.Center, CellTextPad, LineMetrics.EffectiveScale(this),
+                            fg: fg, fgId: style.Fg ?? "").PathAt(point);
+    }
+
     // Область содержимого ячейки: без вертикальной линии справа и линии под строкой.
     private Rect ContentRect(Rect cell) =>
         new(cell.X, cell.Y, Math.Max(0, cell.Width - _s.LineWidth), Math.Max(0, cell.Height - _s.LineWidth));
@@ -846,11 +867,7 @@ public sealed class GridSurface : Control, IEditorSurface
     // авто-привязки — недоступная папка (плашка) или найденный файл; пустое «Выбрать файл…» — нет.
     private bool FileLinkClickable(GridHit hit)
     {
-        if (!IsFileCell(hit)) return false;
-        var def  = hit.Def!;
-        var path = _rows![hit.Row][def.Key];
-        if (def.FileAutoFolder.Length == 0) return path.Length > 0;
-        return FileProbe.FolderExists(def.FileAutoFolder) == false || (path.Length > 0 && FileProbe.FileExists(path) == true);
+        return _lastPointer is { } point && FilePathAt(hit, point) is not null;
     }
 
     private static bool HoverVisible(GridHit hit) =>
@@ -1288,13 +1305,21 @@ public sealed class GridSurface : Control, IEditorSurface
     {
         var path = row[def.Key];
         var auto = def.FileAutoFolder.Length > 0;
-        var (text, brush, brushId, underline) = _s.FileLook(path, def.FileAutoFolder, fg, fgId);
 
         // У авто-привязки скрепки нет (FileEditor прячет кнопку выбора) — надпись во всю ширину.
         var clipW    = auto ? 0 : ClipPadLeft + IconSize + ClipPadRight;
         var textRect = new Rect(inner.X, inner.Y, Math.Max(1, inner.Width - clipW), inner.Height);
-        DrawText(ctx, text, textRect, brush, brushId, align, 1, _s.LineHeight, underline: underline, valign: valign,
-                 centering: TextCentering.BlockInArea);
+        if (FileValue.ReadPaths(path).Count > 1)
+        {
+            if (!DebugSkipText)
+                _s.FileLinks(path, def.FileAutoFolder, textRect, align, valign, CellTextPad, scale, fg: fg, fgId: fgId).Draw(ctx);
+        }
+        else
+        {
+            var (text, brush, brushId, underline) = _s.FileLook(path, def.FileAutoFolder, fg, fgId);
+            DrawText(ctx, text, textRect, brush, brushId, align, 1, _s.LineHeight, underline: underline, valign: valign,
+                     centering: TextCentering.BlockInArea);
+        }
         if (!auto && _s.Paperclip is not null)
         {
             var line = CellAlign.TextTop(valign, inner.Height, _s.LineHeight, _s.TextEdge);

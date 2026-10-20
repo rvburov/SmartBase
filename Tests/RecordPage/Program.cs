@@ -10,7 +10,7 @@
 // Карточки — индексы рисованного списка (PropertyList): их прямоугольники считает поверхность,
 // редактор над карточкой появляется под указателем.
 //
-//   dotnet run -c Release --project Tests/RecordPage -- [--db PATH] [--wide PATH] [--out DIR] [--ref DIR] [--only frames|behave|perf|empty] [--gate]
+//   dotnet run -c Release --project Tests/RecordPage -- [--db PATH] [--wide PATH] [--out DIR] [--ref DIR] [--only frames|behave|perf|empty|fileauto] [--gate]
 
 using System.Diagnostics;
 using System.Reflection;
@@ -40,7 +40,7 @@ var gate    = args.Contains("--gate");
 Directory.CreateDirectory(outDir);
 Directory.CreateDirectory(refDir);
 Console.OutputEncoding = System.Text.Encoding.UTF8;
-if (only != "empty" && !File.Exists(dbPath)) { Console.WriteLine($"Нет базы стенда: {dbPath}"); return 1; }
+if (only is not ("empty" or "fileauto") && !File.Exists(dbPath)) { Console.WriteLine($"Нет базы стенда: {dbPath}"); return 1; }
 
 // Порядок важен: UseSkia ДО UseHeadless (как в Tests/GridProto).
 AppBuilder.Configure<SmartBase.App>()
@@ -54,6 +54,7 @@ Dispatcher.UIThread.UnhandledException += (_, e) => Console.WriteLine($"    [и�
 
 // Самодостаточная проверка фильтра пустых свойств: собственная малая база, wide20 не требуется.
 if (only == "empty") return EmptyPropertiesChecks.Run(outDir);
+if (only == "fileauto") return FileAutoChecks.Run(outDir);
 
 // Копия базы: стенд пишет значения свойств.
 var copy = Path.Combine(outDir, "page-" + Path.GetFileName(dbPath));
@@ -118,6 +119,7 @@ if (only is null or "behave")
 }
 
 if (only is null && EmptyPropertiesChecks.Run(outDir) != 0) failed++;
+if (only is null && FileAutoChecks.Run(outDir) != 0) failed++;
 
 if (only is null or "perf")
 {

@@ -1,5 +1,6 @@
 using System.Globalization;
 using SmartBase.Core.Documents;
+using SmartBase.Core.Models;
 
 namespace SmartBase.Tests.Unit;
 
@@ -22,6 +23,27 @@ public sealed class DocOrderPlanTests
         Assert.Equal(expected, string.Join(",", result.Select(k => $"{k.Entry}:{k.RecordId}:{k.FieldId}")));
         Assert.Equal("Я", Streams[0].Items[0].Title);
         Assert.Empty(DocOrderPlan.Merge([], sort));
+    }
+
+    [Theory]
+    [InlineData(DocSort.Collections, "2,0,1")]
+    [InlineData(DocSort.Title, "0,1,2")]
+    [InlineData(DocSort.TitleDescending, "0,1,2")]
+    [InlineData(DocSort.Modified, "0,1,2")]
+    public void Files_of_one_property_have_distinct_stable_order_keys(DocSort sort, string expected)
+    {
+        DocOrderStream[] streams = [new(1, 1, [
+            new(7, 3, "Комплект", 10, FileIndex: 2),
+            new(7, 3, "Комплект", 10, FileIndex: 0),
+            new(7, 3, "Комплект", 10, FileIndex: 1)])];
+        var result = DocOrderPlan.Merge(streams, sort);
+        Assert.Equal(expected, string.Join(",", result.Select(k => k.FileIndex)));
+        Assert.Equal(3, result.Distinct().Count());
+        var first = new DocRecord { DbId = 1, CollectionId = 1, Id = 7, FileFieldId = 3,
+                                    FileIndex = 0, Title = "Комплект", Mtime = 10 };
+        var second = new DocRecord { DbId = 1, CollectionId = 1, Id = 7, FileFieldId = 3,
+                                     FileIndex = 1, Title = "Комплект", Mtime = 10 };
+        Assert.True(DocOrderPlan.Compare(first, second, sort) < 0);
     }
 
     [Theory]

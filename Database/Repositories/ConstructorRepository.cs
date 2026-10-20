@@ -2831,8 +2831,8 @@ public partial class ConstructorRepository(AppDbContext db)
         db.DbFieldValues.AsNoTracking().Any(v => v.FieldId == fieldId && v.Value != "");
 
     /// <summary>
-    /// Материализует авто-привязку файлов поля «файл»: сканирует папку (верхний уровень, регистр
-    /// учитывается), сопоставляет по «значение_текст-столбца.формат», и ПЕРЕЗАПИСЫВАЕТ значения поля
+    /// Материализует авто-привязку файлов поля «файл»: сканирует папку по правилу, сопоставляет
+    /// имена (точно либо по подстроке), и ПЕРЕЗАПИСЫВАЕТ значения поля
     /// найденными путями (существующие значения очищаются — теперь столбец ведет правило). Значения
     /// материализуются в db_field_values, поэтому фильтр/сортировка работают штатно.
     /// Папка недоступна → значения не трогаем, возвращаем статус (UI покажет плашку).
@@ -2842,7 +2842,9 @@ public partial class ConstructorRepository(AppDbContext db)
         var field = db.DbFields.AsNoTracking().FirstOrDefault(f => f.Id == fieldId);
         if (field is null || field.FieldType != "file") return FileAutoResolveResult.NoRule;
         Demand(PermAction.EditRecord, field.CollectionId);
-        return ResolveAutoFileFieldCore(fieldId, null, default);
+        var result = ResolveAutoFileFieldCore(fieldId, null, default);
+        if (result == FileAutoResolveResult.Ok) DetachResolvedFileValues(fieldId);
+        return result;
     }
 
     /// <summary>Фоновый вариант применения авто-привязки (для окна прогресса): проверка прав — на
@@ -2858,11 +2860,28 @@ public partial class ConstructorRepository(AppDbContext db)
         var path = db.DbPath;
         // ct в Task.Run НЕ передаем: задача всегда стартует и обрабатывает отмену кооперативно
         // (возвращает Cancelled), чтобы await у вызывающего не бросал TaskCanceledException.
-        return Task.Run(() =>
+        return ResolveAndDetachAsync();
+
+        async Task<FileAutoResolveResult> ResolveAndDetachAsync()
         {
-            using var ctx = new AppDbContext(path);
-            return new ConstructorRepository(ctx).ResolveAutoFileFieldCore(fieldId, progress, ct);
-        });
+            var result = await Task.Run(() =>
+            {
+                using var ctx = new AppDbContext(path);
+                return new ConstructorRepository(ctx).ResolveAutoFileFieldCore(fieldId, progress, ct);
+            });
+            // После await возвращаемся в контекст вызывающего UI; общий DbContext в фон не уходит.
+            if (result == FileAutoResolveResult.Ok) DetachResolvedFileValues(fieldId);
+            return result;
+        }
+    }
+
+    // Перескан пишет сырым SQL, в том числе удаляет прежние строки. Их старые отслеживаемые
+    // экземпляры не должны мешать следующей реактивной подстановке того же (RecordId, FieldId).
+    private void DetachResolvedFileValues(int fieldId)
+    {
+        foreach (var entry in db.ChangeTracker.Entries<DbFieldValueEntity>()
+                     .Where(e => e.Entity.FieldId == fieldId).ToList())
+            entry.State = EntityState.Detached;
     }
 
     private FileAutoResolveResult ResolveAutoFileFieldCore(int fieldId, IProgress<double>? progress, CancellationToken ct)
@@ -2874,6 +2893,14 @@ public partial class ConstructorRepository(AppDbContext db)
         if (rule is null) return FileAutoResolveResult.NoRule;
 
         if (!TryScanFolder(rule.Folder, rule.Recursive, out var files)) return FileAutoResolveResult.FolderInaccessible;
+        // Точный поиск сохраняет быстрый словарь и прежний выбор первого одноименного файла.
+        // При частичном совпадении нужны все пути, включая одинаковые имена в разных подпапках.
+        Dictionary<string, string>? exactFiles = null;
+        if (!rule.PartialMatch)
+        {
+            exactFiles = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var path in files) exactFiles.TryAdd(System.IO.Path.GetFileName(path), path);
+        }
 
         // Источник значений: числовое текст-поле (в т.ч. «Описание») → db_field_values по
         // (FieldId, Value); системная колонка «Название» → db_records по (Id, Title) этой коллекции
@@ -2906,15 +2933,20 @@ public partial class ConstructorRepository(AppDbContext db)
                 while (reader.Read())
                 {
                     if (ct.IsCancellationRequested) return FileAutoResolveResult.Cancelled;   // ничего не записано
-                    var target = rule.TargetFileName(reader.GetString(1));
-                    if (target.Length > 0 && files.TryGetValue(target, out var full))
+                    var source = reader.GetString(1);
+                    var full = exactFiles is not null
+                        ? exactFiles.GetValueOrDefault(rule.TargetFileName(source), "")
+                        : MatchFiles(rule, source, files, ct);
+                    if (ct.IsCancellationRequested) return FileAutoResolveResult.Cancelled;
+                    if (full.Length > 0)
                         matches.Add((reader.GetInt32(0), full));
                     if (++read % 5000 == 0 && total > 0) progress?.Report(0.9 * read / total);
                 }
             }
             // reader закрыт → нет конфликта параллельных команд на соединении (важно для Npgsql).
             // Запись = 90..100%. Отмена внутри → откат транзакции (значения не меняются).
-            if (!RewriteFieldValues(fieldId, matches, progress, ct)) return FileAutoResolveResult.Cancelled;
+            if (ct.IsCancellationRequested || !RewriteFieldValues(fieldId, matches, progress, ct))
+                return FileAutoResolveResult.Cancelled;
             progress?.Report(1.0);
             return FileAutoResolveResult.Ok;
         }
@@ -2947,26 +2979,24 @@ public partial class ConstructorRepository(AppDbContext db)
         return rec?.Title ?? "";
     }
 
-    // Скан папки в словарь имя→путь (регистр учитывается — Ordinal). recursive — вместе
+    // Скан папки в список путей. recursive — вместе
     // с вложенными папками. false — папки нет или нет доступа.
     //
-    // При рекурсии одно имя может встретиться в разных подпапках — берем ПЕРВОЕ найденное
-    // (TryAdd, обход сверху вниз): выбирать «правильный» дубль не по чему, а перезапись
-    // последним делала бы результат зависимым от порядка обхода файловой системы.
-    private static bool TryScanFolder(string folder, bool recursive, out Dictionary<string, string> files)
+    // Одно имя в разных подпапках — разные файлы: в частичном режиме нужны все совпадения.
+    private static bool TryScanFolder(string folder, bool recursive, out List<string> files)
     {
-        files = new Dictionary<string, string>(StringComparer.Ordinal);
+        files = [];
         try
         {
             if (!System.IO.Directory.Exists(folder)) return false;
             var depth = recursive ? System.IO.SearchOption.AllDirectories : System.IO.SearchOption.TopDirectoryOnly;
             foreach (var path in System.IO.Directory.EnumerateFiles(folder, "*", depth))
-                files.TryAdd(System.IO.Path.GetFileName(path), path);
+                files.Add(path);
             return true;
         }
         catch (Exception ex) when (ex is System.IO.IOException or UnauthorizedAccessException)
         {
-            files = new Dictionary<string, string>(StringComparer.Ordinal);
+            files = [];
             return false;
         }
     }
@@ -3013,7 +3043,7 @@ public partial class ConstructorRepository(AppDbContext db)
     }
 
     // Пересчитать авто-file поля коллекции для ОДНОЙ записи (добавление записи / правка
-    // столбца-источника). Дешево: точечная проверка файла на диске, без bulk-скана.
+    // столбца-источника). Точный режим ищет маской, частичный собирает все совпадения.
     private void ResolveAutoFileForRecord(int collectionId, int recordId)
     {
         var autoFields = db.DbFields.AsNoTracking()
@@ -3029,22 +3059,36 @@ public partial class ConstructorRepository(AppDbContext db)
         }
     }
 
-    // Точечное совпадение файла для записи (регистр учитывается). "" — не найден/пусто.
-    // Ищем маской по имени, при recursive — вместе с вложенными папками; берем первое
-    // совпадение, как и bulk-скан (TryScanFolder).
+    // Пересчет для записи: тот же матчинг и формат значения, что у полного обновления колонки.
     private static string MatchSingle(FileAutoRule rule, string sourceValue)
     {
         var target = rule.TargetFileName(sourceValue);
-        if (target.Length == 0) return "";
+        if (target.Length == 0 || rule.PartialMatch && string.IsNullOrWhiteSpace(sourceValue)) return "";
         try
         {
             var depth = rule.Recursive ? System.IO.SearchOption.AllDirectories : System.IO.SearchOption.TopDirectoryOnly;
-            foreach (var path in System.IO.Directory.EnumerateFiles(rule.Folder, target, depth))
-                if (string.Equals(System.IO.Path.GetFileName(path), target, StringComparison.Ordinal))
-                    return path;
+            return MatchFiles(rule, sourceValue, System.IO.Directory.EnumerateFiles(
+                rule.Folder, rule.PartialMatch ? "*" : target, depth));
         }
         catch (Exception ex) when (ex is System.IO.IOException or UnauthorizedAccessException) { }
         return "";
+    }
+
+    // Одна ссылка в точном режиме, все совпадения — в частичном. Сортировка полного пути
+    // удерживает порядок списка между обновлением колонки и правкой одной записи.
+    private static string MatchFiles(FileAutoRule rule, string sourceValue, IEnumerable<string> files,
+                                     CancellationToken ct = default)
+    {
+        if (sourceValue.Length == 0 || rule.PartialMatch && string.IsNullOrWhiteSpace(sourceValue)) return "";
+        List<string>? matches = rule.PartialMatch ? [] : null;
+        foreach (var path in files)
+        {
+            if (ct.IsCancellationRequested) return "";
+            if (!rule.MatchesFileName(sourceValue, System.IO.Path.GetFileName(path))) continue;
+            if (matches is null) return path;
+            matches.Add(path);
+        }
+        return matches is null ? "" : FileValue.Serialize(matches.Order(StringComparer.Ordinal));
     }
 
     // Записать значение авто-file ячейки напрямую (мимо SetFieldValue: без прав-повторов и без
@@ -4837,8 +4881,10 @@ public partial class ConstructorRepository(AppDbContext db)
 
     // ── Значения полей ────────────────────────────────────────────────────────
 
+    // Фоновая авто-привязка пишет из отдельного контекста. Читаем сохраненные значения,
+    // чтобы после «Сохранить» таблица и страница записи не возвращали прежний путь из tracker.
     public Dictionary<int, string> GetFieldValues(int recordId) =>
-        db.DbFieldValues
+        db.DbFieldValues.AsNoTracking()
           .Where(fv => fv.RecordId == recordId)
           .ToDictionary(fv => fv.FieldId, fv => fv.Value);
 

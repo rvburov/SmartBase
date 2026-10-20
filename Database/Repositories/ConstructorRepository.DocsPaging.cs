@@ -11,6 +11,7 @@ namespace SmartBase.Database.Repositories;
 /// индексом, поэтому группа читается двумя склеенными потоками. Здесь порядок — порядок самой
 /// коллекции (<c>Position, Id</c>), то есть ровно порядок индекса <c>db_records(CollectionId,
 /// Position)</c>, а разные файловые столбцы одной записи идут подряд по <c>(f.Position, f.Id)</c>.
+/// Пути одного файлового свойства раскрываются в отдельные строки по индексу в значении.
 /// Один поток, один запрос, никаких проекций и новых таблиц.
 ///
 /// Фильтр по типу документа — обычное SQL-условие, поэтому он ЛИСТАЕТСЯ: сколько бы типов ни
@@ -37,7 +38,7 @@ namespace SmartBase.Database.Repositories;
 public partial class ConstructorRepository
 {
     /// <summary>Что разделу нужно знать о коллекции, не читая ее документов.</summary>
-    /// <param name="Total">Всего документов = записей × включенных файловых столбцов с непустым путем.</param>
+    /// <param name="Total">Всего документов = отдельных непустых путей во включенных файловых столбцах.</param>
     /// <param name="TypeFieldId">Поле «Тип документа» коллекции; null — его нет.</param>
     public sealed record DocCollectionStats(int Total, int? TypeFieldId);
 
@@ -127,18 +128,19 @@ public partial class ConstructorRepository
     // путь приезжает соединением сиком по PK, тип — подзапросом. Строка без пути — не документ:
     // показывать в библиотеке нечего (у задач наоборот — пустой исполнитель значит «никому не
     // роздано», и карточка нужна).
-    private const string DocBody = @"
+    private string DocBody => $@"
         FROM db_records r
         JOIN db_fields f       ON f.CollectionId = r.CollectionId
                               AND f.FieldType = 'file' AND f.IsDocFile = 1
         JOIN db_field_values v ON v.RecordId = r.Id AND v.FieldId = f.Id AND v.Value <> ''
+        {DocPathsJoinSql}
         WHERE r.CollectionId = @c";
 
-    private const string DocOrder     = "r.Position, r.Id, f.Position, f.Id";
-    private const string DocOrderDesc = "r.Position DESC, r.Id DESC, f.Position DESC, f.Id DESC";
+    private string DocOrder => $"r.Position, r.Id, f.Position, f.Id, {DocFileIndexSql}";
+    private string DocOrderDesc => $"r.Position DESC, r.Id DESC, f.Position DESC, f.Id DESC, {DocFileIndexSql} DESC";
 
-    private const string DocCols =
-        "r.Id, f.Id, f.Name, r.CollectionId, r.Title, v.Value";
+    private string DocCols =>
+        $"r.Id, f.Id, f.Name, r.CollectionId, r.Title, {DocPathSql}";
 
     /// <summary>
     /// Размеры всех библиотечных коллекций базы одним заходом: <c>id коллекции → </c>
@@ -245,12 +247,12 @@ public partial class ConstructorRepository
         // смещения от края граница пустая по смыслу (все позиции) и нужна только планировщику.
         var bound = seek.From switch
         {
-            DocSeekOrigin.After  => $"({DocOrder}) > (@kp, @ki, @kfp, @kfi)",
-            DocSeekOrigin.Before => $"({DocOrder}) < (@kp, @ki, @kfp, @kfi)",
+            DocSeekOrigin.After  => $"({DocOrder}) > (@kp, @ki, @kfp, @kfi, @kix)",
+            DocSeekOrigin.Before => $"({DocOrder}) < (@kp, @ki, @kfp, @kfi, @kix)",
             DocSeekOrigin.End    => "r.Position <= @edge",
             _                    => "r.Position >= @edge",
         };
-        var sql = $@"SELECT {DocCols}, COALESCE({DocTypeValueExpr}, ''), r.Position, f.Position
+        var sql = $@"SELECT {DocCols}, COALESCE({DocTypeValueExpr}, ''), r.Position, f.Position, {DocFileIndexSql}
                      {DocBody} AND ({where}) AND {bound}
                      ORDER BY {(backward ? DocOrderDesc : DocOrder)} LIMIT @take OFFSET @skip";
 
@@ -271,6 +273,7 @@ public partial class ConstructorRepository
                 AddParam(cmd, "@ki").Value  = seek.Anchor.RecordId;
                 AddParam(cmd, "@kfp").Value = seek.Anchor.FieldPosition;
                 AddParam(cmd, "@kfi").Value = seek.Anchor.FieldId;
+                AddParam(cmd, "@kix").Value = seek.Anchor.FileIndex;
             }
             else AddParam(cmd, "@edge").Value = backward ? int.MaxValue : int.MinValue;
             for (var i = 0; i < types.Count; i++) AddParam(cmd, "@t" + i).Value = types[i];
@@ -321,7 +324,8 @@ public partial class ConstructorRepository
         Title         = rdr.IsDBNull(4) ? "" : rdr.GetString(4),
         Path          = rdr.IsDBNull(5) ? "" : rdr.GetString(5),
         DocType       = rdr.IsDBNull(6) ? "" : rdr.GetString(6),
-        Cursor        = new DocCursor(rdr.GetInt32(7), rdr.GetInt32(0), rdr.GetInt32(8), rdr.GetInt32(1)),
+        Cursor        = new DocCursor(rdr.GetInt32(7), rdr.GetInt32(0), rdr.GetInt32(8), rdr.GetInt32(1), rdr.GetInt32(9)),
+        FileIndex     = rdr.GetInt32(9),
     };
 
     // Название и цвет коллекции — одним чтением на страницу, а не колонкой в каждой строке.
@@ -357,8 +361,8 @@ public partial class ConstructorRepository
     /// учитывает регистр ВСЕГДА, и у латиницы тоже: по «gost» не находилось «GoSt», а файл
     /// «MiXeD-Case.pdf» по «mixed-case» не находился вовсе. Поэтому там сравнение — <c>ILIKE</c>:
     /// латиницу он сводит при любой локали сервера, кириллицу — при локали, которая ее знает, а
-    /// варианты остаются ради сервера с локалью «C». Набор путей уходит в <c>IN</c> по индексу
-    /// <c>db_field_values(FieldId, Value)</c>: это точный заход, а не скан.
+    /// варианты остаются ради сервера с локалью «C». Пути сравниваются отдельно после раскрытия
+    /// значения: находка одного файла не должна возвращать остальные файлы той же ячейки.
     ///
     /// «Е с точками» не отличается от «е» — как и в поиске по тексту
     /// (<c>DocTextIndex.YoSpellings</c>): название с этой буквой находится по написанию через
@@ -404,13 +408,13 @@ public partial class ConstructorRepository
         var like     = LikeOp(db.IsPostgres);
         var likes    = new List<string>();
         for (var i = 0; i < variants.Count; i++)
-            likes.Add($"({Fold("r.Title")} {like} @q{i} ESCAPE '\\' OR {Fold("v.Value")} {like} @q{i} ESCAPE '\\')");
+            likes.Add($"({Fold("r.Title")} {like} @q{i} ESCAPE '\\' OR {Fold(DocPathSql)} {like} @q{i} ESCAPE '\\')");
 
         var pathList = paths.SelectMany(DocIndex.DocTextIndex.Spellings)
                             .Distinct(StringComparer.Ordinal)
                             .ToList();
         var byPath   = pathList.Count > 0
-            ? $"v.Value IN ({string.Join(",", pathList.Select((_, i) => "@p" + i))})"
+            ? $"{DocPathSql} IN ({string.Join(",", pathList.Select((_, i) => "@p" + i))})"
             : "";
 
         var conditions = new List<string>();
@@ -426,15 +430,16 @@ public partial class ConstructorRepository
         {
             using var cmd = conn.CreateCommand();
             cmd.CommandText = $@"
-                SELECT r.Id, f.Id, f.Name, f.CollectionId, c.Name, c.Color, r.Title, v.Value,
-                       {DocTypeAnyExpr}
+                SELECT r.Id, f.Id, f.Name, f.CollectionId, c.Name, c.Color, r.Title, {DocPathSql},
+                       {DocTypeAnyExpr}, {DocFileIndexSql}
                 FROM db_field_values v
                 JOIN db_fields f      ON f.Id = v.FieldId
                 JOIN db_collections c ON c.Id = f.CollectionId
                 JOIN db_records r     ON r.Id = v.RecordId AND r.CollectionId = f.CollectionId
+                {DocPathsJoinSql}
                 WHERE v.FieldId IN ({string.Join(",", docFields)}) AND v.Value <> '' AND ({where})
                   AND {typeWhere}
-                ORDER BY f.CollectionId, r.Position, r.Id, f.Position, f.Id
+                ORDER BY f.CollectionId, r.Position, r.Id, f.Position, f.Id, {DocFileIndexSql}
                 LIMIT {Math.Max(1, limit)}";
 
             for (var i = 0; i < variants.Count; i++)
@@ -475,6 +480,7 @@ public partial class ConstructorRepository
         Title          = rdr.IsDBNull(6) ? "" : rdr.GetString(6),
         Path           = rdr.IsDBNull(7) ? "" : rdr.GetString(7),
         DocType        = rdr.IsDBNull(8) ? "" : rdr.GetString(8),
+        FileIndex      = rdr.GetInt32(9),
     };
 
     /// <summary>

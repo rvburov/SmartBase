@@ -229,8 +229,9 @@ public partial class TableView
             var point = e.Pointer.GetPosition(surface);
             if (!shift && !ctrl && ButtonAt(vm, def, hit.Bounds, point) is { } button)
                 _buttonPress = (hit.Row, def.Key, button.Area, button.Paperclip ? GridButton.Paperclip : GridButton.Checkbox);
-            else if (!shift && !ctrl && def.FieldType == "file" && !vm.IsLoading)
-                OnFileLinkPressed(hit.Row, def, e.Pointer.ClickCount);
+            else if (!shift && !ctrl && def.FieldType == "file" && !vm.IsLoading
+                     && surface.FilePathAt(hit, point) is { } path)
+                OnFileLinkPressed(hit.Row, def, path, e.Pointer.ClickCount);
 
             if (again) _editOnRelease = here;
             // Двойной клик по имени файла открыл ручную правку пути: мышь дальше — в поле, не в ячейки.
@@ -596,9 +597,10 @@ public partial class TableView
 
     // Нажатие на имя файла — как LinkHost у FileEditor: двойной клик правит путь руками (не у
     // авто-привязки), одиночный ждет 250 мс, не станет ли двойным, и тогда открывает файл.
-    private void OnFileLinkPressed(int row, TableColumnDef def, int clickCount)
+    private void OnFileLinkPressed(int row, TableColumnDef def, string path, int clickCount)
     {
-        if (def.FileAutoFolder.Length == 0 && clickCount >= 2)
+        if (def.FileAutoFolder.Length == 0 && clickCount >= 2
+            && CachedRowAt(row) is { } vm && FileValue.ReadPaths(vm[def.Key]).Count <= 1)
         {
             BeginFileEdit(row, def);
             return;
@@ -607,22 +609,22 @@ public partial class TableView
         var key = def.Key;
         _ = Task.Delay(250).ContinueWith(_ => Dispatcher.UIThread.Post(() =>
         {
-            if (seq == _pressSeq) OnFileSingleClick(row, key);
+            if (seq == _pressSeq) OnFileSingleClick(row, key, path);
         }), TaskScheduler.Default);
     }
 
     // Одиночный клик по имени: файл есть — открыть; нет — поправить путь руками; пусто («Выбрать
     // файл…») — ничего. Авто-привязка: папка недоступна — плашка, файл есть — открыть. Диск
     // спрашивается в фоне: на сетевой папке ответ идет секундами, а UI-поток ждать не должен.
-    private void OnFileSingleClick(int row, string key)
+    private void OnFileSingleClick(int row, string key, string path)
     {
         if (CachedRowAt(row) is not { IsLoading: false, IsAddRow: false } vm) return;
         if (_colDefs.FirstOrDefault(d => d.Key == key) is not { } def) return;
         var seq    = _pressSeq;
         var rid    = vm.RecordId;
-        var path   = vm[def.Key].Trim();
         var folder = def.FileAutoFolder;
         if (folder.Length == 0 && path.Length == 0) return;
+        if (path.Length > 0 && !FileValue.ReadPaths(vm[def.Key]).Contains(path, StringComparer.Ordinal)) return;
 
         // Ответ — на UI-поток явно (стенды без контекста синхронизации).
         _ = Task.Run(() => (folder.Length == 0 || Directory.Exists(folder), path.Length > 0 && File.Exists(path)))
@@ -638,7 +640,7 @@ public partial class TableView
                         return;
                     }
                     if (fileOk) FileEditor.OpenWithSystem(path);
-                    else BeginFileEdit(row, def);
+                    else if (FileValue.ReadPaths(vm[def.Key]).Count <= 1) BeginFileEdit(row, def);
                 }), TaskScheduler.Default);
     }
 

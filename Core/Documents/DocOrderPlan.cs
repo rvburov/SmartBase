@@ -3,11 +3,11 @@ using SmartBase.Core.Models;
 namespace SmartBase.Core.Documents;
 
 public enum DocSort { Collections, Title, TitleDescending, Modified }
-public readonly record struct DocOrderItem(int RecordId, int FieldId, string Title, long Modified = 0);
-public readonly record struct DocOrderKey(int Entry, int RecordId, int FieldId);
+public readonly record struct DocOrderItem(int RecordId, int FieldId, string Title, long Modified = 0, int FileIndex = 0);
+public readonly record struct DocOrderKey(int Entry, int RecordId, int FieldId, int FileIndex = 0);
 public sealed record DocOrderStream(int DbId, int CollectionId, IReadOnlyList<DocOrderItem> Items);
 
-/// <summary>Слияние легких ключей всех коллекций. В готовом порядке остаются только три int
+/// <summary>Слияние легких ключей всех коллекций. В готовом порядке остаются только четыре int
 /// на документ; названия и пути не удерживаются виртуальной лентой.</summary>
 public static class DocOrderPlan
 {
@@ -26,7 +26,9 @@ public static class DocOrderPlan
         value = Nullable.Compare(a.CollectionId, b.CollectionId);
         if (value != 0) return value;
         value = Nullable.Compare(a.Id, b.Id);
-        return value != 0 ? value : a.FileFieldId.CompareTo(b.FileFieldId);
+        if (value != 0) return value;
+        value = a.FileFieldId.CompareTo(b.FileFieldId);
+        return value != 0 ? value : a.FileIndex.CompareTo(b.FileIndex);
     }
 
     private static int CompareValue(string a, long at, string b, long bt, DocSort sort)
@@ -48,7 +50,7 @@ public static class DocOrderPlan
                 foreach (var item in streams[e].Items)
                 {
                     ct.ThrowIfCancellationRequested();
-                    keys.Add(new DocOrderKey(e, item.RecordId, item.FieldId));
+                    keys.Add(new DocOrderKey(e, item.RecordId, item.FieldId, item.FileIndex));
                 }
             ct.ThrowIfCancellationRequested();
             return keys.ToArray();
@@ -69,7 +71,9 @@ public static class DocOrderPlan
             value = streams[a.Entry].CollectionId.CompareTo(streams[b.Entry].CollectionId);
             if (value != 0) return value;
             value = a.Item.RecordId.CompareTo(b.Item.RecordId);
-            return value != 0 ? value : a.Item.FieldId.CompareTo(b.Item.FieldId);
+            if (value != 0) return value;
+            value = a.Item.FieldId.CompareTo(b.Item.FieldId);
+            return value != 0 ? value : a.Item.FileIndex.CompareTo(b.Item.FileIndex);
         }
         var heap = new PriorityQueue<Head, Head>(Comparer<Head>.Create(CompareHead));
         for (var e = 0; e < groups.Length; e++)
@@ -89,7 +93,7 @@ public static class DocOrderPlan
         while (heap.TryDequeue(out var head, out _))
         {
             if ((at & 255) == 0) ct.ThrowIfCancellationRequested();
-            result[at++] = new DocOrderKey(head.Entry, head.Item.RecordId, head.Item.FieldId);
+            result[at++] = new DocOrderKey(head.Entry, head.Item.RecordId, head.Item.FieldId, head.Item.FileIndex);
             groups[head.Entry][head.Offset] = default;
             var next = head.Offset + 1;
             if (next >= groups[head.Entry].Length) continue;

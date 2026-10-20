@@ -21,6 +21,30 @@ public sealed class DocSelectionTests
     }
 
     [Fact]
+    public void Files_of_one_property_are_selected_independently_and_keep_identity_after_reordering()
+    {
+        DocRecord File(string path, int index) => new()
+        {
+            DbId = 1, Id = 7, FileFieldId = 3, Path = path, FileIndex = index,
+        };
+        var a = File("/one/report, final.pdf", 0);
+        var b = File("/two/report, final.pdf", 1);
+        var selection = new DocSelection();
+        selection.Toggle(a);
+        selection.Toggle(b);
+        Assert.Equal(2, selection.Count);
+        Assert.True(selection.Contains(File(a.Path, 5)));
+        Assert.True(selection.Contains(File(b.Path, 0)));
+        selection.Toggle(File(b.Path, 0));
+        Assert.Single(selection.Keys);
+        Assert.True(selection.Contains(a));
+        Assert.False(selection.Contains(b));
+        selection.Clear();
+        selection.SelectRange([a, b], a, b);
+        Assert.Equal(2, selection.Count);
+    }
+
+    [Fact]
     public void A_reversed_range_is_inclusive_and_keeps_previous_selection()
     {
         var docs = Enumerable.Range(1, 5).Select(i => Doc(i)).ToArray();

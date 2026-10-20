@@ -26,17 +26,16 @@ public enum DocTextState
 
 /// <summary>
 /// Место документа в порядке ленты — ключ keyset-курсора: позиция и id записи, затем позиция
-/// и id файлового столбца (разные столбцы одной записи идут подряд). По нему следующая
+/// и id файлового столбца, затем индекс пути в свойстве. По нему следующая
 /// страница читается «после этого документа» за время, не зависящее от глубины, а не
 /// смещением, цена которого растет с каждой пропущенной строкой.
 /// </summary>
-public readonly record struct DocCursor(int RecordPosition, int RecordId, int FieldPosition, int FieldId);
+public readonly record struct DocCursor(int RecordPosition, int RecordId, int FieldPosition, int FieldId, int FileIndex = 0);
 
 /// <summary>
-/// Документ раздела «Библиотека документов» — пара «запись × file-поле с ролью
-/// <c>IsDocFile</c>». Одна запись дает столько документов, сколько в коллекции включенных
-/// файловых столбцов: роль не эксклюзивна ровно так же, как календарная дата, поэтому
-/// документ опознается парой (<see cref="Id"/>, <see cref="FileFieldId"/>), а не одним id.
+/// Документ раздела «Библиотека документов» — отдельный файл свойства с ролью
+/// <c>IsDocFile</c>. Запись дает карточку на каждый путь каждого включенного файлового
+/// столбца; <see cref="FileIndex"/> различает пути внутри одного свойства.
 /// </summary>
 public class DocRecord
 {
@@ -45,10 +44,12 @@ public class DocRecord
     public int?   Id           { get; set; }
     /// <summary>File-поле (<c>IsDocFile</c>), из которого получен документ.</summary>
     public int    FileFieldId  { get; set; }
+    /// <summary>Индекс пути в значении файлового свойства; у прежнего одиночного пути — 0.</summary>
+    public int    FileIndex    { get; set; }
     /// <summary>Подпись файлового столбца — его видно в карточке, когда столбцов несколько.</summary>
     public string FileFieldName { get; set; } = "";
     public string Title        { get; set; } = "";
-    /// <summary>Абсолютный путь к документу — как его хранит тип «Файл» (строка в значении).</summary>
+    /// <summary>Отдельный абсолютный путь к документу, раскрытый из значения типа «Файл».</summary>
     public string Path         { get; set; } = "";
     /// <summary>Значение поля с ролью «Тип документа»; пусто — тип не проставлен.</summary>
     public string DocType      { get; set; } = "";

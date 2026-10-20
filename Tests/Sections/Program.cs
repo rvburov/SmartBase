@@ -2096,6 +2096,36 @@ async Task LibraryOps()
         return;
     }
 
+    Step("библиотека: два файла одного свойства");
+    var secondOwnPath = Path.Combine(dir, "второй, свой.txt");
+    File.WriteAllText(secondOwnPath, "второй документ той же записи");
+    SmartBase.Core.Models.DocRecord[] OwnFiles() => feed.Cards
+        .Where(c => !c.IsPlaceholder && c.Doc.DbId == db.DbId && c.Doc.Id == own && c.Doc.FileFieldId == file)
+        .Select(c => c.Doc).ToArray();
+    try
+    {
+        repo.SetFieldValue(own, file, SmartBase.Core.Models.FileValue.Serialize([ownPath, secondOwnPath]));
+        var expanded = await Until(() => OwnFiles().Length == 2 && Census().Total == 2, 30);
+        var files = OwnFiles();
+        Expect(expanded, $"два файла одного свойства дали две карточки и два документа в подвале (карточек {files.Length}, в подвале {Census().Total})");
+        Expect(files.Select(d => (d.Path, d.FileIndex)).SequenceEqual(new[] { (ownPath, 0), (secondOwnPath, 1) }),
+            "у карточек свои пути и индексы файлов, имя с запятой не разделилось");
+        var keys = files.Select(SmartBase.Views.Library.DocSelection.KeyOf).ToArray();
+        Expect(keys.Length == 2 && keys.All(k => k is not null) && keys.Distinct().Count() == 2,
+            "файлы одной записи и одного свойства имеют независимые ключи выделения");
+    }
+    finally { repo.SetFieldValue(own, file, ownPath); }
+
+    Step("библиотека: возврат одного файла");
+    var restored = await Until(() => OwnFiles() is [{ Path: var path, FileIndex: 0 }]
+                                    && path == ownPath && Census().Total == 1, 30);
+    Expect(restored, $"одиночный путь вернул одну карточку и один документ в подвале (в подвале {Census().Total})");
+    if (!restored)
+    {
+        Console.WriteLine($"Библиотека: НЕ ПРОШЛО {faults}");
+        return;
+    }
+
     Step("библиотека: документ перекрывает список без сжатия");
     var reader = main!.FindControl<SmartBase.Views.Library.DocReaderView>("LibraryReader")!;
     var root = main.FindControl<Grid>("RootGrid")!;

@@ -10,9 +10,13 @@
             <Panel Grid.Column="0" VerticalAlignment="Stretch">
                 <!-- Показ: имя файла синей ссылкой / «файл не найден» / «Выбрать файл…» -->
                 <Border x:Name="LinkHost" Padding="10,0" Background="Transparent"
-                        VerticalAlignment="Stretch">
-                    <TextBlock x:Name="Link" VerticalAlignment="Center"
-                               TextTrimming="CharacterEllipsis" />
+                        VerticalAlignment="Stretch" ClipToBounds="True">
+                    <Panel>
+                        <TextBlock x:Name="Link" VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis" />
+                        <StackPanel x:Name="MultiLinks" Orientation="Horizontal"
+                                    VerticalAlignment="Center" IsVisible="False" />
+                    </Panel>
                 </Border>
                 <!-- Правка: ручной ввод полного пути -->
                 <TextBox x:Name="Input" Classes="timeInput" IsVisible="False"

@@ -416,6 +416,10 @@
                               IsChecked="True" />
                 </StackPanel>
 
+                <CheckBox x:Name="FilePartialMatchCheck"
+                          Content="Частичное совпадение имени"
+                          IsChecked="False" />
+
                 <StackPanel Spacing="6">
                     <TextBlock Text="Формат файла"
                                FontWeight="{StaticResource FontWeightBold}"

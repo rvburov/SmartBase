@@ -651,10 +651,16 @@ public sealed class PropertySurface : Control, IEditorSurface
                 // скрепки нет).
                 var box  = Band(value, IconSize, scale);
                 var auto = card.FileAutoFolder.Length > 0;
-                var (text, brush, id, underline) = _s.FileLook(raw, card.FileAutoFolder);
                 var clipW    = auto ? 0 : ClipPadLeft + IconSize + ClipPadRight;
                 var textArea = new Rect(box.X, box.Y, Math.Max(1, box.Width - clipW), box.Height);
-                DrawLabel(ctx, text, textArea, brush, id, scale, TextTrimming.CharacterEllipsis, underline);
+                if (FileValue.ReadPaths(raw).Count > 1)
+                    _s.FileLinks(raw, card.FileAutoFolder, textArea, TextAlignment.Left, CellVAlign.Center,
+                                  0, scale, label: true).Draw(ctx);
+                else
+                {
+                    var (text, brush, id, underline) = _s.FileLook(raw, card.FileAutoFolder);
+                    DrawLabel(ctx, text, textArea, brush, id, scale, TextTrimming.CharacterEllipsis, underline);
+                }
                 if (!auto && _s.Paperclip is { } clip)
                     _s.DrawIcon(ctx, clip, box.Right - ClipPadRight - IconSize, box.Y, _s.Secondary);
                 return;

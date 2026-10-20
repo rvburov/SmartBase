@@ -1136,7 +1136,7 @@ void SortedPages()
             var number = db == a ? 600 - i * 2 : 601 - i * 2;
             var record = repo.AddRecord(new DbRecord { CollectionId = col, Title = number.ToString("D4") }).Id!.Value;
             repo.SetFieldValue(record, field, path);
-            if (number is 1 or 301 or 601) selected.Add(new DocKey(db.DbId, record, field));
+            if (number is 1 or 301 or 601) selected.Add(new DocKey(db.DbId, record, field, path));
         }
         entries.Add(new DocVirtualList.Entry { DbId = db.DbId, DbName = db.Name, Repo = repo,
             ColId = col, TypeFieldId = repo.DocTypeFieldId(col)!.Value,

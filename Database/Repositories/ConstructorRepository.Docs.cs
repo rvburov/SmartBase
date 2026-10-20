@@ -6,7 +6,7 @@ namespace SmartBase.Database.Repositories;
 
 // ── Раздел «Библиотека документов» ────────────────────────────────────────────
 // Третий агрегатный раздел того же устройства, что календарь и задачи. Источник
-// документа — file-поле с флагом IsDocFile, документ = пара (RecordId, file-FieldId).
+// документа — file-поле с флагом IsDocFile, документ = файл внутри (RecordId, file-FieldId).
 //
 // Ключевое отличие от задач: роль НЕ эксклюзивна. У задач исполнитель один на
 // коллекцию намеренно (иначе каждая запись давала бы карточку на каждое user-поле,
@@ -328,9 +328,10 @@ public partial class ConstructorRepository
         {
             using var cmd = conn.CreateCommand();
             cmd.CommandText = $@"
-                SELECT DISTINCT v.Value
+                SELECT DISTINCT {DocPathSql}
                 FROM db_fields f
                 JOIN db_field_values v ON v.FieldId = f.Id AND v.Value <> ''
+                {DocPathsJoinSql}
                 WHERE f.FieldType = 'file' AND f.IsDocFile = 1{colFilter}";
             using var rdr = cmd.ExecuteReader();
             while (rdr.Read())

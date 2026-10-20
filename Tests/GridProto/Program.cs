@@ -21,6 +21,7 @@
 // Оговорка: Pump() выгребает все, что успело прийти, — «первый кадр» включает заполнения страниц.
 //
 //   dotnet run -c Release --project Tests/GridProto -- --db PATH [--collection NAME] [--steps 100] [--out DIR] [--ref DIR] [--probe] [--snap] [--gestures] [--keys] [--edit [--pg]] [--ops]
+//   dotnet run -c Release --project Tests/GridProto -- --files [--out DIR] — ссылки файлов, без базы стенда
 
 using System.Diagnostics;
 using Avalonia;
@@ -40,8 +41,8 @@ using SmartBase.Views.ConstructorDb;
 using SmartBase.Controls.DrawnGrid;
 using SmartBase.Views.ConstructorDb.DrawnGrid;
 
-var path = Arg("--db");
-if (path is null || !File.Exists(path)) { Console.WriteLine("Нужен --db PATH к файлу базы."); return 1; }
+var path = Arg("--db") ?? "";
+if (!args.Contains("--files") && !File.Exists(path)) { Console.WriteLine("Нужен --db PATH к файлу базы."); return 1; }
 var steps  = int.TryParse(Arg("--steps"), out var s) ? Math.Max(1, s) : 100;
 var outDir = Arg("--out") ?? Path.Combine(Path.GetTempPath(), "gridproto");
 Directory.CreateDirectory(outDir);
@@ -55,6 +56,8 @@ AppBuilder.Configure<SmartBase.App>()
           .SetupWithoutStarting();
 SmartBase.Utils.FontScale.Init();
 GridTimings.Enabled = true;
+
+if (args.Contains("--files")) return FileLinksChecks.Run(outDir);
 
 using var mgr = DatabaseManager.Open(9401, "gridproto", path);
 var repo = mgr.Constructor;

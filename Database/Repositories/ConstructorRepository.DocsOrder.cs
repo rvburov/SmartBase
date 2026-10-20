@@ -18,7 +18,7 @@ public partial class ConstructorRepository
         try
         {
             using var command = connection.CreateCommand();
-            command.CommandText = $"SELECT r.Id, f.Id, r.Title, v.Value {DocBody} AND ({where})";
+            command.CommandText = $"SELECT r.Id, f.Id, r.Title, {DocPathSql}, {DocFileIndexSql} {DocBody} AND ({where})";
             AddParam(command, "@c").Value = collectionId;
             AddParam(command, "@type").Value = typeFieldId > 0 ? typeFieldId : -1;
             for (var i = 0; i < types.Count; i++) AddParam(command, "@t" + i).Value = types[i];
@@ -29,7 +29,7 @@ public partial class ConstructorRepository
                 var path = reader.GetString(3);
                 result.Add(new DocOrderItem(reader.GetInt32(0), reader.GetInt32(1),
                     DocOrderPlan.Title(reader.IsDBNull(2) ? "" : reader.GetString(2), path),
-                    0));
+                    0, reader.GetInt32(4)));
                 paths?.Add(path);
             }
         }
@@ -65,9 +65,9 @@ public partial class ConstructorRepository
         {
             using var command = connection.CreateCommand();
             var ids = string.Join(",", keys.Select((_, i) => "@r" + i));
-            var pairs = string.Join(",", keys.Select((_, i) => $"(@r{i}, @f{i})"));
-            command.CommandText = $"SELECT {DocCols}, COALESCE({DocTypeValueExpr}, ''), r.Position, f.Position " +
-                                  $"{DocBody} AND ({where}) AND r.Id IN ({ids}) AND (r.Id, f.Id) IN ({pairs})";
+            var parts = string.Join(",", keys.Select((_, i) => $"(@r{i}, @f{i}, @i{i})"));
+            command.CommandText = $"SELECT {DocCols}, COALESCE({DocTypeValueExpr}, ''), r.Position, f.Position, {DocFileIndexSql} " +
+                                  $"{DocBody} AND ({where}) AND r.Id IN ({ids}) AND (r.Id, f.Id, {DocFileIndexSql}) IN ({parts})";
             AddParam(command, "@c").Value = collectionId;
             AddParam(command, "@type").Value = typeFieldId > 0 ? typeFieldId : -1;
             for (var i = 0; i < types.Count; i++) AddParam(command, "@t" + i).Value = types[i];
@@ -75,6 +75,7 @@ public partial class ConstructorRepository
             {
                 AddParam(command, "@r" + i).Value = keys[i].RecordId;
                 AddParam(command, "@f" + i).Value = keys[i].FieldId;
+                AddParam(command, "@i" + i).Value = keys[i].FileIndex;
             }
             using var reader = command.ExecuteReader();
             while (reader.Read()) result.Add(ReadDocPageRow(reader));

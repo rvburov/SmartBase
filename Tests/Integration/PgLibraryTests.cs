@@ -1,5 +1,6 @@
 using Npgsql;
 using SmartBase.Core.Models;
+using SmartBase.Core.Documents;
 using SmartBase.Database;
 using SmartBase.Database.Repositories;
 using DocView = SmartBase.Database.Repositories.ConstructorRepository.DocView;
@@ -45,6 +46,95 @@ public sealed class PgLibraryTests
             pg = Scenario(m.Constructor);
         }
         return (lite, pg);
+    }
+
+    [SkippableFact]
+    public void Multiple_file_values_have_the_same_library_semantics_on_both_providers()
+    {
+        Skip.IfNot(PgTestServer.IsAvailable, "Стенд PostgreSQL sb-pg (порт 5455) не поднят");
+        List<string> lite;
+        using (var db = new TempDatabase()) lite = MultipleFilesScenario(db.Constructor);
+        var cs = PgTestServer.ConnectionString(PgTestServer.Database1);
+        ResetSchema(cs);
+        List<string> pg;
+        using (var manager = DatabaseManager.Open(101, "pg-library-files", cs, provider: "postgres"))
+            pg = MultipleFilesScenario(manager.Constructor);
+        Assert.Equal(lite, pg);
+    }
+
+    // Пустой элемент остается дыркой индекса: курсор и ключ сортировки адресуют файл,
+    // а не номер строки уже отфильтрованного массива. Запятая в имени не делит путь.
+    private static List<string> MultipleFilesScenario(ConstructorRepository repo)
+    {
+        var collection = SampleData.AddCollection(repo, "Несколько файлов").Id!.Value;
+        var file = SampleData.AddField(repo, collection, "Файл", "file").Id!.Value;
+        repo.SetFileFieldInLibrary(file, true);
+        var type = repo.DocTypeFieldId(collection)!.Value;
+        var first = SampleData.AddRecord(repo, collection, "", 10).Id!.Value;
+        repo.SetFieldValue(first, file,
+            "{\"paths\":[\"/files/zulu.pdf\",\"\",\"/files/needle, report.txt\",\"/files/alpha.pdf\"]}");
+        repo.SetFieldValue(first, type, "Паспорт");
+        var legacy = SampleData.AddRecord(repo, collection, "Одиночный", 20).Id!.Value;
+        repo.SetFieldValue(legacy, file, "/files/legacy, source.pdf");
+        repo.SetFieldValue(legacy, type, "Чертеж");
+        var empty = SampleData.AddRecord(repo, collection, "Пустой", 30).Id!.Value;
+        repo.SetFieldValue(empty, file, "{\"paths\":[]}");
+        string[] expected = ["/files/zulu.pdf", "/files/needle, report.txt", "/files/alpha.pdf",
+                             "/files/legacy, source.pdf"];
+        var active = new HashSet<int> { collection };
+        var lines = new List<string>();
+        void Check(string what, IEnumerable<DocRecord> docs, IEnumerable<string> wanted)
+        {
+            var actual = docs.Select(d => d.Path).ToArray();
+            Assert.Equal(wanted, actual);
+            lines.Add(what + ": " + string.Join(" | ", actual));
+        }
+
+        Assert.Equal(4, repo.CountDocs(collection, type, DocView.All));
+        Assert.Equal(2, repo.CountDocs(collection, type, DocView.All, cap: 2));
+        Assert.Equal(4, repo.GetDocCollectionStats(active)[collection].Total);
+        var histogram = repo.GetDocTypeHistograms(active)[collection];
+        Assert.Equal(3, histogram.Counts["Паспорт"]);
+        Assert.Equal(1, histogram.Counts["Чертеж"]);
+        Assert.Equal(expected.Order(StringComparer.Ordinal), repo.GetDocPaths(active).Order(StringComparer.Ordinal));
+        var whole = repo.GetDocPage(collection, type, DocView.All, 0, 10);
+        Check("весь поток", whole, expected);
+        Assert.Equal(new[] { 0, 2, 3, 0 }, whole.Select(d => d.FileIndex).ToArray());
+        Assert.Equal(whole.Count, whole.Select(d => d.Cursor).Distinct().Count());
+        Check("страницы", Enumerable.Range(0, 2).SelectMany(i => repo.GetDocPage(collection, type, DocView.All, i * 2, 2)), expected);
+        for (var i = 0; i < whole.Count; i++)
+        {
+            Check("после " + i, repo.GetDocPage(collection, type, DocView.All,
+                new DocSeek(DocSeekOrigin.After, 0, whole[i].Cursor), 2), expected.Skip(i + 1).Take(2));
+            Check("перед " + i, repo.GetDocPage(collection, type, DocView.All,
+                new DocSeek(DocSeekOrigin.Before, 0, whole[i].Cursor), 2), expected.Take(i).TakeLast(2));
+        }
+        Check("с конца", repo.GetDocPage(collection, type, DocView.All,
+            new DocSeek(DocSeekOrigin.End, 0), 2), expected.TakeLast(2));
+        Check("имя файла", repo.SearchDocs(active, "needle", []), [expected[1]]);
+        Check("путь из кеша", repo.SearchDocs(active, "", [expected[1]]), [expected[1]]);
+        Check("потолок поиска", repo.SearchDocs(active, "files", [], limit: 2), expected.Take(2));
+        Check("фильтр типа", repo.SearchDocs(active, "files", [], new DocView(new HashSet<string> { "Чертеж" })), [expected[3]]);
+        var keys = repo.GetDocOrderKeys(collection, type, DocView.All, DocSort.Title);
+        var order = DocOrderPlan.Merge([new(101, collection, keys)], DocSort.Title);
+        var wantedKey = Assert.Single(order.Where(k => k.RecordId == first && k.FileIndex == 2));
+        Check("точный ключ файла", repo.GetDocsByOrderKeys(collection, type, [wantedKey]), [expected[1]]);
+        Assert.Equal(4, order.Distinct().Count());
+
+        // Старое произвольное значение не должно приводить к исключению SQL JSON-cast.
+        string[] rawValues = ["{\"paths\":not-json}", "{\"paths\":[\"/valid.pdf\",42]}",
+                              "{\"paths\":{}}", "{\"other\":[]}", " {\"paths\":[\"/space.pdf\"]}"];
+        for (var i = 0; i < rawValues.Length; i++)
+        {
+            var id = SampleData.AddRecord(repo, collection, "Прежнее значение", 40 + i).Id!.Value;
+            repo.SetFieldValue(id, file, rawValues[i]);
+        }
+        var duplicateKey = SampleData.AddRecord(repo, collection, "Повтор ключа", 100).Id!.Value;
+        repo.SetFieldValue(duplicateKey, file, "{\"paths\":[\"/ignored.pdf\"],\"paths\":[\"/last.pdf\"]}");
+        Check("прежние значения", repo.GetDocPage(collection, type, DocView.All, 4, 20), rawValues.Append("/last.pdf"));
+        Assert.Equal(expected.Length + rawValues.Length + 1, repo.CountDocs(collection, type, DocView.All));
+        Assert.Equal(expected.Concat(rawValues).Append("/last.pdf").Order(StringComparer.Ordinal), repo.GetDocPaths(active).Order(StringComparer.Ordinal));
+        return lines;
     }
 
     [SkippableFact]

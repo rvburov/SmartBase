@@ -64,6 +64,29 @@ public sealed class FileAutoRuleTests
         Assert.False(rule!.Recursive);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Roundtrips_partial_match_flag_without_changing_recursive_search(bool partialMatch)
+    {
+        var rule = new FileAutoRule("1", "/d", "pdf", Recursive: true, PartialMatch: partialMatch);
+        var back = FileAutoRule.FromConfig(rule.ToConfigJson());
+        Assert.Equal(rule, back);
+        Assert.Equal(partialMatch, back!.PartialMatch);
+        Assert.True(back.Recursive);
+    }
+
+    [Fact]
+    public void Rule_without_partial_match_key_keeps_exact_matching()
+    {
+        var rule = FileAutoRule.FromConfig("{\"auto\":{\"source\":\"1\",\"folder\":\"/d\",\"format\":\"pdf\"}}");
+        Assert.NotNull(rule);
+        Assert.False(rule!.PartialMatch);
+        Assert.True(rule.MatchesFileName("Отчет", "Отчет.pdf"));
+        Assert.False(rule.MatchesFileName("Отчет", "Готовый Отчет.pdf"));
+        Assert.False(rule.MatchesFileName("отчет", "Отчет.pdf"));
+    }
+
     [Fact]
     public void Reads_legacy_source_field_id_format()
     {
@@ -71,6 +94,7 @@ public sealed class FileAutoRuleTests
         Assert.NotNull(rule);
         Assert.Equal("7", rule!.SourceKey);
         Assert.Equal(7, rule.SourceFieldId);
+        Assert.False(rule.PartialMatch);
     }
 
     [Fact]
@@ -99,4 +123,28 @@ public sealed class FileAutoRuleTests
     [InlineData("", "")]     // пустое значение источника → нет искомого имени → «файл не найден»
     public void Target_file_name_is_value_dot_format(string sourceValue, string expected) =>
         Assert.Equal(expected, new FileAutoRule("1", "/d", "pdf").TargetFileName(sourceValue));
+
+    [Theory]
+    [InlineData("Отчет", "2026-Отчет-финал.pdf", "pdf", true)]
+    [InlineData("Отчет", "Отчет.pdf", "pdf", true)]
+    [InlineData("отчет", "Отчет.pdf", "pdf", false)]
+    [InlineData("Отчет", "Отчет.PDF", "pdf", false)]
+    [InlineData("Отчет", "Отчет.xlsx", "pdf", false)]
+    [InlineData("Отчет", "Отчет.pdf.bak", "pdf", false)]
+    [InlineData("pdf", "Отчет.pdf", "pdf", false)]
+    [InlineData("Отчет", "Пакет-Отчет.tar.gz", "tar.gz", true)]
+    [InlineData("tar", "Отчет.tar.gz", "tar.gz", false)]
+    [InlineData("Отчет", "Пакет-Отчет.TAR.GZ", "tar.gz", false)]
+    [InlineData("", "Отчет.pdf", "pdf", false)]
+    [InlineData(null, "Отчет.pdf", "pdf", false)]
+    [InlineData(" \t ", "Отчет.pdf", "pdf", false)]
+    [InlineData("*", "Отчет.pdf", "pdf", false)]
+    [InlineData("Отчет.1", "ОтчетX1.pdf", "pdf", false)]
+    [InlineData("Отчет.1", "Пакет Отчет.1 готов.pdf", "pdf", true)]
+    public void Partial_match_uses_literal_case_sensitive_name_without_the_configured_extension(
+        string? sourceValue, string fileName, string format, bool expected)
+    {
+        var rule = new FileAutoRule("1", "/d", format, PartialMatch: true);
+        Assert.Equal(expected, rule.MatchesFileName(sourceValue, fileName));
+    }
 }
