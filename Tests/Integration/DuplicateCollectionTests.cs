@@ -38,7 +38,61 @@ public sealed class DuplicateCollectionTests
         }
         Assert.Equal(Scalar(db.Path, $"SELECT COUNT(*) FROM calendar_index WHERE CollectionId = {colId}"),
                      Scalar(db.Path, $"SELECT COUNT(*) FROM calendar_index WHERE CollectionId = {newColId}"));
-        Assert.Equal("0", Scalar(db.Path, $"SELECT COUNT(*) FROM db_meta WHERE Key = '{ConstructorRepository.PendingDuplicateKey}'"));
+        Assert.Equal("0", Scalar(db.Path, $"SELECT COUNT(*) FROM db_meta WHERE Key LIKE '{ConstructorRepository.PendingPrefix}%'"));
+    }
+
+    /// <summary>Записи копии вставляются своими пакетами в зарезервированный блок id: запись,
+    /// которую другой писатель (интерфейс, сосед по общей базе) добавил посреди копии, получает id
+    /// после блока, а копия — непрерывный блок в порядке ранга источника.</summary>
+    [Fact]
+    public void Records_added_during_the_copy_never_take_the_reserved_ids()
+    {
+        using var db = new TempDatabase();
+        var (colId, _, _) = Seed(db.Constructor, records: 37);
+        var otherCol = SampleData.AddCollection(db.Constructor, "Другая").Id!.Value;
+
+        var foreign = new List<int>();
+        var newColId = Duplicate(db, colId, batchSize: 10, progress: done =>
+        {
+            if (done == 0 || done >= 37) return;
+            using var ctx = new AppDbContext(db.Path);
+            foreign.Add(SampleData.AddRecord(new ConstructorRepository(ctx), otherCol, $"чужая {done}").Id!.Value);
+        });
+
+        var copy = Ranked(db.Path, newColId);
+        Assert.Equal(37, copy.Count);
+        var first = copy[0].Id;
+        Assert.Equal(Enumerable.Range(first, 37), copy.Select(r => r.Id));   // блок подряд, в порядке ранга
+        Assert.Equal(3, foreign.Count);
+        Assert.All(foreign, id => Assert.True(id > first + 36, $"чужая запись {id} внутри блока копии"));
+        Assert.Equal(Ranked(db.Path, colId).Select(r => r.Title), copy.Select(r => r.Title));
+    }
+
+    /// <summary>Уборка соседа сочла копию брошенной и забрала маркер (сравнить и записать): копия
+    /// прерывается на следующем же пакете, источник цел, а копию и маркер владелец не трогает —
+    /// их убирает забравший.</summary>
+    [Fact]
+    public void Duplicate_stops_when_a_sweep_claimed_its_marker()
+    {
+        using var db = new TempDatabase();
+        var (colId, _, _) = Seed(db.Constructor, records: 30);
+        var collectionsBefore = db.Constructor.GetAllCollections().Count;
+
+        var ex = Assert.Throws<ConstructorRepository.PendingLostException>(() =>
+            DuplicateWithMarker(db, colId, batchSize: 10, progress: done =>
+            {
+                if (done != 10) return;
+                using var c = Open(db.Path);
+                Exec(c, $"UPDATE db_meta SET Value = Value || ' ' WHERE Key LIKE '{ConstructorRepository.PendingPrefix}%'");
+            }));
+        Assert.NotNull(ex);
+
+        Assert.Equal(30, db.Constructor.CountRecords(colId));
+        Assert.Equal("1", Scalar(db.Path, $"SELECT COUNT(*) FROM db_meta WHERE Key LIKE '{ConstructorRepository.PendingPrefix}%'"));
+        Assert.Equal(collectionsBefore + 1, db.Constructor.GetAllCollections().Count);   // копию удалит забравший маркер
+        // Остановилась на следующем же пакете: его транзакция откатилась вместе с отметкой.
+        var copy = db.Constructor.GetAllCollections().Single(c => c.Name.EndsWith("(копия)"));
+        Assert.Equal(10, db.Constructor.CountRecords(copy.Id!.Value));
     }
 
     /// <summary>Между пакетами копия не держит базу: у общей базы в сетевой папке (журнал DELETE)
@@ -86,10 +140,10 @@ public sealed class DuplicateCollectionTests
 
         Assert.Equal(collectionsBefore, db.Constructor.GetAllCollections().Count);
         Assert.Equal(40, db.Constructor.CountRecords(colId));
-        Assert.Equal("0", Scalar(db.Path, $"SELECT COUNT(*) FROM db_meta WHERE Key = '{ConstructorRepository.PendingDuplicateKey}'"));
+        Assert.Equal("0", Scalar(db.Path, $"SELECT COUNT(*) FROM db_meta WHERE Key LIKE '{ConstructorRepository.PendingPrefix}%'"));
     }
 
-    /// <summary>Выход из программы посреди копии оставляет маркер: следующее монтирование базы
+    /// <summary>Маркер прежней сборки (один на базу, без владельца): следующее монтирование базы
     /// убирает недописанную копию и маркер.</summary>
     [Fact]
     public void Unfinished_duplicate_is_swept_on_mount()
@@ -145,6 +199,23 @@ public sealed class DuplicateCollectionTests
         repo.CopyCollectionData(colId, shell.Collection.Id!.Value,
                                 progress is null ? null : new SyncProgress(progress), batchSize);
         return shell.Collection.Id!.Value;
+    }
+
+    // Дубль с маркером, как у боковой панели (шелл и маркер одной транзакцией, затем данные).
+    private static void DuplicateWithMarker(TempDatabase db, int colId, int batchSize, Action<int> progress)
+    {
+        using var ctx = new AppDbContext(db.Path);
+        var repo  = new ConstructorRepository(ctx);
+        var shell = repo.CreateCollectionShell(colId);
+        ConstructorRepository.PendingCopy pending;
+        using (var tx = ctx.Database.BeginTransaction())
+        {
+            pending = ConstructorRepository.BeginPending(ctx, ConstructorRepository.PendingKind.DuplicateCollection,
+                                                         shell.Collection.Id!.Value);
+            tx.Commit();
+        }
+        repo.CopyCollectionData(colId, shell.Collection.Id!.Value, new SyncProgress(progress), batchSize,
+                                pending, finishPending: true);
     }
 
     private sealed class SyncProgress(Action<int> report) : IProgress<int>
