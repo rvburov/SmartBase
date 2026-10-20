@@ -1,5 +1,6 @@
 using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
+using Serilog;
 
 namespace SmartBase.Database;
 
@@ -297,6 +298,45 @@ public sealed partial class DatabaseManager
         if (!HasTable(db, "db_meta")) return;
         db.Database.ExecuteSqlRaw("DELETE FROM db_meta WHERE \"Key\" = 'compact.vacuum';");
     }
+
+    // ── Сжатие по просьбе при следующем запуске ─────────────────────────────────────
+    //
+    // Основную базу при работающей программе не отцепить (на ней держится все окно), поэтому ее
+    // «Сжать файл» — флаг в db_meta: следующее монтирование сжимает файл с ходом на заставке, без
+    // порогов. Флаг в самом файле — он переживает и выключение компьютера до запуска.
+
+    private const string CompactRequestKey = "compact.requested";
+
+    /// <summary>Сжать файл этой базы при следующем подключении (основная база — при следующем
+    /// запуске программы), сколько бы в нем ни было данных.</summary>
+    public void RequestCompactOnNextStart()
+    {
+        if (Provider != "sqlite" || !HasTable(Context, "db_meta")) return;
+        Context.Database.ExecuteSqlRaw($"INSERT INTO db_meta (\"Key\", \"Value\") VALUES ('{CompactRequestKey}', '1') " +
+                                       "ON CONFLICT(\"Key\") DO UPDATE SET \"Value\" = '1';");
+        Log.Information("База «{Name:l}»: сжатие файла заказано на следующий запуск ({Path:l})", Name, Path);
+    }
+
+    /// <summary>Заказано ли сжатие при следующем запуске (<see cref="RequestCompactOnNextStart"/>).</summary>
+    public bool CompactOnNextStart => Provider == "sqlite" && CompactRequested(Context);
+
+    private static bool CompactRequested(AppDbContext db)
+    {
+        if (!HasTable(db, "db_meta")) return false;
+        db.Database.OpenConnection();
+        try
+        {
+            return Scalar(db.Database.GetDbConnection(),
+                $"SELECT COUNT(*) FROM db_meta WHERE \"Key\"='{CompactRequestKey}';") > 0;
+        }
+        finally
+        {
+            db.Database.CloseConnection();
+        }
+    }
+
+    private static void ClearCompactRequest(AppDbContext db) =>
+        db.Database.ExecuteSqlRaw($"DELETE FROM db_meta WHERE \"Key\" = '{CompactRequestKey}';");
 
     // ── SQL-хелперы на живом соединении ────────────────────────────────────────────
 

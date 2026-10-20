@@ -109,15 +109,20 @@ public partial class DbSettingsDialog : Window
             // Кнопка видна всегда, серая — когда сжать нельзя, и причина написана под ней.
             // Прежнее «видна, только когда есть что возвращать» оставляло администратора
             // искать глазами кнопку, которой на экране не было.
-            var canCompact = canMaintain && !entry.IsDefault;
-            CompactBtn.IsEnabled = canCompact;
-            if (!canCompact)
+            CompactBtn.IsEnabled = canMaintain;
+            if (!canMaintain)
             {
-                CompactHint.Text = entry.IsDefault
-                    ? "Основную базу программа сжимает сама при запуске."
-                    : storage is null
-                        ? "Сжать файл можно, когда база подключена."
-                        : "Сжимать файл может администратор базы.";
+                CompactHint.Text = storage is null
+                    ? "Сжать файл можно, когда база подключена."
+                    : "Сжимать файл может администратор базы.";
+                CompactHint.IsVisible = true;
+            }
+            else if (entry.IsDefault)
+            {
+                // Основная база подключена все время работы программы — отцепить ее на время
+                // сжатия нельзя, поэтому сжатие откладывается на следующий запуск.
+                CompactHint.Text = "Основная база подключена все время работы программы, поэтому ее файл " +
+                                   "сжимается при следующем запуске — ход сжатия будет виден на заставке.";
                 CompactHint.IsVisible = true;
             }
 

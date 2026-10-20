@@ -722,7 +722,12 @@ public partial class MainWindow : Window
     {
         var db    = _workspace.Get(dbId);
         var entry = _workspace.Registry.GetAll().FirstOrDefault(d => d.Id == dbId);
-        if (db is null || entry is null || entry.IsDefault || db.Provider != "sqlite") return;
+        if (db is null || entry is null || db.Provider != "sqlite") return;
+        if (entry.IsDefault)
+        {
+            await RequestDefaultCompactAsync(db);
+            return;
+        }
 
         var stats = db.Storage;
         // Места на диске не хватит — сказать сразу, а не отключать базу ради отказа.
@@ -769,6 +774,35 @@ public partial class MainWindow : Window
             _mountQueue.Enqueue(entry);
         }
         SyncMountedToUi();   // узел базы становится заглушкой «сжимаю файл…»
+    }
+
+    // Основную базу не отцепить, пока программа работает (на ней держится окно), поэтому ее
+    // сжатие — при следующем запуске, с ходом на заставке. Сам по себе запуск большой файл не
+    // сжимает (DatabaseManager.AutoCompactMaxLiveBytes): ждать заставку человек выбирает здесь.
+    private async Task RequestDefaultCompactAsync(DatabaseManager db)
+    {
+        var stats = db.Storage;
+        if (stats is not null && DatabaseManager.CompactRoomProblem(db.Path, stats.LiveBytes) is { } room)
+        {
+            Controls.Widgets.AppNotifications.Info($"Файл «{db.Name}» не сжать: {room}.");
+            return;
+        }
+        var text = $"Сжать файл основной базы «{db.Name}» при следующем запуске программы?\n\n" +
+                   (stats is null ? "" : $"Сейчас {Views.Settings.DatabaseRow.FormatStorage(stats)}.\n\n") +
+                   "Файл будет переписан целиком, данные не меняются. Пока идет сжатие, программа не " +
+                   "откроется: на заставке будет виден ход и сколько осталось.";
+        var ok = await new ConfirmDialog(text, confirmText: "Сжать при запуске").ShowDialog<bool>(this);
+        if (!ok) return;
+        try
+        {
+            db.RequestCompactOnNextStart();
+            Controls.Widgets.AppNotifications.Info($"Файл «{db.Name}» сожмется при следующем запуске программы.");
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "База «{Name:l}»: сжатие при следующем запуске не заказано", db.Name);
+            Notify($"Сжатие файла базы «{db.Name}» не заказано: {ex.Message}");
+        }
     }
 
     // Резервная копия переехала в «Настройки → Резервное копирование»: копии снимает

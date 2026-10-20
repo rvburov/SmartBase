@@ -225,6 +225,51 @@ public sealed class StorageBloatTests
         }
     }
 
+    /// <summary>Порог самосжатия при подключении — то, что сжимается за секунды: основная база
+    /// держит заставку, и сжатие на минуты (прежние 4 ГБ) не давало открыть программу.</summary>
+    [Fact]
+    public void Auto_compaction_limit_keeps_startup_short() =>
+        Assert.True(DatabaseManager.AutoCompactMaxLiveBytes <= 256L * 1024 * 1024);
+
+    /// <summary>«Сжать файл» основной базы: ее не отцепить, пока программа работает, поэтому
+    /// сжатие заказывается на следующий запуск и идет без порогов — даже у большой базы, которая
+    /// сама не сжимается. Заказ разовый: следующее подключение файл не трогает.</summary>
+    [Fact]
+    public void Requested_compaction_runs_at_next_mount_without_limits()
+    {
+        var path  = TempDatabase.NewTempPath();
+        var saved = DatabaseManager.AutoCompactMaxLiveBytes;
+        try
+        {
+            Bloat(path, rows: 40_000, valueLength: 1500);
+            DatabaseManager.AutoCompactMaxLiveBytes = 1;   // любая база — «большая»
+            var fileBefore = new FileInfo(path).Length;
+
+            using (var first = DatabaseManager.Open(6, "main", path))
+            {
+                Assert.True(first.Storage!.NeedsCompaction);   // сама не сжалась
+                Assert.False(first.CompactOnNextStart);
+                first.RequestCompactOnNextStart();
+                Assert.True(first.CompactOnNextStart);
+            }
+
+            var phases = new List<string>();
+            using (var second = DatabaseManager.Open(6, "main", path, stage: (msg, _) => { lock (phases) phases.Add(msg); }))
+            {
+                Assert.Equal(0, FreeSpace(path).FreeBytes);
+                Assert.False(second.CompactOnNextStart);
+                Assert.True(new FileInfo(path).Length < fileBefore / 4,
+                            $"файл не усечен: было {fileBefore}, стало {new FileInfo(path).Length}");
+            }
+            lock (phases) Assert.Contains(phases, p => p.StartsWith("Сжимаю файл", StringComparison.Ordinal));
+        }
+        finally
+        {
+            DatabaseManager.AutoCompactMaxLiveBytes = saved;
+            TempDatabase.Cleanup(path);
+        }
+    }
+
     /// <summary>Места для сжатия нужно еще два объема живых данных (копия во временном файле и
     /// журнал): маленькой базе хватает, заведомо огромной — нет, с объяснением для человека.</summary>
     [Fact]
