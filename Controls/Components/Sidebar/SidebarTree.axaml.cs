@@ -2489,8 +2489,10 @@ public partial class SidebarTree : UserControl
         }
         catch (Exception ex)
         {
-            // Ошибку фона проглатываем: узел либо скопирован, либо нет — UI не валим.
-            Log.Warning(ex, "Сбой фонового копирования узла (дублирование)");
+            // Ошибку фона проглатываем: узел либо скопирован, либо нет — UI не валим. Известные
+            // ошибки БД и прерванная копия дают тост внутри Handle, остальное — только в журнал.
+            if (!DbErrors.Handle(ex, targets[0].Repo.DbPath))
+                Log.Warning(ex, "Сбой фонового копирования узла (дублирование)");
         }
         if (total > BulkLogRecords)
             Log.Information("Дублирование в фоне: целей {Targets}, записей {Records:N0} за {Ms:N0} мс",
@@ -2622,8 +2624,10 @@ public partial class SidebarTree : UserControl
         }
         catch (Exception ex)
         {
-            // Ошибку фона проглатываем: узел либо перенесен, либо нет — UI не валим.
-            Log.Warning(ex, "Сбой фонового переноса узла");
+            // Ошибку фона проглатываем: узел либо перенесен, либо нет — UI не валим. Известные
+            // ошибки БД и прерванный перенос дают тост внутри Handle, остальное — только в журнал.
+            if (!DbErrors.Handle(ex, targetRepo.DbPath))
+                Log.Warning(ex, "Сбой фонового переноса узла");
         }
         if (total > BulkLogRecords)
             Log.Information("Перенос между базами в фоне: целей {Targets}, записей {Records:N0} за {Ms:N0} мс",

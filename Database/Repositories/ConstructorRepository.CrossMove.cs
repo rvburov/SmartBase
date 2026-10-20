@@ -15,20 +15,27 @@ namespace SmartBase.Database.Repositories;
 // (см. MoveCollectionIsolated): копируется все, включая UI-настройки; копия и удаление
 // источника раздельны, с компенсацией при сбое удаления.
 //
-// Отличие от ATTACH-пути: копия коммитится ПО ПАКЕТАМ (а не одной транзакцией), поэтому
-// kill посреди копии оставил бы частичную копию в приемнике. Против этого — маркер
-// crossmove.pending.* в db_meta приемника: ставится до заливки, снимается по завершении;
-// свип при монтировании (SweepUnfinishedCrossMove) доудаляет незавершенную копию.
-// Источник не трогается до полного завершения копии — после сбоя он всегда цел.
+// Копия коммитится ПО ПАКЕТАМ, поэтому выход из программы посреди нее оставил бы частичную копию
+// в приемнике. Против этого — маркер операции в db_meta приемника (ConstructorRepository.Pending):
+// ставится вместе с шеллом, владелец отмечается в каждом пакете, снимается вместе с уникализацией
+// имени; уборка при монтировании (SweepUnfinishedCrossMove) удаляет брошенную копию. Источник не
+// трогается до полного завершения копии — после сбоя копии он всегда цел. Удаление источника —
+// под своим маркером в источнике (DeleteMovedSource).
 public partial class ConstructorRepository
 {
+    // Прежние маркеры (один на базу, без владельца). Новые сборки их не пишут, а оставленные
+    // старой сборкой уборка убирает, как раньше.
     private const string PendingCollectionKey = "crossmove.pending.collection";
     private const string PendingGroupKey      = "crossmove.pending.group";
 
-    // Перенос коллекции между провайдерами: копия в приемник (this) → уникализация имени →
-    // удаление из источника на отдельном подключении (компенсация при сбое — как у ATTACH).
+    // Записей на страницу чтения источника и пакет приемника generic-копии.
+    private const int GenericBatch = 10_000;
+
+    // Перенос коллекции между провайдерами: копия в приемник (this) под маркером → уникализация
+    // имени и снятие маркера одной транзакцией → удаление из источника на отдельном подключении
+    // (DeleteMovedSource: откат копии — только пока исходник не тронут).
     private int MoveCollectionGeneric(string sourceDbPath, int srcCollectionId, int? targetGroupId,
-                                      IProgress<int>? progress, int batchSize)
+                                      IProgress<int>? progress, int? batchSize)
     {
         using var targetCtx = new AppDbContext(DbPath);
         targetCtx.ApplyBulkPerformancePragmas();
@@ -37,36 +44,38 @@ public partial class ConstructorRepository
         using var srcCtx = new AppDbContext(sourceDbPath);
         srcCtx.ApplyBulkPerformancePragmas();
 
-        var (newColId, recCount) = CopyCollectionGeneric(srcCtx, targetCtx, target,
-            srcCollectionId, targetGroupId, progress, 0, batchSize);
+        var (newColId, recCount, pending) = CopyCollectionGeneric(srcCtx, targetCtx, target,
+            srcCollectionId, targetGroupId, progress, 0, batchSize ?? GenericBatch);
         if (newColId == 0) return 0;
 
-        target.UniquifyCollectionName(newColId, targetGroupId);
-
+        // Копия полная: имя на месте и маркер снят одной транзакцией — дальше копия постоянная, и
+        // только теперь трогаем источник. Маркер забрала уборка соседа (сочла копию брошенной) —
+        // PendingLostException, копию удаляет она, источник цел.
         try
         {
-            using var delCtx = new AppDbContext(sourceDbPath);
-            delCtx.ApplyBulkPerformancePragmas();
-            // batchSize тот же, что у копирования: обе фазы двигают одну полосу прогресса,
-            // и разные шаги читались бы как рывок на середине.
-            new ConstructorRepository(delCtx).DeleteCollectionData(srcCollectionId,
-                new BaseProgress(progress, recCount), batchSize);
+            using var tx = targetCtx.Database.BeginTransaction();
+            target.UniquifyCollectionName(newColId, targetGroupId);
+            FinishPending(targetCtx, pending!);
+            tx.Commit();
         }
-        catch
+        catch (Exception ex) when (ex is not PendingLostException)
         {
             try { target.DeleteCollectionData(newColId, log: false); }
-            catch { /* копию убрать не удалось — данные целы в обеих БД */ }
+            catch { /* маркер остался — доудалит уборка */ }
+            DropPending(targetCtx, pending);
             throw;
         }
-        target.LogNow("move", "collection", target.CollectionNameOf(newColId) ?? "", count: recCount);
+
+        DeleteMovedSource(target, sourceDbPath, srcCollectionId, group: false, newColId, progress, recCount, batchSize);
+        LogMoved(target, "collection", target.CollectionNameOf(newColId) ?? "", recCount);
         return newColId;
     }
 
     // Перенос группы со всей веткой между провайдерами: структура групп клонируется через EF
     // (строк мало), коллекции — поколлекционно generic-копией с накоплением прогресса. Один
-    // маркер на корневую группу покрывает всю ветку (свип удалит ее целиком).
+    // маркер на корневую группу покрывает всю ветку (уборка удалит ее целиком).
     private int MoveGroupGeneric(string sourceDbPath, int srcGroupId, int? targetParentId,
-                                 IProgress<int>? progress, int batchSize)
+                                 IProgress<int>? progress, int? batchSize)
     {
         using var targetCtx = new AppDbContext(DbPath);
         targetCtx.ApplyBulkPerformancePragmas();
@@ -78,17 +87,18 @@ public partial class ConstructorRepository
         int newRootId;
         long total = 0;
         var map = new Dictionary<int, int>();   // старый id группы → новый
+        PendingCopy pending;
+
+        // Корень + маркер — одной транзакцией приемника: сбой между ними невозможен.
+        using (var tx = targetCtx.Database.BeginTransaction())
+        {
+            newRootId = CloneOneGroup(srcCtx, targetCtx, srcGroupId, targetParentId, map);
+            pending   = BeginPending(targetCtx, PendingKind.MoveGroup, newRootId);
+            tx.Commit();
+        }
 
         try
         {
-            // Корень + маркер — одной транзакцией приемника: сбой между ними невозможен.
-            using (var tx = targetCtx.Database.BeginTransaction())
-            {
-                newRootId = CloneOneGroup(srcCtx, targetCtx, srcGroupId, targetParentId, map);
-                SetMeta(targetCtx, PendingGroupKey, newRootId.ToString());
-                tx.Commit();
-            }
-
             // Остальная структура ветки (EF, строк мало).
             CloneGroupChildren(srcCtx, targetCtx, srcGroupId, newRootId, map);
 
@@ -101,57 +111,143 @@ public partial class ConstructorRepository
                 .ToList();
             foreach (var col in cols)
             {
-                var (_, rc) = CopyCollectionGeneric(srcCtx, targetCtx, target,
-                    col.Id, map[col.GroupId], progress, total, batchSize, markPending: false);
+                var (_, rc, _) = CopyCollectionGeneric(srcCtx, targetCtx, target,
+                    col.Id, map[col.GroupId], progress, total, batchSize ?? GenericBatch, pending);
                 total += rc;
             }
 
-            RemoveMeta(targetCtx, PendingGroupKey);
+            // Ветка полная: имя корня и снятие маркера — одной транзакцией (см. MoveCollectionGeneric).
+            using var tx = targetCtx.Database.BeginTransaction();
+            target.UniquifyGroupName(newRootId, targetParentId);
+            FinishPending(targetCtx, pending);
+            tx.Commit();
         }
-        catch
+        catch (Exception ex) when (ex is not PendingLostException)
         {
-            // Сбой на фазе копии: убираем частичную ветку из приемника (или это сделает свип).
-            try
-            {
-                if (map.TryGetValue(srcGroupId, out var rootId))
-                {
-                    target.DeleteGroupData(rootId, log: false);
-                    RemoveMeta(targetCtx, PendingGroupKey);
-                }
-            }
-            catch { /* доудалит свип при следующем монтировании */ }
-            throw;
-        }
-
-        target.UniquifyGroupName(newRootId, targetParentId);
-
-        try
-        {
-            using var delCtx = new AppDbContext(sourceDbPath);
-            delCtx.ApplyBulkPerformancePragmas();
-            new ConstructorRepository(delCtx).DeleteGroupData(srcGroupId, new BaseProgress(progress, total),
-                                                             batchSize);   // см. MoveCollectionGeneric
-        }
-        catch
-        {
+            // Сбой на фазе копии: убираем частичную ветку из приемника (не вышло — доудалит уборка).
             try { target.DeleteGroupData(newRootId, log: false); }
-            catch { /* копию убрать не удалось — данные целы в обеих БД */ }
+            catch { /* маркер остался — доудалит уборка при следующем монтировании */ }
+            DropPending(targetCtx, pending);
             throw;
         }
+
+        DeleteMovedSource(target, sourceDbPath, srcGroupId, group: true, newRootId, progress, total, batchSize);
         var movedName = targetCtx.DbGroups.Where(g => g.Id == newRootId)
                                           .Select(g => g.Name).FirstOrDefault() ?? "";
-        target.LogNow("move", "group", movedName, count: total);
+        LogMoved(target, "group", movedName, total);
         return newRootId;
+    }
+
+    // ── Удаление исходника после полной копии (оба пути переноса) ───────────────
+
+    /// <summary>Перенос не закончен: копия в приемнике полная, а исходник удален не до конца.</summary>
+    internal sealed class MoveIncompleteException(Exception inner)
+        : InvalidOperationException("Копия в базе назначения готова, но удалить исходник до конца не удалось: " +
+                                    "остаток удалится при следующем подключении исходной базы.", inner);
+
+    // Удалить перенесенное из источника. Копия в приемнике к этому моменту постоянная (ее маркер снят).
+    // В источнике на время удаления — свой маркер «доудалить» (PendingKind.Moved*): выход из программы
+    // посреди удаления оставил бы часть исходных записей рядом с полной копией, их доудалит уборка при
+    // монтировании источника. Сбой удаления:
+    //  • в источнике все на месте — копия убирается (откат переноса). Сначала снимается маркер
+    //    источника, и только если снят: иначе уборка удалила бы исходник при уже удаленной копии;
+    //  • исходника уже нет — перенос состоялся, сбой был после удаления;
+    //  • удален частично (или источник не прочитать) — копия остается: удалить ее после того, как
+    //    исходник начали удалять, значит потерять данные в обеих базах. Остаток доудалит уборка.
+    // progressBase — сдвиг прогресса (удаление идет второй половиной полосы); batchSize — постоянный
+    // размер пакета удаления (тесты, стенды), без него — по времени.
+    private static void DeleteMovedSource(ConstructorRepository target, string sourceDbPath, int srcId,
+                                          bool group, int copyId, IProgress<int>? progress, long progressBase,
+                                          int? batchSize)
+    {
+        using var srcCtx = new AppDbContext(sourceDbPath);
+        srcCtx.ApplyBulkPerformancePragmas();
+        var src    = new ConstructorRepository(srcCtx);
+        var before = src.MovedSourceState(srcId, group);
+        PendingCopy? mark = null;
+        try
+        {
+            mark = src.BeginPendingInOwnTransaction(group ? PendingKind.MovedGroup : PendingKind.MovedCollection, srcId);
+            if (group) src.DeleteGroupData(srcId, new BaseProgress(progress, progressBase), batchSize);
+            else       src.DeleteCollectionData(srcId, new BaseProgress(progress, progressBase), batchSize);
+            DropPending(srcCtx, mark);
+        }
+        catch (Exception ex)
+        {
+            // Маркер больше не «идущий»: повторное монтирование источника в этом же процессе уберет остаток.
+            if (mark is not null) ActivePending.TryRemove(mark.Key, out _);
+            (bool Exists, long Records, int Collections)? after;
+            try { after = src.MovedSourceState(srcId, group); }
+            catch { after = null; }
+
+            if (after == before && before.Exists)
+            {
+                if (mark is null || RemovePendingStrict(srcCtx, mark))
+                {
+                    try
+                    {
+                        if (group) target.DeleteGroupData(copyId, log: false);
+                        else       target.DeleteCollectionData(copyId, log: false);
+                    }
+                    catch { /* копию убрать не удалось — данные целы в обеих базах */ }
+                }
+                throw;
+            }
+            if (after is { Exists: false })
+            {
+                DropPending(srcCtx, mark);
+                Serilog.Log.Warning(ex, "Перенос: исходник в {Db:l} удален, сбой после удаления", srcCtx.DisplayPath);
+                return;
+            }
+            throw new MoveIncompleteException(ex);
+        }
+    }
+
+    // Что осталось от переносимого в источнике: есть ли сама коллекция (корень ветки), сколько
+    // записей и коллекций. По нему DeleteMovedSource отличает «ничего не удалено» от частичного удаления.
+    private (bool Exists, long Records, int Collections) MovedSourceState(int id, bool group)
+    {
+        if (!group)
+        {
+            var exists = db.DbCollections.Any(c => c.Id == id);
+            return (exists, db.DbRecords.LongCount(r => r.CollectionId == id), exists ? 1 : 0);
+        }
+        if (!db.DbGroups.Any(g => g.Id == id)) return (false, 0, 0);
+        var (collections, records) = CountGroupSubtree(id);
+        return (true, records, collections);
+    }
+
+    // Снять маркер строго: true — маркера больше нет, false — не вышло или его забрала уборка.
+    private static bool RemovePendingStrict(AppDbContext ctx, PendingCopy p)
+    {
+        try
+        {
+            var old = p.Value;
+            ctx.DbMeta.Where(m => m.Key == p.Key && m.Value == old).ExecuteDelete();
+            return !ctx.DbMeta.Any(m => m.Key == p.Key);
+        }
+        catch { return false; }
+    }
+
+    // Журнал «перенес» в приемнике — после того, как перенос состоялся: сбой записи журнала не
+    // должен выглядеть сбоем переноса (и тем более запускать откат).
+    private static void LogMoved(ConstructorRepository target, string targetType, string name, long count)
+    {
+        try { target.LogNow("move", targetType, name, count: count); }
+        catch (Exception ex) { Serilog.Log.Warning(ex, "Перенос состоялся, но запись в журнал не удалась"); }
     }
 
     // ── Движок generic-копии одной коллекции ────────────────────────────────────
 
-    // Копия одной коллекции src → tgt. Возвращает (id новой коллекции, число записей).
-    // markPending=false — при переносе группы ветку целиком покрывает групповой маркер.
-    private (int NewColId, long RecCount) CopyCollectionGeneric(AppDbContext srcCtx, AppDbContext tgtCtx,
+    // Копия одной коллекции src → tgt. Возвращает (id новой коллекции, число записей, маркер).
+    // pending — маркер ветки при переносе группы (ее целиком покрывает групповой маркер); без него
+    // копия ставит свой (PendingKind.MoveCollection) и возвращает его НЕснятым: снимает вызывающий
+    // вместе с уникализацией имени, перед удалением источника. Владелец отмечается в каждом пакете.
+    private (int NewColId, long RecCount, PendingCopy? Pending) CopyCollectionGeneric(AppDbContext srcCtx, AppDbContext tgtCtx,
         ConstructorRepository target, int srcCollectionId, int? targetGroupId,
-        IProgress<int>? progress, long progressBase, int batchSize, bool markPending = true)
+        IProgress<int>? progress, long progressBase, int batchSize, PendingCopy? pending = null)
     {
+        var ownPending = pending is null;
         // Один консистентный снимок источника на все чтение: конкурентные правки других
         // пользователей PG не дадут «рваную» копию (SQLite-читателю то же дает его
         // транзакция чтения). Держится до конца копии.
@@ -161,7 +257,7 @@ public partial class ConstructorRepository
         var srcDbTx = srcTx.GetDbTransaction();
 
         var srcCol = srcCtx.DbCollections.AsNoTracking().FirstOrDefault(c => c.Id == srcCollectionId);
-        if (srcCol is null) return (0, 0);
+        if (srcCol is null) return (0, 0, pending);
 
         var srcFields = srcCtx.DbFields.AsNoTracking()
             .Where(f => f.CollectionId == srcCollectionId).OrderBy(f => f.Id).ToList();
@@ -200,7 +296,7 @@ public partial class ConstructorRepository
                 fieldMap[f.Id] = nf.Id;
             }
 
-            if (markPending) SetMeta(tgtCtx, PendingCollectionKey, newColId.ToString());
+            pending ??= BeginPending(tgtCtx, PendingKind.MoveCollection, newColId);
             tx.Commit();
         }
 
@@ -250,6 +346,7 @@ public partial class ConstructorRepository
                         cells.Select(c => new object?[]
                             { newColId, recMap[c.RecordId], RemapColumnKey(c.Key, fieldMap), c.Bg, c.Fg, c.HAlign, c.VAlign }));
 
+                    BeatPending(tgtCtx, pending);
                     tx.Commit();
                 }
 
@@ -284,34 +381,38 @@ public partial class ConstructorRepository
                         BgAt = cm.BgAt, FgAt = cm.FgAt, HAlignAt = cm.HAlignAt, VAlignAt = cm.VAlignAt,
                     });
                 tgtCtx.SaveChanges();
+                BeatPending(tgtCtx, pending);
                 tx.Commit();
             }
-
-            if (markPending) RemoveMeta(tgtCtx, PendingCollectionKey);
         }
-        catch
+        catch (Exception ex) when (ex is not PendingLostException)
         {
-            // Сбой заливки: убираем частичную копию сразу (иначе ее доудалит свип по маркеру).
-            try
-            {
-                target.DeleteCollectionData(newColId, log: false);
-                if (markPending) RemoveMeta(tgtCtx, PendingCollectionKey);
-            }
-            catch { /* доудалит свип при следующем монтировании */ }
+            // Сбой заливки: убираем частичную копию сразу (не вышло — доудалит уборка по маркеру).
+            // Маркер забрала уборка соседа — копию удаляет она.
+            try { target.DeleteCollectionData(newColId, log: false); }
+            catch { /* доудалит уборка при следующем монтировании */ }
+            if (ownPending) DropPending(tgtCtx, pending);
             throw;
         }
 
-        return (newColId, recCount);
+        return (newColId, recCount, pending);
     }
 
     /// <summary>
-    /// Свип незавершенного generic-переноса и дубля при монтировании: kill посреди пакетной заливки
-    /// оставляет в приемнике частичную копию под маркером crossmove.pending.* (дубль коллекции —
-    /// duplicate.pending.collection) — доудаляем ее (источник не тронут, его данные целы). Сбой
-    /// свипа не валит монтирование: маркер остается, доудалим в следующий раз.
+    /// Уборка незавершенных массовых копий при монтировании: выход из программы посреди пакетной
+    /// заливки (дубль, перенос между базами) оставляет частичную копию под маркером операции
+    /// (ConstructorRepository.Pending) — брошенную удаляем (источник не тронут, его данные целы), а
+    /// прерванное удаление исходника после полной копии — доудаляем. Затем маркеры прежних сборок
+    /// (crossmove.pending.*, duplicate.pending.collection). Сбой уборки не валит монтирование:
+    /// маркер остается, доудалим в следующий раз.
     /// </summary>
     public void SweepUnfinishedCrossMove()
     {
+        try { SweepPendingCopies(); }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Уборка незавершенных копий в {Db:l} не удалась — повтор при следующем монтировании", db.DisplayPath);
+        }
         try
         {
             if (int.TryParse(GetMeta(db, PendingCollectionKey), out var colId))

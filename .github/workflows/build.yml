@@ -275,7 +275,7 @@ jobs:
       - name: Тесты провайдера
         run: |
           dotnet test Tests/Integration --configuration Release \
-            --filter 'FullyQualifiedName~PgProviderTests|FullyQualifiedName~PgCreateDatabaseTests|FullyQualifiedName~PgBulkWriteTests|FullyQualifiedName~PgLibraryTests|FullyQualifiedName~PgSearchTests' \
+            --filter 'FullyQualifiedName~PgProviderTests|FullyQualifiedName~PgCreateDatabaseTests|FullyQualifiedName~PgBulkWriteTests|FullyQualifiedName~PgLibraryTests|FullyQualifiedName~PgSearchTests|FullyQualifiedName~PgCalendarSummaryTests' \
             --logger 'console;verbosity=minimal' | tee pg.log
 
       # Без этой проверки job был бы зеленым и в том случае, когда база не поднялась: тесты

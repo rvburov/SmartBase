@@ -13,6 +13,7 @@ if (args.Length == 0)
     Console.WriteLine("  dbsize  --db PATH [--top N] [--fast]           — из чего состоит файл SQLite (только чтение)");
     Console.WriteLine("  bloat   [--count N] [--dir PATH]               — сценарий раздувания файла: заливка/удаление/правки/VACUUM");
     Console.WriteLine("  delete  --db PATH [--batch N] [--col ИМЯ]      — удаление большой коллекции: время, темп, файл и -wal, память");
+    Console.WriteLine("  dup     --db PATH [--col ИМЯ] [--batch N] [--keep] — дубль большой коллекции и удаление копии");
     Console.WriteLine("  pgdelete [--rows N] [--db ИМЯ]                 — то же удаление на PostgreSQL (стенд sb-pg)");
     Console.WriteLine("  wide    --db PATH [--columns N]                — цена широкой таблицы в ядре: снимок открытия, страницы, значения");
     Console.WriteLine("  docread [--count N] [--pages N] [--dir PATH] [--csv PATH] — разбор, FTS и открытие XLSX (библиотека документов)");
@@ -34,6 +35,7 @@ return args[0] switch
     "dbsize"  => DbSizeBench.Run(rest),
     "bloat"   => BloatBench.Run(rest),
     "delete"  => DeleteBench.Run(rest),
+    "dup"     => DupBench.Run(rest),
     "pgdelete" => PgDeleteBench.Run(rest),
     "wide"    => WideBench.Run(rest),
     "docread" => DocReadBench.Run(rest),
@@ -46,6 +48,6 @@ return args[0] switch
 static int Unknown(string cmd)
 {
     Console.WriteLine($"Неизвестная команда: {cmd}. Доступно: sidebar | import | export | pgload | pgperf | " +
-                      "csvlog | dbsize | bloat | delete | pgdelete | wide | docread | docfeed | backup | pgmove.");
+                      "csvlog | dbsize | bloat | delete | pgdelete | wide | docread | docfeed | backup | pgmove | dup.");
     return 1;
 }

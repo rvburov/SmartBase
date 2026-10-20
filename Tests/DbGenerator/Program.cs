@@ -35,6 +35,12 @@ namespace SmartBase.Tests.DbGenerator;
 ///   dotnet run -c Release --project Tests/DbGenerator                            → Tests/test_database.db, 20 млн
 ///   dotnet run -c Release --project Tests/DbGenerator -- --count 2000000
 ///   dotnet run -c Release --project Tests/DbGenerator -- --out /Volumes/Disk/big.db --force
+///   dotnet run -c Release --project Tests/DbGenerator -- --count 1000000 --shuffle --out ~/TestData/r1.db
+///
+/// --shuffle — даты, тексты и числа записи берутся не по ее номеру, а по перестановке номеров:
+/// содержимое идет вразнобой с порядком записей, как в живой базе. Без него даты и тексты растут
+/// вместе с номером записи, и вставка в индексы значений и проекции календаря выглядит почти
+/// последовательной: дубль и удаление на таком стенде в разы быстрее, чем на настоящих данных.
 ///
 /// ВНИМАНИЕ: 20 млн записей — это ~240 млн строк и файл ~30 ГБ (100 млн — ~1,2 млрд
 /// строк и ~150 ГБ). Такому файлу не место в рабочей папке — большие объемы задавайте
@@ -89,6 +95,7 @@ internal static class Program
         if (profile == "wide") return WideProfile.Run(args, dbPath, total);
         if (profile != "calendar") { Console.WriteLine($"Неизвестный профиль {profile}: calendar | wide."); return 1; }
 
+        if (args.Contains("--shuffle")) EnableShuffle(total);
         var scattered = total / 2;
         var huge      = total - scattered;
         var step      = Math.Max(1, ScatterSpanSeconds / scattered);
@@ -223,9 +230,21 @@ internal static class Program
         public string Title, Note, Qty, Status, Done, Url;
     }
 
-    private static void Fill(ref Row r, long n, long scattered, long step, GiantCache? giant)
+    // Перестановка номеров для --shuffle: d = (n − 1)·k mod total + 1, k взаимно просто с total.
+    private static long _shuffleTotal, _shuffleMul;
+
+    private static void EnableShuffle(long total)
     {
-        r.Id = n;
+        _shuffleTotal = total;
+        _shuffleMul   = 2_654_435_761 % total;
+        static long Gcd(long a, long b) { while (b != 0) (a, b) = (b, a % b); return a; }
+        while (_shuffleMul < 2 || Gcd(_shuffleMul, total) != 1) _shuffleMul++;
+    }
+
+    private static void Fill(ref Row r, long id, long scattered, long step, GiantCache? giant)
+    {
+        r.Id = id;
+        var n = _shuffleTotal == 0 ? id : (id - 1) * _shuffleMul % _shuffleTotal + 1;
         if (n <= scattered)
         {
             var s = ScatterBase.AddSeconds((n - 1) * step);

@@ -12,6 +12,8 @@ namespace SmartBase.Utils;
 ///  • BUSY/LOCKED — уведомление «база занята, изменение не сохранено» (штатная конкуренция);
 ///  • CANTOPEN/IOERR/NOTADB/CORRUPT и файловые ошибки — сигнал монитору доступности
 ///    (DbHealthMonitor: размонтирование, статус «недоступна», авто-переподключение) + уведомление;
+///  • прерванная массовая копия (перенос не закончил удаление исходника, копию забрала уборка
+///    соседа) — уведомление с текстом исключения;
 ///  • все остальное — не наша ошибка, пробрасывается дальше (баг должен быть виден).
 ///
 /// Использование: <c>catch (Exception ex) when (DbErrors.Handle(ex, repo.DbPath)) { }</c> —
@@ -68,6 +70,16 @@ public static class DbErrors
                 Log.Error(ex, "БД недоступна при записи: {Path:l}", Display(dbPath));
             if (dbPath is not null) ReportFailure?.Invoke(dbPath, ex);
             Post("База данных недоступна — изменение не сохранено.");
+            return true;
+        }
+        if (ex is Database.Repositories.ConstructorRepository.MoveIncompleteException
+                  or Database.Repositories.ConstructorRepository.PendingLostException)
+        {
+            // Массовая копия (перенос, дубль) прервана с исходом, который пользователю нужно знать:
+            // копия готова, а исходник доудалится при следующем подключении; копию сочли брошенной
+            // и убрала уборка соседа. Текст исключения и есть сообщение.
+            Log.Warning(ex, "Массовая копия не закончена: {Path:l}", Display(dbPath));
+            Post(ex.Message);
             return true;
         }
         if (ex is Microsoft.EntityFrameworkCore.DbUpdateConcurrencyException)
