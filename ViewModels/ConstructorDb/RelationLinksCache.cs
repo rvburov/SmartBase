@@ -20,6 +20,19 @@ public sealed class RelationLinksCache
     private const int MaxEntries = 20000;
 
     private readonly Dictionary<(int Field, int Record), List<(int Id, string Title)>> _map = new();
+    private readonly Dictionary<(int Field, int Record), List<(SmartBase.Core.Models.RelationTarget Target, string Display)>> _targets = new();
+
+    public bool TryGetTargets(int fieldId, int recordId,
+        out List<(SmartBase.Core.Models.RelationTarget Target, string Display)> links) =>
+        _targets.TryGetValue((fieldId, recordId), out links!);
+
+    public void PrimeTargets(int fieldId, IReadOnlyList<int> recordIds,
+        IReadOnlyDictionary<int, List<(SmartBase.Core.Models.RelationTarget Target, string Display)>> batch)
+    {
+        if (_targets.Count > MaxEntries) _targets.Clear();
+        foreach (var rid in recordIds)
+            _targets[(fieldId, rid)] = batch.TryGetValue(rid, out var links) ? links : [];
+    }
 
     public bool TryGet(int fieldId, int recordId, out List<(int Id, string Title)> links)
         => _map.TryGetValue((fieldId, recordId), out links!);
@@ -33,7 +46,11 @@ public sealed class RelationLinksCache
             _map[(fieldId, rid)] = batch.TryGetValue(rid, out var l) ? l : [];
     }
 
-    public void Invalidate(int fieldId, int recordId) => _map.Remove((fieldId, recordId));
+    public void Invalidate(int fieldId, int recordId)
+    {
+        _map.Remove((fieldId, recordId));
+        _targets.Remove((fieldId, recordId));
+    }
 
-    public void Clear() => _map.Clear();
+    public void Clear() { _map.Clear(); _targets.Clear(); }
 }

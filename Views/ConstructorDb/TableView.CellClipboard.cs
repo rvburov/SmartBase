@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Avalonia.Controls;
 using Avalonia.Input;
 using SmartBase.Controls.Components;
@@ -51,7 +52,7 @@ public partial class TableView
         // Связь уходит в буфер названиями связанных записей через разделитель столбца — так ее
         // показывает ячейка, и так она вставляется обратно. Названия порциями на столбец.
         var recordIds = rows.Select(r => r.RecordId).ToList();
-        var links     = new Dictionary<int, Dictionary<int, List<(int Id, string Title)>>>();
+        var links     = new Dictionary<int, Dictionary<int, List<(RelationTarget Target, string Display)>>>();
         foreach (var c in columns)
             if (FieldTypeInfo.IsRelation(_colDefs[c].FieldType) && int.TryParse(_colDefs[c].Key, out var relationField))
                 links[c] = LinksOf(relationField, recordIds);
@@ -59,7 +60,7 @@ public partial class TableView
         string Text(TableRowVm row, int c) =>
             links.TryGetValue(c, out var byRecord)
                 ? string.Join(_colDefs[c].Relation?.SeparatorString ?? ", ",
-                              byRecord.GetValueOrDefault(row.RecordId)?.Select(l => l.Title) ?? [])
+                              byRecord.GetValueOrDefault(row.RecordId)?.Select(l => l.Display) ?? [])
                 : CellText(row, _colDefs[c]);
 
         var matrix = rows
@@ -73,17 +74,25 @@ public partial class TableView
         if (!CopyTrace.Ready) { AppNotifications.Error(CopyTrace.NoJournal); return false; }
         if (!NoteCopy(columns, matrix.Count, text)) { AppNotifications.Error(CopyTrace.NotWritten); return false; }
 
-        return await SetClipboardTextAsync(text);
+        var relationCells = new List<RelationClipboardCell>();
+        for (var r = 0; r < rows.Count; r++)
+            for (var c = 0; c < columns.Count; c++)
+                if (links.TryGetValue(columns[c], out var byRecord))
+                    relationCells.Add(new(r, c, byRecord.GetValueOrDefault(rows[r].RecordId)?.Select(l => l.Target).ToList() ?? []));
+        var payload = relationCells.Count == 0 ? null : new RelationClipboard(1, text,
+            RelationDbResolver.DbIdFor(_repository), _repository.RelationDatabaseIdentity,
+            _repository.GetRelationDatabaseIdentities(relationCells.SelectMany(c => c.Targets)), relationCells);
+        return await SetClipboardTextAsync(text, payload);
     }
 
     // Связи столбца для многих записей — порциями: список id уходит в запрос параметром.
-    private Dictionary<int, List<(int Id, string Title)>> LinksOf(int fieldId, List<int> recordIds)
+    private Dictionary<int, List<(RelationTarget Target, string Display)>> LinksOf(int fieldId, List<int> recordIds)
     {
-        var all = new Dictionary<int, List<(int Id, string Title)>>();
+        var all = new Dictionary<int, List<(RelationTarget Target, string Display)>>();
         if (_repository is null) return all;
 
         foreach (var chunk in recordIds.Chunk(5_000))
-            foreach (var (recordId, list) in _repository.GetLinksBatch(fieldId, chunk.ToList()))
+            foreach (var (recordId, list) in _repository.GetRelationLinksBatch(fieldId, chunk.ToList()))
                 all[recordId] = list;
         return all;
     }
@@ -115,14 +124,23 @@ public partial class TableView
     // Буфер может быть занят другой программой — на Windows это штатный отказ. Без своего
     // перехвата исключение всплыло бы глобальным «Непредвиденная ошибка», хотя случилось
     // всего лишь «не удалось скопировать».
-    private async Task<bool> SetClipboardTextAsync(string text)
+    private const string RelationClipboardFormat = "application/x-smartbase-relation-cells+json";
+
+    private async Task<bool> SetClipboardTextAsync(string text, RelationClipboard? payload = null)
     {
         var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
         if (clipboard is null) return false;
 
         try
         {
-            await clipboard.SetTextAsync(text);
+            if (payload is null) await clipboard.SetTextAsync(text);
+            else
+            {
+                var data = new DataObject();
+                data.Set(DataFormats.Text, text);
+                data.Set(RelationClipboardFormat, JsonSerializer.Serialize(payload));
+                await clipboard.SetDataObjectAsync(data);
+            }
             return true;
         }
         catch (Exception)
@@ -157,7 +175,7 @@ public partial class TableView
         if (await SelectedCellsAsync() is not { } cells) return;
 
         var targets = cells
-            .Where(t => TablePastePlanner.IsWritable(PasteColumnOf(t.Column, users: null)))
+            .Where(t => TablePastePlanner.IsWritable(PasteColumnOf(t.Column, users: null, structured: true)))
             .ToList();
         if (targets.Count == 0) return;
 
@@ -191,9 +209,30 @@ public partial class TableView
         if (!Can(PermAction.EditRecord)) { PermissionNotice.Show(this, PermAction.EditRecord); return; }
 
         var text = await GetClipboardTextAsync();
-        if (string.IsNullOrEmpty(text)) return;
+        if (text is null) return;
 
-        var values = TableClipboardFormat.Parse(text);
+        RelationClipboard? structured = null;
+        try
+        {
+            if (TopLevel.GetTopLevel(this)?.Clipboard is { } clipboard
+                && await clipboard.GetDataAsync(RelationClipboardFormat) is string raw)
+            {
+                structured = JsonSerializer.Deserialize<RelationClipboard>(raw);
+                if (structured is not { Version: 1, Cells: not null, DatabaseIdentities: not null }
+                    || structured.Text != text || structured.Cells.Any(c => c.Row < 0 || c.Column < 0 || c.Targets is null)
+                    || structured.Cells.Select(c => (c.Row, c.Column)).Distinct().Count() != structured.Cells.Count)
+                    throw new InvalidOperationException("Неверный формат связей в буфере обмена.");
+                // Проверяем все базы до записи первого значения или ребра.
+                structured = structured with { Cells = structured.Cells.Select(c => c with
+                    { Targets = _repository.RebaseRelationClipboardTargets(structured, c.Targets) }).ToList() };
+            }
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException)
+        { AppNotifications.Error(ex.Message); return; }
+
+        var values = text.Length == 0 && structured?.Cells.Any(c => c.Row == 0 && c.Column == 0) == true
+            ? (IReadOnlyList<IReadOnlyList<string>>)[(IReadOnlyList<string>)[""]]
+            : TableClipboardFormat.Parse(text);
         if (values.Count == 0) return;
 
         // Размножение блока по выделению разливает его на всю высоту выделения — проверяем объем
@@ -206,7 +245,7 @@ public partial class TableView
         // чужие столбцы. В плане столбец — уже позиция в сетке.
         var visible = VisibleDataColumns();
         List<string>? users = null;
-        var columns = visible.Select(c => PasteColumnOf(_colDefs[c], users ??= UserOptions())).ToList();
+        var columns = visible.Select(c => PasteColumnOf(_colDefs[c], users ??= UserOptions(), structured is not null)).ToList();
         var plan    = TablePastePlanner.PlanInGrid(values, range, visible, columns, VisibleRowCount);
 
         if (TooManyCells(plan.Cells.Count)) return;
@@ -224,6 +263,8 @@ public partial class TableView
         }
 
         var writes = new List<(TableRowVm Row, TableColumnDef Column, string Value)>();
+        var identities = new Dictionary<(int RecordId, int FieldId), IReadOnlyList<RelationTarget>>();
+        var copiedLinks = structured?.Cells.ToDictionary(c => (c.Row, c.Column));
         if (plan.Cells.Count > 0)
         {
             // Вставке нужны только id записей — значения полей не читаются.
@@ -236,10 +277,18 @@ public partial class TableView
 
             foreach (var cell in plan.Cells)
                 if (byPosition.TryGetValue(cell.Row, out var row))
-                    writes.Add((row, _colDefs[cell.Column], cell.StorageValue));
+                {
+                    var column = _colDefs[cell.Column];
+                    writes.Add((row, column, cell.StorageValue));
+                    var sourceColumn = (visible.IndexOf(cell.Column) - visible.FindIndex(c => c >= range.Left)) % values.Max(v => v.Count);
+                    var sourceRow = (cell.Row - range.Top) % values.Count;
+                    if (FieldTypeInfo.IsRelation(column.FieldType) && int.TryParse(column.Key, out var fid)
+                        && copiedLinks?.TryGetValue((sourceRow, sourceColumn), out var copied) == true)
+                        identities[(row.RecordId, fid)] = copied.Targets;
+                }
         }
 
-        var outcome = await WriteCellsAsync(writes, "Вставка");
+        var outcome = await WriteCellsAsync(writes, "Вставка", identities);
         ReportPaste(outcome, plan.Skipped);
     }
 
@@ -248,19 +297,19 @@ public partial class TableView
     private List<string> UserOptions() => _repository?.GetUserOptions() ?? [];
 
     // Столбец таблицы глазами вставки: планировщик не должен знать про ViewModels.
-    private static PasteColumn PasteColumnOf(TableColumnDef def, List<string>? users) =>
+    private static PasteColumn PasteColumnOf(TableColumnDef def, List<string>? users, bool structured = false) =>
         new(def.Key, def.FieldType,
             // IsReadOnly у колонки означает «нет текстового редактора», а не «значение менять
             // нельзя»: чекбокс правится кликом и из буфера заполняется штатно («да», «1», «✓»).
             // Без этой оговорки вставка и очистка молча обходили бы все колонки-галочки.
-            IsReadOnly: def.IsReadOnly && def.FieldType != "checkbox",
+            IsReadOnly: def.IsReadOnly && def.FieldType != "checkbox" || def.Relation?.Auto is not null,
             Options: def.FieldType == "user" ? users : def.Options,
             DecimalSeparator: def.NumberFormat.DecimalSeparator,
             IsTitle: def.Key == TableRowVm.TitleKey,
             NumberFormat: def.NumberFormat,
             Separator: def.Separator,
             // Связь без настроенной цели или с целью в другой базе по названию не найти.
-            IsCrossDatabaseRelation: FieldTypeInfo.IsRelation(def.FieldType) && def.Relation is not { IsCrossDb: false });
+            IsCrossDatabaseRelation: FieldTypeInfo.IsRelation(def.FieldType) && (def.Relation is null || !structured && def.Relation.IsCrossDb));
 
     // ── Запись ────────────────────────────────────────────────────────────────
 
@@ -275,7 +324,8 @@ public partial class TableView
     // Одним пакетом: значения полей, названия записей и связи разделяются здесь — «Название» живет
     // в самой записи, связи — ребрами, а не текстом. operation — имя действия для журнала и отмены.
     private async Task<WriteOutcome> WriteCellsAsync(
-        IReadOnlyList<(TableRowVm Row, TableColumnDef Column, string Value)> writes, string operation)
+        IReadOnlyList<(TableRowVm Row, TableColumnDef Column, string Value)> writes, string operation,
+        IReadOnlyDictionary<(int RecordId, int FieldId), IReadOnlyList<RelationTarget>>? identities = null)
     {
         if (writes.Count == 0 || _repository is null) return default;
         var repository = _repository;
@@ -285,13 +335,14 @@ public partial class TableView
 
         var cells     = new List<ConstructorRepository.CellWrite>();
         var titles    = new List<ConstructorRepository.TitleWrite>();
-        var relations = new List<(int RecordId, int FieldId, string Text)>();
+        var relations = new List<(int RecordId, int FieldId, string Text, IReadOnlyList<RelationTarget>? Targets)>();
 
         foreach (var (row, column, value) in writes)
         {
             if (column.Key == TableRowVm.TitleKey) titles.Add(new(row.RecordId, value));
             else if (!int.TryParse(column.Key, out var fieldId)) continue;
-            else if (FieldTypeInfo.IsRelation(column.FieldType)) relations.Add((row.RecordId, fieldId, value));
+            else if (FieldTypeInfo.IsRelation(column.FieldType)) relations.Add((row.RecordId, fieldId, value,
+                value.Length == 0 ? [] : identities?.GetValueOrDefault((row.RecordId, fieldId))));
             else cells.Add(new ConstructorRepository.CellWrite(row.RecordId, fieldId, value));
         }
 
@@ -305,14 +356,14 @@ public partial class TableView
         RememberForUndo(operation, batch.Values, batch.Links);
         var changed = batch.Values.Changed + batch.Links.Changed;
         if (changed > 0) ReloadRows();   // строки перечитываем целиком: правок много и они разные
-        return new WriteOutcome(changed, batch.RelationNotFound, batch.RelationAmbiguous);
+        return new WriteOutcome(changed, batch.RelationNotFound, batch.RelationAmbiguous + batch.Links.Conflicts);
     }
 
     // Небольшой пакет — сразу, на общем подключении. null — значения не записались (база занята или
     // недоступна, человеку уже сказано).
     private WriteBatch? WriteNow(ConstructorRepository repository,
                                  List<ConstructorRepository.CellWrite> cells, List<ConstructorRepository.TitleWrite> titles,
-                                 List<(int RecordId, int FieldId, string Text)> relations, string operation)
+                                 List<(int RecordId, int FieldId, string Text, IReadOnlyList<RelationTarget>? Targets)> relations, string operation)
     {
         var values = ConstructorRepository.CellBulkResult.Nothing;
         if (cells.Count > 0 || titles.Count > 0)
@@ -329,7 +380,7 @@ public partial class TableView
         {
             try
             {
-                var found = relations.GroupBy(r => r.FieldId).ToDictionary(
+                var found = relations.Where(r => r.Targets is null).GroupBy(r => r.FieldId).ToDictionary(
                     g => g.Key, g => repository.ResolveRelationTitles(g.Key, [.. g.Select(r => r.Text).Distinct()]));
                 (var linkWrites, notFound, ambiguous) = LinkWritesOf(relations, found);
                 links = repository.SetLinksBulk(_collectionId, linkWrites, operation);
@@ -343,7 +394,7 @@ public partial class TableView
     // Большой пакет — в фоне, на отдельном подключении: окно остается живым, прогресс виден.
     private async Task<WriteBatch?> WriteInBackgroundAsync(ConstructorRepository repository,
                                                           List<ConstructorRepository.CellWrite> cells, List<ConstructorRepository.TitleWrite> titles,
-                                                          List<(int RecordId, int FieldId, string Text)> relations, string operation)
+                                                          List<(int RecordId, int FieldId, string Text, IReadOnlyList<RelationTarget>? Targets)> relations, string operation)
     {
         var values = ConstructorRepository.CellBulkResult.Nothing;
         if (cells.Count > 0 || titles.Count > 0)
@@ -359,7 +410,7 @@ public partial class TableView
             try
             {
                 var found = new Dictionary<int, Dictionary<string, ConstructorRepository.TitleResolution>>();
-                foreach (var byField in relations.GroupBy(r => r.FieldId))
+                foreach (var byField in relations.Where(r => r.Targets is null).GroupBy(r => r.FieldId))
                     found[byField.Key] = await repository.ResolveRelationTitlesIsolatedAsync(
                         byField.Key, [.. byField.Select(r => r.Text).Distinct()]);
                 (var linkWrites, notFound, ambiguous) = LinkWritesOf(relations, found);
@@ -373,15 +424,17 @@ public partial class TableView
 
     // Найденные по названиям связи — в записи ребер; ненайденные и тезки идут в счет пропуска.
     private static (List<ConstructorRepository.LinkWrite> Writes, int NotFound, int Ambiguous) LinkWritesOf(
-        List<(int RecordId, int FieldId, string Text)> relations,
+        List<(int RecordId, int FieldId, string Text, IReadOnlyList<RelationTarget>? Targets)> relations,
         IReadOnlyDictionary<int, Dictionary<string, ConstructorRepository.TitleResolution>> found)
     {
         var writes    = new List<ConstructorRepository.LinkWrite>();
         var notFound  = 0;
         var ambiguous = 0;
 
-        foreach (var (recordId, fieldId, text) in relations)
+        foreach (var (recordId, fieldId, text, targets) in relations)
         {
+            if (targets is not null) { writes.Add(ConstructorRepository.LinkWrite.FromTargets(recordId, fieldId, targets)); continue; }
+
             if (!found.TryGetValue(fieldId, out var byText) || !byText.TryGetValue(text, out var resolution))
             {
                 notFound++;
@@ -473,7 +526,8 @@ public partial class TableView
         OnMenuOpening(menu, async () =>
         {
             if (TopLevel.GetTopLevel(this)?.Clipboard is not { } clipboard) return;
-            try { paste.IsEnabled = !string.IsNullOrWhiteSpace(await clipboard.GetTextAsync()); }
+            try { paste.IsEnabled = !string.IsNullOrWhiteSpace(await clipboard.GetTextAsync())
+                    || await clipboard.GetDataAsync(RelationClipboardFormat) is string; }
             catch (Exception) { paste.IsEnabled = true; }
         });
 

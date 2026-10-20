@@ -148,6 +148,7 @@ public sealed partial class ConstructorRepository
         SyncLocalCache(inserts, updates, deletes, titleChanges);
 
         var autoFiles = ReactToBulkSourceEdits(collectionId, changes);
+        NotifyRelationDataChanged(collectionId);
 
         return changes.Count > UndoChangesLimit
             ? new CellBulkResult(changes.Count, conflicts, [], true, autoFiles)

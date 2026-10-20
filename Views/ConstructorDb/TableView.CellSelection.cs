@@ -407,8 +407,10 @@ public partial class TableView
     /// <see cref="CellDisplayText"/>, там же их проверяет круговой тест). Вычисляемые столбцы берут
     /// значение из аудита записи.</summary>
     private static string CellText(TableRowVm row, TableColumnDef def) =>
-        FieldTypeInfo.IsComputed(def.FieldType)
+        FieldTypeInfo.IsAuditComputed(def.FieldType)
             ? FieldTypeInfo.FormatComputedDisplay(ComputedRaw(row, def.FieldType), def.FieldType)
+            : FieldTypeInfo.IsRelationComputed(def.FieldType)
+            ? FieldTypeInfo.FormatComputedDisplay(row[def.Key], def.FieldType)
             : CellDisplayText.Of(def.FieldType, row[def.Key], def.NumberFormat, def.Separator);
 
     private static string ComputedRaw(TableRowVm row, string fieldType) => fieldType switch

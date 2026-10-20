@@ -24,7 +24,7 @@ public static class ColumnSort
     {
         int Core(string a, string b) => fieldType switch
         {
-            "number" => NumberKey(a).CompareTo(NumberKey(b)),
+            "number" or "rollup" => NumberKey(a).CompareTo(NumberKey(b)),
             "date"   => DateKey(a).CompareTo(DateKey(b)),
             _        => string.Compare(a, b, StringComparison.CurrentCultureIgnoreCase),
         };

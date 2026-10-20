@@ -832,6 +832,11 @@ public sealed class RelationLinkTests
         // Несовпадающий конфиг цели (здесь — внутрибазовый в B): ребро НЕ переезжает.
         var projB = SampleData.AddCollection(repoB, "Проекты").Id!.Value;
         relB.ConfigJson = new RelationConfig(projB, false).ToConfigJson();
+        Assert.Throws<InvalidOperationException>(() => repoB.UpdateField(relB));
+        var unchanged = repoB.GetFields(taskB).Single(f => f.Id == relB.Id);
+        Assert.Equal(new RelationConfig(projA, false, TargetDbId: 1), RelationConfig.FromConfig(unchanged.ConfigJson));
+        Assert.Equal([(p, 1)], repoB.GetLinkEdges(relB.Id!.Value, tb));
+        repoB.SetLinks(relB.Id!.Value, tb, []);
         repoB.UpdateField(relB);
         var tb2 = SampleData.AddRecord(repoB, taskB, "Задача 2").Id!.Value;
         repoB.CopyRelationLinksByName(repoA, t, taskA, tb2, taskB, sourceDbId: 1, targetDbId: 2);

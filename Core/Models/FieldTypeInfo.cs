@@ -9,9 +9,15 @@ namespace SmartBase.Core.Models;
 /// </summary>
 public static class FieldTypeInfo
 {
-    /// <summary>true — значение авто из метаданных записи, ячейка не редактируется.</summary>
-    public static bool IsComputed(string? fieldType) => fieldType is
+    /// <summary>true — значение вычисляется; ручная запись ячейки запрещена.</summary>
+    public static bool IsComputed(string? fieldType) => IsAuditComputed(fieldType) || IsRelationComputed(fieldType);
+
+    /// <summary>true — значение из аудит-метаданных записи.</summary>
+    public static bool IsAuditComputed(string? fieldType) => fieldType is
         "created_at" or "updated_at" or "created_by" or "updated_by";
+
+    /// <summary>true — значение вычисляется по выбранному полю связанных записей.</summary>
+    public static bool IsRelationComputed(string? fieldType) => fieldType is "lookup" or "rollup";
 
     /// <summary>true — тип-дата (обычная «date» или вычисляемые даты): значение форматируется как дата.</summary>
     public static bool IsDateLike(string? fieldType) => fieldType is
@@ -43,6 +49,8 @@ public static class FieldTypeInfo
         "url"        => "Ссылка",
         "file"       => "Файл",
         "relation"   => "Связь",
+        "lookup"     => "Свойство связанной записи",
+        "rollup"     => "Итог по связанным записям",
         "user"       => "Пользователь",
         "created_at" => "Дата создания",
         "updated_at" => "Дата изменения",
@@ -69,6 +77,8 @@ public static class FieldTypeInfo
     {
         var s = raw ?? "";
         if (string.IsNullOrEmpty(s)) return "";
+        if (fieldType == "rollup") return NumberFormatValue.Format(s, NumberFormat.Default);
+        if (fieldType == "lookup") return s;
         if (fieldType is "created_by" or "updated_by") return s;
         return System.DateTime.TryParse(s, System.Globalization.CultureInfo.InvariantCulture,
                                         System.Globalization.DateTimeStyles.RoundtripKind, out var dt)

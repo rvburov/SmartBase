@@ -35,7 +35,7 @@ public partial class ConstructorRepository
     // имени и снятие маркера одной транзакцией → удаление из источника на отдельном подключении
     // (DeleteMovedSource: откат копии — только пока исходник не тронут).
     private int MoveCollectionGeneric(string sourceDbPath, int srcCollectionId, int? targetGroupId,
-                                      IProgress<int>? progress, int? batchSize)
+                                      IProgress<int>? progress, int? batchSize, int sourceDbId, int targetDbId)
     {
         using var targetCtx = new AppDbContext(DbPath);
         targetCtx.ApplyBulkPerformancePragmas();
@@ -43,9 +43,13 @@ public partial class ConstructorRepository
 
         using var srcCtx = new AppDbContext(sourceDbPath);
         srcCtx.ApplyBulkPerformancePragmas();
+        using var sourceSnapshot = srcCtx.Database.BeginTransaction(
+            srcCtx.IsPostgres ? IsolationLevel.RepeatableRead : IsolationLevel.Serializable);
+        var source = new ConstructorRepository(srcCtx);
+        using var relationCopy = target.BeginRelationCopy(sourceDbId, targetDbId, crossDatabase: true);
 
         var (newColId, recCount, pending) = CopyCollectionGeneric(srcCtx, targetCtx, target,
-            srcCollectionId, targetGroupId, progress, 0, batchSize ?? GenericBatch);
+            srcCollectionId, targetGroupId, progress, 0, batchSize ?? GenericBatch, relationCopy);
         if (newColId == 0) return 0;
 
         // Копия полная: имя на месте и маркер снят одной транзакцией — дальше копия постоянная, и
@@ -54,9 +58,11 @@ public partial class ConstructorRepository
         try
         {
             using var tx = targetCtx.Database.BeginTransaction();
+            target.CompleteRelationCopy(relationCopy, source);
             target.UniquifyCollectionName(newColId, targetGroupId);
             FinishPending(targetCtx, pending!);
             tx.Commit();
+            sourceSnapshot.Commit();
         }
         catch (Exception ex) when (ex is not PendingLostException)
         {
@@ -75,7 +81,7 @@ public partial class ConstructorRepository
     // (строк мало), коллекции — поколлекционно generic-копией с накоплением прогресса. Один
     // маркер на корневую группу покрывает всю ветку (уборка удалит ее целиком).
     private int MoveGroupGeneric(string sourceDbPath, int srcGroupId, int? targetParentId,
-                                 IProgress<int>? progress, int? batchSize)
+                                 IProgress<int>? progress, int? batchSize, int sourceDbId, int targetDbId)
     {
         using var targetCtx = new AppDbContext(DbPath);
         targetCtx.ApplyBulkPerformancePragmas();
@@ -83,6 +89,12 @@ public partial class ConstructorRepository
 
         using var srcCtx = new AppDbContext(sourceDbPath);
         srcCtx.ApplyBulkPerformancePragmas();
+        // Вся ветка и ее ребра читаются из одного снимка. Межколлекционные цели могут приехать
+        // последними, поэтому связи переносим лишь после заполнения полной временной карты id.
+        using var sourceSnapshot = srcCtx.Database.BeginTransaction(
+            srcCtx.IsPostgres ? IsolationLevel.RepeatableRead : IsolationLevel.Serializable);
+        var source = new ConstructorRepository(srcCtx);
+        using var relationCopy = target.BeginRelationCopy(sourceDbId, targetDbId, crossDatabase: true);
 
         int newRootId;
         long total = 0;
@@ -112,15 +124,17 @@ public partial class ConstructorRepository
             foreach (var col in cols)
             {
                 var (_, rc, _) = CopyCollectionGeneric(srcCtx, targetCtx, target,
-                    col.Id, map[col.GroupId], progress, total, batchSize ?? GenericBatch, pending);
+                    col.Id, map[col.GroupId], progress, total, batchSize ?? GenericBatch, relationCopy, pending);
                 total += rc;
             }
 
             // Ветка полная: имя корня и снятие маркера — одной транзакцией (см. MoveCollectionGeneric).
             using var tx = targetCtx.Database.BeginTransaction();
+            target.CompleteRelationCopy(relationCopy, source);
             target.UniquifyGroupName(newRootId, targetParentId);
             FinishPending(targetCtx, pending);
             tx.Commit();
+            sourceSnapshot.Commit();
         }
         catch (Exception ex) when (ex is not PendingLostException)
         {
@@ -245,16 +259,15 @@ public partial class ConstructorRepository
     // вместе с уникализацией имени, перед удалением источника. Владелец отмечается в каждом пакете.
     private (int NewColId, long RecCount, PendingCopy? Pending) CopyCollectionGeneric(AppDbContext srcCtx, AppDbContext tgtCtx,
         ConstructorRepository target, int srcCollectionId, int? targetGroupId,
-        IProgress<int>? progress, long progressBase, int batchSize, PendingCopy? pending = null)
+        IProgress<int>? progress, long progressBase, int batchSize, RelationCopyMap relationCopy,
+        PendingCopy? pending = null)
     {
         var ownPending = pending is null;
-        // Один консистентный снимок источника на все чтение: конкурентные правки других
-        // пользователей PG не дадут «рваную» копию (SQLite-читателю то же дает его
-        // транзакция чтения). Держится до конца копии.
-        using var srcTx = srcCtx.Database.BeginTransaction(
-            srcCtx.IsPostgres ? IsolationLevel.RepeatableRead : IsolationLevel.Serializable);
+        // Снимок открыт вызывающим на всю коллекцию или ветку: поздняя коллекция может быть
+        // целью ребра первой. Повторная транзакция здесь разорвала бы общий снимок ветки.
         var srcConn = srcCtx.Database.GetDbConnection();
-        var srcDbTx = srcTx.GetDbTransaction();
+        var srcDbTx = srcCtx.Database.CurrentTransaction?.GetDbTransaction()
+            ?? throw new InvalidOperationException("Копирование коллекции требует общего снимка источника.");
 
         var srcCol = srcCtx.DbCollections.AsNoTracking().FirstOrDefault(c => c.Id == srcCollectionId);
         if (srcCol is null) return (0, 0, pending);
@@ -296,6 +309,7 @@ public partial class ConstructorRepository
                 fieldMap[f.Id] = nf.Id;
             }
 
+            relationCopy.AddCollection(srcCollectionId, newColId, fieldMap);
             pending ??= BeginPending(tgtCtx, PendingKind.MoveCollection, newColId);
             tx.Commit();
         }
@@ -323,6 +337,7 @@ public partial class ConstructorRepository
                 using (var tx = tgtCtx.Database.BeginTransaction())
                 {
                     var recMap = InsertRecordsBatch(tgtCtx, newColId, page);
+                    relationCopy.AddRecords(recMap);
 
                     InsertTriples(tgtCtx, "db_field_values", "RecordId, FieldId, Value",
                         values.Select(v => ((long)recMap[v.RecordId], (object)fieldMap[v.FieldId], (object)v.Value)));

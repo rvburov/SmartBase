@@ -21,6 +21,7 @@ public sealed class JsonTableWriter : ITableWriter
     private readonly FileStream _fs;
     private readonly Utf8JsonWriter _w;
     private IReadOnlyList<ExportColumn>? _cols;
+    private RelationPortableSchema? _portable;
     private JsonEncodedText[] _keys = [];
     private int _sinceFlush;
 
@@ -40,12 +41,35 @@ public sealed class JsonTableWriter : ITableWriter
             throw new InvalidOperationException("JSON поддерживает одну таблицу на файл.");
         _cols = columns;
         _keys = MakeKeys(columns);
+        _portable = columns.Select(c => c.PortableSchema).FirstOrDefault(s => s is not null);
+        if (_portable is not null)
+        {
+            _w.WriteStartObject();
+            _w.WriteNumber("$smartbase", 1);
+            _w.WritePropertyName("schema");
+            JsonSerializer.Serialize(_w, _portable);
+            _w.WritePropertyName("rows");
+        }
         _w.WriteStartArray();
     }
 
     public void WriteRow(IReadOnlyList<string> values)
     {
         var cols = _cols ?? throw new InvalidOperationException("BeginTable не вызван.");
+        if (_portable is not null)
+        {
+            if (values.Count != cols.Count + 1)
+                throw new ExportException("Не получены полные данные связей для JSON SmartBase.");
+            try
+            {
+                var row = JsonSerializer.Deserialize<RelationPortableRow>(values[^1])
+                    ?? throw new ExportException("Не получены данные записи для JSON SmartBase.");
+                JsonSerializer.Serialize(_w, row);
+            }
+            catch (JsonException) { throw new ExportException("Некорректные данные связей для JSON SmartBase."); }
+            FlushRow();
+            return;
+        }
         _w.WriteStartObject();
         var n = Math.Min(values.Count, cols.Count);
         for (var i = 0; i < n; i++)
@@ -70,7 +94,11 @@ public sealed class JsonTableWriter : ITableWriter
             }
         }
         _w.WriteEndObject();
+        FlushRow();
+    }
 
+    private void FlushRow()
+    {
         if (++_sinceFlush >= FlushEvery)
         {
             _w.Flush();
@@ -78,7 +106,11 @@ public sealed class JsonTableWriter : ITableWriter
         }
     }
 
-    public void EndTable() => _w.WriteEndArray();
+    public void EndTable()
+    {
+        _w.WriteEndArray();
+        if (_portable is not null) _w.WriteEndObject();
+    }
 
     public void Finish() => _w.Flush();
 

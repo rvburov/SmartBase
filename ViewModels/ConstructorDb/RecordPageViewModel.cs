@@ -59,7 +59,7 @@ public partial class RecordPageViewModel : ObservableObject
         foreach (var f in fields)
         {
             // «Вычисляемые» типы значения в db_field_values не имеют — берем из аудит-метаданных записи.
-            var initial = FieldTypeInfo.IsComputed(f.FieldType)
+            var initial = FieldTypeInfo.IsAuditComputed(f.FieldType)
                 ? FieldTypeInfo.ComputedValue(record, f.FieldType)
                 : values.GetValueOrDefault(f.Id!.Value, "");
             Properties.Add(new PropertyRowVm(repository, recordId, f, initial));

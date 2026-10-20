@@ -40,7 +40,7 @@ var gate    = args.Contains("--gate");
 Directory.CreateDirectory(outDir);
 Directory.CreateDirectory(refDir);
 Console.OutputEncoding = System.Text.Encoding.UTF8;
-if (only is not ("empty" or "fileauto") && !File.Exists(dbPath)) { Console.WriteLine($"Нет базы стенда: {dbPath}"); return 1; }
+if (only is not ("empty" or "fileauto" or "relationcomputed" or "relations") && !File.Exists(dbPath)) { Console.WriteLine($"Нет базы стенда: {dbPath}"); return 1; }
 
 // Порядок важен: UseSkia ДО UseHeadless (как в Tests/GridProto).
 AppBuilder.Configure<SmartBase.App>()
@@ -55,6 +55,8 @@ Dispatcher.UIThread.UnhandledException += (_, e) => Console.WriteLine($"    [и�
 // Самодостаточная проверка фильтра пустых свойств: собственная малая база, wide20 не требуется.
 if (only == "empty") return EmptyPropertiesChecks.Run(outDir);
 if (only == "fileauto") return FileAutoChecks.Run(outDir);
+if (only == "relationcomputed") return RelationComputedChecks.Run(outDir);
+if (only == "relations") return RelationChecks.Run(outDir);
 
 // Копия базы: стенд пишет значения свойств.
 var copy = Path.Combine(outDir, "page-" + Path.GetFileName(dbPath));

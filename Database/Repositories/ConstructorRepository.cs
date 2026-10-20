@@ -36,8 +36,8 @@ public partial class ConstructorRepository(AppDbContext db)
     /// (ATTACH источника на подключении целевой БД, см. MoveCollectionIsolated).</summary>
     public string DbPath => db.DbPath;
 
-    /// <summary>Провайдер этой БД — PostgreSQL. Нужен UI: перенос с участием PG идет generic-путем
-    /// (ATTACH есть только у SQLite) и связи НЕ переносит — предупреждение там строже.</summary>
+    /// <summary>Провайдер этой БД — PostgreSQL. Межбазовый перенос с участием PG использует
+    /// generic-путь на двух подключениях (ATTACH существует только у SQLite).</summary>
     public bool IsPostgres => db.IsPostgres;
 
     /// <summary>
@@ -579,6 +579,7 @@ public partial class ConstructorRepository(AppDbContext db)
         Demand(PermAction.DuplicateCollection);
         var src = db.DbGroups.Find(groupId);
         if (src is null) throw new InvalidOperationException($"Group {groupId} not found");
+        using var relationCopy = BeginRelationCopy();
 
         // 1) Структура: верхняя группа «(копия)» под тем же родителем; подгруппы — со своими именами.
         //    Вместе с ней — маркер незавершенной копии на всю ветку (ConstructorRepository.Pending):
@@ -609,13 +610,15 @@ public partial class ConstructorRepository(AppDbContext db)
                 var rc    = db.DbRecords.Count(r => r.CollectionId == c.Id);
                 var shell = CreateCollectionShell(c.Id, overrideGroupId: groupMap[c.GroupId!.Value], addCopySuffix: false);
                 if (shell.Collection.Id is int newColId)
-                    CopyCollectionData(c.Id, newColId, new BaseProgress(progress, basis), batchSize, pending);
+                    CopyCollectionData(c.Id, newColId, new BaseProgress(progress, basis), batchSize, pending,
+                        relationCopy: relationCopy);
                 // На PG коллекция копируется одной транзакцией и сама не отмечается — отметка между ними.
                 if (db.IsPostgres) BeatPending(db, pending);
                 basis += rc;
             }
             using (var tx = db.Database.BeginTransaction())
             {
+                CompleteRelationCopy(relationCopy, "");
                 LogNow("duplicate", "group", src.Name, count: basis);
                 FinishPending(db, pending);
                 tx.Commit();
@@ -671,10 +674,12 @@ public partial class ConstructorRepository(AppDbContext db)
     public void DeleteGroup(int groupId)
     {
         Demand(PermAction.DeleteCollection);
+        using var tx = BeginWrite();
         // Одна строка журнала на ветку (рекурсия по подгруппам — внутри core).
         var name = db.DbGroups.Where(g => g.Id == groupId).Select(g => g.Name).FirstOrDefault();
         DeleteGroupCore(groupId);
         if (name is not null) LogNow("delete", "group", name);
+        tx.Commit();
     }
 
     private void DeleteGroupCore(int groupId)
@@ -686,13 +691,18 @@ public partial class ConstructorRepository(AppDbContext db)
 
         // Удаляем коллекции этой группы; поля/записи/значения уйдут каскадно, UI-строки без FK — явно.
         var colIds = db.DbCollections.Where(c => c.GroupId == groupId).Select(c => c.Id).ToList();
+        db.DbRecordLinks.Where(l => l.TargetDbId == 0 && db.DbRecords.Any(r => r.Id == l.ToRecordId && colIds.Contains(r.CollectionId)))
+            .ExecuteDelete();
         db.DbCollections.RemoveRange(db.DbCollections.Where(c => c.GroupId == groupId));
 
         var entity = db.DbGroups.Find(groupId);
         if (entity is not null) db.DbGroups.Remove(entity);
         db.SaveChanges();
         foreach (var colId in colIds)
+        {
             DeleteCollectionUiRows(colId);
+            NotifyRelationDataChanged(colId);
+        }
     }
 
     // UI-настройки коллекции без FK (ui_*, record_display, column_meta) чистим явно при ЛЮБОМ
@@ -789,6 +799,7 @@ public partial class ConstructorRepository(AppDbContext db)
         using var tx = db.Database.BeginTransaction();
         foreach (var gid in groupIds)
             db.Database.ExecuteSqlInterpolated($"DELETE FROM db_groups WHERE Id = {gid}");
+        foreach (var collection in colIds) NotifyRelationDataChanged(collection);
         tx.Commit();
 
         if (log && groupName is not null) LogNow("delete", "group", groupName, count: total);
@@ -872,6 +883,8 @@ public partial class ConstructorRepository(AppDbContext db)
     {
         Demand(PermAction.CreateCollection);
         collectionName = UniqueCollectionName(collectionName, groupId);
+        if (schema.PortableSchema is not null)
+            return ImportPortableStreamedCollection(collectionName, groupId, schema, rows, ct, rowsWritten, batchSize);
 
         int colId;
         List<int> fieldIds;
@@ -955,7 +968,8 @@ public partial class ConstructorRepository(AppDbContext db)
     // Батч-цикл записи (модель транзакций — DeleteCollectionRows): prepared-команды создаются один
     // раз, на каждый пакет переприсваивается транзакция. Прогресс — раз в пакет.
     private void WriteRowsBatched(int collectionId, List<int> fieldIds, ImportSchema schema,
-        IEnumerable<ImportRow> rows, CancellationToken ct, IProgress<long>? rowsWritten, int batchSize)
+        IEnumerable<ImportRow> rows, CancellationToken ct, IProgress<long>? rowsWritten, int batchSize,
+        Action<IReadOnlyList<ImportRow>, IReadOnlyList<long>>? onBatch = null)
     {
         // Шаг Position: 1000 (есть куда вставлять строки между импортированными), но на
         // многомиллионных объемах — 1: (idx+1)*1000 в int переполняется после ~2,1 млн строк.
@@ -1000,8 +1014,8 @@ public partial class ConstructorRepository(AppDbContext db)
                 batch.Add(e.Current);
             if (batch.Count == 0) break;
 
-            using var tx = db.Database.BeginTransaction();
-            var dbTx = tx.GetDbTransaction();
+            using var tx = db.Database.CurrentTransaction is null ? db.Database.BeginTransaction() : null;
+            var dbTx = db.Database.CurrentTransaction!.GetDbTransaction();
             var useBatch = conn.CanCreateBatch;   // PostgreSQL: пакет команд = один сетевой ход
             insRec.Transaction = dbTx;
             insVal.Transaction = dbTx;
@@ -1044,6 +1058,7 @@ public partial class ConstructorRepository(AppDbContext db)
                     // Пустая ячейка строки в db_field_values не заводится (как в BulkAddRecords):
                     // отсутствие строки читается как пусто, а на импорте с редкими колонками
                     // пустые ячейки — десятки процентов таблицы значений и ее индекса.
+                    if (schema.PortableSchema?.Fields[f].FieldType is "relation" or "lookup" or "rollup") continue;
                     var value = f < row.FieldValues.Count ? row.FieldValues[f] : null;
                     if (string.IsNullOrEmpty(value)) continue;
                     vFid.Value = fieldIds[f];
@@ -1054,7 +1069,8 @@ public partial class ConstructorRepository(AppDbContext db)
             }
             net?.Flush();
 
-            tx.Commit();
+            onBatch?.Invoke(batch, newIds);
+            tx?.Commit();
             written += batch.Count;
             rowsWritten?.Report(written);
         }
@@ -1193,6 +1209,7 @@ public partial class ConstructorRepository(AppDbContext db)
         var name = CollectionNameOf(collectionId) ?? "";
         LogNow("create", "record", name, name, count: written);
         rowsWritten?.Report(written);
+        NotifyRelationDataChanged(collectionId);
         return ids;
     }
 
@@ -1217,6 +1234,9 @@ public partial class ConstructorRepository(AppDbContext db)
     public void DeleteCollection(int collectionId)
     {
         Demand(PermAction.DeleteCollection, collectionId);
+        using var tx = BeginWrite();
+        db.DbRecordLinks.Where(l => l.TargetDbId == 0 && db.DbRecords.Any(r => r.Id == l.ToRecordId && r.CollectionId == collectionId))
+            .ExecuteDelete();
         var entity = db.DbCollections.Find(collectionId);
         if (entity is not null)
         {
@@ -1225,6 +1245,8 @@ public partial class ConstructorRepository(AppDbContext db)
         }
         db.SaveChanges();
         DeleteCollectionUiRows(collectionId);
+        NotifyRelationDataChanged(collectionId);
+        tx.Commit();
     }
 
     /// <summary>
@@ -1259,6 +1281,7 @@ public partial class ConstructorRepository(AppDbContext db)
         var name     = CollectionNameOf(collectionId);
         var recCount = db.DbRecords.Count(r => r.CollectionId == collectionId);
         DeleteCollectionRows(collectionId, 0, progress, batchSize);
+        NotifyRelationDataChanged(collectionId);
         if (log && name is not null) LogNow("delete", "collection", name, count: recCount);
         progress?.Report(recCount);   // финально 100% для этой коллекции
     }
@@ -1516,10 +1539,16 @@ public partial class ConstructorRepository(AppDbContext db)
     /// </summary>
     internal void CopyCollectionData(int srcCollectionId, int newCollectionId,
                                      IProgress<int>? progress = null, int? batchSize = null,
-                                     PendingCopy? pending = null, bool finishPending = false)
+                                     PendingCopy? pending = null, bool finishPending = false,
+                                     RelationCopyMap? relationCopy = null)
     {
         var ownPending = pending is null;
         finishPending |= ownPending;
+        var ownRelationCopy = relationCopy is null;
+        using var localRelationCopy = ownRelationCopy ? BeginRelationCopy() : null;
+        relationCopy ??= localRelationCopy!;
+        var fieldMap = BuildFieldMap(srcCollectionId, newCollectionId);
+        relationCopy.AddCollection(srcCollectionId, newCollectionId, fieldMap);
 
         // PG: непрерывного блока id не существует (identity-последовательность делят все
         // клиенты) — карта id строится явно через nextval, см. CopyCollectionDataPg.
@@ -1528,7 +1557,8 @@ public partial class ConstructorRepository(AppDbContext db)
             pending ??= BeginPendingInOwnTransaction(PendingKind.DuplicateCollection, newCollectionId, singleTx: true);
             try
             {
-                CopyCollectionDataPg(srcCollectionId, newCollectionId, progress, batchSize ?? 10000, finishPending ? pending : null);
+                CopyCollectionDataPg(srcCollectionId, newCollectionId, progress, batchSize ?? 10000, finishPending ? pending : null,
+                    relationCopy, ownRelationCopy);
             }
             catch (Exception ex) when (ex is not PendingLostException)
             {
@@ -1541,10 +1571,8 @@ public partial class ConstructorRepository(AppDbContext db)
             return;
         }
 
-        // old FieldId → new FieldId по Position (см. BuildFieldMap). Карта нужна и для значений,
+        // old FieldId → new FieldId по имени (см. BuildFieldMap). Карта нужна и для значений,
         // и для перемэппинга ключей UI-колонок (ширины/порядок/видимость).
-        var fieldMap = BuildFieldMap(srcCollectionId, newCollectionId);
-
         // Временные карты живут на подключении, а копия идет несколькими транзакциями: вне
         // транзакции EF закрывает подключение после каждой команды, и карты пропадали бы.
         db.Database.OpenConnection();
@@ -1655,6 +1683,13 @@ public partial class ConstructorRepository(AppDbContext db)
             using (var tx = db.Database.BeginTransaction())
             {
                 CopyDuplicatedUi(srcCollectionId, newCollectionId, firstNew, recCount);
+                #pragma warning disable EF1002
+                db.Database.ExecuteSqlRaw($@"
+                    INSERT INTO _relation_copy_rmap(old_id,new_id)
+                    SELECT m.old_id,{firstNew} + m.rn - 1 FROM _dup_rmap m
+                    JOIN db_records r ON r.Id = {firstNew} + m.rn - 1");
+                #pragma warning restore EF1002
+                if (ownRelationCopy) CompleteRelationCopy(relationCopy, "");
                 if (finishPending) FinishPending(db, pending);
                 else               BeatPending(db, pending);
                 tx.Commit();
@@ -1811,7 +1846,8 @@ public partial class ConstructorRepository(AppDbContext db)
     // из самой последовательности), значения/проекция/UI-строки джойнятся через карту. Одна
     // транзакция, батчи по rn — только ради гранулярности прогресса, как в SQLite-пути.
     private void CopyCollectionDataPg(int srcCollectionId, int newCollectionId,
-                                      IProgress<int>? progress, int batchSize, PendingCopy? finish)
+                                      IProgress<int>? progress, int batchSize, PendingCopy? finish,
+                                      RelationCopyMap relationCopy, bool completeRelations)
     {
         var recCount = db.DbRecords.Count(r => r.CollectionId == srcCollectionId);
 
@@ -1924,6 +1960,8 @@ public partial class ConstructorRepository(AppDbContext db)
                 WHERE cs.CollectionId = {srcCollectionId}");
         }
 
+        db.Database.ExecuteSqlRaw("INSERT INTO _relation_copy_rmap(old_id,new_id) SELECT old_id,new_id FROM _dup_rmap");
+        if (completeRelations) CompleteRelationCopy(relationCopy, "");
         db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS _dup_rmap");
         db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS _dup_fmap");
         // Маркер снимается той же транзакцией, что фиксирует копию: на PG она одна на всю копию.
@@ -1931,19 +1969,21 @@ public partial class ConstructorRepository(AppDbContext db)
         tx.Commit();
     }
 
-    // Карта полей old→new по Position (скелет копирует Position дословно, Position уникален
-    // в пределах коллекции) — общая для SQLite- и PG-путей дубля.
+    // Имена уникальны в коллекции и копируются дословно. Position не является ключом:
+    // одинаковые позиции допустимы, например после импорта или параллельной перестановки.
     private Dictionary<int, int> BuildFieldMap(int srcCollectionId, int newCollectionId)
     {
         var oldFields = db.DbFields.AsNoTracking().Where(f => f.CollectionId == srcCollectionId)
-            .Select(f => new { f.Id, f.Position }).ToList();
-        var newByPos = new Dictionary<int, int>();
-        foreach (var nf in db.DbFields.AsNoTracking().Where(f => f.CollectionId == newCollectionId)
-                     .Select(f => new { f.Id, f.Position }))
-            newByPos[nf.Position] = nf.Id;
+            .Select(f => new { f.Id, f.Name }).ToList();
+        var newByName = db.DbFields.AsNoTracking().Where(f => f.CollectionId == newCollectionId)
+            .Select(f => new { f.Id, f.Name }).ToDictionary(f => f.Name, f => f.Id, StringComparer.Ordinal);
         var fieldMap = new Dictionary<int, int>(oldFields.Count);
         foreach (var of in oldFields)
-            if (newByPos.TryGetValue(of.Position, out var newFid)) fieldMap[of.Id] = newFid;
+        {
+            if (!newByName.TryGetValue(of.Name, out var newFid))
+                throw new InvalidOperationException("Состав свойств источника изменился во время копирования коллекции.");
+            fieldMap[of.Id] = newFid;
+        }
         return fieldMap;
     }
 
@@ -2036,7 +2076,7 @@ public partial class ConstructorRepository(AppDbContext db)
         Demand(PermAction.CreateCollection);
         using var ctx = new AppDbContext(db.DbPath);
         ctx.ApplyBulkPerformancePragmas();   // большой кеш+mmap — без них вставка в глобальные индексы db_field_values деградирует
-        return new ConstructorRepository(ctx).ImportStreamedCollection(collectionName, groupId, schema, rows, ct, rowsWritten);
+        return new ConstructorRepository(ctx) { Permissions = Permissions }.ImportStreamedCollection(collectionName, groupId, schema, rows, ct, rowsWritten);
     }
 
     // ── Экспорт таблиц (Core/Exporters, см. docs/features/import-export.md) ──
@@ -2114,11 +2154,11 @@ public partial class ConstructorRepository(AppDbContext db)
     /// </summary>
     public IEnumerable<string[]> ReadExportRowsIsolated(int collectionId,
         IReadOnlyList<ExportColumn> columns, bool excludeHidden, CancellationToken ct,
-        IProgress<long>? rowsRead = null, int pageSize = 2000)
+        IProgress<long>? rowsRead = null, int pageSize = 2000, bool portableRelations = false)
     {
         using var ctx = new AppDbContext(db.DbPath);
         ctx.ApplyBulkPerformancePragmas();
-        var repo = new ConstructorRepository(ctx);
+        var repo = new ConstructorRepository(ctx) { Permissions = Permissions };
 
         long total = 0;
         int? afterPos = null, afterId = null;
@@ -2128,18 +2168,40 @@ public partial class ConstructorRepository(AppDbContext db)
             var page = repo.GetRecordsPageAfter(collectionId, afterPos, afterId, pageSize, excludeHidden);
             if (page.Count == 0) yield break;
 
-            var values = repo.GetFieldValuesBatch(
-                page.Where(r => r.Id.HasValue).Select(r => r.Id!.Value).ToList());
+            var pageIds = page.Where(r => r.Id.HasValue).Select(r => r.Id!.Value).ToList();
+            var values = repo.GetFieldValuesBatch(pageIds);
+            var relationLinks = columns.Where(c => c.FieldType == "relation" && c.FieldId.HasValue)
+                .ToDictionary(c => c.FieldId!.Value,
+                    c => repo.GetRelationLinksBatch(c.FieldId!.Value, pageIds));
+            var relationFieldIds = relationLinks.Keys.ToList();
+            var portableEdges = portableRelations
+                ? ctx.DbRecordLinks.AsNoTracking().Where(l => relationFieldIds.Contains(l.FieldId) && pageIds.Contains(l.FromRecordId))
+                    .OrderBy(l => l.Position).ThenBy(l => l.Id).ToList()
+                    .GroupBy(l => (l.FromRecordId, l.FieldId)).ToDictionary(g => g.Key,
+                        g => g.Select(l => new RelationTarget(l.TargetDbId, l.ToRecordId)).ToList())
+                : null;
 
             foreach (var r in page)
             {
                 var vals = r.Id is int rid ? values.GetValueOrDefault(rid) : null;
-                var row  = new string[columns.Count];
+                var row  = new string[columns.Count + (portableRelations ? 1 : 0)];
                 for (var i = 0; i < columns.Count; i++)
                 {
                     var c = columns[i];
-                    row[i] = c.Key == TitleKey ? r.Title
+                    row[i] = c.FieldType == "relation" && c.FieldId is int relationId
+                           ? string.Join(RelationConfig.FromConfig(c.ConfigJson)?.SeparatorString ?? ", ",
+                               relationLinks[relationId].GetValueOrDefault(r.Id!.Value)?.Select(l => l.Display) ?? [])
+                           : c.Key == TitleKey ? r.Title
                            : c.FieldId is int fid && vals is not null ? vals.GetValueOrDefault(fid, "") : "";
+                }
+                if (portableRelations)
+                {
+                    var portableValues = columns.Where(c => c.FieldId.HasValue && c.FieldType is not ("relation" or "lookup" or "rollup"))
+                        .ToDictionary(c => c.FieldId!.Value, c => vals?.GetValueOrDefault(c.FieldId!.Value, "") ?? "");
+                    var portableLinks = relationLinks.ToDictionary(p => p.Key,
+                        p => portableEdges?.GetValueOrDefault((r.Id!.Value, p.Key)) ?? []);
+                    row[^1] = System.Text.Json.JsonSerializer.Serialize(new RelationPortableRow(r.Id!.Value,
+                        columns.Any(c => c.Key == TitleKey) ? r.Title : "", portableValues, portableLinks));
                 }
                 yield return row;
             }
@@ -2172,7 +2234,14 @@ public partial class ConstructorRepository(AppDbContext db)
     // Снимок коллекции: метаданные + поля + записи со значениями + UI-настройки.
     // Ключи значений и UI — СТАРЫЕ id поля/записи; при импорте перемэппливаются.
     public sealed record CollectionSnapshot(DbCollection Collection, List<DbField> Fields,
-                                            List<RecordSnapshot> Records, UiSnapshot Ui);
+                                            List<RecordSnapshot> Records, UiSnapshot Ui)
+    {
+        public string? SourceDatabaseIdentity { get; init; }
+        public int SourceDbId { get; init; }
+        public Dictionary<int, string> DatabaseIdentities { get; init; } = [];
+        public List<RelationSnapshotEdge> Links { get; init; } = [];
+    }
+    public sealed record RelationSnapshotEdge(int FieldId, int FromRecordId, RelationTarget Target, int Position);
     public sealed record RecordSnapshot(DbRecord Record, Dictionary<int, string> ValuesByOldFieldId);
 
     // UI-настройки коллекции для переноса (отвязанные от контекста-источника значения).
@@ -2192,6 +2261,7 @@ public partial class ConstructorRepository(AppDbContext db)
     /// <summary>Снять коллекцию (с полями, записями и значениями) для переноса в другую БД.</summary>
     public CollectionSnapshot ExportCollection(int collectionId)
     {
+        Demand(PermAction.ViewCollection, collectionId);
         var col     = GetAllCollections().First(c => c.Id == collectionId);
         var fields  = GetFields(collectionId);
         var records = GetRecords(collectionId);
@@ -2205,7 +2275,17 @@ public partial class ConstructorRepository(AppDbContext db)
             recSnaps.Add(new RecordSnapshot(r, vals));
         }
 
-        return new CollectionSnapshot(col, fields, recSnaps, ExportUi(collectionId));
+        var fieldIds = fields.Where(f => f.FieldType == "relation").Select(f => f.Id!.Value).ToList();
+        var links = db.DbRecordLinks.AsNoTracking().Where(l => fieldIds.Contains(l.FieldId))
+            .OrderBy(l => l.Position).ThenBy(l => l.Id).ToList()
+            .Select(l => new RelationSnapshotEdge(l.FieldId, l.FromRecordId, new(l.TargetDbId, l.ToRecordId), l.Position)).ToList();
+        var referenced = links.Select(l => l.Target).Concat(fields.Select(f => RelationConfig.FromConfig(f.ConfigJson))
+            .Where(c => c is not null).Select(c => new RelationTarget(c!.TargetDbId, 0)));
+        return new CollectionSnapshot(col, fields, recSnaps, ExportUi(collectionId))
+        {
+            SourceDatabaseIdentity = RelationDatabaseIdentity, SourceDbId = RelationDbResolver.DbIdFor(this),
+            DatabaseIdentities = GetRelationDatabaseIdentities(referenced), Links = links,
+        };
     }
 
     // Снять UI-настройки коллекции в отвязанные значения (AsNoTracking — детач от источника).
@@ -2230,13 +2310,26 @@ public partial class ConstructorRepository(AppDbContext db)
     /// <summary>Импортировать снимок коллекции под группу targetGroupId — атомарно (одна транзакция). Возвращает новую коллекцию.</summary>
     public DbCollection ImportCollection(CollectionSnapshot snap, int? targetGroupId)
     {
+        Demand(PermAction.CreateCollection);
+        var state = PrepareRelationSnapshotImport([snap]);
         using var tx = db.Database.BeginTransaction();
-        var result = ImportCollectionCore(snap, targetGroupId);
-        tx.Commit();
-        return result;
+        try
+        {
+            var result = ImportCollectionCore(snap, targetGroupId, state);
+            CompleteRelationSnapshotImport(state);
+            foreach (var collectionId in state.Collections.Values) NotifyRelationDataChanged(collectionId);
+            tx.Commit();
+            return result;
+        }
+        catch
+        {
+            tx.Rollback();
+            db.ChangeTracker.Clear();
+            throw;
+        }
     }
 
-    private DbCollection ImportCollectionCore(CollectionSnapshot snap, int? targetGroupId)
+    private DbCollection ImportCollectionCore(CollectionSnapshot snap, int? targetGroupId, RelationSnapshotImport state)
     {
         var maxPos = db.DbCollections.Select(c => (int?)c.Position).Max() ?? 0;
         var copy = new DbCollectionEntity
@@ -2281,11 +2374,15 @@ public partial class ConstructorRepository(AppDbContext db)
             if (r.Id is int oldRid) recordMap[oldRid] = nr.Id;
 
             foreach (var (oldFid, val) in rs.ValuesByOldFieldId)
-                if (fieldMap.TryGetValue(oldFid, out var nfid))
+                if (fieldMap.TryGetValue(oldFid, out var nfid)
+                    && snap.Fields.First(f => f.Id == oldFid).FieldType is not ("relation" or "lookup" or "rollup"))
                     db.DbFieldValues.Add(new DbFieldValueEntity { RecordId = nr.Id, FieldId = nfid, Value = val });
             db.SaveChanges();
         }
 
+        state.Collections.Add(snap.Collection.Id!.Value, copy.Id);
+        foreach (var pair in fieldMap) state.Fields.Add(pair.Key, pair.Value);
+        foreach (var pair in recordMap) state.Records.Add(pair.Key, pair.Value);
         ImportUi(snap.Ui, copy.Id, fieldMap, recordMap);
 
         return new DbCollection
@@ -2368,13 +2465,26 @@ public partial class ConstructorRepository(AppDbContext db)
     /// <summary>Импортировать снимок группы (с веткой) под targetParentId — атомарно (одна транзакция). Возвращает новую группу.</summary>
     public DbGroup ImportGroup(GroupSnapshot snap, int? targetParentId)
     {
+        Demand(PermAction.CreateCollection);
+        var state = PrepareRelationSnapshotImport(RelationGroupCollections(snap));
         using var tx = db.Database.BeginTransaction();
-        var result = ImportGroupCore(snap, targetParentId);
-        tx.Commit();
-        return result;
+        try
+        {
+            var result = ImportGroupCore(snap, targetParentId, state);
+            CompleteRelationSnapshotImport(state);
+            foreach (var collectionId in state.Collections.Values) NotifyRelationDataChanged(collectionId);
+            tx.Commit();
+            return result;
+        }
+        catch
+        {
+            tx.Rollback();
+            db.ChangeTracker.Clear();
+            throw;
+        }
     }
 
-    private DbGroup ImportGroupCore(GroupSnapshot snap, int? targetParentId)
+    private DbGroup ImportGroupCore(GroupSnapshot snap, int? targetParentId, RelationSnapshotImport state)
     {
         var maxPos = db.DbGroups.Where(x => x.ParentId == targetParentId).Select(x => (int?)x.Position).Max() ?? 0;
         var copy = new DbGroupEntity { Name = snap.Group.Name, ParentId = targetParentId, Position = maxPos + 1000 };
@@ -2382,8 +2492,8 @@ public partial class ConstructorRepository(AppDbContext db)
         db.SaveChanges();
 
         // Внутри уже открытой транзакции — зовем *Core (без вложенной транзакции).
-        foreach (var sub in snap.Subgroups)   ImportGroupCore(sub, copy.Id);
-        foreach (var col in snap.Collections) ImportCollectionCore(col, copy.Id);
+        foreach (var sub in snap.Subgroups)   ImportGroupCore(sub, copy.Id, state);
+        foreach (var col in snap.Collections) ImportCollectionCore(col, copy.Id, state);
 
         return new DbGroup { Id = copy.Id, Name = copy.Name, ParentId = copy.ParentId, Position = copy.Position };
     }
@@ -2482,13 +2592,13 @@ public partial class ConstructorRepository(AppDbContext db)
 
         // Пара с PostgreSQL (или PG→PG): ATTACH существует только у SQLite — переносим
         // generic-путем на двух независимых подключениях (см. ConstructorRepository.CrossMove).
-        // Связи через generic-путь пока НЕ переносятся (bulk по двум подключениям — отдельным заходом).
         if (db.IsPostgres || PgConnectionInfo.IsPostgresConnectionString(sourceDbPath))
-            return MoveCollectionGeneric(sourceDbPath, srcCollectionId, targetGroupId, progress, batchSize);
+            return MoveCollectionGeneric(sourceDbPath, srcCollectionId, targetGroupId, progress, batchSize, sourceDbId, targetDbId);
 
         using var targetCtx = new AppDbContext(db.DbPath);
         targetCtx.ApplyBulkPerformancePragmas();
         var target = new ConstructorRepository(targetCtx);
+        using var relationCopy = target.BeginRelationCopy(sourceDbId, targetDbId, crossDatabase: true);
 
         // Копия под маркером; в ее последней транзакции — правка конфигов полей-связей (перенесены
         // дословно — переписываем под целевую базу согласованно с переписыванием ребер в копии:
@@ -2502,11 +2612,11 @@ public partial class ConstructorRepository(AppDbContext db)
                 target.CopyOneCollectionFromAttached(conn, srcCollectionId, targetGroupId, progress, 0, batchSize, state,
                     newColId =>
                     {
-                        target.RewriteMovedRelationConfigs(newColId, srcCollectionId, sourceDbId, targetDbId);
+                        target.CompleteRelationCopy(relationCopy, "src.");
                         target.UniquifyCollectionName(newColId, targetGroupId);
                         FinishPending(targetCtx, state.Pending!);
                     },
-                    sourceDbId, targetDbId).RecCount);
+                    relationCopy).RecCount);
         }
         catch (Exception ex) when (ex is not PendingLostException)
         {
@@ -2539,9 +2649,9 @@ public partial class ConstructorRepository(AppDbContext db)
         // Тот же запрет, что и у переноса коллекции: из закрытого контура наружу нельзя.
         DemandMoveFromAllowed(sourceDbPath);
 
-        // Пара с PostgreSQL (или PG→PG): generic-путь вместо ATTACH (см. CrossMove). Связи не переносим.
+        // Пара с PostgreSQL (или PG→PG): generic-путь вместо ATTACH (см. CrossMove).
         if (db.IsPostgres || PgConnectionInfo.IsPostgresConnectionString(sourceDbPath))
-            return MoveGroupGeneric(sourceDbPath, srcGroupId, targetParentId, progress, batchSize);
+            return MoveGroupGeneric(sourceDbPath, srcGroupId, targetParentId, progress, batchSize, sourceDbId, targetDbId);
 
         using var targetCtx = new AppDbContext(db.DbPath);
         targetCtx.ApplyBulkPerformancePragmas();
@@ -2600,6 +2710,7 @@ public partial class ConstructorRepository(AppDbContext db)
                                        IProgress<int>? progress, int? batchSize, AttachedCopy state,
                                        int sourceDbId = 0, int targetDbId = 0)
     {
+        using var relationCopy = BeginRelationCopy(sourceDbId, targetDbId, crossDatabase: true);
         return WithAttachedSource(sourceDbPath, conn =>
         {
             var map = new Dictionary<int, int>();   // старый id группы → новый
@@ -2620,17 +2731,13 @@ public partial class ConstructorRepository(AppDbContext db)
             state.NewId   = root;
             state.Pending = pending;
 
-            // Перенос группы: сами РЕБРА пока НЕ копируем (0,0) — межколлекционный ремап ToRecordId в
-            // пределах ветки отдельным заходом. Но карту коллекций собираем: по ней чиним КОНФИГИ
-            // полей-связей (RewriteMovedGroupRelationConfigs), иначе они уехали бы дословно и
-            // TargetCollectionId источника читался бы как ЛОКАЛЬНАЯ коллекция целевой базы (чужие записи).
-            var colMap = new Dictionary<int, int>();   // старый id коллекции → новый
+            // Карта всей ветки собирается до переноса ребер: цель может находиться в коллекции,
+            // которая будет скопирована последней.
             long basis = 0;
             foreach (var (colId, oldGroup) in cols)
             {
-                var (newColId, rc) = CopyOneCollectionFromAttached(conn, colId, map[oldGroup], progress, basis, batchSize,
-                                                                   state, finalize: null, 0, 0);
-                colMap[colId] = newColId;
+                var (_, rc) = CopyOneCollectionFromAttached(conn, colId, map[oldGroup], progress, basis, batchSize,
+                                                           state, finalize: null, relationCopy);
                 basis += rc;
             }
 
@@ -2638,7 +2745,7 @@ public partial class ConstructorRepository(AppDbContext db)
             // группа, даем «(копия)». Вложенные группы/коллекции легли в новую (пустую) ветку.
             InAttachedTx(conn, _ =>
             {
-                RewriteMovedGroupRelationConfigs(colMap, sourceDbId, targetDbId);
+                CompleteRelationCopy(relationCopy, "src.");
                 UniquifyGroupName(root, targetParentId);
                 FinishPending(db, state.Pending!);
             });
@@ -2757,11 +2864,8 @@ public partial class ConstructorRepository(AppDbContext db)
     // пользовательский ввод), поэтому интерполяция безопасна.
     private (int NewColId, long RecCount) CopyOneCollectionFromAttached(DbConnection conn,
         int srcCollectionId, int? targetGroupId, IProgress<int>? progress, long progressBase, int? batchSize,
-        AttachedCopy state, Action<int>? finalize, int sourceDbId = 0, int targetDbId = 0)
+        AttachedCopy state, Action<int>? finalize, RelationCopyMap relationCopy)
     {
-        // Связи-relation переносим, только зная реестровые DbId (для переписывания TargetDbId под целевую
-        // базу). 0 — путь без переноса связей (PG-generic пока их не копирует).
-        var canMoveLinks = sourceDbId > 0 && targetDbId > 0;
         int  newColId = 0, fieldCount = 0;
         long recCount = 0, firstNew = 0;
         var  recordsInBatches = false;
@@ -2782,7 +2886,7 @@ public partial class ConstructorRepository(AppDbContext db)
                     SELECT Name, {groupSql}, {maxPos + 1000}, Icon, Color FROM src.db_collections WHERE Id = {srcCollectionId}");
                 newColId = (int)ScalarLong(conn, tx, "SELECT last_insert_rowid()");
 
-                // Поля (Position копируем дословно — по нему строим карту old→new).
+                // Поля копируем дословно; карта old→new использует уникальное имя, а не позицию.
                 Exec(conn, tx, $@"
                     INSERT INTO main.db_fields (CollectionId, Name, FieldType, ConfigJson, Position, IsCalStart, IsCalEnd, IsSystem, IsRequired, IsTaskExec, IsTaskAssigner, IsTaskStatus, IsDescription, IsDocFile, IsDocType)
                     SELECT {newColId}, Name, FieldType, ConfigJson, Position, IsCalStart, IsCalEnd, IsSystem, IsRequired, IsTaskExec, IsTaskAssigner, IsTaskStatus, IsDescription, IsDocFile, IsDocType
@@ -2794,7 +2898,7 @@ public partial class ConstructorRepository(AppDbContext db)
                 Exec(conn, tx, $@"
                     INSERT INTO _move_fmap(old_fid, new_fid)
                     SELECT s.Id, n.Id FROM src.db_fields s
-                    JOIN main.db_fields n ON n.CollectionId = {newColId} AND n.Position = s.Position
+                    JOIN main.db_fields n ON n.CollectionId = {newColId} AND n.Name = s.Name
                     WHERE s.CollectionId = {srcCollectionId}");
 
                 Exec(conn, tx, "DROP TABLE IF EXISTS temp._move_rmap");
@@ -2864,27 +2968,12 @@ public partial class ConstructorRepository(AppDbContext db)
             InAttachedTx(conn, tx =>
             {
                 CopyMovedUi(conn, tx, srcCollectionId, newColId, firstNew, recCount);
-
-                // Связи (relation) переносимых полей: FieldId→new (_move_fmap), FromRecordId→new (ранг).
-                // Цель: САМО-связь (TargetDbId=0 и ToRecordId в ЭТОЙ коллекции) → внутрибазовая,
-                // ToRecordId→new; иначе абсолютная БД = (TargetDbId=0?sourceDbId:TargetDbId), в целевой
-                // базе → 0 если совпала с назначением, иначе межбазовая (ToRecordId без изменений — цель
-                // осталась в исходной/третьей БД). Оговорка: связь на ДРУГУЮ коллекцию той же
-                // переносимой ГРУППЫ станет межбазовой на источник (ее цель тоже уедет — станет висячей).
-                // Групповой ремап целей — отдельным заходом.
-                if (canMoveLinks && recCount > 0)
-                    Exec(conn, tx, $@"
-                        INSERT INTO main.db_record_links (FieldId, FromRecordId, ToRecordId, TargetDbId, Position)
-                        SELECT fm.new_fid, {firstNew} + frm.rn - 1,
-                               CASE WHEN l.TargetDbId = 0 AND trm.rn IS NOT NULL THEN {firstNew} + trm.rn - 1 ELSE l.ToRecordId END,
-                               CASE WHEN l.TargetDbId = 0 AND trm.rn IS NOT NULL THEN 0
-                                    WHEN (CASE WHEN l.TargetDbId = 0 THEN {sourceDbId} ELSE l.TargetDbId END) = {targetDbId} THEN 0
-                                    ELSE (CASE WHEN l.TargetDbId = 0 THEN {sourceDbId} ELSE l.TargetDbId END) END,
-                               l.Position
-                        FROM src.db_record_links l
-                        JOIN _move_fmap fm  ON fm.old_fid = l.FieldId
-                        JOIN _move_rmap frm ON frm.old_id = l.FromRecordId
-                        LEFT JOIN _move_rmap trm ON trm.old_id = l.ToRecordId AND l.TargetDbId = 0");
+                var fields = ReadIntPairs(conn, tx, "SELECT old_fid,new_fid FROM _move_fmap")
+                    .ToDictionary(p => p.A, p => p.B);
+                relationCopy.AddCollection(srcCollectionId, newColId, fields);
+                Exec(conn, tx, $@"
+                    INSERT INTO _relation_copy_rmap(old_id,new_id)
+                    SELECT old_id,{firstNew} + rn - 1 FROM _move_rmap");
 
                 if (finalize is not null) finalize(newColId);
                 else                      BeatPending(db, state.Pending!);
@@ -3029,6 +3118,13 @@ public partial class ConstructorRepository(AppDbContext db)
     public DbField AddField(DbField field)
     {
         Demand(PermAction.CreateField, field.CollectionId);
+        if (field.FieldType == "relation" && RelationConfig.FromConfig(field.ConfigJson)?.Auto is not null
+            && !IsApplyingAutoRelation)
+        {
+            var id = SaveAutoRelationField(field, PreviewAutoRelation(field));
+            return ToDbField(db.DbFields.AsNoTracking().Single(f => f.Id == id));
+        }
+        ValidateRelationComputedField(field);
         if (db.DbFields.Any(f => f.CollectionId == field.CollectionId && f.Name == field.Name))
             throw new InvalidOperationException("Поле с таким именем уже существует.");
 
@@ -3053,11 +3149,41 @@ public partial class ConstructorRepository(AppDbContext db)
     public void UpdateField(DbField field)
     {
         Demand(PermAction.EditField, field.CollectionId);
+        if (field.FieldType == "relation" && RelationConfig.FromConfig(field.ConfigJson)?.Auto is not null
+            && !IsApplyingAutoRelation)
+        {
+            SaveAutoRelationField(field, PreviewAutoRelation(field));
+            return;
+        }
+        ValidateRelationComputedField(field);
+        var oldType = db.DbFields.AsNoTracking().Where(f => f.Id == field.Id).Select(f => f.FieldType).FirstOrDefault();
+        using var transaction = db.Database.CurrentTransaction is null &&
+            (oldType == "relation" || field.FieldType == "relation") ? db.Database.BeginTransaction() : null;
+        try
+        {
+            UpdateFieldCore(field);
+            transaction?.Commit();
+        }
+        catch
+        {
+            if (transaction is not null)
+            {
+                transaction.Rollback();
+                db.ChangeTracker.Clear();
+            }
+            throw;
+        }
+    }
+
+    private void UpdateFieldCore(DbField field)
+    {
+        Demand(PermAction.EditField, field.CollectionId);
         var entity = db.DbFields.Find(field.Id);
         if (entity is null) return;
         if (entity.Name != field.Name &&
             db.DbFields.Any(f => f.CollectionId == entity.CollectionId && f.Name == field.Name && f.Id != field.Id))
             throw new InvalidOperationException("Поле с таким именем уже существует.");
+        ValidateAndConvertRelationFieldChange(ToDbField(entity), field);
 
         // Пересборка проекции нужна только при смене ТИПА (содержимое проекции реально меняется:
         // текст→дата заливает строки, дата→текст очищает). Видимость (IsCalStart) — чистый
@@ -3511,6 +3637,7 @@ public partial class ConstructorRepository(AppDbContext db)
     public DbField DuplicateField(int fieldId)
     {
         Demand(PermAction.DuplicateField, CollectionOfField(fieldId));
+        using var tx = BeginWrite();
         var copy = CreateFieldCopyEntity(fieldId);
 
         // Копируем значения ячеек исходного свойства во всех записях ОДНИМ bulk-SQL —
@@ -3519,8 +3646,11 @@ public partial class ConstructorRepository(AppDbContext db)
         db.Database.ExecuteSqlInterpolated($@"
             INSERT INTO db_field_values (RecordId, FieldId, Value)
             SELECT RecordId, {copy.Id}, Value FROM db_field_values WHERE FieldId = {fieldId}");
+        CopyFieldRelationEdges(fieldId, copy.Id);
+        RemapCopiedRelationConfigs(new Dictionary<int, int>(), new Dictionary<int, int> { [fieldId] = copy.Id }, 0, 0);
 
         LogNow("duplicate", "field", copy.Name, CollectionNameOf(copy.CollectionId));
+        tx.Commit();
         return ToDbField(copy);
     }
 
@@ -3562,6 +3692,11 @@ public partial class ConstructorRepository(AppDbContext db)
     {
         Id = e.Id, CollectionId = e.CollectionId, Name = e.Name,
         FieldType = e.FieldType, ConfigJson = e.ConfigJson, Position = e.Position,
+        IsCalStart = e.IsCalStart, IsCalEnd = e.IsCalEnd,
+        IsSystem = e.IsSystem, IsRequired = e.IsRequired,
+        IsTaskExec = e.IsTaskExec, IsTaskAssigner = e.IsTaskAssigner,
+        IsTaskStatus = e.IsTaskStatus, IsDescription = e.IsDescription,
+        IsDocFile = e.IsDocFile, IsDocType = e.IsDocType,
     };
 
     // ── Тяжелые операции со свойствами: счетчик + пакетные версии с прогрессом ──
@@ -3646,12 +3781,16 @@ public partial class ConstructorRepository(AppDbContext db)
     public DbField DuplicateFieldData(int fieldId, IProgress<int>? progress = null, int batchSize = 10000,
                                       int chunkValues = FieldOpChunkValues)
     {
-        var ids = FieldValueRecordIdsSorted(fieldId);   // PK-порядок → последовательные обновления
+        Demand(PermAction.DuplicateField, CollectionOfField(fieldId));
+        var ids = db.DbFieldValues.Where(v => v.FieldId == fieldId).Select(v => v.RecordId)
+            .Union(db.DbRecordLinks.Where(l => l.FieldId == fieldId).Select(l => l.FromRecordId))
+            .Select(id => (long)id).OrderBy(id => id).ToList();
         var tx  = db.Database.BeginTransaction();
         try
         {
             var copy   = CreateFieldCopyEntity(fieldId);
             var copyId = copy.Id;
+            RemapCopiedRelationConfigs(new Dictionary<int, int>(), new Dictionary<int, int> { [fieldId] = copyId }, 0, 0);
             for (var i = 0; i < ids.Count; i += batchSize)
             {
                 if (i > 0 && i % chunkValues < batchSize) { tx.Commit(); tx.Dispose(); CheckpointBetweenChunks(); tx = db.Database.BeginTransaction(); }
@@ -3662,6 +3801,7 @@ public partial class ConstructorRepository(AppDbContext db)
                     $"INSERT INTO db_field_values (RecordId, FieldId, Value) " +
                     $"SELECT RecordId, {copyId}, Value FROM db_field_values " +
                     $"WHERE FieldId = {fieldId} AND RecordId IN ({inList})");
+                CopyFieldRelationEdges(fieldId, copyId, inList);
                 progress?.Report(Math.Min(ids.Count, i + batchSize));
             }
             tx.Commit();
@@ -4112,10 +4252,12 @@ public partial class ConstructorRepository(AppDbContext db)
     public Dictionary<int, Dictionary<int, string>> GetFieldValuesBatch(IReadOnlyList<int> recordIds)
     {
         if (recordIds.Count == 0) return [];
-        return db.DbFieldValues.AsNoTracking()
+        var values = db.DbFieldValues.AsNoTracking()
             .Where(fv => recordIds.Contains(fv.RecordId))
             .GroupBy(fv => fv.RecordId)
             .ToDictionary(g => g.Key, g => g.ToDictionary(fv => fv.FieldId, fv => fv.Value));
+        FillRelationComputedValues(recordIds, values);
+        return values;
     }
 
     /// <summary>Есть ли у записи сосед выше/ниже в порядке коллекции (Position, Id) — для пунктов
@@ -4183,7 +4325,13 @@ public partial class ConstructorRepository(AppDbContext db)
         TouchUpdated(rec);
         SaveIgnoringRemoteDelete(rec);
         // «Название» как источник авто-привязки — пересчитать файл-поля этой записи.
-        return changed ? ReactToSourceEdit(recordId, r => r.SourceIsTitle) : [];
+        var derived = changed ? ReactToSourceEdit(recordId, r => r.SourceIsTitle) : [];
+        if (changed)
+        {
+            NotifyRelationDataChanged(rec.CollectionId, 0, recordId);
+            foreach (var (field, _) in derived) NotifyRelationDataChanged(rec.CollectionId, field, recordId);
+        }
+        return derived;
     }
 
     /// <summary>
@@ -4272,6 +4420,7 @@ public partial class ConstructorRepository(AppDbContext db)
             db.SaveChanges();
         }
 
+        NotifyRelationDataChanged(record.CollectionId, recordId: entity.Id);
         return record;
     }
 
@@ -4476,6 +4625,7 @@ public partial class ConstructorRepository(AppDbContext db)
             db.DbRecords.Remove(entity);
         }
         db.SaveChanges();
+        if (entity is not null) NotifyRelationDataChanged(entity.CollectionId);
     }
 
     public DbRecord DuplicateRecord(int recordId)
@@ -4520,6 +4670,7 @@ public partial class ConstructorRepository(AppDbContext db)
 
         // Копия записи могла принести значения видимых полей-дат — наполняем проекцию календаря.
         RebuildCalendarIndexForRecord(copy.Id);
+        NotifyRelationDataChanged(copy.CollectionId, recordId: copy.Id);
 
         return new DbRecord
         {
@@ -4586,6 +4737,8 @@ public partial class ConstructorRepository(AppDbContext db)
     {
         if (recordIds.Count == 0) return;
         var ids = recordIds.Distinct().ToList();
+        var affectedCollections = db.DbRecords.AsNoTracking().Where(r => ids.Contains(r.Id))
+            .Select(r => r.CollectionId).Distinct().ToList();
 
         // Одна строка журнала на пакет; имя коллекции — до удаления (мультивыделение
         // таблицы всегда в одной коллекции).
@@ -4611,6 +4764,7 @@ public partial class ConstructorRepository(AppDbContext db)
             done = Math.Min(ids.Count, i + batchSize);
             progress?.Report(done);
         }
+        foreach (var collection in affectedCollections) NotifyRelationDataChanged(collection);
         tx.Commit();
         if (log) LogNow("delete", "records", "", colName, ids.Count);
     }
@@ -4763,6 +4917,7 @@ public partial class ConstructorRepository(AppDbContext db)
               ON r.old_id = l.FromRecordId");
 
         db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS temp._dup_recsel");
+        NotifyRelationDataChanged(collectionId);
         tx.Commit();
 
         // Копии могли принести значения видимых полей-дат → наполняем их проекцию календаря
@@ -4867,6 +5022,7 @@ public partial class ConstructorRepository(AppDbContext db)
 
             db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS _dup_rmap");
             db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS _dup_recsel");
+            NotifyRelationDataChanged(collectionId);
             tx.Commit();
         }
 
@@ -4949,6 +5105,7 @@ public partial class ConstructorRepository(AppDbContext db)
             }
 
             if (target.Id == excludeTargetFieldId) continue;
+            if (FieldTypeInfo.IsRelationComputed(meta.FieldType) || FieldTypeInfo.IsRelationComputed(target.FieldType)) continue;
             SetFieldValue(targetRecordId, target.Id!.Value, ConvertValueForType(value, meta.FieldType, target.FieldType));
         }
     }
@@ -5005,9 +5162,12 @@ public partial class ConstructorRepository(AppDbContext db)
         bool createMissingFields, int sourceDbId, int targetDbId)
     {
         // Те же формулы, что в MoveRecordsCore.
-        var canMoveLinks = sourceDbId > 0 && targetDbId > 0;
+        var sameDatabase = ReferenceEquals(db, source.RelationLifecycleContext)
+                           || string.Equals(DbPath, source.DbPath, StringComparison.Ordinal);
+        var canMoveLinks = sameDatabase || sourceDbId > 0 && targetDbId > 0;
         int RelTargetDb(int cfgOrLinkDb)
         {
+            if (sameDatabase) return sourceDbId > 0 && cfgOrLinkDb == sourceDbId ? 0 : cfgOrLinkDb;
             var abs = cfgOrLinkDb == 0 ? sourceDbId : cfgOrLinkDb;
             return abs == targetDbId ? 0 : abs;
         }
@@ -5059,16 +5219,19 @@ public partial class ConstructorRepository(AppDbContext db)
         // конфиге/ребре означает БД ИСТОЧНИКА (sourceDbId). В целевой базе она снова 0, если совпала
         // с назначением (стала внутрибазовой), иначе — межбазовая на ту же абсолютную БД. Одна формула
         // покрывает и внутрибазовый перенос (source==target: 0→0), и межбазовый (0→sourceDbId и т.д.).
-        var canMoveLinks = sourceDbId > 0 && targetDbId > 0;
+        var sameDatabase = ReferenceEquals(db, source.RelationLifecycleContext)
+                           || string.Equals(DbPath, source.DbPath, StringComparison.Ordinal);
+        var canMoveLinks = sameDatabase || sourceDbId > 0 && targetDbId > 0;
         int RelTargetDb(int cfgOrLinkDb)
         {
+            if (sameDatabase) return sourceDbId > 0 && cfgOrLinkDb == sourceDbId ? 0 : cfgOrLinkDb;
             var abs = cfgOrLinkDb == 0 ? sourceDbId : cfgOrLinkDb;
             return abs == targetDbId ? 0 : abs;
         }
         string RewriteRelConfig(DbField sf)
         {
             if (RelationConfig.FromConfig(sf.ConfigJson) is not { } sc) return sf.ConfigJson;
-            return new RelationConfig(sc.TargetCollectionId, sc.Single, sc.Separator, RelTargetDb(sc.TargetDbId)).ToConfigJson();
+            return (sc with { TargetDbId = RelTargetDb(sc.TargetDbId) }).ToConfigJson();
         }
 
         // 1) План: srcFieldId → (целевое поле, типы). Недостающие свойства создаем ОДИН раз (при флаге),
@@ -5076,11 +5239,23 @@ public partial class ConstructorRepository(AppDbContext db)
         var srcFields    = source.GetFields(sourceCollectionId);
         var targetByName = new Dictionary<string, DbField>(StringComparer.OrdinalIgnoreCase);
         foreach (var tf in GetFields(targetCollectionId)) targetByName.TryAdd(tf.Name, tf);
+        // Кардинальность проверяем до создания недостающих полей и до записи/удаления данных.
+        // Нельзя молча выбирать одну из нескольких целей при переносе в существующий single.
+        foreach (var sf in srcFields.Where(f => f.FieldType == "relation"))
+        {
+            if (!canMoveLinks || !targetByName.TryGetValue(sf.Name, out var tf) || tf.FieldType != "relation") continue;
+            var sc = RelationConfig.FromConfig(sf.ConfigJson);
+            var tc = RelationConfig.FromConfig(tf.ConfigJson);
+            if (sc is not null && tc is { Single: true } && tc.TargetCollectionId == sc.TargetCollectionId
+                && tc.TargetDbId == RelTargetDb(sc.TargetDbId))
+                EnsureSingleRelationMove(source, sf.Id!.Value, recordIds, tf.Name);
+        }
 
         var nextFieldPos = (db.DbFields.Where(f => f.CollectionId == targetCollectionId)
                                        .Select(f => (int?)f.Position).Max() ?? 0) + 1000;
 
         var plan = new Dictionary<int, (int FieldId, string From, string To)>();
+        var createdFields = new HashSet<int>();
         foreach (var sf in srcFields)
         {
             if (!targetByName.TryGetValue(sf.Name, out var tf))
@@ -5105,9 +5280,13 @@ public partial class ConstructorRepository(AppDbContext db)
                 });
                 nextFieldPos += 1000;
                 targetByName[sf.Name] = tf;
+                createdFields.Add(tf.Id!.Value);
             }
             plan[sf.Id!.Value] = (tf.Id!.Value, sf.FieldType, tf.FieldType);
         }
+        if (createdFields.Count > 0)
+            RemapCopiedRelationConfigs(new Dictionary<int, int>(), plan.ToDictionary(p => p.Key, p => p.Value.FieldId),
+                0, 0, onlyNewFieldIds: createdFields);
 
         // Связи (relation): переносим там, где исходное И целевое поле — «Связь», а конфиг цели указывает
         // на ту же коллекцию И ту же (переписанную под целевую базу) целевую БД. Созданные выше поля уже
@@ -5121,6 +5300,7 @@ public partial class ConstructorRepository(AppDbContext db)
                 var tc = RelationConfig.FromConfig(tf.ConfigJson);
                 if (sc is null || tc is null) continue;
                 if (tc.TargetCollectionId != sc.TargetCollectionId || tc.TargetDbId != RelTargetDb(sc.TargetDbId)) continue;
+                if (tc.Single) EnsureSingleRelationMove(source, sf.Id!.Value, recordIds, tf.Name);
                 relPlan.Add((sf.Id!.Value, tf.Id!.Value));
             }
 
@@ -5163,6 +5343,7 @@ public partial class ConstructorRepository(AppDbContext db)
                 foreach (var (srcFieldId, value) in values)
                 {
                     if (value.Length == 0 || !plan.TryGetValue(srcFieldId, out var t)) continue;
+                    if (FieldTypeInfo.IsRelationComputed(t.From) || FieldTypeInfo.IsRelationComputed(t.To)) continue;
                     rows.Add(new DbFieldValueEntity
                     {
                         RecordId = rec.Id, FieldId = t.FieldId,
@@ -5196,6 +5377,7 @@ public partial class ConstructorRepository(AppDbContext db)
                 db.ChangeTracker.Clear();   // запись и значения уже во вставке транзакции — трекер не нужен
                 progress?.Report(++done);
             }
+            NotifyRelationDataChanged(targetCollectionId);
             tx.Commit();
         }
 
@@ -5218,10 +5400,15 @@ public partial class ConstructorRepository(AppDbContext db)
 
     // Фоновая авто-привязка пишет из отдельного контекста. Читаем сохраненные значения,
     // чтобы после «Сохранить» таблица и страница записи не возвращали прежний путь из tracker.
-    public Dictionary<int, string> GetFieldValues(int recordId) =>
-        db.DbFieldValues.AsNoTracking()
+    public Dictionary<int, string> GetFieldValues(int recordId)
+    {
+        var values = db.DbFieldValues.AsNoTracking()
           .Where(fv => fv.RecordId == recordId)
           .ToDictionary(fv => fv.FieldId, fv => fv.Value);
+        var batch = new Dictionary<int, Dictionary<int, string>> { [recordId] = values };
+        FillRelationComputedValues([recordId], batch);
+        return batch[recordId];
+    }
 
     /// <summary>Все значения полей коллекции одним запросом (для фильтрации/сортировки).</summary>
     public Dictionary<int, Dictionary<int, string>> GetFieldValuesByCollection(int collectionId) =>
@@ -5277,6 +5464,9 @@ public partial class ConstructorRepository(AppDbContext db)
         var boxFieldIds = db.DbFields.AsNoTracking()
             .Where(f => f.CollectionId == collectionId && f.FieldType == "checkbox")
             .Select(f => f.Id).ToHashSet();
+        var relatedComputed = db.DbFields.AsNoTracking()
+            .Where(f => f.CollectionId == collectionId && (f.FieldType == "lookup" || f.FieldType == "rollup"))
+            .ToDictionary(f => f.Id, ToDbField);
 
         // ФОРМА УСЛОВИЯ ВАЖНА: набор значений уходит в SQL как `IN (json_each(@p))`, и SQLite
         // перебирает его заново на каждую строку, если он стоит внутри КОРРЕЛИРОВАННОГО EXISTS
@@ -5286,6 +5476,15 @@ public partial class ConstructorRepository(AppDbContext db)
         // проба по нему (те же 10 млн × 1444 — 12 с). Ветка «(Пусто)» коррелирована, но без списка.
         foreach (var (key, allowed) in filters)
         {
+            if (int.TryParse(key, out var computedId) && relatedComputed.TryGetValue(computedId, out var computedField))
+            {
+                var excluded = FilterExclusion.IsExclude(allowed);
+                var selected = excluded ? FilterExclusion.Values(allowed).ToHashSet() : allowed;
+                var values = GetRelationComputedColumnValues(collectionId, computedField);
+                var matching = values.Where(kv => selected.Contains(kv.Value)).Select(kv => kv.Key).ToHashSet();
+                q = excluded ? q.Where(r => !matching.Contains(r.Id)) : q.Where(r => matching.Contains(r.Id));
+                continue;
+            }
             if (int.TryParse(key, out var boxId) && boxFieldIds.Contains(boxId))
             {
                 q = CheckboxFilter(q, boxId, allowed);
@@ -5318,7 +5517,10 @@ public partial class ConstructorRepository(AppDbContext db)
                 {
                     // Связь: строка проходит, если есть ребро к ИМЕНОВАННОЙ цели с Title ∈ allowed
                     // (семантика ИЛИ). «(нет связей)» "" — нет ребра ни к одной именованной цели.
-                    var hasCrossDb = db.DbRecordLinks.Any(l => l.FieldId == fid && l.TargetDbId != 0);
+                    var config = RelationConfig.FromConfig(db.DbFields.AsNoTracking()
+                        .Where(f => f.Id == fid).Select(f => f.ConfigJson).FirstOrDefault());
+                    var hasCrossDb = Permissions is not null || config?.DisplayField != RelationConfig.TitleField ||
+                        db.DbRecordLinks.Any(l => l.FieldId == fid && l.TargetDbId != 0);
                     if (!hasCrossDb)
                     {
                         // Чисто внутрибазовое поле — серверный IN по ребрам (без материализации ребер
@@ -5392,6 +5594,7 @@ public partial class ConstructorRepository(AppDbContext db)
     public Dictionary<int, string> GetColumnValues(int collectionId, string key,
         Func<int, IReadOnlyList<int>, Dictionary<int, string>?>? resolveForeign = null)
     {
+        using var foreignScope = (resolveForeign?.Target as ForeignPropertyReader)?.OpenScope();
         if (key == TitleKey)
             return db.DbRecords.AsNoTracking().Where(r => r.CollectionId == collectionId)
                      .Select(r => new { r.Id, r.Title }).ToList()
@@ -5399,6 +5602,8 @@ public partial class ConstructorRepository(AppDbContext db)
         if (int.TryParse(key, out var fid))
         {
             var field = db.DbFields.AsNoTracking().FirstOrDefault(f => f.Id == fid);
+            if (field is not null && FieldTypeInfo.IsRelationComputed(field.FieldType))
+                return GetRelationComputedColumnValues(collectionId, ToDbField(field));
             if (field?.FieldType == "relation")
             {
                 // Сортировка «по показанному тексту»: значение = названия связанных записей (в т.ч. из
@@ -5481,6 +5686,8 @@ public partial class ConstructorRepository(AppDbContext db)
     /// </summary>
     private List<(string Value, int Count)> FieldValueCountsWhole(int collectionId, int fieldId)
     {
+        if (RelatedComputedField(fieldId) is not null)
+            return RelatedComputedCounts(fieldId, Records(collectionId));
         var counts = db.DbFieldValues.AsNoTracking().Where(v => v.FieldId == fieldId && v.Value != "")
                        .GroupBy(v => v.Value).Select(g => new { g.Key, Cnt = g.Count() }).ToList()
                        .ToDictionary(x => x.Key, x => x.Cnt);
@@ -5506,6 +5713,7 @@ public partial class ConstructorRepository(AppDbContext db)
 
     private List<(string Value, int Count)> FieldValueCounts(int fieldId, IQueryable<DbRecordEntity> scope)
     {
+        if (RelatedComputedField(fieldId) is not null) return RelatedComputedCounts(fieldId, scope);
         // JOIN со срезом записей: группировка идет по индексу (FieldId, Value), срез отсекает
         // записи чужой коллекции и не прошедшие фильтры других колонок.
         var groups = (from fv in db.DbFieldValues.AsNoTracking()
@@ -5539,7 +5747,25 @@ public partial class ConstructorRepository(AppDbContext db)
         int collectionId, int fieldId,
         Func<int, IReadOnlyList<int>, Dictionary<int, string>?>? resolveForeign = null)
     {
-        resolveForeign ??= (dbId, ids) => RelationDbResolver.RepoFor(dbId)?.GetRecordTitles(ids);
+        Demand(PermAction.ViewCollection, collectionId);
+        var config = RelationConfig.FromConfig(db.DbFields.AsNoTracking()
+            .Where(f => f.Id == fieldId).Select(f => f.ConfigJson).FirstOrDefault());
+        var propertyKey = config?.DisplayField ?? RelationConfig.TitleField;
+        var customResolver = resolveForeign;
+        resolveForeign = (dbId, ids) =>
+        {
+            var mismatch = propertyKey != RelationConfig.TitleField && config is not null
+                && !IsExpectedRelationTargetDatabase(dbId, config.TargetDbId);
+            var key = mismatch ? RelationConfig.TitleField : propertyKey;
+            var values = customResolver?.Target is ForeignPropertyReader reader
+                ? reader.ResolveProperty(dbId, ids, key)
+                : customResolver is not null ? customResolver(dbId, ids)
+                : RelationDbResolver.RepoFor(dbId)?.GetRecordPropertyValues(ids, key);
+            return mismatch && values is not null
+                ? values.ToDictionary(p => p.Key, p => p.Value == RelationProperty.NoAccess
+                    ? p.Value : RelationProperty.MissingField)
+                : values;
+        };
 
         // Все ребра поля от записей этой коллекции, в порядке ребра; TargetDbId различает базу-цель.
         var edges = (from l in db.DbRecordLinks.AsNoTracking()
@@ -5551,14 +5777,13 @@ public partial class ConstructorRepository(AppDbContext db)
         if (edges.Count == 0) return new();
 
         // Внутрибазовые цели — JOIN (без гигантского IN на тысячах id): ToRecordId → Title.
-        var sameDb = (from l in db.DbRecordLinks.AsNoTracking()
-                      where l.FieldId == fieldId && l.TargetDbId == 0
-                      join src in db.DbRecords.AsNoTracking() on l.FromRecordId equals src.Id
-                      where src.CollectionId == collectionId
-                      join tgt in db.DbRecords.AsNoTracking() on l.ToRecordId equals tgt.Id
-                      select new { l.ToRecordId, Title = tgt.Title ?? "" })
-                     .Distinct().ToList()
-                     .ToDictionary(x => x.ToRecordId, x => x.Title);
+        var localMismatch = propertyKey != RelationConfig.TitleField && config is not null
+            && !IsExpectedRelationTargetDatabase(0, config.TargetDbId);
+        var sameDb = GetRecordPropertyValues(edges.Where(e => e.TargetDbId == 0)
+            .Select(e => e.ToRecordId).Distinct().ToArray(), localMismatch ? RelationConfig.TitleField : propertyKey);
+        if (localMismatch)
+            sameDb = sameDb.ToDictionary(p => p.Key, p => p.Value == RelationProperty.NoAccess
+                ? p.Value : RelationProperty.MissingField);
 
         // Межбазовые цели — резолвим из их баз пакетно по (dbId → набор id); id межбазовых целей мало.
         var crossDb = new Dictionary<(int To, int Db), string?>();
@@ -5666,6 +5891,7 @@ public partial class ConstructorRepository(AppDbContext db)
         IReadOnlyDictionary<string, HashSet<string>>? filters = null, bool excludeHidden = false,
         Func<int, IReadOnlyList<int>, Dictionary<int, string>?>? resolveForeign = null)
     {
+        using var foreignScope = (resolveForeign?.Target as ForeignPropertyReader)?.OpenScope();
         var others = OtherFilters(filters, key);
         var scope  = FilteredRecords(collectionId, others, excludeHidden, resolveForeign);
         return key == TitleKey ? TitleCounts(scope)
@@ -5728,7 +5954,7 @@ public partial class ConstructorRepository(AppDbContext db)
         {
             using var ctx = new AppDbContext(db.DbPath);
             ctx.ApplyPerformancePragmas();
-            var repo = new ConstructorRepository(ctx);
+            var repo = new ConstructorRepository(ctx) { Permissions = Permissions };
             return repo.ColumnValues(collectionId, key, others, excludeHidden, ForeignResolver(crossPaths), search, ct);
         }, ct);
     }
@@ -5738,6 +5964,22 @@ public partial class ConstructorRepository(AppDbContext db)
         string? search, CancellationToken ct)
     {
         int? fid = int.TryParse(key, out var parsed) ? parsed : null;
+        if (fid is int computedId && RelatedComputedField(computedId) is not null)
+        {
+            using var foreignScope = (resolveForeign?.Target as ForeignPropertyReader)?.OpenScope();
+            ct.ThrowIfCancellationRequested();
+            var computedScope = FilteredRecords(collectionId, others, excludeHidden, resolveForeign);
+            var counts = RelatedComputedCounts(computedId, computedScope);
+            var computedPattern = search?.Trim();
+            if (!string.IsNullOrEmpty(computedPattern))
+                counts = counts.Where(v => v.Value.Contains(computedPattern, StringComparison.OrdinalIgnoreCase)).ToList();
+            var total = counts.Count(v => v.Value.Length > 0);
+            var computedPage = counts.Where(v => v.Value.Length > 0).OrderBy(v => v.Value, StringComparer.CurrentCulture)
+                .Take(FilterValueCap).ToList();
+            computedPage.AddRange(counts.Where(v => v.Value.Length == 0));
+            ct.ThrowIfCancellationRequested();
+            return new(computedPage, total > FilterValueCap, total, total > FilterValueCap);
+        }
         var cappable = key == TitleKey || (fid is { } id && db.DbFields.AsNoTracking()
                            .Any(f => f.Id == id && f.FieldType != "relation" && f.FieldType != "date"
                                      && f.FieldType != "checkbox"));
@@ -5832,10 +6074,17 @@ public partial class ConstructorRepository(AppDbContext db)
         {
             using var ctx = new AppDbContext(db.DbPath);
             ctx.ApplyPerformancePragmas();
-            var repo  = new ConstructorRepository(ctx);
-            var scope = repo.FilteredRecords(collectionId, others, excludeHidden, ForeignResolver(crossPaths));
+            var repo  = new ConstructorRepository(ctx) { Permissions = Permissions };
+            var resolver = ForeignResolver(crossPaths);
+            using var foreignScope = (resolver?.Target as ForeignPropertyReader)?.OpenScope();
+            var scope = repo.FilteredRecords(collectionId, others, excludeHidden, resolver);
             if (int.TryParse(key, out var fid))
             {
+                if (repo.RelatedComputedField(fid) is not null)
+                {
+                    var counts = repo.RelatedComputedCounts(fid, scope);
+                    return ((long)counts.Count(v => v.Value.Length > 0), counts.Where(v => v.Value.Length == 0).Sum(v => v.Count));
+                }
                 var values = repo.CappedValues(fid, scope, others.Count > 0 || excludeHidden);
                 var distinct = values.Select(v => v.Value).Distinct().LongCount();
                 ct.ThrowIfCancellationRequested();
@@ -5880,7 +6129,7 @@ public partial class ConstructorRepository(AppDbContext db)
         {
             using var ctx = new AppDbContext(db.DbPath);
             ctx.ApplyPerformancePragmas();
-            var repo = new ConstructorRepository(ctx);
+            var repo = new ConstructorRepository(ctx) { Permissions = Permissions };
             return repo.GetColumnCounts(collectionId, key, others, excludeHidden, ForeignResolver(crossPaths));
         });
     }
@@ -5915,7 +6164,8 @@ public partial class ConstructorRepository(AppDbContext db)
     /// чтобы файл-ячейка обновилась мгновенно. Обычно пусто.</summary>
     public IReadOnlyList<(int FieldId, string Value)> SetFieldValue(int recordId, int fieldId, string value)
     {
-        Demand(PermAction.EditRecord, CollectionOfRecord(recordId));
+        var collectionId = CollectionOfRecord(recordId);
+        Demand(PermAction.EditRecord, collectionId);
 
         // Число: приводим десятичный разделитель к выбранному в свойстве (канон хранения).
         // Нечисловое значение и не-числовые поля остаются как есть.
@@ -6038,7 +6288,13 @@ public partial class ConstructorRepository(AppDbContext db)
         // Реактивная авто-привязка: если правили текст-столбец, служащий источником авто-file
         // поля — пересчитать файл для этой записи. Возвращаем побочные изменения (fieldId → новое
         // значение файла), чтобы UI мгновенно обновил именно файл-ячейку этой строки.
-        return changed ? ReactToSourceEditForAutoFile(recordId, fieldId) : [];
+        var derived = changed ? ReactToSourceEditForAutoFile(recordId, fieldId) : [];
+        if (changed && collectionId is int changedCollection)
+        {
+            NotifyRelationDataChanged(changedCollection, fieldId, recordId);
+            foreach (var (derivedField, _) in derived) NotifyRelationDataChanged(changedCollection, derivedField, recordId);
+        }
+        return derived;
     }
 
     // Если правили текст-поле editedFieldId, служащее источником авто-file полей — пересчитать их.
@@ -7042,6 +7298,7 @@ public partial class ConstructorRepository(AppDbContext db)
         r.Id           = rec.Id;
         r.CollectionId = colId;
         r.FieldId      = dateFieldId;
+        NotifyRelationDataChanged(colId, recordId: rec.Id);
         return r;
     }
 
@@ -7075,14 +7332,39 @@ public partial class ConstructorRepository(AppDbContext db)
             // Входящие связи все равно оборвутся (у копии новый Id) — предупреждает UI.
             var oldId = rec.Id;
             var audit = (rec.CreatedAt, rec.UpdatedAt, rec.CreatedBy, rec.UpdatedBy);
-            r.CollectionId = newColId;
-            r.Id = null;
-            AddCalendarRecord(r);
-            CopyFieldValuesByName(this, oldId, oldColId, r.Id!.Value, newColId,
-                                  createMissingFields: false, excludeTargetFieldId: r.FieldId);
-            CopyRelationLinksByName(this, oldId, oldColId, r.Id!.Value, newColId);
-            RestoreMovedRecordAudit(r.Id!.Value, audit);
-            DeleteRecord(oldId);
+            var previousDto = (r.Id, r.CollectionId, r.FieldId);
+            using var move = BeginWrite();
+            try
+            {
+                // Проверяем до создания записи, в том числе при перехвате отказа внутри чужой tx.
+                var targetRelations = new Dictionary<string, DbField>(StringComparer.OrdinalIgnoreCase);
+                foreach (var field in GetFields(newColId).Where(f => f.FieldType == "relation"))
+                    targetRelations.TryAdd(field.Name, field);
+                foreach (var field in GetFields(oldColId).Where(f => f.FieldType == "relation"))
+                {
+                    if (!targetRelations.TryGetValue(field.Name, out var target)) continue;
+                    var sourceConfig = RelationConfig.FromConfig(field.ConfigJson);
+                    var targetConfig = RelationConfig.FromConfig(target.ConfigJson);
+                    if (sourceConfig is not null && targetConfig is { Single: true }
+                        && targetConfig.TargetCollectionId == sourceConfig.TargetCollectionId
+                        && targetConfig.TargetDbId == sourceConfig.TargetDbId)
+                        EnsureSingleRelationMove(this, field.Id!.Value, [oldId], target.Name);
+                }
+                r.CollectionId = newColId;
+                r.Id = null;
+                AddCalendarRecord(r);
+                CopyFieldValuesByName(this, oldId, oldColId, r.Id!.Value, newColId,
+                                      createMissingFields: false, excludeTargetFieldId: r.FieldId);
+                CopyRelationLinksByName(this, oldId, oldColId, r.Id!.Value, newColId);
+                RestoreMovedRecordAudit(r.Id!.Value, audit);
+                DeleteRecord(oldId);
+                move.Commit();
+            }
+            catch
+            {
+                (r.Id, r.CollectionId, r.FieldId) = previousDto;
+                throw;
+            }
             return;
         }
 
@@ -7098,6 +7380,7 @@ public partial class ConstructorRepository(AppDbContext db)
         r.FieldId = dateFieldId;
         // Описание — обычное поле: правка события пишет его туда же, куда и создание.
         SetFieldValue(rec.Id, EnsureDescriptionField(newColId), r.Description ?? "");
+        NotifyRelationDataChanged(newColId, recordId: rec.Id);
     }
 
     /// <summary>
@@ -7139,6 +7422,7 @@ public partial class ConstructorRepository(AppDbContext db)
             db.DbRecordLinks.RemoveRange(incoming);
             db.DbRecords.Remove(rec);
             db.SaveChanges();
+            NotifyRelationDataChanged(rec.CollectionId);
         }
     }
 

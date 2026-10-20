@@ -377,14 +377,14 @@ public sealed class TablePastePlannerTests
         Assert.Equal(2, plan.Skipped[PasteSkipReason.NotTextColumn]);
     }
 
-    /// <summary>Связь внутри базы вставляется названиями: планировщик только чистит текст, записи
-    /// по названиям находит база.</summary>
+    /// <summary>Планировщик сохраняет подпись дословно: пробелы могут различать цели.
+    /// Допустимость однозначной вставки с отступами проверяет репозиторий.</summary>
     [Fact]
     public void Relation_is_passed_on_as_titles()
     {
         var plan = TablePastePlanner.Plan(Values(["  Проект А, Проект Б "]), 0, 0, [Link], rowCount: 1);
 
-        Assert.Equal("Проект А, Проект Б", Assert.Single(plan.Cells).StorageValue);
+        Assert.Equal("  Проект А, Проект Б ", Assert.Single(plan.Cells).StorageValue);
     }
 
     /// <summary>Read-only столбец пропускается, НО позицию в блоке занимает: соседи справа не

@@ -10,6 +10,7 @@ using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Styling;
+using Avalonia.Threading;
 using SmartBase.Core.Models;
 using SmartBase.Database;
 using SmartBase.Database.Repositories;
@@ -44,12 +45,8 @@ public sealed class RelationSelectBox : Panel
     // точечный GetLinks. null — вне таблицы (панель записи): всегда прямое чтение из БД.
     private readonly RelationLinksCache? _cache;
 
-    private readonly List<int>                     _selected = [];
-    // id выбранной цели → TargetDbId ЕГО ребра: переход по «карандашу» идет в СВОЮ базу ребра, а не в
-    // цель текущего конфига поля (иначе после пере-настройки/смешанных ребер открылась бы пустая/чужая
-    // запись). Для кандидатов из пикера используется _cfg.TargetDbId (они из текущей целевой базы).
-    private readonly Dictionary<int, int>          _selectedDb = new();
-    private readonly Dictionary<int, string>       _titles   = new();
+    private readonly List<RelationTarget> _selected = [];
+    private readonly Dictionary<RelationTarget, string> _titles = new();
     private readonly AvaloniaList<RelationOptionVm> _shown    = [];
     private readonly TextBlock _valueText;
     private readonly TextBlock _placeholder;
@@ -60,16 +57,15 @@ public sealed class RelationSelectBox : Panel
     private TextBox?   _search;
     private TextBlock? _moreHint;
     private int _recordId;
+    private CancellationTokenSource? _pickerSearch;
+    private int _searchGeneration;
+    private bool _canSelectForList;
 
     /// <summary>Поднимается после изменения набора связей.</summary>
     public event EventHandler? Changed;
     /// <summary>Переход к связанной записи — (DbId цели, Id записи). DbId=0 — та же БД, &gt;0 —
     /// межбазовая цель (открыть из ее БД). Пункт «карандаш» у строки списка.</summary>
     public event EventHandler<(int DbId, int RecordId)>? Navigate;
-
-    // Репозиторий целевой БД: та же (внутрибазовая связь) или чужая (межбазовая — через резолвер
-    // реестра). null для межбазовой — целевая БД недоступна (показ/пикер деградируют мягко).
-    private ConstructorRepository? TargetRepo() => _cfg.IsCrossDb ? RelationDbResolver.RepoFor(_cfg.TargetDbId) : _repo;
 
     public RelationSelectBox(ConstructorRepository repo, int fieldId, RelationConfig cfg,
                              bool editing = false, double contentLeftPadding = 0,
@@ -145,7 +141,9 @@ public sealed class RelationSelectBox : Panel
                 Child                 = WindowZoom.WrapPopupContent(BuildChecklist()),
             };
             Children.Add(_popup);
+            _popup.Closed += (_, _) => CancelSearch();
         }
+        DetachedFromVisualTree += (_, _) => CancelSearch();
 
         // Повторный показ (после выхода из правки ячейки) — перечитать связи СВЕЖИМИ (мимо кеша),
         // чтобы текст отражал только что сделанную правку.
@@ -188,16 +186,12 @@ public sealed class RelationSelectBox : Panel
     private void ReloadSelected(bool preferCache)
     {
         _selected.Clear();
-        _selectedDb.Clear();
+        _titles.Clear();
         if (_recordId > 0)
         {
-            // Быстрый путь таблицы: батч-кеш держит ТОЛЬКО внутрибазовые ребра (TargetDbId=0) с уже
-            // резолвнутыми названиями. Годится лишь для внутрибазового поля при прогретом кеше; иначе
-            // (и всегда для межбазового поля) — резолвим по ребрам, КАЖДОЕ по своему TargetDbId.
-            if (!_cfg.IsCrossDb && preferCache && _cache is not null
-                && _cache.TryGet(_fieldId, _recordId, out var cached))
+            if (preferCache && _cache is not null && _cache.TryGetTargets(_fieldId, _recordId, out var cached))
             {
-                foreach (var (id, title) in cached) { _selected.Add(id); _selectedDb[id] = 0; _titles[id] = title; }
+                foreach (var (target, display) in cached) { _selected.Add(target); _titles[target] = display; }
             }
             else LoadSelected();
         }
@@ -205,69 +199,28 @@ public sealed class RelationSelectBox : Panel
         if (_popup is { IsOpen: true }) RefreshList(_search?.Text);
     }
 
-    // Резолв КАЖДОГО ребра по ЕГО СОБСТВЕННОМУ TargetDbId (а не по цели текущего конфига поля): ребро,
-    // созданное на другую БД, всегда резолвится ИЗ ТОЙ БД — даже если позже цель поля пере-настроили.
-    // Так показ остается честным: нет ложных совпадений Id с чужой локальной записью.
-    //
-    // Единая логика обрыва (как внутри базы, так и межбазы):
-    //  • БД цели ДОСТУПНА, но записи в ней нет (удалена/перенесена) → чип пропадает (не в _selected):
-    //    пусто → «связи нет». На правке ячейки такое ребро вычищается само (SetLinks по _selected).
-    //  • БД цели НЕДОСТУПНА (сервер лег / путь-файл пропал / грузится / отключена) → показываем
-    //    «(база недоступна)» и ДЕРЖИМ ребро (база вернется — связь восстановится).
     private void LoadSelected()
     {
-        var edges = _repo.GetLinkEdges(_fieldId, _recordId);   // (ToRecordId, TargetDbId) в порядке Position
-        if (edges.Count == 0) return;
-
-        // Обрыв решаем по ПАРЕ (ToRecordId, TargetDbId), а не по голому id: осиротевшее межбазовое
-        // ребро (TargetDbId>0), чей id СЛУЧАЙНО совпал с живой внутрибазовой записью, не должно
-        // прятать валидную внутрибазовую связь (и убивать ее на следующей правке через SetLinks).
-        var gone = new HashSet<(int To, int Db)>();   // база доступна, но цели нет → обрыв → «связи нет»
-        foreach (var grp in edges.GroupBy(e => e.TargetDbId))
+        foreach (var (target, display) in _repo.GetRelationLinks(_fieldId, _recordId))
         {
-            var repo = grp.Key == 0 ? _repo : RelationDbResolver.RepoFor(grp.Key);
-            var ids  = grp.Select(e => e.ToRecordId).Distinct().ToList();
-            var map  = repo?.GetRecordTitles(ids);   // null → БД цели недоступна (временно)
-            foreach (var id in ids)
-            {
-                if (map is null)                          _titles[id] = "(база недоступна)";
-                else if (map.TryGetValue(id, out var t))  _titles[id] = t;
-                else                                      gone.Add((id, grp.Key));
-            }
+            _selected.Add(target);
+            _titles[target] = display;
         }
-        foreach (var (toId, dbId) in edges)
-            if (!gone.Contains((toId, dbId))) { _selected.Add(toId); _selectedDb[toId] = dbId; }
     }
 
-    /// <summary>
-    /// Текст закрытого вида связи для рисованного показа (список свойств страницы записи): названия
-    /// целей первой строкой через разделитель поля, по тем же правилам обрыва, что у контрола
-    /// (<see cref="LoadSelected"/>): база доступна, а записи нет — цель пропускается; база недоступна —
-    /// «(база недоступна)». Пусто — связей нет.
-    /// </summary>
-    public static string DisplayText(ConstructorRepository repo, int fieldId, int recordId, RelationConfig cfg)
+    /// <summary>Общий показ для рисованной карточки и редактора, с теми же правами и форматированием.</summary>
+    public static string DisplayText(ConstructorRepository repo, int fieldId, int recordId, RelationConfig cfg) =>
+        string.Join(cfg.SeparatorString, repo.GetRelationLinks(fieldId, recordId)
+            .Select(link => TitleText.FirstLine(link.Display)));
+
+    private bool CanSelect
     {
-        if (recordId <= 0) return "";
-        var edges = repo.GetLinkEdges(fieldId, recordId);
-        if (edges.Count == 0) return "";
-        var titles = new Dictionary<int, string>();
-        var gone   = new HashSet<(int To, int Db)>();
-        foreach (var grp in edges.GroupBy(e => e.TargetDbId))
+        get
         {
-            var target = grp.Key == 0 ? repo : RelationDbResolver.RepoFor(grp.Key);
-            var ids    = grp.Select(e => e.ToRecordId).Distinct().ToList();
-            var map    = target?.GetRecordTitles(ids);
-            foreach (var id in ids)
-            {
-                if (map is null)                         titles[id] = "(база недоступна)";
-                else if (map.TryGetValue(id, out var t)) titles[id] = t;
-                else                                     gone.Add((id, grp.Key));
-            }
+            if (!_editing || _cfg.Auto is not null || _repo.GetRecord(_recordId)?.CollectionId is not int collection) return false;
+            return _repo.CanReadRelationCollection(collection)
+                && (_repo.Permissions?.Can(PermAction.EditRecord, collection) ?? true);
         }
-        var parts = new List<string>();
-        foreach (var (toId, dbId) in edges)
-            if (!gone.Contains((toId, dbId))) parts.Add(TitleText.FirstLine(titles.GetValueOrDefault(toId, "")));
-        return string.Join(cfg.SeparatorString, parts);
     }
 
     private void OpenPopup()
@@ -309,7 +262,8 @@ public sealed class RelationSelectBox : Panel
     public void OpenSearch(string text)
     {
         if (_recordId <= 0 || _popup is null || _search is null) return;
-        _search.Text  = text;   // отбор — по TextChanged поля, один запрос к базе, а не два
+        if (_search.Text == text) RefreshList(text);
+        else _search.Text = text;
         _popup.IsOpen = true;
         _search.Focus();
         _search.SelectionStart = _search.SelectionEnd = _search.CaretIndex = text.Length;
@@ -385,7 +339,7 @@ public sealed class RelationSelectBox : Panel
 
         _search = new TextBox
         {
-            Watermark                = "Поиск по названию…",
+            Watermark                = _cfg.EffectiveSearchField == RelationConfig.TitleField ? "Поиск по названию…" : "Поиск по свойству…",
             Height                   = 30,
             FontSize                 = fontBase,
             Background               = Brush("BrushBg", Colors.White),
@@ -446,16 +400,28 @@ public sealed class RelationSelectBox : Panel
         {
             var name = new TextBlock { TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
             name.Bind(TextBlock.TextProperty, new Binding(nameof(RelationOptionVm.Title)));
+            var detail = new TextBlock
+            {
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                FontSize = Math.Max(9, fontBase - 1),
+                Foreground = Brush("BrushSecondaryText", Colors.Gray),
+            };
+            detail.Bind(TextBlock.TextProperty, new Binding(nameof(RelationOptionVm.Detail)));
+            detail.Bind(IsVisibleProperty, new Binding(nameof(RelationOptionVm.HasDetail)));
+            var label = new StackPanel();
+            label.Children.Add(name);
+            label.Children.Add(detail);
 
             var cb = new CheckBox
             {
-                Content                    = name,
+                Content                    = label,
                 FontSize                   = fontBase,
                 HorizontalAlignment        = HorizontalAlignment.Stretch,
                 HorizontalContentAlignment = HorizontalAlignment.Left,
                 Margin                     = new Thickness(0),
                 Cursor                     = new Cursor(StandardCursorType.Hand),
             };
+            cb.IsEnabled = _canSelectForList;
             cb.Bind(ToggleButton.IsCheckedProperty, new Binding(nameof(RelationOptionVm.Checked)) { Mode = BindingMode.TwoWay });
 
             // «Карандаш» — перейти к связанной записи (иконка из реестра, вместо стрелки).
@@ -471,6 +437,14 @@ public sealed class RelationSelectBox : Panel
                 e.Handled = true;
                 if ((s as Control)?.DataContext is RelationOptionVm vm)
                 {
+                    var targetRepo = vm.DbId == 0 ? _repo : RelationDbResolver.RepoFor(vm.DbId);
+                    var collection = targetRepo?.GetRecord(vm.Id)?.CollectionId;
+                    if (collection is null) return;
+                    if (!targetRepo!.CanReadRelationCollection(collection.Value))
+                    {
+                        SmartBase.Controls.Dialogs.PermissionNotice.Show(this, PermAction.ViewCollection);
+                        return;
+                    }
                     if (_popup is not null) _popup.IsOpen = false;
                     Navigate?.Invoke(this, (vm.DbId, vm.Id));   // база ЭТОГО пункта, не текущего конфига
                 }
@@ -489,72 +463,105 @@ public sealed class RelationSelectBox : Panel
     // (точный остаток не считаем — COUNT по 10 млн на каждый ввод недопустим).
     private const int PickerCap = 200;
 
-    private void RefreshList(string? query)
+    private void CancelSearch()
     {
-        var q       = query?.Trim() ?? "";
-        // Кандидаты — из ЦЕЛЕВОЙ БД (для межбазовой связи чужой). Само-исключение только внутри
-        // своей БД (в другой БД тот же Id — иная запись).
-        var results = TargetRepo()?.SearchRecordTitles(_cfg.TargetCollectionId, q, PickerCap + 1, _cfg.IsCrossDb ? 0 : _recordId)
-                      ?? [];
-        var hasMore = results.Count > PickerCap;
-        if (hasMore) results = results.Take(PickerCap).ToList();
-        // Кандидаты всегда из ТЕКУЩЕЙ целевой базы (_cfg.TargetDbId). Не затираем название выбранного
-        // ребра, чья база ОТЛИЧАЕТСЯ (межбазовое/смешанное — см. C4): при коллизии id кандидатское имя
-        // из целевой базы подменило бы имя из чужой базы (навигация-DbId осталась бы верной, а текст — нет).
-        foreach (var (id, title) in results)
-            if (!(_selectedDb.TryGetValue(id, out var edgeDb) && edgeDb != _cfg.TargetDbId))
-                _titles[id] = title;
+        _searchGeneration++;
+        _pickerSearch?.Cancel();
+        _pickerSearch?.Dispose();
+        _pickerSearch = null;
+    }
 
-        var list = new List<RelationOptionVm>();
-        // Уже выбранные — ВСЕГДА с базой СВОЕГО ребра (переход туда, откуда связь реально идет), и в
-        // пустом списке, И В ПОИСКЕ: иначе при коллизии id «→» уводил бы в базу текущего конфига поля
-        // (исходный симптом C4). Кандидаты приходят только из целевой базы поля, поэтому выбранная
-        // цель в ЧУЖОЙ базе в results не попадает — отбираем ее по уже известному названию, чтобы при
-        // поиске она не исчезала из списка.
-        foreach (var id in _selected)
+    private void RefreshList(string? query) => _ = RefreshListAsync(query);
+
+    private async Task RefreshListAsync(string? query)
+    {
+        CancelSearch();
+        var generation = _searchGeneration;
+        var cancel = _pickerSearch = new CancellationTokenSource();
+        var ct = cancel.Token;
+        var q = query?.Trim() ?? "";
+        var record = _recordId;
+        var selected = _selected.ToArray();
+        if (_moreHint is not null) { _moreHint.Text = "Поиск…"; _moreHint.IsVisible = true; }
+        try
         {
-            var title = _titles.GetValueOrDefault(id, "");
-            if (q.Length > 0 && title.IndexOf(q, StringComparison.CurrentCultureIgnoreCase) < 0) continue;
-            list.Add(new RelationOptionVm(id, title, _selectedDb.GetValueOrDefault(id, _cfg.TargetDbId), this));
+            await Task.Delay(150, ct);
+            var data = await Dispatcher.UIThread.InvokeAsync(() =>
+                _repo.GetRelationPickerDataAsync(record, _cfg, q, selected, ct));
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                if (ct.IsCancellationRequested || generation != _searchGeneration || record != _recordId || _popup is not { IsOpen: true }) return;
+                ApplyPickerData(data, q);
+            });
         }
-        // Кандидаты — из ТЕКУЩЕЙ целевой базы поля.
-        foreach (var (id, title) in results)
-            if (!_selected.Contains(id)) list.Add(new RelationOptionVm(id, title, _cfg.TargetDbId, this));
-        _shown.Clear();
-        _shown.AddRange(list);
-
-        if (_moreHint is not null)
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
         {
-            _moreHint.Text      = $"Показаны первые {PickerCap} — уточните в поиске";
-            _moreHint.IsVisible = hasMore;
+            Serilog.Log.Warning(ex, "Не удалось прочитать список связей");
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                if (generation != _searchGeneration || ct.IsCancellationRequested) return;
+                _shown.Clear();
+                if (_moreHint is not null)
+                {
+                    _moreHint.Text = ex is PermissionDeniedException ? "Нет доступа к коллекции" : "Поиск недоступен";
+                    _moreHint.IsVisible = true;
+                }
+            });
         }
     }
 
-    private void Toggle(int id, bool on)
+    private void ApplyPickerData(RelationPickerData data, string q)
     {
-        if (_cfg.Single)
+        foreach (var pair in data.SelectedLabels) _titles[pair.Key] = pair.Value;
+        foreach (var value in data.Candidates) _titles[new(_cfg.TargetDbId, value.RecordId)] = value.Display;
+        var list = new List<RelationOptionVm>();
+        foreach (var target in _selected)
         {
-            _selected.Clear();
-            if (on) _selected.Add(id);
-            foreach (var it in _shown) it.Refresh();
+            var label = _titles.GetValueOrDefault(target, "");
+            if (q.Length > 0 && !data.SelectedSearch.GetValueOrDefault(target, "")
+                .Contains(q, StringComparison.CurrentCultureIgnoreCase)) continue;
+            list.Add(new RelationOptionVm(target, label, data.SelectedTitles.GetValueOrDefault(target, ""), this));
         }
-        else if (on)
+        foreach (var result in data.Candidates)
         {
-            if (!_selected.Contains(id)) _selected.Add(id);
+            var target = new RelationTarget(_cfg.TargetDbId, result.RecordId);
+            if (!_selected.Contains(target)) list.Add(new RelationOptionVm(target, _titles.GetValueOrDefault(target, ""),
+                _cfg.DisplayField == RelationConfig.TitleField ? "" : result.Title, this));
         }
-        else
+        _canSelectForList = CanSelect;
+        _shown.Clear();
+        _shown.AddRange(list);
+        if (_moreHint is not null)
         {
-            _selected.Remove(id);
+            _moreHint.Text = $"Показаны первые {PickerCap} — уточните в поиске";
+            _moreHint.IsVisible = data.HasMore;
         }
+    }
 
-        if (_recordId > 0)
+    private void Toggle(RelationTarget target, bool on)
+    {
+        if (!CanSelect)
         {
-            // Оборванные ссылки (цель удалена при живой базе) в _selected не попадают (LoadSelected),
-            // поэтому SetLinks по _selected сам вычищает их ребра — «чистка при правке».
-            _repo.SetLinks(_fieldId, _recordId, _selected);
-            _cache?.Invalidate(_fieldId, _recordId);   // кеш устарел — следующее чтение возьмет свежее
+            foreach (var item in _shown) item.Refresh();
+            return;
         }
-        RefreshDisplay();
+        var next = _cfg.Single && on ? new List<RelationTarget>() : new List<RelationTarget>(_selected);
+        if (on) { if (!next.Contains(target)) next.Add(target); }
+        else next.Remove(target);
+        if (next.SequenceEqual(_selected)) return;
+        try
+        {
+            if (_recordId > 0) _repo.SetLinkEdges(_fieldId, _recordId, next);
+        }
+        catch (PermissionDeniedException)
+        {
+            SmartBase.Controls.Dialogs.PermissionNotice.Show(this, PermAction.EditRecord);
+            foreach (var item in _shown) item.Refresh();
+            return;
+        }
+        _cache?.Invalidate(_fieldId, _recordId);
+        ReloadSelected(preferCache: false);
         Changed?.Invoke(this, EventArgs.Empty);
     }
 
@@ -567,19 +574,21 @@ public sealed class RelationSelectBox : Panel
     private static double Res(string key, double fallback) =>
         Application.Current!.TryFindResource(key, out var r) && r is double d ? d : fallback;
 
-    private sealed class RelationOptionVm(int id, string title, int dbId, RelationSelectBox owner) : INotifyPropertyChanged
+    private sealed class RelationOptionVm(RelationTarget target, string title, string recordTitle, RelationSelectBox owner) : INotifyPropertyChanged
     {
-        public int    Id    => id;
-        public int    DbId  => dbId;   // база цели этого пункта (0 — та же БД, >0 — межбазовая)
+        public int    Id    => target.RecordId;
+        public int    DbId  => target.DbId;   // база цели этого пункта (0 — та же БД, >0 — межбазовая)
         // Строка списка — одна строка: показываем первую (поиск выше идет по полному названию).
-        public string Title => TitleText.FirstLine(title);
+        public string Title => title.Length == 0 ? "(пусто)" : TitleText.FirstLine(title);
+        public string Detail => recordTitle is RelationProperty.NoAccess or RelationProperty.Unavailable ? "" : TitleText.FirstLine(recordTitle);
+        public bool HasDetail => Detail.Length > 0 && Detail != Title;
 
         public bool Checked
         {
-            get => owner._selected.Contains(id);
+            get => owner._selected.Contains(target);
             set
             {
-                owner.Toggle(id, value);
+                owner.Toggle(target, value);
                 PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Checked)));
             }
         }

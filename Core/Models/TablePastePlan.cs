@@ -189,8 +189,8 @@ public static class TablePastePlanner
         if (column.IsTitle) return TitleText.Stored(source);
 
         // Связь — названиями связанных записей, как их показывает ячейка. Найти записи по ним может
-        // только база, поэтому здесь текст лишь очищается от краевых пробелов; пустой снимает связи.
-        if (FieldTypeInfo.IsRelation(column.FieldType)) return source.Trim();
+        // только база. Пробелы в подписи значимы; пустой текст снимает связи.
+        if (FieldTypeInfo.IsRelation(column.FieldType)) return source;
 
         // Текст, ссылка и все неизвестное — как есть, без обрезки: пробелы по краям в тексте могут
         // быть частью значения, и молча их срезать значит портить данные. Пустая ячейка буфера

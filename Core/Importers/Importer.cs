@@ -1,10 +1,15 @@
+using SmartBase.Core.Models;
+
 namespace SmartBase.Core.Importers;
 
 /// <summary>Ошибка импорта с дружелюбным текстом — показывается пользователю в баннере диалога.</summary>
 public sealed class ImportException(string message) : Exception(message);
 
 /// <summary>Одна запись: название и значения свойств (в порядке FieldNames схемы).</summary>
-public sealed record ImportRow(string Title, IReadOnlyList<string> FieldValues);
+public sealed record ImportRow(string Title, IReadOnlyList<string> FieldValues)
+{
+    public RelationPortableRow? PortableRow { get; init; }
+}
 
 /// <summary>
 /// Итог первого прохода по источнику (см. <see cref="TableSources.ITableSource.Analyze"/>):
@@ -16,7 +21,10 @@ public sealed record ImportSchema(
     string? TitleHeader,
     IReadOnlyList<string> FieldNames,
     long RowCount,
-    long EmptyTitleCount);
+    long EmptyTitleCount)
+{
+    public RelationPortableSchema? PortableSchema { get; init; }
+}
 
 /// <summary>Раскладка листов Excel по коллекциям (чекбоксы ручного режима).</summary>
 public enum SheetMode

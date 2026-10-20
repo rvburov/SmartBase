@@ -45,6 +45,7 @@ public sealed class CsvTableWriter : ITableWriter
                 "date"        => WriterHelpers.DateDisplay(values[i]),
                 "checkbox"    => WriterHelpers.IsChecked(values[i]) ? "1" : "",
                 "multiselect" => MultiSelectValue.Display(values[i], MultiSelectValue.SeparatorFromConfig(cols[i].ConfigJson)),
+                "rollup"      => FieldTypeInfo.FormatComputedDisplay(values[i], "rollup"),
                 _             => values[i],
             });
         }

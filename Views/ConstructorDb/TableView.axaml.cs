@@ -2649,6 +2649,7 @@ public partial class TableView : UserControl
         if (raw == "") return "(Пусто)";
         if (fieldType == "multiselect") return OneLine(MultiSelectValue.Display(raw, separator));
         if (fieldType == "number") return NumberFormatValue.Format(raw, numberFormat ?? NumberFormat.Default);
+        if (fieldType == "rollup") return FieldTypeInfo.FormatComputedDisplay(raw, fieldType);
         if (fieldType == "file") return FileValue.DisplayName(raw);   // имя файла, а не абсолютный путь
         return OneLine(raw);
     }

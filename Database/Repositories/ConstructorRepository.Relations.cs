@@ -7,46 +7,38 @@ namespace SmartBase.Database.Repositories;
 
 // ── Связи между записями (тип поля «relation») ──────────────────────────────────
 // Ребро «из записи в запись по полю-связи» хранится в db_record_links (DbRecordLinkEntity),
-// НЕ в db_field_values — так работают каскады (FK ON DELETE CASCADE: удаление поля/записи-конца
-// чистит ребра) и обратные ссылки (backlink = запрос по ToRecordId). Показ ячейки — «чипы» с
-// названием (Title) связанной записи, резолвятся на лету (в базе дублируется только Id).
-// Настройка поля (целевая коллекция, one/many) — RelationConfig в ConfigJson.
+// НЕ в db_field_values. Каскады чистят исходящие ребра при удалении свойства/источника;
+// локальные входящие чистит код удаления цели. Показ выбранного свойства разрешается на лету.
+// Настройка цели, кардинальности, показа/поиска и автосопоставления — RelationConfig в ConfigJson.
 public partial class ConstructorRepository
 {
-    /// <summary>Связанные записи (Id + Title) для ячейки поля-связи одной записи, в порядке
-    /// Position. Только ВНУТРИБАЗОВЫЕ ребра (<c>TargetDbId=0</c>) — Title резолвится JOIN'ом к
-    /// локальным db_records; межбазовые ребра резолвятся отдельно по своим БД (см.
-    /// <c>RelationSelectBox.LoadSelected</c>), иначе их Id совпал бы с чужой локальной записью.</summary>
+    /// <summary>Совместимая локальная проекция: Id и выбранная подпись (старое имя поля Title),
+    /// в порядке ребер. Полный межбазовый набор — <see cref="GetRelationLinks"/>.</summary>
     public List<(int Id, string Title)> GetLinks(int fieldId, int fromRecordId) =>
-        (from l in db.DbRecordLinks.AsNoTracking()
-         where l.FieldId == fieldId && l.FromRecordId == fromRecordId && l.TargetDbId == 0
-         join r in db.DbRecords on l.ToRecordId equals r.Id
-         orderby l.Position, l.Id
-         select new { r.Id, r.Title })
-        .ToList()
-        .Select(x => (x.Id, x.Title ?? ""))
-        .ToList();
+        GetLinksBatch(fieldId, [fromRecordId]).GetValueOrDefault(fromRecordId, []);
 
-    /// <summary>Связи для НАБОРА записей-источников (горячий путь виртуализированной таблицы:
-    /// тянем чипы только видимых строк): fromRecordId → список (Id, Title) в порядке Position.
-    /// Только ВНУТРИБАЗОВЫЕ ребра (<c>TargetDbId=0</c>) — как <see cref="GetLinks"/>; межбазовые в
-    /// табличный батч-кеш не попадают (резолвятся ячейкой отдельно по своим БД).</summary>
+    /// <summary>Пакет совместимой локальной проекции (<c>TargetDbId=0</c>), как GetLinks.
+    /// Новая таблица/кеш используют GetRelationLinksBatch с полной парой базы и записи.</summary>
     public Dictionary<int, List<(int Id, string Title)>> GetLinksBatch(int fieldId, IReadOnlyList<int> fromRecordIds)
     {
         var result = new Dictionary<int, List<(int Id, string Title)>>();
         if (fromRecordIds.Count == 0) return result;
-
+        var field = db.DbFields.AsNoTracking().FirstOrDefault(f => f.Id == fieldId);
+        if (field is null || !CanReadRelationCollection(field.CollectionId)) return result;
+        var cfg = RelationConfig.FromConfig(field.ConfigJson);
         var rows = (from l in db.DbRecordLinks.AsNoTracking()
                     where l.FieldId == fieldId && fromRecordIds.Contains(l.FromRecordId) && l.TargetDbId == 0
-                    join r in db.DbRecords on l.ToRecordId equals r.Id
                     orderby l.Position, l.Id
-                    select new { l.FromRecordId, r.Id, r.Title })
+                    select new { l.FromRecordId, Id = l.ToRecordId })
                    .ToList();
+        var labels = ResolveRelationLabels(rows.Select(r => new RelationTarget(0, r.Id)).Distinct().ToList(),
+            cfg?.DisplayField ?? RelationConfig.TitleField, cfg?.TargetDbId);
         foreach (var row in rows)
         {
+            if (!labels.TryGetValue(new(0, row.Id), out var label)) continue;
             if (!result.TryGetValue(row.FromRecordId, out var list))
                 result[row.FromRecordId] = list = [];
-            list.Add((row.Id, row.Title ?? ""));
+            list.Add((row.Id, label));
         }
         return result;
     }
@@ -57,10 +49,7 @@ public partial class ConstructorRepository
     /// это как обрыв (чип пропадает → «связи нет»); недоступная база (repo=null) → «(база недоступна)».</summary>
     public Dictionary<int, string> GetRecordTitles(IReadOnlyList<int> ids)
     {
-        if (ids.Count == 0) return new();
-        return db.DbRecords.AsNoTracking().Where(r => ids.Contains(r.Id))
-                 .Select(r => new { r.Id, r.Title }).ToList()
-                 .ToDictionary(x => x.Id, x => x.Title ?? "");
+        return GetRecordPropertyValues(ids, RelationConfig.TitleField);
     }
 
     /// <summary>Id связанных записей ячейки в порядке Position (без резолва Title).</summary>
@@ -136,6 +125,7 @@ public partial class ConstructorRepository
             if (tc.TargetCollectionId != sc.TargetCollectionId || tc.TargetDbId != RelTargetDb(sc.TargetDbId)) continue;
 
             var edges = source.GetLinkEdges(sf.Id!.Value, sourceRecordId);
+            if (tc.Single) EnsureSingleRelationMove(source, sf.Id.Value, [sourceRecordId], tf.Name);
             for (var i = 0; i < edges.Count; i++)
                 rows.Add(new DbRecordLinkEntity
                 {
@@ -150,187 +140,129 @@ public partial class ConstructorRepository
     }
 
     /// <summary>
-    /// Заменить ВЕСЬ набор связей ячейки на <paramref name="toRecordIds"/> (основной путь записи из
-    /// пикера). Порядок сохраняется (Position), дубли/само-ссылки/чужие коллекции отсеиваются, для
-    /// single берется максимум одна связь. Разница применяется точечно (лишние — удалить, новые —
-    /// добавить, оставшиеся — переставить), чтобы не задваивать unique-индекс и не плодить Id.
-    /// Пишет строку журнала «до → после» именами записей. Ничего не изменилось → выходим молча.
+    /// Совместимый API численных id: база берется из конфига, single сохраняет старое правило первой цели.
+    /// Новый код передает полные пары в SetLinkEdges; он отклоняет несколько целей для single.
+    /// Запись применяет точечную разницу, сохраняет порядок и пишет журнал выбранными подписями.
     /// </summary>
     public void SetLinks(int fieldId, int fromRecordId, IReadOnlyList<int> toRecordIds)
     {
-        Demand(PermAction.EditRecord, CollectionOfRecord(fromRecordId));
+        var cfg = RelationConfig.FromConfig(db.DbFields.AsNoTracking().Where(f => f.Id == fieldId)
+            .Select(f => f.ConfigJson).FirstOrDefault());
+        if (cfg is null) return;
+        // Старый API доверял межбазовым id; новые UI/IO используют проверяемые полные цели.
+        SetLinkEdgesCore(fieldId, fromRecordId,
+            toRecordIds.Select(id => new RelationTarget(cfg.TargetDbId, id)).ToList(), allowUnresolved: true);
+    }
 
+    public void SetLinkEdges(int fieldId, int fromRecordId, IReadOnlyList<RelationTarget> targets) =>
+        SetLinkEdgesCore(fieldId, fromRecordId, targets, allowUnresolved: false);
+
+    private void SetLinkEdgesCore(int fieldId, int fromRecordId, IReadOnlyList<RelationTarget> targets, bool allowUnresolved)
+    {
+        var source = db.DbRecords.Find(fromRecordId);
+        Demand(PermAction.EditRecord, source?.CollectionId);
+        if (source is null) return;
         var field = db.DbFields.AsNoTracking().FirstOrDefault(f => f.Id == fieldId);
         if (field is null || field.FieldType != "relation") return;
+        if (field.CollectionId != source.CollectionId)
+            throw new InvalidOperationException("Свойство связи не принадлежит коллекции записи.");
         var cfg = RelationConfig.FromConfig(field.ConfigJson);
         if (cfg is null) return;
-        var targetDbId = cfg.TargetDbId;   // 0 = та же БД; >0 = цель в другом .db (реестровый DbId)
+        if (cfg.Auto is not null)
+            throw new InvalidOperationException("Автоматическая связь изменяется по правилу сопоставления.");
+        var existing = db.DbRecordLinks.Where(l => l.FieldId == fieldId && l.FromRecordId == fromRecordId).ToList();
+        var previous = existing.OrderBy(l => l.Position).ThenBy(l => l.Id)
+            .Select(l => new RelationTarget(l.TargetDbId, l.ToRecordId)).ToList();
+        var wanted = NormalizeRelationTargets(cfg, fromRecordId, targets, previous, allowUnresolved);
+        if (previous.SequenceEqual(wanted)) return;
 
-        // Нормализуем желаемый набор: без дублей, порядок выбора сохраняем. Само-ссылку отсеиваем
-        // только для внутрибазовой связи (в другой БД тот же Id — уже иная запись).
-        var wanted = new List<int>();
-        var seen   = new HashSet<int>();
-        foreach (var to in toRecordIds)
-            if ((targetDbId != 0 || to != fromRecordId) && seen.Add(to)) wanted.Add(to);
+        var labels = ResolveRelationLabels(previous.Concat(wanted).Distinct().ToList(), cfg.DisplayField, cfg.TargetDbId);
+        string Join(IEnumerable<RelationTarget> edges) => string.Join(", ", edges.Select(t =>
+            labels.GetValueOrDefault(t, $"#{t.RecordId}")));
+        Log("update", "record", source.Title, CollectionNameOf(source.CollectionId),
+            detail: ChangeDetail.Value(source.Title, field.Name, Join(previous), Join(wanted)));
 
-        // Внутрибазовая связь: оставляем только существующие записи целевой коллекции (страховка от
-        // гонок/битых Id). Межбазовую проверить отсюда нельзя (цель в другом файле) — доверяем пикеру.
-        if (targetDbId == 0 && wanted.Count > 0)
-        {
-            var valid = db.DbRecords.AsNoTracking()
-                .Where(r => r.CollectionId == cfg.TargetCollectionId && wanted.Contains(r.Id))
-                .Select(r => r.Id)
-                .ToHashSet();
-            wanted = wanted.Where(valid.Contains).ToList();
-        }
-        if (cfg.Single && wanted.Count > 1) wanted = [wanted[0]];
-
-        var existing = db.DbRecordLinks
-            .Where(l => l.FieldId == fieldId && l.FromRecordId == fromRecordId)
-            .ToList();
-        var existingOrdered = existing.OrderBy(l => l.Position).ThenBy(l => l.Id)
-                                      .Select(l => l.ToRecordId).ToList();
-        if (existingOrdered.SequenceEqual(wanted)) return;   // ничего не изменилось
-
-        // Журнал «до → после» именами записей (владелец — сама запись-источник).
-        var fromRec = db.DbRecords.Find(fromRecordId);
-        if (fromRec is not null)
-        {
-            var titleIds = existingOrdered.Concat(wanted).Distinct().ToList();
-            var titles   = db.DbRecords.AsNoTracking()
-                .Where(r => titleIds.Contains(r.Id))
-                .ToDictionary(r => r.Id, r => r.Title ?? "");
-            // Межбазовые цели локально не резолвятся (другой файл) — в журнале показываем «#id».
-            string Join(IEnumerable<int> ids) => string.Join(", ", ids.Select(id => titles.GetValueOrDefault(id, targetDbId == 0 ? "" : $"#{id}")));
-            Log("update", "record", fromRec.Title, CollectionNameOf(fromRec.CollectionId),
-                detail: ChangeDetail.Value(fromRec.Title, field.Name, Join(existingOrdered), Join(wanted)));
-        }
-
-        // Точечная разница: убрать лишние, оставшиеся переставить, недостающие добавить.
         var wantedSet = wanted.ToHashSet();
-        var byTo      = new Dictionary<int, DbRecordLinkEntity>();
-        foreach (var l in existing)
+        var byTarget = new Dictionary<RelationTarget, DbRecordLinkEntity>();
+        foreach (var edge in existing)
         {
-            if (wantedSet.Contains(l.ToRecordId)) byTo[l.ToRecordId] = l;
-            else db.DbRecordLinks.Remove(l);
+            var target = new RelationTarget(edge.TargetDbId, edge.ToRecordId);
+            if (wantedSet.Contains(target) && byTarget.TryAdd(target, edge)) continue;
+            db.DbRecordLinks.Remove(edge);
         }
         for (var i = 0; i < wanted.Count; i++)
         {
-            var pos = (i + 1) * 1000;
-            if (byTo.TryGetValue(wanted[i], out var l)) l.Position = pos;
+            var target = wanted[i];
+            if (byTarget.TryGetValue(target, out var edge)) edge.Position = (i + 1) * 1000;
             else db.DbRecordLinks.Add(new DbRecordLinkEntity
             {
-                FieldId = fieldId, FromRecordId = fromRecordId, ToRecordId = wanted[i],
-                TargetDbId = targetDbId, Position = pos,
+                FieldId = fieldId, FromRecordId = fromRecordId, ToRecordId = target.RecordId,
+                TargetDbId = target.DbId, Position = (i + 1) * 1000,
             });
         }
-
-        if (fromRec is not null) TouchUpdated(fromRec);
+        TouchUpdated(source);
         db.SaveChanges();
+        NotifyRelationDataChanged(source.CollectionId, fieldId, fromRecordId);
+    }
+
+    /// <summary>Общие правила выбора; прежние смешанные/временно недоступные ребра сохраняются по полной паре.</summary>
+    internal List<RelationTarget> NormalizeRelationTargets(RelationConfig cfg, int sourceId,
+        IReadOnlyList<RelationTarget> targets, IReadOnlyCollection<RelationTarget>? allowedExisting = null,
+        bool allowUnresolved = false)
+    {
+        var previous = allowedExisting?.ToHashSet() ?? [];
+        var wanted = new List<RelationTarget>();
+        var seen = new HashSet<RelationTarget>();
+        var candidates = targets.Where(t => t.RecordId > 0 && t.DbId >= 0
+            && !(t.DbId == 0 && t.RecordId == sourceId)).Distinct().ToList();
+        var newTargets = candidates.Where(t => !previous.Contains(t) && t.DbId == cfg.TargetDbId).ToList();
+        var targetRepo = cfg.TargetDbId == 0 ? this : RelationDbResolver.RepoFor(cfg.TargetDbId);
+        HashSet<int> valid = [];
+        if (newTargets.Count > 0)
+        {
+            if (targetRepo is null)
+            {
+                if (!allowUnresolved) throw new InvalidOperationException("Целевая база связи недоступна.");
+                valid = newTargets.Select(t => t.RecordId).ToHashSet();
+            }
+            else
+            {
+                targetRepo.Demand(PermAction.ViewCollection, cfg.TargetCollectionId);
+                var ids = newTargets.Select(t => t.RecordId).ToList();
+                valid = targetRepo.ReadRelationPropertyValues(cfg.TargetCollectionId, RelationConfig.TitleField, ids)
+                    .Select(r => r.RecordId).ToHashSet();
+            }
+        }
+        foreach (var target in candidates)
+            if ((previous.Contains(target) || target.DbId == cfg.TargetDbId && valid.Contains(target.RecordId)) && seen.Add(target))
+                wanted.Add(target);
+        if (cfg.Single && wanted.Count > 1) return [wanted[0]];
+        return wanted;
     }
 
     /// <summary>Добавить одну связь (для single — заменяет прежнюю). Идемпотентно.</summary>
     public void AddLink(int fieldId, int fromRecordId, int toRecordId)
     {
-        // single: новый выбор замещает прежний (SetLinks сам возьмет первую, но нам нужна именно
-        // новая связь — значит передаем ровно ее).
+        // single: новый выбор замещает прежний; передаем ровно новую полную цель.
         var cfg = RelationConfig.FromConfig(
             db.DbFields.AsNoTracking().Where(f => f.Id == fieldId).Select(f => f.ConfigJson).FirstOrDefault());
-        if (cfg is { Single: true }) { SetLinks(fieldId, fromRecordId, [toRecordId]); return; }
-
-        var cur = GetLinkTargetIds(fieldId, fromRecordId);
-        if (cur.Contains(toRecordId)) return;
-        cur.Add(toRecordId);
-        SetLinks(fieldId, fromRecordId, cur);
+        if (cfg is null) return;
+        var target = new RelationTarget(cfg.TargetDbId, toRecordId);
+        var cur = cfg.Single ? new List<RelationTarget>() : GetLinkEdges(fieldId, fromRecordId)
+            .Select(e => new RelationTarget(e.TargetDbId, e.ToRecordId)).ToList();
+        if (cur.Contains(target)) return;
+        cur.Add(target);
+        SetLinkEdgesCore(fieldId, fromRecordId, cur, allowUnresolved: true);
     }
 
     /// <summary>Снять одну связь (крестик на чипе). Нет такой связи — no-op.</summary>
     public void RemoveLink(int fieldId, int fromRecordId, int toRecordId)
     {
-        var cur = GetLinkTargetIds(fieldId, fromRecordId);
-        if (!cur.Remove(toRecordId)) return;
-        SetLinks(fieldId, fromRecordId, cur);
-    }
-
-    /// <summary>
-    /// Переписать конфиги полей-связей ПЕРЕНЕСЕННОЙ (ATTACH) коллекции под целевую базу: копия полей
-    /// идет дословным INSERT…SELECT, поэтому TargetDbId/TargetCollectionId остаются от источника —
-    /// правим после. TargetDbId по формуле (абсолютная БД цели = TargetDbId==0?sourceDbId; в целевой
-    /// базе → 0 если == targetDbId, иначе межбазовая). Для САМО-связи (цель = сама перенесенная
-    /// коллекция) — TargetDbId=0 и TargetCollectionId=новый id (цель уехала вместе с полем). Должно
-    /// быть согласовано с переписыванием ребер в CopyOneCollectionFromAttached.
-    /// </summary>
-    private void RewriteMovedRelationConfigs(int newColId, int srcCollectionId, int sourceDbId, int targetDbId)
-    {
-        if (sourceDbId <= 0 || targetDbId <= 0) return;
-        var fields  = db.DbFields.Where(f => f.CollectionId == newColId && f.FieldType == "relation").ToList();
-        var changed = false;
-        foreach (var f in fields)
-        {
-            if (RelationConfig.FromConfig(f.ConfigJson) is not { } c) continue;
-            int newDb, newCol;
-            if (c.TargetDbId == 0 && c.TargetCollectionId == srcCollectionId)   // само-связь на эту коллекцию
-            {
-                newDb  = 0;
-                newCol = newColId;
-            }
-            else                                                                // внешняя цель (осталась в исходной/третьей БД)
-            {
-                var abs = c.TargetDbId == 0 ? sourceDbId : c.TargetDbId;
-                newDb  = abs == targetDbId ? 0 : abs;
-                newCol = c.TargetCollectionId;
-            }
-            var updated = new RelationConfig(newCol, c.Single, c.Separator, newDb).ToConfigJson();
-            if (updated != f.ConfigJson) { f.ConfigJson = updated; changed = true; }
-        }
-        if (changed) db.SaveChanges();
-    }
-
-    /// <summary>
-    /// То же для МЕЖБАЗОВОГО переноса ГРУППЫ (ветки целиком). Ребра ветки не копируются (v1), но
-    /// конфиги полей-связей приезжают ДОСЛОВНО, и без правки TargetCollectionId источника читался бы
-    /// как id ЛОКАЛЬНОЙ коллекции целевой базы — поле молча показывало бы ЧУЖИЕ записи. Разбор целей:
-    /// <list type="bullet">
-    /// <item>цель — коллекция ТОЙ ЖЕ перенесенной ветки (есть в <paramref name="colMap"/>): уехала
-    /// вместе с полем → внутрибазовая на новый id;</item>
-    /// <item>внешняя цель: по формуле MoveCollectionIsolated (абсолютная БД цели = TargetDbId==0 ?
-    /// sourceDbId; в целевой базе → 0 если == targetDbId, иначе межбазовая);</item>
-    /// <item>база источника неизвестна (<paramref name="sourceDbId"/>/<paramref name="targetDbId"/>
-    /// ≤ 0 — цель не восстановить): сбрасываем в «не настроено» (TargetCollectionId=0). Лучше пустое
-    /// поле, чем ссылка на чужие записи.</item>
-    /// </list>
-    /// Сами связи ветки при этом все равно пусты — поле лишь показывает верную цель для нового выбора.
-    /// </summary>
-    private void RewriteMovedGroupRelationConfigs(IReadOnlyDictionary<int, int> colMap, int sourceDbId, int targetDbId)
-    {
-        if (colMap.Count == 0) return;
-        var newColIds = colMap.Values.ToList();
-        var fields    = db.DbFields.Where(f => newColIds.Contains(f.CollectionId) && f.FieldType == "relation").ToList();
-        var changed   = false;
-        foreach (var f in fields)
-        {
-            if (RelationConfig.FromConfig(f.ConfigJson) is not { } c) continue;
-            int newDb, newCol;
-            if (c.TargetDbId == 0 && colMap.TryGetValue(c.TargetCollectionId, out var movedCol))
-            {
-                newDb  = 0;
-                newCol = movedCol;
-            }
-            else if (sourceDbId > 0 && targetDbId > 0)
-            {
-                var abs = c.TargetDbId == 0 ? sourceDbId : c.TargetDbId;
-                newDb  = abs == targetDbId ? 0 : abs;
-                newCol = c.TargetCollectionId;
-            }
-            else
-            {
-                newDb  = 0;
-                newCol = 0;   // «не настроено» — FromConfig вернет null, поле ничего не связывает
-            }
-            var updated = new RelationConfig(newCol, c.Single, c.Separator, newDb).ToConfigJson();
-            if (updated != f.ConfigJson) { f.ConfigJson = updated; changed = true; }
-        }
-        if (changed) db.SaveChanges();
+        var cur = GetLinkEdges(fieldId, fromRecordId).Select(e => new RelationTarget(e.TargetDbId, e.ToRecordId)).ToList();
+        var index = cur.FindIndex(t => t.RecordId == toRecordId);
+        if (index < 0) return;
+        cur.RemoveAt(index);
+        SetLinkEdgesCore(fieldId, fromRecordId, cur, allowUnresolved: true);
     }
 
     /// <summary>
@@ -343,6 +275,7 @@ public partial class ConstructorRepository
     public List<(int Id, string Title)> SearchRecordTitles(
         int collectionId, string? query, int limit = 100, int excludeRecordId = 0)
     {
+        if (!CanReadRelationCollection(collectionId)) return [];
         var q = db.DbRecords.AsNoTracking().Where(r => r.CollectionId == collectionId);
         if (excludeRecordId > 0) q = q.Where(r => r.Id != excludeRecordId);
         var term = query?.Trim() ?? "";

@@ -60,6 +60,8 @@ public partial class PropertyEditorDialog : Window
         new() { Type = "url",      Label = "Ссылка",  Icon = Components.FieldTypeIcons.ForType("url")!, StartsGroup = true },
         new() { Type = "file",     Label = "Файл",    Icon = Components.FieldTypeIcons.ForType("file")!     },
         new() { Type = "relation", Label = "Связь",   Icon = Components.FieldTypeIcons.ForType("relation")! },
+        new() { Type = "lookup", Label = "Свойство связанной записи", Icon = Components.FieldTypeIcons.ForType("relation")! },
+        new() { Type = "rollup", Label = "Итог по связанным записям", Icon = Components.FieldTypeIcons.ForType("number")! },
         new() { Type = "user",     Label = "Пользователь", Icon = Components.FieldTypeIcons.ForType("user")! },
         // 4. Вычисляемые типы (значение авто из метаданных записи, ячейка read-only).
         new() { Type = "created_at", Label = "Дата создания",          Icon = Components.FieldTypeIcons.ForType("created_at")!, StartsGroup = true },
@@ -142,6 +144,7 @@ public partial class PropertyEditorDialog : Window
         FileFolderBtn.Click              += async (_, _) => await PickFolderAsync();
         PopulateFileSources();
         PopulateRelationDatabases();
+        InitializeExtendedRelations();
 
         // Новое свойство открывается с типом из «Настройки → Конструктор базы данных»;
         // у существующего тип берется из самого поля (ниже), настройка его не трогает.
@@ -178,6 +181,8 @@ public partial class PropertyEditorDialog : Window
                 // «Связь» — восстановить целевую коллекцию + кардинальность.
                 if (field.FieldType == "relation")
                     RestoreRelationConfig(field.ConfigJson);
+                if (field.FieldType is "lookup" or "rollup")
+                    RestoreRelationComputedConfig(field.ConfigJson);
             }
         }
 
@@ -330,6 +335,8 @@ public partial class PropertyEditorDialog : Window
         FileSection.IsVisible = _selectedType == "file";
         // Настройка связи — только для типа «Связь».
         RelationSection.IsVisible = _selectedType == "relation";
+        RelationComputedSection.IsVisible = _selectedType is "lookup" or "rollup";
+        UpdateRelationComputedVisibility();
         // Библиотека документов — только для типа «Файл».
         LibrarySection.IsVisible = _selectedType == "file";
 
@@ -697,10 +704,11 @@ public partial class PropertyEditorDialog : Window
         if (repo is not null)
             foreach (var c in repo.GetAllCollections())
                 // Пункт списка — одна строка (TitleText); выбор идет по Id.
-                if (c.Id.HasValue)
+                if (c.Id.HasValue && (repo.Permissions?.Can(PermAction.ViewCollection, c.Id.Value) ?? true))
                     items.Add(new TargetCollectionItem { Id = c.Id.Value, Name = TitleText.FirstLine(c.Name) });
         RelationTargetCombo.ItemsSource   = items;
         RelationTargetCombo.SelectedIndex = -1;      // цель нужно выбрать явно (список сменился)
+        PopulateRelationProperties();
     }
 
     // Восстановить сохраненное правило связи (целевая БД + коллекция + one/many + разделитель).
@@ -720,6 +728,14 @@ public partial class PropertyEditorDialog : Window
         RelationCardinalityCombo.SelectedIndex = cfg.Single ? 1 : 0;
         var sepIdx = Array.IndexOf(SeparatorKeys, cfg.Separator);
         RelationSeparatorCombo.SelectedIndex = sepIdx >= 0 ? sepIdx : 0;
+        SelectRelationProperty(RelationDisplayCombo, cfg.DisplayField);
+        SelectRelationProperty(RelationSearchCombo, cfg.SearchField ?? cfg.DisplayField);
+        RelationModeCombo.SelectedIndex = cfg.Auto is null ? 0 : 1;
+        if (cfg.Auto is { } auto)
+        {
+            SelectRelationProperty(RelationAutoSourceCombo, auto.SourceField);
+            SelectRelationProperty(RelationAutoTargetCombo, auto.TargetField);
+        }
     }
 
     // Собрать ConfigJson поля-связи. null — целевая коллекция не выбрана (ошибка показана).
@@ -734,7 +750,18 @@ public partial class PropertyEditorDialog : Window
         var separator  = SeparatorKeys[Math.Clamp(RelationSeparatorCombo.SelectedIndex, 0, SeparatorKeys.Length - 1)];
         var dbId       = (RelationDbCombo.SelectedItem as RelationDbItem)?.Id ?? _currentDbId;
         var targetDbId = dbId == _currentDbId ? 0 : dbId;   // своя БД → 0 (внутрибазовая связь)
-        return new RelationConfig(t.Id, single, separator, targetDbId).ToConfigJson();
+        var display = (RelationDisplayCombo.SelectedItem as RelationPropertyItem)?.Key;
+        var search = (RelationSearchCombo.SelectedItem as RelationPropertyItem)?.Key;
+        if (display is null || search is null) { ShowError("Выберите свойства для показа и поиска"); return null; }
+        RelationAutoRule? auto = null;
+        if (RelationModeCombo.SelectedIndex == 1)
+        {
+            if (RelationAutoSourceCombo.SelectedItem is not RelationPropertyItem source ||
+                RelationAutoTargetCombo.SelectedItem is not RelationPropertyItem target)
+            { ShowError("Выберите свойства для автоматического сопоставления"); return null; }
+            auto = new RelationAutoRule(source.Key, target.Key);
+        }
+        return new RelationConfig(t.Id, single, separator, targetDbId, display, search, auto).ToConfigJson();
     }
 
     // Под-опции формата числа: блок опций (точность/разряды/валюта) скрыт для «Обычного числа»
@@ -1020,6 +1047,23 @@ public partial class PropertyEditorDialog : Window
 
     private async void TrySave()
     {
+        if (_savingProperty) return;
+        _savingProperty = true;
+        SaveBtn.IsEnabled = false;
+        CancelBtn.IsEnabled = false;
+        try { await SavePropertyAsync(); }
+        catch (OperationCanceledException) { ShowError("Сохранение отменено"); }
+        catch (PermissionDeniedException ex) { ShowError(ex.Message); }
+        finally
+        {
+            _savingProperty = false;
+            SaveBtn.IsEnabled = true;
+            CancelBtn.IsEnabled = true;
+        }
+    }
+
+    private async Task SavePropertyAsync()
+    {
         var name = NameBox.Text?.Trim() ?? "";
         if (string.IsNullOrEmpty(name))
         {
@@ -1056,6 +1100,13 @@ public partial class PropertyEditorDialog : Window
             if (cfg is null) return;
             relationConfig = cfg;
         }
+        var computedConfig = "{}";
+        if (_selectedType is "lookup" or "rollup")
+        {
+            var cfg = BuildRelationComputedConfigJson();
+            if (cfg is null) return;
+            computedConfig = cfg;
+        }
 
         // Смена типа уносит привязку к разделу — предупреждаем ровно так же, как при удалении
         // столбца: для раздела это одно и то же (данные ему станут недоступны), а раньше тип
@@ -1087,15 +1138,25 @@ public partial class PropertyEditorDialog : Window
                 else if (_selectedType == "number")           field.ConfigJson = BuildNumberConfigJson();
                 else if (_selectedType == "file")             field.ConfigJson = fileConfig;
                 else if (_selectedType == "relation")         field.ConfigJson = relationConfig;
-                _repository.UpdateField(field);
-                savedFieldId = _editFieldId.Value;
+                else if (_selectedType is "lookup" or "rollup") field.ConfigJson = computedConfig;
+                if (field.FieldType == "relation" && RelationConfig.FromConfig(field.ConfigJson)?.Auto is not null)
+                {
+                    var saved = await SaveAutoRelationAsync(field);
+                    if (saved is null) return;
+                    savedFieldId = saved.Value;
+                }
+                else
+                {
+                    _repository.UpdateField(field);
+                    savedFieldId = _editFieldId.Value;
+                }
             }
             else
             {
                 var fields = _repository.GetFields(_collectionId);
                 var maxPos = fields.Count > 0 ? fields.Max(f => f.Position) : 0;
 
-                var added = _repository.AddField(new DbField
+                var proposed = new DbField
                 {
                     CollectionId = _collectionId,
                     Name         = name,
@@ -1105,9 +1166,16 @@ public partial class PropertyEditorDialog : Window
                                  : _selectedType == "number"                 ? BuildNumberConfigJson()
                                  : _selectedType == "file"                   ? fileConfig
                                  : _selectedType == "relation"               ? relationConfig
+                                 : _selectedType is "lookup" or "rollup"     ? computedConfig
                                  : "{}",
-                });
-                savedFieldId = added.Id!.Value;
+                };
+                if (_selectedType == "relation" && RelationConfig.FromConfig(relationConfig)?.Auto is not null)
+                {
+                    var saved = await SaveAutoRelationAsync(proposed);
+                    if (saved is null) return;
+                    savedFieldId = saved.Value;
+                }
+                else savedFieldId = _repository.AddField(proposed).Id!.Value;
             }
         }
         catch (InvalidOperationException ex)

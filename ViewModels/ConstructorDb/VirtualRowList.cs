@@ -257,6 +257,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
         {
             if (onlyFields is not null && !onlyFields.Contains(fid)) continue;
             _relLinks.Prime(fid, recordIds, _repo.GetLinksBatch(fid, recordIds));
+            _relLinks.PrimeTargets(fid, recordIds, _repo.GetRelationLinksBatch(fid, recordIds));
         }
     }
 
@@ -265,6 +266,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
     {
         if (_relLinks is null || recordIds.Count == 0) return;
         foreach (var (fid, batch) in links) _relLinks.Prime(fid, recordIds, batch);
+        foreach (var (fid, batch) in links.Targets) _relLinks.PrimeTargets(fid, recordIds, batch);
     }
 
     // Поля-связи среди запрошенных полей (null — все поля-связи коллекции); null, если связей нет.

@@ -1442,6 +1442,8 @@ public partial class RecordPageView : UserControl
         "url"      => "IconFieldUrl",
         "file"     => "IconFieldFile",
         "relation" => "IconFieldRelation",
+        "lookup"   => "IconFieldRelation",
+        "rollup"   => "IconFieldNumber",
         "user"     => "IconUser",
         // Вычисляемые типы: та же иконка, что и у дат/пользователя (различаются подписью).
         "created_at" or "updated_at" => "IconCalendarDate",

@@ -6,7 +6,7 @@ namespace SmartBase.Database;
 /// Есть ли ВХОДЯЩИЕ связи (тип «relation»), которые оборвет удаление / перенос записей / коллекции /
 /// группы — для окна подтверждения «связи будут удалены» (без числа: нужен лишь факт). Проверяет
 /// внутрибазовые (TargetDbId=0, чистятся сразу) и межбазовые из ДРУГИХ ОТКРЫТЫХ баз (обрываются →
-/// «связи нет», лениво). Закрытые базы не проверяем (их ребра вычистятся при открытии) — best-effort.
+/// «связи нет», лениво). Закрытые базы не проверяем (их ребра вычистятся при следующей правке) — best-effort.
 /// Any/EXISTS обрывается на первом ребре, поэтому дешево даже на больших базах. Общие репозитории →
 /// звать только с UI-потока.
 /// </summary>
@@ -36,17 +36,9 @@ public static class RelationDeleteImpact
     }
 
     /// <summary>
-    /// Перенос, который ребра НЕ копирует ВООБЩЕ — ни входящие, ни исходящие, ни само-связи внутри
-    /// переносимого. Таких путей два:
-    /// <list type="bullet">
-    /// <item>любой перенос с участием PostgreSQL (generic-путь: ATTACH есть только у SQLite);</item>
-    /// <item>перенос ВЕТКИ ГРУППЫ между базами даже на SQLite — <c>CopyGroupFromAttached</c> зовет
-    /// копирование коллекций с <c>sourceDbId/targetDbId = 0,0</c> (v1: межколлекционный ремап
-    /// <c>ToRecordId</c> внутри ветки не сделан).</item>
-    /// </list>
-    /// Поэтому предупреждаем при наличии ЛЮБЫХ связей, а не только внешних входящих: коллекция с
-    /// одними само-связями и ветка, ссылающаяся ТОЛЬКО наружу, прошли бы обычную проверку
-    /// («внешних входящих нет») и потеряли бы связи молча.
+    /// Консервативная проверка для операции, которая намеренно не сохраняет ни одного ребра.
+    /// Обычный перенос коллекции/ветки теперь сохраняет граф и использует
+    /// <see cref="ForCollectionsExternalCrossMove"/>; этот метод оставлен для совместимости.
     /// </summary>
     public static bool ForCrossMoveDroppingAllLinks(ConstructorRepository owner, int ownerDbId,
                                                     IReadOnlyCollection<int> collectionIds)
@@ -58,10 +50,17 @@ public static class RelationDeleteImpact
 
     /// <summary>МЕЖБАЗОВЫЙ перенос ОДНОЙ коллекции: теряются только ВНЕШНИЕ входящие (само-связи внутри
     /// переписываются на новую копию). Межбазовые из других баз — всегда внешние.</summary>
-    public static bool ForCollectionExternalCrossMove(ConstructorRepository owner, int ownerDbId, int collectionId)
+    public static bool ForCollectionExternalCrossMove(ConstructorRepository owner, int ownerDbId, int collectionId) =>
+        ForCollectionsExternalCrossMove(owner, ownerDbId, [collectionId]);
+
+    /// <summary>Перенос ветки сохраняет исходящие и внутренние связи. Обрываются только входящие
+    /// из записей вне всего переносимого набора, включая ссылки из других открытых баз.</summary>
+    public static bool ForCollectionsExternalCrossMove(ConstructorRepository owner, int ownerDbId,
+                                                       IReadOnlyCollection<int> collectionIds)
     {
-        if (owner.HasExternalIncomingLinksToCollection(collectionId)) return true;
-        return HasCrossDbIncoming(owner, ownerDbId, [collectionId]);
+        if (collectionIds.Count == 0) return false;
+        if (owner.HasExternalIncomingLinksToCollections(collectionIds)) return true;
+        return HasCrossDbIncoming(owner, ownerDbId, collectionIds);
     }
 
     // Есть ли межбазовое входящее ребро из какой-либо ОТКРЫТОЙ базы на записи данных коллекций.

@@ -11,13 +11,16 @@ namespace SmartBase.Core.Models;
 /// <see cref="TargetCollectionId"/> == 0 — поле-связь еще не настроено (цель не выбрана).
 /// <see cref="TargetDbId"/> — межбазовая цель: 0 = целевая коллекция в ЭТОЙ же БД (обычный случай);
 /// &gt;0 = стабильный DbId целевой БД из реестра app.db (коллекция и записи — в другом файле).
-/// <see cref="Single"/> — true: ровно одна связанная запись (выбор заменяет прежнюю); false:
+/// <see cref="Single"/> — true: не более одной связанной записи (выбор заменяет прежнюю); false:
 /// несколько (many-to-many); дефолт диалога — «Одну» (true). <see cref="Separator"/> — ключ формата
 /// склейки названий (общий с «Мультисписком», 7 вариантов: comma/dot/space/semicolon/newline/
 /// comma_tight/dot_tight; см. <see cref="MultiSelectValue.SeparatorFor"/>).
 /// </summary>
-public sealed record RelationConfig(int TargetCollectionId, bool Single, string Separator = "comma", int TargetDbId = 0)
+public sealed record RelationConfig(int TargetCollectionId, bool Single, string Separator = "comma", int TargetDbId = 0,
+    string DisplayField = "__title__", string? SearchField = null, RelationAutoRule? Auto = null)
 {
+    public const string TitleField = "__title__";
+    public string EffectiveSearchField => SearchField ?? DisplayField;
     /// <summary>Цель — в другой БД (межбазовая связь).</summary>
     public bool IsCrossDb => TargetDbId > 0;
 
@@ -32,14 +35,25 @@ public sealed record RelationConfig(int TargetCollectionId, bool Single, string 
             var root = doc.RootElement;
             if (root.ValueKind != JsonValueKind.Object) return null;
 
-            var target = root.TryGetProperty("targetCollectionId", out var t) && t.TryGetInt32(out var id) ? id : 0;
+            var target = root.TryGetProperty("targetCollectionId", out var t) && t.ValueKind == JsonValueKind.Number && t.TryGetInt32(out var id) ? id : 0;
             var single = root.TryGetProperty("single", out var s) && s.ValueKind is JsonValueKind.True or JsonValueKind.False
                          && s.GetBoolean();
             var separator = root.TryGetProperty("separator", out var sep) && sep.ValueKind == JsonValueKind.String
                             && sep.GetString() is { Length: > 0 } sk ? sk : "comma";
-            var targetDb = root.TryGetProperty("targetDbId", out var td) && td.TryGetInt32(out var dbId) && dbId > 0 ? dbId : 0;
+            var targetDb = 0;
+            if (root.TryGetProperty("targetDbId", out var td))
+            {
+                if (td.ValueKind != JsonValueKind.Number || !td.TryGetInt32(out var dbId)) return null;
+                if (dbId > 0) targetDb = dbId;
+            }
+            var display = ReadField(root, "displayField") ?? TitleField;
+            var search = ReadField(root, "searchField");
+            RelationAutoRule? auto = null;
+            if (root.TryGetProperty("auto", out var a) && a.ValueKind == JsonValueKind.Object
+                && ReadField(a, "sourceField") is { } source && ReadField(a, "targetField") is { } destination)
+                auto = new RelationAutoRule(source, destination);
             if (target <= 0) return null;
-            return new RelationConfig(target, single, separator, targetDb);
+            return new RelationConfig(target, single, separator, targetDb, display, search, auto);
         }
         catch (JsonException ex)
         {
@@ -48,14 +62,30 @@ public sealed record RelationConfig(int TargetCollectionId, bool Single, string 
         }
     }
 
+    private static string? ReadField(JsonElement root, string name) =>
+        root.TryGetProperty(name, out var field) && field.ValueKind == JsonValueKind.String
+        && field.GetString() is { } key && IsFieldKey(key) ? key : null;
+
+    public static bool IsFieldKey(string? key) => key == TitleField
+        || int.TryParse(key, out var id) && id > 0;
+
     /// <summary>Строка-склейка названий для показа (из ключа <see cref="Separator"/>).</summary>
     public string SeparatorString => MultiSelectValue.SeparatorFor(Separator);
 
     /// <summary>Объект для сериализации в ConfigJson поля. targetDbId пишем только для межбазовой
     /// цели — внутрибазовые конфиги остаются как раньше (0 не засоряет JSON).</summary>
-    public object ToConfigObject() => TargetDbId > 0
-        ? (object)new { targetCollectionId = TargetCollectionId, single = Single, separator = Separator, targetDbId = TargetDbId }
-        : new { targetCollectionId = TargetCollectionId, single = Single, separator = Separator };
+    public object ToConfigObject()
+    {
+        var value = new Dictionary<string, object>
+        {
+            ["targetCollectionId"] = TargetCollectionId, ["single"] = Single, ["separator"] = Separator,
+        };
+        if (TargetDbId > 0) value["targetDbId"] = TargetDbId;
+        if (DisplayField != TitleField) value["displayField"] = DisplayField;
+        if (SearchField is not null) value["searchField"] = SearchField;
+        if (Auto is not null) value["auto"] = new { sourceField = Auto.SourceField, targetField = Auto.TargetField };
+        return value;
+    }
 
     /// <summary>ConfigJson-строка целиком (у поля «связь» иных настроек нет).</summary>
     public string ToConfigJson() => JsonSerializer.Serialize(ToConfigObject());

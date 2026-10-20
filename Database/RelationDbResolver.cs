@@ -14,13 +14,42 @@ namespace SmartBase.Database;
 public static class RelationDbResolver
 {
     private static Workspace? _ws;
+    [ThreadStatic] private static Func<int, ConstructorRepository?>? _scoped;
+    [ThreadStatic] private static Func<ConstructorRepository, int>? _scopedIdentity;
+    internal static bool HasScopedResolver => _scoped is not null;
 
     public static void Configure(Workspace ws) => _ws = ws;
+
+    /// <summary>Абсолютная идентичность базы репозитория; 0 — неизвестна у изолированного клона.</summary>
+    public static int DbIdFor(ConstructorRepository repo)
+    {
+        if (_scopedIdentity is not null) return _scopedIdentity(repo);
+        if (repo.Permissions is { DbId: > 0 } permissions) return permissions.DbId;
+        return _ws?.Mounted.FirstOrDefault(m => m.Constructor == repo || m.Context.DbPath == repo.DbPath)?.DbId ?? 0;
+    }
+
+    /// <summary>Фоновое вычисление читает только свои подключения; вложенные свойства используют тот же резолвер.</summary>
+    public static IDisposable UseScopedResolver(Func<int, ConstructorRepository?> resolver,
+        Func<ConstructorRepository, int>? identity = null)
+    {
+        var previous = _scoped;
+        var previousIdentity = _scopedIdentity;
+        _scoped = resolver;
+        _scopedIdentity = identity;
+        return new ResolverScope(previous, previousIdentity);
+    }
+
+    private sealed class ResolverScope(Func<int, ConstructorRepository?>? previous,
+        Func<ConstructorRepository, int>? identity) : IDisposable
+    {
+        public void Dispose() { _scoped = previous; _scopedIdentity = identity; }
+    }
 
     /// <summary>Репозиторий базы по ее реестровому DbId. dbId ≤ 0 — вызывающий использует свой
     /// (внутрибазовая связь). Не смонтирована → монтируем из реестра. null — недоступна.</summary>
     public static ConstructorRepository? RepoFor(int dbId)
     {
+        if (_scoped is not null) return dbId > 0 ? _scoped(dbId) : null;
         if (_ws is null || dbId <= 0) return null;
         var mgr = _ws.Get(dbId);
         if (mgr is null)
@@ -30,6 +59,10 @@ public static class RelationDbResolver
         }
         return mgr?.Constructor;
     }
+
+    /// <summary>Только уже открытое подключение, без синхронного монтирования.</summary>
+    public static ConstructorRepository? MountedRepoFor(int dbId) =>
+        dbId <= 0 ? null : _scoped is not null ? _scoped(dbId) : _ws?.Get(dbId)?.Constructor;
 
     /// <summary>Имя базы по DbId (для заглушек «Загрузите базу…»). null — нет в реестре.</summary>
     public static string? DbName(int dbId) =>

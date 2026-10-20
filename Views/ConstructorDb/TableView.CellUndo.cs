@@ -38,7 +38,9 @@ public partial class TableView
     private void RememberForUndo(string operation, ConstructorRepository.CellBulkResult values,
                                  ConstructorRepository.LinkBulkResult links)
     {
-        if (values.Changed + links.Changed == 0 || values.ChangesTruncated) return;
+        if (values.Changed + links.Changed == 0 || values.ChangesTruncated || links.ChangesTruncated
+            || values.Changed + links.Changes.Sum(c => (long)Math.Max(1, c.OldTargets.Count + c.NewTargets.Count))
+                > ConstructorRepository.UndoChangesLimit) return;
 
         _undoSteps.Add(new UndoStep(_collectionId, operation, values.Changes, links.Changes));
         if (_undoSteps.Count > UndoDepth) _undoSteps.RemoveAt(0);
@@ -64,8 +66,8 @@ public partial class TableView
             .Select(c => new ConstructorRepository.TitleWrite(c.RecordId, c.OldValue, ExpectedOld: c.NewValue))
             .ToList();
         var links = step.Links
-            .Select(l => new ConstructorRepository.LinkWrite(l.RecordId, l.FieldId, l.OldIds,
-                                                             ExpectedOldIds: ConstructorRepository.LinkIdsKey(l.NewIds)))
+            .Select(l => ConstructorRepository.LinkWrite.FromTargets(l.RecordId, l.FieldId, l.OldTargets,
+                ConstructorRepository.LinkTargetsKey(l.NewTargets), l.Config))
             .ToList();
         var journal = $"Отмена: {step.Operation.ToLowerInvariant()}";
 

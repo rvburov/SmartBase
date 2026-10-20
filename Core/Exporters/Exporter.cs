@@ -1,3 +1,5 @@
+using SmartBase.Core.Models;
+
 namespace SmartBase.Core.Exporters;
 
 /// <summary>Ошибка экспорта с дружелюбным текстом — показывается пользователю в баннере диалога.</summary>
@@ -45,4 +47,7 @@ public sealed record ExportSpec(
 /// типизации значений писателями («text» у системных), ConfigJson — конфиг поля
 /// (нужен, например, для формата склейки «Мультисписка»; null у системных).
 /// </summary>
-public sealed record ExportColumn(string Key, string Header, int? FieldId, string FieldType, string? ConfigJson = null);
+public sealed record ExportColumn(string Key, string Header, int? FieldId, string FieldType, string? ConfigJson = null)
+{
+    public RelationPortableSchema? PortableSchema { get; init; }
+}

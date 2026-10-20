@@ -96,13 +96,14 @@ public sealed partial class ConstructorRepository
             using var ctx = new AppDbContext(path);
             ctx.ApplyBulkPerformancePragmas();
             ctx.DeferCheckpoint();   // перенос журнала — в фоне, см. SetCellsBulkIsolatedAsync
-            return new ConstructorRepository(ctx).SetLinksBulk(collectionId, writes, operation);
+            return new ConstructorRepository(ctx) { Permissions = Permissions }.SetLinksBulk(collectionId, writes, operation);
         });
 
-        var touched = result.Changes.Select(c => (c.RecordId, c.FieldId)).ToHashSet();
+        var touched = (result.ChangesTruncated ? writes.Select(w => (w.RecordId, w.FieldId))
+            : result.Changes.Select(c => (c.RecordId, c.FieldId))).ToHashSet();
         foreach (var link in db.DbRecordLinks.Local.Where(l => touched.Contains((l.FromRecordId, l.FieldId))).ToList())
             db.Entry(link).State = EntityState.Detached;
-        ForgetTracked(result.Changes.Select(c => (c.RecordId, (int?)null)));
+        ForgetTracked(touched.Select(c => (c.RecordId, (int?)null)));
         return result;
     }
 
@@ -117,7 +118,7 @@ public sealed partial class ConstructorRepository
         {
             using var ctx = new AppDbContext(path);
             ctx.ApplyPerformancePragmas();
-            return new ConstructorRepository(ctx).ResolveRelationTitles(fieldId, list);
+            return new ConstructorRepository(ctx) { Permissions = Permissions }.ResolveRelationTitles(fieldId, list);
         });
     }
 

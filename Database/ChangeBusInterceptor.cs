@@ -25,6 +25,7 @@ public sealed class ChangeBusInterceptor : DbTransactionInterceptor
                                                      DbTransaction result)
     {
         (eventData.Context as AppDbContext)?.OnTransactionStarted();
+        if (eventData.Context is AppDbContext context) Repositories.ConstructorRepository.RelationTransactionStarted(context);
         return result;
     }
 
@@ -34,26 +35,35 @@ public sealed class ChangeBusInterceptor : DbTransactionInterceptor
                                                                      CancellationToken cancellationToken = default)
     {
         (eventData.Context as AppDbContext)?.OnTransactionStarted();
+        if (eventData.Context is AppDbContext context) Repositories.ConstructorRepository.RelationTransactionStarted(context);
         return ValueTask.FromResult(result);
     }
 
-    public override void TransactionCommitted(DbTransaction transaction, TransactionEndEventData eventData) =>
+    public override void TransactionCommitted(DbTransaction transaction, TransactionEndEventData eventData)
+    {
         (eventData.Context as AppDbContext)?.OnTransactionCommitted();
+        if (eventData.Context is AppDbContext context) Repositories.ConstructorRepository.RelationTransactionCommitted(context);
+    }
 
     public override Task TransactionCommittedAsync(DbTransaction transaction, TransactionEndEventData eventData,
                                                    CancellationToken cancellationToken = default)
     {
         (eventData.Context as AppDbContext)?.OnTransactionCommitted();
+        if (eventData.Context is AppDbContext context) Repositories.ConstructorRepository.RelationTransactionCommitted(context);
         return Task.CompletedTask;
     }
 
-    public override void TransactionRolledBack(DbTransaction transaction, TransactionEndEventData eventData) =>
+    public override void TransactionRolledBack(DbTransaction transaction, TransactionEndEventData eventData)
+    {
         (eventData.Context as AppDbContext)?.OnTransactionRolledBack();
+        if (eventData.Context is AppDbContext context) Repositories.ConstructorRepository.RelationTransactionRolledBack(context);
+    }
 
     public override Task TransactionRolledBackAsync(DbTransaction transaction, TransactionEndEventData eventData,
                                                     CancellationToken cancellationToken = default)
     {
         (eventData.Context as AppDbContext)?.OnTransactionRolledBack();
+        if (eventData.Context is AppDbContext context) Repositories.ConstructorRepository.RelationTransactionRolledBack(context);
         return Task.CompletedTask;
     }
 }

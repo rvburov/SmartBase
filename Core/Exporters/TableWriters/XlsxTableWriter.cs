@@ -103,7 +103,7 @@ public sealed class XlsxTableWriter : ITableWriter
             if (raw.Length == 0) continue;   // пустое — ячейку не пишем, r= держит сетку
             switch (cols[i].FieldType)
             {
-                case "number" when WriterHelpers.TryNumber(raw, out var num):
+                case "number" or "rollup" when WriterHelpers.TryNumber(raw, out var num):
                     WriteNumberCell(i, num);
                     break;
                 case "checkbox":

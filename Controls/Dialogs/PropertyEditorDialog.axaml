@@ -1,6 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:w="clr-namespace:SmartBase.Controls.Widgets"
+        xmlns:b="clr-namespace:SmartBase.Controls.Behaviors"
         x:Class="SmartBase.Controls.Dialogs.PropertyEditorDialog"
         Title="Создание свойства"
         Width="{StaticResource DialogWidthBase}"
@@ -10,6 +11,7 @@
         SizeToContent="Height"
         WindowStartupLocation="CenterOwner"
         CanResize="False"
+        b:DialogFit.LimitToScreen="True"
         Background="{StaticResource BrushBg}">
 
     <Window.Styles>
@@ -58,7 +60,9 @@
         </Style>
     </Window.Styles>
 
-    <StackPanel Spacing="0" Margin="{StaticResource DialogPadding}">
+    <Grid RowDefinitions="*,Auto" Margin="{StaticResource DialogPadding}">
+    <ScrollViewer Grid.Row="0" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+    <StackPanel Spacing="0">
 
         <TextBlock Text="Название"
                    Margin="0,0,0,6"
@@ -467,7 +471,7 @@
                        Foreground="{StaticResource BrushSecondaryText}" />
             <TextBlock TextWrapping="Wrap" LineHeight="16"
                        Foreground="{StaticResource BrushSecondaryText}"
-                       Text="Ячейка ссылается на записи выбранной коллекции. Название связанной записи показывается «чипом»; по клику — переход к ней. Целевая коллекция может быть в другой базе данных." />
+                       Text="Выбирайте записи по нужному свойству или связывайте их автоматически по совпадению столбцов. Нажатие на связанную запись открывает ее." />
 
             <StackPanel Spacing="6">
                 <TextBlock Text="Целевая база"
@@ -489,6 +493,44 @@
                           VerticalContentAlignment="Center"
                           Background="{StaticResource BrushSecondaryBg}"
                           CornerRadius="{StaticResource RadiusBase}" />
+            </StackPanel>
+
+            <StackPanel Spacing="6">
+                <TextBlock Text="Показывать свойство" FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <ComboBox x:Name="RelationDisplayCombo" HorizontalAlignment="Stretch"
+                          Height="{StaticResource ControlHeightStandard}" />
+            </StackPanel>
+            <StackPanel Spacing="6">
+                <TextBlock Text="Искать по свойству" FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <ComboBox x:Name="RelationSearchCombo" HorizontalAlignment="Stretch"
+                          Height="{StaticResource ControlHeightStandard}" />
+            </StackPanel>
+            <StackPanel Spacing="6">
+                <TextBlock Text="Режим связи" FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <ComboBox x:Name="RelationModeCombo" HorizontalAlignment="Stretch"
+                          Height="{StaticResource ControlHeightStandard}" SelectedIndex="0">
+                    <ComboBoxItem Content="Ручной выбор" />
+                    <ComboBoxItem Content="Автоматически по совпадению свойств" />
+                </ComboBox>
+            </StackPanel>
+            <StackPanel x:Name="RelationAutoOptions" Spacing="10" IsVisible="False">
+                <StackPanel Spacing="6">
+                    <TextBlock Text="Свойство этой коллекции" FontWeight="{StaticResource FontWeightBold}"
+                               Foreground="{StaticResource BrushSecondaryText}" />
+                    <ComboBox x:Name="RelationAutoSourceCombo" HorizontalAlignment="Stretch"
+                              Height="{StaticResource ControlHeightStandard}" />
+                </StackPanel>
+                <StackPanel Spacing="6">
+                    <TextBlock Text="Совпадает со свойством целевой коллекции" FontWeight="{StaticResource FontWeightBold}"
+                               Foreground="{StaticResource BrushSecondaryText}" />
+                    <ComboBox x:Name="RelationAutoTargetCombo" HorizontalAlignment="Stretch"
+                              Height="{StaticResource ControlHeightStandard}" />
+                </StackPanel>
+                <TextBlock Text="Пустые значения не связываются. Перед сохранением будет показан результат подбора."
+                           TextWrapping="Wrap" Foreground="{StaticResource BrushSecondaryText}" />
             </StackPanel>
 
             <StackPanel Spacing="6">
@@ -525,6 +567,37 @@
             </StackPanel>
         </StackPanel>
 
+        <StackPanel x:Name="RelationComputedSection" IsVisible="False" Spacing="10" Margin="0,0,0,12">
+            <TextBlock Text="Значения связанных записей" FontWeight="{StaticResource FontWeightBold}"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+            <TextBlock Text="Значение обновляется из связанной записи и доступно только для чтения."
+                       TextWrapping="Wrap" Foreground="{StaticResource BrushSecondaryText}" />
+            <StackPanel Spacing="6">
+                <TextBlock Text="Поле-связь" FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <ComboBox x:Name="ComputedRelationCombo" HorizontalAlignment="Stretch"
+                          Height="{StaticResource ControlHeightStandard}" />
+            </StackPanel>
+            <StackPanel x:Name="ComputedAggregateOptions" Spacing="6" IsVisible="False">
+                <TextBlock Text="Итог" FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <ComboBox x:Name="ComputedAggregateCombo" HorizontalAlignment="Stretch"
+                          Height="{StaticResource ControlHeightStandard}" SelectedIndex="0">
+                    <ComboBoxItem Content="Количество" />
+                    <ComboBoxItem Content="Сумма" />
+                    <ComboBoxItem Content="Среднее" />
+                    <ComboBoxItem Content="Минимум" />
+                    <ComboBoxItem Content="Максимум" />
+                </ComboBox>
+            </StackPanel>
+            <StackPanel x:Name="ComputedTargetOptions" Spacing="6">
+                <TextBlock Text="Свойство связанной записи" FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <ComboBox x:Name="ComputedTargetCombo" HorizontalAlignment="Stretch"
+                          Height="{StaticResource ControlHeightStandard}" />
+            </StackPanel>
+        </StackPanel>
+
         <!-- ── Конфиденциальность ─────────────────────────────────────────── -->
         <!-- Только у сохраненного свойства: у нового еще нет ключа, которому ставить метку. -->
         <StackPanel x:Name="LabelSection" Spacing="0" IsVisible="False" Margin="0,0,0,12">
@@ -552,14 +625,17 @@
         <!-- Уведомление об ошибке валидации -->
         <w:NoticeBanner x:Name="NoticeBanner" Margin="0,0,0,12" />
 
+    </StackPanel>
+    </ScrollViewer>
+
         <!-- Кнопки -->
-        <Grid ColumnDefinitions="*,Auto,8,Auto" Margin="0,4,0,0">
+        <Grid Grid.Row="1" ColumnDefinitions="*,Auto,8,Auto" Margin="0,4,0,0">
             <Button Grid.Column="1" x:Name="CancelBtn" Classes="dialog"
                     Content="Отмена" />
             <Button Grid.Column="3" x:Name="SaveBtn" Classes="dialog"
                     Content="Сохранить" />
         </Grid>
 
-    </StackPanel>
+    </Grid>
 
 </Window>

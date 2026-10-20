@@ -1257,7 +1257,7 @@ public sealed class GridSurface : Control, IEditorSurface
                 return;
         }
 
-        if (FieldTypeInfo.IsComputed(def.FieldType))
+        if (FieldTypeInfo.IsAuditComputed(def.FieldType))
         {
             var raw = def.FieldType switch
             {
@@ -1269,6 +1269,14 @@ public sealed class GridSurface : Control, IEditorSurface
             };
             DrawText(ctx, FieldTypeInfo.FormatComputedDisplay(raw, def.FieldType), inner,
                      fg ?? _s.Secondary, fg is null ? "s" : fgId, align, 1, _s.LineHeight, valign: valign, centering: centering);
+            return;
+        }
+
+        if (FieldTypeInfo.IsRelationComputed(def.FieldType))
+        {
+            DrawText(ctx, FieldTypeInfo.FormatComputedDisplay(row[def.Key], def.FieldType), inner,
+                     fg ?? _s.Secondary, fg is null ? "s" : fgId, align, FitLines(inner.Height), _s.LineHeight,
+                     valign: valign, centering: centering);
             return;
         }
 

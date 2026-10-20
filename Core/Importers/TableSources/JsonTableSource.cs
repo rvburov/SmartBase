@@ -30,9 +30,12 @@ public sealed class JsonTableSource(string path, string itemsPath = "") : ITable
 
     private List<string> _keys = [];
     private int _titleIdx = -1;
+    private RelationPortableTableSource? _portable;
 
     public ImportSchema Analyze(IProgress<double>? progress, CancellationToken ct)
     {
+        _portable = string.IsNullOrWhiteSpace(itemsPath) ? RelationPortableTableSource.TryOpen(path, ct) : null;
+        if (_portable is not null) return _portable.Analyze(progress, ct);
         var keys  = new List<string>();
         var stats = new Dictionary<string, KeyStat>(StringComparer.Ordinal);
         long rowCount = 0;
@@ -86,6 +89,11 @@ public sealed class JsonTableSource(string path, string itemsPath = "") : ITable
 
     public IEnumerable<ImportRow> ReadRows(CancellationToken ct)
     {
+        if (_portable is not null)
+        {
+            foreach (var row in _portable.ReadRows(ct)) yield return row;
+            yield break;
+        }
         var index = new Dictionary<string, int>(StringComparer.Ordinal);
         for (var i = 0; i < _keys.Count; i++) index[_keys[i]] = i;
 

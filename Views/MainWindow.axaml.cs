@@ -111,6 +111,7 @@ public partial class MainWindow : Window
                                          Controls.Widgets.AppNotifications.Info);
         // Резолвер чужих баз для межбазовых связей (тип «relation» с TargetDbId>0).
         RelationDbResolver.Configure(workspace);
+        ConfigureRelationChanges();
 
         // Сообщения человеку — карточки в правом верхнем углу окна (стопкой, сами гаснут).
         Controls.Widgets.AppNotifications.Install(this);
@@ -883,6 +884,8 @@ public partial class MainWindow : Window
     {
         var changedDb = _workspace.Get(dbId);
         if (changedDb is null) return;   // база уже размонтирована/потеряна
+        if (changes.Any(c => c.TargetType is "record" or "records" or "field" or "collection" or "group"))
+            QueueAllRelationRefreshes();
 
         // Скрытый раздел перечитает данные при показе, если читал их раньше этого момента
         // (ShowModule → «Задачи»); календарь и конструктор при показе перечитывают всегда.
@@ -1321,6 +1324,7 @@ public partial class MainWindow : Window
     private void SyncMountedToUi()
     {
         HookPermissionEvents();
+        QueueAllRelationRefreshes();
         var pending = PendingDbs();
         ConstructorSidebar.InitializeWorkspace(_workspace.Mounted, Controls.Components.SidebarMode.Constructor, pending);
         CalendarSidebar.InitializeWorkspace(GrantedDbs(), Controls.Components.SidebarMode.Calendar, pending);
@@ -1807,6 +1811,12 @@ public partial class MainWindow : Window
         // Коллекцию берем У САМОЙ ЗАПИСИ (переход по чипу связи открывает запись ДРУГОЙ
         // коллекции — панель должна показать ее собственную схему полей).
         var ownCollectionId = repo.GetRecord(recordId)?.CollectionId;
+        if (ownCollectionId is int protectedCollection &&
+            !(repo.Permissions?.Can(PermAction.ViewCollection, protectedCollection) ?? true))
+        {
+            Notify("Нет доступа к коллекции связанной записи.");
+            return;
+        }
 
         // МЕЖБАЗОВЫЙ переход к несуществующей записи фолбэка иметь НЕ МОЖЕТ: id активной коллекции
         // относится к ДРУГОЙ базе, и панель открывалась бы с чужой схемой и пустыми полями — снаружи

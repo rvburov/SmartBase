@@ -2131,6 +2131,11 @@ public partial class SidebarTree : UserControl
                                     throw new ExportException(
                                         $"Все столбцы коллекции «{tbl.Collection.CollectionName}» исключены — " +
                                         "нет данных для экспорта.");
+                                var portableRelations = req.Spec.Format == ExportFormat.Json
+                                    && cols.Any(c => c.FieldType is "relation" or "lookup" or "rollup");
+                                if (portableRelations)
+                                    cols = repo.PreparePortableExportColumnsIsolated(tbl.Collection.CollectionId, cols,
+                                        excludeHidden: !req.Spec.IncludeHidden);
                                 var total = repo.CountRecordsIsolated(
                                     tbl.Collection.CollectionId, excludeHidden: !req.Spec.IncludeHidden);
 
@@ -2140,7 +2145,7 @@ public partial class SidebarTree : UserControl
                                              new Progress<long>(n => ui.Report((
                                                  tBase + tSlice * (0.05 + 0.95 * Math.Min(1.0,
                                                      total == 0 ? 1.0 : n / (double)total)),
-                                                 "Экспорт записей…", info)))))
+                                                 "Экспорт записей…", info))), portableRelations: portableRelations))
                                     writer.WriteRow(row);
                                 writer.EndTable();
                                 repo.LogExportIsolated(tbl.Collection.CollectionName, total);
@@ -2534,36 +2539,18 @@ public partial class SidebarTree : UserControl
     {
         if (crossDb.Count == 0 || OwnerWindow is null) return true;
 
-        // Два пути НЕ копируют ребра вовсе: любой перенос с участием PostgreSQL (generic вместо ATTACH)
-        // и перенос ВЕТКИ ГРУППЫ даже на SQLite (v1). Там теряются и связи ВНУТРИ переносимого, и
-        // исходящие наружу — обычная проверка смотрит только внешние ВХОДЯЩИЕ и их не видит.
-        var pg = targetRepo.IsPostgres || crossDb.Any(t => t.SrcRepo.IsPostgres);
-
         var hasLinks   = false;
-        string? severe = null;   // непустое → ребра не переедут вовсе (текст строже)
         foreach (var t in crossDb)
         {
-            var dropsAll = pg || t.IsGroup;
-            bool hit;
-            if (dropsAll)
-            {
-                IReadOnlyCollection<int> cols = t.IsGroup ? t.SrcRepo.CollectionIdsInGroup(t.Id) : [t.Id];
-                hit = RelationDeleteImpact.ForCrossMoveDroppingAllLinks(t.SrcRepo, t.SrcDbId, cols);
-            }
-            else hit = RelationDeleteImpact.ForCollectionExternalCrossMove(t.SrcRepo, t.SrcDbId, t.Id);
-            if (!hit) continue;
-
+            IReadOnlyCollection<int> cols = t.IsGroup ? t.SrcRepo.CollectionIdsInGroup(t.Id) : [t.Id];
+            if (!RelationDeleteImpact.ForCollectionsExternalCrossMove(t.SrcRepo, t.SrcDbId, cols)) continue;
             hasLinks = true;
-            if (!dropsAll) continue;
-            severe = pg ? "Перенос с участием PostgreSQL" : "Перенос ветки группы между базами";
-            break;   // строгий текст уже определен, остальные узлы не важны
+            break;
         }
         if (!hasLinks) return true;
 
         var warn = new ConfirmDialog(
-            severe is not null
-                ? $"{severe} связи НЕ переносит: будут потеряны и связи ВНУТРИ переносимого, и ссылки на него. Продолжить?"
-                : "Межбазовый перенос оборвет связи, ссылающиеся на переносимое (станут «связи нет»). Продолжить?",
+            "Межбазовый перенос оборвет внешние связи, ссылающиеся на переносимое. Внутренние и исходящие связи сохранятся. Продолжить?",
             confirmText: "Перенести");
         return await warn.ShowDialog<bool>(OwnerWindow) == true;
     }

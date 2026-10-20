@@ -26,6 +26,8 @@ public static class FieldTypeIcons
         "url"      => Icon("IconFieldUrl"),
         "file"     => Icon("IconFieldFile"),
         "relation" => Icon("IconFieldRelation"),
+        "lookup"   => Icon("IconFieldRelation"),
+        "rollup"   => Icon("IconFieldNumber"),
         "user"     => Icon("IconUser"),
         // Вычисляемые типы: значение авто из метаданных записи. Иконку переиспользуем
         // (дата — календарь, пользователь — человек), различаются подписью.

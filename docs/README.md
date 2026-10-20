@@ -32,6 +32,9 @@
   [url](developer/architecture/data-types/url.md) ·
   [file](developer/architecture/data-types/file.md) ·
   [user](developer/architecture/data-types/user.md) ·
+  [relation](developer/architecture/data-types/relation.md) ·
+  [lookup](developer/architecture/data-types/lookup.md) ·
+  [rollup](developer/architecture/data-types/rollup.md) ·
   [computed](developer/architecture/data-types/computed.md) ·
   [роль «Описание»](developer/architecture/data-types/description.md).
 - **База данных** ([database/](developer/architecture/database/)):

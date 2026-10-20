@@ -58,7 +58,10 @@ public sealed partial class ConstructorRepository
 
     /// <summary>Связи записей страницы по полям-связям окна: fieldId → (recordId → цели). Записи
     /// без ребер в словаре поля отсутствуют.</summary>
-    public sealed class PageLinks : Dictionary<int, Dictionary<int, List<(int Id, string Title)>>>;
+    public sealed class PageLinks : Dictionary<int, Dictionary<int, List<(int Id, string Title)>>>
+    {
+        public Dictionary<int, Dictionary<int, List<(RelationTarget Target, string Display)>>> Targets { get; } = [];
+    }
 
     /// <summary>Страница таблицы одним фоновым чтением: записи, значения ячеек окна, оформление
     /// ячеек и связи по полям-связям окна (иначе их читала бы UI-нить на общем контексте).</summary>
@@ -75,7 +78,14 @@ public sealed partial class ConstructorRepository
     {
         var links = new PageLinks();
         if (relationFieldIds is null || recordIds.Count == 0) return links;
-        foreach (var fid in relationFieldIds) links[fid] = GetLinksBatch(fid, recordIds);
+        foreach (var fid in relationFieldIds)
+        {
+            var targets = GetRelationLinksBatch(fid, recordIds);
+            links.Targets[fid] = targets;
+            links[fid] = targets.ToDictionary(kv => kv.Key,
+                kv => kv.Value.Where(v => v.Target.DbId == 0).Select(v => (v.Target.RecordId, v.Display)).ToList())
+                .Where(kv => kv.Value.Count > 0).ToDictionary(kv => kv.Key, kv => kv.Value);
+        }
         return links;
     }
 
@@ -93,13 +103,18 @@ public sealed partial class ConstructorRepository
     /// поля-связи окна, чьи ребра читаются здесь же для табличного кеша связей.
     /// </summary>
     public Task<PageData> LoadPageAsync(int collectionId, Func<ConstructorRepository, RecordPage> records,
-                                        IReadOnlyList<int>? fieldIds, IReadOnlyList<int>? relationFieldIds = null) =>
-        Task.Run(() =>
+                                        IReadOnlyList<int>? fieldIds, IReadOnlyList<int>? relationFieldIds = null)
+    {
+        var keys = fieldIds ?? GetFields(collectionId).Where(f => f.Id.HasValue).Select(f => f.Id!.Value).ToList();
+        var crossPaths = CrossDbPathsForKeys(collectionId, keys.Select(id => id.ToString())
+            .Concat((relationFieldIds ?? []).Select(id => id.ToString())));
+        return Task.Run(() =>
         {
             var t0 = GridTimings.Start();
             using var ctx = new AppDbContext(db.DbPath);
             ctx.ApplyPerformancePragmas();
-            var repo = new ConstructorRepository(ctx);
+            var repo = new ConstructorRepository(ctx) { Permissions = Permissions };
+            using var foreignScope = (ForeignResolver(crossPaths)?.Target as ForeignPropertyReader)?.OpenScope();
             GridTimings.Stop(t0, "страница (фон): подключение");
 
             var t1 = GridTimings.Start();
@@ -117,19 +132,30 @@ public sealed partial class ConstructorRepository
             GridTimings.Stop(t4, "страница (фон): связи");
             return new PageData(page, values, cells, links);
         });
+    }
 
     /// <summary>Дочитать значения колонок, которых не было в окне при загрузке страницы (прокрутка
     /// вбок): recordId → (fieldId → значение); записи без значения в словарь не попадают. Плюс связи
     /// по дочитанным полям-связям.</summary>
     public Task<TopUpData> LoadValuesAsync(IReadOnlyList<int> recordIds, IReadOnlyList<int> fieldIds,
-                                           IReadOnlyList<int>? relationFieldIds = null) =>
-        Task.Run(() =>
+                                           IReadOnlyList<int>? relationFieldIds = null)
+    {
+        var paths = new Dictionary<int, string>();
+        var keys = fieldIds.Concat(relationFieldIds ?? []).Select(id => id.ToString()).ToArray();
+        var collections = db.DbFields.AsNoTracking().Where(f => fieldIds.Contains(f.Id)
+            || (relationFieldIds != null && relationFieldIds.Contains(f.Id)))
+            .Select(f => f.CollectionId).Distinct().ToList();
+        foreach (var collection in collections)
+            foreach (var (id, path) in CrossDbPathsForKeys(collection, keys) ?? []) paths[id] = path;
+        return Task.Run(() =>
         {
             using var ctx = new AppDbContext(db.DbPath);
             ctx.ApplyPerformancePragmas();
-            var repo = new ConstructorRepository(ctx);
+            var repo = new ConstructorRepository(ctx) { Permissions = Permissions };
+            using var foreignScope = (ForeignResolver(paths)?.Target as ForeignPropertyReader)?.OpenScope();
             return new TopUpData(repo.GetFieldValuesBatch(recordIds, fieldIds), repo.ReadPageLinks(recordIds, relationFieldIds));
         });
+    }
 
     /// <summary>Значения записей только по полям <paramref name="fieldIds"/>; null или шире
     /// <see cref="FieldWindowLimit"/> — все поля. Сырой SQL: диапазон по первичному ключу
@@ -170,6 +196,7 @@ public sealed partial class ConstructorRepository
             }
         }
         finally { if (opened) conn.Close(); }
+        FillRelationComputedValues(recordIds, result, allFields ? null : fieldIds);
         return result;
     }
 
@@ -488,7 +515,7 @@ public sealed partial class ConstructorRepository
                                           (sortKey is null ? "" : $", сортировка по {sortKey}"));
             await using var ctx = new AppDbContext(dbPath);
             ctx.ApplyPerformancePragmas();
-            var repo = new ConstructorRepository(ctx);
+            var repo = new ConstructorRepository(ctx) { Permissions = Permissions };
             var ids  = await repo.FilteredIdsSortedAsync(collectionId, filtersCopy, excludeHidden, sortKey, sortAsc,
                                                          sortFieldType, ForeignResolver(crossPaths), ct);
             slow.Context += $", отобрано {ids.Count:N0}";
@@ -500,7 +527,14 @@ public sealed partial class ConstructorRepository
         bool excludeHidden, string? sortKey, bool sortAsc, string? sortFieldType,
         Func<int, IReadOnlyList<int>, Dictionary<int, string>?>? resolveForeign, CancellationToken ct)
     {
-        var q = FilteredRecords(collectionId, filters, excludeHidden, resolveForeign);
+        var q = FilteredQuery();
+
+        IQueryable<DbRecordEntity> FilteredQuery()
+        {
+            // Вычисляемые условия разрешаются до первого await; scope не переносится между потоками.
+            using var foreignScope = (resolveForeign?.Target as ForeignPropertyReader)?.OpenScope();
+            return FilteredRecords(collectionId, filters, excludeHidden, resolveForeign);
+        }
 
         if (sortKey is null)
             return await q.OrderBy(r => r.Position).ThenBy(r => r.Id).Select(r => r.Id).ToListAsync(ct);
@@ -509,7 +543,7 @@ public sealed partial class ConstructorRepository
             return await OrderedIds(q, r => r.Title, sortAsc).ToListAsync(ct);
 
         var fieldType = sortFieldType ?? "text";
-        if (FieldTypeInfo.IsComputed(fieldType))
+        if (FieldTypeInfo.IsAuditComputed(fieldType))
         {
             return fieldType switch
             {
@@ -522,6 +556,19 @@ public sealed partial class ConstructorRepository
 
         if (!int.TryParse(sortKey, out var fid))
             return await q.OrderBy(r => r.Position).ThenBy(r => r.Id).Select(r => r.Id).ToListAsync(ct);
+
+        if (FieldTypeInfo.IsRelationComputed(fieldType))
+        {
+            var ordered = await q.OrderBy(r => r.Position).ThenBy(r => r.Id).Select(r => r.Id).ToListAsync(ct);
+            var field = db.DbFields.AsNoTracking().Where(f => f.Id == fid).ToList().Select(ToDbField).FirstOrDefault();
+            if (field is null) return ordered;
+            using var foreignScope = (resolveForeign?.Target as ForeignPropertyReader)?.OpenScope();
+            var values = GetRelationComputedColumnValues(collectionId, field);
+            ct.ThrowIfCancellationRequested();
+            var cmp = ColumnSort.BuildComparer(fieldType == "rollup" ? "number" : "text", sortAsc);
+            return ordered.OrderBy(id => values.GetValueOrDefault(id, ""),
+                Comparer<string>.Create((a, b) => cmp(a, b))).ToList();
+        }
 
         if (fieldType == "relation")
         {
@@ -632,24 +679,110 @@ public sealed partial class ConstructorRepository
     private Dictionary<int, string>? CrossDbPathsForKeys(int collectionId, IEnumerable<string> keys)
     {
         Dictionary<int, string>? crossPaths = null;
+        var seen = new HashSet<(string Db, int Field)>();
         foreach (var k in keys)
-            if (int.TryParse(k, out var fid) && IsRelationField(fid))
+            if (int.TryParse(k, out var fid)) Visit(this, collectionId, fid, 0);
+        var ownDbId = RelationDbResolver.DbIdFor(this);
+        if (crossPaths is { Count: > 0 } && ownDbId > 0) crossPaths[ownDbId] = DbPath;
+        return crossPaths;
+
+        void Visit(ConstructorRepository repo, int col, int fid, int depth)
+        {
+            if (depth >= 16 || !seen.Add((repo.DbPath, fid))) return;
+            var field = repo.RelationComputedContext.DbFields.AsNoTracking()
+                .FirstOrDefault(f => f.Id == fid && f.CollectionId == col);
+            if (field is null) return;
+            if (field.FieldType == "relation")
             {
                 crossPaths ??= new();
-                foreach (var (dbId, path) in CrossDbPathsForField(collectionId, fid)) crossPaths[dbId] = path;
+                foreach (var (dbId, path) in repo.CrossDbPathsForField(col, fid)) crossPaths[dbId] = path;
+                if (RelationConfig.FromConfig(field.ConfigJson) is { } cfg)
+                    VisitTarget(repo, cfg, cfg.DisplayField, depth + 1);
             }
-        return crossPaths;
+            else if (FieldTypeInfo.IsRelationComputed(field.FieldType)
+                && RelationComputedConfig.FromConfig(field.ConfigJson) is { } computed)
+            {
+                var relation = repo.RelationComputedContext.DbFields.AsNoTracking()
+                    .FirstOrDefault(f => f.Id == computed.RelationFieldId && f.CollectionId == col && f.FieldType == "relation");
+                if (RelationConfig.FromConfig(relation?.ConfigJson) is not { } cfg) return;
+                crossPaths ??= new();
+                foreach (var (dbId, path) in repo.CrossDbPathsForField(col, computed.RelationFieldId)) crossPaths[dbId] = path;
+                VisitTarget(repo, cfg, computed.Aggregate == "count" ? TitleKey : computed.TargetField, depth + 1);
+            }
+        }
+
+        void VisitTarget(ConstructorRepository repo, RelationConfig cfg, string targetKey, int depth)
+        {
+            var target = cfg.TargetDbId == 0 ? repo : RelationDbResolver.RepoFor(cfg.TargetDbId);
+            if (target is null) return;
+            if (cfg.TargetDbId > 0) (crossPaths ??= new())[cfg.TargetDbId] = target.DbPath;
+            if (int.TryParse(targetKey, out var targetField)) Visit(target, cfg.TargetCollectionId, targetField, depth);
+        }
     }
 
     // Резолвер названий целей чужих баз для фонового потока: свежие изолированные подключения по
     // снятым заранее путям; путь не снят → null → «(база недоступна)», как в ячейке.
     private static Func<int, IReadOnlyList<int>, Dictionary<int, string>?>? ForeignResolver(Dictionary<int, string>? crossPaths) =>
-        crossPaths is null ? null
-        : (dbId, ids) =>
+        crossPaths is null ? null : new ForeignPropertyReader(crossPaths).Resolve;
+
+    // Именованный владелец делегата сохраняет прежний API Title-резолвера и дает общему чтению
+    // связей доступ к выбранному свойству. Вложенные lookup работают на тех же своих контекстах.
+    private sealed class ForeignPropertyReader(Dictionary<int, string> paths)
+    {
+        public Dictionary<int, string>? Resolve(int dbId, IReadOnlyList<int> ids) => ResolveProperty(dbId, ids, TitleKey);
+
+        public Dictionary<int, string>? ResolveProperty(int dbId, IReadOnlyCollection<int> ids, string propertyKey)
         {
-            if (!crossPaths.TryGetValue(dbId, out var path)) return null;
-            using var fctx = new AppDbContext(path);
-            fctx.ApplyPerformancePragmas();
-            return new ConstructorRepository(fctx).GetRecordTitles(ids);
-        };
+            using var scope = new ReadScope(paths);
+            scope.Activate();
+            return scope.Resolve(dbId)?.GetRecordPropertyValues(ids, propertyKey);
+        }
+
+        public IDisposable OpenScope()
+        {
+            var scope = new ReadScope(paths);
+            scope.Activate();
+            return scope;
+        }
+
+        private sealed class ReadScope(Dictionary<int, string> paths) : IDisposable
+        {
+            private readonly Dictionary<int, (AppDbContext Db, ConstructorRepository Repo)> _opened = [];
+            private IDisposable? _active;
+
+            public IDisposable Activate() => _active = RelationDbResolver.UseScopedResolver(Resolve,
+                repo => paths.FirstOrDefault(kv => kv.Value == repo.DbPath).Key);
+
+            public ConstructorRepository? Resolve(int dbId)
+            {
+                if (_opened.TryGetValue(dbId, out var cached)) return cached.Repo;
+                if (!paths.TryGetValue(dbId, out var path)) return null;
+                AppDbContext? context = null;
+                try
+                {
+                    context = new AppDbContext(path);
+                    context.ApplyPerformancePragmas();
+                    var permissions = new PermissionService(context) { DbId = dbId };
+                    permissions.Reload(notify: false);
+                    var repo = new ConstructorRepository(context) { Permissions = permissions };
+                    _opened[dbId] = (context, repo);
+                    return repo;
+                }
+                catch (Exception ex) when (ex is System.Data.Common.DbException or System.IO.IOException
+                                                    or InvalidOperationException or ArgumentException)
+                {
+                    context?.Dispose();
+                    return null;
+                }
+            }
+
+            public void Dispose()
+            {
+                _active?.Dispose();
+                _active = null;
+                foreach (var (context, _) in _opened.Values) context.Dispose();
+                _opened.Clear();
+            }
+        }
+    }
 }
