@@ -2644,8 +2644,9 @@ public partial class TableView : UserControl
     {
         // Связь: значение фильтра = название связанной записи (Title); пусто → «(нет связей)».
         if (fieldType == "relation") return raw == "" ? "(нет связей)" : OneLine(raw);
+        // Чекбокс: окно фильтра получает две группы (GetColumnCounts) — отмечено и все остальное.
+        if (fieldType == "checkbox") return CheckboxValue.IsChecked(raw) ? "✓" : "(Не отмечено)";
         if (raw == "") return "(Пусто)";
-        if (fieldType == "checkbox") return IsTruthy(raw) ? "✓" : "—";
         if (fieldType == "multiselect") return OneLine(MultiSelectValue.Display(raw, separator));
         if (fieldType == "number") return NumberFormatValue.Format(raw, numberFormat ?? NumberFormat.Default);
         if (fieldType == "file") return FileValue.DisplayName(raw);   // имя файла, а не абсолютный путь

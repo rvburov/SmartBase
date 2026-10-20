@@ -200,4 +200,47 @@ public sealed class ColumnFilterCascadeTests
         Assert.Equal(repo.GetColumnCounts(col, status.ToString()),
                      await repo.GetColumnCountsAsync(col, status.ToString(), F((status, ["Новая"]))));
     }
+
+    /// <summary>
+    /// Чекбокс в окне фильтра — две строки, «отмечено» и «не отмечено», как бы ни были записаны
+    /// значения: снятая в таблице галочка («0»), нетронутая ячейка, текст от прежнего типа столбца.
+    /// Раньше каждое такое значение было своей строкой «—» рядом с «(Пусто)». Отбор по группе
+    /// находит все ее записи — и по прежним сохраненным фильтрам со значениями как есть.
+    /// </summary>
+    [Fact]
+    public void Checkbox_column_filters_by_two_groups()
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+        var col  = SampleData.AddCollection(repo, "Проверки").Id!.Value;
+        var box  = SampleData.AddField(repo, col, "Ошибки", "checkbox", position: 10).Id!.Value;
+        var values = new[] { "1", "true", "0", "нет", "", "", "1" };
+        var ids = values.Select((v, i) =>
+        {
+            var id = SampleData.AddRecord(repo, col, $"П{i + 1}", position: (i + 1) * 10).Id!.Value;
+            if (v != "") repo.SetFieldValue(id, box, v);
+            return id;
+        }).ToArray();
+        int[] on  = [ids[0], ids[1], ids[6]];
+        int[] off = [ids[2], ids[3], ids[4], ids[5]];
+
+        Assert.Equal(L(("1", 3), ("", 4)), repo.GetColumnCounts(col, box.ToString()));
+
+        Assert.Equal(on,  repo.GetFilteredRecordIds(col, F((box, ["1"]))));
+        Assert.Equal(off, repo.GetFilteredRecordIds(col, F((box, [""]))));
+        Assert.Equal(off, repo.GetFilteredRecordIds(col, F((box, ["0"]))));     // прежний фильтр «—»
+        Assert.Equal(ids, repo.GetFilteredRecordIds(col, F((box, ["1", ""]))));
+        Assert.Empty(repo.GetFilteredRecordIds(col, new Dictionary<string, HashSet<string>> { [box.ToString()] = [] }));
+        Assert.Equal(off, repo.GetFilteredRecordIds(col,
+            new Dictionary<string, HashSet<string>> { [box.ToString()] = FilterExclusion.Exclude(["1"]) }));
+
+        // Снятая галочка остается в отборе «не отмечено», а не выпадает из него.
+        repo.SetFieldValue(ids[0], box, "0");
+        Assert.Equal(L(("1", 2), ("", 5)), repo.GetColumnCounts(col, box.ToString()));
+        Assert.Contains(ids[0], repo.GetFilteredRecordIds(col, F((box, [""]))));
+
+        // Каскад: по записям, прошедшим фильтр другой колонки.
+        var titles = new Dictionary<string, HashSet<string>> { [TitleKey] = ["П2", "П3"] };
+        Assert.Equal(L(("1", 1), ("", 1)), repo.GetColumnCounts(col, box.ToString(), titles));
+    }
 }

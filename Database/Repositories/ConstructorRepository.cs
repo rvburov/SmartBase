@@ -4891,6 +4891,11 @@ public partial class ConstructorRepository(AppDbContext db)
         var relFieldIds = db.DbFields.AsNoTracking()
             .Where(f => f.CollectionId == collectionId && f.FieldType == "relation")
             .Select(f => f.Id).ToHashSet();
+        // Чекбоксы — две группы, а не значения как есть: «отмечено» и все остальное (пусто, «0»
+        // снятой галочки, текст, оставшийся от прежнего типа столбца). См. CheckboxValue.
+        var boxFieldIds = db.DbFields.AsNoTracking()
+            .Where(f => f.CollectionId == collectionId && f.FieldType == "checkbox")
+            .Select(f => f.Id).ToHashSet();
 
         // ФОРМА УСЛОВИЯ ВАЖНА: набор значений уходит в SQL как `IN (json_each(@p))`, и SQLite
         // перебирает его заново на каждую строку, если он стоит внутри КОРРЕЛИРОВАННОГО EXISTS
@@ -4900,6 +4905,12 @@ public partial class ConstructorRepository(AppDbContext db)
         // проба по нему (те же 10 млн × 1444 — 12 с). Ветка «(Пусто)» коррелирована, но без списка.
         foreach (var (key, allowed) in filters)
         {
+            if (int.TryParse(key, out var boxId) && boxFieldIds.Contains(boxId))
+            {
+                q = CheckboxFilter(q, boxId, allowed);
+                continue;
+            }
+
             // Отбор «кроме» (FilterExclusion): набор — исключаемые значения. Его дает окно фильтра колонки,
             // у которой значений больше, чем оно показывает; у связей такого окна нет.
             if (FilterExclusion.IsExclude(allowed))
@@ -4964,6 +4975,32 @@ public partial class ConstructorRepository(AppDbContext db)
         }
 
         return q;
+    }
+
+    // Отбор по чекбоксу: в наборе (или в исключениях отбора «кроме») важна только группа значения.
+    // Отмеченные — по индексу (FieldId, Value) некоррелированным списком id, как у остальных колонок.
+    private IQueryable<DbRecordEntity> CheckboxFilter(IQueryable<DbRecordEntity> q, int fieldId, HashSet<string> allowed)
+    {
+        bool on, off;
+        if (FilterExclusion.IsExclude(allowed))
+        {
+            var excl = FilterExclusion.Values(allowed);
+            on  = !excl.Any(CheckboxValue.IsChecked);
+            off = excl.All(CheckboxValue.IsChecked);
+        }
+        else
+        {
+            on  = allowed.Any(CheckboxValue.IsChecked);
+            off = !allowed.All(CheckboxValue.IsChecked);
+        }
+        if (on && off) return q;
+
+        var spellings = CheckboxValue.CheckedSpellings.ToList();
+        var checkedIds = db.DbFieldValues.Where(fv => fv.FieldId == fieldId && spellings.Contains(fv.Value))
+                                         .Select(fv => fv.RecordId);
+        return on  ? q.Where(r => checkedIds.Contains(r.Id))
+             : off ? q.Where(r => !checkedIds.Contains(r.Id))
+             :       q.Where(r => false);
     }
 
     /// <summary>
@@ -5253,9 +5290,32 @@ public partial class ConstructorRepository(AppDbContext db)
         return key == TitleKey ? TitleCounts(scope)
             : int.TryParse(key, out var fid)
                 ? (IsRelationField(fid) ? RelationValueCounts(collectionId, fid, resolveForeign, scope)
+                   : IsCheckboxField(fid) ? CheckboxCounts(fid, scope, whole: others.Count == 0 && !excludeHidden)
                    : others.Count == 0 && !excludeHidden ? FieldValueCountsWhole(collectionId, fid)
                    : FieldValueCounts(fid, scope))
                 : [];
+    }
+
+    private bool IsCheckboxField(int fieldId) =>
+        db.DbFields.AsNoTracking().Any(f => f.Id == fieldId && f.FieldType == "checkbox");
+
+    // Чекбокс в окне фильтра — две строки: «отмечено» (CheckboxValue.Checked) и «не отмечено» ("",
+    // туда же «0» снятой галочки и любой другой текст). Значения как есть давали несколько строк
+    // «—» рядом с «(Пусто)», и отобрать все неотмеченные одной галочкой было нельзя.
+    // whole — срез равен всей коллекции: отмеченные считаются по индексу (FieldId, Value) без обхода
+    // записей (значения поля принадлежат только записям его коллекции), как у FieldValueCountsWhole.
+    private List<(string Value, int Count)> CheckboxCounts(int fieldId, IQueryable<DbRecordEntity> scope, bool whole)
+    {
+        var spellings = CheckboxValue.CheckedSpellings.ToList();
+        var on  = whole
+            ? db.DbFieldValues.AsNoTracking().Count(fv => fv.FieldId == fieldId && spellings.Contains(fv.Value))
+            : scope.Count(r => db.DbFieldValues.Where(fv => fv.FieldId == fieldId && spellings.Contains(fv.Value))
+                                               .Select(fv => fv.RecordId).Contains(r.Id));
+        var off = scope.Count() - on;
+        var result = new List<(string Value, int Count)>(2);
+        if (on  > 0) result.Add((CheckboxValue.Checked, on));
+        if (off > 0) result.Add(("", off));
+        return result;
     }
 
     /// <summary>Сколько значений показывает окно фильтра колонки, у которой разных значений больше:
@@ -5298,7 +5358,8 @@ public partial class ConstructorRepository(AppDbContext db)
     {
         int? fid = int.TryParse(key, out var parsed) ? parsed : null;
         var cappable = key == TitleKey || (fid is { } id && db.DbFields.AsNoTracking()
-                           .Any(f => f.Id == id && f.FieldType != "relation" && f.FieldType != "date"));
+                           .Any(f => f.Id == id && f.FieldType != "relation" && f.FieldType != "date"
+                                     && f.FieldType != "checkbox"));
         // Больше ли разных непустых значений, чем показывает окно: DISTINCT с LIMIT идет по индексу
         // (FieldId, Value) и останавливается на первом лишнем.
         var many = cappable && (fid is { } f0
