@@ -467,6 +467,11 @@ public partial class MainWindow : Window
         // ── Панель чтения документа (библиотека) ──
         // Открывает ее раздел библиотеки (подписки — при его построении, CreateLibraryModule).
         LibraryReader.CloseRequested     += (_, _)   => CloseLibraryReader();
+        LibraryReader.ListPanelToggled += (_, open) =>
+        {
+            _libraryContentOpen = open;
+            ApplyColumns();
+        };
 
         // Ширину панели записи восстанавливаем; сама панель при запуске закрыта
         // (_recordPanelLogicalOpen = false по умолчанию) — без выбранной записи
@@ -1627,8 +1632,8 @@ public partial class MainWindow : Window
         var inConstructor = _activeModule == "constructor";
         var inLibrary     = _activeModule == "library";
 
-        // Центральный блок скрывается только в конструкторе; в календаре/настройках он всегда «открыт».
-        var collection = !inConstructor || _collectionOpen;
+        // В библиотеке список можно свернуть стрелкой в шапке документа, как коллекцию у записи.
+        var collection = inConstructor ? _collectionOpen : !inLibrary || !_readerOpen || _libraryContentOpen;
         // Панель записи существует только в конструкторе, панель чтения — только в библиотеке.
         var record     = inConstructor && _recordPanelLogicalOpen;
         var reader     = inLibrary && _readerOpen;
@@ -1675,6 +1680,11 @@ public partial class MainWindow : Window
         }
 
         // ── Видимость блоков ──
+        // Библиотека сохраняет всю ширину рабочей области: правая панель закрывает часть
+        // списка, а не сжимает карточки и поиск. Остальные разделы живут в своей колонке.
+        Grid.SetColumnSpan(ModulesHost, inLibrary && collection && reader ? 3 : 1);
+        if (_libraryView is { } library) library.IsVisible = inLibrary && collection;
+        LibraryReader.SetListPanelOpen(_libraryContentOpen);
         ConstructorModule.IsVisible    = inConstructor && collection;
         RecordPanel.IsVisible          = record;
         LibraryReader.IsVisible        = reader;
@@ -1919,6 +1929,7 @@ public partial class MainWindow : Window
     // ── Правая панель «Чтение документа» ───────────────────────────────────────
 
     private int  _readerWidth = AppSettings.LibraryReaderWidthDefault;
+    private bool _libraryContentOpen = true;
     private bool _readerOpen;
 
     /// <summary>
@@ -1942,6 +1953,7 @@ public partial class MainWindow : Window
     private void CloseLibraryReader()
     {
         _readerOpen = false;
+        _libraryContentOpen = true;
         LibraryReader.Clear();
         _libraryView?.SetReaderOpen(false);
         ApplyColumns();

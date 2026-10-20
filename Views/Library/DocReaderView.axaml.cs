@@ -37,8 +37,11 @@ namespace SmartBase.Views.Library;
 /// </summary>
 public partial class DocReaderView : UserControl
 {
-    /// <summary>Закрыть панель — крестик в шапке.</summary>
+    /// <summary>Закрыть панель — команда клавиатуры.</summary>
     public event EventHandler? CloseRequested;
+
+    /// <summary>Показать список рядом с документом или раскрыть документ на всю ширину.</summary>
+    public event EventHandler<bool>? ListPanelToggled;
 
     /// <summary>Документ, открытый сейчас; null — панель пуста.</summary>
     public DocRecord? Document { get; private set; }
@@ -291,7 +294,13 @@ public partial class DocReaderView : UserControl
             Dispatcher.UIThread.Post(FillSheet, DispatcherPriority.Background);
         };
 
-        CloseBtn.Click += (_, _) => CloseRequested?.Invoke(this, EventArgs.Empty);
+        SetListPanelOpen(true);
+        ListPanelBtn.Click += (_, _) =>
+        {
+            var open = ListPanelBtn.IsChecked == true;
+            SetListPanelOpen(open);
+            ListPanelToggled?.Invoke(this, open);
+        };
         PrevBtn.Click  += (_, _) => Step(-1);
         NextBtn.Click  += (_, _) => Step(+1);
 
@@ -307,6 +316,14 @@ public partial class DocReaderView : UserControl
         };
         AddHandler(KeyDownEvent, OnReaderKeyDown, Avalonia.Interactivity.RoutingStrategies.Tunnel);
         _findDebounce.Tick += (_, _) => { _findDebounce.Stop(); Rehighlight(); };
+    }
+
+    public void SetListPanelOpen(bool open)
+    {
+        ListPanelBtn.IsChecked = open;
+        ListOpenIcon.IsVisible = !open;
+        ListCloseIcon.IsVisible = open;
+        ToolTip.SetTip(ListPanelBtn, open ? "Развернуть документ" : "Показать список документов");
     }
 
     private void OnReaderKeyDown(object? sender, KeyEventArgs e)

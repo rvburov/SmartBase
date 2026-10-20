@@ -112,6 +112,7 @@ void Run()
     Section("лист книги таблицей",       () => Sheets(reader));
     Section("закрепленные области",      () => FrozenPanes(reader));
     Section("клавиши библиотеки",        () => LibraryKeys(reader, host));
+    Section("стрелка панели документа",  () => ReaderArrow(reader));
     Section("большая книга",             () => BigBook(reader));
     Section("закрытие панели",           () => DetachReader(reader, host));
     window.Close();
@@ -127,6 +128,30 @@ void Section(string name, Action body)
     try { body(); }
     catch (Exception ex) { Check(false, $"раздел упал: {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}"); }
     sections.Add((name, failures - before));
+}
+
+void ReaderArrow(DocReaderView reader)
+{
+    var toggle = Find<ToggleButton>(reader, "ListPanelBtn")!;
+    var changes = new List<bool>();
+    void Changed(object? sender, bool open) => changes.Add(open);
+    reader.ListPanelToggled += Changed;
+    try
+    {
+        reader.SetListPanelOpen(true);
+        Check(Find<Control>(reader, "CloseBtn") is null, "крестик заменен стрелкой");
+        Check(toggle.IsChecked == true && Find<Control>(reader, "ListCloseIcon")!.IsVisible,
+            "при открытом списке стрелка указывает на раскрытие документа");
+        toggle.IsChecked = false;
+        toggle.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Check(changes.SequenceEqual(new[] { false }) && Find<Control>(reader, "ListOpenIcon")!.IsVisible,
+            "нажатие передает скрытие списка и разворачивает стрелку");
+        Check(ToolTip.GetTip(toggle)?.ToString() == "Показать список документов", "подсказка раскрытой панели");
+        reader.SetListPanelOpen(true);
+        Check(changes.Count == 1 && ToolTip.GetTip(toggle)?.ToString() == "Развернуть документ",
+            "синхронизация состояния не отправляет повторное действие");
+    }
+    finally { reader.ListPanelToggled -= Changed; reader.SetListPanelOpen(true); }
 }
 
 // ── Текстовый файл ──────────────────────────────────────────────────────────────

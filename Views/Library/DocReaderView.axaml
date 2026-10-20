@@ -45,7 +45,7 @@
 
     <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,*">
 
-        <!-- ── Шапка: название документа и закрытие ─────────────────────────── -->
+        <!-- ── Шапка: название документа и раскрытие панели ─────────────────────────── -->
         <Grid Grid.Row="0" Height="56" Margin="16,0" ColumnDefinitions="*,Auto">
             <StackPanel Grid.Column="0" VerticalAlignment="Center" Spacing="1" Margin="0,0,8,0">
                 <TextBlock x:Name="TitleLabel"
@@ -62,21 +62,26 @@
                            TextTrimming="CharacterEllipsis" />
             </StackPanel>
 
-            <Button Grid.Column="1" x:Name="CloseBtn"
-                    Classes="icon"
-                    Width="30" Height="30"
-                    VerticalAlignment="Center"
-                    CornerRadius="{StaticResource RadiusMedium}"
-                    ToolTip.Tip="Закрыть панель чтения">
-                <Viewbox Width="{StaticResource IconSizeSmall}" Height="{StaticResource IconSizeSmall}">
+            <ToggleButton Grid.Column="1" x:Name="ListPanelBtn" Classes="navbtn"
+                          Width="30" Height="30"
+                          VerticalAlignment="Center"
+                          CornerRadius="{StaticResource RadiusMedium}"
+                          ToolTip.Tip="Развернуть документ">
+                <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}">
                     <Canvas Width="24" Height="24">
-                        <Path Data="{StaticResource IconClose}"
-                              Stroke="{Binding $parent[Button].Foreground}"
-                              StrokeThickness="{StaticResource IconStrokeSmall}"
+                        <Path x:Name="ListOpenIcon"
+                              Data="{StaticResource IconArrowRightFromLine}"
+                              Stroke="{Binding $parent[ToggleButton].Foreground}"
+                              StrokeThickness="{StaticResource IconStrokeMedium}"
+                              StrokeLineCap="Round" StrokeJoin="Round" />
+                        <Path x:Name="ListCloseIcon"
+                              Data="{StaticResource IconArrowLeftToLine}"
+                              Stroke="{Binding $parent[ToggleButton].Foreground}"
+                              StrokeThickness="{StaticResource IconStrokeMedium}"
                               StrokeLineCap="Round" StrokeJoin="Round" />
                     </Canvas>
                 </Viewbox>
-            </Button>
+            </ToggleButton>
         </Grid>
 
         <Border Grid.Row="1" Classes="separator h" />

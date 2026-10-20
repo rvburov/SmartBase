@@ -371,10 +371,11 @@ var gcMarks = new List<(TimeSpan Pause, int G0, int G1, int G2, long HeapMb)>();
      GC.GetTotalMemory(false) / 1048576);
 MainWindow? main = null;
 var exit = new CancellationTokenSource();
+var scenarioFailed = false;
 Dispatcher.UIThread.Post(async () =>
 {
     try { await Scenario(); }
-    catch (Exception ex) { Console.WriteLine($"  СБОЙ СЦЕНАРИЯ: {ex}"); }
+    catch (Exception ex) { scenarioFailed = true; Console.WriteLine($"  СБОЙ СЦЕНАРИЯ: {ex}"); }
     finally { exit.Cancel(); }
 });
 Dispatcher.UIThread.MainLoop(exit.Token);
@@ -383,7 +384,7 @@ probe.Stop();
 sampler?.Stop();
 
 Report();
-return 0;
+return scenarioFailed ? 1 : 0;
 
 // ── Сценарий ─────────────────────────────────────────────────────────────────
 
@@ -2047,7 +2048,7 @@ async Task LibraryOps()
     var faults = 0;
     void Expect(bool ok, string what)
     {
-        if (!ok) faults++;
+        if (!ok) { faults++; scenarioFailed = true; }
         Console.WriteLine(ok ? $"  {what}" : $"  НЕ ПРОШЛО: {what}");
     }
 
@@ -2094,6 +2095,65 @@ async Task LibraryOps()
         Console.WriteLine($"Библиотека: НЕ ПРОШЛО {faults}");
         return;
     }
+
+    Step("библиотека: документ перекрывает список без сжатия");
+    var reader = main!.FindControl<SmartBase.Views.Library.DocReaderView>("LibraryReader")!;
+    var root = main.FindControl<Grid>("RootGrid")!;
+    var readerWidth = (int)Get(main, "_readerWidth")!;
+    var feedWidth = feed.Bounds.Width;
+    var readDoc = Doc("Стенд: свой")!;
+    Call(main, "OpenLibraryReader", readDoc);
+    await Settle(0.3, 20);
+    Expect(reader.IsVisible && Math.Abs(feed.Bounds.Width - feedWidth) < 1,
+        $"открытие документа не сжало ленту ({feedWidth:0} → {feed.Bounds.Width:0})");
+    foreach (var width in new[] { 400, 800 })
+    {
+        SetField(main, "_readerWidth", width);
+        Call(main, "ApplyColumns");
+        await Settle(0.2, 20);
+        Expect(Math.Abs(feed.Bounds.Width - feedWidth) < 1,
+            $"при ширине документа {width} лента сохранила ширину {feedWidth:0}");
+        var readerX = reader.TranslatePoint(default, main)!.Value.X;
+        var feedX = feed.TranslatePoint(default, main)!.Value.X;
+        Expect(readerX < feedX + feed.Bounds.Width && readerX > feedX,
+            "документ перекрывает правую часть списка");
+    }
+    var expand = reader.FindControl<Avalonia.Controls.Primitives.ToggleButton>("ListPanelBtn")!;
+    async Task ToggleReader()
+    {
+        var at = expand.TranslatePoint(new Point(expand.Bounds.Width / 2, expand.Bounds.Height / 2), main)!.Value;
+        main.MouseDown(at, MouseButton.Left);
+        main.MouseUp(at, MouseButton.Left);
+        await Settle(0.3, 20);
+    }
+    await ToggleReader();
+    Expect(reader.IsVisible && !library.IsVisible && root.ColumnDefinitions[3].ActualWidth < 1,
+        "стрелка раскрыла документ на всю рабочую ширину");
+    Expect(ToolTip.GetTip(expand)?.ToString() == "Показать список документов",
+        "стрелка раскрытого документа предлагает вернуть список");
+    Expect(reader.Document == readDoc, "раскрытие сохранило открытый документ");
+    ShowModule("settings");
+    Expect(Grid.GetColumnSpan(main.FindControl<Grid>("ModulesHost")!) == 1,
+        "другие разделы используют обычную колонку контента");
+    ShowModule("library");
+    await Settle(0.3, 20);
+    Expect(reader.IsVisible && !library.IsVisible, "возврат в раздел сохранил раскрытый документ");
+    await ToggleReader();
+    Expect(reader.IsVisible && library.IsVisible && Math.Abs(root.ColumnDefinitions[5].ActualWidth - 800) < 1,
+        "повторное нажатие вернуло список и прежнюю ширину документа");
+    Expect(Math.Abs(feed.Bounds.Width - feedWidth) < 1, "возврат списка сохранил ширину карточек");
+    Call(main, "CloseLibraryReader");
+    await Settle(0.2, 20);
+    Expect(!reader.IsVisible && library.IsVisible && Math.Abs(feed.Bounds.Width - feedWidth) < 1,
+        "закрытие документа вернуло список на всю рабочую область");
+    Call(main, "OpenLibraryReader", readDoc);
+    await Settle(0.2, 20);
+    await ToggleReader();
+    reader.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Key.Escape });
+    await Settle(0.2, 20);
+    Expect(!reader.IsVisible && library.IsVisible && (bool)Get(main, "_libraryContentOpen")!,
+        "Escape закрыл раскрытый документ и вернул список");
+    SetField(main, "_readerWidth", readerWidth);
 
     // Чужая правка: свой файл убрали с диска, а сосед прикрепил новый документ.
     File.Delete(ownPath);
