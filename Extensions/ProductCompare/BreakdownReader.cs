@@ -42,6 +42,12 @@ internal sealed class BreakdownNode
 internal sealed class BreakdownSheet(BreakdownFile file, BreakdownNode root, Stylesheet? styles,
                                      int products, int operations)
 {
+    /// <summary>Верхнее изделие файла — строка «Изделие» (уровень 0), а без нее первое изделие
+    /// листа; <c>null</c> — изделий на листе нет. По нему движок проверяет, что все файлы —
+    /// расшифровки одного изделия.</summary>
+    public BreakdownNode? Top { get; } =
+        root.Children.FirstOrDefault(c => c.Level == 0) ?? root.Children.FirstOrDefault();
+
     public BreakdownFile File       { get; } = file;
     public BreakdownNode Root       { get; } = root;
     public Stylesheet?   Styles     { get; } = styles;

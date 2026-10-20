@@ -48,13 +48,22 @@ public static class BreakdownCompareEngine
             progress?.Report(5 + 55 * (i + 1) / files.Count);
         }
 
-        // 3) Общий список входимостей.
+        // 3) Одно изделие: обозначение КД в строке «Изделие» у всех файлов одно. Имя файла для
+        //    этого не годится — часть до даты пишут как придется.
+        var tops = sheets.GroupBy(s => s.Top?.Key ?? "").ToList();
+        if (tops.Count > 1)
+            throw new ProductCompareException(BreakdownFiles.List(
+                "В папке расшифровки разных изделий (разное обозначение КД в строке «Изделие»):",
+                sheets.Select(s => $"{Describe(s.Top)} — {Path.GetFileName(s.File.Path)}")));
+        log?.Report($"🔎 Изделие у всех файлов одно: {Describe(sheets[0].Top)}");
+
+        // 4) Общий список входимостей.
         var list = BreakdownMerge.Merge(sheets.Select(s => s.Root).ToList());
         if (list.Rows.Count == 0)
             throw new ProductCompareException($"На листах «{BreakdownReader.SheetName}» нет ни одной строки данных.");
         progress?.Report(62);
 
-        // 4) Запись. Расширение результата — как у шаблона: тип книги внутри файла не меняется.
+        // 5) Запись. Расширение результата — как у шаблона: тип книги внутри файла не меняется.
         var timestamp  = DateTime.Now.ToString("dd.MM.yyyy_HH-mm-ss");
         var extension  = Path.GetExtension(templatePath).ToLowerInvariant();
         var outputPath = Path.Combine(outputDir, $"{BreakdownFiles.ResultPrefix}{timestamp}{extension}");
@@ -63,4 +72,11 @@ public static class BreakdownCompareEngine
 
         return new BreakdownResult(outputPath, files, list.Rows.Count, list.Products, list.Operations);
     }
+
+    private static string Describe(BreakdownNode? top) => top?.Key switch
+    {
+        null                                => "на листе нет ни одного изделия",
+        var key when key.StartsWith("КД:")  => key["КД:".Length..],
+        var key                             => $"без обозначения КД, «{key["Имя:".Length..]}»",
+    };
 }

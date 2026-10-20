@@ -93,17 +93,16 @@ public sealed class BreakdownFilesTests : IDisposable
         Assert.DoesNotContain("2026.02.01", ex.Message);
     }
 
+    // Часть имени до даты пишут свободно — по ней изделие не определяется (настоящая папка:
+    // одно изделие под шестью разными именами).
     [Fact]
-    public void Different_products_stop_the_run()
+    public void Free_text_before_the_date_does_not_matter()
     {
-        Touch("Изделие А_2026.01.01_Иванов.xlsx");
-        Touch("Изделие Б_2026.02.01_Иванов.xlsx");
+        Touch("ТД 7Р21С110 (Платан-РСО) АЦИЕ.461411.123_2026.01.01_Иванов.xlsx");
+        Touch("Платан-РСО АЦИЕ.461411.123 7Р21С110_2026.02.01_Петров.xlsx");
+        Touch("Платан-РСО_2026.03.01.xlsx");
 
-        var ex = Refusal();
-
-        Assert.Contains("разных изделий", ex.Message);
-        Assert.Contains("«Изделие А»", ex.Message);
-        Assert.Contains("«Изделие Б»", ex.Message);
+        Assert.Equal(3, BreakdownFiles.Collect(_root, null).Count);
     }
 
     [Fact]
@@ -173,5 +172,48 @@ public sealed class BreakdownFilesTests : IDisposable
             () => BreakdownCompareEngine.Run(template, _root, _root, null, null, default));
 
         Assert.Contains("Изд_2026.02.01_А.xlsx", ex.Message);
+    }
+
+    // ── Одно изделие — по содержимому ─────────────────────────────────────────
+
+    private string TemplateOutside()
+    {
+        var template = Path.Combine(_root, "Шаблон", "шаблон.xlsm");
+        Directory.CreateDirectory(Path.GetDirectoryName(template)!);
+        BreakdownStand.WriteTemplate(template);
+        return template;
+    }
+
+    [Fact]
+    public void Different_designation_of_the_top_product_stops_the_run_and_names_files()
+    {
+        var template = TemplateOutside();
+        BreakdownStand.WriteBreakdown(Path.Combine(_root, "Изд_2026.01.01_А.xlsx"),
+            new BRow("Изделие", "Платан-РСО", "АЦИЕ.461411.123"));
+        BreakdownStand.WriteBreakdown(Path.Combine(_root, "Изд_2026.02.01_А.xlsx"),
+            new BRow("Изделие", "Другое", "АЦИЕ.000000.001"));
+
+        var ex = Assert.Throws<ProductCompareException>(
+            () => BreakdownCompareEngine.Run(template, _root, _root, null, null, default));
+
+        Assert.Contains("разных изделий", ex.Message);
+        Assert.Contains("АЦИЕ.461411.123 — Изд_2026.01.01_А.xlsx", ex.Message);
+        Assert.Contains("АЦИЕ.000000.001 — Изд_2026.02.01_А.xlsx", ex.Message);
+    }
+
+    [Fact]
+    public void Same_designation_under_different_names_is_one_product()
+    {
+        var template = TemplateOutside();
+        BreakdownStand.WriteBreakdown(Path.Combine(_root, "ТД 7Р21С110 (Платан-РСО)_2026.01.01_А.xlsx"),
+            new BRow("Изделие", "Платан-РСО", "АЦИЕ.461411.123"));
+        BreakdownStand.WriteBreakdown(Path.Combine(_root, "Платан-РСО_2026.02.01_Б.xlsx"),
+            new BRow("Изделие", "Платан-РСО", "АЦИЕ.461411.123"));
+        var log = new List<string>();
+
+        var result = BreakdownCompareEngine.Run(template, _root, _root, null, new SyncProgress<string>(log.Add), default);
+
+        Assert.Equal(2, result.Files.Count);
+        Assert.Contains(log, line => line.Contains("Изделие у всех файлов одно: АЦИЕ.461411.123"));
     }
 }

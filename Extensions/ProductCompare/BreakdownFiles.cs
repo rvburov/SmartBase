@@ -6,7 +6,7 @@ using System.Text.RegularExpressions;
 namespace SmartBase.Extensions.ProductCompare;
 
 /// <summary>Файл расшифровки, отобранный для сравнения: путь, имя без расширения (оно же
-/// идет в заголовок блока), проект — часть имени до даты — и дата из имени.</summary>
+/// идет в заголовок блока), часть имени до даты и дата из имени.</summary>
 public sealed record BreakdownFile(string Path, string Title, string Project, DateTime Date);
 
 /// <summary>
@@ -14,6 +14,11 @@ public sealed record BreakdownFile(string Path, string Title, string Project, Da
 /// «Проект_ГГГГ.ММ.ДД_ФИО» (так их называет макрос расшифровки и читает «Сводная
 /// трудоемкость»); хвоста «_ФИО» может и не быть. Все, что мешает однозначному порядку, —
 /// отказ с перечнем файлов: сравнение по датам, у которого порядок угадан, хуже, чем никакое.
+///
+/// Часть имени до даты в отбор не входит: на деле ее пишут свободно («ТД 7Р21С110 (…)
+/// АЦИЕ.461411.123», «Платан-РСО АЦИЕ.461411.123 7Р21С110», «ЧАСТНЫЙ СЛУЧАЙ …»), и по имени одно
+/// изделие от другого не отличить. Одно ли это изделие, проверяет движок по содержимому —
+/// по обозначению КД в строке «Изделие» (<see cref="BreakdownCompareEngine"/>).
 /// </summary>
 public static partial class BreakdownFiles
 {
@@ -52,7 +57,7 @@ public static partial class BreakdownFiles
     /// Файлы расшифровок папки (без подпапок) в порядке дат, от ранней к поздней. Берутся
     /// .xlsx и .xlsm; служебные «~$…» и прошлые результаты пропускаются. Отказ
     /// (<see cref="ProductCompareException"/> с перечнем файлов), если в каком-то имени нет
-    /// даты, если дата повторяется, если в папке файлы разных изделий или файлов меньше двух.
+    /// даты, если дата повторяется или файлов меньше двух.
     /// </summary>
     public static IReadOnlyList<BreakdownFile> Collect(string folder, IProgress<string>? log)
     {
@@ -88,12 +93,6 @@ public static partial class BreakdownFiles
                 "У нескольких файлов одна и та же дата — какой из них новее, неизвестно:",
                 sameDate.SelectMany(g => g.Select(f => $"{g.Key:dd.MM.yyyy} — {Path.GetFileName(f.Path)}"))));
 
-        var projects = files.GroupBy(f => f.Project, StringComparer.CurrentCultureIgnoreCase).ToList();
-        if (projects.Count > 1)
-            throw new ProductCompareException(List(
-                "В папке расшифровки разных изделий (разное начало имени до даты):",
-                projects.Select(g => $"«{g.Key}» — файлов: {g.Count()}")));
-
         if (files.Count < 2)
             throw new ProductCompareException(
                 $"Для сравнения нужны хотя бы два файла расшифровки, в папке найдено: {files.Count}.");
@@ -101,7 +100,7 @@ public static partial class BreakdownFiles
         return files.OrderBy(f => f.Date).ToList();
     }
 
-    private static string List(string title, IEnumerable<string> items)
+    internal static string List(string title, IEnumerable<string> items)
     {
         var text = new StringBuilder(title);
         foreach (var item in items) text.Append("\n • ").Append(item);
