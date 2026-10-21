@@ -70,9 +70,10 @@ public sealed class BreakdownCompareRunTests : IDisposable
 
         var result = RunAndCheck(ws =>
         {
-            Assert.Equal("Изделие АБВГ.000001.001_2026.01.05_Иванова", ws.Text(1, Col(0, 3)));
-            Assert.Equal("Изделие АБВГ.000001.001_2026.03.20_Иванова", ws.Text(1, Col(1, 3)));
-            Assert.Equal("Изделие АБВГ.000001.001_2026.06.16_Иванова", ws.Text(1, Col(2, 3)));
+            // Заголовок шаблона — A1:I1: имя файла в левой клетке объединения каждого блока.
+            Assert.Equal("Изделие АБВГ.000001.001_2026.01.05_Иванова", ws.Text(1, Col(0, 1)));
+            Assert.Equal("Изделие АБВГ.000001.001_2026.03.20_Иванова", ws.Text(1, Col(1, 1)));
+            Assert.Equal("Изделие АБВГ.000001.001_2026.06.16_Иванова", ws.Text(1, Col(2, 1)));
         });
 
         Assert.Equal([new DateTime(2026, 1, 5), new DateTime(2026, 3, 20), new DateTime(2026, 6, 16)],
@@ -270,7 +271,7 @@ public sealed class BreakdownCompareRunTests : IDisposable
     // ── Шаблон ────────────────────────────────────────────────────────────────
 
     [Fact]
-    public void Header_is_repeated_over_every_block_except_the_button()
+    public void Header_with_the_merged_title_is_repeated_over_every_block()
     {
         Breakdown("2026.01.01", new BRow("Изделие", "Комплекс", "АБВГ.000"));
         Breakdown("2026.02.01", new BRow("Изделие", "Комплекс", "АБВГ.000"));
@@ -278,34 +279,51 @@ public sealed class BreakdownCompareRunTests : IDisposable
 
         RunAndCheck(ws =>
         {
-            Assert.Equal(BreakdownStand.ButtonText, ws.Text(1, 1));
-            Assert.Equal("", ws.Text(1, Col(1, 1)));
-            Assert.Equal("", ws.Text(1, Col(2, 1)));
+            var merged = ws.MergedRanges.Select(r => r.RangeAddress.ToString()).ToHashSet();
+            Assert.Contains("A1:I1", merged);
+            Assert.Contains("K1:S1", merged);
+            Assert.Contains("U1:AC1", merged);
+            Assert.Contains("K2:K4", merged);
+            Assert.Contains("AC2:AC4", merged);
+
+            // Текст заголовка, оставшийся в шаблоне, не уцелел ни над одним блоком.
+            for (var c = 1; c <= Col(2, 9); c++)
+                Assert.NotEqual(BreakdownStand.TitleText, ws.Text(1, c));
 
             for (var block = 1; block < 3; block++)
             {
-                Assert.Equal("Уровень",              ws.Text(2, Col(block, 1)));
+                Assert.Equal("Уровень",               ws.Text(2, Col(block, 1)));
                 Assert.Equal("Уровень идентификатор", ws.Text(2, Col(block, 2)));
-                Assert.Equal("Комментарий",          ws.Text(2, Col(block, 9)));
+                Assert.Equal("Комментарий",           ws.Text(2, Col(block, 9)));
                 Assert.True(ws.Cell(2, Col(block, 3)).Style.Font.Bold);
-                Assert.True(ws.Cell(1, Col(block, 3)).IsMerged());
                 Assert.Equal(ws.Column(1).Width,  ws.Column(Col(block, 1)).Width);
                 Assert.Equal(ws.Column(3).Width,  ws.Column(Col(block, 3)).Width);
                 Assert.Equal(ws.Column(10).Width, ws.Column(Col(block, 10)).Width);
             }
 
-            var merged = ws.MergedRanges.Select(r => r.RangeAddress.ToString()).ToHashSet();
-            Assert.Contains("M1:S1", merged);
-            Assert.Contains("W1:AC1", merged);
-            Assert.Contains("K2:K4", merged);
-            Assert.Contains("AC2:AC4", merged);
-
             Assert.Equal("A5:AC6", ws.AutoFilter.Range.RangeAddress.ToString());
         });
     }
 
+    // Прежняя раскладка шаблона (заголовок C1:I1 рядом с кнопкой) тоже работает: имя файла —
+    // в левую клетку того объединения, которое накрывает C1.
     [Fact]
-    public void Button_macros_and_other_sheets_survive()
+    public void Title_goes_into_C1_when_the_template_merges_C1_to_I1()
+    {
+        BreakdownStand.WriteTemplate(_template, titleFromC: true);
+        Breakdown("2026.01.01", new BRow("Изделие", "Комплекс", "АБВГ.000"));
+        Breakdown("2026.02.01", new BRow("Изделие", "Комплекс", "АБВГ.000"));
+
+        RunAndCheck(ws =>
+        {
+            Assert.Equal("Изделие АБВГ.000001.001_2026.01.01_Иванова", ws.Text(1, Col(0, 3)));
+            Assert.Equal("Изделие АБВГ.000001.001_2026.02.01_Иванова", ws.Text(1, Col(1, 3)));
+            Assert.Contains("M1:S1", ws.MergedRanges.Select(r => r.RangeAddress.ToString()));
+        });
+    }
+
+    [Fact]
+    public void Shapes_macros_and_other_sheets_survive()
     {
         Breakdown("2026.01.01", new BRow("Изделие", "Комплекс", "АБВГ.000"));
         Breakdown("2026.02.01", new BRow("Изделие", "Комплекс", "АБВГ.000"));

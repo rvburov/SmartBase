@@ -23,8 +23,9 @@ internal sealed record BRow(string Index, string Name, string Deno = "", double?
 internal static class BreakdownStand
 {
     public const string ProductFill = "4472C4";
-    public const string ButtonText  = "КНОПКА";
-    public const string TitleText   = "заголовок шаблона";
+    /// <summary>Текст заголовка, оставшийся в шаблоне от прошлой расшифровки (как в настоящем
+    /// шаблоне пользователя): в результате его быть не должно — только имена файлов.</summary>
+    public const string TitleText   = "КТС ПД РУАМ АЦИЕ.462715.007-27_2026.06.16_Парфенова";
     public static readonly byte[] VbaBytes = [1, 2, 3, 4, 5, 6, 7, 8];
 
     public const string ButtonVml =
@@ -77,18 +78,19 @@ internal static class BreakdownStand
     }
 
     /// <summary>
-    /// Шаблон как на фото пользователя: лист «Лист1», в A1 — кнопка (здесь ее место помечено
-    /// текстом), C1:I1 — объединенный заголовок, строки 2–4 — шапка столбцов, 5 — автофильтр,
-    /// 6–8 — пустые клетки с рамками. Второй лист и макросы — «обвязка», ее трогать нельзя.
+    /// Шаблон как у пользователя: лист «Лист1», A1:I1 — объединенный заголовок блока (кнопку
+    /// «Создать уровни» пользователь убрал, заголовок занял всю ширину блока), строки 2–4 —
+    /// шапка столбцов, 5 — автофильтр, 6–8 — пустые клетки с рамками. Прежняя раскладка —
+    /// заголовок C1:I1 рядом с кнопкой — <paramref name="titleFromC"/>. Фигура на листе (VML),
+    /// второй лист и макросы — «обвязка», ее трогать нельзя.
     /// </summary>
-    public static void WriteTemplate(string path)
+    public static void WriteTemplate(string path, bool titleFromC = false)
     {
         var plain = Path.ChangeExtension(path, ".tmp.xlsx");
         using (var wb = new XLWorkbook())
         {
             var ws = wb.AddWorksheet("Лист1");
-            ws.Cell(1, 1).Value = ButtonText;
-            ws.Range("C1:I1").Merge().Value = TitleText;
+            ws.Range(titleFromC ? "C1:I1" : "A1:I1").Merge().Value = TitleText;
 
             string[] header = ["Уровень", "Уровень идентификатор", "Наименование", "Децимальный номер КД",
                                "Децимальный номер ТД", "Кол-во", "Т (1 шт.)", "Т всего", "Комментарий"];

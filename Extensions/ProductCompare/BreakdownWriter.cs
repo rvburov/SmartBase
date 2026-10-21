@@ -7,14 +7,20 @@ namespace SmartBase.Extensions.ProductCompare;
 
 /// <summary>
 /// Запись сравнения расшифровок в копию шаблона. Шаблон копируется целиком, а в копии
-/// меняется только содержимое ячеек первого листа (OpenXML), поэтому кнопки на листе, макросы
-/// и прочие части книги доходят до результата нетронутыми. ClosedXML здесь не годится: при
-/// сохранении он теряет элементы управления на листе — кнопку «Создать уровни» шаблона.
+/// меняется только содержимое ячеек первого листа (OpenXML), поэтому фигуры и кнопки на листе,
+/// макросы и прочие части книги доходят до результата нетронутыми. ClosedXML здесь не годится:
+/// при сохранении он теряет элементы управления на листе.
 ///
 /// Раскладка шаблона: блок — столбцы A–I (уровень, индекс, наименование, обозначение КД,
 /// обозначение ТД, кол-во, Т (1 шт.), Т всего, комментарий), за ним пустой столбец; строки
-/// 1–5 — шапка (в C1 — заголовок блока, в A1:B1 — кнопка), данные с 6-й строки. Блоки дат
-/// идут вправо через пустой столбец; шапка повторяется над каждым, кроме места кнопки.
+/// 1–5 — шапка, в 1-й — заголовок блока, данные с 6-й строки. Блоки дат идут вправо через
+/// пустой столбец; шапка с объединениями повторяется над каждым целиком.
+///
+/// Заголовок — объединение в 1-й строке, которое накрывает C1: сейчас это A1:I1 (кнопку
+/// «Создать уровни» пользователь из шаблона убрал), раньше было C1:I1. Имя файла пишется в
+/// левую клетку объединения — в клетку внутри объединения Excel его не покажет, и над блоком
+/// остался бы текст, забытый в шаблоне (так и было: над первым блоком висело имя чужой
+/// расшифровки, и блоки казались не по датам).
 /// </summary>
 internal static class BreakdownWriter
 {
@@ -22,8 +28,7 @@ internal static class BreakdownWriter
     public const int  BlockStep    = BlockColumns + 1;
     public const uint HeaderRows   = 5;
     public const uint FirstDataRow = HeaderRows + 1;
-    public const int  TitleColumn  = 3;          // C1 — заголовок блока: имя файла
-    private const int ButtonColumns = 2;         // A1:B1 — кнопка шаблона, над другими блоками не повторяется
+    public const int  TitleColumn  = 3;          // C1 — клетка, по которой ищется заголовок блока
 
     public static void Write(string templatePath, string outputPath,
                              IReadOnlyList<BreakdownSheet> sheets, MergedList list,
@@ -48,11 +53,12 @@ internal static class BreakdownWriter
             // Оформление пустых клеток данных берется из 6-й строки шаблона ДО записи.
             var blankStyles = new uint?[BlockColumns];
             for (var c = 0; c < BlockColumns; c++) blankStyles[c] = grid.Get(FirstDataRow, c + 1)?.StyleIndex?.Value;
-            var titleStyle = grid.Get(1, TitleColumn)?.StyleIndex?.Value;
+            var titleColumn = TitleCell(ws);
+            var titleStyle  = grid.Get(1, titleColumn)?.StyleIndex?.Value;
 
             RepeatHeader(grid, blocks);
             for (var k = 0; k < blocks; k++)
-                grid.Set(1, TitleColumn + k * BlockStep, TextCell(sheets[k].File.Title, titleStyle));
+                grid.Set(1, titleColumn + k * BlockStep, TextCell(sheets[k].File.Title, titleStyle));
 
             var target  = new TargetStyles(styles);
             var copiers = sheets.Select(s => new StyleCopier(s.Styles, target)).ToArray();
@@ -197,14 +203,23 @@ internal static class BreakdownWriter
 
     // ── Шапка, объединения, ширины, фильтр ────────────────────────────────────
 
-    private static bool InButton(uint row, int column) => row == 1 && column <= ButtonColumns;
+    /// <summary>Столбец клетки заголовка блока: левая клетка объединения в 1-й строке, которое
+    /// накрывает C1 (A1:I1 — столбец A), а без объединения — сама C1.</summary>
+    private static int TitleCell(Worksheet ws)
+    {
+        foreach (var merge in ws.GetFirstChild<MergeCells>()?.Elements<MergeCell>() ?? [])
+            if (TryRange(merge.Reference?.Value, out var range) &&
+                range.Row1 == 1 && range.Col1 <= TitleColumn && TitleColumn <= range.Col2)
+                return range.Col1;
+        return TitleColumn;
+    }
 
     private static void RepeatHeader(Grid grid, int blocks)
     {
         for (uint r = 1; r <= HeaderRows; r++)
             for (var c = 1; c <= BlockColumns; c++)
             {
-                if (InButton(r, c) || grid.Get(r, c) is not { } original) continue;
+                if (grid.Get(r, c) is not { } original) continue;
                 for (var k = 1; k < blocks; k++)
                 {
                     var copy = (Cell)original.CloneNode(true);
@@ -229,7 +244,7 @@ internal static class BreakdownWriter
                 continue;
             }
 
-            var inHeader = range.Row2 <= HeaderRows && range.Col2 <= BlockColumns && !InButton(range.Row1, range.Col1);
+            var inHeader = range.Row2 <= HeaderRows && range.Col2 <= BlockColumns;
             if (!inHeader) continue;
             for (var k = 1; k < blocks; k++)
             {
