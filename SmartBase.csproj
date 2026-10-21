@@ -189,6 +189,14 @@
          документ заново постранично. Шрифт знака (PT Sans) отдается своим IFontResolver,
          см. Extensions/PdfWatermark/WatermarkFont.cs. -->
     <PackageReference Include="PDFsharp"                         Version="6.2.4" />
+    <!-- Пин исправленной версии зависимости PDFsharp. PDFsharp (и 6.2.4, и последняя 6.5.0)
+         тянет System.Security.Cryptography.Pkcs 8.0.1 с уязвимостями CVE-2026-84008
+         (SignedCms.CheckSignature, высокий) и CVE-2026-70162 (EnvelopedCms.Decode, средний) —
+         обе отказ в обслуживании, NuGet предупреждает о них в каждой сборке (NU1902/NU1903).
+         Сами эти функции программа не вызывает: PDFsharp здесь только рисует знак и PDF не
+         подписывает. Ветка 10.x — по .NET 10 программы; у 8.x поддержка кончается в 11.2026.
+         Убрать пин, когда PDFsharp сам потянет исправленную версию. -->
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
     <!-- Растеризация страниц PDF (Extensions/PdfWatermark): знак ВПЕЧАТЫВАЕТСЯ в пиксели,
          иначе он снимается редактором за одну операцию — слой поверх страницы стирается
          выбрасыванием последнего потока /Contents. Docnet.Core, а не PDFtoImage: тот требует
