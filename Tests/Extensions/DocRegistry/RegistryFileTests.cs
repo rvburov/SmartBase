@@ -116,16 +116,46 @@ public sealed class RegistryFileTests
         Assert.Single(RegistryFile.Read(Book(dir, sheet => Fill(sheet, 2), header)));
     }
 
+    /// <summary>Столбцы ищутся по именам: переставленные «ФИО» и «Проект» отдают каждый свое
+    /// значение, а не соседнее.</summary>
     [Fact]
-    public void Swapped_columns_are_refused()
+    public void Swapped_columns_are_read_by_name()
     {
         using var dir = new TempDir("registry-file");
 
         var header = RegistrySchema.Columns.ToList();
         (header[2], header[4]) = (header[4], header[2]);
+        var values = Values.ToList();
+        (values[2], values[4]) = (values[4], values[2]);
 
-        Assert.Contains($"3-й столбец — «{RegistrySchema.ProjectColumn}»",
-                        Refuse(dir, sheet => Fill(sheet, 2), header));
+        var row = Assert.Single(RegistryFile.Read(Book(dir, sheet => Fill(sheet, 2, values), header)));
+
+        Assert.Equal("Иванов Иван Иванович", row.Fio);
+        Assert.Equal("Проект",               row.Project);
+    }
+
+    /// <summary>
+    /// Свои столбцы журнала (для письма и прочего) не мешают: выгрузка такого журнала читается
+    /// без правки шапки, а лишние значения пропускаются. Столбец вставлен В СЕРЕДИНУ, чтобы
+    /// сдвинуть все следующие за ним.
+    /// </summary>
+    [Fact]
+    public void Extra_columns_are_skipped()
+    {
+        using var dir = new TempDir("registry-file");
+
+        List<string> header = [.. RegistrySchema.Columns.Take(2), "Письмо", .. RegistrySchema.Columns.Skip(2), "Ответ"];
+        List<string> values = [.. Values.Take(2), "Исх. 15", .. Values.Skip(2), "Получен"];
+
+        var row = Assert.Single(RegistryFile.Read(Book(dir, sheet => Fill(sheet, 2, values), header)));
+
+        Assert.Equal("Втулка",               row.Name);
+        Assert.Equal("АБВГ.301121.ХХХ",      row.Designation);
+        Assert.Equal("Иванов Иван Иванович", row.Fio);
+        Assert.Equal("Проект",               row.Project);
+        Assert.Equal("Учтено",               row.Accounting);
+        Assert.Equal("Изделие 1",            row.FirstUse);
+        Assert.Equal("Кратко",               row.Summary);
     }
 
     [Fact]
@@ -135,18 +165,20 @@ public sealed class RegistryFileTests
 
         var header = RegistrySchema.Columns.Take(7).ToList();
 
-        Assert.Contains("столбцов 7, а должно быть 8",
+        Assert.Contains($"нет столбца «{RegistrySchema.SummaryColumn}»",
                         Refuse(dir, sheet => Fill(sheet, 2, [.. Values.Take(7)]), header));
     }
 
+    /// <summary>Два столбца с одним именем эталона — отказ: какой из них читать, не понять.</summary>
     [Fact]
-    public void Extra_column_is_refused()
+    public void Duplicate_column_is_refused()
     {
         using var dir = new TempDir("registry-file");
 
-        var header = RegistrySchema.Columns.Append("Мое примечание").ToList();
+        var header = RegistrySchema.Columns.Append(RegistrySchema.ProjectColumn).ToList();
 
-        Assert.Contains("столбцов 9, а должно быть 8", Refuse(dir, sheet => Fill(sheet, 2), header));
+        Assert.Contains($"«{RegistrySchema.ProjectColumn}» встречается несколько раз",
+                        Refuse(dir, sheet => Fill(sheet, 2), header));
     }
 
     // ── Читать нечего ─────────────────────────────────────────────────────────

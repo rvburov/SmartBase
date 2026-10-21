@@ -177,18 +177,26 @@ public static class MessageRegistration
     /// Что означает идентификатор, здесь не знают: это строка, которой программа, приславшая
     /// сообщение, называет отправителя. Регистр не учитывается.
     /// </summary>
-    public static IReadOnlySet<string> Senders(string? setting)
+    public static IReadOnlySet<string> Senders(string? setting) =>
+        SenderEntries(setting).Select(e => e.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Записи списка по порядку: идентификатор и запись целиком, с пометкой, — так ее и
+    /// показывают человеку (<c>1001 Иванов</c>). Повтор идентификатора пропускается.
+    /// </summary>
+    public static IReadOnlyList<(string Id, string Entry)> SenderEntries(string? setting)
     {
-        var senders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var entries = new List<(string Id, string Entry)>();
+        var seen    = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var entry in (setting ?? "").Split([';', ',', '\n', '\r'],
                                                     StringSplitOptions.RemoveEmptyEntries))
         {
             var words = entry.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-            if (words.Length > 0) senders.Add(words[0]);
+            if (words.Length > 0 && seen.Add(words[0])) entries.Add((words[0], string.Join(' ', words)));
         }
 
-        return senders;
+        return entries;
     }
 
     // ── Номер ─────────────────────────────────────────────────────────────────

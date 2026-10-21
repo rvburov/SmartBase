@@ -8,10 +8,10 @@ namespace SmartBase.Extensions.DocRegistry;
 /// Проверка содержимого здесь не идет — ею занимается <see cref="RegistryImport"/>; здесь
 /// отсеивается только то, из-за чего читать нечего: не тот формат, не тот лист, не те столбцы.
 ///
-/// Столбцы в файле — ТЕ ЖЕ ВОСЕМЬ и в том же порядке, что в коллекции-журнале
-/// (<see cref="RegistrySchema.Columns"/>). Ряд один на файл и на журнал намеренно: файл делают
-/// выгрузкой из журнала или по его образцу, и второй порядок столбцов означал бы, что человеку
-/// надо помнить, какой из них где.
+/// Столбцы в файле — ТЕ ЖЕ ВОСЕМЬ, что в коллекции-журнале (<see cref="RegistrySchema.Columns"/>),
+/// и ищутся так же — по именам, в любом порядке, лишние пропускаются. Правило одно на файл и на
+/// журнал намеренно: файл делают выгрузкой из журнала или по его образцу, и выгрузка журнала со
+/// своими столбцами (для письма и прочего) обязана читаться без правки шапки.
 /// </summary>
 public static class RegistryFile
 {
@@ -49,7 +49,9 @@ public static class RegistryFile
         var used = sheet.RangeUsed()
             ?? throw new DocRegistryException($"Лист «{sheet.Name}» пустой.");
 
-        CheckHeader(used.FirstRow(), sheet.Name);
+        // Номера столбцов эталона в книге — в порядке эталона: 0 — «Наименование», 1 —
+        // «Обозначение» и так далее.
+        var at = Header(used.FirstRow(), sheet.Name);
 
         var rows = new List<ImportRow>();
 
@@ -59,18 +61,18 @@ public static class RegistryFile
             // читаемости, и разбирать там нечего.
             if (row.Cells().All(c => c.IsEmpty())) continue;
 
-            // Четвертый столбец — «Дата регистрации» — намеренно НЕ читается: дата регистрации
-            // это момент, когда строка попала в журнал, и ставится он при записи. В файле
-            // столбец быть обязан (ряд один на файл и на журнал), а значение в нем — любое.
+            // «Дата регистрации» (at[3]) намеренно НЕ читается: дата регистрации это момент,
+            // когда строка попала в журнал, и ставится он при записи. В файле столбец быть
+            // обязан (правило одно на файл и на журнал), а значение в нем — любое.
             rows.Add(new ImportRow(
                 Line:        row.WorksheetRow().RowNumber(),
-                Name:        Text(row.Cell(1)),
-                Designation: Text(row.Cell(2)),
-                Fio:         Text(row.Cell(3)),
-                Project:     Text(row.Cell(5)),
-                Accounting:  Text(row.Cell(6)),
-                FirstUse:    Text(row.Cell(7)),
-                Summary:     Text(row.Cell(8))));
+                Name:        Text(row.Cell(at[0])),
+                Designation: Text(row.Cell(at[1])),
+                Fio:         Text(row.Cell(at[2])),
+                Project:     Text(row.Cell(at[4])),
+                Accounting:  Text(row.Cell(at[5])),
+                FirstUse:    Text(row.Cell(at[6])),
+                Summary:     Text(row.Cell(at[7]))));
         }
 
         if (rows.Count == 0)
@@ -80,24 +82,18 @@ public static class RegistryFile
     }
 
     /// <summary>
-    /// Сверить шапку с эталоном столбцов. Сообщения — как у проверки коллекции
-    /// (<see cref="RegistrySchema.Check"/>): человек видит один и тот же разбор и там и тут.
+    /// Найти в шапке столбцы эталона и вернуть их номера в строке (с 1, как у ячеек) в порядке
+    /// эталона. Сообщения — как у проверки коллекции (<see cref="RegistrySchema.Check"/>):
+    /// человек видит один и тот же разбор и там и тут.
     /// </summary>
-    private static void CheckHeader(IXLRangeRow header, string sheetName)
+    private static IReadOnlyList<int> Header(IXLRangeRow header, string sheetName)
     {
-        var names  = header.Cells().Select(Text).ToList();
-        var wanted = RegistrySchema.Columns;
+        var cells = header.Cells().Select((cell, i) => (Name: Text(cell), Number: i + 1)).ToList();
 
-        if (names.Count != wanted.Count)
-            throw new DocRegistryException(
-                $"На листе «{sheetName}» столбцов {names.Count}, а должно быть {wanted.Count}: " +
-                string.Join(", ", wanted));
+        var (found, problem) = RegistrySchema.Find(cells, c => c.Name);
 
-        for (var i = 0; i < wanted.Count; i++)
-            if (!RegistrySchema.SameName(names[i], wanted[i]))
-                throw new DocRegistryException(
-                    $"На листе «{sheetName}» {i + 1}-й столбец — «{names[i]}», " +
-                    $"а должен быть «{wanted[i]}»");
+        return found?.Select(c => c.Number).ToList()
+            ?? throw new DocRegistryException($"На листе «{sheetName}» {problem}");
     }
 
     /// <summary>Текст ячейки — тот же, что человек видит в Excel (с учетом формата числа).</summary>

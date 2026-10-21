@@ -1,3 +1,5 @@
+using Avalonia.Controls;
+
 namespace SmartBase.Extensions;
 
 /// <summary>
@@ -13,7 +15,25 @@ namespace SmartBase.Extensions;
 /// <param name="Key">Имя настройки внутри расширения (уникально в его пределах).</param>
 /// <param name="Label">Подпись над полем.</param>
 /// <param name="Watermark">Серая подсказка в пустом поле (пример значения).</param>
+/// <param name="Button">Кнопка под полем; <c>null</c> — только поле.</param>
 public sealed record ExtensionSetting(
-    string Key,
-    string Label,
-    string Watermark = "");
+    string                  Key,
+    string                  Label,
+    string                  Watermark = "",
+    ExtensionSettingButton? Button    = null);
+
+/// <summary>
+/// Кнопка под полем настройки: действие над значением, которое выполняет само расширение, —
+/// например, разослать что-то тем, кто записан в поле. Оболочка только рисует кнопку и
+/// передает ей значение поля; что кнопка делает и что говорит человеку, решает расширение.
+/// </summary>
+/// <param name="Text">Подпись кнопки.</param>
+/// <param name="Run">Что сделать по нажатию. Значение поля к этому моменту уже сохранено.</param>
+public sealed record ExtensionSettingButton(string Text, Func<ExtensionSettingRun, Task> Run);
+
+/// <summary>Что оболочка дает кнопке настройки.</summary>
+/// <param name="Owner">Окно настроек — владелец диалогов кнопки.</param>
+/// <param name="Value">Значение поля в момент нажатия.</param>
+/// <param name="Replies">Отправка сообщения путем ответов сценариев (см.
+/// <see cref="IActionReplies"/>); <c>null</c> — интеграции недоступны.</param>
+public sealed record ExtensionSettingRun(Window Owner, string Value, IActionReplies? Replies);

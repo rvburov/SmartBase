@@ -25,15 +25,20 @@ public sealed record SchemaCheck(RegistryShape? Shape, string? Problem)
 /// <summary>
 /// Эталон структуры коллекции регистрации и проверка выбранной коллекции на соответствие.
 ///
-/// Столбцов ровно восемь и идут они в заданном порядке — это и есть признак «той самой»
-/// коллекции. Расширение пишет в чужую готовую коллекцию (в отличие от «Документов в
-/// коллекцию», которое создает свою), поэтому промахнуться легко: подтвердить структуру
-/// заранее дешевле, чем разбирать потом записи, разложенные не по тем столбцам.
+/// Восемь столбцов эталона, найденные ПО ИМЕНАМ, — признак «той самой» коллекции. Расширение
+/// пишет в чужую готовую коллекцию (в отличие от «Документов в коллекцию», которое создает
+/// свою), поэтому промахнуться легко: подтвердить структуру заранее дешевле, чем разбирать
+/// потом записи, разложенные не по тем столбцам.
 ///
-/// Первый столбец — СИСТЕМНАЯ колонка записи (Title), переименованная в «Наименование»;
-/// остальные семь — обычные поля коллекции. Сравнение имен прощает регистр, крайние пробелы и
-/// разнобой в написании буквы «е» (см. <see cref="SameName"/>), но не прощает порядок:
-/// перепутанные местами столбцы означают, что значения лягут не туда.
+/// Порядок не важен, а лишние столбцы разрешены где угодно: в журнал дописывают свои колонки —
+/// например, для письма, — и расширение их не трогает (решение пользователя 21.10.2026).
+/// Значения ложатся по найденным id полей, поэтому переставленный столбец получит свое
+/// значение, а не соседнее. Нельзя только двух столбцов с одним именем эталона: в какой из
+/// них писать, не понять.
+///
+/// «Наименование» — СИСТЕМНАЯ колонка записи (Title), переименованная из «Названия»; остальные
+/// семь — обычные поля коллекции. Сравнение имен прощает регистр, крайние пробелы и разнобой в
+/// написании буквы «е» (см. <see cref="SameName"/>).
 /// </summary>
 public static class RegistrySchema
 {
@@ -65,42 +70,65 @@ public static class RegistrySchema
     /// </summary>
     public static SchemaCheck Check(ConstructorRepository repo, int collectionId, string collectionName)
     {
-        var columns = Ordered(repo, collectionId);
-        var wanted  = Columns;
+        var (found, problem) = Find(Ordered(repo, collectionId), c => c.Name);
+        if (found is null) return new SchemaCheck(null, problem);
 
-        if (columns.Count != wanted.Count)
-            return new SchemaCheck(null,
-                $"столбцов {columns.Count}, а должно быть {wanted.Count}: {string.Join(", ", wanted)}");
-
-        for (var i = 0; i < wanted.Count; i++)
-            if (!SameName(columns[i].Name, wanted[i]))
-                return new SchemaCheck(null,
-                    $"{i + 1}-й столбец — «{columns[i].Name}», а должен быть «{wanted[i]}»");
-
-        // Первый столбец обязан быть системной колонкой записи: значение «Наименования» — это
-        // название записи, а не значение поля. Одноименное обычное поле на первом месте прошло
-        // бы проверку по именам, но писать в него как в название было бы ошибкой.
-        if (columns[0].FieldId is not null)
+        // «Наименование» обязано быть системной колонкой записи: его значение — это название
+        // записи, а не значение поля. Одноименное обычное поле прошло бы проверку по именам, но
+        // писать в него как в название было бы ошибкой.
+        if (found[0].FieldId is not null)
             return new SchemaCheck(null,
                 $"«{TitleColumn}» должен быть системным столбцом записи, а не обычным полем");
 
-        // Обратный случай: системную колонку переименовали и увели вглубь ряда. Тогда у одного
-        // из семи полей нет id, и писать в него нечем.
-        for (var i = 1; i < columns.Count; i++)
-            if (columns[i].FieldId is null)
+        // Обратный случай: системную колонку переименовали в имя одного из семи полей. Тогда у
+        // этого поля нет id, и писать в него нечем.
+        for (var i = 1; i < found.Count; i++)
+            if (found[i].FieldId is null)
                 return new SchemaCheck(null,
-                    $"«{columns[i].Name}» — системный столбец записи, а должен быть обычным полем");
+                    $"«{found[i].Name}» — системный столбец записи, а должен быть обычным полем");
 
         return new SchemaCheck(new RegistryShape(
             collectionId, collectionName,
-            DesignationFieldId: columns[1].FieldId!.Value,
-            FioFieldId:         columns[2].FieldId!.Value,
-            DateFieldId:        columns[3].FieldId!.Value,
-            DateFieldType:      columns[3].FieldType,
-            ProjectFieldId:     columns[4].FieldId!.Value,
-            AccountingFieldId:  columns[5].FieldId!.Value,
-            FirstUseFieldId:    columns[6].FieldId!.Value,
-            SummaryFieldId:     columns[7].FieldId!.Value), null);
+            DesignationFieldId: found[1].FieldId!.Value,
+            FioFieldId:         found[2].FieldId!.Value,
+            DateFieldId:        found[3].FieldId!.Value,
+            DateFieldType:      found[3].FieldType,
+            ProjectFieldId:     found[4].FieldId!.Value,
+            AccountingFieldId:  found[5].FieldId!.Value,
+            FirstUseFieldId:    found[6].FieldId!.Value,
+            SummaryFieldId:     found[7].FieldId!.Value), null);
+    }
+
+    /// <summary>
+    /// Найти столбцы эталона среди <paramref name="columns"/> по именам — в порядке эталона.
+    /// Лишние пропускаются, порядок не важен. <c>null</c> — какого-то столбца нет или он
+    /// встречается дважды; причина — во втором значении. Тот же разбор у шапки файла
+    /// (<see cref="RegistryFile"/>): человек видит одни и те же слова и там и тут.
+    /// </summary>
+    public static (IReadOnlyList<T>? Found, string Problem) Find<T>(IReadOnlyList<T> columns,
+                                                                    Func<T, string> name)
+    {
+        var found   = new List<T>(Columns.Count);
+        var missing = new List<string>();
+
+        foreach (var wanted in Columns)
+        {
+            var same = columns.Where(c => SameName(name(c), wanted)).ToList();
+
+            if (same.Count > 1)
+                return (null, $"столбец «{wanted}» встречается несколько раз — непонятно, в какой писать");
+
+            if (same.Count == 0) missing.Add(wanted);
+            else                 found.Add(same[0]);
+        }
+
+        if (missing.Count == 1)
+            return (null, $"нет столбца «{missing[0]}»");
+
+        if (missing.Count > 1)
+            return (null, $"нет столбцов: {string.Join(", ", missing.Select(m => $"«{m}»"))}");
+
+        return (found, "");
     }
 
     /// <summary>
@@ -108,9 +136,9 @@ public static class RegistrySchema
     /// затем поля; сохраненный порядок (<c>column_meta</c>) перекрывает порядок полей.
     ///
     /// Расчет повторяет <c>ConstructorRepository.GetExportColumns</c>, но БЕЗ его отсева полей
-    /// типа «markdown»: экспорту они не нужны, а проверке структуры нужны — иначе колонка,
-    /// вклинившаяся в середину ряда, осталась бы невидимой, и проверка сказала бы «сошлось»
-    /// о коллекции с другим порядком столбцов.
+    /// типа «markdown»: экспорту они не нужны, а проверке структуры нужны — иначе такое поле с
+    /// именем из эталона осталось бы невидимым, и проверка не заметила бы двух одноименных
+    /// столбцов.
     /// </summary>
     public static List<Column> Ordered(ConstructorRepository repo, int collectionId)
     {

@@ -418,7 +418,7 @@ public partial class SettingsView : UserControl
 
     // Поле одной настройки: подпись, под ней строка ввода. Значение сохраняется при потере
     // фокуса — тот же прием, что у пути обновления.
-    private static StackPanel BuildSettingField(IExtension extension, ExtensionSetting setting)
+    private StackPanel BuildSettingField(IExtension extension, ExtensionSetting setting)
     {
         var block = new StackPanel { Spacing = 6 };
         block.Children.Add(new TextBlock { Classes = { "desc" }, Text = setting.Label });
@@ -433,7 +433,55 @@ public partial class SettingsView : UserControl
             AppSettings.SaveExtensionSetting(extension.Id, setting.Key, box.Text ?? "");
 
         block.Children.Add(box);
+
+        if (setting.Button is { } button)
+            block.Children.Add(BuildSettingButton(extension, setting, button, box));
+
         return block;
+    }
+
+    // Кнопка под полем настройки: что она делает и что говорит человеку, решает расширение.
+    // Оболочка дает ей значение поля и отправку путем ответов сценариев (ActionReplies) — сама
+    // кнопка ни сценариев, ни запросов не знает.
+    private Button BuildSettingButton(IExtension extension, ExtensionSetting setting,
+                                      ExtensionSettingButton button, TextBox box)
+    {
+        // Текстовые кнопки настроек — общий стиль «dialog»; «auto» снимает фиксированную ширину.
+        var run = new Button
+        {
+            Classes             = { "dialog", "auto" },
+            Content             = button.Text,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
+        };
+
+        run.Click += async (_, _) =>
+        {
+            if (VisualRoot is not Window owner) return;
+
+            // Значение — то, что сейчас в поле, и сохраняется оно до нажатия: человек мог дописать
+            // строку и сразу нажать кнопку, а потеря фокуса приходит не раньше щелчка.
+            var value = box.Text ?? "";
+            AppSettings.SaveExtensionSetting(extension.Id, setting.Key, value);
+
+            run.IsEnabled = false;
+            try
+            {
+                var replies = _registry is { } registry ? new ActionReplies(registry.Integrations) : null;
+                await button.Run(new ExtensionSettingRun(owner, value, replies));
+            }
+            catch (Exception ex)
+            {
+                // Щелчок — async void: ошибка, ушедшая отсюда, уронила бы программу.
+                Serilog.Log.Error(ex, "Кнопка настройки {Extension}.{Setting}", extension.Id, setting.Key);
+                await ConfirmDialog.Info($"{button.Text}: не получилось — {ex.Message}").ShowDialog(owner);
+            }
+            finally
+            {
+                run.IsEnabled = true;
+            }
+        };
+
+        return run;
     }
 
     // ── О программе ──────────────────────────────────────────────────────────

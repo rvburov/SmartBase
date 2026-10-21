@@ -50,24 +50,60 @@ public sealed class RegistrySchemaTests
         Assert.Equal("date",                           shape.DateFieldType);
     }
 
-    // ── Отказы ────────────────────────────────────────────────────────────────
+    // ── Порядок и свои столбцы ────────────────────────────────────────────────
 
+    /// <summary>Столбцы ищутся по именам: переставленные «Обозначение» и «ФИО регистрирующего»
+    /// получают каждый свое значение, а не соседнее.</summary>
     [Fact]
-    public void Swapped_columns_are_rejected()
+    public void Swapped_columns_are_found_by_name()
     {
         using var db = new TempDatabase();
 
-        // Меняем местами «Обозначение» и «ФИО регистрирующего»: имена все на месте,
-        // а порядок другой — значения ушли бы не туда.
         string[] swapped = [Reference[1], Reference[0], .. Reference[2..]];
         var id = JournalStand.Create(db.Constructor, "Перепутанный", swapped);
 
-        var check = RegistrySchema.Check(db.Constructor, id, "Перепутанный");
+        var shape = JournalStand.Shape(db.Constructor, id, "Перепутанный");
+        var byId  = db.Constructor.GetFields(id).ToDictionary(f => f.Id!.Value, f => f.Name);
 
-        Assert.False(check.Ok);
-        Assert.Contains(RegistrySchema.DesignationColumn, check.Problem);
+        Assert.Equal(RegistrySchema.DesignationColumn, byId[shape.DesignationFieldId]);
+        Assert.Equal(RegistrySchema.FioColumn,         byId[shape.FioFieldId]);
     }
 
+    /// <summary>
+    /// Свои столбцы журнала — для письма и прочего — разрешены где угодно, в том числе ПЕРЕД
+    /// «Наименованием» и между полями эталона, и раскладка их не задевает (решение пользователя
+    /// 21.10.2026).
+    /// </summary>
+    [Fact]
+    public void Extra_columns_are_allowed_anywhere()
+    {
+        using var db = new TempDatabase();
+
+        string[] extra = ["Письмо", .. Reference[..3], "Дата письма", .. Reference[3..], "Ответ"];
+        var id = JournalStand.Create(db.Constructor, "Длинный", extra);
+
+        // Системную колонку записи уводим в середину ряда: порядок больше ничего не значит.
+        var fields = db.Constructor.GetFields(id).ToDictionary(f => f.Name, f => f.Id!.Value.ToString());
+        db.Constructor.SaveColumnOrder(id,
+            [fields["Письмо"], fields[Reference[0]], RegistrySchema.TitleKey, .. Reference[1..].Select(n => fields[n]),
+             fields["Дата письма"], fields["Ответ"]]);
+
+        var shape = JournalStand.Shape(db.Constructor, id, "Длинный");
+        var byId  = db.Constructor.GetFields(id).ToDictionary(f => f.Id!.Value, f => f.Name);
+
+        Assert.Equal(RegistrySchema.DesignationColumn, byId[shape.DesignationFieldId]);
+        Assert.Equal(RegistrySchema.FioColumn,         byId[shape.FioFieldId]);
+        Assert.Equal(RegistrySchema.DateColumn,        byId[shape.DateFieldId]);
+        Assert.Equal(RegistrySchema.ProjectColumn,     byId[shape.ProjectFieldId]);
+        Assert.Equal(RegistrySchema.AccountingColumn,  byId[shape.AccountingFieldId]);
+        Assert.Equal(RegistrySchema.FirstUseColumn,    byId[shape.FirstUseFieldId]);
+        Assert.Equal(RegistrySchema.SummaryColumn,     byId[shape.SummaryFieldId]);
+    }
+
+    // ── Отказы ────────────────────────────────────────────────────────────────
+
+    /// <summary>Переименованный столбец — это пропавший столбец эталона: отказ называет, какого
+    /// не хватает, а «Шифр» становится просто своим столбцом.</summary>
     [Fact]
     public void Renamed_column_is_rejected()
     {
@@ -79,7 +115,7 @@ public sealed class RegistrySchemaTests
         var check = RegistrySchema.Check(db.Constructor, id, "Переименованный");
 
         Assert.False(check.Ok);
-        Assert.Contains("Шифр", check.Problem);
+        Assert.Equal($"нет столбца «{RegistrySchema.DesignationColumn}»", check.Problem);
     }
 
     [Fact]
@@ -92,21 +128,24 @@ public sealed class RegistrySchemaTests
         var check = RegistrySchema.Check(db.Constructor, id, "Короткий");
 
         Assert.False(check.Ok);
-        Assert.Contains("столбцов", check.Problem);
+        Assert.Equal($"нет столбца «{RegistrySchema.SummaryColumn}»", check.Problem);
     }
 
+    /// <summary>Два столбца с одним именем эталона — отказ: в какой из них писать, не понять.
+    /// Одинаковых имен программа не дает, а вот «Проект» и «проект» — разные имена для нее и
+    /// одно и то же для сравнения столбцов.</summary>
     [Fact]
-    public void Extra_column_is_rejected()
+    public void Duplicate_column_is_rejected()
     {
         using var db = new TempDatabase();
 
-        string[] extra = [.. Reference, "Лишний"];
-        var id = JournalStand.Create(db.Constructor, "Длинный", extra);
+        string[] twice = [.. Reference, RegistrySchema.ProjectColumn.ToLowerInvariant()];
+        var id = JournalStand.Create(db.Constructor, "Двойной", twice);
 
-        var check = RegistrySchema.Check(db.Constructor, id, "Длинный");
+        var check = RegistrySchema.Check(db.Constructor, id, "Двойной");
 
         Assert.False(check.Ok);
-        Assert.Contains("столбцов", check.Problem);
+        Assert.Contains($"«{RegistrySchema.ProjectColumn}» встречается несколько раз", check.Problem);
     }
 
     /// <summary>Обычная коллекция программы — самый частый промах: у нее и колонок другое число,
@@ -120,7 +159,8 @@ public sealed class RegistrySchemaTests
         var check = RegistrySchema.Check(db.Constructor, collection.Id!.Value, "Просто");
 
         Assert.False(check.Ok);
-        Assert.NotNull(check.Problem);
+        Assert.StartsWith("нет столбцов:", check.Problem);
+        Assert.All(RegistrySchema.Columns, name => Assert.Contains($"«{name}»", check.Problem));
     }
 
     /// <summary>«Наименование» обязано быть системной колонкой записи: одноименное обычное поле
