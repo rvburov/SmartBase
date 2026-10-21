@@ -962,8 +962,11 @@ public partial class CalendarControllerView : UserControl
     {
         if (r.Id is not int id) return true;
         var repo = _dbs.FirstOrDefault(d => d.DbId == r.DbId).Repo;
-        if (repo is null || !RelationDeleteImpact.ForRecords(repo, [id])) return true;
-        return await new ConfirmDialog(message, confirmText).ShowDialog<bool>(win) == true;
+        if (repo is null) return true;
+        var check = RelationDeleteImpact.CheckRecords(repo, [id]);
+        if (check.Blocked is { } blocked) { await ConfirmDialog.Info(blocked).ShowDialog(win); return false; }
+        if (check.Warning.Length == 0) return true;
+        return await new ConfirmDialog(message + check.Warning, confirmText).ShowDialog<bool>(win) == true;
     }
 
     // Событие доводит коллекцию до нужных столбцов («Дата», «Описание») — прежде это
@@ -1138,15 +1141,11 @@ public partial class CalendarControllerView : UserControl
         // Календарь агрегирует события ИЗ ВСЕХ смонтированных БД, поэтому проверяем по каждой базе
         // отдельно; репозиторий берем прямым поиском по _dbs (не RepoOf: он подставляет DefaultRepo и
         // проверил бы чужую базу). Одна запись дает по событию на каждое поле-дату → id дедуплицируем.
-        var hasLinks = false;
-        foreach (var g in targets.GroupBy(r => r.DbId))
-        {
-            var repo = _dbs.FirstOrDefault(d => d.DbId == g.Key).Repo;
-            if (repo is null) continue;
-            var ids = g.Select(r => r.Id!.Value).Distinct().ToList();
-            if (RelationDeleteImpact.ForRecords(repo, ids)) { hasLinks = true; break; }
-        }
-        var linkWarn = hasLinks ? " На них ссылаются связи из других записей — они будут удалены." : "";
+        var check = RelationDeleteImpact.CheckRecords(targets.GroupBy(r => r.DbId)
+            .Select(g => (Repo: _dbs.FirstOrDefault(d => d.DbId == g.Key).Repo, Ids: (IReadOnlyCollection<int>)g.Select(r => r.Id!.Value).Distinct().ToList()))
+            .Where(g => g.Repo is not null).Select(g => (g.Repo!, g.Ids)));
+        if (check.Blocked is { } blocked) { await ConfirmDialog.Info(blocked).ShowDialog(win); return; }
+        var linkWarn = check.Warning;
 
         var dlg = new ConfirmDialog($"Вы удаляете {targets.Count} {RecordsPlural(targets.Count)}.{linkWarn} Подтвердить?");
         if (await dlg.ShowDialog<bool>(win) != true) return;

@@ -62,4 +62,42 @@ public sealed class RelationPropertyConfigTests
         using var restored = RelationPropertyResolution.Enter("first.db", 12);
         Assert.NotNull(restored);
     }
+
+    [Fact]
+    public void Several_display_and_search_properties_roundtrip_and_old_versions_see_the_first()
+    {
+        var cfg = new RelationConfig(7, true, DisplayField: "21|__title__", SearchField: "22|23|21");
+        var json = cfg.ToConfigJson();
+        Assert.Equal(cfg, RelationConfig.FromConfig(json));
+        Assert.Equal(["21", "__title__"], cfg.DisplayKeys);
+        Assert.Equal(["22", "23", "21"], cfg.SearchKeys);
+        // Прежняя версия читает только одиночные ключи и показывает первое свойство.
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        Assert.Equal("21", doc.RootElement.GetProperty("displayField").GetString());
+        Assert.Equal("22", doc.RootElement.GetProperty("searchField").GetString());
+        Assert.Equal(["21", "__title__", "22", "23"], cfg.TargetPropertyKeys);
+    }
+
+    [Fact]
+    public void Property_lists_drop_bad_keys_duplicates_and_extra_items()
+    {
+        var cfg = RelationConfig.FromConfig(
+            "{\"targetCollectionId\":7,\"displayField\":\"5\",\"displayFields\":[\"5\",\"x\",\"5\",6,\"7\",\"8\",\"9\"],\"searchFields\":[]}")!;
+        Assert.Equal("5|7|8", cfg.DisplayField);
+        Assert.Null(cfg.SearchField);
+        Assert.Equal(["5", "7", "8"], cfg.SearchKeys);
+    }
+
+    [Fact]
+    public void Delete_policy_is_written_only_when_deletion_is_restricted()
+    {
+        var plain = new RelationConfig(7, true);
+        Assert.DoesNotContain("onDelete", plain.ToConfigJson(), StringComparison.Ordinal);
+        Assert.False(RelationConfig.FromConfig(plain.ToConfigJson())!.RestrictDelete);
+        var restricted = plain with { RestrictDelete = true };
+        Assert.Contains("\"onDelete\":\"restrict\"", restricted.ToConfigJson(), StringComparison.Ordinal);
+        Assert.Equal(restricted, RelationConfig.FromConfig(restricted.ToConfigJson()));
+        // Незнакомое значение — обычное поведение «снять связь».
+        Assert.False(RelationConfig.FromConfig("{\"targetCollectionId\":7,\"onDelete\":\"cascade\"}")!.RestrictDelete);
+    }
 }

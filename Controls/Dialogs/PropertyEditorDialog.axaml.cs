@@ -158,6 +158,7 @@ public partial class PropertyEditorDialog : Window
         PopulateFileSources();
         PopulateRelationDatabases();
         InitializeExtendedRelations();
+        InitializeRelationKeys();
         InitializeRelationData();
 
         // Новое свойство открывается с типом из «Настройки → Конструктор базы данных»;
@@ -724,6 +725,7 @@ public partial class PropertyEditorDialog : Window
 
         RelationCardinalityCombo.SelectedIndex = 1;  // дефолт «Одну» (0 — Несколько); не сбрасывается при смене БД
         RelationSeparatorCombo.SelectedIndex   = 0;
+        RelationDeleteCombo.SelectedIndex      = 0;   // дефолт «Снять связь»
 
         RelationDbCombo.ItemsSource        = dbs;
         RelationDbCombo.SelectionChanged  -= OnRelationDbChanged;
@@ -780,8 +782,8 @@ public partial class PropertyEditorDialog : Window
         RelationCardinalityCombo.SelectedIndex = cfg.Single ? 1 : 0;
         var sepIdx = Array.IndexOf(SeparatorKeys, cfg.Separator);
         RelationSeparatorCombo.SelectedIndex = sepIdx >= 0 ? sepIdx : 0;
-        SelectRelationProperty(RelationDisplayCombo, cfg.DisplayField);
-        SelectRelationProperty(RelationSearchCombo, cfg.SearchField ?? cfg.DisplayField);
+        RelationDeleteCombo.SelectedIndex = cfg.RestrictDelete ? 1 : 0;
+        RestoreRelationKeys(cfg);
         RelationModeCombo.SelectedIndex = cfg.Auto is null ? 0 : 1;
         if (cfg.Auto is { } auto)
         {
@@ -806,9 +808,8 @@ public partial class PropertyEditorDialog : Window
             return null;
         }
         var targetDbId = db.Id == _currentDbId ? 0 : db.Id;   // своя БД → 0 (внутрибазовая связь)
-        var display = (RelationDisplayCombo.SelectedItem as RelationPropertyItem)?.Key;
-        var search = (RelationSearchCombo.SelectedItem as RelationPropertyItem)?.Key;
-        if (display is null || search is null) { ShowError("Выберите свойства для показа и поиска"); return null; }
+        if (BuildRelationKeys() is not { } keys) { ShowError("Выберите свойства для показа и поиска"); return null; }
+        var (display, search) = keys;
         RelationAutoRule? auto = null;
         if (RelationModeCombo.SelectedIndex == 1)
         {
@@ -817,7 +818,8 @@ public partial class PropertyEditorDialog : Window
             { ShowError("Выберите свойства для автоматического сопоставления"); return null; }
             auto = new RelationAutoRule(source.Key, target.Key);
         }
-        return new RelationConfig(t.Id, single, separator, targetDbId, display, search, auto).ToConfigJson();
+        var restrict = RelationDeleteCombo.SelectedIndex == 1;           // 0 — Снять связь, 1 — Запретить удаление
+        return new RelationConfig(t.Id, single, separator, targetDbId, display, search, auto, restrict).ToConfigJson();
     }
 
     // Под-опции формата числа: блок опций (точность/разряды/валюта) скрыт для «Обычного числа»

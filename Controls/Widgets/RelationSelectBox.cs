@@ -339,7 +339,8 @@ public sealed class RelationSelectBox : Panel
 
         _search = new TextBox
         {
-            Watermark                = _cfg.EffectiveSearchField == RelationConfig.TitleField ? "Поиск по названию…" : "Поиск по свойству…",
+            Watermark                = _cfg.EffectiveSearchField == RelationConfig.TitleField ? "Поиск по названию…"
+                                     : _cfg.SearchKeys.Count > 1 ? "Поиск по свойствам…" : "Поиск по свойству…",
             Height                   = 30,
             FontSize                 = fontBase,
             Background               = Brush("BrushBg", Colors.White),

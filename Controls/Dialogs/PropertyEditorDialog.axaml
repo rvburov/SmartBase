@@ -503,17 +503,25 @@
                           CornerRadius="{StaticResource RadiusBase}" />
             </StackPanel>
 
+            <!-- Показ и поиск по нескольким свойствам: первое — в основном списке, остальные
+                 строками ниже (PropertyEditorDialog.RelationKeys). -->
             <StackPanel Spacing="6">
-                <TextBlock Text="Показывать свойство" FontWeight="{StaticResource FontWeightBold}"
+                <TextBlock Text="Показывать свойства" FontWeight="{StaticResource FontWeightBold}"
                            Foreground="{StaticResource BrushSecondaryText}" />
                 <ComboBox x:Name="RelationDisplayCombo" HorizontalAlignment="Stretch"
                           Height="{StaticResource ControlHeightStandard}" />
+                <StackPanel x:Name="RelationDisplayExtra" Spacing="6" />
+                <Button x:Name="AddDisplayBtn" Classes="link" Content="+ Еще свойство"
+                        HorizontalAlignment="Left" />
             </StackPanel>
             <StackPanel Spacing="6">
-                <TextBlock Text="Искать по свойству" FontWeight="{StaticResource FontWeightBold}"
+                <TextBlock Text="Искать по свойствам" FontWeight="{StaticResource FontWeightBold}"
                            Foreground="{StaticResource BrushSecondaryText}" />
                 <ComboBox x:Name="RelationSearchCombo" HorizontalAlignment="Stretch"
                           Height="{StaticResource ControlHeightStandard}" />
+                <StackPanel x:Name="RelationSearchExtra" Spacing="6" />
+                <Button x:Name="AddSearchBtn" Classes="link" Content="+ Еще свойство"
+                        HorizontalAlignment="Left" />
             </StackPanel>
             <StackPanel Spacing="6">
                 <TextBlock Text="Режим связи" FontWeight="{StaticResource FontWeightBold}"
@@ -572,6 +580,20 @@
                     <ComboBoxItem Content="Через запятую без пробела" />
                     <ComboBoxItem Content="Через точку без пробела" />
                 </ComboBox>
+            </StackPanel>
+
+            <!-- Что будет с записью-целью при ее удалении (RelationConfig.RestrictDelete). -->
+            <StackPanel Spacing="6">
+                <TextBlock Text="При удалении связанной записи"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <ComboBox x:Name="RelationDeleteCombo" HorizontalAlignment="Stretch"
+                          Height="{StaticResource ControlHeightStandard}" SelectedIndex="0">
+                    <ComboBoxItem Content="Снять связь" />
+                    <ComboBoxItem Content="Запретить удаление" />
+                </ComboBox>
+                <TextBlock TextWrapping="Wrap" Foreground="{StaticResource BrushSecondaryText}"
+                           Text="«Запретить удаление» не даст удалить или перенести в другую базу запись, на которую ссылается это свойство: сначала уберите ссылку." />
             </StackPanel>
 
             <!-- Данные из связанных записей: каждая строка — отдельный столбец только для чтения

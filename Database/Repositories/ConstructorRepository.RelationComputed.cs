@@ -282,14 +282,17 @@ public partial class ConstructorRepository
                 else if (current.FieldType == "relation")
                 {
                     var cfg = RelationConfig.FromConfig(current.ConfigJson);
-                    if (cfg is null || cfg.DisplayField == TitleKey) return;
+                    if (cfg is null || cfg.DisplayKeys.All(k => k == TitleKey)) return;
                     var target = cfg.TargetDbId == 0 ? repo : RelationDbResolver.RepoFor(cfg.TargetDbId)
                         ?? throw new InvalidOperationException("База связанной записи недоступна.");
                     target.Demand(PermAction.ViewCollection, cfg.TargetCollectionId);
-                    if (!int.TryParse(cfg.DisplayField, out var targetId)) return;
-                    var targetField = target.DbPath == DbPath && field.Id == targetId ? field
-                        : target.RelationComputedContext.DbFields.AsNoTracking().Where(f => f.Id == targetId).ToList().Select(ToDbField).FirstOrDefault();
-                    if (targetField is not null) Visit(target, targetField, depth + 1);
+                    foreach (var displayKey in cfg.DisplayKeys)
+                    {
+                        if (!int.TryParse(displayKey, out var targetId)) continue;
+                        var targetField = target.DbPath == DbPath && field.Id == targetId ? field
+                            : target.RelationComputedContext.DbFields.AsNoTracking().Where(f => f.Id == targetId).ToList().Select(ToDbField).FirstOrDefault();
+                        if (targetField is not null) Visit(target, targetField, depth + 1);
+                    }
                 }
             }
             finally { stack.Remove(key); }

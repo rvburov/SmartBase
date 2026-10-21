@@ -10,7 +10,8 @@ public partial class ConstructorRepository
     private static HashSet<int> RelationProjectionRemappedFields(IReadOnlyList<DbField> fields,
         IReadOnlyDictionary<int, int> collectionMap, IReadOnlyDictionary<int, int> fieldMap, int sourceDbId)
     {
-        bool Changes(string? key) => int.TryParse(key, out var id) && fieldMap.TryGetValue(id, out var mapped) && mapped != id;
+        bool Changes(string? key) => RelationConfig.SplitKeys(key).Any(k =>
+            int.TryParse(k, out var id) && fieldMap.TryGetValue(id, out var mapped) && mapped != id);
         var internalRelations = fields.Where(f => f.FieldType == "relation" && f.Id.HasValue)
             .Select(f => (Id: f.Id!.Value, Config: RelationConfig.FromConfig(f.ConfigJson)))
             .Where(f => f.Config is { } cfg && IsRelationSourceDatabase(cfg.TargetDbId, sourceDbId)

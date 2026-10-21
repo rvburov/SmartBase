@@ -431,11 +431,13 @@ public partial class ConstructorControllerView : UserControl
         if (_repository is null) return;
 
         // Предупреждаем ТОЛЬКО если удаление оборвет входящие связи (иначе — мгновенно, как раньше):
-        // на эту запись ссылались другие → у них станет «связи нет».
-        if (RelationDeleteImpact.ForRecords(_repository, [recordId])
-            && VisualRoot is Avalonia.Controls.Window confirmWin)
+        // окно называет, кто ссылается; связь с запретом удаления не дает удалить вовсе.
+        var check = RelationDeleteImpact.CheckRecords(_repository, [recordId]);
+        if (check.Warning.Length > 0 || check.Blocked is not null)
         {
-            var warnDlg = new ConfirmDialog("Удалить запись? На нее ссылаются связи — они будут удалены.");
+            if (VisualRoot is not Avalonia.Controls.Window confirmWin) return;
+            if (check.Blocked is { } blocked) { await ConfirmDialog.Info(blocked).ShowDialog(confirmWin); return; }
+            var warnDlg = new ConfirmDialog($"Удалить запись?{check.Warning}");
             if (await warnDlg.ShowDialog<bool>(confirmWin) != true) return;
         }
 
@@ -467,9 +469,11 @@ public partial class ConstructorControllerView : UserControl
         if (ids.Count == 0) return;
 
         // Предупреждаем, что удаление оборвет ВХОДЯЩИЕ связи на эти записи (внутрибазовые + межбазовые
-        // из открытых баз). Best-effort: связи из закрытых баз чистятся лениво. Показываем лишь ФАКТ.
-        var linkWarn = RelationDeleteImpact.ForRecords(_repository, ids)
-            ? " На них ссылаются связи из других записей — они будут удалены." : "";
+        // из открытых баз), и называем их. Связь с запретом удаления не дает удалить вовсе.
+        // Best-effort: связи из закрытых баз чистятся лениво.
+        var check = RelationDeleteImpact.CheckRecords(_repository, ids);
+        if (check.Blocked is { } blocked) { await ConfirmDialog.Info(blocked).ShowDialog(win); return; }
+        var linkWarn = check.Warning;
         // Рутинный вопрос снимает настройка «Спрашивать подтверждение при удалении», а вот
         // предупреждение об обрыве связей она НЕ снимает: это про потерю чужих данных, о
         // которой из самого действия не догадаться.
@@ -580,9 +584,11 @@ public partial class ConstructorControllerView : UserControl
             warnings.Add($"• потеряются связи в полях: {NameList(linksDropped)}");
 
         // Перенос = копия + удаление (у записи новый id), поэтому ВХОДЯЩИЕ связи на нее обрываются
-        // (за записью не следуют).
-        if (RelationDeleteImpact.ForRecords(_repository, ids))
-            warnings.Add("• оборвутся связи, ссылающиеся на переносимые записи (станут «связи нет»)");
+        // (за записью не следуют), а связь с запретом удаления держит и перенос.
+        var moveCheck = RelationDeleteImpact.CheckRecords(_repository, ids);
+        if (moveCheck.Blocked is { } blocked) { await ConfirmDialog.Info(blocked).ShowDialog(win); return; }
+        if (moveCheck.Warning.Length > 0)
+            warnings.Add($"• оборвутся связи, ссылающиеся на переносимые записи:{moveCheck.Warning}");
 
         if (warnings.Count > 0)
         {

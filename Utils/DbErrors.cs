@@ -51,6 +51,14 @@ public static class DbErrors
             Dispatcher.UIThread.Post(() => (NotifyDenied ?? Notify)?.Invoke(ex.Message));
             return true;
         }
+        if (ex is Database.Repositories.RelationDeleteRestrictedException)
+        {
+            // Запись держит связь с запретом удаления. Окна удаления говорят это заранее, сюда
+            // доходят остальные пути и гонки (ссылку поставили, пока окно было открыто).
+            Log.Information("Удаление отклонено связью с запретом: {Path:l}", Display(dbPath));
+            Dispatcher.UIThread.Post(() => (NotifyDenied ?? Notify)?.Invoke(ex.Message));
+            return true;
+        }
         if (DbHealthMonitor.IsBusyError(ex))
         {
             // Штатная конкуренция — не ошибка приложения, поэтому Warning, не Error. Но на

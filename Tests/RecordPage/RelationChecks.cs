@@ -13,6 +13,7 @@ using SmartBase.Controls.Dialogs;
 using SmartBase.Controls.Widgets;
 using SmartBase.Core.Models;
 using SmartBase.Database;
+using SmartBase.Database.Repositories;
 using SmartBase.Utils;
 using SmartBase.Views.ConstructorDb;
 
@@ -86,6 +87,43 @@ internal static class RelationChecks
             Expect(repo.GetLinks(relation.Id.Value, record).Single().Title == "Б-02"
                 && repo.SearchRelationRecords(target, targetInn.Id.Value.ToString(), "100").Single().RecordId == a,
                 "показ идет по артикулу, поиск по ИНН, сохраненная цель остается прежней");
+
+            var multi = new PropertyEditorDialog(repo, source, relation.Id.Value) { MaxHeight = 600 };
+            var multiClosed = multi.ShowDialog<bool>(owner);
+            Pump();
+            var addDisplay = multi.FindControl<Button>("AddDisplayBtn")!;
+            addDisplay.BringIntoView();
+            Click(multi, addDisplay);
+            Choose(multi.FindControl<StackPanel>("RelationDisplayExtra")!.GetVisualDescendants().OfType<ComboBox>().Single(), "Key", "__title__");
+            var addSearch = multi.FindControl<Button>("AddSearchBtn")!;
+            addSearch.BringIntoView();
+            Click(multi, addSearch);
+            Choose(multi.FindControl<StackPanel>("RelationSearchExtra")!.GetVisualDescendants().OfType<ComboBox>().Single(), "Key", sku.Id.Value.ToString());
+            Combo(multi, "RelationDeleteCombo").SelectedIndex = 1;   // «Запретить удаление»
+            using (var frame = multi.CaptureRenderedFrame()) frame?.Save(Path.Combine(outDir, "relations-multi-dialog.png"));
+            Click(multi, multi.FindControl<Button>("SaveBtn")!);
+            Wait(() => multiClosed.IsCompleted, "показ по нескольким свойствам не сохранился");
+            var multiCfg = RelationConfig.FromConfig(repo.GetFields(source).Single(f => f.Id == relation.Id).ConfigJson)!;
+            Expect(multiClosed.Result && multiCfg.DisplayKeys.SequenceEqual([sku.Id.Value.ToString(), "__title__"])
+                && multiCfg.SearchKeys.SequenceEqual([targetInn.Id.Value.ToString(), sku.Id.Value.ToString()]),
+                "дополнительные свойства показа и поиска сохранились в порядке строк окна");
+            Expect(multiCfg.RestrictDelete && Throws<RelationDeleteRestrictedException>(() => repo.DeleteRecord(b))
+                && repo.GetRecord(b) is not null,
+                "«Запретить удаление» сохранилось и не дает удалить связанную запись");
+            Expect(repo.GetRelationLinks(relation.Id.Value, record).Single().Display == "Б-02 · Компания Б"
+                && repo.SearchRelationRecords(target, multiCfg.EffectiveSearchField, "А-01").Single().RecordId == a
+                && repo.SearchRelationRecords(target, multiCfg.EffectiveSearchField, "200").Single().RecordId == b,
+                "ячейка показывает оба свойства, поиск находит запись по любому из выбранных");
+            var reopened = new PropertyEditorDialog(repo, source, relation.Id.Value) { MaxHeight = 600 };
+            var reopenedClosed = reopened.ShowDialog<bool>(owner);
+            Pump();
+            Expect(SelectedKey(reopened.FindControl<StackPanel>("RelationDisplayExtra")!.GetVisualDescendants().OfType<ComboBox>().Single()) == "__title__"
+                && SelectedKey(reopened.FindControl<StackPanel>("RelationSearchExtra")!.GetVisualDescendants().OfType<ComboBox>().Single()) == sku.Id.Value.ToString(),
+                "повторное открытие восстановило дополнительные свойства строками");
+            Expect(Combo(reopened, "RelationDeleteCombo").SelectedIndex == 1,
+                "повторное открытие показало запрет удаления");
+            Click(reopened, reopened.FindControl<Button>("CancelBtn")!);
+            Wait(() => reopenedClosed.IsCompleted, "окно связи не закрылось");
 
             before = Snapshot();
             var cancelled = CreateAuto("Авто отмена");
@@ -310,6 +348,11 @@ internal static class RelationChecks
                 checks++;
                 if (!ok) failed++;
                 Console.WriteLine($"  {(ok ? "ок    " : "ПРОВАЛ")} {message}");
+            }
+            static bool Throws<T>(Action action) where T : Exception
+            {
+                try { action(); return false; }
+                catch (T) { return true; }
             }
             void Pump()
             {

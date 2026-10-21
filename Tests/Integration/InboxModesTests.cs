@@ -224,6 +224,30 @@ public sealed class InboxModesTests : IDisposable
         Assert.Contains("Артикул", answer.Body, StringComparison.Ordinal);
     }
 
+    /// <summary>Связь с запретом удаления держит сообщение ЦЕЛИКОМ: удаление наполовину не
+    /// просил никто, и запись без ссылок из того же сообщения тоже остается.</summary>
+    [Fact]
+    public void A_restricted_link_refuses_the_whole_delete_message()
+    {
+        var (id, _) = Orders();
+        var records = _db.Constructor.GetRecords(id);
+        var invoices = SampleData.AddCollection(_db.Constructor, "Счета").Id!.Value;
+        var invoice  = SampleData.AddRecord(_db.Constructor, invoices, "Счет 1").Id!.Value;
+        var order    = SampleData.AddField(_db.Constructor, invoices, "Заказ", "relation");
+        order.ConfigJson = new RelationConfig(id, true, RestrictDelete: true).ToConfigJson();
+        _db.Constructor.UpdateField(order);
+        _db.Constructor.SetLinks(order.Id!.Value, invoice, [records.Single(r => r.Title == "Заказ 1").Id!.Value]);
+        var secret = Issue(PermAction.DeleteRecord);
+
+        var answer = Post(secret, """
+            {"collection":"Заказы","mode":"delete","key":"Номер","rows":[{"Номер":"А-2"},{"Номер":"А-1"}]}
+            """);
+
+        Assert.Equal(422, answer.Status);
+        Assert.Contains("«Счета · Заказ» — 1 запись", answer.Body, StringComparison.Ordinal);
+        Assert.Equal(3, _db.Constructor.GetRecords(id).Count);
+    }
+
     // ── Подготовка коллекции: маска ───────────────────────────────────────────
 
     [Fact]

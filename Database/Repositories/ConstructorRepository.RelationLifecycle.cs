@@ -91,6 +91,9 @@ public partial class ConstructorRepository
         int.TryParse(key, NumberStyles.None, CultureInfo.InvariantCulture, out var id) && fields.TryGetValue(id, out var mapped)
             ? mapped.ToString(CultureInfo.InvariantCulture) : key;
 
+    private static string RemapRelationFieldKeys(string composite, IReadOnlyDictionary<int, int> fields) =>
+        RelationConfig.JoinKeys(RelationConfig.SplitKeys(composite).Select(key => RemapRelationFieldKey(key, fields)));
+
     private static bool IsRelationSourceDatabase(int edgeDbId, int sourceDbId) =>
         edgeDbId == 0 || sourceDbId > 0 && edgeDbId == sourceDbId;
 
@@ -123,8 +126,8 @@ public partial class ConstructorRepository
             {
                 TargetCollectionId = internalTarget ? collectionMap[config.TargetCollectionId] : config.TargetCollectionId,
                 TargetDbId = internalTarget ? 0 : RebaseRelationDatabase(config.TargetDbId, sourceDbId, targetDbId, crossDatabase),
-                DisplayField = internalTarget ? RemapRelationFieldKey(config.DisplayField, fieldMap) : config.DisplayField,
-                SearchField = internalTarget && config.SearchField is { } search ? RemapRelationFieldKey(search, fieldMap) : config.SearchField,
+                DisplayField = internalTarget ? RemapRelationFieldKeys(config.DisplayField, fieldMap) : config.DisplayField,
+                SearchField = internalTarget && config.SearchField is { } search ? RemapRelationFieldKeys(search, fieldMap) : config.SearchField,
                 Auto = config.Auto is { } auto ? auto with
                 {
                     SourceField = RemapRelationFieldKey(auto.SourceField, fieldMap),

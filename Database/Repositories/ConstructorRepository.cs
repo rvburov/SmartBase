@@ -679,6 +679,7 @@ public partial class ConstructorRepository(AppDbContext db)
     public void DeleteGroup(int groupId)
     {
         Demand(PermAction.DeleteCollection);
+        EnsureDeleteAllowedForCollections(CollectionIdsInGroup(groupId));
         using var tx = BeginWrite();
         // Одна строка журнала на ветку (рекурсия по подгруппам — внутри core).
         var name = db.DbGroups.Where(g => g.Id == groupId).Select(g => g.Name).FirstOrDefault();
@@ -790,6 +791,7 @@ public partial class ConstructorRepository(AppDbContext db)
         var groupIds = SubtreeGroupIds(groupId);
         var colIds   = db.DbCollections.Where(c => c.GroupId != null && groupIds.Contains(c.GroupId.Value))
                          .Select(c => c.Id).ToList();
+        EnsureDeleteAllowedForCollections(colIds);
         var total    = colIds.Count == 0 ? 0L : db.DbRecords.LongCount(r => colIds.Contains(r.CollectionId));
 
         long basis = 0;
@@ -1239,6 +1241,7 @@ public partial class ConstructorRepository(AppDbContext db)
     public void DeleteCollection(int collectionId)
     {
         Demand(PermAction.DeleteCollection, collectionId);
+        EnsureDeleteAllowedForCollections([collectionId]);
         using var tx = BeginWrite();
         db.DbRecordLinks.Where(l => l.TargetDbId == 0 && db.DbRecords.Any(r => r.Id == l.ToRecordId && r.CollectionId == collectionId))
             .ExecuteDelete();
@@ -1283,6 +1286,7 @@ public partial class ConstructorRepository(AppDbContext db)
     public void DeleteCollectionData(int collectionId, IProgress<int>? progress = null,
                                      int? batchSize = null, bool log = true)
     {
+        EnsureDeleteAllowedForCollections([collectionId]);
         var name     = CollectionNameOf(collectionId);
         var recCount = db.DbRecords.Count(r => r.CollectionId == collectionId);
         DeleteCollectionRows(collectionId, 0, progress, batchSize);
@@ -2517,6 +2521,7 @@ public partial class ConstructorRepository(AppDbContext db)
         source.Demand(PermAction.DeleteCollection, collectionId);
         target.Demand(PermAction.CreateCollection);
         target.DemandMoveFromAllowed(source);
+        source.EnsureDeleteAllowedForCollections([collectionId]);   // до копии: откатывать нечего
         var snap = source.ExportCollection(collectionId);
         snap.Collection.Name = newName;
         var moved = target.ImportCollection(snap, targetGroupId);
@@ -2541,6 +2546,7 @@ public partial class ConstructorRepository(AppDbContext db)
         source.Demand(PermAction.DeleteCollection);
         target.Demand(PermAction.CreateCollection);
         target.DemandMoveFromAllowed(source);
+        source.EnsureDeleteAllowedForCollections(source.CollectionIdsInGroup(groupId));
         var snap = source.ExportGroup(groupId);
         snap.Group.Name = newName;
         var moved = target.ImportGroup(snap, targetParentId);
@@ -2594,6 +2600,7 @@ public partial class ConstructorRepository(AppDbContext db)
         // исходящие обходится в два приема — перенес и выгрузил уже оттуда.
         // См. ConstructorRepository.Confidentiality.cs.
         DemandMoveFromAllowed(sourceDbPath);
+        EnsureMoveAllowed(sourceDbPath, repo => [srcCollectionId]);
 
         // Пара с PostgreSQL (или PG→PG): ATTACH существует только у SQLite — переносим
         // generic-путем на двух независимых подключениях (см. ConstructorRepository.CrossMove).
@@ -2653,6 +2660,7 @@ public partial class ConstructorRepository(AppDbContext db)
 
         // Тот же запрет, что и у переноса коллекции: из закрытого контура наружу нельзя.
         DemandMoveFromAllowed(sourceDbPath);
+        EnsureMoveAllowed(sourceDbPath, repo => repo.CollectionIdsInGroup(srcGroupId));
 
         // Пара с PostgreSQL (или PG→PG): generic-путь вместо ATTACH (см. CrossMove).
         if (db.IsPostgres || PgConnectionInfo.IsPostgresConnectionString(sourceDbPath))
@@ -4362,6 +4370,7 @@ public partial class ConstructorRepository(AppDbContext db)
     public void DeleteRecord(int recordId)
     {
         Demand(PermAction.DeleteRecord, CollectionOfRecord(recordId));
+        EnsureDeleteAllowed([recordId]);
         var entity = db.DbRecords.Find(recordId);
         if (entity is not null)
         {
@@ -4485,6 +4494,7 @@ public partial class ConstructorRepository(AppDbContext db)
     {
         if (recordIds.Count == 0) return;
         var ids = recordIds.Distinct().ToList();
+        EnsureDeleteAllowed(ids.ToHashSet());
         var affectedCollections = db.DbRecords.AsNoTracking().Where(r => ids.Contains(r.Id))
             .Select(r => r.CollectionId).Distinct().ToList();
 
@@ -4883,6 +4893,8 @@ public partial class ConstructorRepository(AppDbContext db)
         if (!sameDb) { sourceCtx = new AppDbContext(sourceDbPath); sourceCtx.ApplyPerformancePragmas(); }
         var sourceRepo = sameDb ? targetRepo : new ConstructorRepository(sourceCtx!);
 
+        // Перенос — копия и удаление оригинала: связь с запретом удаления держит и перенос.
+        sourceRepo.EnsureDeleteAllowed(recordIds.ToHashSet());
         try { return targetRepo.MoveRecordsCore(sourceRepo, sourceCollectionId, recordIds, targetCollectionId, createMissingFields, sourceDbId, targetDbId, progress); }
         finally { sourceCtx?.Dispose(); }
     }
@@ -7182,6 +7194,7 @@ public partial class ConstructorRepository(AppDbContext db)
     public void DeleteCalendarRecord(int id)
     {
         Demand(PermAction.DeleteRecord, CollectionOfRecord(id));
+        EnsureDeleteAllowed([id]);
         var rec = db.DbRecords.Find(id);
         if (rec is not null)
         {

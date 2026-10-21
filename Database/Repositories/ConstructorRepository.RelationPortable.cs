@@ -40,8 +40,8 @@ public partial class ConstructorRepository
                 if (relation.Auto is { } auto) keys.Add(auto.SourceField);
                 if (selfRelations.Contains(field.Id))
                 {
-                    keys.Add(relation.DisplayField);
-                    if (relation.SearchField is { } search) keys.Add(search);
+                    keys.AddRange(relation.DisplayKeys);
+                    if (relation.SearchField is not null) keys.AddRange(relation.SearchKeys);
                     if (relation.Auto is { } rule) keys.Add(rule.TargetField);
                 }
                 if (keys.Any(k => int.TryParse(k, out var id) && !includedFields.Contains(id)))

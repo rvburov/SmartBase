@@ -721,17 +721,11 @@ public partial class TasksControllerView : UserControl
 
         // Предупреждаем, что удаление оборвет ВХОДЯЩИЕ связи на эти записи — как в таблице и
         // календаре. Задачи собраны из всех допущенных БД, поэтому проверяем по каждой базе.
-        var hasLinks = false;
-        foreach (var g in targets.GroupBy(t => t.DbId))
-        {
-            if (RepoFor(g.Key) is not { } repo) continue;
-            if (RelationDeleteImpact.ForRecords(repo, g.Select(t => t.Id).ToList()))
-            {
-                hasLinks = true;
-                break;
-            }
-        }
-        var linkWarn = hasLinks ? " На них ссылаются связи из других записей — они будут удалены." : "";
+        var check = RelationDeleteImpact.CheckRecords(targets.GroupBy(t => t.DbId)
+            .Select(g => (Repo: RepoFor(g.Key), Ids: (IReadOnlyCollection<int>)g.Select(t => t.Id).ToList()))
+            .Where(g => g.Repo is not null).Select(g => (g.Repo!, g.Ids)));
+        if (check.Blocked is { } blocked) { await ConfirmDialog.Info(blocked).ShowDialog(win); return; }
+        var linkWarn = check.Warning;
 
         var dlg = new ConfirmDialog($"Вы удаляете {targets.Count} {TasksPlural(targets.Count)}.{linkWarn} Подтвердить?");
         if (await dlg.ShowDialog<bool>(win) != true) return;
@@ -843,13 +837,13 @@ public partial class TasksControllerView : UserControl
         // редактировании скрыт, а DbId ниже принудительно возвращается исходный.
         var movingCollection = res is { Deleted: false, Task: { } m } && m.CollectionId != t.CollectionId;
         if ((res.Deleted || movingCollection) && t.Id is int rid && RepoFor(t.DbId) is { } own
-            && RelationDeleteImpact.ForRecords(own, [rid]))
+            && RelationDeleteImpact.CheckRecords(own, [rid]) is { } check
+            && (check.Blocked is not null || check.Warning.Length > 0))
         {
+            if (check.Blocked is { } blocked) { await ConfirmDialog.Info(blocked).ShowDialog(win); return; }
             var warn = res.Deleted
-                ? new ConfirmDialog("Удалить задачу? На нее ссылаются связи из других записей — "
-                                  + "они будут удалены.", "Удалить")
-                : new ConfirmDialog("Перенос пересоздает задачу: связи из других записей на нее "
-                                  + "оборвутся (станут «связи нет»). Перенести?", "Перенести");
+                ? new ConfirmDialog($"Удалить задачу?{check.Warning}", "Удалить")
+                : new ConfirmDialog($"Перенос пересоздает задачу, и связи из других записей на нее оборвутся.{check.Warning} Перенести?", "Перенести");
             if (await warn.ShowDialog<bool>(win) != true) return;
         }
 

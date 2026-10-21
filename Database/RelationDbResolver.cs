@@ -156,6 +156,9 @@ public static class RelationDbResolver
         return list;
     }
 
+    /// <summary>Имя подключенной базы по номеру связи (для текстов окон); null — не подключена.</summary>
+    public static string? DbName(int linkId) => MountedManagerFor(linkId)?.Name;
+
     /// <summary>Номер реестра этого компьютера для номера связи; 0 — база не встречалась.</summary>
     public static int RegistryIdFor(int linkId) =>
         MountedManagerFor(linkId)?.DbId ?? (RegistryByLink.TryGetValue(linkId, out var id) ? id : 0);

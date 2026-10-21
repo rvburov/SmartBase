@@ -725,7 +725,8 @@ public sealed partial class ConstructorRepository
             var target = cfg.TargetDbId == 0 ? repo : RelationDbResolver.RepoFor(cfg.TargetDbId);
             if (target is null) return;
             if (cfg.TargetDbId > 0) (crossPaths ??= new())[cfg.TargetDbId] = target.DbPath;
-            if (int.TryParse(targetKey, out var targetField)) Visit(target, cfg.TargetCollectionId, targetField, depth);
+            foreach (var key in RelationConfig.SplitKeys(targetKey))
+                if (int.TryParse(key, out var targetField)) Visit(target, cfg.TargetCollectionId, targetField, depth);
         }
     }
 

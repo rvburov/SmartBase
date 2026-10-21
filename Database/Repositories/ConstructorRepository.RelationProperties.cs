@@ -58,6 +58,7 @@ public partial class ConstructorRepository
     {
         Demand(PermAction.ViewCollection, collectionId);
         if (ids is { Count: 0 }) return [];
+        if (fieldKey.Contains(RelationConfig.KeySeparator)) return ReadCompositePropertyValues(collectionId, fieldKey, ids);
         var query = db.DbRecords.AsNoTracking().Where(r => r.CollectionId == collectionId);
         if (ids is not null) query = query.Where(r => ids.Contains(r.Id));
         var records = query.OrderBy(r => r.Position).ThenBy(r => r.Id).ToList();
@@ -114,6 +115,25 @@ public partial class ConstructorRepository
             var display = relationDisplay is not null ? relationDisplay.GetValueOrDefault(r.Id, "")
                 : RelationProperty.Format(raw, field.FieldType, field.ConfigJson);
             return new RelationPropertyValue(r.Id, r.Title ?? "", raw, display, field.FieldType, field.ConfigJson);
+        }).ToList();
+    }
+
+    /// <summary>Показ по нескольким свойствам: непустые значения через « · » в порядке настройки
+    /// («ДЕТ-001 · Кронштейн левый»). Отсутствующее свойство пропускается; нет ни одного —
+    /// «(свойство недоступно)». Сырое значение равно показу: ключ автосвязи составным не бывает.</summary>
+    private List<RelationPropertyValue> ReadCompositePropertyValues(int collectionId, string fieldKey,
+        IReadOnlyCollection<int>? ids)
+    {
+        var parts = RelationConfig.SplitKeys(fieldKey).Select(key => ReadRelationPropertyValues(collectionId, key, ids)).ToList();
+        var byId = parts.Skip(1).Select(p => p.ToDictionary(v => v.RecordId)).ToList();
+        return parts[0].Select(first =>
+        {
+            var values = new List<RelationPropertyValue> { first };
+            values.AddRange(byId.Select(d => d.GetValueOrDefault(first.RecordId)).OfType<RelationPropertyValue>());
+            var present = values.Where(v => v.Display != RelationProperty.MissingField).ToList();
+            var display = present.Count == 0 ? RelationProperty.MissingField
+                : string.Join(" · ", present.Select(v => v.Display).Where(d => d.Length > 0));
+            return new RelationPropertyValue(first.RecordId, first.Title, display, display, "text", null);
         }).ToList();
     }
 
@@ -191,6 +211,16 @@ public partial class ConstructorRepository
         if (!CanReadRelationCollection(collectionId)) return [];
         take = Math.Clamp(take, 1, 1000);
         var term = query?.Trim() ?? "";
+        if (fieldKey.Contains(RelationConfig.KeySeparator) && term.Length > 0)
+        {
+            // Поиск по нескольким свойствам — «или»: запись найдена, если запрос есть хотя бы в
+            // одном из них. Порядок — как у записей коллекции, значения — по всем свойствам.
+            var found = new HashSet<int>();
+            foreach (var key in RelationConfig.SplitKeys(fieldKey))
+                foreach (var value in SearchRelationRecordsCore(collectionId, key, query, excludeId, take, ct))
+                    found.Add(value.RecordId);
+            return ReadRelationPropertyValues(collectionId, fieldKey, found).Take(take).ToList();
+        }
         if (fieldKey == RelationConfig.TitleField)
             return SearchRecordTitles(collectionId, query, take, excludeId)
                 .Select(r => new RelationPropertyValue(r.Id, r.Title, r.Title, r.Title, "text", null)).ToList();
@@ -259,8 +289,8 @@ public partial class ConstructorRepository
         foreach (var group in targets.Distinct().GroupBy(t => t.DbId))
         {
             var target = group.Key == 0 ? this : RelationDbResolver.RepoFor(group.Key);
-            var differentPropertyDatabase = int.TryParse(fieldKey, out _) && expectedTargetDbId is int expected
-                && !IsExpectedRelationTargetDatabase(group.Key, expected);
+            var differentPropertyDatabase = RelationConfig.SplitKeys(fieldKey).Any(k => int.TryParse(k, out _))
+                && expectedTargetDbId is int expected && !IsExpectedRelationTargetDatabase(group.Key, expected);
             // Численный id свойства имеет смысл только в базе, для которой выбран этот selector.
             // Чтение Title сохраняет проверку существования и прав, не читая одноименную цифру чужого поля.
             var values = target?.GetRecordPropertyValues(group.Select(t => t.RecordId).ToList(),

@@ -247,7 +247,7 @@ public partial class ConstructorRepository
 
         var (index, duplicates) = repo.KeyIndex(collectionId, keyFieldId);
 
-        var deleted   = 0;
+        var erase     = new List<int>();
         var missing   = 0;
         var ambiguous = 0;
         var empty     = 0;
@@ -270,14 +270,28 @@ public partial class ConstructorRepository
             }
             else if (index.TryGetValue(key, out var recordId))
             {
-                repo.DeleteRecord(recordId);
+                erase.Add(recordId);
                 index.Remove(key);   // тот же ключ в файле дважды — второй раз «нечего удалять»
-                deleted++;
             }
             else
             {
                 missing++;
             }
+        }
+
+        // Связь с запретом удаления держит сообщение целиком, до первой удаленной записи —
+        // по той же причине, что и право: удаление наполовину не просил никто.
+        var restricted = repo.IncomingReferences(erase, repo.RelationTargetsOfThisBase(), erase.ToHashSet())
+                             .Where(r => r.Restrict).ToList();
+        if (restricted.Count > 0)
+        {
+            problem = RestrictedMessage(restricted);
+            return null;
+        }
+
+        foreach (var recordId in erase)
+        {
+            repo.DeleteRecord(recordId);
 
             // То же правило, что у укладки ответа (см. ApplyRows): удаленное уже удалено,
             // и держать за ним в трекере EF строки журнала изменений незачем. Без этой строки
@@ -286,7 +300,7 @@ public partial class ConstructorRepository
             ctx.ChangeTracker.Clear();
         }
 
-        return new InboxErase(deleted, missing, ambiguous, empty);
+        return new InboxErase(erase.Count, missing, ambiguous, empty);
     }
 
     // ── Подготовка коллекции (режим «ensure-collection», шаг 11) ───────────────

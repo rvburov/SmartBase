@@ -263,8 +263,7 @@ public partial class ConstructorRepository
                 }
                 var target = CheckTarget(field, relation);
                 if (target is null) return;
-                if (!Property(target, relation.TargetCollectionId, relation.DisplayField)
-                    || !Property(target, relation.TargetCollectionId, relation.EffectiveSearchField)
+                if (!relation.DisplayKeys.Concat(relation.SearchKeys).All(key => Property(target, relation.TargetCollectionId, key))
                     || relation.Auto is { } auto && (!Property(_source, field.CollectionId, auto.SourceField)
                         || !Property(target, relation.TargetCollectionId, auto.TargetField)))
                     FieldIssue(field, RelationIntegrityIssueKind.MissingDependency, "Одно из свойств показа, поиска или сопоставления отсутствует.");
@@ -357,8 +356,8 @@ public partial class ConstructorRepository
                 {
                     var target = relation.TargetDbId == 0 ? catalog : Target(relation.TargetDbId);
                     if (target is not null)
-                        cycle = Key(target, relation.TargetCollectionId, relation.DisplayField)
-                            || Key(target, relation.TargetCollectionId, relation.EffectiveSearchField);
+                        cycle = relation.DisplayKeys.Concat(relation.SearchKeys)
+                            .Any(key => Key(target, relation.TargetCollectionId, key));
                     if (!cycle && relation.Auto is { } auto)
                     {
                         cycle = Key(catalog, field.CollectionId, auto.SourceField);

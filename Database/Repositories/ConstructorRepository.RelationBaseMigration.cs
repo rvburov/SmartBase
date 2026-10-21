@@ -116,9 +116,8 @@ public partial class ConstructorRepository
     }
 
     private static List<int> LegacyFieldKeys(RelationConfig config) =>
-        new[] { config.DisplayField, config.SearchField, config.Auto?.TargetField }
-            .Where(k => k is not null && k != RelationConfig.TitleField)
-            .Select(k => int.Parse(k!, CultureInfo.InvariantCulture)).Distinct().ToList();
+        config.TargetPropertyKeys.Where(k => k != RelationConfig.TitleField)
+            .Select(k => int.Parse(k, CultureInfo.InvariantCulture)).Distinct().ToList();
 
     // Признаки цели: коллекция, все связанные записи в ней и свойства из настройки. У старого
     // ребра, оставшегося от прежней цели свойства, коллекция неизвестна — проверяются записи.

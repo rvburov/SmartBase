@@ -2542,18 +2542,18 @@ public partial class SidebarTree : UserControl
     {
         if (crossDb.Count == 0 || OwnerWindow is null) return true;
 
-        var hasLinks   = false;
+        var warnings = "";
         foreach (var t in crossDb)
         {
             IReadOnlyCollection<int> cols = t.IsGroup ? t.SrcRepo.CollectionIdsInGroup(t.Id) : [t.Id];
-            if (!RelationDeleteImpact.ForCollectionsExternalCrossMove(t.SrcRepo, cols)) continue;
-            hasLinks = true;
-            break;
+            var check = RelationDeleteImpact.CheckCollections(t.SrcRepo, cols);
+            if (check.Blocked is { } blocked) { await ConfirmDialog.Info(blocked).ShowDialog(OwnerWindow); return false; }
+            warnings += check.Warning;
         }
-        if (!hasLinks) return true;
+        if (warnings.Length == 0) return true;
 
         var warn = new ConfirmDialog(
-            "Межбазовый перенос оборвет внешние связи, ссылающиеся на переносимое. Внутренние и исходящие связи сохранятся. Продолжить?",
+            $"Межбазовый перенос оборвет внешние связи, ссылающиеся на переносимое.{warnings} Внутренние и исходящие связи сохранятся. Продолжить?",
             confirmText: "Перенести");
         return await warn.ShowDialog<bool>(OwnerWindow) == true;
     }
@@ -2729,7 +2729,7 @@ public partial class SidebarTree : UserControl
         // ОТКРЫТЫХ баз; из закрытых — не проверяем, вычистятся лениво). Разворачиваем группы в их ветки
         // и объединяем с одиночными коллекциями по базе (одну коллекцию не проверяем дважды), обрываемся
         // на первой найденной связи.
-        var hasLinks = false;
+        var linkWarn = "";
         foreach (var byDb in groups.Concat(colls).Where(n => n.Id.HasValue && RepoOf(n) is not null)
                                     .GroupBy(n => n.DbId))
         {
@@ -2738,10 +2738,12 @@ public partial class SidebarTree : UserControl
             foreach (var n in byDb)
                 if (n.IsGroup) cols.UnionWith(r.CollectionIdsInGroup(n.Id!.Value));
                 else           cols.Add(n.Id!.Value);
-            if (RelationDeleteImpact.ForCollections(r, cols)) { hasLinks = true; break; }
+            var check = RelationDeleteImpact.CheckCollections(r, cols);
+            if (check.Blocked is { } blocked) { await ConfirmDialog.Info(blocked).ShowDialog(OwnerWindow); return; }
+            linkWarn += check.Warning;
         }
 
-        var confirm = new ConfirmDialog(BuildDeleteMessage(groups.Count, colls.Count, hasLinks));
+        var confirm = new ConfirmDialog(BuildDeleteMessage(groups.Count, colls.Count, linkWarn));
         if (await confirm.ShowDialog<bool>(OwnerWindow) != true) return;
 
         // Цели: группа (удаляем ВСЮ ветку) или коллекция. Репозитории резолвим здесь, на UI-потоке
@@ -2799,7 +2801,7 @@ public partial class SidebarTree : UserControl
     }
 
     // Текст подтверждения с подсчетом: только группы / только коллекции / и то и другое.
-    private static string BuildDeleteMessage(int groups, int colls, bool hasLinks)
+    private static string BuildDeleteMessage(int groups, int colls, string linkWarn)
     {
         var parts = new List<string>();
         if (groups > 0) parts.Add($"{groups} {GroupsPlural(groups)}");
@@ -2807,7 +2809,6 @@ public partial class SidebarTree : UserControl
         var warn = groups > 0
             ? "Вложенные группы и коллекции также будут удалены без возможности восстановления."
             : "Данные будут удалены без возможности восстановления.";
-        var linkWarn = hasLinks ? " Также будут удалены связи, ссылающиеся на удаляемое." : "";
         return $"Вы удаляете {string.Join(" и ", parts)}. {warn}{linkWarn} Подтвердить?";
     }
 
