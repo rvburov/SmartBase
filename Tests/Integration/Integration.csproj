@@ -27,6 +27,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\SmartBase.csproj" />
+    <!-- Дочерний процесс аварийных проверок. Не запускает сборку внутри теста. -->
+    <ProjectReference Include="..\MultiProcess\MultiProcess.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>

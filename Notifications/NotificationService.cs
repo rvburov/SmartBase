@@ -49,6 +49,7 @@ public sealed class NotificationService : IDisposable
     private bool     _calendarOn     = true;
     private bool     _taskAssignedOn = false;
     private bool     _taskStatusOn   = false;
+    private bool     _backupOn       = false;
     private DateTime _watermark;
     // Тумблер задачных видов включили — на ближайшем тике не читаем накопленное, а сдвигаем
     // курсоры на хвост: включение не должно вываливать историю (симметрия с водяной меткой).
@@ -60,7 +61,7 @@ public sealed class NotificationService : IDisposable
     private int _unseen;
 
     // Хоть один источник включен: тик целиком гейтится этим.
-    private bool AnyOn => _calendarOn || _taskAssignedOn || _taskStatusOn;
+    private bool AnyOn => _calendarOn || _taskAssignedOn || _taskStatusOn || _backupOn;
     private bool TasksOn => _taskSource is not null && (_taskAssignedOn || _taskStatusOn);
 
     // Недавно показанные цели по метке (tag) — чтобы по клику отдать полные данные без
@@ -79,6 +80,8 @@ public sealed class NotificationService : IDisposable
     /// <summary>Пользователь кликнул по баннеру задачи — MainWindow открывает карточку задачи.
     /// Поднимается из потока нотифайера: подписчик обязан маршалить в UI-поток.</summary>
     public event Action<TaskEvent>? TaskActivated;
+    public event Action<int>? BackupActivated;
+    private sealed record BackupTarget(int DbId);
 
     public NotificationService(
         INativeNotifier notifier,
@@ -112,6 +115,7 @@ public sealed class NotificationService : IDisposable
         {
             case CalendarRecord rec: RecordActivated?.Invoke(rec); break;
             case TaskEvent e:        TaskActivated?.Invoke(e);     break;
+            case BackupTarget b:    BackupActivated?.Invoke(b.DbId); break;
         }
     }
 
@@ -131,6 +135,7 @@ public sealed class NotificationService : IDisposable
         _calendarOn     = AppSettings.LoadNotificationsEnabled();
         _taskAssignedOn = AppSettings.LoadNotifyTaskAssigned();
         _taskStatusOn   = AppSettings.LoadNotifyTaskStatus();
+        _backupOn       = AppSettings.LoadNotifyBackup();
 
         var saved = AppSettings.LoadNotifyWatermark();
         _watermark = saved ?? _clock();
@@ -334,6 +339,25 @@ public sealed class NotificationService : IDisposable
 
     /// <summary>Живое переключение тумблера «Уведомления о смене стадии задачи».</summary>
     public void SetTaskStatusEnabled(bool on) => SetTaskFlag(ref _taskStatusOn, on, "о смене стадии задачи");
+
+    public void SetBackupEnabled(bool on)
+    {
+        _backupOn = on;
+        if (!on) ClearBadgeIfAllOff();
+    }
+
+    /// <summary>Результат ручной или плановой копии. UI-поток; выключенный тумблер
+    /// подавляет баннер и счетчик, но не скрывает ошибку в фоновых работах.</summary>
+    public void NotifyBackupResult(int dbId, string name, bool ok, string message)
+    {
+        if (!_backupOn) return;
+        var tag = $"backup:{dbId}:{Guid.NewGuid():N}";
+        Remember(tag, new BackupTarget(dbId));
+        SafeShow(ok ? "Резервная копия создана" : "Ошибка резервного копирования",
+            ok ? $"База «{name}»: копирование завершено" : $"База «{name}»: {message}", tag);
+        _unseen++;
+        SafeBadge(_unseen);
+    }
 
     // Включение задачного вида — не показывать накопленное: на ближайшем тике курсоры уедут
     // на хвост очередей (аналог «метка = сейчас» у календаря).

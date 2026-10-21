@@ -3,6 +3,7 @@ using Serilog;
 using SmartBase.Database.Entities;
 using SmartBase.Logging;
 using SmartBase.Utils;
+using SmartBase.Core;
 
 namespace SmartBase.Database.Backup;
 
@@ -42,6 +43,13 @@ public sealed class BackupService : IDisposable
     private readonly Dictionary<int, DateTime> _lastAttempt = [];   // бэкоф ретраев, на процесс
     private DispatcherTimer? _timer;
     private bool _ticking;   // тики не накладываются; все входы — с UI-потока
+    private bool _recovered;
+    private volatile bool _disposed;
+    private readonly string _jobPrefix = "backup." + Guid.NewGuid().ToString("N") + ".";
+    private const string JobTitle = "Резервное копирование";
+    private const string JobIcon = "IconArchive";
+    internal const string InterruptedMessage = "Копирование прервано. Результат не подтвержден";
+    internal string BackgroundJobId(int dbId) => _jobPrefix + dbId;
 
     public BackupService(DatabaseRegistry registry) => _registry = registry;
 
@@ -52,6 +60,7 @@ public sealed class BackupService : IDisposable
     public void Start()
     {
         if (_timer is not null) return;
+        RecoverInterrupted();
 
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(TickSeconds) };
         _timer.Tick += (_, _) => _ = TickAsync();
@@ -65,10 +74,32 @@ public sealed class BackupService : IDisposable
 
     public void Dispose()
     {
-        if (_timer is null) return;
-        _timer.Stop();
+        _disposed = true;
+        _timer?.Stop();
         _timer = null;
+        foreach (var job in BackgroundJobs.All.Where(j => j.Id.StartsWith(_jobPrefix, StringComparison.Ordinal)))
+            BackgroundJobs.Finish(job.Id);
         Log.Information("Резервное копирование: служба остановлена");
+    }
+
+    // Маркер хранится до проверки и публикации копии. После аварийного завершения
+    // его нельзя превращать в успех по наличию .part или по старому якорю расписания.
+    internal void RecoverInterrupted()
+    {
+        if (_recovered) return;
+        _recovered = true;
+        foreach (var entry in _registry.GetAll())
+        {
+            var state = AppSettings.LoadBackupRunState(entry.Id);
+            if (state.Outcome != BackupRunOutcome.Running) continue;
+            AppSettings.SaveBackupRunState(entry.Id, state with
+            {
+                Outcome = BackupRunOutcome.Interrupted, Error = InterruptedMessage,
+            });
+            BackgroundJobs.Fail(BackgroundJobId(entry.Id), JobTitle,
+                $"{entry.Name}: {InterruptedMessage}", JobIcon);
+            BackupFinished?.Invoke(entry.Id, false, InterruptedMessage);
+        }
     }
 
     /// <summary>Снять копию немедленно (кнопка «Копировать сейчас»). Ждет своей очереди,
@@ -76,6 +107,7 @@ public sealed class BackupService : IDisposable
     /// Успешная ручная копия двигает lastRun: плановая в тот же день не дублируется.</summary>
     public async Task RunNowAsync(int dbId)
     {
+        RecoverInterrupted();
         var entry = _registry.GetAll().FirstOrDefault(d => d.Id == dbId);
         if (entry is null) return;
         await RunOneAsync(entry, manual: true);
@@ -86,6 +118,7 @@ public sealed class BackupService : IDisposable
 
     private async Task TickAsync()
     {
+        RecoverInterrupted();
         if (_ticking) return;
         _ticking = true;
         try
@@ -124,8 +157,33 @@ public sealed class BackupService : IDisposable
         await _gate.WaitAsync();
         var startedAt = DateTime.Now;
         _lastAttempt[entry.Id] = startedAt;
+        var progressGate = new object();
+        var acceptingProgress = true;
+        void ReportProgress(string message, double? fraction)
+        {
+            lock (progressGate)
+            {
+                if (!acceptingProgress || _disposed) return;
+                BackgroundJobs.Report(BackgroundJobId(entry.Id), JobTitle,
+                    $"{entry.Name}: {message.Replace('\n', ' ')}",
+                    fraction is { } f ? (int)(Math.Clamp(f, 0, 1) * 1000) : 0,
+                    fraction.HasValue ? 1000 : 0, icon: JobIcon);
+                if (_disposed)
+                {
+                    BackgroundJobs.Finish(BackgroundJobId(entry.Id));
+                    return;
+                }
+                BackupProgress?.Invoke(entry.Id, message, fraction);
+            }
+        }
         try
         {
+            var state = AppSettings.LoadBackupRunState(entry.Id);
+            AppSettings.SaveBackupRunState(entry.Id, state with
+            {
+                StartedAt = startedAt, Outcome = BackupRunOutcome.Running, Error = null,
+            });
+            ReportProgress("Копирую…", null);
             Log.Information("Резервное копирование базы «{Name:l}» начато ({Kind:l})",
                             entry.Name, manual ? "вручную" : "по расписанию");
             BackupStarted?.Invoke(entry.Id);
@@ -135,12 +193,19 @@ public sealed class BackupService : IDisposable
             var ext    = BackupRotation.Extension(entry.IsPostgres);
             var target = Path.Combine(folder, BackupRotation.CopyFileName(entry.Name, startedAt, ext));
 
-            var error = await Task.Run(() => ExecuteAsync(entry, folder, target, keep));
+            var error = await Task.Run(() => ExecuteAsync(entry, folder, target, keep, ReportProgress));
+            lock (progressGate) acceptingProgress = false;
+            if (_disposed) return;
 
             if (error is null)
             {
                 AppSettings.SaveBackupLastRun(entry.Id, startedAt);
+                AppSettings.SaveBackupRunState(entry.Id, AppSettings.LoadBackupRunState(entry.Id) with
+                {
+                    LastSuccess = DateTime.Now, Outcome = BackupRunOutcome.Succeeded, Error = null,
+                });
                 _lastAttempt.Remove(entry.Id);
+                BackgroundJobs.Finish(BackgroundJobId(entry.Id));
                 BackupFinished?.Invoke(entry.Id, true, "");
             }
             else
@@ -150,16 +215,19 @@ public sealed class BackupService : IDisposable
         }
         catch (Exception ex)
         {
-            ReportFailure(entry, manual, ex.Message, ex);
+            lock (progressGate) acceptingProgress = false;
+            if (!_disposed) ReportFailure(entry, manual, ex.Message, ex);
         }
         finally
         {
+            lock (progressGate) acceptingProgress = false;
             _gate.Release();
         }
     }
 
     // Фоновая часть: сама копия и ротация. Возвращает текст ошибки или null.
-    private async Task<string?> ExecuteAsync(DatabaseRefEntity entry, string folder, string target, int keep)
+    private async Task<string?> ExecuteAsync(DatabaseRefEntity entry, string folder, string target, int keep,
+                                            Action<string, double?> progress)
     {
         Directory.CreateDirectory(folder);
 
@@ -175,8 +243,7 @@ public sealed class BackupService : IDisposable
             if (!File.Exists(entry.Path))
                 return $"Файл базы не найден: {entry.Path}";
             // BackupTo сам проверяет целостность копии и пишет строку успеха в журнал.
-            DatabaseManager.BackupTo(entry.Path, entry.Name, target,
-                (msg, frac) => BackupProgress?.Invoke(entry.Id, msg, frac));
+            DatabaseManager.BackupTo(entry.Path, entry.Name, target, progress);
         }
 
         Rotate(entry, folder, keep);
@@ -214,6 +281,11 @@ public sealed class BackupService : IDisposable
 
     private void ReportFailure(DatabaseRefEntity entry, bool manual, string message, Exception? ex)
     {
+        AppSettings.SaveBackupRunState(entry.Id, AppSettings.LoadBackupRunState(entry.Id) with
+        {
+            Outcome = BackupRunOutcome.Failed, Error = message,
+        });
+        BackgroundJobs.Fail(BackgroundJobId(entry.Id), JobTitle, $"{entry.Name}: {message}", JobIcon);
         // Ручной запуск — след всегда (разовое действие человека); плановый — не чаще
         // раза в период: до починки каждый ретрай падал бы той же записью.
         if (manual || Diag.Throttle($"backup:{entry.Id}", TimeSpan.FromMinutes(10)))

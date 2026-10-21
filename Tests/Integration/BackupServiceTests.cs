@@ -110,13 +110,14 @@ public sealed class BackupServiceTests
 
         var entry    = registry.GetAll().Single();
         var finished = new List<(bool Ok, string Message)>();
-        var service  = new BackupService(registry);
+        using var service  = new BackupService(registry);
         service.BackupFinished += (_, ok, msg) => finished.Add((ok, msg));
 
         await service.RunNowAsync(entry.Id);
 
         Assert.Equal([(true, "")], finished);
         Assert.NotNull(AppSettings.LoadBackupLastRun(entry.Id));
+        Assert.NotNull(AppSettings.LoadBackupRunState(entry.Id).LastSuccess);
 
         var copy = Assert.Single(Directory.GetFiles(dir.File("copies")));
         Assert.True(BackupRotation.IsCopyOf(Path.GetFileName(copy), entry.Name, "db"));
@@ -142,11 +143,12 @@ public sealed class BackupServiceTests
         var id = registry.GetAll().Single().Id;
         AppSettings.SaveBackupEnabled(id, true);
 
-        var service = new BackupService(registry);
+        using var service = new BackupService(registry);
 
         // Первый тик после включения — только якорь «сейчас», копия не снимается.
         await service.TickNowAsync();
         Assert.NotNull(AppSettings.LoadBackupLastRun(id));
+        Assert.Null(AppSettings.LoadBackupRunState(id).LastSuccess);
         Assert.False(Directory.Exists(dir.File("copies")));
 
         // Отметка позавчера → расписание (daily 03:00) давно наступило: тик догоняет копию.
@@ -169,7 +171,7 @@ public sealed class BackupServiceTests
         AppSettings.SaveBackupFolder(dir.File("copies"));
         AppSettings.SaveBackupLastRun(registry.GetAll().Single().Id, DateTime.Now.AddDays(-2));
 
-        var service = new BackupService(registry);
+        using var service = new BackupService(registry);
         await service.TickNowAsync();
 
         Assert.False(Directory.Exists(dir.File("copies")));
@@ -195,7 +197,7 @@ public sealed class BackupServiceTests
         File.WriteAllText(Path.Combine(folder, "Соседняя (копия 2020-01-01_03-00).db"), "x");
         File.WriteAllText(Path.Combine(folder, "заметки.txt"), "x");
 
-        var service = new BackupService(registry);
+        using var service = new BackupService(registry);
         await service.RunNowAsync(registry.GetAll().Single().Id);
 
         var names = Directory.GetFiles(folder).Select(Path.GetFileName).ToList();
@@ -223,7 +225,7 @@ public sealed class BackupServiceTests
         File.WriteAllText(Path.Combine(folder, "Основная (копия 2020-01-01_03-00).db.part"), "x");
         File.WriteAllText(Path.Combine(folder, "Соседняя (копия 2020-01-01_03-00).db.part"), "x");
 
-        var service = new BackupService(registry);
+        using var service = new BackupService(registry);
         await service.RunNowAsync(registry.GetAll().Single().Id);
 
         var names = Directory.GetFiles(folder).Select(Path.GetFileName).ToList();
@@ -242,7 +244,7 @@ public sealed class BackupServiceTests
 
         var id       = registry.GetAll().Single().Id;
         var finished = new List<(bool Ok, string Message)>();
-        var service  = new BackupService(registry);
+        using var service  = new BackupService(registry);
         service.BackupFinished += (_, ok, msg) => finished.Add((ok, msg));
 
         await service.RunNowAsync(id);
@@ -252,5 +254,37 @@ public sealed class BackupServiceTests
         Assert.Contains("не найден", message);
         Assert.Null(AppSettings.LoadBackupLastRun(id));
         Assert.Empty(Directory.GetFiles(dir.File("copies")));   // папка создана, но копии нет
+    }
+
+    [Fact]
+    public async Task Background_job_keeps_failure_then_shows_retry_progress_with_its_icon_and_finishes()
+    {
+        using var dir = new TempDir();
+        var path = dir.File("source.db");
+        using var registry = DatabaseRegistry.Open(path, dir.File("app.db"));
+        AppSettings.AttachStore(registry);
+        AppSettings.SaveBackupFolder(dir.File("copies"));
+        var id = registry.GetAll().Single().Id;
+        using var service = new BackupService(registry);
+        await service.RunNowAsync(id);
+        var failed = Assert.Single(SmartBase.Core.BackgroundJobs.All.Where(j => j.Id == service.BackgroundJobId(id)));
+        Assert.True(failed.Failed);
+        Assert.Equal("IconArchive", failed.Icon);
+        Assert.Null(AppSettings.LoadBackupRunState(id).LastSuccess);
+
+        using var source = DatabaseManager.Open(id, "source", path);
+        var running = false;
+        var verifying = false;
+        service.BackupProgress += (_, phase, _) =>
+        {
+            var job = SmartBase.Core.BackgroundJobs.All.Single(j => j.Id == service.BackgroundJobId(id));
+            running |= !job.Failed && job.Icon == "IconArchive" && job.Detail.Contains("Основная");
+            verifying |= phase.StartsWith("Проверяю копию", StringComparison.Ordinal) && job.Detail.Contains("Проверяю копию");
+        };
+        await service.RunNowAsync(id);
+        Assert.True(running);
+        Assert.True(verifying);
+        Assert.DoesNotContain(SmartBase.Core.BackgroundJobs.All, j => j.Id == service.BackgroundJobId(id));
+        Assert.NotNull(AppSettings.LoadBackupRunState(id).LastSuccess);
     }
 }

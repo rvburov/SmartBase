@@ -18,7 +18,7 @@ namespace SmartBase.Views.Settings;
 /// здесь: у каждой базы тумблер автозапуска, редактор расписания (состав зависит от
 /// периодичности), кнопка «Копировать сейчас» и строка статуса. Сами копии снимает
 /// BackupService в MainWindow: кнопка уходит туда событием <see cref="BackupNowRequested"/>,
-/// а ход и итог возвращаются методами OnBackup* (прогресс MainWindow маршалит в UI-поток).
+/// итог обновляет дату успеха через OnBackupFinished; ход и ошибки живут в фоновых работах.
 /// </summary>
 public partial class SettingsView
 {
@@ -306,10 +306,12 @@ public partial class SettingsView
     // коротком месяце здесь честно превращается в его последний день). До первого тика
     // службы якорь — «сейчас», как в BackupService; просроченный запуск (догон после
     // выключенного приложения) показывается словами, а не датой в прошлом.
-    private string BackupStatusText(int dbId)
+    internal static string BackupStatusText(int dbId)
     {
         var last = AppSettings.LoadBackupLastRun(dbId);
-        var text = last is { } l ? $"Последняя копия: {l:dd.MM.yyyy HH:mm}" : "Копий еще не было";
+        var success = AppSettings.LoadBackupRunState(dbId).LastSuccess;
+        var text = success is { } l ? $"Последняя успешная копия: {l:dd.MM.yyyy HH:mm}"
+            : last is null ? "Успешных копий пока нет" : "Нет сведений об успешных копиях";
         if (!AppSettings.LoadBackupEnabled(dbId)) return text;
 
         var now  = DateTime.Now;
@@ -320,8 +322,10 @@ public partial class SettingsView
             : $"{text} · Следующая копия: {next:dd.MM.yyyy HH:mm}";
     }
 
-    private void RefreshBackupStatus(int dbId) =>
-        SetBackupStatus(dbId, BackupStatusText(dbId), error: false);
+    private void RefreshBackupStatus(int dbId)
+    {
+        if (_backupStatus.TryGetValue(dbId, out var status)) status.Text = BackupStatusText(dbId);
+    }
 
     // ── Общие настройки раздела ───────────────────────────────────────────────
 
@@ -364,38 +368,10 @@ public partial class SettingsView
             AppSettings.SaveBackupKeep(options[BackupKeepCombo.SelectedIndex]);
     }
 
-    // ── Ход и итог копии (события BackupService через MainWindow) ─────────────
+    // ── Результат копии (событие BackupService через MainWindow) ─────────────
 
-    /// <summary>Копия начата: строка статуса — «Копирую…». UI-поток.</summary>
-    public void OnBackupStarted(int dbId) => SetBackupStatus(dbId, "Копирую…", error: false);
+    /// <summary>Ход и ошибки видны в «Фоновых работах»; здесь остаются расписание
+    /// и подтвержденная последняя копия.</summary>
+    public void OnBackupFinished(int dbId) => RefreshBackupStatus(dbId);
 
-    /// <summary>Ход копии (сообщение колбэка BackupTo, доля 0..1). Звать с UI-потока —
-    /// событие службы приходит из фонового, MainWindow маршалит.</summary>
-    public void OnBackupProgress(int dbId, string message, double? fraction)
-    {
-        // BackupTo шлет «Копирую "X"\nN из M МБ» — для однострочного статуса хватает фазы.
-        var nl    = message.IndexOf('\n');
-        var phase = nl < 0 ? message : message[..nl];
-        SetBackupStatus(dbId, fraction is { } f ? $"{phase} · {f * 100:N0} %" : phase, error: false);
-    }
-
-    /// <summary>Итог: успех — свежие «Последняя копия…» и «Следующая копия…», сбой — текст
-    /// ошибки красным (до следующего события или перезахода в раздел).</summary>
-    public void OnBackupFinished(int dbId, bool ok, string message)
-    {
-        if (ok) RefreshBackupStatus(dbId);
-        else    SetBackupStatus(dbId, $"Ошибка: {message}", error: true);
-    }
-
-    private void SetBackupStatus(int dbId, string text, bool error)
-    {
-        if (!_backupStatus.TryGetValue(dbId, out var status)) return;
-        status.Text = text;
-        // Ошибка — красным поверх серого desc-стиля; успех возвращает стандартный цвет.
-        if (error)
-            status.Foreground = Application.Current?.TryFindResource("BrushRed", out var res) == true
-                && res is IBrush brush ? brush : new SolidColorBrush(Color.Parse("#FF3B30"));
-        else
-            status.ClearValue(TextBlock.ForegroundProperty);
-    }
 }

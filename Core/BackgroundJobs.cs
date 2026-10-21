@@ -8,6 +8,7 @@ namespace SmartBase.Core;
 /// <param name="Total">Всего; 0 — объем неизвестен, полоса не рисуется.</param>
 /// <param name="Failed">Работа сорвалась — значок краснеет.</param>
 /// <param name="Stop">Чем остановить; null — остановить нельзя.</param>
+/// <param name="Icon">Ключ иконки общего набора; null — строка без отдельной иконки.</param>
 public sealed record BackgroundJob(
     string  Id,
     string  Title,
@@ -15,7 +16,8 @@ public sealed record BackgroundJob(
     int     Done,
     int     Total,
     bool    Failed,
-    Action? Stop);
+    Action? Stop,
+    string? Icon = null);
 
 /// <summary>
 /// Реестр идущих фоновых работ — один на приложение.
@@ -75,9 +77,9 @@ public static class BackgroundJobs
 
     /// <summary>Завести работу или обновить уже заведенную с тем же ключом.</summary>
     public static void Report(string id, string title, string detail,
-                              int done = 0, int total = 0, Action? stop = null)
+                              int done = 0, int total = 0, Action? stop = null, string? icon = null)
     {
-        lock (Lock) Jobs[id] = new BackgroundJob(id, title, detail, done, total, false, stop);
+        lock (Lock) Jobs[id] = new BackgroundJob(id, title, detail, done, total, false, stop, icon);
         Changed?.Invoke();
     }
 
@@ -86,9 +88,9 @@ public static class BackgroundJobs
     /// уходит по <see cref="Finish"/>, когда о ней прочитали (ссылка «Убрать» в панели фоновых
     /// работ), или при следующем запуске: <see cref="Report"/> с тем же ключом заменяет ее идущей.
     /// </summary>
-    public static void Fail(string id, string title, string detail)
+    public static void Fail(string id, string title, string detail, string? icon = null)
     {
-        lock (Lock) Jobs[id] = new BackgroundJob(id, title, detail, 0, 0, true, null);
+        lock (Lock) Jobs[id] = new BackgroundJob(id, title, detail, 0, 0, true, null, icon);
         Changed?.Invoke();
     }
 

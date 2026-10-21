@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Прогон автотестов SmartBase.
 #   ./Tests/run-all.sh                   — Unit (быстрый гейт) + Integration (SQLite + PG, если поднят sb-pg)
-#                                          + стенд панели чтения библиотеки (Tests/DocReader)
+#                                          + стенды панели чтения и настроек копий (DocReader, BackupUi)
 #   ./Tests/run-all.sh --with-extensions — плюс тесты расширений (Tests/Extensions/*)
 #   ./Tests/run-all.sh --with-bench      — плюс быстрый прогон бенчмарков (маленькие объемы, смоук)
 #
@@ -23,6 +23,10 @@ dotnet test Tests/Integration
 echo
 echo "== Стенд панели чтения библиотеки =="
 dotnet run --project Tests/DocReader -f net10.0
+
+echo
+echo "== Резервные копии: настройки и фоновые работы без экрана =="
+dotnet run --project Tests/BackupUi -f net10.0
 
 if [[ "${1:-}" == "--with-extensions" ]]; then
   echo

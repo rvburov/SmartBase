@@ -35,6 +35,36 @@ string Pragma(string db, string pragma)
 
 switch (args.FirstOrDefault())
 {
+    // Аварийный стенд бэкапа: родитель может завершить настоящий процесс до публикации
+    // копии или удалить его .part. Барьер перед проверкой не меняет сам алгоритм записи.
+    case "--backup-worker":
+    {
+        var (source, app, ready, release) = (args[1], args[2], args[3], args[4]);
+        using var registry = DatabaseRegistry.Open(source, app);
+        SmartBase.Utils.AppSettings.AttachStore(registry);
+        using var service = new SmartBase.Database.Backup.BackupService(registry);
+        var ok = false;
+        service.BackupFinished += (_, success, message) =>
+        {
+            ok = success;
+            Console.WriteLine(success ? "SUCCESS" : "ERROR: " + message);
+        };
+        service.BackupProgress += (_, message, fraction) =>
+        {
+            if (fraction is not null || !message.StartsWith("Проверяю копию", StringComparison.Ordinal)) return;
+            File.WriteAllText(ready, "verification");
+            var timeout = Stopwatch.StartNew();
+            while (!File.Exists(release))
+            {
+                if (timeout.Elapsed > TimeSpan.FromSeconds(90))
+                    throw new TimeoutException("Родитель не освободил барьер резервной копии");
+                Thread.Sleep(5);
+            }
+        };
+        service.RunNowAsync(registry.GetAll().Single(d => d.IsDefault).Id).GetAwaiter().GetResult();
+        return ok ? 0 : 1;
+    }
+
     // ── Профиль журнала/прагм: локально WAL+NORMAL+mmap, «сеть» DELETE+FULL+mmap=0 ──
     case "--check-pragmas":
     {

@@ -1161,15 +1161,39 @@ public static class AppSettings
         else                                   _store?.Set(BackupKey(dbId, "schedule"), schedule);
     }
 
-    // Отметка последнего выполненного бэкапа — СОСТОЯНИЕ службы, а не настройка (как
-    // водяная метка уведомлений): пишется всегда, дефолта нет. null — копий еще не было
-    // (служба поставит якорь «сейчас» при первом тике включенного расписания).
+    // Якорь расписания: ставится и до первой копии. Старое имя ключа оставлено для
+    // совместимости; показывать lastRun как время успешной копии нельзя.
     public static DateTime? LoadBackupLastRun(int dbId) =>
         DateTime.TryParse(_store?.Get(BackupKey(dbId, "lastRun")), CultureInfo.InvariantCulture,
             DateTimeStyles.RoundtripKind, out var dt) ? dt : null;
 
     public static void SaveBackupLastRun(int dbId, DateTime instant) =>
         _store?.Set(BackupKey(dbId, "lastRun"), instant.ToString("o", CultureInfo.InvariantCulture));
+
+    public static Database.Backup.BackupRunState LoadBackupRunState(int dbId)
+    {
+        try
+        {
+            var json = _store?.Get(BackupKey(dbId, "runState"));
+            return json is null ? new() :
+                System.Text.Json.JsonSerializer.Deserialize<Database.Backup.BackupRunState>(json) ?? new();
+        }
+        catch (System.Text.Json.JsonException) { return new(); }
+    }
+
+    // Одна строка настройки: состояние попытки и время успеха сохраняются атомарно.
+    public static void SaveBackupRunState(int dbId, Database.Backup.BackupRunState state) =>
+        _store?.Set(BackupKey(dbId, "runState"), System.Text.Json.JsonSerializer.Serialize(state));
+
+    public const bool NotifyBackupDefault = false;
+    public static bool LoadNotifyBackup() =>
+        bool.TryParse(_store?.Get("notifyBackup"), out var on) ? on : NotifyBackupDefault;
+
+    public static void SaveNotifyBackup(bool on)
+    {
+        if (on == NotifyBackupDefault) _store?.Remove("notifyBackup");
+        else _store?.Set("notifyBackup", on.ToString());
+    }
 
     /// <summary>
     /// Убрать настройки бэкапа баз, которых больше нет в реестре: отключили базу — ее

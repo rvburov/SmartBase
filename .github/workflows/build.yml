@@ -384,6 +384,7 @@ jobs:
           dotnet build Tests/DbGenerator  --configuration Release
           dotnet build Tests/MultiProcess --configuration Release
           dotnet build Tests/DocReader    --configuration Release
+          dotnet build Tests/BackupUi     --configuration Release
           dotnet build Tests/RecordPage --framework net10.0 --configuration Release
 
       # Живая Avalonia без экрана: разметка панели, подсветка, переходы по совпадениям, страницы
@@ -391,6 +392,9 @@ jobs:
       # в конце вывода шага.
       - name: Стенд панели чтения
         run: dotnet run --project Tests/DocReader --configuration Release --no-build
+
+      - name: Настройки резервных копий и фоновые работы
+        run: dotnet run --project Tests/BackupUi --configuration Release --no-build
 
       # Эти режимы сами создают базы стенда. Явные out/ref не пишут в домашний каталог.
       - name: Свойства страницы записи

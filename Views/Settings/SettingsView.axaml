@@ -182,6 +182,22 @@
                     </Border>
                     <Border Classes="separator h" />
 
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Уведомления о резервных копиях" />
+                                <TextBlock Classes="desc"
+                                           Text="Всплывающее уведомление об успешном завершении или ошибке резервного копирования. Нажатие открывает настройки резервных копий." />
+                            </StackPanel>
+                            <ToggleSwitch Grid.Column="1" x:Name="BackupNotificationsToggle"
+                                          OnContent="" OffContent=""
+                                          VerticalAlignment="Center"
+                                          IsCheckedChanged="OnBackupNotificationsToggled" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
                     <!-- Автозапуск при входе в систему -->
                     <Border Classes="settingRow">
                         <Grid ColumnDefinitions="*,Auto">

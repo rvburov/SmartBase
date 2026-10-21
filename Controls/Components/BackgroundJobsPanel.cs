@@ -120,8 +120,17 @@ public static class BackgroundJobsPanel
                 Foreground   = job.Failed ? red : primary,
                 TextTrimming = TextTrimming.CharacterEllipsis,
             };
-            Grid.SetColumn(name, 0);
-            top.Children.Add(name);
+            Control heading = name;
+            if (job.Icon is { } icon)
+            {
+                var label = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,8,*") };
+                label.Children.Add(Widgets.SettingRows.Icon(icon, job.Failed ? red : secondary));
+                Grid.SetColumn(name, 2);
+                label.Children.Add(name);
+                heading = label;
+            }
+            Grid.SetColumn(heading, 0);
+            top.Children.Add(heading);
 
             // Ссылка справа — кликабельная строка, а не кнопка: панель узкая, и кнопка в ней
             // перетянула бы на себя все внимание с самих работ. У идущей работы она
@@ -196,7 +205,7 @@ public static class BackgroundJobsPanel
             Padding    = new Thickness(12, 8),
             Child = new TextBlock
             {
-                Text         = "Работы идут, пока открыто окно программы.",
+                Text         = "Работы идут, пока программа запущена.",
                 FontSize     = small,
                 Foreground   = secondary,
                 TextWrapping = TextWrapping.Wrap,

@@ -48,6 +48,7 @@ public partial class SettingsView : UserControl
     // Тумблеры уведомлений по задачам — туда же, каждый сам по себе.
     public event EventHandler<bool>?              TaskAssignedNotificationsChanged;
     public event EventHandler<bool>?              TaskStatusNotificationsChanged;
+    public event EventHandler<bool>?              BackupNotificationsChanged;
     // Тумблер «Общее → Фоновый режим» переключен — MainWindow показывает/прячет значок в трее.
     public event EventHandler<bool>?              BackgroundEnabledChanged;
     // Выбрана (или очищена) папка хранилища заметок — MainWindow передает путь дереву и разделу.
@@ -91,6 +92,7 @@ public partial class SettingsView : UserControl
         NotificationsToggle.IsChecked = AppSettings.LoadNotificationsEnabled();
         TaskAssignedToggle.IsChecked  = AppSettings.LoadNotifyTaskAssigned();
         TaskStatusToggle.IsChecked    = AppSettings.LoadNotifyTaskStatus();
+        BackupNotificationsToggle.IsChecked = AppSettings.LoadNotifyBackup();
         AutostartToggle.IsEnabled     = Autostart.IsSupported;   // в dev-режиме (без бандла/exe) недоступно
         // Состояние берем у САМОЙ системы, а не из app.db: запись могли снести мимо приложения,
         // и тумблер показывал бы автозапуск, которого нет. Вне установки читать нечего — там
@@ -267,6 +269,13 @@ public partial class SettingsView : UserControl
         var on = TaskStatusToggle.IsChecked == true;
         AppSettings.SaveNotifyTaskStatus(on);
         TaskStatusNotificationsChanged?.Invoke(this, on);
+    }
+
+    private void OnBackupNotificationsToggled(object? sender, RoutedEventArgs e)
+    {
+        var on = BackupNotificationsToggle.IsChecked == true;
+        AppSettings.SaveNotifyBackup(on);
+        BackupNotificationsChanged?.Invoke(this, on);
     }
 
     // Автозапуск: сначала запись в ОС, и только если она легла — сохраняем настройку. Запись не

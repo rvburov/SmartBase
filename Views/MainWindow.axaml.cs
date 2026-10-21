@@ -220,10 +220,20 @@ public partial class MainWindow : Window
 
         // Службы → раздел настроек (ход копирования, обход папки обмена, порт, сценарии): только
         // построенному разделу — строящийся читает состояние служб сам.
-        _backup.BackupStarted  += dbId => _settingsView?.OnBackupStarted(dbId);
-        _backup.BackupProgress += (dbId, msg, frac) =>
-            Dispatcher.UIThread.Post(() => _settingsView?.OnBackupProgress(dbId, msg, frac));
-        _backup.BackupFinished += (dbId, ok, msg) => _settingsView?.OnBackupFinished(dbId, ok, msg);
+        _backup.BackupFinished += (dbId, ok, msg) =>
+        {
+            _settingsView?.OnBackupFinished(dbId);
+            var name = _workspace.Registry.GetAll().FirstOrDefault(d => d.Id == dbId)?.Name ?? "База данных";
+            _notifications.NotifyBackupResult(dbId, name, ok, msg);
+        };
+        _notifications.BackupActivated += _ => Dispatcher.UIThread.Post(() =>
+        {
+            ShowFromTray();
+            _notifications.NotifyWindowActivated();
+            ActivityBarControl.SetModuleActive("settings");
+            ShowModule("settings");
+            SettingsSidebar.Select("backup");
+        });
         _inbox.Swept += run => _settingsView?.OnInboxSwept(run);
         _ingress.Changed += () => Dispatcher.UIThread.Post(() => _settingsView?.OnIngressChanged());
         _scenarios.Ran += (_, _) => _settingsView?.OnScenarioRan();

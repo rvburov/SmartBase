@@ -309,6 +309,7 @@ public partial class MainWindow
         // Тумблеры уведомлений по задачам — тем же путем, каждый сам по себе.
         view.TaskAssignedNotificationsChanged += (_, on) => _notifications.SetTaskAssignedEnabled(on);
         view.TaskStatusNotificationsChanged   += (_, on) => _notifications.SetTaskStatusEnabled(on);
+        view.BackupNotificationsChanged       += (_, on) => _notifications.SetBackupEnabled(on);
         // Тумблер «Общее → Фоновый режим»: показать/скрыть значок в трее (и вернуть окно при выкл).
         view.BackgroundEnabledChanged += (_, on) => OnBackgroundChanged(on);
 

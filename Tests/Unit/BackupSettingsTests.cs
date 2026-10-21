@@ -141,6 +141,56 @@ public sealed class BackupSettingsTests
         Assert.Equal(instant, AppSettings.LoadBackupLastRun(3));
     }
 
+    [Fact]
+    public void Schedule_anchor_does_not_claim_a_successful_copy()
+    {
+        var store = new FakeStore();
+        AppSettings.AttachStore(store);
+        AppSettings.SaveBackupLastRun(3, new DateTime(2026, 9, 5, 3, 0, 0));
+        Assert.Null(AppSettings.LoadBackupRunState(3).LastSuccess);
+        Assert.DoesNotContain("Последняя успешная копия:",
+            SmartBase.Views.Settings.SettingsView.BackupStatusText(3));
+    }
+
+    [Fact]
+    public void Failed_attempt_preserves_success_in_status_and_state_round_trips()
+    {
+        AppSettings.AttachStore(new FakeStore());
+        var success = new DateTime(2026, 9, 5, 3, 0, 0);
+        var state = new SmartBase.Database.Backup.BackupRunState(success, success.AddDays(1),
+            SmartBase.Database.Backup.BackupRunOutcome.Failed, "временный файл не найден");
+        AppSettings.SaveBackupRunState(3, state);
+        Assert.Equal(state, AppSettings.LoadBackupRunState(3));
+        Assert.Null(AppSettings.LoadBackupRunState(4).LastSuccess);
+        Assert.Contains("Последняя успешная копия: 05.09.2026 03:00",
+            SmartBase.Views.Settings.SettingsView.BackupStatusText(3));
+    }
+
+    [Fact]
+    public void Malformed_run_state_does_not_invent_a_success()
+    {
+        var store = new FakeStore();
+        AppSettings.AttachStore(store);
+        store.Set("backup.3.runState", "поврежденная запись");
+        Assert.Null(AppSettings.LoadBackupRunState(3).LastSuccess);
+    }
+
+    [Fact]
+    public void Backup_notification_switch_is_independent_and_persists_as_a_delta()
+    {
+        var store = new FakeStore();
+        AppSettings.AttachStore(store);
+        Assert.False(AppSettings.LoadNotifyBackup());
+        AppSettings.SaveNotifyBackup(true);
+        Assert.True(AppSettings.LoadNotifyBackup());
+        Assert.True(store.Has("notifyBackup"));
+        AppSettings.SaveNotificationsEnabled(false);
+        Assert.True(AppSettings.LoadNotifyBackup());
+        AppSettings.SaveNotifyBackup(false);
+        Assert.False(AppSettings.LoadNotifyBackup());
+        Assert.False(store.Has("notifyBackup"));
+    }
+
     // ── Уборка осиротевших ключей ─────────────────────────────────────────────
 
     [Fact]
