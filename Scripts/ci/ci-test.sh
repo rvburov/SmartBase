@@ -74,6 +74,20 @@ for name in ("test", "closed-loop", "postgres", "tools"):
 assert {m["os"] for m in jobs["test"]["strategy"]["matrix"]["include"]} == {
     "ubuntu-latest", "windows-latest", "macos-latest", "macos-15-intel"}
 assert jobs["postgres"]["services"]["postgres"]["image"] == "postgres:16"
+for name, results in (("agent-tests", "quick-results"), ("test", "matrix-results")):
+    steps = jobs[name]["steps"]
+    unit = next(s["run"] for s in steps if s.get("run", "").startswith("dotnet test Tests/Unit "))
+    extensions = next(s["run"] for s in steps if s.get("run", "").startswith("bash Tests/run-extensions.sh "))
+    assert "--logger 'trx;LogFileName=unit.trx'" in unit
+    assert f'--results-directory "$RUNNER_TEMP/{results}"' in unit
+    assert '--logger trx --results-directory "$RUNNER_TEMP/extensions-results"' in extensions
+    assert "LogFileName" not in extensions  # Несколько проектов не пишут в один файл.
+    reporter = next(s for s in steps if "python3 Scripts/ci/report-failures.py" in s.get("run", ""))
+    assert reporter["if"] == "failure()"
+    assert "shopt -s nullglob" in reporter["run"]
+    assert f'"$RUNNER_TEMP/{results}/"*.trx' in reporter["run"]
+    assert '"$RUNNER_TEMP/extensions-results/"*.trx' in reporter["run"]
+    assert 'python3 Scripts/ci/report-failures.py "${reports[@]}"' in reporter["run"]
 for job in jobs.values():
     for step in job.get("steps", []):
         if step.get("uses", "").startswith("actions/checkout@"):

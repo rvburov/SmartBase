@@ -78,9 +78,15 @@ jobs:
         with:
           dotnet-version: '10.0.x'
       - name: Модульные тесты
-        run: dotnet test Tests/Unit --configuration Release --logger 'console;verbosity=minimal'
+        run: dotnet test Tests/Unit --configuration Release --logger 'console;verbosity=minimal' --logger 'trx;LogFileName=unit.trx' --results-directory "$RUNNER_TEMP/quick-results"
       - name: Тесты расширений
-        run: bash Tests/run-extensions.sh --configuration Release --logger 'console;verbosity=minimal'
+        run: bash Tests/run-extensions.sh --configuration Release --logger 'console;verbosity=minimal' --logger trx --results-directory "$RUNNER_TEMP/extensions-results"
+      - name: Имена и сообщения упавших тестов
+        if: failure()
+        run: |
+          shopt -s nullglob
+          reports=("$RUNNER_TEMP/quick-results/"*.trx "$RUNNER_TEMP/extensions-results/"*.trx)
+          python3 Scripts/ci/report-failures.py "${reports[@]}"
 
   # ── Сборка и тесты на каждой операционной системе ───────────────────────────
   test:
@@ -148,8 +154,9 @@ jobs:
       # задевают. Гоняем на всей матрице ОС осознанно — расширения работают с файловой
       # системой, а именно там платформы и расходятся: регистр расширений файлов, скрытые
       # файлы с ведущей точкой, разделители путей, сортировка по культуре.
+      # TRX без LogFileName получает уникальное имя для каждого проекта, общий файл не затирается.
       - name: Тесты расширений
-        run: bash Tests/run-extensions.sh --configuration Release --logger 'console;verbosity=minimal'
+        run: bash Tests/run-extensions.sh --configuration Release --logger 'console;verbosity=minimal' --logger trx --results-directory "$RUNNER_TEMP/extensions-results"
 
       # Граница между наборами — не соглашение, а проверяемый инвариант: тесты ядра не должны
       # знать ни одного расширения, иначе удаление расширения снова начнет ронять их сборку
@@ -208,7 +215,10 @@ jobs:
 
       - name: Имена и сообщения упавших тестов
         if: failure()
-        run: python3 Scripts/ci/report-failures.py "$RUNNER_TEMP/matrix-results/unit.trx" "$RUNNER_TEMP/matrix-results/integration.trx"
+        run: |
+          shopt -s nullglob
+          reports=("$RUNNER_TEMP/matrix-results/"*.trx "$RUNNER_TEMP/extensions-results/"*.trx)
+          python3 Scripts/ci/report-failures.py "${reports[@]}"
 
   # ── Сборка для закрытого контура ────────────────────────────────────────────
   # Второй дистрибутив программы: в нем отправляющего слоя нет физически — файл
