@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Первые ошибки TRX в публичных GitHub annotations; исходный статус job не меняется."""
 import sys
+import re
 import xml.etree.ElementTree as ET
 
 MAX_FAILURES = 10
@@ -13,6 +14,20 @@ def escape(value, property_value=False):
     if property_value:
         value = value.replace(":", "%3A").replace(",", "%2C")
     return value
+
+
+def stack_excerpt(trace):
+    frames = list(dict.fromkeys(line.strip() for line in trace.splitlines() if line.strip()))
+    def priority(line):
+        if re.search(r"\bSmartBase(?:\.|[\\/])", line):
+            return 0
+        if re.search(r"\.cs:\s*(?:(?:line|строка)\s*)?\d+", line):
+            return 1
+        return 2
+    frames.sort(key=priority)  # Сохраняем порядок внутри каждой группы.
+    # Начало кадра показывает метод, конец — путь и строку исходника.
+    return "\n".join(line if len(line) <= 190 else line[:80] + "..." + line[-107:]
+                     for line in frames[:3])
 
 
 def annotations(paths):
@@ -30,7 +45,10 @@ def annotations(paths):
                 continue
             name = result.get("testName", "Неизвестный тест")[:MAX_NAME]
             message = result.findtext("{*}Output/{*}ErrorInfo/{*}Message") or result.get("outcome", "Failed")
-            body = f"{name}: {message}"[:MAX_MESSAGE]
+            trace = stack_excerpt(result.findtext("{*}Output/{*}ErrorInfo/{*}StackTrace") or "")
+            suffix = "\nStack:\n" + trace if trace else ""
+            prefix = f"{name}: "
+            body = prefix + message[:MAX_MESSAGE - len(prefix) - len(suffix)] + suffix
             yield f"::error title={escape(name, True)}::{escape(body)}"
             count += 1
             if count >= MAX_FAILURES:

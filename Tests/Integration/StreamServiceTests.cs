@@ -283,6 +283,7 @@ public sealed class StreamServiceTests : IDisposable
                             + Event(1, "Нужна втулка") + "\0");
 
         await Until(() => stand.Requests.Count == 1, "ответ на событие");
+        await service.SettleAsync(Patience);
 
         Assert.Equal(("Нужна втулка", "1001"), Assert.Single(clerk.Seen));
     }
@@ -393,6 +394,7 @@ public sealed class StreamServiceTests : IDisposable
         await stand.SendAsync(Event(1, "Нужна втулка"));
 
         await Until(() => stand.Requests.Count == 1, "ответ на событие");
+        await service.SettleAsync(Patience);
 
         using var body = System.Text.Json.JsonDocument.Parse(stand.Requests[0].Body);
         Assert.Equal("Сервер не работает", body.RootElement.GetProperty("message").GetString());

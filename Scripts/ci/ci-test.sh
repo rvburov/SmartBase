@@ -178,6 +178,20 @@ with tempfile.TemporaryDirectory(prefix="smartbase-ci-errors-") as temporary:
     assert cli.returncode == 0, cli.stderr.decode("ascii", "backslashreplace")
     assert cli.stderr == b""
     assert cli.stdout.decode("utf-8").splitlines() == list(module.annotations([unicode_path]))
+    ET.SubElement(error, "StackTrace").text = "\n".join(
+        [f"at System.Framework.Frame{i}() " + "x" * 500 for i in range(50)]
+        + ["at SmartBase.Tests.Integration.Case.Run() in C:/src/SmartBase/Tests/Case.cs:line 42",
+           "at Other.Test.Run() in C:/src/Other.cs:line 99"])
+    error.find("Message").text = "Ошибка%\r\n::error title=injected::payload " + "m" * 4000
+    ET.ElementTree(unicode_root).write(unicode_path, encoding="utf-8", xml_declaration=True)
+    annotation = list(module.annotations([unicode_path]))[0]
+    body = annotation.split("::", 2)[2]
+    assert "SmartBase.Tests.Integration.Case.Run() in C:/src/SmartBase/Tests/Case.cs:line 42" in body
+    assert body.index("SmartBase.Tests.Integration.Case.Run()") < body.index("System.Framework.Frame0()")
+    # XML нормализует CRLF текста в LF; вывод все равно остается одной workflow-командой.
+    assert "Ошибка%25%0A::error title=injected::payload" in body
+    assert "\r" not in annotation and "\n" not in annotation
+    assert len(body.replace("%0D", "\r").replace("%0A", "\n").replace("%25", "%")) <= 1500
     path.write_text("broken", encoding="utf-8")
     assert list(module.annotations([path])) == ["::warning title=TRX::Не удалось прочитать отчет тестов"]
 PY
