@@ -160,8 +160,13 @@ else
   done
   # Незаполненные заготовки: <версия>, TODO, XXX, {{…}}. Латиница в угловых скобках не
   # ищется намеренно — в теле релиза законно встречается <details>/<summary>.
-  left="$(printf '%s\n' "$notes" | grep -nE '<[а-яА-Я][а-яА-Я ]*>|TODO|XXX|\{\{')"
-  if [ -n "$miss" ]; then
+  # Явный алфавит: диапазон а-я зависит от LC_COLLATE и бывает недопустим в C.UTF-8.
+  cyrillic='абвгдежзийклмнопрстуфхцчшщъыьэюяАБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ'
+  left_status=0
+  left="$(printf '%s\n' "$notes" | grep -nE "<[$cyrillic][$cyrillic ]*>|TODO|XXX|\\{\\{")" || left_status=$?
+  if [ "$left_status" -gt 1 ]; then
+    bad "5. Не удалось проверить тело релиза на заготовки (код $left_status)" "$left"
+  elif [ -n "$miss" ]; then
     bad "5. В теле релиза не хватает:$miss"
   elif [ -n "$left" ]; then
     bad "5. В теле релиза остались заготовки" "$left"

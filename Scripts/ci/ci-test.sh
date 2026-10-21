@@ -76,18 +76,22 @@ assert {m["os"] for m in jobs["test"]["strategy"]["matrix"]["include"]} == {
 assert jobs["postgres"]["services"]["postgres"]["image"] == "postgres:16"
 for name, results in (("agent-tests", "quick-results"), ("test", "matrix-results")):
     steps = jobs[name]["steps"]
+    python_setup = next(s for s in steps if s.get("uses") == "actions/setup-python@v6")
+    assert python_setup["with"]["python-version"] == "3.13"
+    assert steps.index(python_setup) > next(i for i, s in enumerate(steps) if s.get("uses") == "actions/setup-dotnet@v5")
     unit = next(s["run"] for s in steps if s.get("run", "").startswith("dotnet test Tests/Unit "))
     extensions = next(s["run"] for s in steps if s.get("run", "").startswith("bash Tests/run-extensions.sh "))
     assert "--logger 'trx;LogFileName=unit.trx'" in unit
     assert f'--results-directory "$RUNNER_TEMP/{results}"' in unit
     assert '--logger trx --results-directory "$RUNNER_TEMP/extensions-results"' in extensions
     assert "LogFileName" not in extensions  # Несколько проектов не пишут в один файл.
-    reporter = next(s for s in steps if "python3 Scripts/ci/report-failures.py" in s.get("run", ""))
+    reporter = next(s for s in steps if "python Scripts/ci/report-failures.py" in s.get("run", ""))
+    assert steps.index(python_setup) < steps.index(reporter)
     assert reporter["if"] == "failure()"
     assert "shopt -s nullglob" in reporter["run"]
     assert f'"$RUNNER_TEMP/{results}/"*.trx' in reporter["run"]
     assert '"$RUNNER_TEMP/extensions-results/"*.trx' in reporter["run"]
-    assert 'python3 Scripts/ci/report-failures.py "${reports[@]}"' in reporter["run"]
+    assert 'python Scripts/ci/report-failures.py "${reports[@]}"' in reporter["run"]
 for job in jobs.values():
     for step in job.get("steps", []):
         if step.get("uses", "").startswith("actions/checkout@"):
@@ -138,7 +142,7 @@ PY
 ok 'TRX не принимает пустой отчет, новый skip и отсутствие native-backup тестов'
 
 python3 -B - "$ci_here" <<'PY'
-import importlib.util, pathlib, sys, tempfile, xml.etree.ElementTree as ET
+import importlib.util, os, pathlib, subprocess, sys, tempfile, xml.etree.ElementTree as ET
 spec = importlib.util.spec_from_file_location("report_failures", pathlib.Path(sys.argv[1]) / "report-failures.py")
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
@@ -162,6 +166,18 @@ with tempfile.TemporaryDirectory(prefix="smartbase-ci-errors-") as temporary:
     assert all("\r" not in line and "\n" not in line for line in lines)
     assert all(len(line.split("::", 2)[2].replace("%25", "%").replace("%0D", "\r").replace("%0A", "\n")) <= 1500 for line in lines)
     assert list(module.annotations([pathlib.Path(temporary) / "absent.trx"])) == []
+    unicode_path = pathlib.Path(temporary) / "cyrillic.trx"
+    unicode_root = ET.Element("TestRun")
+    result = ET.SubElement(ET.SubElement(unicode_root, "Results"), "UnitTestResult",
+                           testName="Namespace.Русский_тест", outcome="Failed")
+    error = ET.SubElement(ET.SubElement(result, "Output"), "ErrorInfo")
+    ET.SubElement(error, "Message").text = "Ошибка проверки: русское сообщение"
+    ET.ElementTree(unicode_root).write(unicode_path, encoding="utf-8", xml_declaration=True)
+    cli = subprocess.run([sys.executable, "-B", str(spec.origin), str(unicode_path)],
+                         env={**os.environ, "PYTHONIOENCODING": "cp1252"}, capture_output=True)
+    assert cli.returncode == 0, cli.stderr.decode("ascii", "backslashreplace")
+    assert cli.stderr == b""
+    assert cli.stdout.decode("utf-8").splitlines() == list(module.annotations([unicode_path]))
     path.write_text("broken", encoding="utf-8")
     assert list(module.annotations([path])) == ["::warning title=TRX::Не удалось прочитать отчет тестов"]
 PY

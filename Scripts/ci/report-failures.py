@@ -38,5 +38,7 @@ def annotations(paths):
 
 
 if __name__ == "__main__":
+    # Windows pipe может унаследовать cp1252; GitHub workflow commands читаются как UTF-8.
+    sys.stdout.reconfigure(encoding="utf-8")
     for annotation in annotations(sys.argv[1:]):
         print(annotation)

@@ -875,7 +875,8 @@ public sealed partial class DatabaseManager : IDisposable
     // и калиброванной скорости (стенд 1,6 ГБ: ~30 с/ГБ миграция, ~10 с/ГБ сжатие), дальше —
     // пересчет по фактической скорости со сглаживанием (EMA), округление до минут
     // («осталось ≈ 2 мин» / «меньше минуты») — без ложной точности. Текст и доля уходят в
-    // stage-колбэк раз в полсекунды; мгновенные этапы таймер не видит (первый тик 0,5 с).
+    // stage-колбэк сразу на вызывающем потоке, дальше — раз в полсекунды с таймера:
+    // даже мгновенный этап должен сообщить о начале до выполнения работы.
     // Хук живет на текущем физическом соединении — вызывающий держит его открытым
     // (OpenConnection) на время этапа; Dispose снимает хук и таймер.
     private sealed class SqliteStageProgress : IDisposable
@@ -893,6 +894,7 @@ public sealed partial class DatabaseManager : IDisposable
                                     string stallText, double expectedSteps, double expectedJournal,
                                     double initialEtaSeconds, Action<string, double?> stage)
         {
+            stage($"{phase}\n{context}{EtaLine(0, initialEtaSeconds)}", 0);
             _handle = ((Microsoft.Data.Sqlite.SqliteConnection)db.Database.GetDbConnection()).Handle!;
 
             // Каждые 100k VM-инструкций — инкремент; накладные расходы ничтожны (тысячи
@@ -919,7 +921,7 @@ public sealed partial class DatabaseManager : IDisposable
                 var reason = _watch.Elapsed.TotalSeconds - _lastMoveAt > 5 ? stallText : context;
 
                 stage($"{phase}\n{reason}{EtaLine(frac, initialEtaSeconds)}", frac);
-            }, null, dueTime: 0, period: 500);
+            }, null, dueTime: 500, period: 500);
 
             static long Len(string f) => File.Exists(f) ? new FileInfo(f).Length : 0;
         }

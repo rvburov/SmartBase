@@ -307,6 +307,32 @@ public sealed class StorageBloatTests
 
     // ── 4. Ручное сжатие и резервная копия ────────────────────────────────────
 
+    /// <summary>Даже короткое сжатие сообщает о начале синхронно, до фоновых тиков:
+    /// таймер мог не успеть запуститься до завершения VACUUM и оставить этап невидимым.</summary>
+    [Fact]
+    public void CompactFile_reports_initial_progress_on_calling_thread()
+    {
+        var path = TempDatabase.NewTempPath();
+        try
+        {
+            // Закрываем все подключения к маленькой базе до ручного сжатия.
+            using (DatabaseManager.Open(7, "small", path)) { }
+
+            var callerThreadId = Environment.CurrentManagedThreadId;
+            var progress = new List<(string Message, double? Fraction, int ThreadId)>();
+            DatabaseManager.CompactFile(path, "small", (message, fraction) =>
+            {
+                lock (progress)
+                    progress.Add((message, fraction, Environment.CurrentManagedThreadId));
+            });
+
+            lock (progress)
+                Assert.Contains(progress, p => p.Message.StartsWith("Сжимаю файл «small»", StringComparison.Ordinal)
+                    && p.Fraction == 0 && p.ThreadId == callerThreadId);
+        }
+        finally { TempDatabase.Cleanup(path); }
+    }
+
     /// <summary>Ручное сжатие возвращает место и сохраняет данные; прогресс приходит с фазой
     /// «Сжимаю файл».</summary>
     [Fact]
