@@ -9,6 +9,8 @@ namespace SmartBase.Extensions.DocRegistry;
 /// репозиторию, базе, коллекции, отправителю и сценарию с его источником (ActionContext.Channel).
 /// После закрытия базы или перезапуска оно исчезает.
 /// Данные не меняются до «Да»; подтверждается именно показанный человеку снимок.
+/// Ответы — разметкой (<see cref="ReplyMarkup"/>): отказы пишутся простым текстом и
+/// оформляются по строке, карточка и запросы подтверждения собираются уже оформленными.
 /// </summary>
 internal static class DocumentMessages
 {
@@ -27,12 +29,25 @@ internal static class DocumentMessages
                                string Project, string Accounting, string FirstUse, string Summary,
                                string? Version)
     {
-        public string Text => string.Join("\n",
-            $"Номер: {Number}", $"Наименование: {Name}", $"Проект: {Project}", $"ФИО: {Fio}",
-            $"Дата регистрации: {Show(Date)}", $"Отметка учета: {Show(Accounting)}",
-            $"Примечание (первичное применение): {Show(FirstUse)}",
-            $"Примечание (краткая характеристика): {Show(Summary)}");
-        private static string Show(string value) => value.Length == 0 ? "—" : value;
+        /// <summary>
+        /// Карточка строками «Поле: значение», номер — жирным. <paramref name="changed"/> —
+        /// поля, новые значения которых выделить жирным (ответ «Изменено»).
+        /// </summary>
+        public string Text(IReadOnlyCollection<string>? changed = null)
+        {
+            string Mark(string value, string field) =>
+                changed?.Contains(field) == true ? ReplyMarkup.Bold(Show(value)) : Show(value);
+
+            return string.Join("\n",
+                $"Номер: {ReplyMarkup.Bold(Show(Number))}",
+                $"Наименование: {Mark(Name, "Наименование")}", $"Проект: {Mark(Project, "Проект")}",
+                $"ФИО: {Mark(Fio, "ФИО")}",
+                $"Дата регистрации: {Show(Date)}", $"Отметка учета: {Show(Accounting)}",
+                $"Примечание (первичное применение): {Show(FirstUse)}",
+                $"Примечание (краткая характеристика): {Show(Summary)}");
+        }
+
+        private static string Show(string value) => value.Length == 0 ? "—" : ReplyMarkup.Escape(value);
     }
 
     private sealed record Pending(string Action, Card Before, RegistryShape Shape,
@@ -51,7 +66,7 @@ internal static class DocumentMessages
         var registration = RegistrySchema.SameName(action, MessageRegistration.RegisterWord);
 
         if (action.Length > 0 && !registration && known is null)
-            return ActionResult.Refused($"Действие: неизвестное действие (Можно: {Choices})");
+            return ReplyMarkup.Refused($"Действие: неизвестное действие (Можно: {Choices})");
 
         if (context.Repo is not { } repo)
             return known is not null || yes || no
@@ -65,22 +80,22 @@ internal static class DocumentMessages
             {
                 waiting.Items.Remove(key);
                 if (yes || no)
-                    return ActionResult.Refused("Подтверждение: срок истек. Отправьте запрос заново");
+                    return ReplyMarkup.Refused("Подтверждение: срок истек. Отправьте запрос заново");
                 pending = null;
             }
 
             if (yes || no)
             {
                 if (pending is null)
-                    return ActionResult.Refused("Подтверждение: нет операции, ожидающей ответа. Отправьте запрос заново");
+                    return ReplyMarkup.Refused("Подтверждение: нет операции, ожидающей ответа. Отправьте запрос заново");
                 // Забираем один раз, в том числе при отказе в правах или сбое записи.
                 waiting.Items.Remove(key);
-                if (no) return Reply("Операция отменена", 0);
+                if (no) return Reply(ReplyMarkup.Bold("Операция отменена"), 0);
                 return Confirm(context, repo, pending);
             }
 
             if (pending is not null && known != View)
-                return ActionResult.Refused($"Ожидается подтверждение: {pending.Action}, {pending.Before.Number}. "
+                return ReplyMarkup.Refused($"Ожидается подтверждение: {pending.Action}, {pending.Before.Number}. "
                                           + $"{AnswerPrompt}. Для нового запроса сначала ответьте Нет");
 
             if (known is null) return null;
@@ -117,7 +132,7 @@ internal static class DocumentMessages
                     if (!RegistrySchema.SameName(field, "Действие") && !RegistrySchema.SameName(field, "Номер"))
                         problems.Add($"{field}: для действия «{known}» нужны только Действие и Номер");
             }
-            if (problems.Count > 0) return ActionResult.Refused(string.Join("\n", problems));
+            if (problems.Count > 0) return ReplyMarkup.Refused(string.Join("\n", problems));
 
             try
             {
@@ -125,24 +140,29 @@ internal static class DocumentMessages
                 var check = Shape(repo, context.CollectionId);
                 if (check.Shape is not { } shape) return ActionResult.Failed(check.Problem!);
                 var (card, problem) = Find(repo, shape, number!, context);
-                if (card is null) return ActionResult.Refused(problem);
-                if (known == View) return Reply(card.Text, 1);
+                if (card is null) return ReplyMarkup.Refused(problem);
+                if (known == View) return Reply(card.Text(), 1);
 
                 var after = Apply(card, changes);
                 if (known == Edit && after == card)
-                    return ActionResult.Refused("Изменение: новые значения совпадают с текущими. Изменений нет");
+                    return ReplyMarkup.Refused("Изменение: новые значения совпадают с текущими. Изменений нет");
 
                 foreach (var expired in waiting.Items.Where(p => p.Value.Expires <= context.Now).Select(p => p.Key).ToArray())
                     waiting.Items.Remove(expired);
                 if (waiting.Items.Count >= 256)
-                    return ActionResult.Refused("Подтверждение: слишком много ожидающих операций. Повторите запрос позже");
+                    return ReplyMarkup.Refused("Подтверждение: слишком много ожидающих операций. Повторите запрос позже");
                 waiting.Items[key] = new Pending(known, card, shape, changes, context.Now + Lifetime);
-                var preview = known == Delete ? $"Подтвердите удаление документа:\n{card.Text}"
-                    : $"Подтвердите изменение документа:\n{card.Text}\n\nИзменения:\n"
-                      + string.Join("\n", changes.Select(c => $"{c.Key}: {Value(card, c.Key)} → {c.Value}"));
-                return Reply($"{preview}\n\n{AnswerPrompt}\nПодтверждение действует 10 минут", 0);
+                // Перечень изменений строками: старое значение зачеркнуто, новое — жирным.
+                var preview = known == Delete
+                    ? $"{ReplyMarkup.Bold("Подтвердите удаление документа:")}\n{card.Text()}"
+                    : $"{ReplyMarkup.Bold("Подтвердите изменение документа:")}\n{card.Text()}\n\n"
+                      + $"{ReplyMarkup.Bold("Изменения:")}\n"
+                      + string.Join("\n", changes.Select(c =>
+                            $"{c.Key}: {ReplyMarkup.Struck(ReplyMarkup.Escape(Value(card, c.Key)))} → "
+                            + ReplyMarkup.Bold(ReplyMarkup.Escape(c.Value))));
+                return Reply($"{preview}\n\n{Prompt}", 0);
             }
-            catch (PermissionDeniedException error) { return ActionResult.Refused(error.Message); }
+            catch (PermissionDeniedException error) { return ReplyMarkup.Refused(error.Message); }
         }
     }
 
@@ -156,7 +176,7 @@ internal static class DocumentMessages
         lock (waiting)
         {
             if (waiting.Items.TryGetValue(key, out var active) && active.Expires > context.Now)
-                return ActionResult.Refused("Ожидается подтверждение. Для нового запроса сначала ответьте Нет");
+                return ReplyMarkup.RefusedHeaded("Ожидается подтверждение. Для нового запроса сначала ответьте Нет");
             try
             {
                 DemandRegistration(repo, shape.CollectionId);
@@ -165,16 +185,16 @@ internal static class DocumentMessages
                     var series = Series(repo, shape, request.Org, request.Eskd);
                     var number = request.Number ?? Designation.FirstFree(series, request.Org, request.Eskd);
                     if (number is null)
-                        return ActionResult.Refused("Номер: в серии заняты все номера 001–999");
+                        return ReplyMarkup.Refused("Номер: в серии заняты все номера 001–999");
                     int? execution = null;
                     if (request.NewExecution)
                     {
                         execution = Designation.FirstFreeExecution(series, request.Org, request.Eskd, number.Value);
                         if (execution is null)
-                            return ActionResult.Refused("Номер: у документа заняты все исполнения 01–99");
+                            return ReplyMarkup.Refused("Номер: у документа заняты все исполнения 01–99");
                     }
                     else if (series.Any(d => Designation.NumberIn(d, request.Org, request.Eskd) == number))
-                        return ActionResult.Refused($"Номер: документ {Designation.Format(request.Org, request.Eskd, number.Value)} уже зарегистрирован");
+                        return ReplyMarkup.Refused($"Номер: документ {Designation.Format(request.Org, request.Eskd, number.Value)} уже зарегистрирован");
 
                     var input = new RegistrationInput(request.Name, request.Org, request.Eskd, request.Fio,
                         request.Project, Execution: execution, Number: number);
@@ -186,7 +206,7 @@ internal static class DocumentMessages
                         foreach (var expired in waiting.Items.Where(p => p.Value.Expires <= context.Now).Select(p => p.Key).ToArray())
                             waiting.Items.Remove(expired);
                         if (waiting.Items.Count >= 256)
-                            return ActionResult.Refused("Подтверждение: слишком много ожидающих операций. Повторите запрос позже");
+                            return ReplyMarkup.Refused("Подтверждение: слишком много ожидающих операций. Повторите запрос позже");
                         var designation = execution is { } e
                             ? Designation.FormatExecution(request.Org, request.Eskd, number.Value, e)
                             : Designation.Format(request.Org, request.Eskd, number.Value);
@@ -194,17 +214,18 @@ internal static class DocumentMessages
                         waiting.Items[key] = new Pending(MessageRegistration.RegisterWord, card, shape,
                             new Dictionary<string, string>(), context.Now + Lifetime, input, series);
                         // Порядок ответа — как в плане: номер, расшифровка кода по уровням, вопрос.
+                        // Предупреждение — жирным целиком: ради него ответ и просит подтверждения.
                         var warning = missing
-                            ? "Код классификации не найден в доступном справочнике ЕСКД. Возможно, он относится к закрытому классификатору. Вы уверены, что номер указан верно?"
-                            : string.Join("\n", EskdCatalog.Chain(request.Eskd).Select(n => $"{n.Code} — {(n.Name.Length == 0 ? "наименование отсутствует в справочнике" : n.Name)}"))
-                              + "\n\nЭто первый номер в данной серии классификатора. Вы уверены, что номер верный?";
-                        return Reply($"{RegisterMessageAction.Registered(designation, request, "Заявка на регистрацию")}\n\n{warning}\n\n{AnswerPrompt}\nПодтверждение действует 10 минут", 0);
+                            ? ReplyMarkup.Bold("Код классификации не найден в доступном справочнике ЕСКД. Возможно, он относится к закрытому классификатору. Вы уверены, что номер указан верно?")
+                            : string.Join("\n", EskdCatalog.Chain(request.Eskd).Select(n => $"{n.Code} — {ReplyMarkup.Escape(n.Name.Length == 0 ? "наименование отсутствует в справочнике" : n.Name)}"))
+                              + "\n\n" + ReplyMarkup.Bold("Это первый номер в данной серии классификатора. Вы уверены, что номер верный?");
+                        return Reply($"{RegisterMessageAction.Registered(designation, request, "Заявка на регистрацию")}\n\n{warning}\n\n{Prompt}", 0);
                     }
                     return WriteRegistration(context, repo, shape, input);
                 });
             }
-            catch (PermissionDeniedException error) { return ActionResult.Refused(error.Message); }
-            catch (DocRegistryException error) { return ActionResult.Refused($"Номер: {error.Message}"); }
+            catch (PermissionDeniedException error) { return ReplyMarkup.Refused(error.Message); }
+            catch (DocRegistryException error) { return ReplyMarkup.Refused($"Номер: {error.Message}"); }
         }
     }
 
@@ -242,32 +263,32 @@ internal static class DocumentMessages
                 {
                     var orgs = DocRegistryExtension.ParseOrgCodes(context.Setting(DocRegistryExtension.OrgCodesKey));
                     if (orgs.Count > 0 && !orgs.Any(o => MessageRegistration.Org(o) == MessageRegistration.Org(registration.Org)))
-                        return ActionResult.Refused("Номер: код организации больше не разрешен. Отправьте запрос заново");
+                        return ReplyMarkup.Refused("Номер: код организации больше не разрешен. Отправьте запрос заново");
                     if (shape != pending.Shape || !Series(repo, shape, registration.Org, registration.Eskd)
                             .SequenceEqual(pending.Series ?? [], StringComparer.Ordinal))
-                        return ActionResult.Refused("Серия изменилась после запроса подтверждения. Регистрация не выполнена. Отправьте запрос заново");
+                        return ReplyMarkup.RefusedHeaded("Серия изменилась после запроса подтверждения. Регистрация не выполнена. Отправьте запрос заново");
                     return WriteRegistration(context, repo, shape, registration);
                 }
                 var (current, problem) = Find(repo, shape, pending.Before.Number, context);
-                if (current is null) return ActionResult.Refused(problem);
+                if (current is null) return ReplyMarkup.Refused(problem);
                 if (shape != pending.Shape || current != pending.Before)
-                    return ActionResult.Refused("Документ изменился после запроса подтверждения. Операция не выполнена. Отправьте запрос заново");
+                    return ReplyMarkup.RefusedHeaded("Документ изменился после запроса подтверждения. Операция не выполнена. Отправьте запрос заново");
 
                 if (pending.Action == Delete)
                 {
                     repo.DeleteRecord(current.Id);
-                    return Reply($"Удалено\n{current.Text}", 1);
+                    return Reply($"{ReplyMarkup.Bold("Удалено")}\n{current.Text()}", 1);
                 }
                 foreach (var (field, value) in pending.Changes)
                 {
                     if (field == "Наименование") repo.SetRecordTitle(current.Id, value);
                     else repo.SetFieldValue(current.Id, field == "Проект" ? shape.ProjectFieldId : shape.FioFieldId, value);
                 }
-                return Reply($"Изменено\n{Apply(current, pending.Changes).Text}", 1);
+                return Reply($"{ReplyMarkup.Bold("Изменено")}\n{Apply(current, pending.Changes).Text([.. pending.Changes.Keys])}", 1);
             });
         }
-        catch (PermissionDeniedException error) { return ActionResult.Refused(error.Message); }
-        catch (DocRegistryException error) { return ActionResult.Refused($"Номер: {error.Message}"); }
+        catch (PermissionDeniedException error) { return ReplyMarkup.Refused(error.Message); }
+        catch (DocRegistryException error) { return ReplyMarkup.Refused($"Номер: {error.Message}"); }
     }
 
     private static void Demand(ConstructorRepository repo, int collection, string action)
@@ -320,7 +341,12 @@ internal static class DocumentMessages
         "Наименование" => card.Name, "Проект" => card.Project, _ => card.Fio,
     };
 
-    private static ActionResult Reply(string text, int rows) => new(true, text.Split('\n')[0], rows, Reply: text);
+    /// <summary>Удача с оформленным ответом; в журнал — его первая строка простым текстом.</summary>
+    private static ActionResult Reply(string html, int rows) =>
+        new(true, ReplyMarkup.Text(html).Split('\n')[0], rows, Reply: html);
+
+    /// <summary>Просьба ответить и срок — двумя строками под запросом подтверждения.</summary>
+    private const string Prompt = ReplyMarkup.AnswerPrompt + "\n" + ReplyMarkup.Lifetime;
 
     internal static string? ExactNumber(string text)
     {

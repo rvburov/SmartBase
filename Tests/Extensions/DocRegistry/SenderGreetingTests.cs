@@ -50,10 +50,21 @@ public sealed class SenderGreetingTests
     [Fact]
     public void Text_is_the_access_line_and_the_instruction()
     {
+        var seen = ReplyMarkup.Text(SenderGreeting.Text);
+
         Assert.StartsWith("Вам открыт доступ к регистрации документов в журнале КД.\n\nИнструкция по работе с журналом КД\n",
-                          SenderGreeting.Text, StringComparison.Ordinal);
-        Assert.EndsWith("Инструкция", SenderGreeting.Text, StringComparison.Ordinal);
+                          seen, StringComparison.Ordinal);
+        Assert.EndsWith("Инструкция", seen.TrimEnd(), StringComparison.Ordinal);
         Assert.DoesNotContain('\r', SenderGreeting.Text);
+    }
+
+    /// <summary>Строка о доступе — жирным, как заголовок; за ней — оформленная инструкция.</summary>
+    [Fact]
+    public void The_access_line_is_bold_like_a_heading()
+    {
+        Assert.StartsWith("<b>Вам открыт доступ к регистрации документов в журнале КД.</b>\n\n"
+                          + "<b><font size='4'>Инструкция по работе с журналом КД</font></b>\n",
+                          SenderGreeting.Text, StringComparison.Ordinal);
     }
 
     /// <summary>Кнопка стоит под списком регистрирующих, и больше нигде.</summary>

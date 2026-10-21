@@ -50,7 +50,10 @@ public sealed class RegisterMessageAction : IExtensionAction
     /// <summary>Первая строка ответа об удаче.</summary>
     public const string RegisteredWord = "Зарегистрировано";
 
-    /// <summary>Отказ тому, кого нет в списке. Без подробностей: чужому они ни к чему.</summary>
+    /// <summary>
+    /// Отказ тому, кого нет в списке. Без подробностей: чужому они ни к чему. Уходит с первым
+    /// предложением жирным (<see cref="ReplyMarkup.Headed"/>).
+    /// </summary>
     public const string NotListed = "Вы не в списке регистрирующих. Обратитесь к администратору";
 
     public string Key         => ActionKey;
@@ -96,11 +99,11 @@ public sealed class RegisterMessageAction : IExtensionAction
         if (senders.Count == 0)
             return new ActionResult(false,
                 "список регистрирующих по сообщениям пуст: заполните настройку расширения "
-                + $"«{DocRegistryExtension.SendersLabel}»", Reply: NotListed);
+                + $"«{DocRegistryExtension.SendersLabel}»", Reply: ReplyMarkup.Headed(NotListed));
 
         if (!senders.Contains(sender))
             return new ActionResult(false, $"отправителя «{sender}» нет в списке регистрирующих",
-                                    Reply: NotListed);
+                                    Reply: ReplyMarkup.Headed(NotListed));
 
         var orgs = DocRegistryExtension.ParseOrgCodes(context.Setting(DocRegistryExtension.OrgCodesKey));
 
@@ -117,14 +120,15 @@ public sealed class RegisterMessageAction : IExtensionAction
 
         if (request is null)
         {
-            var reply = string.Join("\n", problems);
+            var plain = string.Join("\n", problems);
 
             // Не узнано ни одной строки — отправителю перечень тот же, а тому, кто настраивал
             // обмен, надо знать, что действие получило: пустую колонку или текст не того вида.
             // Сам текст в объяснение не идет: оно ложится в журнал.
             return MessageRegistration.KnownLines(text) > 0
-                ? ActionResult.Refused(reply)
-                : new ActionResult(false, reply + "\n" + NothingRead(text), Reply: reply);
+                ? ReplyMarkup.Refused(plain)
+                : new ActionResult(false, plain + "\n" + NothingRead(text),
+                                   Reply: ReplyMarkup.Problems(plain));
         }
 
         if (context.Repo is not { } repo)
@@ -149,15 +153,16 @@ public sealed class RegisterMessageAction : IExtensionAction
     /// <summary>
     /// Ответ об удаче: что зарегистрировано — теми же строками и в том же порядке, что в
     /// сообщении. На месте метки стоит выданный номер, остальное — как записано в журнал.
+    /// Заголовок и номер — жирным (<see cref="ReplyMarkup"/>).
     /// </summary>
     internal static string Registered(string designation, RegistrationRequest request,
                                       string heading = RegisteredWord) =>
         string.Join("\n",
-            heading,
-            $"{MessageRegistration.NumberKey}: {designation}",
-            $"{MessageRegistration.NameKey}: {request.Name}",
-            $"{MessageRegistration.ProjectKey}: {request.Project}",
-            $"{MessageRegistration.FioKey}: {request.Fio}");
+            ReplyMarkup.Bold(ReplyMarkup.Escape(heading)),
+            $"{MessageRegistration.NumberKey}: {ReplyMarkup.Bold(ReplyMarkup.Escape(designation))}",
+            $"{MessageRegistration.NameKey}: {ReplyMarkup.Escape(request.Name)}",
+            $"{MessageRegistration.ProjectKey}: {ReplyMarkup.Escape(request.Project)}",
+            $"{MessageRegistration.FioKey}: {ReplyMarkup.Escape(request.Fio)}");
 
     /// <summary>Пометка для журнала: что действие получило вместо сообщения.</summary>
     private static string NothingRead(string text) => text.Length == 0

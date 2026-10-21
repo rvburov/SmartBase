@@ -47,15 +47,15 @@ public sealed class RegistrationConfirmationTests : IDisposable
         var preview = Call(Request(tail));
         Assert.True(preview.Ok, preview.Explanation);
         Assert.Equal(0, preview.Rows);
-        Assert.Contains("АБВГ.301121.001", preview.Answer, StringComparison.Ordinal);
-        Assert.Contains("Это первый номер", preview.Answer, StringComparison.Ordinal);
+        Assert.Contains("АБВГ.301121.001", ReplyMarkup.Text(preview.Answer), StringComparison.Ordinal);
+        Assert.Contains("Это первый номер", ReplyMarkup.Text(preview.Answer), StringComparison.Ordinal);
         foreach (var node in EskdCatalog.Chain("301121"))
-            Assert.Contains($"{node.Code} — {node.Name}", preview.Answer, StringComparison.Ordinal);
+            Assert.Contains($"{node.Code} — {node.Name}", ReplyMarkup.Text(preview.Answer), StringComparison.Ordinal);
         Assert.Empty(_db.Constructor.GetRecords(_journal));
         Assert.True(Call("Инструкция").Ok);
         var done = Call("да");
         Assert.True(done.Ok, done.Explanation);
-        Assert.StartsWith("Зарегистрировано\nНомер: АБВГ.301121.001", done.Answer, StringComparison.Ordinal);
+        Assert.StartsWith("Зарегистрировано\nНомер: АБВГ.301121.001", ReplyMarkup.Text(done.Answer), StringComparison.Ordinal);
         Assert.Single(_db.Constructor.GetRecords(_journal));
         Assert.False(Call("Да").Ok);
     }
@@ -68,13 +68,13 @@ public sealed class RegistrationConfirmationTests : IDisposable
         Assert.Null(EskdCatalog.Find("000000"));
         var preview = Call(Request(tail, "000000"));
         Assert.True(preview.Ok, preview.Explanation);
-        Assert.Contains("Код классификации не найден в доступном справочнике ЕСКД", preview.Answer, StringComparison.Ordinal);
-        Assert.Contains("Возможно, он относится к закрытому классификатору", preview.Answer, StringComparison.Ordinal);
+        Assert.Contains("Код классификации не найден в доступном справочнике ЕСКД", ReplyMarkup.Text(preview.Answer), StringComparison.Ordinal);
+        Assert.Contains("Возможно, он относится к закрытому классификатору", ReplyMarkup.Text(preview.Answer), StringComparison.Ordinal);
         Assert.Empty(_db.Constructor.GetRecords(_journal));
         Assert.True(Call("Да").Ok);
         Assert.Single(_db.Constructor.GetRecords(_journal));
         var second = Call(Request("ХХХ", "000000"));
-        Assert.StartsWith("Зарегистрировано\nНомер: АБВГ.000000.002", second.Answer, StringComparison.Ordinal);
+        Assert.StartsWith("Зарегистрировано\nНомер: АБВГ.000000.002", ReplyMarkup.Text(second.Answer), StringComparison.Ordinal);
         Assert.Equal(2, _db.Constructor.GetRecords(_journal).Count);
     }
 
@@ -89,13 +89,13 @@ public sealed class RegistrationConfirmationTests : IDisposable
     {
         var preview = Call(Request(tail));
         Assert.True(preview.Ok, preview.Explanation);
-        Assert.Contains($"Номер: {designation}\n", preview.Answer, StringComparison.Ordinal);
-        Assert.Contains("Это первый номер", preview.Answer, StringComparison.Ordinal);
+        Assert.Contains($"Номер: {designation}\n", ReplyMarkup.Text(preview.Answer), StringComparison.Ordinal);
+        Assert.Contains("Это первый номер", ReplyMarkup.Text(preview.Answer), StringComparison.Ordinal);
         Assert.Empty(_db.Constructor.GetRecords(_journal));
 
         var done = Call("Да");
         Assert.True(done.Ok, done.Explanation);
-        Assert.StartsWith($"Зарегистрировано\nНомер: {designation}\n", done.Answer, StringComparison.Ordinal);
+        Assert.StartsWith($"Зарегистрировано\nНомер: {designation}\n", ReplyMarkup.Text(done.Answer), StringComparison.Ordinal);
         Assert.Single(_db.Constructor.GetRecords(_journal));
     }
 
@@ -103,7 +103,7 @@ public sealed class RegistrationConfirmationTests : IDisposable
     [Fact]
     public void The_first_number_question_follows_the_number_and_the_catalog_chain()
     {
-        var answer = Call(Request()).Answer;
+        var answer = ReplyMarkup.Text(Call(Request()).Answer);
         var number   = answer.IndexOf("Номер: АБВГ.301121.001", StringComparison.Ordinal);
         var chain    = answer.IndexOf($"{EskdCatalog.Chain("301121").Last().Code} — ", StringComparison.Ordinal);
         var question = answer.IndexOf("Это первый номер в данной серии классификатора. Вы уверены, что номер верный?", StringComparison.Ordinal);
@@ -118,7 +118,7 @@ public sealed class RegistrationConfirmationTests : IDisposable
     public void No_cancels_without_writing_and_cannot_be_reused(string code)
     {
         Assert.True(Call(Request(code: code)).Ok);
-        Assert.Equal("Операция отменена", Call("Нет").Answer);
+        Assert.Equal("Операция отменена", ReplyMarkup.Text(Call("Нет").Answer));
         Assert.Empty(_db.Constructor.GetRecords(_journal));
         Assert.False(Call("Да").Ok);
         Assert.True(Call(Request(code: code)).Ok);
@@ -133,7 +133,7 @@ public sealed class RegistrationConfirmationTests : IDisposable
         Seed(1);
         var result = Call(Request(tail));
         Assert.True(result.Ok, result.Explanation);
-        Assert.StartsWith("Зарегистрировано\nНомер: АБВГ.301121.002", result.Answer, StringComparison.Ordinal);
+        Assert.StartsWith("Зарегистрировано\nНомер: АБВГ.301121.002", ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
         Assert.Equal(2, _db.Constructor.GetRecords(_journal).Count);
         Assert.False(Call("Да").Ok);
     }
@@ -142,7 +142,7 @@ public sealed class RegistrationConfirmationTests : IDisposable
     public void A_hole_at_001_in_an_existing_series_needs_no_first_series_warning()
     {
         Seed(2);
-        Assert.StartsWith("Зарегистрировано\n", Call(Request()).Answer, StringComparison.Ordinal);
+        Assert.StartsWith("Зарегистрировано\n", ReplyMarkup.Text(Call(Request()).Answer), StringComparison.Ordinal);
         Assert.Equal(2, _db.Constructor.GetRecords(_journal).Count);
     }
 
@@ -150,7 +150,7 @@ public sealed class RegistrationConfirmationTests : IDisposable
     public void Another_organization_does_not_make_this_series_existing()
     {
         Seed(1, org: "ГМБВ");
-        Assert.Contains("Это первый номер", Call(Request()).Answer, StringComparison.Ordinal);
+        Assert.Contains("Это первый номер", ReplyMarkup.Text(Call(Request()).Answer), StringComparison.Ordinal);
         Assert.Single(_db.Constructor.GetRecords(_journal));
     }
 
@@ -160,7 +160,7 @@ public sealed class RegistrationConfirmationTests : IDisposable
         Seed(1);
         var result = Call(Request());
         Assert.False(result.Ok);
-        Assert.Contains("уже зарегистрирован", result.Answer, StringComparison.Ordinal);
+        Assert.Contains("уже зарегистрирован", ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
         Assert.Single(_db.Constructor.GetRecords(_journal));
     }
 
@@ -171,7 +171,7 @@ public sealed class RegistrationConfirmationTests : IDisposable
         Seed(1);
         var result = Call("Да");
         Assert.False(result.Ok);
-        Assert.Contains("Серия изменилась", result.Answer, StringComparison.Ordinal);
+        Assert.Contains("Серия изменилась", ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
         Assert.Single(_db.Constructor.GetRecords(_journal));
         Assert.False(Call("Да").Ok);
     }
@@ -182,7 +182,7 @@ public sealed class RegistrationConfirmationTests : IDisposable
         Assert.True(Call(Request()).Ok);
         var result = Call("Да", minutes: 10);
         Assert.False(result.Ok);
-        Assert.Contains("срок истек", result.Answer, StringComparison.Ordinal);
+        Assert.Contains("срок истек", ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
         Assert.Empty(_db.Constructor.GetRecords(_journal));
     }
 
@@ -202,7 +202,7 @@ public sealed class RegistrationConfirmationTests : IDisposable
         Assert.True(Call(Request()).Ok);
         Assert.False(Call(Request("002")).Ok);
         Assert.True(Call("Да").Ok);
-        Assert.Contains("АБВГ.301121.001", Call("Действие: Просмотр\nНомер: АБВГ.301121.001").Answer, StringComparison.Ordinal);
+        Assert.Contains("АБВГ.301121.001", ReplyMarkup.Text(Call("Действие: Просмотр\nНомер: АБВГ.301121.001").Answer), StringComparison.Ordinal);
         Assert.Single(_db.Constructor.GetRecords(_journal));
     }
 
@@ -234,7 +234,7 @@ public sealed class RegistrationConfirmationTests : IDisposable
     {
         var result = Call(Request(code: "000000").Replace("Наименование: Кронштейн", "Наименование:", StringComparison.Ordinal));
         Assert.False(result.Ok);
-        Assert.Contains("Наименование: не указано наименование", result.Answer, StringComparison.Ordinal);
+        Assert.Contains("Наименование: не указано наименование", ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
         Assert.False(Call("Да").Ok);
         Assert.Empty(_db.Constructor.GetRecords(_journal));
     }

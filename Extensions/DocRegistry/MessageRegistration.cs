@@ -277,7 +277,17 @@ public static class MessageRegistration
     {
         if (string.IsNullOrEmpty(text) || !Tag.IsMatch(text)) return text ?? "";
 
-        var lines = BreakTag.Replace(text, "\n");
+        return Unmarked(text);
+    }
+
+    /// <summary>
+    /// Текст, который заведомо размечен, — без тегов и с сущностями, возвращенными знаками.
+    /// В отличие от <see cref="Plain"/> не спрашивает, есть ли теги: так читаются собственные
+    /// ответы расширения (<see cref="ReplyMarkup"/>), где «&amp;lt;» — всегда экранированный знак.
+    /// </summary>
+    internal static string Unmarked(string html)
+    {
+        var lines = BreakTag.Replace(html, "\n");
         var bare  = Tag.Replace(lines, "");
 
         // Неразрывный пробел — частый гость разметки; в журнале он ни к чему.
@@ -332,13 +342,32 @@ public static class MessageRegistration
             var colon = line.IndexOf(':');
             if (colon <= 0) continue;
 
-            var key = line[..colon].Trim();
+            var key = Key(line[..colon]);
             if (key.Length == 0 || values.Any(v => RegistrySchema.SameName(v.Key, key))) continue;
 
             values.Add((key, line[(colon + 1)..].Trim()));
         }
 
         return values;
+    }
+
+    /// <summary>
+    /// Знаки, которые оказываются перед строкой, скопированной из оформленного ответа: метка
+    /// цитаты и маркеры списка. Образцы сообщений в инструкции стоят цитатой, и при копировании
+    /// программа может поставить их перед каждой строкой.
+    /// </summary>
+    private static readonly char[] LineMarks = ['>', '|', '│', '•', '·', '◦', '▪', '-', '–', '—', '*'];
+
+    /// <summary>
+    /// Ключ строки без меток цитаты и списка и без невидимых знаков форматирования: человек
+    /// видит «Номер», что бы ни пришло перед ним вместе с копией.
+    /// </summary>
+    private static string Key(string text)
+    {
+        var visible = string.Concat(text.Where(c =>
+            char.GetUnicodeCategory(c) != System.Globalization.UnicodeCategory.Format));
+
+        return visible.Trim().TrimStart(LineMarks).Trim();
     }
 
     internal static string Value(List<(string Key, string Value)> values, string key) =>

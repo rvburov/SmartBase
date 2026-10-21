@@ -53,8 +53,8 @@ public sealed class DocumentMessageTests : IDisposable
         Assert.True(result.Ok, result.Explanation);
         foreach (var value in new[] { Number, "Кронштейн", "Машина", "Иванов Иван Иванович",
                                      "Дата регистрации:", "Учтен", "Первое применение", "Стальной" })
-            Assert.Contains(value, result.Answer, StringComparison.Ordinal);
-        Assert.DoesNotContain("Подтвердите", result.Answer, StringComparison.Ordinal);
+            Assert.Contains(value, ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
+        Assert.DoesNotContain("Подтвердите", ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
         Assert.Equal(before, _db.Constructor.GetFieldValues(_id));
         Assert.False(Call("Да").Ok);
     }
@@ -69,7 +69,7 @@ public sealed class DocumentMessageTests : IDisposable
         Assert.True(Call(Request("Удаление")).Ok);
         Assert.False(Call(answer).Ok);
         Assert.NotNull(_db.Constructor.GetRecord(_id));
-        Assert.Equal("Операция отменена", Call("нет").Answer);
+        Assert.Equal("Операция отменена", ReplyMarkup.Text(Call("нет").Answer));
         Assert.NotNull(_db.Constructor.GetRecord(_id));
     }
 
@@ -81,8 +81,8 @@ public sealed class DocumentMessageTests : IDisposable
         var result = Call(Request("Удаление"));
         Assert.True(result.Ok, result.Explanation);
         Assert.Equal(0, result.Rows);
-        Assert.Contains("Подтвердите удаление", result.Answer, StringComparison.Ordinal);
-        Assert.Contains("Кронштейн", result.Answer, StringComparison.Ordinal);
+        Assert.Contains("Подтвердите удаление", ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
+        Assert.Contains("Кронштейн", ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
         Assert.NotNull(_db.Constructor.GetRecord(_id));
         Assert.False(Call("Да", sender: "1002").Ok);
         Assert.NotNull(_db.Constructor.GetRecord(_id));
@@ -101,8 +101,8 @@ public sealed class DocumentMessageTests : IDisposable
         var before = _db.Constructor.GetFieldValues(_id);
         var result = Call(Request("Изменение") + "\nНаименование: Опора\nПроект: Станок\nФИО: Петров Петр Петрович");
         Assert.True(result.Ok, result.Explanation);
-        Assert.Contains("Наименование: Кронштейн → Опора", result.Answer, StringComparison.Ordinal);
-        Assert.Contains("Проект: Машина → Станок", result.Answer, StringComparison.Ordinal);
+        Assert.Contains("Наименование: Кронштейн → Опора", ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
+        Assert.Contains("Проект: Машина → Станок", ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
         Assert.Equal("Кронштейн", _db.Constructor.GetRecord(_id)!.Title);
         Assert.Equal(before, _db.Constructor.GetFieldValues(_id));
         Assert.True(Call(answer).Ok);
@@ -121,13 +121,13 @@ public sealed class DocumentMessageTests : IDisposable
     {
         var preview = Call(Request("Изменение") + "\nФИО: Петров   Петр \t Петрович");
         Assert.True(preview.Ok, preview.Explanation);
-        Assert.Contains("ФИО: Иванов Иван Иванович → Петров Петр Петрович", preview.Answer, StringComparison.Ordinal);
+        Assert.Contains("ФИО: Иванов Иван Иванович → Петров Петр Петрович", ReplyMarkup.Text(preview.Answer), StringComparison.Ordinal);
         Assert.True(Call("Да").Ok);
         Assert.Equal("Петров Петр Петрович", _db.Constructor.GetFieldValues(_id)[_shape.FioFieldId]);
 
         var same = Call(Request("Изменение") + "\nФИО: Петров  Петр  Петрович");
         Assert.False(same.Ok);
-        Assert.Contains("Изменений нет", same.Answer, StringComparison.Ordinal);
+        Assert.Contains("Изменений нет", ReplyMarkup.Text(same.Answer), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -148,7 +148,7 @@ public sealed class DocumentMessageTests : IDisposable
     {
         var result = Call(Request(action), sender: "9999");
         Assert.False(result.Ok);
-        Assert.Equal(RegisterMessageAction.NotListed, result.Answer);
+        Assert.Equal(RegisterMessageAction.NotListed, ReplyMarkup.Text(result.Answer));
         Assert.NotNull(_db.Constructor.GetRecord(_id));
     }
 
@@ -199,7 +199,7 @@ public sealed class DocumentMessageTests : IDisposable
         Assert.True(Call(Request("Удаление")).Ok);
         var result = Call("Да", at: Now.AddMinutes(10));
         Assert.False(result.Ok);
-        Assert.Contains("срок истек", result.Answer, StringComparison.Ordinal);
+        Assert.Contains("срок истек", ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
         Assert.NotNull(_db.Constructor.GetRecord(_id));
         Assert.True(Call(Request("Удаление"), at: Now.AddMinutes(11)).Ok);
         Assert.True(Call("Нет", at: Now.AddMinutes(11)).Ok);
@@ -216,7 +216,7 @@ public sealed class DocumentMessageTests : IDisposable
     {
         var result = Call(Request(action, number));
         Assert.False(result.Ok);
-        Assert.StartsWith("Номер:", result.Answer, StringComparison.Ordinal);
+        Assert.StartsWith("Номер:", ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
         Assert.False(Call("Да").Ok);
         Assert.NotNull(_db.Constructor.GetRecord(_id));
     }
@@ -229,7 +229,7 @@ public sealed class DocumentMessageTests : IDisposable
     {
         var result = Call(Request(action, "АБВГ.301121.999") + (action == "Изменение" ? "\nПроект: Станок" : ""));
         Assert.False(result.Ok);
-        Assert.Contains("не найден", result.Answer, StringComparison.Ordinal);
+        Assert.Contains("не найден", ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -238,7 +238,7 @@ public sealed class DocumentMessageTests : IDisposable
         JournalStand.AddRow(_db.Constructor, _shape, "Дубликат", Number);
         var result = Call(Request("Удаление"));
         Assert.False(result.Ok);
-        Assert.Contains("несколько записей", result.Answer, StringComparison.Ordinal);
+        Assert.Contains("несколько записей", ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
         Assert.False(Call("Да").Ok);
         Assert.Equal(2, _db.Constructor.GetRecords(_journal).Count);
     }
@@ -249,7 +249,7 @@ public sealed class DocumentMessageTests : IDisposable
         var result = Call(Request("Изменение") + "\nНаименование: \nПроект: \nФИО: Иванов И.И.\nНовый номер: АБВГ.301121.002");
         Assert.False(result.Ok);
         foreach (var field in new[] { "Наименование:", "Проект:", "ФИО:", "Новый номер:" })
-            Assert.Contains(field, result.Answer, StringComparison.Ordinal);
+            Assert.Contains(field, ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
         Assert.False(Call("Да").Ok);
         Assert.Equal("Кронштейн", _db.Constructor.GetRecord(_id)!.Title);
     }
@@ -279,7 +279,7 @@ public sealed class DocumentMessageTests : IDisposable
         }
         var result = Call("Да");
         Assert.False(result.Ok);
-        Assert.Contains("изменился", result.Answer, StringComparison.Ordinal);
+        Assert.Contains("изменился", ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
         Assert.NotNull(_db.Constructor.GetRecord(_id));
         Assert.Equal("Машина", _db.Constructor.GetFieldValuesBatch([_id])[_id][_shape.ProjectFieldId]);
         Assert.False(Call("Да").Ok);
@@ -301,8 +301,8 @@ public sealed class DocumentMessageTests : IDisposable
         JournalStand.AddRow(_db.Constructor, _shape, "Исполнение", Number + "-01");
         var result = Call("<p>Действие: Просмотр</p><p>Номер: АБВГ.301121.001-01</p>");
         Assert.True(result.Ok);
-        Assert.Contains("Наименование: Исполнение", result.Answer, StringComparison.Ordinal);
-        Assert.DoesNotContain("Кронштейн", result.Answer, StringComparison.Ordinal);
+        Assert.Contains("Наименование: Исполнение", ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
+        Assert.DoesNotContain("Кронштейн", ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -349,7 +349,7 @@ public sealed class DocumentMessageTests : IDisposable
         _db.Permissions.Reload(notify: false);
         var result = Call(afterPreview ? "Да" : request);
         Assert.False(result.Ok);
-        Assert.Contains("Недостаточно прав", result.Answer, StringComparison.Ordinal);
+        Assert.Contains("Недостаточно прав", ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
         Assert.NotNull(_db.Constructor.GetRecord(_id));
         Assert.Equal("Машина", _db.Constructor.GetFieldValues(_id)[_shape.ProjectFieldId]);
     }
@@ -364,7 +364,7 @@ public sealed class DocumentMessageTests : IDisposable
         _db.Permissions.Reload(notify: false);
         var result = Call("Действие: Регистрация\nНомер: АБВГ.301121.ХХХ\nНаименование: Опора\nПроект: Станок\nФИО: Иванов Иван Иванович");
         Assert.False(result.Ok);
-        Assert.Contains("Недостаточно прав", result.Answer, StringComparison.Ordinal);
+        Assert.Contains("Недостаточно прав", ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
         Assert.Single(_db.Constructor.GetRecords(_journal));
     }
 }

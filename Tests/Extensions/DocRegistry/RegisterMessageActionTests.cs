@@ -52,7 +52,7 @@ public sealed class RegisterMessageActionTests
         var result = Action.Run(new ActionContext(null, 1, 1, Now, Settings()), Input(command));
         Assert.True(result.Ok, result.Explanation);
         Assert.Equal(0, result.Rows);
-        var instruction = result.Answer.ReplaceLineEndings("\n");
+        var instruction = ReplyMarkup.Text(result.Answer).ReplaceLineEndings("\n");
         foreach (var action in new[] { "Регистрация", "Просмотр", "Удаление", "Изменение" })
             Assert.Contains($"Действие: {action}\nНомер:", instruction, StringComparison.Ordinal);
         Assert.Contains("не найден", instruction, StringComparison.Ordinal);
@@ -68,7 +68,7 @@ public sealed class RegisterMessageActionTests
         var result = Action.Run(new ActionContext(null, 1, 1, Now, Settings()),
                                 Input("Инструкция", "unknown"));
         Assert.False(result.Ok);
-        Assert.Equal(RegisterMessageAction.NotListed, result.Answer);
+        Assert.Equal(RegisterMessageAction.NotListed, ReplyMarkup.Text(result.Answer));
     }
 
     // ── Регистрация ───────────────────────────────────────────────────────────
@@ -86,7 +86,7 @@ public sealed class RegisterMessageActionTests
         var result = Action.Run(Context(db, journal), Input(Message()));
 
         Assert.Empty(db.Constructor.GetRecords(journal));
-        Assert.Contains("первый номер", result.Answer, StringComparison.Ordinal);
+        Assert.Contains("первый номер", ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
         result = Action.Run(Context(db, journal), Input("Да"));
 
         Assert.True(result.Ok, result.Explanation);
@@ -96,7 +96,7 @@ public sealed class RegisterMessageActionTests
             + "Наименование: Кронштейн\n"
             + "Проект: Машина\n"
             + "ФИО: Иванов Иван Иванович",
-            result.Answer);
+            ReplyMarkup.Text(result.Answer));
         Assert.Equal("Зарегистрировано АБВГ.301121.001 Машина Иванов Иван Иванович", result.Explanation);
         Assert.Equal(1, result.Rows);
 
@@ -117,7 +117,7 @@ public sealed class RegisterMessageActionTests
         var second = Action.Run(context, Input(Message()));
 
         Assert.True(second.Ok, second.Explanation);
-        Assert.Contains("АБВГ.301121.002", second.Answer, StringComparison.Ordinal);
+        Assert.Contains("АБВГ.301121.002", ReplyMarkup.Text(second.Answer), StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -138,8 +138,8 @@ public sealed class RegisterMessageActionTests
         var first  = Action.Run(context, Input(Message("АБВГ.301121.001-ХХ")));
         var second = Action.Run(context, Input(Message("АБВГ.301121.001-ХХ")));
 
-        Assert.Contains("Номер: АБВГ.301121.001-01\n", first.Answer,  StringComparison.Ordinal);
-        Assert.Contains("Номер: АБВГ.301121.001-02\n", second.Answer, StringComparison.Ordinal);
+        Assert.Contains("Номер: АБВГ.301121.001-01\n", ReplyMarkup.Text(first.Answer),  StringComparison.Ordinal);
+        Assert.Contains("Номер: АБВГ.301121.001-02\n", ReplyMarkup.Text(second.Answer), StringComparison.Ordinal);
 
         // Три строки, и номер 001 без исполнения среди них один.
         var titles = db.Constructor.GetRecords(journal);
@@ -159,13 +159,13 @@ public sealed class RegisterMessageActionTests
         var context = Context(db, journal);
 
         var preview = Action.Run(context, Input(Message("АБВГ.301121.007-ХХ")));
-        Assert.Contains("первый номер", preview.Answer, StringComparison.Ordinal);
+        Assert.Contains("первый номер", ReplyMarkup.Text(preview.Answer), StringComparison.Ordinal);
         Assert.Empty(db.Constructor.GetRecords(journal));
 
         var result = Action.Run(context, Input("Да"));
 
         Assert.True(result.Ok, result.Explanation);
-        Assert.Contains("АБВГ.301121.007-01", result.Answer, StringComparison.Ordinal);
+        Assert.Contains("АБВГ.301121.007-01", ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
         Assert.Single(db.Constructor.GetRecords(journal));
     }
 
@@ -184,7 +184,7 @@ public sealed class RegisterMessageActionTests
         var result = Action.Run(Context(db, journal), Input("не сообщение вовсе", sender: "9999"));
 
         Assert.False(result.Ok);
-        Assert.Equal(RegisterMessageAction.NotListed, result.Answer);
+        Assert.Equal(RegisterMessageAction.NotListed, ReplyMarkup.Text(result.Answer));
         Assert.Contains("9999", result.Explanation, StringComparison.Ordinal);
         Assert.Empty(db.Constructor.GetRecords(journal));
     }
@@ -199,7 +199,7 @@ public sealed class RegisterMessageActionTests
         var result = Action.Run(Context(db, journal), Input(Message(), sender: "Иванов"));
 
         Assert.False(result.Ok);
-        Assert.Equal(RegisterMessageAction.NotListed, result.Answer);
+        Assert.Equal(RegisterMessageAction.NotListed, ReplyMarkup.Text(result.Answer));
     }
 
     /// <summary>
@@ -215,7 +215,7 @@ public sealed class RegisterMessageActionTests
         var result = Action.Run(Context(db, journal, senders: ""), Input(Message()));
 
         Assert.False(result.Ok);
-        Assert.Equal(RegisterMessageAction.NotListed, result.Answer);
+        Assert.Equal(RegisterMessageAction.NotListed, ReplyMarkup.Text(result.Answer));
         Assert.Contains("пуст", result.Explanation, StringComparison.Ordinal);
         Assert.Empty(db.Constructor.GetRecords(journal));
     }
@@ -273,8 +273,8 @@ public sealed class RegisterMessageActionTests
         var result = Action.Run(Context(db, journal), Input(""));
 
         Assert.False(result.Ok);
-        Assert.StartsWith("Действие: не указано действие", result.Answer, StringComparison.Ordinal);
-        Assert.DoesNotContain("пустым", result.Answer, StringComparison.Ordinal);
+        Assert.StartsWith("Действие: не указано действие", ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
+        Assert.DoesNotContain("пустым", ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
         Assert.Contains("пришел пустым", result.Explanation, StringComparison.Ordinal);
     }
 
@@ -292,7 +292,7 @@ public sealed class RegisterMessageActionTests
         var result = Action.Run(Context(db, journal), Input("{text}"));
 
         Assert.False(result.Ok);
-        Assert.StartsWith("Действие: не указано действие", result.Answer, StringComparison.Ordinal);
+        Assert.StartsWith("Действие: не указано действие", ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
         Assert.Contains("знаков: 6", result.Explanation, StringComparison.Ordinal);
         Assert.DoesNotContain("{text}", result.Explanation, StringComparison.Ordinal);
     }
@@ -307,7 +307,7 @@ public sealed class RegisterMessageActionTests
         var result = Action.Run(Context(db, journal), Input("Проект: Машина"));
 
         Assert.False(result.Ok);
-        Assert.Equal(result.Answer, result.Explanation);
+        Assert.Equal(ReplyMarkup.Text(result.Answer), result.Explanation);
     }
 
     // ── Два вида отказа ───────────────────────────────────────────────────────
@@ -325,7 +325,7 @@ public sealed class RegisterMessageActionTests
         Assert.Equal(
             "Номер: неправильный номер (Пример: АААА.000000.ХХХ, АААА.000000.001 или АААА.000000.001-ХХ)\n"
             + "Проект: не указан проект",
-            result.Answer);
+            ReplyMarkup.Text(result.Answer));
         Assert.Empty(db.Constructor.GetRecords(journal));
     }
 
@@ -481,7 +481,7 @@ public sealed class MessageScenarioTests : IDisposable
         Assert.True(outcome.Ok, outcome.Problem);
         Assert.Empty(_db.Constructor.GetRecords(journal));
         outcome = await Run(scenario, Event("Да"));
-        Assert.Equal(Registered, outcome.Reply);
+        Assert.Equal(Registered, ReplyMarkup.Text(outcome.Reply));
         Assert.Single(_db.Constructor.GetRecords(journal));
     }
 
@@ -496,7 +496,7 @@ public sealed class MessageScenarioTests : IDisposable
         Assert.True(outcome.Ok, outcome.Problem);
         Assert.Empty(_db.Constructor.GetRecords(journal));
         outcome = await Run(scenario, Event("Да"));
-        Assert.Equal(Registered, outcome.Reply);
+        Assert.Equal(Registered, ReplyMarkup.Text(outcome.Reply));
         Assert.Single(_db.Constructor.GetRecords(journal));
 
         // В отчете шагов — одна строка: отчет читает тот, кто настраивал обмен.
@@ -518,7 +518,7 @@ public sealed class MessageScenarioTests : IDisposable
                     + (action == "Изменение" ? "\nПроект: Станок" : "");
         var preview = await Run(scenario, Event(request));
         Assert.True(preview.Ok, preview.Problem);
-        Assert.Contains("Подтвердите", preview.Reply, StringComparison.Ordinal);
+        Assert.Contains("Подтвердите", ReplyMarkup.Text(preview.Reply), StringComparison.Ordinal);
         Assert.Single(_db.Constructor.GetRecords(journal));
 
         var otherSource = await Run(Scenario(journal), Event("Да"));
@@ -526,9 +526,9 @@ public sealed class MessageScenarioTests : IDisposable
         Assert.Single(_db.Constructor.GetRecords(journal));
         var confirmed = await Run(scenario, Event("Да"));
         Assert.True(confirmed.Ok, confirmed.Problem);
-        Assert.StartsWith(action == "Удаление" ? "Удалено\n" : "Изменено\n", confirmed.Reply, StringComparison.Ordinal);
+        Assert.StartsWith(action == "Удаление" ? "Удалено\n" : "Изменено\n", ReplyMarkup.Text(confirmed.Reply), StringComparison.Ordinal);
         if (action == "Удаление") Assert.Empty(_db.Constructor.GetRecords(journal));
-        else Assert.Contains("Проект: Станок", confirmed.Reply, StringComparison.Ordinal);
+        else Assert.Contains("Проект: Станок", ReplyMarkup.Text(confirmed.Reply), StringComparison.Ordinal);
         Assert.False((await Run(scenario, Event("Да"))).Ok);
     }
 
@@ -577,7 +577,7 @@ public sealed class MessageScenarioTests : IDisposable
         Assert.True((await Run(scenario, Event(request))).Ok);
         var result = await Run(scenario, Event(answer));
         Assert.True(result.Ok, result.Problem);
-        if (!yes) Assert.Equal("Операция отменена", result.Reply);
+        if (!yes) Assert.Equal("Операция отменена", ReplyMarkup.Text(result.Reply));
         var records = _db.Constructor.GetRecords(journal);
         if (action is "Регистрация" or "Закрытый код") Assert.Equal(yes ? 1 : 0, records.Count);
         else if (action == "Удаление") Assert.Equal(yes ? 0 : 1, records.Count);
@@ -600,7 +600,7 @@ public sealed class MessageScenarioTests : IDisposable
         Assert.True((await Run(scenario, Event("Действие: Удаление\nНомер: АБВГ.301121.001"))).Ok);
         var help = await Run(scenario, Event("Инструкция"));
         Assert.True(help.Ok, help.Problem);
-        Assert.StartsWith("Инструкция по работе с журналом КД", help.Reply, StringComparison.Ordinal);
+        Assert.StartsWith("Инструкция по работе с журналом КД", ReplyMarkup.Text(help.Reply), StringComparison.Ordinal);
         Assert.Single(_db.Constructor.GetRecords(journal));
         Assert.True((await Run(scenario, Event("Да"))).Ok);
         Assert.Empty(_db.Constructor.GetRecords(journal));
@@ -623,10 +623,10 @@ public sealed class MessageScenarioTests : IDisposable
 
         var viewed = await Run(scenario, Event("Действие: Просмотр\nНомер: АБВГ.301121.001"));
         Assert.True(viewed.Ok, viewed.Problem);
-        Assert.Contains("Наименование: Кронштейн", viewed.Reply, StringComparison.Ordinal);
+        Assert.Contains("Наименование: Кронштейн", ReplyMarkup.Text(viewed.Reply), StringComparison.Ordinal);
         var denied = await Run(scenario, Event("Да"));
         Assert.False(denied.Ok);
-        Assert.Contains("Недостаточно прав", denied.Reply, StringComparison.Ordinal);
+        Assert.Contains("Недостаточно прав", ReplyMarkup.Text(denied.Reply), StringComparison.Ordinal);
         Assert.Single(_db.Constructor.GetRecords(journal));
     }
 
@@ -639,8 +639,8 @@ public sealed class MessageScenarioTests : IDisposable
         var outcome = await Run(Scenario(journal), Event("Действие: Регистрация"));
 
         Assert.False(outcome.Ok);
-        Assert.StartsWith("Номер: не указан номер", outcome.Reply, StringComparison.Ordinal);
-        Assert.DoesNotContain("действие «", outcome.Reply, StringComparison.Ordinal);
+        Assert.StartsWith("Номер: не указан номер", ReplyMarkup.Text(outcome.Reply), StringComparison.Ordinal);
+        Assert.DoesNotContain("действие «", ReplyMarkup.Text(outcome.Reply), StringComparison.Ordinal);
         Assert.Empty(_db.Constructor.GetRecords(journal));
     }
 

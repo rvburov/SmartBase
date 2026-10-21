@@ -30,8 +30,11 @@ public static class SenderGreeting
     /// <summary>Скрытая настройка: идентификаторы тех, кому инструкция уже ушла.</summary>
     public const string InstructedKey = "senders.instructed";
 
-    /// <summary>Текст сообщения: строка о доступе, пустая строка и инструкция.</summary>
-    public static string Text => FirstLine + "\n\n" + MessageInstructions.Text;
+    /// <summary>
+    /// Текст сообщения: строка о доступе — жирным, как заголовок, — пустая строка и инструкция.
+    /// Разметка — как у остальных ответов (<see cref="ReplyMarkup"/>).
+    /// </summary>
+    public static string Text => ReplyMarkup.Bold(FirstLine) + "\n\n" + MessageInstructions.Text;
 
     /// <summary>Новые: записи списка, чьим идентификаторам инструкция еще не уходила, — в порядке
     /// списка.</summary>
