@@ -61,8 +61,6 @@ public partial class PropertyEditorDialog : Window
         new() { Type = "url",      Label = "Ссылка",  Icon = Components.FieldTypeIcons.ForType("url")!, StartsGroup = true },
         new() { Type = "file",     Label = "Файл",    Icon = Components.FieldTypeIcons.ForType("file")!     },
         new() { Type = "relation", Label = "Связь",   Icon = Components.FieldTypeIcons.ForType("relation")! },
-        new() { Type = "lookup", Label = "Свойство связанной записи", Icon = Components.FieldTypeIcons.ForType("relation")! },
-        new() { Type = "rollup", Label = "Итог по связанным записям", Icon = Components.FieldTypeIcons.ForType("number")! },
         new() { Type = "user",     Label = "Пользователь", Icon = Components.FieldTypeIcons.ForType("user")! },
         // 4. Вычисляемые типы (значение авто из метаданных записи, ячейка read-only).
         new() { Type = "created_at", Label = "Дата создания",          Icon = Components.FieldTypeIcons.ForType("created_at")!, StartsGroup = true },
@@ -71,9 +69,14 @@ public partial class PropertyEditorDialog : Window
         new() { Type = "updated_by", Label = "Изменение пользователем", Icon = Components.FieldTypeIcons.ForType("updated_by")! },
     ];
 
+    // Список типов окна: FieldTypes, а у столбца данных без своей связи — еще и его тип.
+    private FieldTypeItem[] _types = FieldTypes;
+
     private readonly ConstructorRepository _repository;
     private readonly int  _collectionId;
-    private readonly int? _editFieldId;
+    // У нового свойства — null до первой записи: связь, сохраненная без своих столбцов данных
+    // (ошибка их записи), дальше правится как существующая, а не создается второй раз.
+    private int? _editFieldId;
     // Номер базы этого поля для связей — чтобы отличить «своя БД» (пишем TargetDbId=0) от межбазовой.
     private readonly int  _currentDbId;
 
@@ -116,10 +119,20 @@ public partial class PropertyEditorDialog : Window
 
         _repository   = repository;
         _collectionId = collectionId;
-        _editFieldId  = editFieldId;
         _currentDbId  = RelationDbResolver.DbIdFor(repository);
+        // Столбец данных из связи настраивается в окне своей связи: открываем ее, строка столбца
+        // подсвечена. Связь удалена (столбец остался от прежней версии) — окно самого столбца.
+        if (editFieldId is int dataId && repository.GetFields(collectionId) is var all
+            && all.FirstOrDefault(f => f.Id == dataId) is { } dataField && FieldTypeInfo.IsRelationComputed(dataField.FieldType)
+            && RelationComputedConfig.FromConfig(dataField.ConfigJson)?.RelationFieldId is int parent
+            && all.Any(f => f.Id == parent && f.FieldType == "relation"))
+        {
+            _focusDataField = dataId;
+            editFieldId = parent;
+        }
+        _editFieldId  = editFieldId;
 
-        TypeCombo.ItemsSource = FieldTypes;
+        TypeCombo.ItemsSource = _types;
 
         // Оба раздела — только по явному включению: user-поле иначе плодило бы задачи, а
         // поле-дата — события («дата выдачи», «дата расчета» и прочие служебные даты залили бы
@@ -145,6 +158,7 @@ public partial class PropertyEditorDialog : Window
         PopulateFileSources();
         PopulateRelationDatabases();
         InitializeExtendedRelations();
+        InitializeRelationData();
 
         // Новое свойство открывается с типом из «Настройки → Конструктор базы данных»;
         // у существующего тип берется из самого поля (ниже), настройка его не трогает.
@@ -180,9 +194,19 @@ public partial class PropertyEditorDialog : Window
                     RestoreFileAutoRule(field.ConfigJson);
                 // «Связь» — восстановить целевую коллекцию + кардинальность.
                 if (field.FieldType == "relation")
+                {
                     RestoreRelationConfig(field.ConfigJson);
+                    RestoreRelationData(field.Id!.Value);
+                }
                 if (field.FieldType is "lookup" or "rollup")
+                {
+                    // Столбец без своей связи: тип в списке есть только у него, чтобы окно не
+                    // показало «Текст» и не сменило тип при сохранении.
+                    _types = [.. FieldTypes, new FieldTypeItem { Type = field.FieldType, Label = FieldTypeInfo.Label(field.FieldType),
+                        Icon = Components.FieldTypeIcons.ForType(field.FieldType)! }];
+                    TypeCombo.ItemsSource = _types;
                     RestoreRelationComputedConfig(field.ConfigJson);
+                }
             }
         }
 
@@ -200,13 +224,13 @@ public partial class PropertyEditorDialog : Window
         // правки app.db руками или отката версии), приводим к первому пункту ЯВНО: присваивание
         // SelectedIndex идет до подписки ниже, поэтому само по себе оно _selectedType не поправит
         // — окно показывало бы «Текст», а сохраняло чужой тип.
-        var idx = Array.FindIndex(FieldTypes, t => t.Type == _selectedType);
-        if (idx < 0) _selectedType = FieldTypes[0].Type;
+        var idx = Array.FindIndex(_types, t => t.Type == _selectedType);
+        if (idx < 0) _selectedType = _types[0].Type;
         TypeCombo.SelectedIndex = idx >= 0 ? idx : 0;
         TypeCombo.SelectionChanged += (_, _) =>
         {
             var i = TypeCombo.SelectedIndex;
-            if (i >= 0 && i < FieldTypes.Length) _selectedType = FieldTypes[i].Type;
+            if (i >= 0 && i < _types.Length) _selectedType = _types[i].Type;
             UpdateCalDateVisibility();
         };
         UpdateCalDateVisibility();
@@ -457,6 +481,17 @@ public partial class PropertyEditorDialog : Window
     /// равна удалению столбца — и предупреждение здесь теми же словами, что в окне удаления
     /// (<c>FieldRoleText</c>). true — терять нечего либо пользователь согласился.
     /// </summary>
+    // Связь меняет тип: данные из связанных записей без нее не считаются и уходят вместе с ней.
+    private async Task<bool> ConfirmRelationDependentsLoss()
+    {
+        if (_editFieldId is not int fieldId || _editField?.FieldType != "relation" || _selectedType == "relation") return true;
+        var names = _repository.GetRelationDependentFields(fieldId).Select(f => $"«{f.Name}»").ToList();
+        if (names.Count == 0) return true;
+        return await new ConfirmDialog(
+            $"Вместе со связью удалятся столбцы данных из нее: {string.Join(", ", names)}. Продолжить?", "Продолжить")
+            .ShowDialog<bool>(this);
+    }
+
     private async Task<bool> ConfirmRoleLossOnTypeChange()
     {
         if (_editFieldId is not int fieldId || _editField is null) return true;
@@ -480,7 +515,7 @@ public partial class PropertyEditorDialog : Window
                               .ToList();
         if (lost.Count == 0) return true;
 
-        var typeLabel = FieldTypes.FirstOrDefault(t => t.Type == _selectedType)?.Label ?? _selectedType;
+        var typeLabel = _types.FirstOrDefault(t => t.Type == _selectedType)?.Label ?? _selectedType;
         var roles     = FieldRoleText.JoinRu(lost.Select(FieldRoleText.Title));
         var needs     = FieldRoleText.JoinRu(
             lost.Select(ConstructorRepository.RoleTypeNames).Distinct());
@@ -1118,7 +1153,7 @@ public partial class PropertyEditorDialog : Window
         if (_selectedType == "relation")
         {
             var cfg = BuildRelationConfigJson();
-            if (cfg is null) return;
+            if (cfg is null || !ValidateRelationData()) return;
             relationConfig = cfg;
         }
         var computedConfig = "{}";
@@ -1133,6 +1168,8 @@ public partial class PropertyEditorDialog : Window
         // столбца: для раздела это одно и то же (данные ему станут недоступны), а раньше тип
         // менялся молча и плашка оставалась висеть над уже неработающей ролью.
         if (!await ConfirmRoleLossOnTypeChange()) return;
+        if (!await ConfirmRelationDependentsLoss()) return;
+        if (!await ConfirmRelationDataRemoval()) return;
 
         // Включение авто-привязки на поле с уже сохраненными значениями — подтверждаем затирание.
         if (fileAuto && _editFieldId is int existId && _repository.FieldHasValues(existId))
@@ -1213,6 +1250,25 @@ public partial class PropertyEditorDialog : Window
             // исключение отсюда (async void) роняло приложение целиком.
             NameBox.Focus();
             return;
+        }
+
+        // Связь сохранена — ее столбцы данных из связанных записей одним целым. Ошибка столбцов
+        // оставляет окно открытым, а связь дальше правится как сохраненная (не создается заново).
+        SavedFieldId = savedFieldId;
+        if (_selectedType == "relation")
+        {
+            try { SavedDataFieldIds = _repository.SaveRelationDataColumns(savedFieldId, CollectRelationData()); }
+            catch (Exception ex) when (ex is InvalidOperationException or PermissionDeniedException)
+            {
+                _editFieldId ??= savedFieldId;
+                ShowError(ex.Message);
+                return;
+            }
+            catch (Exception ex) when (Utils.DbErrors.Handle(ex, _repository.DbPath))
+            {
+                _editFieldId ??= savedFieldId;
+                return;
+            }
         }
 
         // Для типа «Дата» применяем переключатель «Отображать в календаре»: включенная дата

@@ -150,7 +150,8 @@ public partial class ConstructorRepository
                     : RelationRollupValue.Calculate(cfg.Aggregate, selected.Select(v => v.Raw));
                 if (cycle || invalid is not null) { Store(id, fid, value); continue; }
                 var typed = field.FieldType == "rollup"
-                    ? new RelationComputedValue(value, FieldTypeInfo.FormatComputedDisplay(value, "rollup"), "number", "{}")
+                    ? new RelationComputedValue(value, FieldTypeInfo.FormatComputedDisplay(value, "rollup"),
+                        RelationComputedConfig.IsDateAggregate(cfg.Aggregate) ? "date" : "number", "{}")
                     : selected.Count == 1
                     ? new RelationComputedValue(selected[0].Raw, value, selected[0].FieldType, selected[0].ConfigJson)
                     : new RelationComputedValue(JsonSerializer.Serialize(selected.Select(v => new
@@ -260,7 +261,9 @@ public partial class ConstructorRepository
                     if (cfg.TargetField == TitleKey)
                     {
                         if (current.FieldType == "rollup")
-                            throw new InvalidOperationException("Для числового итога выберите числовое свойство.");
+                            throw new InvalidOperationException(RelationComputedConfig.IsDateAggregate(cfg.Aggregate)
+                                ? "Для самой ранней или поздней даты выберите свойство-дату."
+                                : "Для числового итога выберите числовое свойство.");
                         return;
                     }
                     var targetId = int.Parse(cfg.TargetField, CultureInfo.InvariantCulture);
@@ -269,8 +272,11 @@ public partial class ConstructorRepository
                             .ToList().Select(ToDbField).FirstOrDefault();
                     if (targetField is null || targetField.CollectionId != relationCfg.TargetCollectionId)
                         throw new InvalidOperationException("Выбранное свойство отсутствует в целевой коллекции.");
-                    if (current.FieldType == "rollup" && targetField.FieldType is not ("number" or "rollup"))
+                    if (current.FieldType == "rollup" && RelationComputedConfig.IsNumberAggregate(cfg.Aggregate)
+                        && targetField.FieldType is not ("number" or "rollup"))
                         throw new InvalidOperationException("Для числового итога выберите числовое свойство.");
+                    if (RelationComputedConfig.IsDateAggregate(cfg.Aggregate) && !FieldTypeInfo.IsDateLike(targetField.FieldType))
+                        throw new InvalidOperationException("Для самой ранней или поздней даты выберите свойство-дату.");
                     Visit(target, targetField, depth + 1);
                 }
                 else if (current.FieldType == "relation")

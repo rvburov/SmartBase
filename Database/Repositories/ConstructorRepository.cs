@@ -3577,6 +3577,9 @@ public partial class ConstructorRepository(AppDbContext db)
                 progress?.Report(Math.Min(ids.Count, i + batchSize));
             }
 
+            // Данные из связанных записей без своей связи не считаются — уходят вместе с ней.
+            if (field.FieldType == "relation") RemoveRelationDependentFields(fieldId, colId);
+
             // Строка поля (FK ON DELETE CASCADE уберет calendar_index) + чистка column_meta и
             // оформления ее ячеек (FK нет — ключ строковый), как в синхронном DeleteField.
             var key = fieldId.ToString();
@@ -3686,6 +3689,7 @@ public partial class ConstructorRepository(AppDbContext db)
         if (entity is null) { db.SaveChanges(); return; }
 
         var colId = entity.CollectionId;
+        if (entity.FieldType == "relation") RemoveRelationDependentFields(fieldId, colId);
         Log("delete", "field", entity.Name, CollectionNameOf(colId));
         db.DbFields.Remove(entity);
 

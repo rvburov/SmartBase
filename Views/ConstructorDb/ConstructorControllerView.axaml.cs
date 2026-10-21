@@ -847,16 +847,18 @@ public partial class ConstructorControllerView : UserControl
         var ok  = await dlg.ShowDialog<bool?>(win);
         if (ok != true) return;
 
-        // Новое поле — то, которого не было до открытия диалога.
-        var newField = _repository.GetFields(_currentCollectionId.Value)
-            .FirstOrDefault(f => !idsBefore.Contains(f.Id));
-
-        if (newField?.Id is { } newId)
+        // Новое поле — сохраненное окном; связь приходит вместе со своими столбцами данных,
+        // они встают за ней в том же порядке.
+        var newIds = dlg.SavedFieldId is int saved && !idsBefore.Contains(saved)
+            ? new List<int> { saved }.Concat(dlg.SavedDataFieldIds.Where(id => !idsBefore.Contains(id))).ToList()
+            : [];
+        if (newIds.Count > 0)
         {
-            // movableKeys для MoveColumnAfter = прежний порядок + новый ключ в конце
-            // (как его кладет AddField). Затем метод переставит его за afterKey.
-            var movable = new List<string>(orderBefore) { newId.ToString() };
-            _repository.MoveColumnAfter(_currentCollectionId.Value, newId.ToString(), afterKey, movable);
+            var keys  = newIds.Select(id => id.ToString()).ToList();
+            var order = orderBefore.Where(k => !keys.Contains(k)).ToList();
+            var at    = order.IndexOf(afterKey);
+            order.InsertRange(at < 0 ? order.Count : at + 1, keys);
+            _repository.SaveColumnOrder(_currentCollectionId.Value, order);
         }
 
         TableViewCtrl.ReloadColumns();   // только колонки, строки не сбрасываем
@@ -1005,11 +1007,21 @@ public partial class ConstructorControllerView : UserControl
                                        _repository.HasTaskExecField(_currentCollectionId.Value),
                                        _repository.HasCalendarDateField(_currentCollectionId.Value),
                                        _repository.HasDocFileField(_currentCollectionId.Value));
+        // Данные из связанных записей без своей связи не считаются: репозиторий удаляет их вместе
+        // с ней, окно называет их заранее.
+        var dependents = deletable
+            .Where(id => fields.FirstOrDefault(f => f.Id == id)?.FieldType == "relation")
+            .SelectMany(_repository.GetRelationDependentFields)
+            .Where(d => d.Id is int did && !deletable.Contains(did))
+            .Select(d => d.Name).Distinct().ToList();
+        var dependentWarn = dependents.Count == 0 ? ""
+            : $"\n\nВместе со связью удалятся столбцы данных из нее: {NameList(dependents)}.";
+
         // Как и у записей: рутину снимает настройка, а предупреждение о потере роли раздела
         // («коллекция выпадет из задач/календаря») остается — оно о последствии, а не о рутине.
-        if (ConstructorSettings.ConfirmDelete || roleWarn.Length > 0)
+        if (ConstructorSettings.ConfirmDelete || roleWarn.Length > 0 || dependentWarn.Length > 0)
         {
-            var message = $"Вы удаляете {deletable.Count} {PropertiesPlural(deletable.Count)}. Подтвердить?" + roleWarn;
+            var message = $"Вы удаляете {deletable.Count} {PropertiesPlural(deletable.Count)}. Подтвердить?" + roleWarn + dependentWarn;
             if (await new ConfirmDialog(message).ShowDialog<bool>(win) != true) return;
         }
 

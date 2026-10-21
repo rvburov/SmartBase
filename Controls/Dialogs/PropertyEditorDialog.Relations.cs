@@ -53,6 +53,7 @@ public partial class PropertyEditorDialog
         var sources = RelationProperties(_repository, _collectionId)
             .Where(p => p.Key != _editFieldId?.ToString()).ToList();
         SetRelationProperties(RelationAutoSourceCombo, sources);
+        RefreshRelationDataProperties();
     }
 
     private static void SetRelationProperties(ComboBox combo, List<RelationPropertyItem> properties, bool keepSelection = true)

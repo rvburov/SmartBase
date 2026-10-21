@@ -571,7 +571,7 @@ public sealed partial class ConstructorRepository
             using var foreignScope = (resolveForeign?.Target as ForeignPropertyReader)?.OpenScope();
             var values = GetRelationComputedColumnValues(collectionId, field);
             ct.ThrowIfCancellationRequested();
-            var cmp = ColumnSort.BuildComparer(fieldType == "rollup" ? "number" : "text", sortAsc);
+            var cmp = ColumnSort.BuildComparer(fieldType == "rollup" ? "rollup" : "text", sortAsc);
             return ordered.OrderBy(id => values.GetValueOrDefault(id, ""),
                 Comparer<string>.Create((a, b) => cmp(a, b))).ToList();
         }

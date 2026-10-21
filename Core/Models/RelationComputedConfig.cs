@@ -8,7 +8,13 @@ namespace SmartBase.Core.Models;
 public sealed record RelationComputedConfig(int RelationFieldId, string TargetField = "__title__",
                                             string Aggregate = "lookup")
 {
-    public static readonly string[] Aggregates = ["count", "sum", "avg", "min", "max"];
+    public static readonly string[] Aggregates = ["count", "sum", "avg", "min", "max", "earliest", "latest"];
+
+    /// <summary>Итог по датам: значение — дата в ISO-каноне, а не число.</summary>
+    public static bool IsDateAggregate(string? aggregate) => aggregate is "earliest" or "latest";
+
+    /// <summary>Итог по числам — нужен числовой тип свойства цели.</summary>
+    public static bool IsNumberAggregate(string? aggregate) => aggregate is "sum" or "avg" or "min" or "max";
 
     public static RelationComputedConfig? FromConfig(string? json)
     {
@@ -47,7 +53,8 @@ public sealed record RelationComputedConfig(int RelationFieldId, string TargetFi
     public static string AggregateLabel(string aggregate) => aggregate switch
     {
         "count" => "Количество", "sum" => "Сумма", "avg" => "Среднее",
-        "min" => "Минимум", "max" => "Максимум", _ => "Значения",
+        "min" => "Минимум", "max" => "Максимум",
+        "earliest" => "Самая ранняя дата", "latest" => "Самая поздняя дата", _ => "Значения",
     };
 }
 

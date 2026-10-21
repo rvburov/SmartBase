@@ -136,34 +136,73 @@ internal static class RelationChecks
                 && repo.GetLinkTargetIds(saved.Id.Value, record).ToHashSet().SetEquals([a, b]),
                 "повторное сохранение без изменения настроек увидело внешнее изменение данных и обновило все совпадения");
 
-            var lookupDialog = CreateComputed("Артикул клиента", "lookup", saved.Id.Value, sku.Id.Value.ToString());
-            var lookupClosed = lookupDialog.ShowDialog<bool>(owner);
+            // Данные из связанных записей настраиваются внутри «Связи»: отдельных типов в списке нет.
+            var typeChoice = new PropertyEditorDialog(repo, source) { MaxHeight = 600 };
+            var typeClosed = typeChoice.ShowDialog<bool>(owner);
             Pump();
-            ConfigureComputed(lookupDialog, saved.Id.Value, sku.Id.Value.ToString());
-            Choose(Combo(lookupDialog, "ComputedRelationCombo"), "Id", relation.Id.Value);
-            Expect(SelectedKey(Combo(lookupDialog, "ComputedTargetCombo")) == "__title__",
-                "смена исходной связи сбрасывает выбранное свойство цели, даже если такой ключ есть в новой связи");
-            Choose(Combo(lookupDialog, "ComputedRelationCombo"), "Id", saved.Id.Value);
-            Choose(Combo(lookupDialog, "ComputedTargetCombo"), "Key", sku.Id.Value.ToString());
-            Click(lookupDialog, lookupDialog.FindControl<Button>("SaveBtn")!);
-            Wait(() => lookupClosed.IsCompleted, "lookup не сохранился");
-            var lookup = repo.GetFields(source).Single(f => f.Name == "Артикул клиента");
-            Expect(lookupClosed.Result && RelationComputedConfig.FromConfig(lookup.ConfigJson) == new RelationComputedConfig(saved.Id.Value, sku.Id.Value.ToString())
-                && repo.GetFieldValues(record).GetValueOrDefault(lookup.Id!.Value) == "А-01, Б-02",
-                "lookup создается диалогом и выводит выбранное свойство обеих связанных записей");
+            var typeKeys = Combo(typeChoice, "TypeCombo").Items.OfType<FieldTypeItem>().Select(t => t.Type).ToList();
+            Expect(typeKeys.Contains("relation") && !typeKeys.Contains("lookup") && !typeKeys.Contains("rollup"),
+                "в списке типов одна «Связь»: данные из связанных записей — ее настройка");
+            Click(typeChoice, typeChoice.FindControl<Button>("CancelBtn")!);
+            Wait(() => typeClosed.IsCompleted, "окно нового свойства не закрылось");
 
-            var rollupDialog = CreateComputed("Общий баланс", "rollup", saved.Id.Value, balance.Id.Value.ToString());
-            var rollupClosed = rollupDialog.ShowDialog<bool>(owner);
+            var dataDialog = new PropertyEditorDialog(repo, source, relation.Id.Value) { MaxHeight = 600 };
+            var dataClosed = dataDialog.ShowDialog<bool>(owner);
             Pump();
-            ConfigureComputed(rollupDialog, saved.Id.Value, balance.Id.Value.ToString());
-            Combo(rollupDialog, "ComputedAggregateCombo").SelectedIndex = 1;
+            var addData = dataDialog.FindControl<Button>("AddRelationDataBtn")!;
+            addData.BringIntoView();
+            Click(dataDialog, addData);
+            addData.BringIntoView();
+            Click(dataDialog, addData);
+            var rows = DataRows(dataDialog);
+            Choose(RowCombo(rows[0], "Property"), "Key", sku.Id.Value.ToString());
+            Expect(RowText(rows[0]) == "Клиент · Артикул" && SelectedAggregate(rows[0]) == "lookup",
+                "новая строка показывает значения свойства и сама называет столбец «Связь · свойство»");
+            Choose(RowCombo(rows[1], "Property"), "Key", balance.Id.Value.ToString());
+            Choose(RowCombo(rows[1], "Kind"), "Aggregate", "sum");
+            Expect(RowText(rows[1]) == "Клиент · сумма Баланс", "итог по числу назван по виду итога и свойству");
+            Choose(RowCombo(rows[0], "Property"), "Key", "__title__");
+            Expect(!Kinds(rows[0]).Contains("sum"), "у текстового свойства числовых итогов нет");
+            Choose(RowCombo(rows[0], "Property"), "Key", sku.Id.Value.ToString());
+            RowName(rows[1]).Text = "Общий баланс";
             Pump();
-            Click(rollupDialog, rollupDialog.FindControl<Button>("SaveBtn")!);
-            Wait(() => rollupClosed.IsCompleted, "rollup не сохранился");
+            using (var frame = dataDialog.CaptureRenderedFrame()) frame?.Save(Path.Combine(outDir, "relations-data-dialog.png"));
+            Click(dataDialog, dataDialog.FindControl<Button>("SaveBtn")!);
+            Wait(() => dataClosed.IsCompleted, "связь со столбцами данных не сохранилась");
+            var lookup = repo.GetFields(source).Single(f => f.Name == "Клиент · Артикул");
             var rollup = repo.GetFields(source).Single(f => f.Name == "Общий баланс");
-            Expect(rollupClosed.Result && RelationComputedConfig.FromConfig(rollup.ConfigJson)?.Aggregate == "sum"
-                && repo.GetFieldValues(record).GetValueOrDefault(rollup.Id!.Value) == "30.75",
-                "числовой итог создается диалогом и считает сырые числа связанных записей");
+            var order = repo.GetColumnOrder(source);
+            Expect(dataClosed.Result && lookup.FieldType == "lookup"
+                && RelationComputedConfig.FromConfig(lookup.ConfigJson) == new RelationComputedConfig(relation.Id.Value, sku.Id.Value.ToString())
+                && repo.GetFieldValues(record).GetValueOrDefault(lookup.Id!.Value) == "Б-02",
+                "сохранение связи создало столбец значений свойства связанной записи");
+            Expect(rollup.FieldType == "rollup" && RelationComputedConfig.FromConfig(rollup.ConfigJson)?.Aggregate == "sum"
+                && repo.GetFieldValues(record).GetValueOrDefault(rollup.Id!.Value) == "20.25",
+                "итог создан тем же сохранением и считает сырые числа связанных записей");
+            Expect(order[lookup.Id.Value.ToString()] == order[relation.Id.Value.ToString()] + 1000
+                && order[rollup.Id.Value.ToString()] == order[lookup.Id.Value.ToString()] + 1000,
+                "столбцы данных встали сразу за связью в порядке строк окна");
+
+            var childDialog = new PropertyEditorDialog(repo, source, rollup.Id.Value) { MaxHeight = 600 };
+            var childClosed = childDialog.ShowDialog<bool>(owner);
+            Pump();
+            var childRows = DataRows(childDialog);
+            Expect(childDialog.FindControl<TextBox>("NameBox")!.Text == "Клиент"
+                && childDialog.FindControl<StackPanel>("RelationSection")!.IsVisible && childRows.Count == 2
+                && RowText(childRows[1]) == "Общий баланс" && SelectedAggregate(childRows[1]) == "sum",
+                "окно столбца данных открывает настройки его связи со всеми столбцами");
+            var deleteRow = ((Border)childRows[1].GetType().GetProperty("Root")!.GetValue(childRows[1])!)
+                .GetVisualDescendants().OfType<Button>().Single();
+            deleteRow.BringIntoView();
+            Click(childDialog, deleteRow);
+            Click(childDialog, childDialog.FindControl<Button>("SaveBtn")!);
+            Wait(() => childDialog.OwnedWindows.OfType<ConfirmDialog>().Any(), "удаление столбца данных не спросило подтверждения");
+            var removal = childDialog.OwnedWindows.OfType<ConfirmDialog>().Single();
+            Click(removal, removal.FindControl<Button>("ConfirmBtn")!);
+            Wait(() => childClosed.IsCompleted, "связь без удаленного столбца не сохранилась");
+            Expect(childClosed.Result && repo.GetFields(source).All(f => f.Id != rollup.Id)
+                && repo.GetFields(source).Any(f => f.Id == lookup.Id),
+                "удаленная строка удалила только свой столбец");
 
             var filterDisplay = typeof(TableView).GetMethod("DisplayValue", BindingFlags.NonPublic | BindingFlags.Static)!;
             Expect((string?)filterDisplay.Invoke(null, ["1.5", "rollup", ", ", null]) == "1,5"
@@ -249,19 +288,6 @@ internal static class RelationChecks
                 Pump();
                 Choose(Combo(dialog, "RelationAutoSourceCombo"), "Key", sourceInn.Id.Value.ToString());
                 Choose(Combo(dialog, "RelationAutoTargetCombo"), "Key", targetInn.Id.Value.ToString());
-            }
-
-            PropertyEditorDialog CreateComputed(string name, string type, int relationId, string key) =>
-                new(repo, source) { MaxHeight = 600, Tag = (name, type) };
-            void ConfigureComputed(PropertyEditorDialog dialog, int relationId, string key)
-            {
-                var (name, typeKey) = ((string, string))dialog.Tag!;
-                dialog.FindControl<TextBox>("NameBox")!.Text = name;
-                var type = Combo(dialog, "TypeCombo");
-                type.SelectedItem = type.Items.OfType<FieldTypeItem>().Single(t => t.Type == typeKey);
-                Pump();
-                Choose(Combo(dialog, "ComputedRelationCombo"), "Id", relationId);
-                Choose(Combo(dialog, "ComputedTargetCombo"), "Key", key);
             }
 
             void SaveWithPreview(PropertyEditorDialog dialog, Task<bool> closed)
@@ -358,6 +384,15 @@ internal static class RelationChecks
     }
 
     private static ComboBox Combo(Window window, string name) => window.FindControl<ComboBox>(name)!;
+    private static List<object> DataRows(PropertyEditorDialog dialog) =>
+        Private<System.Collections.IEnumerable>(dialog, "_relationData").Cast<object>().ToList();
+    private static ComboBox RowCombo(object row, string name) => (ComboBox)row.GetType().GetProperty(name)!.GetValue(row)!;
+    private static TextBox RowName(object row) => (TextBox)row.GetType().GetProperty("Name")!.GetValue(row)!;
+    private static string? RowText(object row) => RowName(row).Text;
+    private static string? SelectedAggregate(object row) =>
+        RowCombo(row, "Kind").SelectedItem?.GetType().GetProperty("Aggregate")?.GetValue(RowCombo(row, "Kind").SelectedItem) as string;
+    private static List<string> Kinds(object row) => RowCombo(row, "Kind").Items.Cast<object>()
+        .Select(k => (string)k.GetType().GetProperty("Aggregate")!.GetValue(k)!).ToList();
     private static T Private<T>(object owner, string field) =>
         (T)owner.GetType().GetField(field, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(owner)!;
     private static string? SelectedKey(ComboBox combo) => combo.SelectedItem?.GetType().GetProperty("Key")?.GetValue(combo.SelectedItem) as string;

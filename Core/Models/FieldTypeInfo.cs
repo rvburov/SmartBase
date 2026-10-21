@@ -49,8 +49,8 @@ public static class FieldTypeInfo
         "url"        => "Ссылка",
         "file"       => "Файл",
         "relation"   => "Связь",
-        "lookup"     => "Свойство связанной записи",
-        "rollup"     => "Итог по связанным записям",
+        "lookup"     => "Данные из связи",
+        "rollup"     => "Итог по связи",
         "user"       => "Пользователь",
         "created_at" => "Дата создания",
         "updated_at" => "Дата изменения",
@@ -77,7 +77,9 @@ public static class FieldTypeInfo
     {
         var s = raw ?? "";
         if (string.IsNullOrEmpty(s)) return "";
-        if (fieldType == "rollup") return NumberFormatValue.Format(s, NumberFormat.Default);
+        // Итог по связи — число или (самая ранняя / поздняя) дата в ISO-каноне.
+        if (fieldType == "rollup")
+            return DateValue.TryParseStorage(s, out var date) ? date.ToDisplay() : NumberFormatValue.Format(s, NumberFormat.Default);
         if (fieldType == "lookup") return s;
         if (fieldType is "created_by" or "updated_by") return s;
         return System.DateTime.TryParse(s, System.Globalization.CultureInfo.InvariantCulture,

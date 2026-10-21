@@ -48,6 +48,8 @@ public partial class ConstructorRepository
                 || label == RelationProperty.MissingField
                 || label == RelationProperty.Cycle))
                 throw new InvalidOperationException("Не удалось прочитать все цели связи. Преобразование в текст отменено.");
+            // Связь стала другим типом: данные из связанных записей считать больше не по чему.
+            RemoveRelationDependentFields(fieldId, oldField.CollectionId);
             db.DbFieldValues.RemoveRange(scalars);
             db.SaveChanges();
             foreach (var group in edges.GroupBy(e => e.FromRecordId))

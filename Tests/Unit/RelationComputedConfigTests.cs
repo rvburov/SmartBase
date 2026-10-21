@@ -75,4 +75,28 @@ public sealed class RelationComputedConfigTests
         Assert.Equal("0", RelationRollupValue.Calculate("sum", []));
         Assert.Equal("", RelationRollupValue.Calculate("avg", []));
     }
+
+    [Fact]
+    public void Earliest_and_latest_dates_keep_the_whole_target_value()
+    {
+        string[] dates = ["2026-10-05/2026-10-20", "2026-10-03T14:00", "", "2026-10-18"];
+        Assert.Equal("2026-10-03T14:00", RelationRollupValue.Calculate("earliest", dates));
+        // Поздняя — по концу: диапазон до 20 октября позже даты 18 октября.
+        Assert.Equal("2026-10-05/2026-10-20", RelationRollupValue.Calculate("latest", dates));
+        Assert.Equal("", RelationRollupValue.Calculate("latest", ["", ""]));
+        Assert.Equal("(не дата)", RelationRollupValue.Calculate("earliest", ["2026-10-01", "завтра"]));
+    }
+
+    [Fact]
+    public void A_date_rollup_shows_and_sorts_as_a_date_and_a_number_stays_a_number()
+    {
+        Assert.Equal("03.10.2026 14:00", FieldTypeInfo.FormatComputedDisplay("2026-10-03T14:00", "rollup"));
+        Assert.Equal("1,5", FieldTypeInfo.FormatComputedDisplay("1.5", "rollup"));
+        var ascending = ColumnSort.BuildComparer("rollup", true);
+        Assert.True(ascending("2026-10-20", "2026-09-30") > 0);
+        Assert.True(ascending("2026-01-05", "") < 0);
+        Assert.True(RelationComputedConfig.IsDateAggregate("latest") && !RelationComputedConfig.IsNumberAggregate("latest"));
+        Assert.Equal(new RelationComputedConfig(5, "7", "earliest"),
+            RelationComputedConfig.FromConfig(new RelationComputedConfig(5, "7", "earliest").ToConfigJson()));
+    }
 }

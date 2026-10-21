@@ -24,7 +24,8 @@ public static class ColumnSort
     {
         int Core(string a, string b) => fieldType switch
         {
-            "number" or "rollup" => NumberKey(a).CompareTo(NumberKey(b)),
+            "number" => NumberKey(a).CompareTo(NumberKey(b)),
+            "rollup" => RollupKey(a).CompareTo(RollupKey(b)),
             "date"   => DateKey(a).CompareTo(DateKey(b)),
             _        => string.Compare(a, b, StringComparison.CurrentCultureIgnoreCase),
         };
@@ -45,6 +46,10 @@ public static class ColumnSort
         s.Length > 0 && double.TryParse(s.Replace(',', '.'), NumberStyles.Any, CultureInfo.InvariantCulture, out var d)
             ? d
             : double.PositiveInfinity;
+
+    /// <summary>Ключ итога по связи: число как число, дата итога (ISO-канон) — по началу.</summary>
+    public static double RollupKey(string s) =>
+        DateValue.TryParseStorage(s, out var date) ? date.Start.Ticks : NumberKey(s);
 
     /// <summary>Ключ даты: начало значения; нечитаемое — максимум (в конец списка).</summary>
     public static DateTime DateKey(string s) =>
