@@ -79,7 +79,7 @@ public partial class TimeCollectorWindow : Window
         // Доступ к базам — через ту же точку, что и межбазовые связи: расширению не нужно
         // знать ни о Workspace, ни о главном окне (тот же прием, что в «Документах в коллекцию»).
         // Список заполняется ДО выбора приемника: смена приемника тут же спрашивает про базы.
-        _databases = RelationDbResolver.Databases();
+        _databases = RelationDbResolver.RegistryDatabases();
         DbCombo.ItemsSource = _databases.Select(d => d.Name).ToList();
         if (_databases.Count > 0) DbCombo.SelectedIndex = 0;
         DbCombo.IsEnabled = _databases.Count > 1;   // выбирать не из чего — список заблокирован
@@ -235,7 +235,7 @@ public partial class TimeCollectorWindow : Window
                 SetStatus("Нет доступной базы данных", "BrushRed");
                 return;
             }
-            _repo = RelationDbResolver.RepoFor(_databases[DbCombo.SelectedIndex].DbId);
+            _repo = RelationDbResolver.RegistryRepoFor(_databases[DbCombo.SelectedIndex].DbId);
             if (_repo is null) { SetStatus("База данных недоступна", "BrushRed"); return; }
             if (WithOperations && !File.Exists(OpsBox.Text!.Trim()))
             {

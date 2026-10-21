@@ -5548,7 +5548,7 @@ public partial class ConstructorRepository(AppDbContext db)
             var map = resolveForeign(grp.Key, ids);
             foreach (var id in ids)
                 crossDb[(id, grp.Key)] =
-                    map is null                        ? "(база недоступна)"
+                    map is null                        ? UnavailableLabel(grp.Key)
                   : map.TryGetValue(id, out var t)     ? t
                   :                                      null;   // записи нет → ребро пропускаем («связи нет»)
         }

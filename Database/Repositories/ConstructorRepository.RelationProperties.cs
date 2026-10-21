@@ -267,7 +267,7 @@ public partial class ConstructorRepository
                 differentPropertyDatabase ? RelationConfig.TitleField : fieldKey);
             foreach (var edge in group)
             {
-                if (values is null) labels[edge] = RelationProperty.Unavailable;
+                if (values is null) labels[edge] = UnavailableLabel(group.Key);
                 else if (values.TryGetValue(edge.RecordId, out var text))
                     labels[edge] = differentPropertyDatabase && text != RelationProperty.NoAccess ? RelationProperty.MissingField : text;
             }

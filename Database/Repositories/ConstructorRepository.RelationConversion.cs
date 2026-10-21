@@ -21,6 +21,12 @@ public partial class ConstructorRepository
         if (wasRelation && isRelation)
         {
             if (edges.Count == 0 || autoSave) return;
+            if (config is not null && oldConfig is not null && IsLegacyRelationDb(oldConfig.TargetDbId)
+                && !IsLegacyRelationDb(config.TargetDbId) && config.TargetCollectionId == oldConfig.TargetCollectionId)
+            {
+                RebindLegacyRelationField(oldConfig.TargetDbId, config, edges);
+                return;
+            }
             if (config is null || oldConfig is null || config.TargetDbId != oldConfig.TargetDbId
                 || config.TargetCollectionId != oldConfig.TargetCollectionId)
                 throw new InvalidOperationException("Сначала очистите связи: изменение целевой коллекции не переносит существующие записи автоматически.");
@@ -38,7 +44,8 @@ public partial class ConstructorRepository
             var labels = ResolveRelationLabels(edges.Select(e => new RelationTarget(e.TargetDbId, e.ToRecordId)).Distinct().ToList(),
                 oldConfig?.DisplayField ?? RelationConfig.TitleField, oldConfig?.TargetDbId);
             if (edges.Any(e => !labels.TryGetValue(new(e.TargetDbId, e.ToRecordId), out var label)
-                || label == RelationProperty.NoAccess || label == RelationProperty.Unavailable || label == RelationProperty.MissingField
+                || label == RelationProperty.NoAccess || label == RelationProperty.Unavailable || label == RelationProperty.UnknownBase
+                || label == RelationProperty.MissingField
                 || label == RelationProperty.Cycle))
                 throw new InvalidOperationException("Не удалось прочитать все цели связи. Преобразование в текст отменено.");
             db.DbFieldValues.RemoveRange(scalars);
@@ -85,5 +92,25 @@ public partial class ConstructorRepository
         }
         db.SaveChanges();
         ownedTx?.Commit();
+    }
+
+    // Старая межбазовая связь получила базу из окна свойства: ребра переводятся на ее постоянный
+    // номер, только если все связанные записи лежат в целевой коллекции выбранной базы.
+    private void RebindLegacyRelationField(int legacy, RelationConfig config, List<DbRecordLinkEntity> edges)
+    {
+        var target = config.TargetDbId == 0 ? this : RelationDbResolver.RepoFor(config.TargetDbId)
+            ?? throw new InvalidOperationException("Выбранная база недоступна. Подключите ее и сохраните свойство снова.");
+        var legacyEdges = edges.Where(e => e.TargetDbId == legacy).ToList();
+        var targets = legacyEdges.Select(e => e.ToRecordId).Distinct().ToList();
+        if (!IsLegacyTarget(target.AutoContext, config.TargetCollectionId, targets, LegacyFieldKeys(config)))
+            throw new InvalidOperationException("В выбранной базе нет всех связанных записей этой коллекции. Выберите другую базу.");
+        var newDbId = config.TargetDbId;
+        var existing = edges.Where(e => e.TargetDbId == newDbId).Select(e => (e.FromRecordId, e.ToRecordId)).ToHashSet();
+        foreach (var edge in legacyEdges)
+        {
+            if (existing.Contains((edge.FromRecordId, edge.ToRecordId))) db.DbRecordLinks.Remove(edge);
+            else edge.TargetDbId = newDbId;
+        }
+        db.SaveChanges();
     }
 }

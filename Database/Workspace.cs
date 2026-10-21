@@ -47,6 +47,7 @@ public sealed class Workspace : IDisposable
         progress?.Report((0, $"Открываю базу «{defEntry.Name}»…"));
         var def = DatabaseManager.Open(defEntry.Id, defEntry.Name, AppSettings.DbPath,
             stage: (msg, inner) => progress?.Report((Math.Clamp(inner ?? 0, 0, 1), msg)));
+        RelationDbResolver.Remember(def);
         return new Workspace(registry, def);
     }
 
@@ -98,6 +99,7 @@ public sealed class Workspace : IDisposable
                 if (raced is not null) { manager.Dispose(); return raced; }
                 _mounted.Add(manager);
             }
+            RelationDbResolver.Remember(manager);
             return manager;
         }
         catch (MountBlockedException ex)

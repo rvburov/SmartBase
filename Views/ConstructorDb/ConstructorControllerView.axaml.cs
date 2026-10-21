@@ -432,7 +432,7 @@ public partial class ConstructorControllerView : UserControl
 
         // Предупреждаем ТОЛЬКО если удаление оборвет входящие связи (иначе — мгновенно, как раньше):
         // на эту запись ссылались другие → у них станет «связи нет».
-        if (RelationDeleteImpact.ForRecords(_repository, CurrentDbId, [recordId])
+        if (RelationDeleteImpact.ForRecords(_repository, [recordId])
             && VisualRoot is Avalonia.Controls.Window confirmWin)
         {
             var warnDlg = new ConfirmDialog("Удалить запись? На нее ссылаются связи — они будут удалены.");
@@ -468,7 +468,7 @@ public partial class ConstructorControllerView : UserControl
 
         // Предупреждаем, что удаление оборвет ВХОДЯЩИЕ связи на эти записи (внутрибазовые + межбазовые
         // из открытых баз). Best-effort: связи из закрытых баз чистятся лениво. Показываем лишь ФАКТ.
-        var linkWarn = RelationDeleteImpact.ForRecords(_repository, CurrentDbId, ids)
+        var linkWarn = RelationDeleteImpact.ForRecords(_repository, ids)
             ? " На них ссылаются связи из других записей — они будут удалены." : "";
         // Рутинный вопрос снимает настройка «Спрашивать подтверждение при удалении», а вот
         // предупреждение об обрыве связей она НЕ снимает: это про потерю чужих данных, о
@@ -573,7 +573,7 @@ public partial class ConstructorControllerView : UserControl
         // (два списка полей), поэтому дешево независимо от числа переносимых записей.
         var (dropped, linksDropped) = targetRepo.FieldsLostOnMove(
             _repository, _currentCollectionId.Value, res.CollectionId,
-            res.CreateMissingFields, CurrentDbId, res.DbId);
+            res.CreateMissingFields, RelationDbResolver.DbIdFor(_repository), RelationDbResolver.DbIdFor(targetRepo));
         if (dropped.Count > 0)
             warnings.Add($"• не перенесутся свойства: {NameList(dropped)}");
         if (linksDropped.Count > 0)
@@ -581,7 +581,7 @@ public partial class ConstructorControllerView : UserControl
 
         // Перенос = копия + удаление (у записи новый id), поэтому ВХОДЯЩИЕ связи на нее обрываются
         // (за записью не следуют).
-        if (RelationDeleteImpact.ForRecords(_repository, CurrentDbId, ids))
+        if (RelationDeleteImpact.ForRecords(_repository, ids))
             warnings.Add("• оборвутся связи, ссылающиеся на переносимые записи (станут «связи нет»)");
 
         if (warnings.Count > 0)
@@ -596,13 +596,16 @@ public partial class ConstructorControllerView : UserControl
 
         var sourcePath = _repository.DbPath;
         var sourceCollectionId = _currentCollectionId.Value;
+        // Номера баз для пересчета межбазовых связей — у самих баз, не номера реестра.
+        var sourceLinkId = RelationDbResolver.DbIdFor(_repository);
+        var targetLinkId = RelationDbResolver.DbIdFor(targetRepo);
         var many = ids.Count > 1;
         await RunBulkOp(many ? "Перемещение записей" : "Перемещение записи",
             (p, setPhase) =>
             {
                 setPhase(many ? "Перемещение записей" : "Перемещение записи");
                 targetRepo.MoveRecordsToCollectionIsolated(sourcePath, sourceCollectionId, ids, res.CollectionId,
-                    res.CreateMissingFields, CurrentDbId, res.DbId, new IntProgress(done => p.Report((done, ids.Count))));
+                    res.CreateMissingFields, sourceLinkId, targetLinkId, new IntProgress(done => p.Report((done, ids.Count))));
                 p.Report((ids.Count, ids.Count));   // финал → «Сохранение…»
             });
 
@@ -744,7 +747,7 @@ public partial class ConstructorControllerView : UserControl
             ? _repository.GetFields(_currentCollectionId.Value).Select(f => f.Id).ToHashSet()
             : null;
 
-        var dlg = new PropertyEditorDialog(_repository, _currentCollectionId.Value, fieldId, CurrentDbId);
+        var dlg = new PropertyEditorDialog(_repository, _currentCollectionId.Value, fieldId);
         var ok  = await dlg.ShowDialog<bool?>(win);
         if (ok != true) return;
 
@@ -840,7 +843,7 @@ public partial class ConstructorControllerView : UserControl
         var orderBefore = TableViewCtrl.MovableKeysInOrder();
         var idsBefore   = _repository.GetFields(_currentCollectionId.Value).Select(f => f.Id).ToHashSet();
 
-        var dlg = new PropertyEditorDialog(_repository, _currentCollectionId.Value, null, CurrentDbId);
+        var dlg = new PropertyEditorDialog(_repository, _currentCollectionId.Value, null);
         var ok  = await dlg.ShowDialog<bool?>(win);
         if (ok != true) return;
 

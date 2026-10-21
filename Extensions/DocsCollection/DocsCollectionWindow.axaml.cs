@@ -35,7 +35,7 @@ public partial class DocsCollectionWindow : Window
 
         // Доступ к базам — через ту же точку, что и межбазовые связи: расширению не нужно
         // знать ни о Workspace, ни о главном окне.
-        _databases = RelationDbResolver.Databases();
+        _databases = RelationDbResolver.RegistryDatabases();
         DbCombo.ItemsSource = _databases.Select(d => d.Name).ToList();
         if (_databases.Count > 0) DbCombo.SelectedIndex = 0;
         DbCombo.IsEnabled = _databases.Count > 1;
@@ -86,7 +86,7 @@ public partial class DocsCollectionWindow : Window
         }
 
         var dbId = _databases[DbCombo.SelectedIndex].DbId;
-        var repo = RelationDbResolver.RepoFor(dbId);
+        var repo = RelationDbResolver.RegistryRepoFor(dbId);
         if (repo is null) { SetStatus("База данных недоступна", "BrushRed"); return; }
 
         var recursive  = RecursiveCheck.IsChecked == true;

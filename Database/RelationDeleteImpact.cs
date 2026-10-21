@@ -13,13 +13,14 @@ namespace SmartBase.Database;
 public static class RelationDeleteImpact
 {
     /// <summary>Есть ли входящие связи на записи <paramref name="recordIds"/> (удаление/перенос записи).</summary>
-    public static bool ForRecords(ConstructorRepository owner, int ownerDbId, IReadOnlyCollection<int> recordIds)
+    public static bool ForRecords(ConstructorRepository owner, IReadOnlyCollection<int> recordIds)
     {
         if (recordIds.Count == 0) return false;
+        var ownerDbId = RelationDbResolver.DbIdFor(owner);
         if (owner.HasIncomingLinks(recordIds, 0)) return true;                 // внутрибазовые
-        // Межбазовые ищем ТОЛЬКО при валидном DbId нашей базы: чужая база различает ребра «в нашу базу»
-        // по TargetDbId == ownerDbId. Если ownerDbId неизвестен (≤0), пропускаем — иначе с targetDbId=0
-        // совпали бы ВНУТРЕННИЕ ребра чужой базы по коллизии id (у баз id могут пересекаться).
+        // Межбазовые ищем ТОЛЬКО при известном номере нашей базы: чужая база различает ребра «в нашу
+        // базу» по TargetDbId == номеру. Номера нет (≤0) — пропускаем, иначе с targetDbId=0 совпали бы
+        // ВНУТРЕННИЕ ребра чужой базы по коллизии id (у баз id могут пересекаться).
         if (ownerDbId <= 0) return false;
         foreach (var (_, repo) in RelationDbResolver.MountedReposExcept(ownerDbId))
             if (repo.HasIncomingLinks(recordIds, ownerDbId)) return true;      // межбазовые из открытых баз
@@ -28,11 +29,11 @@ public static class RelationDeleteImpact
 
     /// <summary>Есть ли входящие связи на записи коллекций <paramref name="collectionIds"/>
     /// (удаление коллекции/группы; в т.ч. ветка группы).</summary>
-    public static bool ForCollections(ConstructorRepository owner, int ownerDbId, IReadOnlyCollection<int> collectionIds)
+    public static bool ForCollections(ConstructorRepository owner, IReadOnlyCollection<int> collectionIds)
     {
         if (collectionIds.Count == 0) return false;
         if (owner.HasIncomingLinksToCollections(collectionIds)) return true;   // внутрибазовые
-        return HasCrossDbIncoming(owner, ownerDbId, collectionIds);
+        return HasCrossDbIncoming(owner, collectionIds);
     }
 
     /// <summary>
@@ -40,34 +41,35 @@ public static class RelationDeleteImpact
     /// Обычный перенос коллекции/ветки теперь сохраняет граф и использует
     /// <see cref="ForCollectionsExternalCrossMove"/>; этот метод оставлен для совместимости.
     /// </summary>
-    public static bool ForCrossMoveDroppingAllLinks(ConstructorRepository owner, int ownerDbId,
+    public static bool ForCrossMoveDroppingAllLinks(ConstructorRepository owner,
                                                     IReadOnlyCollection<int> collectionIds)
     {
         if (collectionIds.Count == 0) return false;
         if (owner.HasAnyLinksInCollections(collectionIds)) return true;
-        return HasCrossDbIncoming(owner, ownerDbId, collectionIds);
+        return HasCrossDbIncoming(owner, collectionIds);
     }
 
     /// <summary>МЕЖБАЗОВЫЙ перенос ОДНОЙ коллекции: теряются только ВНЕШНИЕ входящие (само-связи внутри
     /// переписываются на новую копию). Межбазовые из других баз — всегда внешние.</summary>
-    public static bool ForCollectionExternalCrossMove(ConstructorRepository owner, int ownerDbId, int collectionId) =>
-        ForCollectionsExternalCrossMove(owner, ownerDbId, [collectionId]);
+    public static bool ForCollectionExternalCrossMove(ConstructorRepository owner, int collectionId) =>
+        ForCollectionsExternalCrossMove(owner, [collectionId]);
 
     /// <summary>Перенос ветки сохраняет исходящие и внутренние связи. Обрываются только входящие
     /// из записей вне всего переносимого набора, включая ссылки из других открытых баз.</summary>
-    public static bool ForCollectionsExternalCrossMove(ConstructorRepository owner, int ownerDbId,
+    public static bool ForCollectionsExternalCrossMove(ConstructorRepository owner,
                                                        IReadOnlyCollection<int> collectionIds)
     {
         if (collectionIds.Count == 0) return false;
         if (owner.HasExternalIncomingLinksToCollections(collectionIds)) return true;
-        return HasCrossDbIncoming(owner, ownerDbId, collectionIds);
+        return HasCrossDbIncoming(owner, collectionIds);
     }
 
     // Есть ли межбазовое входящее ребро из какой-либо ОТКРЫТОЙ базы на записи данных коллекций.
     // Карта целей чужой базы в нашу мала (межбазовые связи разрежены) → пересечение дешево.
-    private static bool HasCrossDbIncoming(ConstructorRepository owner, int ownerDbId, IReadOnlyCollection<int> collectionIds)
+    private static bool HasCrossDbIncoming(ConstructorRepository owner, IReadOnlyCollection<int> collectionIds)
     {
-        if (ownerDbId <= 0) return false;   // без валидного DbId межбазовые не идентифицировать (коллизии id)
+        var ownerDbId = RelationDbResolver.DbIdFor(owner);
+        if (ownerDbId <= 0) return false;   // без номера базы межбазовые не идентифицировать (коллизии id)
         foreach (var (_, repo) in RelationDbResolver.MountedReposExcept(ownerDbId))
         {
             var map = repo.IncomingLinkCountsByTarget(ownerDbId);

@@ -66,7 +66,7 @@ public partial class MainWindow
         }
         // Нулевой id означает полную проверку правил и обновление вычислений/подписей.
         // Он нужен и тогда, когда auto-полей нет вообще: lookup и ручные связи тоже меняются.
-        foreach (var manager in mounted) QueueRelationChange(new(manager.Path, manager.DbId, 0));
+        foreach (var manager in mounted) QueueRelationChange(new(manager.Path, RelationDbResolver.DbIdFor(manager.Constructor), 0));
     }
 
     private async void FlushRelationChanges(object? sender, EventArgs args)

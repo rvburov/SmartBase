@@ -19,7 +19,7 @@ public sealed class RelationGlobalRefreshTests
         Assert.All(results, result => Assert.True(result.Applied, result.Message));
         Assert.Equal([f.NewChoice], f.B.Constructor.GetLinkTargetIds(f.MiddleAuto, f.MiddleRecord));
         Assert.Empty(f.C.Constructor.GetLinkEdges(f.LastAuto, f.OldRecord));
-        Assert.Equal([(f.MiddleRecord, 2)], f.C.Constructor.GetLinkEdges(f.LastAuto, f.NewRecord));
+        Assert.Equal([(f.MiddleRecord, f.B.LinkId)], f.C.Constructor.GetLinkEdges(f.LastAuto, f.NewRecord));
     }
 
     [Fact]
@@ -43,9 +43,9 @@ public sealed class RelationGlobalRefreshTests
         var toLast = f.B.Constructor.AddField(new DbField
         {
             CollectionId = f.MiddleCollection, Name = "Запись последней базы", FieldType = "relation",
-            ConfigJson = new RelationConfig(f.LastCollection, true, TargetDbId: 3).ToConfigJson(),
+            ConfigJson = new RelationConfig(f.LastCollection, true, TargetDbId: f.C.LinkId).ToConfigJson(),
         });
-        f.B.Constructor.SetLinkEdges(toLast.Id!.Value, f.MiddleRecord, [new(3, f.OldRecord)]);
+        f.B.Constructor.SetLinkEdges(toLast.Id!.Value, f.MiddleRecord, [new(f.C.LinkId, f.OldRecord)]);
         var lastValue = f.B.Constructor.AddField(new DbField
         {
             CollectionId = f.MiddleCollection, Name = "Связь последней базы", FieldType = "lookup",
@@ -83,17 +83,15 @@ public sealed class RelationGlobalRefreshTests
         public int OldRecord { get; }
         public int NewRecord { get; }
         public int LastAuto { get; }
-        public RelationDataChange RootChange => new(A.Path, 1, RootCollection, 0, RootRecord);
+        public RelationDataChange RootChange => new(A.Path, A.LinkId, RootCollection, 0, RootRecord);
 
         public Fixture()
         {
             // Имитируем приложение: изменения выпускают событие, один подготовленный запуск
             // ниже должен обновить весь граф. Промежуточных headless-пересчетов здесь нет.
             ConstructorRepository.RelationDataChanged += _ignore;
-            _resolver = RelationDbResolver.UseScopedResolver(id => id switch
-            {
-                1 => A.Constructor, 2 => B.Constructor, 3 => C.Constructor, _ => null,
-            });
+            _resolver = RelationDbResolver.UseScopedResolver(id =>
+                id == A.LinkId ? A.Constructor : id == B.LinkId ? B.Constructor : id == C.LinkId ? C.Constructor : null);
             try
             {
                 RootCollection = SampleData.AddCollection(A.Constructor, "Корневые значения").Id!.Value;
@@ -106,9 +104,9 @@ public sealed class RelationGlobalRefreshTests
                 var rootRelation = B.Constructor.AddField(new DbField
                 {
                     CollectionId = MiddleCollection, Name = "Корневая запись", FieldType = "relation",
-                    ConfigJson = new RelationConfig(RootCollection, true, TargetDbId: 1).ToConfigJson(),
+                    ConfigJson = new RelationConfig(RootCollection, true, TargetDbId: A.LinkId).ToConfigJson(),
                 });
-                B.Constructor.SetLinkEdges(rootRelation.Id!.Value, MiddleRecord, [new(1, RootRecord)]);
+                B.Constructor.SetLinkEdges(rootRelation.Id!.Value, MiddleRecord, [new(A.LinkId, RootRecord)]);
                 var rootLookup = B.Constructor.AddField(new DbField
                 {
                     CollectionId = MiddleCollection, Name = "Ключ корня", FieldType = "lookup",
@@ -131,7 +129,7 @@ public sealed class RelationGlobalRefreshTests
                 LastAuto = C.Constructor.AddField(new DbField
                 {
                     CollectionId = LastCollection, Name = "Промежуточная запись", FieldType = "relation",
-                    ConfigJson = new RelationConfig(MiddleCollection, true, TargetDbId: 2,
+                    ConfigJson = new RelationConfig(MiddleCollection, true, TargetDbId: B.LinkId,
                         Auto: new(RelationConfig.TitleField, selectedLookup.Id!.Value.ToString())).ToConfigJson(),
                 }).Id!.Value;
                 AssertOldEdges();
@@ -146,7 +144,7 @@ public sealed class RelationGlobalRefreshTests
         public void AssertOldEdges()
         {
             Assert.Equal([OldChoice], B.Constructor.GetLinkTargetIds(MiddleAuto, MiddleRecord));
-            Assert.Equal([(MiddleRecord, 2)], C.Constructor.GetLinkEdges(LastAuto, OldRecord));
+            Assert.Equal([(MiddleRecord, B.LinkId)], C.Constructor.GetLinkEdges(LastAuto, OldRecord));
             Assert.Empty(C.Constructor.GetLinkEdges(LastAuto, NewRecord));
         }
 

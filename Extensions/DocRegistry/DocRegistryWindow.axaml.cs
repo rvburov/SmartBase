@@ -120,7 +120,7 @@ public partial class DocRegistryWindow : Window
 
         // Доступ к базам — через ту же точку, что и межбазовые связи: расширению не нужно знать
         // ни о Workspace, ни о главном окне (тот же прием, что в «Документах в коллекцию»).
-        _databases = RelationDbResolver.Databases();
+        _databases = RelationDbResolver.RegistryDatabases();
         DbCombo.ItemsSource = _databases.Select(d => d.Name).ToList();
         DbCombo.IsEnabled   = _databases.Count > 1;   // выбирать не из чего — список заблокирован
 
@@ -164,7 +164,7 @@ public partial class DocRegistryWindow : Window
         {
             try
             {
-                _repo = RelationDbResolver.RepoFor(_databases[index].DbId);
+                _repo = RelationDbResolver.RegistryRepoFor(_databases[index].DbId);
                 if (_repo is not null)
                 {
                     _collections = _repo.GetAllCollections();

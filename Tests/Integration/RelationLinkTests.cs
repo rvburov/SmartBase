@@ -320,10 +320,10 @@ public sealed class RelationLinkTests
         var b1 = SampleData.AddRecord(repoB, projB, "Инфра B").Id!.Value;
         var b2 = SampleData.AddRecord(repoB, projB, "Сайт B").Id!.Value;
 
-        // БД-A: «Задачи» с межбазовой связью на БД-B (TargetDbId=2, разделитель — запятая).
+        // БД-A: «Задачи» с межбазовой связью на БД-B (TargetDbId — номер БД-B, разделитель — запятая).
         var taskA = SampleData.AddCollection(repoA, "Задачи").Id!.Value;
         var rel   = SampleData.AddField(repoA, taskA, "Проект", "relation");
-        rel.ConfigJson = new RelationConfig(projB, false, "comma", 2).ToConfigJson();
+        rel.ConfigJson = new RelationConfig(projB, false, "comma", dbB.LinkId).ToConfigJson();
         repoA.UpdateField(rel);
         var relId = rel.Id!.Value;
         var t1 = SampleData.AddRecord(repoA, taskA, "T1").Id!.Value;
@@ -334,7 +334,7 @@ public sealed class RelationLinkTests
 
         // Резолвер названий целей БД-B (в проде — RelationDbResolver; Workspace в тестах не поднят).
         Dictionary<int, string>? Resolve(int dbId, IReadOnlyList<int> ids) =>
-            dbId == 2 ? repoB.GetRecordTitles(ids) : null;
+            dbId == dbB.LinkId ? repoB.GetRecordTitles(ids) : null;
 
         // Сортировка: значение = названия целей из БД-B через разделитель поля.
         var vals = repoA.GetColumnValues(taskA, relId.ToString(), Resolve);
@@ -369,7 +369,7 @@ public sealed class RelationLinkTests
 
         var taskA = SampleData.AddCollection(repoA, "Задачи").Id!.Value;
         var rel   = SampleData.AddField(repoA, taskA, "Проект", "relation");
-        rel.ConfigJson = new RelationConfig(projB, false, "comma", 2).ToConfigJson();
+        rel.ConfigJson = new RelationConfig(projB, false, "comma", dbB.LinkId).ToConfigJson();
         repoA.UpdateField(rel);
         var t1 = SampleData.AddRecord(repoA, taskA, "T1").Id!.Value;
         repoA.SetLinks(rel.Id!.Value, t1, [b1]);
@@ -504,9 +504,9 @@ public sealed class RelationLinkTests
 
         // ATTACH-путь одиночной коллекции: внешних входящих нет → окна нет, и это ВЕРНО
         // (само-связи переписываются на копию и переезжают).
-        Assert.False(RelationDeleteImpact.ForCollectionExternalCrossMove(repo, 1, colC));
+        Assert.False(RelationDeleteImpact.ForCollectionExternalCrossMove(repo, colC));
         // Путь без копирования ребер: предупреждать обязаны.
-        Assert.True(RelationDeleteImpact.ForCrossMoveDroppingAllLinks(repo, 1, [colC]));
+        Assert.True(RelationDeleteImpact.ForCrossMoveDroppingAllLinks(repo, [colC]));
 
         // Вторая дыра: связи только НАРУЖУ. Входящих в D нет вообще, но ее ребра тоже пропадут.
         var colD = SampleData.AddCollection(repo, "D").Id!.Value;
@@ -517,12 +517,12 @@ public sealed class RelationLinkTests
         repo.SetLinks(relOut.Id!.Value, d1, [c1]);
 
         Assert.False(repo.HasIncomingLinksToCollections([colD]));                        // входящих в D нет
-        Assert.True(RelationDeleteImpact.ForCrossMoveDroppingAllLinks(repo, 1, [colD])); // но связи потеряются
+        Assert.True(RelationDeleteImpact.ForCrossMoveDroppingAllLinks(repo, [colD])); // но связи потеряются
 
         // Коллекция без связей не тревожит ни один путь.
         var empty = SampleData.AddCollection(repo, "Пустая").Id!.Value;
         SampleData.AddRecord(repo, empty, "e1");
-        Assert.False(RelationDeleteImpact.ForCrossMoveDroppingAllLinks(repo, 1, [empty]));
+        Assert.False(RelationDeleteImpact.ForCrossMoveDroppingAllLinks(repo, [empty]));
     }
 
     // Окно «что потеряется» перед переносом записи. Правила ОБЯЗАНЫ совпадать с планом MoveRecordsCore:

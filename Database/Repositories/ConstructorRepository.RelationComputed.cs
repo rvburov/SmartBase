@@ -112,7 +112,7 @@ public partial class ConstructorRepository
                     try
                     {
                         var targetRepo = group.Key == 0 ? this : RelationDbResolver.RepoFor(group.Key);
-                        if (targetRepo is null) { error = "(база недоступна)"; break; }
+                        if (targetRepo is null) { error = UnavailableLabel(group.Key); break; }
                         if (propertyKey != TitleKey
                             && targetRepo.Permissions?.Can(PermAction.ViewCollection, relationConfig.TargetCollectionId) == false)
                         { error = "(нет доступа)"; break; }

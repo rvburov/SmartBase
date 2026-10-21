@@ -725,7 +725,7 @@ public partial class TasksControllerView : UserControl
         foreach (var g in targets.GroupBy(t => t.DbId))
         {
             if (RepoFor(g.Key) is not { } repo) continue;
-            if (RelationDeleteImpact.ForRecords(repo, g.Key, g.Select(t => t.Id).ToList()))
+            if (RelationDeleteImpact.ForRecords(repo, g.Select(t => t.Id).ToList()))
             {
                 hasLinks = true;
                 break;
@@ -843,7 +843,7 @@ public partial class TasksControllerView : UserControl
         // редактировании скрыт, а DbId ниже принудительно возвращается исходный.
         var movingCollection = res is { Deleted: false, Task: { } m } && m.CollectionId != t.CollectionId;
         if ((res.Deleted || movingCollection) && t.Id is int rid && RepoFor(t.DbId) is { } own
-            && RelationDeleteImpact.ForRecords(own, t.DbId, [rid]))
+            && RelationDeleteImpact.ForRecords(own, [rid]))
         {
             var warn = res.Deleted
                 ? new ConfirmDialog("Удалить задачу? На нее ссылаются связи из других записей — "

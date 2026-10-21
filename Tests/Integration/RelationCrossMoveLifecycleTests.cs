@@ -24,11 +24,11 @@ public sealed class RelationCrossMoveLifecycleTests
         var outgoing = Relation(repo, a, "Наружу", new RelationConfig(outside, false));
         repo.SetLinks(internalLink, ar, [br]);
         repo.SetLinks(outgoing, ar, [other]);
-        Assert.False(RelationDeleteImpact.ForCollectionsExternalCrossMove(repo, 0, [a, b]));
+        Assert.False(RelationDeleteImpact.ForCollectionsExternalCrossMove(repo, [a, b]));
         var incoming = Relation(repo, outside, "Входящая", new RelationConfig(a, false));
         repo.SetLinks(incoming, other, [ar]);
-        Assert.True(RelationDeleteImpact.ForCollectionsExternalCrossMove(repo, 0, [a, b]));
-        Assert.False(RelationDeleteImpact.ForCollectionsExternalCrossMove(repo, 0, []));
+        Assert.True(RelationDeleteImpact.ForCollectionsExternalCrossMove(repo, [a, b]));
+        Assert.False(RelationDeleteImpact.ForCollectionsExternalCrossMove(repo, []));
     }
 
     [SkippableTheory]

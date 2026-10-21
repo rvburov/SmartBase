@@ -154,6 +154,16 @@ public sealed partial class DatabaseManager : IDisposable
         Categories  = new CategoryRepository(Context);
         Constructor = new ConstructorRepository(Context) { Permissions = Permissions };
 
+        // Постоянный номер базы для межбазовых связей (db_meta, одинаков на всех компьютерах).
+        // Без права записи номер не заводится: база работает, но целью новой межбазовой связи
+        // стать не может.
+        try { Constructor.EnsureRelationBaseId(RelationDbResolver.KnownLinkIds()); }
+        catch (Exception ex) when (ex is DbUpdateException or System.Data.Common.DbException or IOException
+                                      or InvalidOperationException)
+        {
+            Log.Warning("База «{Name:l}»: номер для межбазовых связей не заведен ({ErrorType})", name, ex.GetType().Name);
+        }
+
         // Незавершенный generic-перенос (kill посреди пакетной заливки из БД другого
         // провайдера) оставляет частичную копию под маркером crossmove.pending.* —
         // доудаляем ее при монтировании (источник переносом не тронут).
@@ -276,6 +286,8 @@ public sealed partial class DatabaseManager : IDisposable
     public void Dispose()
     {
         WaitMaintenance();
+        // Файл по этому адресу могут подменить другой базой — номер связи перечитается.
+        ConstructorRepository.ForgetRelationBaseId(Context.DbPath);
         Context.Dispose();
         // Фоновый перенос журнала (WalCheckpointer) не должен держать файл закрытой базы.
         if (Provider == "sqlite") WalCheckpointer.Unwatch(Path);

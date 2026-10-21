@@ -74,7 +74,7 @@ public partial class PropertyEditorDialog : Window
     private readonly ConstructorRepository _repository;
     private readonly int  _collectionId;
     private readonly int? _editFieldId;
-    // Реестровый DbId базы этого поля — чтобы отличить «своя БД» (пишем TargetDbId=0) от межбазовой.
+    // Номер базы этого поля для связей — чтобы отличить «своя БД» (пишем TargetDbId=0) от межбазовой.
     private readonly int  _currentDbId;
 
     // Режим системной колонки («Название»/«Описание»): тип зафиксирован «Текст»,
@@ -108,8 +108,7 @@ public partial class PropertyEditorDialog : Window
     /// <summary>В системном режиме — введенная подпись (после Сохранить); иначе null.</summary>
     public string? ResultName { get; private set; }
 
-    public PropertyEditorDialog(ConstructorRepository repository, int collectionId, int? editFieldId = null,
-                                int currentDbId = 0)
+    public PropertyEditorDialog(ConstructorRepository repository, int collectionId, int? editFieldId = null)
     {
         // Порог медленности: окно свойства (типы, списки коллекций для связи) дольше Diag.UiOpen — в журнал.
         using var slow = Logging.Diag.Measure("окно свойства", Logging.Diag.UiOpen, $"коллекция {collectionId}");
@@ -118,7 +117,7 @@ public partial class PropertyEditorDialog : Window
         _repository   = repository;
         _collectionId = collectionId;
         _editFieldId  = editFieldId;
-        _currentDbId  = currentDbId;
+        _currentDbId  = RelationDbResolver.DbIdFor(repository);
 
         TypeCombo.ItemsSource = FieldTypes;
 
@@ -663,7 +662,7 @@ public partial class PropertyEditorDialog : Window
         public override string ToString() => Name;
     }
 
-    /// <summary>Пункт выпадашки целевой БД связи (реестровый DbId + имя).</summary>
+    /// <summary>Пункт выпадашки целевой БД связи (номер базы для связей + имя).</summary>
     private sealed class RelationDbItem
     {
         public int    Id   { get; init; }
@@ -671,18 +670,22 @@ public partial class PropertyEditorDialog : Window
         public override string ToString() => Name;
     }
 
+    // Коллекция старой связи, чья база не определена на этом компьютере (см. RestoreRelationConfig).
+    private int? _legacyTargetCollection;
+
     // Репозиторий выбранной целевой БД: своя (_repository) или чужая (через резолвер реестра).
     private ConstructorRepository? RepoForDb(int dbId) =>
         dbId == _currentDbId || dbId <= 0 ? _repository : RelationDbResolver.RepoFor(dbId);
 
-    // Список целевых БД (реестр). Резолвер не настроен (тесты/безоконный) → одна «своя» база.
+    // Список целевых БД (реестр, номера баз для связей). Резолвер не настроен (тесты/безоконный)
+    // → одна «своя» база.
     // Смена БД перезаполняет список коллекций (PopulateRelationTargets).
     private void PopulateRelationDatabases()
     {
         if (_systemMode || _repository is null) return;
         var dbs = RelationDbResolver.Databases()
             .Select(d => new RelationDbItem { Id = d.DbId, Name = d.Name }).ToList();
-        if (dbs.Count == 0) dbs = [new RelationDbItem { Id = _currentDbId, Name = "Текущая база" }];
+        if (dbs.All(d => d.Id != _currentDbId)) dbs.Insert(0, new RelationDbItem { Id = _currentDbId, Name = "Текущая база" });
 
         RelationCardinalityCombo.SelectedIndex = 1;  // дефолт «Одну» (0 — Несколько); не сбрасывается при смене БД
         RelationSeparatorCombo.SelectedIndex   = 0;
@@ -700,8 +703,7 @@ public partial class PropertyEditorDialog : Window
     private void PopulateRelationTargets()
     {
         if (_systemMode || _repository is null) return;
-        var dbId = (RelationDbCombo.SelectedItem as RelationDbItem)?.Id ?? _currentDbId;
-        var repo = RepoForDb(dbId);
+        var repo = RelationDbCombo.SelectedItem is RelationDbItem db ? RepoForDb(db.Id) : null;
         var items = new List<TargetCollectionItem>();
         if (repo is not null)
             foreach (var c in repo.GetAllCollections())
@@ -709,7 +711,10 @@ public partial class PropertyEditorDialog : Window
                 if (c.Id.HasValue && (repo.Permissions?.Can(PermAction.ViewCollection, c.Id.Value) ?? true))
                     items.Add(new TargetCollectionItem { Id = c.Id.Value, Name = TitleText.FirstLine(c.Name) });
         RelationTargetCombo.ItemsSource   = items;
-        RelationTargetCombo.SelectedIndex = -1;      // цель нужно выбрать явно (список сменился)
+        // Цель нужно выбрать явно (список сменился). Исключение — старая связь без базы: ее
+        // коллекция известна, после выбора базы она подставляется сама.
+        RelationTargetCombo.SelectedIndex = _legacyTargetCollection is int legacy && RelationDbCombo.SelectedIndex >= 0
+            ? items.FindIndex(i => i.Id == legacy) : -1;
         PopulateRelationProperties();
     }
 
@@ -719,6 +724,16 @@ public partial class PropertyEditorDialog : Window
         var cfg = RelationConfig.FromConfig(configJson);
         if (cfg is null) return;
         // Целевая БД (0 → своя). Смена комбо перезаполнит список коллекций до выбора цели ниже.
+        // Старая межбазовая связь с номером реестра другого компьютера: база не выбрана, пока ее
+        // не укажут, — иначе одноименный номер коллекции молча указал бы на чужую базу.
+        if (ConstructorRepository.IsLegacyRelationDb(cfg.TargetDbId))
+        {
+            _legacyTargetCollection = cfg.TargetCollectionId;
+            RelationLegacyNote.Kind = Widgets.NoticeBanner.BannerKind.Info;
+            RelationLegacyNote.Show("Связи этого свойства созданы на другом компьютере, и их база здесь не определена. " +
+                                    "Выберите целевую базу: программа проверит, что связанные записи в ней есть.");
+            RelationDbCombo.SelectedIndex = -1;
+        }
         var dbId = cfg.TargetDbId > 0 ? cfg.TargetDbId : _currentDbId;
         if (RelationDbCombo.ItemsSource is IEnumerable<RelationDbItem> dbs)
         {
@@ -750,8 +765,12 @@ public partial class PropertyEditorDialog : Window
         }
         var single     = RelationCardinalityCombo.SelectedIndex == 1;   // 0 — Несколько, 1 — Одну
         var separator  = SeparatorKeys[Math.Clamp(RelationSeparatorCombo.SelectedIndex, 0, SeparatorKeys.Length - 1)];
-        var dbId       = (RelationDbCombo.SelectedItem as RelationDbItem)?.Id ?? _currentDbId;
-        var targetDbId = dbId == _currentDbId ? 0 : dbId;   // своя БД → 0 (внутрибазовая связь)
+        if (RelationDbCombo.SelectedItem is not RelationDbItem db)
+        {
+            ShowError("Выберите целевую базу");
+            return null;
+        }
+        var targetDbId = db.Id == _currentDbId ? 0 : db.Id;   // своя БД → 0 (внутрибазовая связь)
         var display = (RelationDisplayCombo.SelectedItem as RelationPropertyItem)?.Key;
         var search = (RelationSearchCombo.SelectedItem as RelationPropertyItem)?.Key;
         if (display is null || search is null) { ShowError("Выберите свойства для показа и поиска"); return null; }

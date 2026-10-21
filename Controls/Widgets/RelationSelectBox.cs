@@ -580,7 +580,7 @@ public sealed class RelationSelectBox : Panel
         public int    DbId  => target.DbId;   // база цели этого пункта (0 — та же БД, >0 — межбазовая)
         // Строка списка — одна строка: показываем первую (поиск выше идет по полному названию).
         public string Title => title.Length == 0 ? "(пусто)" : TitleText.FirstLine(title);
-        public string Detail => recordTitle is RelationProperty.NoAccess or RelationProperty.Unavailable ? "" : TitleText.FirstLine(recordTitle);
+        public string Detail => recordTitle is RelationProperty.NoAccess or RelationProperty.Unavailable or RelationProperty.UnknownBase ? "" : TitleText.FirstLine(recordTitle);
         public bool HasDetail => Detail.Length > 0 && Detail != Title;
 
         public bool Checked

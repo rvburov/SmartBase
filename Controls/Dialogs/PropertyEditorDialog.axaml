@@ -478,6 +478,8 @@
             <TextBlock TextWrapping="Wrap" LineHeight="16"
                        Foreground="{StaticResource BrushSecondaryText}"
                        Text="Выбирайте записи по нужному свойству или связывайте их автоматически по совпадению столбцов. Нажатие на связанную запись открывает ее." />
+            <!-- Связь создана до постоянных номеров баз на другом компьютере: базу надо указать. -->
+            <w:NoticeBanner x:Name="RelationLegacyNote" />
 
             <StackPanel Spacing="6">
                 <TextBlock Text="Целевая база"

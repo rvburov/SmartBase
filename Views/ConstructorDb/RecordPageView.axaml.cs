@@ -13,6 +13,7 @@ using SmartBase.Controls.Dialogs;
 using SmartBase.Controls.DrawnGrid;
 using SmartBase.Controls.Widgets;
 using SmartBase.Core.Models;
+using SmartBase.Database;
 using SmartBase.Database.Repositories;
 using SmartBase.Utils;
 using SmartBase.ViewModels.ConstructorDb;
@@ -1072,7 +1073,7 @@ public partial class RecordPageView : UserControl
         FooterBar.ShowActions(Actions().Count > 0);
 
     private IReadOnlyList<DataAction> Actions() =>
-        _vm is null ? [] : DataActions?.Invoke(_dbId, _vm.CollectionId) ?? [];
+        _vm is null ? [] : DataActions?.Invoke(_dbId > 0 ? RelationDbResolver.RegistryIdFor(_dbId) : 0, _vm.CollectionId) ?? [];
 
     /// <summary>
     /// Список действий под кнопкой. Собирается на КАЖДОЕ открытие: обмен могли настроить, пока

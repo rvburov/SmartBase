@@ -112,6 +112,7 @@ public partial class MainWindow : Window
         // Резолвер чужих баз для межбазовых связей (тип «relation» с TargetDbId>0).
         RelationDbResolver.Configure(workspace);
         ConfigureRelationChanges();
+        ConfigureRelationBases();
         ConfigureFileAutoChanges();
         ConfigureRelationIntegrity();
 
@@ -1341,6 +1342,7 @@ public partial class MainWindow : Window
     private void SyncMountedToUi()
     {
         HookPermissionEvents();
+        QueueRelationBaseMigration();
         QueueAllRelationRefreshes();
         QueueRelationIntegrityChecks();
         var pending = PendingDbs();
@@ -1797,8 +1799,11 @@ public partial class MainWindow : Window
 
         // Идем строго по сохраненной базе (ноль разбор уже отсек): база могла не смонтироваться
         // к этому моменту или вовсе выпасть из реестра — тогда панель просто не откроется.
-        var repo = RelationDbResolver.RepoFor(last.DbId);
+        // Сохранен номер реестра этого компьютера; панель открывается по номеру базы для связей.
+        var repo = RelationDbResolver.RegistryRepoFor(last.DbId);
         if (repo is null) return;
+        var linkId = RelationDbResolver.DbIdFor(repo);
+        if (linkId <= 0 && repo != CurrentConstructorRepo) return;
 
         try
         {
@@ -1809,12 +1814,13 @@ public partial class MainWindow : Window
             return;   // база занята или пропала — панель просто не откроется
         }
 
-        OpenRecordPanel(last.DbId, last.RecordId);
+        OpenRecordPanel(linkId > 0 ? linkId : 0, last.RecordId);
     }
 
     private void OpenRecordPanel(int recordId) => OpenRecordPanel(0, recordId);
 
-    // dbId>0 — межбазовый переход (по чипу связи на запись в ДРУГОЙ .db): панель открывается из
+    // dbId>0 — межбазовый переход (по чипу связи на запись в ДРУГОЙ .db, номер базы для связей —
+    // см. RelationDbResolver): панель открывается из
     // репозитория ЦЕЛЕВОЙ БД (ее схема/правки), активную коллекцию НЕ переключаем — панель
     // самодостаточна. dbId=0 — обычный переход в текущей БД.
     private void OpenRecordPanel(int dbId, int recordId)
@@ -1865,7 +1871,7 @@ public partial class MainWindow : Window
         // приложения», и внутри сеанса этого хватает, но значение переживает перезапуск —
         // записываем НАСТОЯЩИЙ id базы (как DataActions выше), иначе после старта с другой
         // активной базой мы открыли бы запись с тем же номером из чужой базы.
-        AppSettings.SaveConstructorLastRecord(dbId > 0 ? dbId : _currentConstructorDbId, recordId);
+        AppSettings.SaveConstructorLastRecord(dbId > 0 ? RelationDbResolver.RegistryIdFor(repo) : _currentConstructorDbId, recordId);
         ApplyColumns();
     }
 

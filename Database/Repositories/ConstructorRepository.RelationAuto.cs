@@ -565,7 +565,7 @@ public partial class ConstructorRepository
     {
         if (value.FieldType.Length == 0 && value.Display == RelationProperty.NoAccess)
             return AutoFailure(RelationAutoStatus.NoAccess, field, "Нет доступа к зависимому свойству. Прежние связи сохранены.");
-        if (value.FieldType.Length == 0 && value.Display is RelationProperty.Unavailable or "(вычисление недоступно)")
+        if (value.FieldType.Length == 0 && value.Display is RelationProperty.Unavailable or RelationProperty.UnknownBase or "(вычисление недоступно)")
             return AutoFailure(RelationAutoStatus.Unavailable, field, "Зависимую базу не удалось прочитать. Прежние связи сохранены.");
         return AutoFailure(RelationAutoStatus.InvalidRule, field, $"В {location} свойстве есть недоступное значение или значение другого типа.");
     }

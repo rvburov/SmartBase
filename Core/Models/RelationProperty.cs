@@ -21,6 +21,9 @@ public static class RelationProperty
 {
     public const string NoAccess = "(нет доступа)";
     public const string Unavailable = "(база недоступна)";
+    /// <summary>Старая межбазовая связь с номером реестра другого компьютера: база не определена,
+    /// пока ее не выберут в окне свойства (ребра сохраняются).</summary>
+    public const string UnknownBase = "(база не определена)";
     public const string MissingField = "(свойство недоступно)";
     public const string Cycle = "(циклическая связь)";
 

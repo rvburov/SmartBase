@@ -51,7 +51,7 @@ public partial class PdfWatermarkWindow : Window
     {
         InitializeComponent();
 
-        _databases = RelationDbResolver.Databases();
+        _databases = RelationDbResolver.RegistryDatabases();
         DbCombo.ItemsSource = _databases.Select(d => d.Name).ToList();
         DbCombo.IsEnabled   = _databases.Count > 1;
 
@@ -163,7 +163,7 @@ public partial class PdfWatermarkWindow : Window
         {
             try
             {
-                _repo = RelationDbResolver.RepoFor(_databases[index].DbId);
+                _repo = RelationDbResolver.RegistryRepoFor(_databases[index].DbId);
                 if (_repo is not null)
                 {
                     _collections = _repo.GetAllCollections();

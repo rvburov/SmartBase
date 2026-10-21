@@ -2546,7 +2546,7 @@ public partial class SidebarTree : UserControl
         foreach (var t in crossDb)
         {
             IReadOnlyCollection<int> cols = t.IsGroup ? t.SrcRepo.CollectionIdsInGroup(t.Id) : [t.Id];
-            if (!RelationDeleteImpact.ForCollectionsExternalCrossMove(t.SrcRepo, t.SrcDbId, cols)) continue;
+            if (!RelationDeleteImpact.ForCollectionsExternalCrossMove(t.SrcRepo, cols)) continue;
             hasLinks = true;
             break;
         }
@@ -2573,8 +2573,8 @@ public partial class SidebarTree : UserControl
         var anyGroup = crossDb.Any(t => t.IsGroup);
 
         int MoveOne(CrossMove t, IProgress<int>? p) => t.IsGroup
-            ? targetRepo.MoveGroupIsolated(t.SrcRepo.DbPath, t.Id, targetLocation, p, sourceDbId: t.SrcDbId, targetDbId: targetDbId)
-            : targetRepo.MoveCollectionIsolated(t.SrcRepo.DbPath, t.Id, targetLocation, p, sourceDbId: t.SrcDbId, targetDbId: targetDbId);
+            ? targetRepo.MoveGroupIsolated(t.SrcRepo.DbPath, t.Id, targetLocation, p, sourceDbId: RelationDbResolver.DbIdFor(t.SrcRepo), targetDbId: RelationDbResolver.DbIdFor(targetRepo))
+            : targetRepo.MoveCollectionIsolated(t.SrcRepo.DbPath, t.Id, targetLocation, p, sourceDbId: RelationDbResolver.DbIdFor(t.SrcRepo), targetDbId: RelationDbResolver.DbIdFor(targetRepo));
 
         (int DbId, int Id, bool IsGroup)? reveal = null;
         var progress = new NodeWorkProgress(PhaseText(title, crossDb.Count, 0, crossDb[0].IsGroup));
@@ -2738,7 +2738,7 @@ public partial class SidebarTree : UserControl
             foreach (var n in byDb)
                 if (n.IsGroup) cols.UnionWith(r.CollectionIdsInGroup(n.Id!.Value));
                 else           cols.Add(n.Id!.Value);
-            if (RelationDeleteImpact.ForCollections(r, byDb.Key, cols)) { hasLinks = true; break; }
+            if (RelationDeleteImpact.ForCollections(r, cols)) { hasLinks = true; break; }
         }
 
         var confirm = new ConfirmDialog(BuildDeleteMessage(groups.Count, colls.Count, hasLinks));

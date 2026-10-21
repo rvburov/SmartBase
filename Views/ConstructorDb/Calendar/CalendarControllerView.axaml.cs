@@ -962,7 +962,7 @@ public partial class CalendarControllerView : UserControl
     {
         if (r.Id is not int id) return true;
         var repo = _dbs.FirstOrDefault(d => d.DbId == r.DbId).Repo;
-        if (repo is null || !RelationDeleteImpact.ForRecords(repo, r.DbId, [id])) return true;
+        if (repo is null || !RelationDeleteImpact.ForRecords(repo, [id])) return true;
         return await new ConfirmDialog(message, confirmText).ShowDialog<bool>(win) == true;
     }
 
@@ -1041,7 +1041,8 @@ public partial class CalendarControllerView : UserControl
                                                      rec.Id!.Value, rec.CollectionId ?? 0,
                                                      createMissingFields: false, excludeTargetFieldId: rec.FieldId);
                     targetRepo.CopyRelationLinksByName(sourceRepo, r.Id!.Value, r.CollectionId ?? 0,
-                                                       rec.Id!.Value, rec.CollectionId ?? 0, r.DbId, rec.DbId);
+                                                       rec.Id!.Value, rec.CollectionId ?? 0,
+                                                       RelationDbResolver.DbIdFor(sourceRepo), RelationDbResolver.DbIdFor(targetRepo));
                     sourceRepo.DeleteCalendarRecord(r.Id!.Value);
                 });
                 if (!ok) { RefreshCurrent(); return; }
@@ -1143,7 +1144,7 @@ public partial class CalendarControllerView : UserControl
             var repo = _dbs.FirstOrDefault(d => d.DbId == g.Key).Repo;
             if (repo is null) continue;
             var ids = g.Select(r => r.Id!.Value).Distinct().ToList();
-            if (RelationDeleteImpact.ForRecords(repo, g.Key, ids)) { hasLinks = true; break; }
+            if (RelationDeleteImpact.ForRecords(repo, ids)) { hasLinks = true; break; }
         }
         var linkWarn = hasLinks ? " На них ссылаются связи из других записей — они будут удалены." : "";
 
