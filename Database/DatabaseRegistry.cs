@@ -276,15 +276,27 @@ public sealed class DatabaseRegistry : IDisposable, ISettingsDatabase
                     .Select(s => s.Key)
                     .ToList();
 
-    // Если дефолтной БД еще нет — регистрируем текущий database.db как основную.
+    // Основная база всегда живет по актуальному пути приложения (Workspace.Open).
+    // После переноса папки app.db хранит старый абсолютный путь: обновляем его и для
+    // резервных копий, настроек и остальных потребителей реестра, сохраняя Id и имя.
     private void EnsureDefault(string defaultDataPath)
     {
-        if (_db.Databases.Any(d => d.IsDefault)) return;
+        var fullPath = System.IO.Path.GetFullPath(defaultDataPath);
+        var existing = _db.Databases.FirstOrDefault(d => d.IsDefault);
+        if (existing is not null)
+        {
+            if (existing.Path != fullPath)
+            {
+                existing.Path = fullPath;
+                _db.SaveChanges();
+            }
+            return;
+        }
 
         _db.Databases.Add(new DatabaseRefEntity
         {
             Name      = "Основная",
-            Path      = System.IO.Path.GetFullPath(defaultDataPath),
+            Path      = fullPath,
             Provider  = "sqlite",
             IsDefault = true,
         });

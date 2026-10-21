@@ -13,6 +13,89 @@ namespace SmartBase.Tests.Integration;
 /// </summary>
 public sealed class BackupServiceTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Default_database_backup_follows_moved_data_directory(bool oldFileStillExists)
+    {
+        using var dir = new TempDir();
+        var legacyDir = dir.File("DataBase");
+        var currentDir = dir.File("SmartBase");
+        var legacyPath = Path.Combine(legacyDir, "database.db");
+        var currentPath = Path.Combine(currentDir, "database.db");
+        var extraPath = dir.File("extra.db");
+        Directory.CreateDirectory(legacyDir);
+
+        int id, collectionId, extraId;
+        using (var registry = DatabaseRegistry.Open(legacyPath, Path.Combine(legacyDir, "app.db")))
+        {
+            AppSettings.AttachStore(registry);
+            id = registry.GetAll().Single().Id;
+            registry.Rename(id, "Моя основная");
+            extraId = registry.Add("Другая", extraPath).Id;
+            AppSettings.SaveBackupEnabled(id, true);
+            AppSettings.SaveBackupSchedule(id, "weekly mon,thu 03:00");
+
+            using var database = DatabaseManager.Open(id, "Моя основная", legacyPath);
+            var collection = SampleData.AddCollection(database.Constructor);
+            collectionId = collection.Id!.Value;
+            SampleData.AddRecords(database.Constructor, collectionId, count: 7, step: 10);
+        }
+
+        // Переносится вся папка, включая app.db со старым абсолютным путем основной базы.
+        SqliteGate.ClearAllPools();
+        Directory.Move(legacyDir, currentDir);
+
+        using (var registry = DatabaseRegistry.Open(currentPath, Path.Combine(currentDir, "app.db")))
+        {
+            AppSettings.AttachStore(registry);
+            AppSettings.SaveBackupFolder(dir.File("copies"));
+
+            // Даже если по старому адресу осталась другая база, копировать нужно актуальную.
+            if (oldFileStillExists)
+            {
+                Directory.CreateDirectory(legacyDir);
+                using var oldDatabase = DatabaseManager.Open(91, "Старый файл", legacyPath);
+            }
+
+            var finished = new List<(bool Ok, string Message)>();
+            using var service = new BackupService(registry);
+            service.BackupFinished += (_, ok, msg) => finished.Add((ok, msg));
+            await service.RunNowAsync(id);
+
+            Assert.Equal([(true, "")], finished);
+            var copy = Assert.Single(Directory.GetFiles(dir.File("copies")));
+            try
+            {
+                using var copyDb = DatabaseManager.Open(90, "copy", copy);
+                Assert.Equal(7, copyDb.Constructor.CountRecords(collectionId));
+            }
+            finally { TempDatabase.Cleanup(copy); }
+
+            var main = registry.GetAll().Single(d => d.IsDefault);
+            Assert.Equal(id, main.Id);
+            Assert.Equal("Моя основная", main.Name);
+            Assert.Equal(currentPath, main.Path);
+            Assert.Equal(extraPath, registry.GetAll().Single(d => d.Id == extraId).Path);
+            Assert.True(AppSettings.LoadBackupEnabled(id));
+            Assert.Equal("weekly mon,thu 03:00", AppSettings.LoadBackupSchedule(id));
+            Assert.Equal(oldFileStillExists, File.Exists(legacyPath));
+        }
+
+        // Путь записан в app.db, а не подменен только в памяти открытого реестра.
+        using (var stored = new SystemDbContext(Path.Combine(currentDir, "app.db")))
+            Assert.Equal(currentPath, stored.Databases.Single(d => d.IsDefault).Path);
+
+        // Повторный запуск не создает новую запись основной базы.
+        using (var again = DatabaseRegistry.Open(currentPath, Path.Combine(currentDir, "app.db")))
+        {
+            Assert.Equal(2, again.GetAll().Count);
+            Assert.Equal(id, again.GetAll().Single(d => d.IsDefault).Id);
+            Assert.Equal(currentPath, again.GetAll().Single(d => d.IsDefault).Path);
+        }
+        SqliteGate.ClearAllPools();
+    }
+
     [Fact]
     public async Task Run_now_creates_valid_copy_and_updates_last_run()
     {
