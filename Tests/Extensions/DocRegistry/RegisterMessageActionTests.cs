@@ -52,11 +52,12 @@ public sealed class RegisterMessageActionTests
         var result = Action.Run(new ActionContext(null, 1, 1, Now, Settings()), Input(command));
         Assert.True(result.Ok, result.Explanation);
         Assert.Equal(0, result.Rows);
+        var instruction = result.Answer.ReplaceLineEndings("\n");
         foreach (var action in new[] { "Регистрация", "Просмотр", "Удаление", "Изменение" })
-            Assert.Contains($"Действие: {action}\nНомер:", result.Answer, StringComparison.Ordinal);
-        Assert.Contains("не найден", result.Answer, StringComparison.Ordinal);
-        Assert.Contains("10 минут", result.Answer, StringComparison.Ordinal);
-        Assert.DoesNotContain("```", result.Answer, StringComparison.Ordinal);
+            Assert.Contains($"Действие: {action}\nНомер:", instruction, StringComparison.Ordinal);
+        Assert.Contains("не найден", instruction, StringComparison.Ordinal);
+        Assert.Contains("10 минут", instruction, StringComparison.Ordinal);
+        Assert.DoesNotContain("```", instruction, StringComparison.Ordinal);
     }
 
     [Fact]
