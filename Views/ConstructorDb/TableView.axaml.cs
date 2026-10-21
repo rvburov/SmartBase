@@ -1,3 +1,4 @@
+using System.Text;
 using System.Globalization;
 using System.Text.Json;
 using Avalonia;
@@ -1801,12 +1802,16 @@ public partial class TableView : UserControl
 
         using var cts = new CancellationTokenSource();
         ProgressDialog? dlg = null;
-        var progress = new Progress<double>(f => dlg?.SetProgress(f, "Поиск файлов…"));
+        var progress = new Progress<double>(f =>
+        {
+            if (double.IsNaN(f)) dlg?.SetSaving("Индексирование каталога…");
+            else dlg?.SetProgress(f, "Поиск файлов…");
+        });
         var bg = _repository.ResolveAutoFileFieldAsync(fieldId, progress, cts.Token);
         if (win is not null && await Task.WhenAny(bg, Task.Delay(400)) != bg)
         {
             dlg = new ProgressDialog { Title = "Привязка файлов" };
-            dlg.SetProgress(0, "Поиск файлов…");
+            dlg.SetSaving("Индексирование каталога…");
             dlg.EnableCancel(() => cts.Cancel());
             var closed = dlg.ShowDialog(win);
             await bg;
@@ -1814,9 +1819,11 @@ public partial class TableView : UserControl
             await closed;
         }
         var result = await bg;
+        if (result == ConstructorRepository.FileAutoResolveResult.Ok) FileProbe.ForgetAll();
         ReloadRows();
-        if (result == ConstructorRepository.FileAutoResolveResult.FolderInaccessible && win is not null)
-            await ConfirmDialog.Info("Папка недоступна").ShowDialog(win);
+        var message = ConstructorRepository.FileAutoFailureMessage(result);
+        if (message.Length > 0 && win is not null)
+            await ConfirmDialog.Info(message).ShowDialog(win);
     }
 
     // Удаление из контекстного меню «Удалить». Если поле входит в текущее выделение
@@ -2025,7 +2032,8 @@ public partial class TableView : UserControl
                                                        else if (on) checkedSet.Add(r);
                                                        else checkedSet.Remove(r);
                                                    },
-                                                   () => SyncSelectAll());
+                                                   () => SyncSelectAll(),
+                                                   def.FieldType == "file" && raw.Length > 0 ? raw : "");
 
         var valuesList = new ListBox
         {
@@ -2138,7 +2146,8 @@ public partial class TableView : UserControl
             return q.Length == 0
                 ? counts
                 : counts.Where(c => DisplayValue(c.Raw, def.FieldType, def.Separator, def.NumberFormat)
-                    .Contains(q, StringComparison.OrdinalIgnoreCase)).ToList();
+                    .Contains(q, StringComparison.OrdinalIgnoreCase)
+                    || def.FieldType == "file" && c.Raw.Contains(q, StringComparison.OrdinalIgnoreCase)).ToList();
         }
 
         // Показанные сейчас сырые значения — общий язык обоих режимов списка: по ним
@@ -2164,7 +2173,7 @@ public partial class TableView : UserControl
             shown.AddRange(Matched().Select(c => Vm(c.Raw, c.Count)));
             // Ширина строки фиксируется по текущему набору — иначе экстент горизонтальной
             // прокрутки считался бы только по видимым строкам и полоса прыгала бы.
-            metrics.Measure(shown.Select(v => v.Display), shown.Select(v => v.CountText),
+            metrics.Measure(shown.SelectMany(v => new[] { v.Display, v.PathDetails }), shown.Select(v => v.CountText),
                             fontBase, family);
         }
         rebuildListRef = RebuildList;
@@ -2536,7 +2545,9 @@ public partial class TableView : UserControl
     {
         if (asc is bool a)
         {
-            var cmp = BuildComparer(fieldType, a);
+            var cmp = fieldType == "file"
+                ? new Func<string, string, int>((x, y) => (a ? 1 : -1) * CompareFileDisplay(x, y))
+                : BuildComparer(fieldType, a);
             return src.OrderBy(c => c.Value, Comparer<string>.Create((x, y) => cmp(x, y)))
                       .Select(c => (c.Value, c.Count)).ToList();
         }
@@ -2544,6 +2555,22 @@ public partial class TableView : UserControl
         // Без сортировки — порядок как в таблице: репозиторий уже вернул значения по первой
         // позиции записи, «(Пусто)» в конце. Ничего не пересортировываем.
         return src.Select(c => (c.Value, c.Count)).ToList();
+    }
+
+    // SQL файлов задает C/BINARY (порядок кодовых точек Unicode). UTF16 Ordinal
+    // отличается для символов вне BMP; чеклист повторяет тот же порядок, что страницы.
+    private static int CompareFileDisplay(string left, string right)
+    {
+        var a = FileValue.DisplayName(left).EnumerateRunes().GetEnumerator();
+        var b = FileValue.DisplayName(right).EnumerateRunes().GetEnumerator();
+        while (true)
+        {
+            var hasA = a.MoveNext();
+            var hasB = b.MoveNext();
+            if (!hasA || !hasB) return hasA.CompareTo(hasB);
+            var comparison = a.Current.Value.CompareTo(b.Current.Value);
+            if (comparison != 0) return comparison;
+        }
     }
 
     // Шаблон строки списка значений фильтра (чекбокс + количество) — для виртуализированного
@@ -2559,9 +2586,13 @@ public partial class TableView : UserControl
             name.Bind(Layoutable.MinWidthProperty,
                       new Binding(nameof(FilterValueMetrics.TextMinWidth)) { Source = metrics });
 
+            var path = new TextBlock { Foreground = secondary, FontSize = Math.Max(10, fontBase - 2) };
+            path.Bind(TextBlock.TextProperty, new Binding(nameof(FilterValueVm.PathDetails)));
+            path.Bind(IsVisibleProperty, new Binding(nameof(FilterValueVm.HasPathDetails)));
+            var label = new StackPanel { Spacing = 2, Children = { name, path } };
             var cb = new CheckBox
             {
-                Content   = name,
+                Content   = label,
                 FontSize  = fontBase,
                 HorizontalAlignment        = HorizontalAlignment.Stretch,
                 HorizontalContentAlignment = HorizontalAlignment.Left,
@@ -2608,6 +2639,8 @@ public partial class TableView : UserControl
         public string Raw       { get; }
         public string Display   { get; }
         public string CountText { get; }
+        public string PathDetails { get; }
+        public bool HasPathDetails => PathDetails.Length > 0;
 
         // Галочка — в общем наборе окна или по правилу «все, кроме снятых» (CappedFilterSelection).
         private readonly Func<string, bool> _isChecked;
@@ -2615,9 +2648,9 @@ public partial class TableView : UserControl
         private readonly Action _onChanged;
 
         public FilterValueVm(string raw, string display, int count, Func<string, bool> isChecked,
-                             Action<string, bool> setChecked, Action onChanged)
+                             Action<string, bool> setChecked, Action onChanged, string pathDetails = "")
         {
-            Raw = raw; Display = display; CountText = count.ToString();
+            Raw = raw; Display = display; CountText = count.ToString(); PathDetails = pathDetails;
             _isChecked = isChecked; _setChecked = setChecked; _onChanged = onChanged;
         }
 

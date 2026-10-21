@@ -10,6 +10,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.VisualTree;
+using SmartBase.Controls.DrawnGrid;
 using SmartBase.Core.Models;
 using SmartBase.Database;
 using SmartBase.Database.Repositories;
@@ -137,9 +138,9 @@ public partial class PropertyEditorDialog : Window
         // блок опций скрыт для «Обычного числа»).
         NumberFormatCombo.SelectionChanged += (_, _) => UpdateNumberOptionsVisibility();
 
-        // Авто-привязка файлов: выбор столбца-источника открывает блок «папка/формат»;
+        // Автоподстановка файлов включается явно, настройки до сохранения остаются черновиком;
         // «Свой формат…» — поле ручного расширения; кнопка — системный выбор папки.
-        FileSourceCombo.SelectionChanged += (_, _) => UpdateFileAutoVisibility();
+        FileAutoToggle.IsCheckedChanged += (_, _) => { UpdateFileAutoVisibility(); HideError(); };
         FileFormatCombo.SelectionChanged += (_, _) => UpdateFileFormatCustomVisibility();
         FileFolderBtn.Click              += async (_, _) => await PickFolderAsync();
         PopulateFileSources();
@@ -541,7 +542,7 @@ public partial class PropertyEditorDialog : Window
         public override string ToString() => Name;
     }
 
-    // Заполнить список столбцов-источников: серая заглушка «Выбрать…» (= без авто, ручной выбор),
+    // Заполнить список столбцов-источников: серая заглушка «Выбрать…»,
     // системное «Название» (на него тоже можно ссылаться — значение в db_records) и поля типа
     // «Текст» этой коллекции (в том числе «Описание» — оно обычное текстовое поле).
     private void PopulateFileSources()
@@ -567,10 +568,10 @@ public partial class PropertyEditorDialog : Window
     // Разобрать сохраненное правило и выставить контролы поиска файла.
     private void RestoreFileAutoRule(string? configJson)
     {
-        var rule = FileAutoRule.FromConfig(configJson);
-        // Правила нет — это новое поле или ручной режим: галочка остается в состоянии
-        // по умолчанию (включена), как задано в разметке.
-        if (rule is null) { FileSourceCombo.SelectedIndex = 0; return; }
+        var rule = FileAutoRule.ReadConfigured(configJson);
+        FileAutoToggle.IsChecked = rule?.Enabled == true;
+        // Настроек нет — ручной режим; вложенные папки сохраняют начальное состояние.
+        if (rule is null) { FileSourceCombo.SelectedIndex = 0; UpdateFileAutoVisibility(); return; }
         FileRecursiveCheck.IsChecked = rule.Recursive;
         FilePartialMatchCheck.IsChecked = rule.PartialMatch;
 
@@ -596,9 +597,9 @@ public partial class PropertyEditorDialog : Window
         UpdateFileAutoVisibility();
     }
 
-    // Папка/формат нужны только когда выбран реальный столбец-источник (авто-режим).
+    // Источник, папка и формат видны только при явно включенной автоподстановке.
     private void UpdateFileAutoVisibility() =>
-        FileAutoOptions.IsVisible = SelectedSource() is { Key.Length: > 0 };
+        FileAutoOptions.IsVisible = FileAutoToggle.IsChecked == true;
 
     // «Свой формат…» открывает поле ручного ввода расширения.
     private void UpdateFileFormatCustomVisibility() =>
@@ -631,24 +632,25 @@ public partial class PropertyEditorDialog : Window
         if (folders.Count == 0) return;
         var path = folders[0].Path.LocalPath;
         FileFolderText.Text = path;
-        if (!Directory.Exists(path)) ShowError("Папка недоступна");
-        else HideError();
+        HideError();
     }
 
-    // Собрать ConfigJson поля «Файл»: правило авто-привязки, если выбран столбец-источник и
-    // корректно заданы папка+формат. Иначе — пустой конфиг (ручной режим). null → ошибка показана.
+    // Выключенное правило хранит черновик настроек и не запускает поиск. Для включенного
+    // обязательны источник, папка и формат; доступность папки проверяется в фоновом resolver.
     private string? BuildFileConfigJson()
     {
+        var enabled = FileAutoToggle.IsChecked == true;
         var src = SelectedSource();
-        if (src is not { Key.Length: > 0 }) return "{}";   // ручной режим
-
         var folder = FileFolderText.Text?.Trim() ?? "";
         var format = SelectedFormat();
-        if (folder.Length == 0) { ShowError("Выберите папку с файлами"); return null; }
-        if (!Directory.Exists(folder)) { ShowError("Папка недоступна"); return null; }
-        if (format.Length == 0) { ShowError("Выберите формат файла"); return null; }
-        return new FileAutoRule(src.Key, folder, format, FileRecursiveCheck.IsChecked == true,
-            FilePartialMatchCheck.IsChecked == true).ToConfigJson();
+        if (enabled)
+        {
+            if (src is not { Key.Length: > 0 }) { ShowError("Выберите столбец-источник"); return null; }
+            if (folder.Length == 0) { ShowError("Выберите папку с файлами"); return null; }
+            if (format.Length == 0) { ShowError("Выберите формат файла"); return null; }
+        }
+        return new FileAutoRule(src?.Key ?? "", folder, format, FileRecursiveCheck.IsChecked == true,
+            FilePartialMatchCheck.IsChecked == true, Enabled: enabled).ToConfigJson();
     }
 
     // ── Связь (relation) ─────────────────────────────────────────────────────────
@@ -1081,7 +1083,7 @@ public partial class PropertyEditorDialog : Window
             return;
         }
 
-        // «Файл»: собрать конфиг авто-привязки (или пустой «{}» для ручного режима).
+        // «Файл»: собрать настройки автоподстановки, включая выключенный черновик.
         // null — валидация не прошла (ошибка уже показана баннером).
         var fileConfig = "{}";
         if (_selectedType == "file")
@@ -1272,20 +1274,26 @@ public partial class PropertyEditorDialog : Window
         {
             using var cts = new CancellationTokenSource();
             ProgressDialog? dlg = null;
-            var progress = new Progress<double>(f => dlg?.SetProgress(f, "Поиск файлов…"));
+            var progress = new Progress<double>(f =>
+            {
+                if (double.IsNaN(f)) dlg?.SetSaving("Индексирование каталога…");
+                else dlg?.SetProgress(f, "Поиск файлов…");
+            });
             var bg = _repository.ResolveAutoFileFieldAsync(savedFieldId, progress, cts.Token);
             if (await Task.WhenAny(bg, Task.Delay(400)) != bg)
             {
                 dlg = new ProgressDialog { Title = "Привязка файлов" };
-                dlg.SetProgress(0, "Поиск файлов…");
+                dlg.SetSaving("Индексирование каталога…");
                 dlg.EnableCancel(() => cts.Cancel());   // Отмена → значения не меняются
                 var closed = dlg.ShowDialog(this);
                 await bg;
                 dlg.Done();
                 await closed;
             }
-            if (await bg == ConstructorRepository.FileAutoResolveResult.FolderInaccessible)
-                await ConfirmDialog.Info("Папка недоступна").ShowDialog(this);
+            var result = await bg;
+            if (result == ConstructorRepository.FileAutoResolveResult.Ok) FileProbe.ForgetAll();
+            var message = ConstructorRepository.FileAutoFailureMessage(result);
+            if (message.Length > 0) await ConfirmDialog.Info(message).ShowDialog(this);
         }
 
         Close(true);

@@ -74,9 +74,13 @@ public class AppDbContext : DbContext
         // Поиск без учета регистра (SqlText.ContainsIgnoreCase): встроенные LIKE и lower() SQLite
         // регистр различают только у латиницы. Функция — на подключение, как и прагмы.
         if (conn is Microsoft.Data.Sqlite.SqliteConnection sqlite)
+        {
             sqlite.CreateFunction(SqlText.ContainsName, (string? value, string? part) =>
                 value is not null && part is not null && value.Contains(part, StringComparison.OrdinalIgnoreCase),
                 isDeterministic: true);
+            sqlite.CreateFunction(SqlText.FileDisplayName,
+                (string? raw) => SmartBase.Core.Models.FileValue.DisplayName(raw), isDeterministic: true);
+        }
     }
 
     // ── Аудит-метаданные записей (для типов свойств «Дата/Создание/Изменение …») ──

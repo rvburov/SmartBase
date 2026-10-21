@@ -9,7 +9,7 @@ namespace SmartBase.Core.Models;
 /// (регистр учитывается). <see cref="PartialMatch"/> — значение входит в имя без расширения,
 /// привязываются все совпадения. <see cref="Recursive"/> = искать и во вложенных папках.
 /// Найденный путь материализуется в db_field_values (чтобы работали фильтр/сортировка),
-/// сам столбец становится read-only.
+/// сам столбец становится read-only, пока правило включено.
 ///
 /// Источник — строковый ключ колонки (как в сортировке/фильтре/экспорте): системное
 /// «Название» (<see cref="TitleSource"/>, значение в db_records.Title) либо числовой Id
@@ -17,8 +17,8 @@ namespace SmartBase.Core.Models;
 /// вторым путем, по своему Id.
 ///
 /// Хранится в ConfigJson поля:
-/// <c>{ "auto": { "source": "…", "folder": "…", "format": "pdf", "recursive": true, "partialMatch": false } }</c>.
-/// null (правила нет) — поле работает как обычный ручной «файл».
+/// <c>{ "auto": { "source": "…", "folder": "…", "format": "pdf", "recursive": true, "partialMatch": false, "enabled": true } }</c>.
+/// Без правила или при enabled:false поле работает как обычный ручной «файл».
 /// </summary>
 /// <param name="Recursive">
 /// Искать во вложенных папках. Ключа нет в конфиге — <c>false</c>: правила, созданные до
@@ -28,8 +28,10 @@ namespace SmartBase.Core.Models;
 /// </param>
 /// <param name="PartialMatch">Искать значение внутри имени файла. По умолчанию выключено:
 /// существующие правила сохраняют точное сопоставление.</param>
+/// <param name="Enabled">Применять правило. Выключенное правило сохраняет настройки,
+/// но не меняет значения и оставляет поле доступным для ручного выбора.</param>
 public sealed record FileAutoRule(string SourceKey, string Folder, string Format, bool Recursive = false,
-                                  bool PartialMatch = false)
+                                  bool PartialMatch = false, bool Enabled = true)
 {
     /// <summary>Состояние галочки «Искать во вложенных папках» у нового свойства.</summary>
     public const bool DefaultRecursive = true;
@@ -42,22 +44,39 @@ public sealed record FileAutoRule(string SourceKey, string Folder, string Format
     /// <summary>Числовой Id текст-поля-источника; 0 — источник системный («Название»).</summary>
     public int SourceFieldId => int.TryParse(SourceKey, out var id) ? id : 0;
 
-    /// <summary>Разобрать правило из ConfigJson поля. null — правила нет / конфиг нечитаем /
-    /// не заданы источник, папка или формат (без них правило неполно и не применяется).</summary>
+    /// <summary>Применяемое правило: включено и заданы источник, папка и формат.
+    /// Выключенные и неполные настройки доступны через <see cref="ReadConfigured"/>.</summary>
     public static FileAutoRule? FromConfig(string? configJson)
+    {
+        var rule = ReadConfigured(configJson);
+        return rule is { Enabled: true } && rule.Folder.Length > 0 && rule.Format.Length > 0
+            && (rule.SourceIsTitle || rule.SourceFieldId > 0) ? rule : null;
+    }
+
+    /// <summary>Сохраненные настройки, включая выключенный неполный черновик.
+    /// Старый JSON без enabled остается включенным; чтение не запускает поиск файлов.</summary>
+    public static FileAutoRule? ReadConfigured(string? configJson)
     {
         if (string.IsNullOrWhiteSpace(configJson)) return null;
         try
         {
             using var doc = JsonDocument.Parse(configJson);
-            if (!doc.RootElement.TryGetProperty("auto", out var a) || a.ValueKind != JsonValueKind.Object)
+            if (doc.RootElement.ValueKind != JsonValueKind.Object
+                || !doc.RootElement.TryGetProperty("auto", out var a) || a.ValueKind != JsonValueKind.Object)
                 return null;
+            var enabled = true;
+            if (a.TryGetProperty("enabled", out var e))
+            {
+                if (e.ValueKind is not (JsonValueKind.True or JsonValueKind.False)) return null;
+                enabled = e.ValueKind == JsonValueKind.True;
+            }
 
             // Новый формат — строковый ключ «source»; старый (совместимость) — числовой «sourceFieldId».
             string source;
             if (a.TryGetProperty("source", out var sc) && sc.ValueKind == JsonValueKind.String)
                 source = sc.GetString() ?? "";
-            else if (a.TryGetProperty("sourceFieldId", out var s) && s.TryGetInt32(out var id) && id > 0)
+            else if (a.TryGetProperty("sourceFieldId", out var s) && s.ValueKind == JsonValueKind.Number
+                     && s.TryGetInt32(out var id) && id > 0)
                 source = id.ToString();
             else
                 source = "";
@@ -70,14 +89,11 @@ public sealed record FileAutoRule(string SourceKey, string Folder, string Format
             var partialMatch = a.TryGetProperty("partialMatch", out var p) && p.ValueKind == JsonValueKind.True;
 
             source = source.Trim();
-            // Нераспознанный ключ (например, «__desc__» из баз, где описание было системной
-            // колонкой) — правило неполно: подставлять вместо него «Название» нельзя, это молча
-            // переписало бы значения чужим столбцом.
-            if (source != TitleSource && !(int.TryParse(source, out var srcId) && srcId > 0)) return null;
             folder = folder.Trim();
             format = NormalizeFormat(format);
-            if (source.Length == 0 || folder.Length == 0 || format.Length == 0) return null;
-            return new FileAutoRule(source, folder, format, recursive, partialMatch);
+            // Нераспознанный ключ не становится «Названием»: FromConfig не применит такое
+            // правило, а диалог покажет незаполненный источник и позволит исправить настройки.
+            return new FileAutoRule(source, folder, format, recursive, partialMatch, enabled);
         }
         catch (JsonException ex)
         {
@@ -90,7 +106,7 @@ public sealed record FileAutoRule(string SourceKey, string Folder, string Format
     public static object ToConfigObject(FileAutoRule rule) => new
     {
         auto = new { source = rule.SourceKey, folder = rule.Folder, format = rule.Format,
-                     recursive = rule.Recursive, partialMatch = rule.PartialMatch },
+                     recursive = rule.Recursive, partialMatch = rule.PartialMatch, enabled = rule.Enabled },
     };
 
     /// <summary>ConfigJson-строка целиком (у поля «файл» иных настроек нет).</summary>

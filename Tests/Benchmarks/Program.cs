@@ -4,6 +4,7 @@ using SmartBase.Tests.Benchmarks;
 if (args.Length == 0)
 {
     Console.WriteLine("Использование: dotnet run -c Release --project Tests/Benchmarks -- <команда> [опции]");
+    Console.WriteLine("  fileauto [--files N] [--exact]                 — дисковый каталог синтетических путей (по умолчанию 10 млн)");
     Console.WriteLine("  sidebar [--db PATH] [--target PATH] [--light]  — операции сайдбара на большом стенде");
     Console.WriteLine("  import  [--rows N] [--dir PATH]                — замер импорта CSV");
     Console.WriteLine("  export  [--rows N] [--dir PATH]                — замер экспорта во все форматы");
@@ -26,6 +27,7 @@ if (args.Length == 0)
 var rest = args.Skip(1).ToArray();
 return args[0] switch
 {
+    "fileauto" => FileAutoBench.Run(rest),
     "sidebar" => SidebarBench.Run(rest),
     "import"  => ImportBench.Run(rest),
     "export"  => ExportBench.Run(rest),
@@ -48,6 +50,6 @@ return args[0] switch
 static int Unknown(string cmd)
 {
     Console.WriteLine($"Неизвестная команда: {cmd}. Доступно: sidebar | import | export | pgload | pgperf | " +
-                      "csvlog | dbsize | bloat | delete | pgdelete | wide | docread | docfeed | backup | pgmove | dup.");
+                      "fileauto | csvlog | dbsize | bloat | delete | pgdelete | wide | docread | docfeed | backup | pgmove | dup.");
     return 1;
 }

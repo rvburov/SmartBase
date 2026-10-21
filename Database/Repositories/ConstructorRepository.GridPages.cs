@@ -221,6 +221,9 @@ public sealed partial class ConstructorRepository
                                            int skip = 0, int? headCount = null)
     {
         if (take <= 0) return RecordPage.Empty;
+        if (IsFileField(fieldId))
+            return GetFileRecordsSortedHead(collectionId, fieldId, asc, excludeHidden, take,
+                afterValue, afterId, beforeValue, beforeId, skip, headCount);
         var hidden = HiddenFilterByRecordId(excludeHidden, "fv.RecordId");
         var args   = new List<(string, object)> { ("@f", fieldId) };
         if (excludeHidden) args.Add(("@c", collectionId));
@@ -274,7 +277,8 @@ public sealed partial class ConstructorRepository
     {
         if (take <= 0) return [];
         var hidden = HiddenFilter(excludeHidden);
-        var probe  = " AND NOT EXISTS (SELECT 1 FROM db_field_values v WHERE v.RecordId = r.Id AND v.FieldId = @f AND v.Value <> '')";
+        var nonEmptyValue = IsFileField(fieldId) ? FileDisplaySql("v.Value") : "v.Value";
+        var probe  = $" AND NOT EXISTS (SELECT 1 FROM db_field_values v WHERE v.RecordId = r.Id AND v.FieldId = @f AND {nonEmptyValue} <> '')";
         var args   = new List<(string, object)> { ("@c", collectionId), ("@f", fieldId) };
 
         if (afterPos is int ap && afterId is int aid)
@@ -300,7 +304,7 @@ public sealed partial class ConstructorRepository
         if (limit <= 0) return [];
         // Пропускаемых строк больше, чем записей в голове — дешевле один раз собрать id головы.
         if (headCount is int hc && hc < offset)
-            probe = " AND r.Id NOT IN (SELECT v.RecordId FROM db_field_values v WHERE v.FieldId = @f AND v.Value <> '')";
+            probe = $" AND r.Id NOT IN (SELECT v.RecordId FROM db_field_values v WHERE v.FieldId = @f AND {nonEmptyValue} <> '')";
         args.Add(("@take", limit)); args.Add(("@skip", offset));
         var order = fromEnd ? "i.Position DESC, i.Id DESC" : "i.Position, i.Id";
         return ReadRecordRows($@"SELECT {RecordCols} FROM db_records r
@@ -315,6 +319,7 @@ public sealed partial class ConstructorRepository
     /// зовется только через <see cref="CountNonEmptyValuesAsync"/>.</summary>
     public int CountNonEmptyValues(int collectionId, int fieldId, bool excludeHidden)
     {
+        if (IsFileField(fieldId)) return CountFileNonEmptyValues(collectionId, fieldId, excludeHidden);
         var args = new List<(string, object)> { ("@f", fieldId) };
         if (excludeHidden) args.Add(("@c", collectionId));
         return (int)ScalarSql($"SELECT COUNT(*) FROM db_field_values fv WHERE fv.FieldId = @f AND fv.Value <> ''" +
@@ -356,6 +361,7 @@ public sealed partial class ConstructorRepository
     /// без значения в порядке таблицы. null — записи нет или скрыта.</summary>
     public int? RankInSortedView(int collectionId, int fieldId, bool asc, bool excludeHidden, int recordId, int headCount)
     {
+        if (IsFileField(fieldId)) return RankInFileSortedView(collectionId, fieldId, asc, excludeHidden, recordId, headCount);
         if (!RecordShown(collectionId, recordId, excludeHidden)) return null;
         var args = new List<(string, object)> { ("@c", collectionId), ("@f", fieldId), ("@id", recordId) };
         var hidden = HiddenFilterByRecordId(excludeHidden, "fv.RecordId");
@@ -586,6 +592,9 @@ public sealed partial class ConstructorRepository
 
         if (fieldType == "number")
             return await NumberSortedIdsAsync(collectionId, q, fid, sortAsc, filters.Count == 0, excludeHidden, ct);
+
+        if (fieldType == "file")
+            return await FileSortedIdsAsync(q, fid, sortAsc, ct);
 
         // Текст и прочие строковые типы (дата в ISO-каноне тоже): порядок значения в SQL, пустые и
         // отсутствующие — в конце, равные — в порядке таблицы.

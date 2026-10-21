@@ -375,12 +375,12 @@ public sealed class FileAutoLinkTests : IDisposable
         Assert.Equal(oldPath, repo.GetFieldValues(record.Id!.Value)[file.Id!.Value]);
 
         File.Delete(oldPath);
+        var newPath = MakeFile("Новый Отчет.pdf");
         var result = background ? await repo.ResolveAutoFileFieldAsync(file.Id!.Value)
                                 : repo.ResolveAutoFileField(file.Id!.Value);
         Assert.Equal(ConstructorRepository.FileAutoResolveResult.Ok, result);
         Assert.False(repo.GetFieldValues(record.Id!.Value).ContainsKey(file.Id!.Value));
 
-        var newPath = MakeFile("Новый Отчет.pdf");
         var effect = Assert.Single(repo.SetRecordTitle(record.Id!.Value, "Новый"));
         Assert.Equal(file.Id!.Value, effect.FieldId);
         Assert.Equal(newPath, effect.Value);

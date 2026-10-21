@@ -10,6 +10,8 @@ namespace SmartBase.Controls.DrawnGrid;
 /// Рисование и попадание используют одну раскладку, без контролов в ячейках.</summary>
 internal sealed class FileLinksLayout
 {
+    private const int PreviewPaths = 8;
+    private const int PreviewCharacters = 512;
     private sealed record Part(int Start, int Length, string? Path, bool Clickable,
                                IBrush Brush, string BrushId, bool Underline, bool Ellipsis = false);
     private sealed record Run(TextLayout Layout, Rect[] Bounds, string? Path);
@@ -25,12 +27,19 @@ internal sealed class FileLinksLayout
                                          IBrush? foreground = null, string foregroundId = "")
     {
         if (area.Width <= pad * 2 || area.Height <= 0) return new(default, []);
+        var width = Math.Max(1, area.Width - pad * 2);
+        var lineHeight = label ? double.NaN : style.LineHeight;
+        var dots = style.Text.Get("…", width, TextAlignment.Left, style.Secondary, "s", 1,
+                                  lineHeight, trimming: TextTrimming.None);
         var paths = FileValue.ReadPaths(storage);
         var parts = new List<Part>();
         var text = new StringBuilder();
+        var more = false;
 
         // Недоступная папка — один статус для всего свойства, а не статус у каждого файла.
-        if (paths.Count == 0 || autoFolder.Length > 0 && FileProbe.FolderExists(autoFolder) == false)
+        if (width <= dots.WidthIncludingTrailingWhitespace)
+            more = true;
+        else if (paths.Count == 0 || autoFolder.Length > 0 && FileProbe.FolderExists(autoFolder) == false)
         {
             var look = style.FileLook("", autoFolder, foreground, foregroundId);
             parts.Add(new(0, look.Text.Length, null, false, look.Brush, look.Id, false));
@@ -38,31 +47,56 @@ internal sealed class FileLinksLayout
         }
         else
         {
-            foreach (var path in paths)
+            for (var i = 0; i < paths.Count; i++)
             {
+                if (i >= PreviewPaths || text.Length >= PreviewCharacters) { more = true; break; }
+                var path = paths[i];
+                var name = PreviewName(path, Math.Max(1, PreviewCharacters - text.Length - 2), out var cutName);
+                if (name.Length == 0) { more = true; break; }
+                // До очереди диска убеждаемся, что хотя бы начало этой ссылки попадет в кадр.
+                // Скрытые за предыдущими именами пути не измеряются целиком и не проверяются.
+                var first = char.IsHighSurrogate(name[0]) && name.Length > 1 ? name[..2] : name[..1];
+                var start = text.ToString() + (text.Length > 0 ? ", " : "") + first;
+                var startMeasure = style.Text.Get(start, width, TextAlignment.Left, style.Primary, "p", 1,
+                                                  lineHeight, trimming: TextTrimming.None);
+                if (startMeasure.WidthIncludingTrailingWhitespace > width - dots.WidthIncludingTrailingWhitespace)
+                {
+                    var lastFits = i == paths.Count - 1 && !cutName
+                        && style.Text.Get(text.ToString() + (text.Length > 0 ? ", " : "") + name,
+                            width, TextAlignment.Left, style.Primary, "p", 1,
+                            lineHeight, trimming: TextTrimming.None).WidthIncludingTrailingWhitespace <= width;
+                    if (!lastFits) { more = true; break; }
+                }
                 if (text.Length > 0)
                 {
                     parts.Add(new(text.Length, 2, null, false, foreground ?? style.Primary,
                                   foreground is null ? "p" : foregroundId, false));
                     text.Append(", ");
                 }
-                var look = style.FileLook(path, autoFolder, foreground, foregroundId);
-                parts.Add(new(text.Length, look.Text.Length, path,
-                              autoFolder.Length == 0 || look.Underline, look.Brush, look.Id, look.Underline));
-                text.Append(look.Text);
+                var exists = FileProbe.FileExists(path) != false;
+                var caption = name + (exists ? "" : " — файл не найден");
+                var brush = exists ? foreground ?? style.Accent : style.Secondary;
+                var brushId = exists ? foreground is null ? "a" : foregroundId : "s";
+                parts.Add(new(text.Length, caption.Length, path, autoFolder.Length == 0 || exists,
+                              brush, brushId, exists));
+                text.Append(caption);
+                var shown = style.Text.Get(text.ToString(), width, TextAlignment.Left, style.Primary, "p", 1,
+                                           lineHeight, trimming: TextTrimming.None);
+                if (cutName || shown.WidthIncludingTrailingWhitespace > width)
+                {
+                    more = cutName || i + 1 < paths.Count;
+                    break;
+                }
             }
         }
 
         var full = text.ToString();
-        var width = Math.Max(1, area.Width - pad * 2);
-        var lineHeight = label ? double.NaN : style.LineHeight;
         var measure = style.Text.Get(full, width, TextAlignment.Left, style.Primary, "p", 1,
                                      lineHeight, trimming: TextTrimming.None);
         var prefix = full.Length;
-        if (measure.WidthIncludingTrailingWhitespace > width)
+        var ellipsis = more || measure.WidthIncludingTrailingWhitespace > width;
+        if (ellipsis)
         {
-            var dots = style.Text.Get("…", width, TextAlignment.Left, style.Secondary, "s", 1,
-                                      lineHeight, trimming: TextTrimming.None);
             var available = width - dots.WidthIncludingTrailingWhitespace;
             prefix = 0;
             if (available > 0 && measure.TextLines.Count > 0)
@@ -82,8 +116,8 @@ internal sealed class FileLinksLayout
 
         // Явное многоточие имеет собственный диапазон: попадание по нему никогда не попадает
         // в невидимый хвост последней ссылки (автоматическое схлопывание текста этого не обещает).
-        var visible = prefix < full.Length ? full[..prefix] + "…" : full;
-        if (prefix < full.Length)
+        var visible = ellipsis ? full[..prefix] + "…" : full;
+        if (ellipsis)
             parts.Add(new(prefix, 1, null, false, style.Secondary, "s", false, Ellipsis: true));
         var layout = style.Text.Get(visible, width, TextAlignment.Left, style.Primary, "p", 1,
                                     lineHeight, trimming: TextTrimming.None);
@@ -135,5 +169,16 @@ internal sealed class FileLinksLayout
         foreach (var run in _runs)
             if (run.Path is not null && run.Bounds.Any(rect => rect.Contains(point))) return run.Path;
         return null;
+    }
+
+    private static string PreviewName(string path, int limit, out bool truncated)
+    {
+        var start = path.LastIndexOfAny(['/', '\\']) + 1;
+        if (start == path.Length) start = 0;
+        var name = path.AsSpan(start);
+        truncated = name.Length > limit;
+        if (!truncated) return name.ToString();
+        if (char.IsHighSurrogate(name[limit - 1])) limit--;
+        return name[..limit].ToString();
     }
 }

@@ -4,7 +4,7 @@
              x:Class="SmartBase.Controls.Widgets.FileEditor">
 
     <Border x:Name="Box" Classes="timeField" Height="34">
-        <Grid ColumnDefinitions="*,Auto">
+        <Grid ColumnDefinitions="*,Auto,Auto">
 
             <!-- Левая часть: либо ссылка/статус (показ), либо поле ввода пути (ручная правка) -->
             <Panel Grid.Column="0" VerticalAlignment="Stretch">
@@ -23,8 +23,12 @@
                          Watermark="Путь к файлу" />
             </Panel>
 
+            <Button Grid.Column="1" x:Name="MoreFiles" Classes="navbtn"
+                    IsVisible="False" Height="28" MinWidth="30" Padding="6,0" Margin="4,0"
+                    ToolTip.Tip="Все файлы" />
+
             <!-- Правая иконка-скрепка: всегда кликабельна → системный выбор файла -->
-            <Button Grid.Column="1" x:Name="Pick" Classes="timeArrow"
+            <Button Grid.Column="2" x:Name="Pick" Classes="timeArrow"
                     ToolTip.Tip="Выбрать файл">
                 <Viewbox Width="{StaticResource IconSizeSmall}" Height="{StaticResource IconSizeSmall}">
                     <Canvas Width="24" Height="24">

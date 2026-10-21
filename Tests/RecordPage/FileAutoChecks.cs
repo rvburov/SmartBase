@@ -37,7 +37,7 @@ internal static class FileAutoChecks
             manager = DatabaseManager.Open(9409, "file-auto", path);
             var repo = manager.Constructor;
             var collectionId = repo.AddCollection(new DbCollection { Name = "Авто-привязка" }).Id!.Value;
-            // Правило из прежней базы: ключа partialMatch еще нет.
+            // Правило из прежней базы: ключей enabled и partialMatch еще нет.
             var legacyConfig = JsonSerializer.Serialize(new
             {
                 auto = new { source = FileAutoRule.TitleSource, folder = filesFolder, format = "pdf", recursive = true },
@@ -62,6 +62,20 @@ internal static class FileAutoChecks
             Pump();
             var types = fresh.FindControl<ComboBox>("TypeCombo")!;
             types.SelectedItem = types.Items.OfType<FieldTypeItem>().Single(t => t.Type == "file");
+            Pump();
+            var freshToggle = fresh.FindControl<ToggleSwitch>("FileAutoToggle")!;
+            var freshOptions = fresh.FindControl<StackPanel>("FileAutoOptions")!;
+            Expect(freshToggle.IsChecked != true && !freshOptions.IsVisible,
+                   "у нового файлового свойства автоподстановка выключена, настройки скрыты");
+            fresh.FindControl<TextBox>("NameBox")!.Text = "Новые документы";
+            Click(fresh, freshToggle);
+            Expect(freshToggle.IsChecked == true && freshOptions.IsVisible && Snapshot() == snapshot,
+                   "явное включение показывает источник, папку и формат без изменения базы");
+            Click(fresh, fresh.FindControl<Button>("SaveBtn")!);
+            Expect(!freshClosed.IsCompleted
+                   && fresh.FindControl<NoticeBanner>("NoticeBanner")!.Message == "Выберите столбец-источник"
+                   && Snapshot() == snapshot,
+                   "включенное правило без источника не сохраняется как ручное поле");
             var sources = fresh.FindControl<ComboBox>("FileSourceCombo")!;
             sources.SelectedItem = sources.Items.OfType<PropertyEditorDialog.SourceFieldItem>()
                 .Single(s => s.Key == FileAutoRule.TitleSource);
@@ -72,14 +86,46 @@ internal static class FileAutoChecks
             Click(fresh, freshPartial);
             Expect(freshPartial.IsChecked == true && Snapshot() == snapshot,
                    "галочка в новом диалоге меняет только черновик и не затрагивает прежнюю привязку");
+            fresh.FindControl<TextBox>("FileFolderText")!.Text = filesFolder;
+            var freshFormat = fresh.FindControl<ComboBox>("FileFormatCombo")!;
+            freshFormat.SelectedItem = freshFormat.Items.OfType<ComboBoxItem>().Single(i => Equals(i.Content, "pdf"));
+            Click(fresh, freshToggle);
+            Expect(!freshOptions.IsVisible && Snapshot() == snapshot,
+                   "выключение до сохранения скрывает настройки и не меняет существующие файлы");
+            Click(fresh, freshToggle);
+            Expect(freshOptions.IsVisible && freshPartial.IsChecked == true
+                   && fresh.FindControl<TextBox>("FileFolderText")!.Text == filesFolder
+                   && sources.SelectedItem is PropertyEditorDialog.SourceFieldItem { Key: FileAutoRule.TitleSource },
+                   "повторное включение сохраняет черновик источника, папки и частичного поиска");
             Click(fresh, fresh.FindControl<Button>("CancelBtn")!);
             Wait(() => freshClosed.IsCompleted, "новый диалог не закрылся по отмене");
             Expect(!freshClosed.Result && Snapshot() == snapshot,
                    "отмена нового свойства не создает поле и не меняет значения");
 
+            var manual = new PropertyEditorDialog(repo, collectionId);
+            var manualClosed = manual.ShowDialog<bool>(owner);
+            Pump();
+            var manualTypes = manual.FindControl<ComboBox>("TypeCombo")!;
+            manualTypes.SelectedItem = manualTypes.Items.OfType<FieldTypeItem>().Single(t => t.Type == "file");
+            manual.FindControl<TextBox>("NameBox")!.Text = "Ручные документы";
+            Click(manual, manual.FindControl<Button>("SaveBtn")!);
+            Wait(() => manualClosed.IsCompleted, "ручное поле без настроек поиска не сохранилось");
+            var manualField = repo.GetFields(collectionId).Single(f => f.Name == "Ручные документы");
+            var manualRule = FileAutoRule.ReadConfigured(manualField.ConfigJson);
+            Expect(manualClosed.Result && manualRule is { Enabled: false, SourceKey: "", Folder: "", Format: "" }
+                   && FileAutoRule.FromConfig(manualField.ConfigJson) is null && Value() == exact,
+                   "новое ручное поле сохраняется без источника, папки и формата, прежняя привязка не меняется");
+            repo.SetFieldValue(recordId, manualField.Id!.Value, exact);
+            Expect(repo.GetFieldValues(recordId).GetValueOrDefault(manualField.Id.Value) == exact,
+                   "выключенная автоподстановка оставляет поле доступным для ручного значения");
+            snapshot = Snapshot();
+
             var edit = new PropertyEditorDialog(repo, collectionId, fieldId);
             var editClosed = edit.ShowDialog<bool>(owner);
             Pump();
+            Expect(edit.FindControl<ToggleSwitch>("FileAutoToggle")!.IsChecked == true
+                   && edit.FindControl<StackPanel>("FileAutoOptions")!.IsVisible,
+                   "старое действующее правило без enabled открывается с включенной автоподстановкой");
             var partial = edit.FindControl<CheckBox>("FilePartialMatchCheck")!;
             Expect(partial.IsChecked != true, "старое правило без нового ключа открывается с выключенной галочкой");
             Click(edit, partial);
@@ -94,7 +140,7 @@ internal static class FileAutoChecks
             Wait(() => editClosed.IsCompleted, "сохранение и повторный поиск не завершились");
             Expect(editClosed.Result, "настоящее сохранение закрывает диалог с успешным результатом");
             var saved = FileAutoRule.FromConfig(repo.GetFields(collectionId).Single(f => f.Id == fieldId).ConfigJson);
-            Expect(saved is { PartialMatch: true, Recursive: true, Format: "pdf" }
+            Expect(saved is { Enabled: true, PartialMatch: true, Recursive: true, Format: "pdf" }
                    && saved.SourceKey == FileAutoRule.TitleSource,
                    "сохранены частичный поиск, рекурсия, формат и столбец-источник");
             Expect(FileValue.ReadPaths(Value()).ToHashSet(StringComparer.Ordinal).SetEquals(expectedPaths),
@@ -126,8 +172,78 @@ internal static class FileAutoChecks
             var cancelReopened = new PropertyEditorDialog(repo, collectionId, fieldId);
             var cancelReopenedClosed = cancelReopened.ShowDialog<bool>(owner);
             Pump();
+            var beforeCancel = Snapshot();
+            Click(cancelReopened, cancelReopened.FindControl<ToggleSwitch>("FileAutoToggle")!);
+            Expect(!cancelReopened.FindControl<StackPanel>("FileAutoOptions")!.IsVisible && Snapshot() == beforeCancel,
+                   "выключение в открытом диалоге не останавливает сохраненное правило и не меняет список");
             Click(cancelReopened, cancelReopened.FindControl<Button>("CancelBtn")!);
             Wait(() => cancelReopenedClosed.IsCompleted, "повторный диалог не закрылся по отмене");
+            Expect(!cancelReopenedClosed.Result && Snapshot() == beforeCancel
+                   && FileAutoRule.FromConfig(repo.GetFields(collectionId).Single(f => f.Id == fieldId).ConfigJson) is not null,
+                   "отмена выключения сохраняет активное правило и все пути");
+
+            var disable = new PropertyEditorDialog(repo, collectionId, fieldId);
+            var disableClosed = disable.ShowDialog<bool>(owner);
+            Pump();
+            var beforeDisable = Value();
+            Click(disable, disable.FindControl<ToggleSwitch>("FileAutoToggle")!);
+            Click(disable, disable.FindControl<Button>("SaveBtn")!);
+            Wait(() => disableClosed.IsCompleted, "выключение автоподстановки не сохранилось");
+            var disabledConfig = repo.GetFields(collectionId).Single(f => f.Id == fieldId).ConfigJson;
+            var disabledRule = FileAutoRule.ReadConfigured(disabledConfig);
+            Expect(disableClosed.Result && Value() == beforeDisable
+                   && disabledRule is { Enabled: false, PartialMatch: true, Recursive: true, Format: "pdf" }
+                   && disabledRule.SourceKey == FileAutoRule.TitleSource && disabledRule.Folder == filesFolder
+                   && FileAutoRule.FromConfig(disabledConfig) is null,
+                   "сохраненное выключение оставляет все пути, источник, папку, формат и флаги поиска");
+            var whileOff = Path.Combine(filesFolder, "Отчет июнь.pdf");
+            File.WriteAllText(whileOff, "файл появился при выключенном правиле");
+            repo.ResolveAutoFileField(fieldId);
+            repo.SetRecordTitle(recordId, "Другой отчет");
+            Expect(Value() == beforeDisable,
+                   "выключенное правило не пересчитывает файлы при запросе поиска и изменении источника");
+            repo.SetRecordTitle(recordId, "Отчет");
+
+            var disabledReopen = new PropertyEditorDialog(repo, collectionId, fieldId);
+            var disabledReopenClosed = disabledReopen.ShowDialog<bool>(owner);
+            Pump();
+            Expect(disabledReopen.FindControl<ToggleSwitch>("FileAutoToggle")!.IsChecked != true
+                   && !disabledReopen.FindControl<StackPanel>("FileAutoOptions")!.IsVisible
+                   && disabledReopen.FindControl<TextBox>("FileFolderText")!.Text == filesFolder
+                   && disabledReopen.FindControl<CheckBox>("FilePartialMatchCheck")!.IsChecked == true
+                   && disabledReopen.FindControl<CheckBox>("FileRecursiveCheck")!.IsChecked == true
+                   && disabledReopen.FindControl<ComboBox>("FileSourceCombo")!.SelectedItem
+                       is PropertyEditorDialog.SourceFieldItem { Key: FileAutoRule.TitleSource }
+                   && disabledReopen.FindControl<ComboBox>("FileFormatCombo")!.SelectedItem
+                       is ComboBoxItem { Content: "pdf" },
+                   "повторное открытие выключенного правила восстанавливает все настройки под скрытым блоком");
+            var disabledSnapshot = Snapshot();
+            Click(disabledReopen, disabledReopen.FindControl<ToggleSwitch>("FileAutoToggle")!);
+            Expect(disabledReopen.FindControl<StackPanel>("FileAutoOptions")!.IsVisible
+                   && Snapshot() == disabledSnapshot,
+                   "включение после открытия остается черновиком и не добавляет новый файл до сохранения");
+            Click(disabledReopen, disabledReopen.FindControl<Button>("CancelBtn")!);
+            Wait(() => disabledReopenClosed.IsCompleted, "отмена повторного включения не закрыла диалог");
+            Expect(!disabledReopenClosed.Result && Snapshot() == disabledSnapshot,
+                   "отмена повторного включения оставляет правило выключенным и список прежним");
+
+            var enable = new PropertyEditorDialog(repo, collectionId, fieldId);
+            var enableClosed = enable.ShowDialog<bool>(owner);
+            Pump();
+            Click(enable, enable.FindControl<ToggleSwitch>("FileAutoToggle")!);
+            Click(enable, enable.FindControl<Button>("SaveBtn")!);
+            Wait(() => enable.OwnedWindows.OfType<ConfirmDialog>().Any(),
+                 "включение сохраненного правила не запросило подтверждение замены путей");
+            Expect(Snapshot() == disabledSnapshot, "ожидание подтверждения повторного включения не меняет базу");
+            var enableConfirmation = enable.OwnedWindows.OfType<ConfirmDialog>().Single();
+            Click(enableConfirmation, enableConfirmation.FindControl<Button>("ConfirmBtn")!);
+            Wait(() => enableClosed.IsCompleted, "повторное включение не завершило поиск");
+            Expect(enableClosed.Result
+                   && FileAutoRule.FromConfig(repo.GetFields(collectionId).Single(f => f.Id == fieldId).ConfigJson)
+                       is { Enabled: true, PartialMatch: true }
+                   && FileValue.ReadPaths(Value()).ToHashSet(StringComparer.Ordinal)
+                       .SetEquals(expectedPaths.Where(p => p != archived).Append(added).Append(whileOff)),
+                   "после Сохранить правило вновь включено, все настройки применены и новый файл найден");
 
             var storage = FileValue.Serialize([comma, april]);
             var editor = new FileEditor { AutoFolder = filesFolder, Storage = storage, Margin = new Thickness(16) };

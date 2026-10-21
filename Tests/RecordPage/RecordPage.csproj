@@ -24,6 +24,7 @@
     <ProjectReference Include="..\..\SmartBase.csproj" />
     <!-- Кадры, сравнение и карта различий — общие со стендом служебных таблиц. -->
     <Compile Include="..\ServiceGrids\Frames.cs" Link="Frames.cs" />
+    <Compile Include="..\Benchmarks\FileAutoBench.cs" Link="FileAutoBench.cs" />
   </ItemGroup>
 
 </Project>

@@ -416,7 +416,8 @@ public sealed partial class ConstructorRepository
             {
                 if (!(rule!.SourceIsTitle && titleEdited) && !fieldsEdited.Contains(rule.SourceFieldId)) continue;
 
-                var matched = MatchSingle(rule, ReadSourceValue(rule, byRecord.Key));
+                var matched = ResolveOrQueueAutoFile(fileFieldId, byRecord.Key, rule);
+                if (matched is null) continue;
                 SetAutoFileValue(fileFieldId, byRecord.Key, matched);
                 result.Add((byRecord.Key, fileFieldId, matched));
             }

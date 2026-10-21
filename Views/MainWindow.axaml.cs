@@ -112,6 +112,7 @@ public partial class MainWindow : Window
         // Резолвер чужих баз для межбазовых связей (тип «relation» с TargetDbId>0).
         RelationDbResolver.Configure(workspace);
         ConfigureRelationChanges();
+        ConfigureFileAutoChanges();
         ConfigureRelationIntegrity();
 
         // Сообщения человеку — карточки в правом верхнем углу окна (стопкой, сами гаснут).

@@ -55,6 +55,7 @@ public partial class MainWindow
     private void QueueAllRelationRefreshes()
     {
         if (_relationChangesClosed) return;
+        FileAutoMountsChanged();
         var mounted = _workspace.Mounted.Where(m => m.Permissions.AccessGranted).ToArray();
         if (!_relationMounted.SetEquals(mounted))
         {

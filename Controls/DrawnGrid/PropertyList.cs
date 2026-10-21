@@ -255,6 +255,7 @@ public sealed class PropertyList : Panel, ILogicalScrollable
     // Занятый редактор: фокус внутри него или раскрытый список (свой попап или окно ComboBox).
     private static bool IsBusy(Control editor)
     {
+        if (editor is SmartBase.Controls.Widgets.FileEditor { IsInteractionBusy: true }) return true;
         if (editor.IsKeyboardFocusWithin) return true;
         if (editor is ComboBox { IsDropDownOpen: true }) return true;
         foreach (var popup in editor.GetVisualDescendants().OfType<Popup>())

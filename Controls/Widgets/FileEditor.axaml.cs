@@ -4,10 +4,15 @@ using System.IO;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Templates;
 using Avalonia.Input;
+using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
+using SmartBase.Controls.Behaviors;
+using SmartBase.Controls.DrawnGrid;
 
 namespace SmartBase.Controls.Widgets;
 
@@ -21,6 +26,7 @@ namespace SmartBase.Controls.Widgets;
 /// </summary>
 public partial class FileEditor : UserControl
 {
+    internal const int InlineFileLimit = 8;
     private string _path = "";        // хранимое значение: путь, список путей или ""
     private IReadOnlyList<string> _paths = [];
     private string? _pendingPath;      // путь именно той ссылки, по которой нажали
@@ -30,6 +36,11 @@ public partial class FileEditor : UserControl
     private Window? _window;
     private readonly DispatcherTimer _clickTimer;
     private DispatcherTimer? _errFlash;
+    private bool _attached;
+    private int _stateVersion;
+    private CancellationTokenSource? _openRequest;
+    private Flyout? _allFiles;
+    private ListBox? _allFilesList;
 
     /// <summary>Поднимается при изменении значения пользователем.</summary>
     public event EventHandler? Changed;
@@ -37,6 +48,10 @@ public partial class FileEditor : UserControl
     /// <summary>Ручная правка пути кончилась (Enter, Escape, уход фокуса, выбор файла) — до того, как
     /// поле ввода спрячется: в обработчике еще видно, был ли фокус в редакторе.</summary>
     public event EventHandler? EditEnded;
+
+    /// <summary>Список файлов или действие пользователя еще не завершены: при смене наведения
+    /// рисованная панель сохраняет редактор до закрытия списка или ответа фоновой проверки.</summary>
+    public bool IsInteractionBusy => _allFiles?.IsOpen == true || _openRequest is not null || _clickTimer.IsEnabled;
 
     public FileEditor()
     {
@@ -54,6 +69,7 @@ public partial class FileEditor : UserControl
         };
 
         Pick.Click += async (_, _) => await PickFileAsync();
+        ConfigureAllFiles();
 
         LinkHost.PointerPressed += (_, e) =>
         {
@@ -82,6 +98,8 @@ public partial class FileEditor : UserControl
         // приложение теряет фокус, иначе она висит поверх других программ.
         AttachedToVisualTree += (_, _) =>
         {
+            _attached = true;
+            FileProbe.Resolved += OnProbeResolved;
             UpdateVisual();
             _window = TopLevel.GetTopLevel(this) as Window;
             if (_window is null) return;
@@ -90,7 +108,10 @@ public partial class FileEditor : UserControl
         };
         DetachedFromVisualTree += (_, _) =>
         {
-            _clickTimer.Stop();
+            _attached = false;
+            FileProbe.Resolved -= OnProbeResolved;
+            ResetInteraction();
+            _errFlash?.Stop();
             HideError();
             if (_window is null) return;
             _window.Deactivated -= OnWindowDeactivated;
@@ -109,8 +130,7 @@ public partial class FileEditor : UserControl
         {
             _path = value ?? "";
             _paths = Core.Models.FileValue.ReadPaths(_path);
-            _clickTimer.Stop();
-            _pendingPath = null;
+            ResetInteraction();
             EndEdit();
             UpdateVisual();
         }
@@ -124,8 +144,7 @@ public partial class FileEditor : UserControl
         set
         {
             _autoFolder = value ?? "";
-            _clickTimer.Stop();
-            _pendingPath = null;
+            ResetInteraction();
             Pick.IsVisible = _autoFolder.Length == 0;   // в авто-режиме скрепки нет
             EndEdit();
             UpdateVisual();
@@ -143,8 +162,7 @@ public partial class FileEditor : UserControl
         if (v == _path) return;               // значение не изменилось
         _path = v;
         _paths = Core.Models.FileValue.ReadPaths(_path);
-        _clickTimer.Stop();
-        _pendingPath = null;
+        ResetInteraction();
         UpdateVisual();
     }
 
@@ -184,19 +202,37 @@ public partial class FileEditor : UserControl
         _clickTimer.Start();
     }
 
-    private void OnSingleClick(string? selectedPath)
+    private async void OnSingleClick(string? selectedPath)
     {
         var path = selectedPath ?? (_paths.Count == 1 ? _paths[0] : "");
-        if (IsAuto)
+        var folder = _autoFolder;
+        var version = _stateVersion;
+        _openRequest?.Cancel();
+        var request = new CancellationTokenSource();
+        _openRequest = request;
+        try
         {
-            // Авто-режим read-only: папка недоступна → плашка; файл есть → открыть; иначе — ничего.
-            if (!System.IO.Directory.Exists(_autoFolder)) { FlashError("Папка недоступна"); return; }
-            if (path.Length > 0 && File.Exists(path)) OpenWithSystem(path);
-            return;
+            if (folder.Length > 0)
+            {
+                FileProbe.Forget(folder, folder: true);
+                var folderExists = await FileProbe.FolderExistsAsync(folder, request.Token);
+                if (!Current()) return;
+                if (!folderExists) { FlashError("Папка недоступна"); return; }
+            }
+            if (path.Length == 0) return;
+            FileProbe.Forget(path);
+            var exists = await FileProbe.FileExistsAsync(path, request.Token);
+            if (!Current()) return;
+            if (exists) OpenWithSystem(path);
+            else if (folder.Length == 0 && _paths.Count == 1) BeginEdit();
         }
-        if (path.Length == 0) return;              // «Выбрать файл…» — не кликабельно
-        if (File.Exists(path)) OpenWithSystem(path);
-        else if (_paths.Count == 1) BeginEdit();    // одиночный отсутствующий путь можно поправить
+        catch (OperationCanceledException) when (request.IsCancellationRequested) { }
+        finally
+        {
+            if (ReferenceEquals(_openRequest, request)) _openRequest = null;
+            request.Dispose();
+        }
+        bool Current() => _attached && version == _stateVersion && !request.IsCancellationRequested;
     }
 
     /// <summary>Открыть файл штатным приложением ОС. UseShellExecute=true делегирует системе:
@@ -204,13 +240,14 @@ public partial class FileEditor : UserControl
     /// рисованной таблицы — у нее нет своего контрола в ячейке.</summary>
     public static void OpenWithSystem(string path)
     {
-        try { Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true }); }
-        catch (Exception ex)
+        _ = Task.Run(() =>
         {
-            // Нечем открыть / нет прав — для человека тихо, для журнала нет: «файл не открывается»
-            // разбирается по этой записи (сетевой путь недоступен, ассоциации нет).
-            Serilog.Log.Warning(ex, "Не удалось открыть файл системой: {Path:l}", path);
-        }
+            try { Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true }); }
+            catch (Exception ex)
+            {
+                Serilog.Log.Warning(ex, "Не удалось открыть файл системой: {Path:l}", path);
+            }
+        });
     }
 
     /// <summary>Системный выбор одного файла; null — отказались. Общее с ячейкой «Файла» рисованной таблицы.</summary>
@@ -228,7 +265,9 @@ public partial class FileEditor : UserControl
     {
         var top = TopLevel.GetTopLevel(this);
         if (top is null) return;
+        var version = _stateVersion;
         if (await PickPathAsync(top) is not { } picked) return;
+        if (!_attached || version != _stateVersion) return;
         SetPath(picked, raise: true);
         EndEdit();
         UpdateVisual();
@@ -249,6 +288,7 @@ public partial class FileEditor : UserControl
     private void BeginEdit()
     {
         if (IsAuto || _paths.Count > 1) return;
+        ResetInteraction();
         _editing = true;
         _suppress = true;
         Input.Text = _path;
@@ -295,7 +335,7 @@ public partial class FileEditor : UserControl
     private void LiveValidate()
     {
         var text    = Input.Text?.Trim() ?? "";
-        var invalid = text.Length > 0 && !File.Exists(text);
+        var invalid = text.Length > 0 && FileProbe.FileExists(text) == false;
         Input.Foreground = invalid ? Red() : Primary();
         if (invalid) ShowError("Укажите путь и наименование файла");
         else         HideError();
@@ -307,8 +347,8 @@ public partial class FileEditor : UserControl
         var changed = v != _path;
         _path = v;
         _paths = Core.Models.FileValue.ReadPaths(_path);
-        _clickTimer.Stop();
-        _pendingPath = null;
+        ResetInteraction();
+        FileProbe.Forget(v);
         if (raise && changed) Changed?.Invoke(this, EventArgs.Empty);
     }
 
@@ -320,96 +360,129 @@ public partial class FileEditor : UserControl
         Link.IsVisible = true;
         MultiLinks.IsVisible = false;
         MultiLinks.Children.Clear();
+        MoreFiles.IsVisible = false;
 
-        if (_paths.Count > 1 && (!IsAuto || System.IO.Directory.Exists(_autoFolder)))
+        // Неизвестный ответ показывается оптимистично, как в рисованной таблице.
+        if (IsAuto && FileProbe.FolderExists(_autoFolder) == false)
+        {
+            Link.Text = "папка недоступна";
+            Link.Foreground = Secondary();
+            Link.TextDecorations = null;
+            LinkHost.Cursor = new Cursor(StandardCursorType.Hand);
+            _allFiles?.Hide();
+            return;
+        }
+        if (_paths.Count > 1)
         {
             ShowMultipleFiles();
             return;
         }
-
         var path = _paths.Count == 1 ? _paths[0] : "";
-
-        // Авто-режим (read-only): «папка недоступна» / имя-ссылка / «файл не найден».
-        if (IsAuto)
-        {
-            if (!System.IO.Directory.Exists(_autoFolder))
-            {
-                Link.Text            = "папка недоступна";
-                Link.Foreground      = Secondary();
-                Link.TextDecorations = null;
-                LinkHost.Cursor      = new Cursor(StandardCursorType.Hand);
-            }
-            else if (path.Length > 0 && File.Exists(path))
-            {
-                Link.Text            = SafeFileName(path);
-                Link.Foreground      = Accent();
-                Link.TextDecorations = TextDecorations.Underline;
-                LinkHost.Cursor      = new Cursor(StandardCursorType.Hand);
-            }
-            else
-            {
-                Link.Text            = path.Length > 0 ? SafeFileName(path) + " — файл не найден" : "файл не найден";
-                Link.Foreground      = Secondary();
-                Link.TextDecorations = null;
-                LinkHost.Cursor      = Cursor.Default;
-            }
-            return;
-        }
-
         if (path.Length == 0)
         {
-            Link.Text            = "Выбрать файл…";     // серое, некликабельное
-            Link.Foreground      = Secondary();
+            Link.Text = IsAuto ? "файл не найден" : "Выбрать файл…";
+            Link.Foreground = Secondary();
             Link.TextDecorations = null;
-            LinkHost.Cursor      = Cursor.Default;
+            LinkHost.Cursor = Cursor.Default;
             return;
         }
-
-        var name = SafeFileName(path);
-        if (File.Exists(path))
-        {
-            Link.Text            = name;                 // синяя подчеркнутая ссылка
-            Link.Foreground      = Accent();
-            Link.TextDecorations = TextDecorations.Underline;
-            LinkHost.Cursor      = new Cursor(StandardCursorType.Hand);
-        }
-        else
-        {
-            Link.Text            = name + " — файл не найден";
-            Link.Foreground      = Secondary();
-            Link.TextDecorations = null;
-            LinkHost.Cursor      = new Cursor(StandardCursorType.Hand);
-        }
+        var exists = FileProbe.FileExists(path) != false;
+        Link.Text = SafeFileName(path) + (exists ? "" : " — файл не найден");
+        Link.Foreground = exists ? Accent() : Secondary();
+        Link.TextDecorations = exists ? TextDecorations.Underline : null;
+        LinkHost.Cursor = exists || !IsAuto ? new Cursor(StandardCursorType.Hand) : Cursor.Default;
     }
 
-    // Разделители — отдельные элементы: запятая внутри имени остается частью своей ссылки.
-    // Весь список обрезается границами LinkHost, поэтому невидимый хвост не получает нажатий.
+    // Только короткий предпросмотр; все сохраненные пути доступны через виртуальный список.
     private void ShowMultipleFiles()
     {
         Link.IsVisible = false;
         MultiLinks.IsVisible = true;
         LinkHost.Cursor = Cursor.Default;
-        foreach (var path in _paths)
+        var shown = Math.Min(_paths.Count, InlineFileLimit);
+        for (var i = 0; i < shown; i++)
         {
-            if (MultiLinks.Children.Count > 0)
-                MultiLinks.Children.Add(new TextBlock { Text = ", ", Foreground = Secondary() });
-
-            var exists = File.Exists(path);
-            var link = new TextBlock
-            {
-                Text = SafeFileName(path) + (exists ? "" : " — файл не найден"),
-                Foreground = exists ? Accent() : Secondary(),
-                TextDecorations = exists ? TextDecorations.Underline : null,
-                Cursor = exists ? new Cursor(StandardCursorType.Hand) : Cursor.Default,
-            };
-            link.PointerPressed += (_, e) =>
-            {
-                if (!e.GetCurrentPoint(link).Properties.IsLeftButtonPressed) return;
-                e.Handled = true;
-                QueueClick(path);
-            };
-            MultiLinks.Children.Add(link);
+            if (i > 0) MultiLinks.Children.Add(new TextBlock { Text = ", ", Foreground = Secondary() });
+            MultiLinks.Children.Add(CreateFileLink(_paths[i]));
         }
+        MoreFiles.IsVisible = _paths.Count > shown;
+        MoreFiles.Content = $"+{_paths.Count - shown:N0}";
+    }
+
+    private TextBlock CreateFileLink(string path)
+    {
+        var link = new TextBlock { Tag = path };
+        link.Classes.Add("fileProbeLink");
+        UpdateFileLink(link, path);
+        link.PointerPressed += (_, e) =>
+        {
+            if (!e.GetCurrentPoint(link).Properties.IsLeftButtonPressed) return;
+            e.Handled = true;
+            _allFiles?.Hide();
+            QueueClick(path);
+        };
+        return link;
+    }
+
+    private void UpdateFileLink(TextBlock link, string path)
+    {
+        var exists = FileProbe.FileExists(path) != false;
+        link.Text = SafeFileName(path) + (exists ? "" : " — файл не найден");
+        link.Foreground = exists ? Accent() : Secondary();
+        link.TextDecorations = exists ? TextDecorations.Underline : null;
+        link.Cursor = exists ? new Cursor(StandardCursorType.Hand) : Cursor.Default;
+    }
+
+    private void ConfigureAllFiles()
+    {
+        _allFilesList = new ListBox
+        {
+            Name = "AllFilesList",
+            Height = 320,
+            ItemsPanel = new FuncTemplate<Panel>(() => new VirtualizingStackPanel()),
+            ItemTemplate = new FuncDataTemplate<string>((path, _) =>
+            {
+                var row = new StackPanel { Spacing = 2 };
+                row.Children.Add(CreateFileLink(path ?? ""));
+                row.Children.Add(new TextBlock
+                {
+                    Text = PreviewText(path ?? "", 1024),
+                    Foreground = Secondary(),
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                });
+                return row;
+            }),
+        };
+        var allFiles = new Flyout { Content = _allFilesList };
+        allFiles.Opening += (_, _) =>
+        {
+            TransientPopups.Track(allFiles);
+            _allFilesList.Width = Math.Clamp(Bounds.Width, 280, 640);
+            _allFilesList.ItemsSource = _paths;
+        };
+        _allFiles = allFiles;
+        MoreFiles.Flyout = allFiles;
+    }
+
+    private void OnProbeResolved()
+    {
+        if (!_attached) return;
+        if (_editing) LiveValidate();
+        else UpdateVisual();
+        if (_allFilesList is not null)
+            foreach (var link in _allFilesList.GetVisualDescendants().OfType<TextBlock>()
+                         .Where(t => t.Classes.Contains("fileProbeLink")))
+                if (link.Tag is string path) UpdateFileLink(link, path);
+    }
+
+    private void ResetInteraction()
+    {
+        unchecked { _stateVersion++; }
+        _clickTimer.Stop();
+        _pendingPath = null;
+        _openRequest?.Cancel();
+        _allFiles?.Hide();
+        if (_allFilesList is not null) _allFilesList.ItemsSource = null;
     }
 
     // Показать плашку на пару секунд (клик по «папка недоступна»): та же плашка-оверлей.
@@ -424,7 +497,19 @@ public partial class FileEditor : UserControl
 
     // Имя для показа — общий источник с фильтром таблицы (валидный путь → базовое имя,
     // произвольное значение от прежнего типа → как есть).
-    private static string SafeFileName(string path) => Core.Models.FileValue.DisplayName(path);
+    private static string SafeFileName(string path)
+    {
+        var start = path.LastIndexOfAny(['/', '\\']) + 1;
+        if (start == path.Length) start = 0;
+        return PreviewText(path.AsSpan(start), 512);
+    }
+
+    private static string PreviewText(ReadOnlySpan<char> text, int limit)
+    {
+        if (text.Length <= limit) return text.ToString();
+        if (char.IsHighSurrogate(text[limit - 1])) limit--;
+        return text[..limit].ToString() + "…";
+    }
 
     private void ShowError(string message) { NoticeBanner.Show(message); ErrPop.IsOpen = true; }
     private void HideError()               { NoticeBanner.Hide();        ErrPop.IsOpen = false; }

@@ -26,6 +26,7 @@ public sealed class ChangeBusInterceptor : DbTransactionInterceptor
     {
         (eventData.Context as AppDbContext)?.OnTransactionStarted();
         if (eventData.Context is AppDbContext context) Repositories.ConstructorRepository.RelationTransactionStarted(context);
+        if (eventData.Context is AppDbContext fileContext) Repositories.ConstructorRepository.FileAutoTransactionStarted(fileContext);
         return result;
     }
 
@@ -36,6 +37,7 @@ public sealed class ChangeBusInterceptor : DbTransactionInterceptor
     {
         (eventData.Context as AppDbContext)?.OnTransactionStarted();
         if (eventData.Context is AppDbContext context) Repositories.ConstructorRepository.RelationTransactionStarted(context);
+        if (eventData.Context is AppDbContext fileContext) Repositories.ConstructorRepository.FileAutoTransactionStarted(fileContext);
         return ValueTask.FromResult(result);
     }
 
@@ -43,6 +45,7 @@ public sealed class ChangeBusInterceptor : DbTransactionInterceptor
     {
         (eventData.Context as AppDbContext)?.OnTransactionCommitted();
         if (eventData.Context is AppDbContext context) Repositories.ConstructorRepository.RelationTransactionCommitted(context);
+        if (eventData.Context is AppDbContext fileContext) Repositories.ConstructorRepository.FileAutoTransactionCommitted(fileContext);
     }
 
     public override Task TransactionCommittedAsync(DbTransaction transaction, TransactionEndEventData eventData,
@@ -50,6 +53,7 @@ public sealed class ChangeBusInterceptor : DbTransactionInterceptor
     {
         (eventData.Context as AppDbContext)?.OnTransactionCommitted();
         if (eventData.Context is AppDbContext context) Repositories.ConstructorRepository.RelationTransactionCommitted(context);
+        if (eventData.Context is AppDbContext fileContext) Repositories.ConstructorRepository.FileAutoTransactionCommitted(fileContext);
         return Task.CompletedTask;
     }
 
@@ -57,6 +61,7 @@ public sealed class ChangeBusInterceptor : DbTransactionInterceptor
     {
         (eventData.Context as AppDbContext)?.OnTransactionRolledBack();
         if (eventData.Context is AppDbContext context) Repositories.ConstructorRepository.RelationTransactionRolledBack(context);
+        if (eventData.Context is AppDbContext fileContext) Repositories.ConstructorRepository.FileAutoTransactionStarted(fileContext);
     }
 
     public override Task TransactionRolledBackAsync(DbTransaction transaction, TransactionEndEventData eventData,
@@ -64,6 +69,7 @@ public sealed class ChangeBusInterceptor : DbTransactionInterceptor
     {
         (eventData.Context as AppDbContext)?.OnTransactionRolledBack();
         if (eventData.Context is AppDbContext context) Repositories.ConstructorRepository.RelationTransactionRolledBack(context);
+        if (eventData.Context is AppDbContext fileContext) Repositories.ConstructorRepository.FileAutoTransactionStarted(fileContext);
         return Task.CompletedTask;
     }
 }

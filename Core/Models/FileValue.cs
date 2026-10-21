@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Collections.ObjectModel;
+using System.Runtime.CompilerServices;
 
 namespace SmartBase.Core.Models;
 
@@ -10,11 +12,20 @@ namespace SmartBase.Core.Models;
 /// </summary>
 public static class FileValue
 {
+    // Значение строки живет в модели строки таблицы. Повторный кадр получает тот же разбор,
+    // а удаленная из модели строка вместе с массивом может быть собрана GC.
+    private static readonly ConditionalWeakTable<string, ReadOnlyCollection<string>> Decoded = new();
+
     /// <summary>Пути свойства. Старое значение остается одиночным путем; только объект с массивом
     /// строк paths считается списком. Запятые в именах не служат разделителями.</summary>
     public static IReadOnlyList<string> ReadPaths(string? raw)
     {
         if (string.IsNullOrEmpty(raw)) return [];
+        return Decoded.GetValue(raw, value => Array.AsReadOnly(ParsePaths(value)));
+    }
+
+    private static string[] ParsePaths(string raw)
+    {
         if (raw[0] == '{')
         {
             try

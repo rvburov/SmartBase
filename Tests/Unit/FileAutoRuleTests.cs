@@ -1,3 +1,4 @@
+using System.Text.Json;
 using SmartBase.Core.Models;
 
 namespace SmartBase.Tests.Unit;
@@ -31,6 +32,46 @@ public sealed class FileAutoRuleTests
         Assert.True(back.SourceIsTitle);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Enabled_flag_roundtrips_without_losing_settings(bool enabled)
+    {
+        var rule = new FileAutoRule("42", "/data/files", "tar.gz", Recursive: true,
+            PartialMatch: true, Enabled: enabled);
+        var json = rule.ToConfigJson();
+        using var parsed = JsonDocument.Parse(json);
+        Assert.Equal(enabled, parsed.RootElement.GetProperty("auto").GetProperty("enabled").GetBoolean());
+        Assert.Equal(rule, FileAutoRule.ReadConfigured(json));
+        Assert.Equal(enabled ? rule : null, FileAutoRule.FromConfig(json));
+
+        var restored = FileAutoRule.ReadConfigured(json)! with { Enabled = true };
+        Assert.Equal(rule with { Enabled = true }, FileAutoRule.FromConfig(restored.ToConfigJson()));
+    }
+
+    [Theory]
+    [InlineData("", "/data/files", "pdf")]
+    [InlineData("42", "", "pdf")]
+    [InlineData("__title__", "/data/files", "")]
+    public void Disabled_incomplete_settings_are_kept_but_cannot_be_applied(string source, string folder, string format)
+    {
+        var draft = new FileAutoRule(source, folder, format, Recursive: true, PartialMatch: true, Enabled: false);
+        Assert.Equal(draft, FileAutoRule.ReadConfigured(draft.ToConfigJson()));
+        Assert.Null(FileAutoRule.FromConfig(draft.ToConfigJson()));
+        Assert.Null(FileAutoRule.FromConfig((draft with { Enabled = true }).ToConfigJson()));
+    }
+
+    [Theory]
+    [InlineData("[]")]
+    [InlineData("null")]
+    [InlineData("{\"auto\":true}")]
+    [InlineData("{\"auto\":{\"source\":\"42\",\"folder\":\"/d\",\"format\":\"pdf\",\"enabled\":\"false\"}}")]
+    public void Invalid_structure_and_non_boolean_enabled_flags_do_not_activate_rules(string json)
+    {
+        Assert.Null(FileAutoRule.ReadConfigured(json));
+        Assert.Null(FileAutoRule.FromConfig(json));
+    }
+
     /// <summary>
     /// Легаси-ключ «__desc__» (описание было системной колонкой) больше не источник: правило
     /// отбрасывается целиком. Подставлять вместо него «Название» нельзя — авто-привязка молча
@@ -62,6 +103,7 @@ public sealed class FileAutoRuleTests
         var rule = FileAutoRule.FromConfig("{\"auto\":{\"source\":\"1\",\"folder\":\"/d\",\"format\":\"pdf\"}}");
         Assert.NotNull(rule);
         Assert.False(rule!.Recursive);
+        Assert.True(rule.Enabled);
     }
 
     [Theory]
@@ -95,6 +137,7 @@ public sealed class FileAutoRuleTests
         Assert.Equal("7", rule!.SourceKey);
         Assert.Equal(7, rule.SourceFieldId);
         Assert.False(rule.PartialMatch);
+        Assert.True(rule.Enabled);
     }
 
     [Fact]
