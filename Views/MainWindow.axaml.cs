@@ -1065,11 +1065,16 @@ public partial class MainWindow : Window
     private static void NotifyInfo(string message) => Controls.Widgets.AppNotifications.Info(message);
 
     // Заглушки немонтированных БД для сайдбаров (очередь/обновление/недоступна).
-    private List<Controls.Components.PendingDb> PendingDbs() =>
-        _mountQueue.Pending()
+    private List<Controls.Components.PendingDb> PendingDbs()
+    {
+        var postgresIds = _workspace.Registry.GetAll().Where(d => d.IsPostgres)
+            .Select(d => d.Id).ToHashSet();
+        return _mountQueue.Pending()
             .Select(s => new Controls.Components.PendingDb(
-                s.DbId, s.Name, s.Text, s.State == MountQueue.ItemState.Failed))
+                s.DbId, s.Name, s.Text, s.State == MountQueue.ItemState.Failed,
+                postgresIds.Contains(s.DbId)))
             .ToList();
+    }
 
     // Допущенные БД: календарь, цели переноса и списки диалогов видят только их.
     // Недопущенные (замок) показывает лишь сайдбар конструктора.

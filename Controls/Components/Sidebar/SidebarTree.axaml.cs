@@ -72,12 +72,13 @@ public partial class SidebarTree : UserControl
     // каждой мертвой базы по несколько раз, а чтение без catch (ключи для галочек) роняло
     // приложение. Readable=false — последнее чтение не удалось: снимок остается прежним, а
     // галочки такой базы не чистятся (см. PersistChecks).
-    private sealed class MountedDb(int dbId, string name, ConstructorRepository repo, bool locked = false)
+    private sealed class MountedDb(int dbId, string name, ConstructorRepository repo, bool locked = false, bool isPostgres = false)
     {
         public int                   DbId        { get; } = dbId;
         public string                Name        { get; } = name;
         public ConstructorRepository Repo        { get; } = repo;
         public bool                  Locked      { get; } = locked;
+        public bool                  IsPostgres  { get; } = isPostgres;
         public List<DbGroup>         Groups      { get; set; } = [];
         public List<DbCollection>    Collections { get; set; } = [];
         // Коллекции, подключенные к разделу (поле-дата календаря / исполнитель задач). null —
@@ -205,7 +206,7 @@ public partial class SidebarTree : UserControl
     {
         _dbs.Clear();
         foreach (var d in databases)
-            _dbs.Add(new MountedDb(d.DbId, d.Name, d.Constructor, !d.Permissions.AccessGranted));
+            _dbs.Add(new MountedDb(d.DbId, d.Name, d.Constructor, !d.Permissions.AccessGranted, d.Provider == "postgres"));
         _pending.Clear();
         if (pending is not null) _pending.AddRange(pending);
         _showRoots = true;
@@ -441,6 +442,7 @@ public partial class SidebarTree : UserControl
                     DbId       = db.DbId,
                     Id         = db.DbId,
                     Name       = db.Name,
+                    IsPostgres = db.IsPostgres,
                     IsLocked   = db.Locked,
                     IsExpanded = !db.Locked && !_collapsedDbRoots.Contains(db.DbId),
                 };
@@ -460,6 +462,7 @@ public partial class SidebarTree : UserControl
                     DbId      = p.DbId,
                     Id        = p.DbId,
                     Name      = p.Name,
+                    IsPostgres = p.IsPostgres,
                     IsPending = true,
                     Status    = p.Status,
                     Failed    = p.Failed,
@@ -2839,10 +2842,11 @@ public partial class SidebarTree : UserControl
 }
 
 // ── Немонтированная БД фоновой очереди (для узла-заглушки) ────────────────────
-public sealed class PendingDb(int dbId, string name, string status, bool failed)
+public sealed class PendingDb(int dbId, string name, string status, bool failed, bool isPostgres = false)
 {
     public int    DbId   { get; } = dbId;
     public string Name   { get; } = name;
+    public bool IsPostgres { get; } = isPostgres;
     public string Status { get; set; } = status;
     public bool   Failed { get; set; } = failed;
 }
@@ -2862,6 +2866,7 @@ public class SidebarNode
     public bool    IsExpanded { get; set; }
     public bool    IsGroup    => NodeType == "group";
     public bool    IsDatabase => NodeType == "database";
+    public bool    IsPostgres { get; init; }
 
     public ObservableCollection<SidebarNode> Children { get; } = [];
 }
@@ -3002,7 +3007,7 @@ public partial class SidebarRow : ObservableObject
 
     public bool      ShowChevron     => Expandable;
     public Geometry? ChevronGeometry => Node.IsExpanded ? Icon("IconChevronDown") : Icon("IconChevronRight");
-    public Geometry? IconGeometry    => Node.IsLocked ? Icon("IconLock") : Node.IsDatabase ? Icon("IconDatabase") : Node.IsGroup ? Icon("IconFolder") : Icon("IconCollection");
+    public Geometry? IconGeometry    => Node.IsLocked ? Icon("IconLock") : Node.IsDatabase ? Icon(Node.IsPostgres ? "IconServer" : "IconDatabase") : Node.IsGroup ? Icon("IconFolder") : Icon("IconCollection");
 
     // «Без цвета» → серый: единое правило EventColors, кисти кешируются в ColorTools
     // (свойство читается на каждой перерисовке строки дерева).

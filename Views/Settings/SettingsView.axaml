@@ -427,8 +427,24 @@
                             <DataTemplate x:DataType="vm:DatabaseRow">
                                 <StackPanel>
                                 <Border Classes="settingRow">
-                                    <Grid ColumnDefinitions="*,Auto">
-                                        <StackPanel Grid.Column="0" Spacing="3"
+                                    <Grid ColumnDefinitions="Auto,*,Auto">
+                                        <Viewbox Width="{StaticResource IconSizeMedium}"
+                                                 Height="{StaticResource IconSizeMedium}"
+                                                 Margin="0,0,12,0" VerticalAlignment="Center">
+                                            <Canvas Width="24" Height="24">
+                                                <Path Data="{StaticResource IconDatabase}"
+                                                      IsVisible="{Binding !IsPostgres}"
+                                                      Stroke="{StaticResource BrushSecondaryText}"
+                                                      StrokeThickness="{StaticResource IconStrokeMedium}"
+                                                      StrokeLineCap="Round" StrokeJoin="Round" />
+                                                <Path Data="{StaticResource IconServer}"
+                                                      IsVisible="{Binding IsPostgres}"
+                                                      Stroke="{StaticResource BrushSecondaryText}"
+                                                      StrokeThickness="{StaticResource IconStrokeMedium}"
+                                                      StrokeLineCap="Round" StrokeJoin="Round" />
+                                            </Canvas>
+                                        </Viewbox>
+                                        <StackPanel Grid.Column="1" Spacing="3"
                                                     VerticalAlignment="Center" Margin="0,0,16,0">
                                             <TextBlock Text="{Binding Name}"
  />
@@ -452,7 +468,7 @@
                                                        IsVisible="{Binding ShowStorage}" />
                                         </StackPanel>
 
-                                        <StackPanel Grid.Column="1" Orientation="Horizontal"
+                                        <StackPanel Grid.Column="2" Orientation="Horizontal"
                                                     Spacing="8" VerticalAlignment="Center">
 
                                             <!-- Чем база хранится, и не она ли по умолчанию:
