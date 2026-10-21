@@ -122,4 +122,34 @@ with tempfile.TemporaryDirectory(prefix="smartbase-ci-") as temporary:
                 raise AssertionError("TRX guard accepted missing/failed/skipped tests")
 PY
 ok 'TRX не принимает пустой отчет, новый skip и отсутствие native-backup тестов'
+
+python3 -B - "$ci_here" <<'PY'
+import importlib.util, pathlib, sys, tempfile, xml.etree.ElementTree as ET
+spec = importlib.util.spec_from_file_location("report_failures", pathlib.Path(sys.argv[1]) / "report-failures.py")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+assert module.escape("%,:\r\n", True) == "%25%2C%3A%0D%0A"
+assert module.escape("%,:\r\n") == "%25,:%0D%0A"
+with tempfile.TemporaryDirectory(prefix="smartbase-ci-errors-") as temporary:
+    path = pathlib.Path(temporary) / "failed.trx"
+    root = ET.Element("{urn:trx}TestRun")
+    results = ET.SubElement(root, "{urn:trx}Results")
+    ET.SubElement(results, "{urn:trx}UnitTestResult", testName="Passed", outcome="Passed")
+    ET.SubElement(results, "{urn:trx}UnitTestResult", testName="Skipped", outcome="NotExecuted")
+    for index in range(12):
+        result = ET.SubElement(results, "{urn:trx}UnitTestResult", testName=f"Namespace.Case{index},:\r\n%", outcome="Failed")
+        error = ET.SubElement(ET.SubElement(result, "{urn:trx}Output"), "{urn:trx}ErrorInfo")
+        ET.SubElement(error, "{urn:trx}Message").text = "failure%\r\n" + "x" * 2000
+    ET.ElementTree(root).write(path, encoding="utf-8", xml_declaration=True)
+    lines = list(module.annotations([path, path]))
+    assert len(lines) == 10
+    assert all(line.startswith("::error title=Namespace.Case") for line in lines)
+    assert all("%2C%3A%0D%0A%25::" in line for line in lines)
+    assert all("\r" not in line and "\n" not in line for line in lines)
+    assert all(len(line.split("::", 2)[2].replace("%25", "%").replace("%0D", "\r").replace("%0A", "\n")) <= 1500 for line in lines)
+    assert list(module.annotations([pathlib.Path(temporary) / "absent.trx"])) == []
+    path.write_text("broken", encoding="utf-8")
+    assert list(module.annotations([path])) == ["::warning title=TRX::Не удалось прочитать отчет тестов"]
+PY
+ok 'публичные annotations ограничены, экранированы и содержат только ошибки TRX'
 printf 'Проверок модуля CI пройдено: %s\n' "$ci_passed"

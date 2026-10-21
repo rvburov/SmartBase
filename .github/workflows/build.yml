@@ -133,13 +133,13 @@ jobs:
       # умеет отрапортовать «Ошибок: 0», ничего не перекомпилировав: стоит времени файлов уехать
       # назад (перенос папки, облачный диск), и MSBuild считает сборку свежей. Здесь это невозможно.
       - name: Модульные тесты
-        run: dotnet test Tests/Unit --configuration Release --logger 'console;verbosity=minimal'
+        run: dotnet test Tests/Unit --configuration Release --logger 'console;verbosity=minimal' --logger 'trx;LogFileName=unit.trx' --results-directory "$RUNNER_TEMP/matrix-results"
 
       # PostgreSQL-стенд здесь не поднимаем — контейнеры-сервисы работают только на Linux-раннерах.
       # Тесты провайдера сами уходят в Skipped (Tests/Integration/PgTestServer.cs проверяет
       # localhost:5455), а по-настоящему их гоняет отдельный job ниже.
       - name: Интеграционные тесты
-        run: dotnet test Tests/Integration --configuration Release --logger 'console;verbosity=minimal'
+        run: dotnet test Tests/Integration --configuration Release --logger 'console;verbosity=minimal' --logger 'trx;LogFileName=integration.trx' --results-directory "$RUNNER_TEMP/matrix-results"
 
       # Тесты расширений — отдельные сборки, по проекту на расширение (Tests/Extensions/*).
       # Список берется глобом внутри скрипта: заведение и удаление расширения этот файл не
@@ -203,6 +203,10 @@ jobs:
       - name: Убедиться, что связка с D-Bus проверена
         if: runner.os == 'Linux'
         run: python3 Scripts/ci/check-trx.py "$RUNNER_TEMP/dbus-results/dbus.trx"
+
+      - name: Имена и сообщения упавших тестов
+        if: failure()
+        run: python3 Scripts/ci/report-failures.py "$RUNNER_TEMP/matrix-results/unit.trx" "$RUNNER_TEMP/matrix-results/integration.trx"
 
   # ── Сборка для закрытого контура ────────────────────────────────────────────
   # Второй дистрибутив программы: в нем отправляющего слоя нет физически — файл
