@@ -433,14 +433,14 @@ internal sealed class RelationIntegrityFixture : IDisposable
     private static DbConnection Open(DatabaseManager manager, bool foreignKeys = true)
     {
         DbConnection connection = manager.Context.IsPostgres ? new NpgsqlConnection(manager.Path)
-            : new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = manager.Path, ForeignKeys = foreignKeys }.ToString());
+            : SqliteGate.NewConnection(new SqliteConnectionStringBuilder { DataSource = manager.Path, ForeignKeys = foreignKeys, Pooling = false }.ToString());
         connection.Open();
         return connection;
     }
 
     private static SqliteConnection OpenSqlite(string path)
     {
-        var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly }.ToString());
+        var connection = SqliteGate.NewConnection(new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
         connection.Open();
         return connection;
     }

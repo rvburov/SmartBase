@@ -40,6 +40,9 @@ Job `checks` (**«Итог проверок»**) запускается всег
 
 ## Что входит в полный профиль
 
+`LANG=ru_RU.UTF-8` задает культуру Linux. Windows и macOS могут использовать системную
+культуру; тесты с ожиданиями конкретного формата задают `CurrentCulture` явно.
+
 - **Linux, Windows, macOS Apple Silicon и macOS Intel:** сборка обоих таргетов приложения,
   Unit, Integration и все проекты `Tests/Extensions/*`. `fail-fast: false` сохраняет результаты
   остальных ОС при падении одной.

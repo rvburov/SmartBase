@@ -1,3 +1,4 @@
+using System.Globalization;
 using SmartBase.Utils;
 
 namespace SmartBase.Tests.Unit;
@@ -14,14 +15,28 @@ public sealed class SizesTests
 {
     /// <summary>Единица растет вместе с числом, разрядность — вместе с единицей.</summary>
     [Theory]
-    [InlineData(700,                    "1 КБ")]     // мелочь в интерфейсе округляется до КБ
-    [InlineData(1024,                   "1 КБ")]
-    [InlineData(1024L * 700,            "700 КБ")]
-    [InlineData(1024L * 1024,           "1,0 МБ")]
-    [InlineData(1024L * 1024 * 3 + 500_000, "3,5 МБ")]
-    [InlineData(1024L * 1024 * 1024,    "1,00 ГБ")]
-    public void A_size_grows_its_unit_together_with_its_precision(long bytes, string expected) =>
-        Assert.Equal(expected, Sizes.Text(bytes).Replace(' ', ' '));
+    [InlineData("ru-RU", 700,                    "1 КБ")] // мелочь в интерфейсе округляется до КБ
+    [InlineData("ru-RU", 1024,                   "1 КБ")]
+    [InlineData("ru-RU", 1024L * 700,            "700 КБ")]
+    [InlineData("ru-RU", 1024L * 1024,           "1,0 МБ")]
+    [InlineData("ru-RU", 1024L * 1024 * 3 + 500_000, "3,5 МБ")]
+    [InlineData("ru-RU", 1024L * 1024 * 1024,    "1,00 ГБ")]
+    [InlineData("en-US", 1024L * 1024,           "1.0 МБ")]
+    [InlineData("en-US", 1024L * 1024 * 3 + 500_000, "3.5 МБ")]
+    [InlineData("en-US", 1024L * 1024 * 1024,    "1.00 ГБ")]
+    public void A_size_grows_its_unit_together_with_its_precision(string cultureName, long bytes, string expected)
+    {
+        var previousCulture = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo(cultureName);
+            Assert.Equal(expected, Sizes.Text(bytes).Replace(' ', ' '));
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = previousCulture;
+        }
+    }
 
     /// <summary>
     /// В интерфейсе мелочь — это «0 КБ», в «Диагностике» — «96 Б». Это и есть то единственное,

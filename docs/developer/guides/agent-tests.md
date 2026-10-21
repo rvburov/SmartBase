@@ -20,7 +20,8 @@ Push любой ветки, кроме `main`, запускает общий wor
 2. `bash Tests/run-extensions.sh --configuration Release` — все наборы `Tests/Extensions/*`.
 3. **«Итог проверок»** — обязательные jobs должны завершиться успешно.
 
-Культура — `LANG=ru_RU.UTF-8`, как в пользовательских проверках форматирования. Новый push
+На Linux задан `LANG=ru_RU.UTF-8`. В полной матрице это не гарантирует русскую культуру
+Windows/macOS: тесты, ожидающие конкретный формат, задают `CurrentCulture` явно. Новый push
 отменяет предыдущую проверку той же ветки; исходный репозиторий fork входит в ключ concurrency.
 
 Другие ОС, Integration с живым PostgreSQL, нативные `pg_dump`/`pg_restore`, закрытые конфигурации

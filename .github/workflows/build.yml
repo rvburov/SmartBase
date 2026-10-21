@@ -35,6 +35,8 @@ env:
   DOTNET_NOLOGO: 'true'
   DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 'true'
+  # LANG задает культуру Linux; Windows/macOS могут использовать системную культуру.
+  # Тесты с ожиданиями конкретного формата задают CurrentCulture явно.
   LANG: ru_RU.UTF-8
 
 # Явный `shell: bash` на весь файл, а не только ради одинакового шелла на трех ОС. Умолчание
