@@ -14,6 +14,11 @@ internal enum SourceKind { Empty, Number, Text, Bool, Error, Date }
 /// запись из XML без пересчета), и номер стиля в книге-источнике.</summary>
 internal readonly record struct SourceCell(SourceKind Kind, string Value, uint Style)
 {
+    /// <summary>Ячейки, которой в XML нет вовсе: у пустых клеток настоящих расшифровок элемента
+    /// нет. Значение по умолчанию (<c>default</c>) не годится — в нем <see cref="Value"/> равно
+    /// <c>null</c>, и на нем упал первый прогон на настоящей папке.</summary>
+    public static readonly SourceCell Missing = new(SourceKind.Empty, "", 0);
+
     public bool IsEmpty => Kind == SourceKind.Empty;
 }
 
@@ -114,38 +119,48 @@ internal static partial class BreakdownReader
             {
                 ct.ThrowIfCancellationRequested();
                 if (rowIndex <= HeaderRows) continue;
-
-                var cells = ReadCells(row, strings);
-                if (cells.All(c => c.IsEmpty)) continue;              // пустая строка-разделитель
-                var source = new SourceRow(cells, row.CustomHeight?.Value == true ? row.Height?.Value : (double?)null);
-
-                var index = cells[ColIndex].Value.Trim();
-                if (index.Length == 0)
+                try
                 {
-                    var current = stack.Peek();
-                    var opKey   = Normalize(cells[ColName].Value);
-                    var opOcc   = current.Operations.Count(o => o.Key == opKey);
-                    current.Operations.Add((opKey, opOcc, source));
-                    operations++;
-                    continue;
+                    var cells = ReadCells(row, strings);
+                    if (cells.All(c => c.IsEmpty)) continue;              // пустая строка-разделитель
+                    var source = new SourceRow(cells, row.CustomHeight?.Value == true ? row.Height?.Value : (double?)null);
+
+                    var index = cells[ColIndex].Value.Trim();
+                    if (index.Length == 0)
+                    {
+                        var current = stack.Peek();
+                        var opKey   = Normalize(cells[ColName].Value);
+                        var opOcc   = current.Operations.Count(o => o.Key == opKey);
+                        current.Operations.Add((opKey, opOcc, source));
+                        operations++;
+                        continue;
+                    }
+
+                    var level = Level(index);
+                    while (stack.Peek().Level >= level) stack.Pop();
+                    var parent = stack.Peek();
+
+                    var deno = Normalize(cells[ColDeno].Value);
+                    var key  = deno.Length > 0 ? "КД:" + deno : "Имя:" + Normalize(cells[ColName].Value);
+                    var node = new BreakdownNode
+                    {
+                        Key        = key,
+                        Occurrence = parent.Children.Count(c => c.Key == key),
+                        Level      = level,
+                        Row        = source,
+                    };
+                    parent.Children.Add(node);
+                    stack.Push(node);
+                    products++;
                 }
-
-                var level = Level(index);
-                while (stack.Peek().Level >= level) stack.Pop();
-                var parent = stack.Peek();
-
-                var deno = Normalize(cells[ColDeno].Value);
-                var key  = deno.Length > 0 ? "КД:" + deno : "Имя:" + Normalize(cells[ColName].Value);
-                var node = new BreakdownNode
+                catch (Exception ex) when (ex is not ProductCompareException and not OperationCanceledException)
                 {
-                    Key        = key,
-                    Occurrence = parent.Children.Count(c => c.Key == key),
-                    Level      = level,
-                    Row        = source,
-                };
-                parent.Children.Add(node);
-                stack.Push(node);
-                products++;
+                    // Непредвиденное в данных — назвать файл и строку, а не одно сообщение .NET:
+                    // по нему пользователь не поймет, где искать.
+                    throw new ProductCompareException(
+                        $"Не удалось разобрать файл «{Path.GetFileName(file.Path)}», лист «{SheetName}», " +
+                        $"строка {rowIndex}:\n{ex.Message}");
+                }
             }
 
             return new BreakdownSheet(file, root, styles, products, operations);
@@ -224,6 +239,7 @@ internal static partial class BreakdownReader
     private static SourceCell[] ReadCells(Row row, List<string> strings)
     {
         var cells = new SourceCell[SourceColumns.Length];
+        Array.Fill(cells, SourceCell.Missing);
         var maxColumn = SourceColumns[^1];
         int previous = 0;
         foreach (var cell in row.Elements<Cell>())

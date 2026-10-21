@@ -255,7 +255,12 @@ public partial class ProductCompareWindow : Window
         }
         catch (Exception ex)
         {
+            // Непредвиденный сбой: одного сообщения .NET мало, чтобы найти место, — стек в журнал,
+            // его можно прислать разработчику снимком (тот же прием, что у «Сводной трудоемкости»).
             Fail($"Ошибка: {ex.Message}");
+            LogLine("");
+            LogLine("Подробности сбоя (для разработчика):");
+            LogLine(ex.ToString());
         }
         finally
         {

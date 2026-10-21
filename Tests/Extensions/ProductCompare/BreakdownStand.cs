@@ -48,9 +48,12 @@ internal static class BreakdownStand
         {
             var r   = rows[i];
             var row = i + 2;
-            ws.Cell(row, 2).Value = r.Index;
-            ws.Cell(row, 3).Value = r.Name;
-            ws.Cell(row, 4).Value = r.Deno;
+            // Пустых клеток в файле нет вовсе, как в настоящих расшифровках: у строки операции нет
+            // ни индекса (B), ни, бывает, вида работ (D). Ячейки без элемента в XML читатель
+            // обязан понимать как пустые — на этом упал первый прогон на настоящей папке.
+            if (r.Index.Length > 0) ws.Cell(row, 2).Value = r.Index;
+            if (r.Name.Length  > 0) ws.Cell(row, 3).Value = r.Name;
+            if (r.Deno.Length  > 0) ws.Cell(row, 4).Value = r.Deno;
             if (r.Qty  is { } qty)  ws.Cell(row, 6).Value = qty;
             if (r.Norm is { } norm) ws.Cell(row, 7).Value = norm;
             if (r.Comment.Length > 0) ws.Cell(row, 12).Value = r.Comment;
