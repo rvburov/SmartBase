@@ -197,7 +197,8 @@ public partial class ConstructorRepository
             ct.ThrowIfCancellationRequested();
             var search = string.IsNullOrWhiteSpace(query) ? new Dictionary<RelationTarget, string>()
                 : cfg.EffectiveSearchField == cfg.DisplayField ? labels : repo.ResolveRelationLabels(targets, cfg.EffectiveSearchField, cfg.TargetDbId);
-            var titles = cfg.DisplayField == RelationConfig.TitleField ? new Dictionary<RelationTarget, string>()
+            // Название уже входит в подпись — второй строкой его не повторяем.
+            var titles = cfg.DisplayKeys.Contains(RelationConfig.TitleField) ? new Dictionary<RelationTarget, string>()
                 : repo.ResolveRelationLabels(targets, RelationConfig.TitleField);
             ct.ThrowIfCancellationRequested();
             return new RelationPickerData(ordered, labels, search, titles, more);

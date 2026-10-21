@@ -30,6 +30,17 @@ public sealed class RelationMultiPropertyTests
         Assert.Empty(f.Repo.SearchRelationRecords(f.Parts, key, "Пласт"));
     }
 
+    // Название уже входит в составной показ — список выбора не повторяет его второй строкой.
+    [Fact]
+    public async Task The_picker_does_not_repeat_a_title_that_is_already_shown()
+    {
+        using var f = new Fixture();
+        var data = await f.Repo.GetRelationPickerDataAsync(f.Node, f.Config(), null,
+            [new RelationTarget(0, f.Bracket)]);
+        Assert.Equal("ДЕТ-001 · Кронштейн", data.SelectedLabels.Values.Single());
+        Assert.Empty(data.SelectedTitles);
+    }
+
     [Fact]
     public void A_deleted_property_drops_out_of_the_display_without_breaking_it()
     {

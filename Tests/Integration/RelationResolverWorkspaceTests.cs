@@ -62,7 +62,7 @@ public sealed class RelationResolverWorkspaceTests
     // Ссылки из другой открытой базы окно удаления видит по номеру базы и называет ее;
     // запрет удаления в такой связи держит удаление так же, как своя связь.
     [Fact]
-    public void The_delete_window_sees_links_from_another_open_database()
+    public async Task The_delete_window_sees_links_from_another_open_database()
     {
         var appDb = TempDatabase.NewTempPath();
         var def   = TempDatabase.NewTempPath();
@@ -90,12 +90,15 @@ public sealed class RelationResolverWorkspaceTests
                 Restrict(false);
                 invoices.SetLinks(field.Id!.Value, bill, [client]);
 
-                var check = RelationDeleteImpact.CheckRecords(defDb.Constructor, [client]);
+                var check = await RelationDeleteImpact.CheckRecordsAsync(defDb.Constructor, [client]);
                 Assert.Null(check.Blocked);
-                Assert.Contains("«Счета · Клиент» (база «Учет») — 1 запись", check.Warning, StringComparison.Ordinal);
+                Assert.Equal("«Счета · Клиент» из базы «Учет» (1 запись)", check.References);
                 Restrict(true);
-                Assert.Contains("(база «Учет»)", RelationDeleteImpact.CheckRecords(defDb.Constructor, [client]).Blocked);
-                Assert.NotNull(RelationDeleteImpact.CheckCollections(defDb.Constructor, [clients]).Blocked);
+                Assert.Contains("из базы «Учет»", (await RelationDeleteImpact.CheckRecordsAsync(defDb.Constructor, [client])).Blocked);
+                Assert.NotNull((await RelationDeleteImpact.CheckCollectionsAsync([(defDb.Constructor, [clients])])).Blocked);
+                // Источник из другой базы, удаляемый в той же операции (календарь, задачи), не мешает.
+                Assert.Null((await RelationDeleteImpact.CheckRecordsAsync([(defDb.Constructor, [client]), (invoices, [bill])])).Blocked);
+                Assert.Null((await RelationDeleteImpact.CheckCollectionsAsync([(defDb.Constructor, [clients]), (invoices, [bills])])).Blocked);
             }
             finally
             {

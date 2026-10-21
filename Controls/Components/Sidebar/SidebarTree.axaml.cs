@@ -2542,18 +2542,15 @@ public partial class SidebarTree : UserControl
     {
         if (crossDb.Count == 0 || OwnerWindow is null) return true;
 
-        var warnings = "";
-        foreach (var t in crossDb)
-        {
-            IReadOnlyCollection<int> cols = t.IsGroup ? t.SrcRepo.CollectionIdsInGroup(t.Id) : [t.Id];
-            var check = RelationDeleteImpact.CheckCollections(t.SrcRepo, cols);
-            if (check.Blocked is { } blocked) { await ConfirmDialog.Info(blocked).ShowDialog(OwnerWindow); return false; }
-            warnings += check.Warning;
-        }
-        if (warnings.Length == 0) return true;
+        // Все переносимое — одной проверкой: ссылки между переносимыми коллекциями переписываются
+        // на копию и не обрываются.
+        var check = await RelationDeleteImpact.CheckCollectionsAsync(crossDb.Select(t =>
+            (t.SrcRepo, (IReadOnlyCollection<int>)(t.IsGroup ? t.SrcRepo.CollectionIdsInGroup(t.Id) : [t.Id]))), move: true);
+        if (check.Blocked is { } blocked) { await ConfirmDialog.Info(blocked).ShowDialog(OwnerWindow); return false; }
+        if (check.References.Length == 0) return true;
 
         var warn = new ConfirmDialog(
-            $"Межбазовый перенос оборвет внешние связи, ссылающиеся на переносимое.{warnings} Внутренние и исходящие связи сохранятся. Продолжить?",
+            $"Межбазовый перенос оборвет внешние ссылки на переносимые записи: {check.References}. Внутренние и исходящие связи сохранятся. Продолжить?",
             confirmText: "Перенести");
         return await warn.ShowDialog<bool>(OwnerWindow) == true;
     }
@@ -2729,7 +2726,9 @@ public partial class SidebarTree : UserControl
         // ОТКРЫТЫХ баз; из закрытых — не проверяем, вычистятся лениво). Разворачиваем группы в их ветки
         // и объединяем с одиночными коллекциями по базе (одну коллекцию не проверяем дважды), обрываемся
         // на первой найденной связи.
-        var linkWarn = "";
+        // Коллекции всей операции по базам: ссылки между удаляемыми запрету не мешают ни в окне,
+        // ни в репозитории (DeleteGroupIsolated/DeleteCollectionIsolated получают весь набор базы).
+        var together = new Dictionary<ConstructorRepository, IReadOnlyCollection<int>>();
         foreach (var byDb in groups.Concat(colls).Where(n => n.Id.HasValue && RepoOf(n) is not null)
                                     .GroupBy(n => n.DbId))
         {
@@ -2738,12 +2737,12 @@ public partial class SidebarTree : UserControl
             foreach (var n in byDb)
                 if (n.IsGroup) cols.UnionWith(r.CollectionIdsInGroup(n.Id!.Value));
                 else           cols.Add(n.Id!.Value);
-            var check = RelationDeleteImpact.CheckCollections(r, cols);
-            if (check.Blocked is { } blocked) { await ConfirmDialog.Info(blocked).ShowDialog(OwnerWindow); return; }
-            linkWarn += check.Warning;
+            together[r] = cols.ToList();
         }
+        var check = await RelationDeleteImpact.CheckCollectionsAsync(together.Select(p => (p.Key, p.Value)));
+        if (check.Blocked is { } blocked) { await ConfirmDialog.Info(blocked).ShowDialog(OwnerWindow); return; }
 
-        var confirm = new ConfirmDialog(BuildDeleteMessage(groups.Count, colls.Count, linkWarn));
+        var confirm = new ConfirmDialog(BuildDeleteMessage(groups.Count, colls.Count, check.Warning("записи")));
         if (await confirm.ShowDialog<bool>(OwnerWindow) != true) return;
 
         // Цели: группа (удаляем ВСЮ ветку) или коллекция. Репозитории резолвим здесь, на UI-потоке
@@ -2776,7 +2775,9 @@ public partial class SidebarTree : UserControl
                         progress.Report(total == 0 ? 0 : b / (double)total, text);
                         IProgress<int> p = new IntProgress(done =>
                             progress.Report(total == 0 ? 1 : (b + done) / (double)total, text));
-                        if (t.IsGroup) t.Repo.DeleteGroupIsolated(t.Id, p); else t.Repo.DeleteCollectionIsolated(t.Id, p);
+                        var alongside = together.GetValueOrDefault(t.Repo);
+                        if (t.IsGroup) t.Repo.DeleteGroupIsolated(t.Id, p, alongside);
+                        else           t.Repo.DeleteCollectionIsolated(t.Id, p, alongside);
                         basis += counts[i].Records;
                     }
                 });

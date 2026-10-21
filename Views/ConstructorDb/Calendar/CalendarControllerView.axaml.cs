@@ -957,16 +957,19 @@ public partial class CalendarControllerView : UserControl
     // коллекции в самом окне записи шли мимо них. Репозиторий берем прямым поиском по _dbs, а не через
     // RepoOf: тот подставляет DefaultRepo и проверил бы чужую базу по коллизии id. Нет связей — окна
     // нет (правка записи не должна каждый раз спрашивать). true — можно продолжать.
-    private async Task<bool> ConfirmIncomingLinkBreak(
-        Avalonia.Controls.Window win, CalendarRecord r, string message, string confirmText)
+    // move — перенос в другую коллекцию или базу: запись пересоздается, и ссылки на нее обрываются.
+    private async Task<bool> ConfirmIncomingLinkBreak(Avalonia.Controls.Window win, CalendarRecord r, bool move)
     {
         if (r.Id is not int id) return true;
         var repo = _dbs.FirstOrDefault(d => d.DbId == r.DbId).Repo;
         if (repo is null) return true;
-        var check = RelationDeleteImpact.CheckRecords(repo, [id]);
+        var check = await RelationDeleteImpact.CheckRecordsAsync(repo, [id], move);
         if (check.Blocked is { } blocked) { await ConfirmDialog.Info(blocked).ShowDialog(win); return false; }
-        if (check.Warning.Length == 0) return true;
-        return await new ConfirmDialog(message + check.Warning, confirmText).ShowDialog<bool>(win) == true;
+        if (check.References.Length == 0) return true;
+        var message = move
+            ? $"Перенос пересоздает запись.{check.Warning("нее", move: true)} Перенести?"
+            : $"Удалить запись?{check.Warning("нее")}";
+        return await new ConfirmDialog(message, move ? "Перенести" : "Удалить").ShowDialog<bool>(win) == true;
     }
 
     // Событие доводит коллекцию до нужных столбцов («Дата», «Описание») — прежде это
@@ -987,9 +990,7 @@ public partial class CalendarControllerView : UserControl
 
         if (result.Deleted)
         {
-            if (!await ConfirmIncomingLinkBreak(win, r,
-                    "Удалить запись? На нее ссылаются связи из других записей — они будут удалены.",
-                    "Удалить")) return;
+            if (!await ConfirmIncomingLinkBreak(win, r, move: false)) return;
             if (!TryWrite(RepoOf(r), () => RepoOf(r).DeleteCalendarRecord(r.Id!.Value))) return;
             _journalDelta = [(r, -1)];
         }
@@ -1007,9 +1008,7 @@ public partial class CalendarControllerView : UserControl
             // связи на нее оборвутся (исходящие переносятся, см. CopyRelationLinksByName). Правка без
             // смены места (дата, название, поле-дата) Id не меняет — там предупреждать не о чем.
             var moving = rec.DbId != r.DbId || rec.CollectionId != r.CollectionId;
-            if (moving && !await ConfirmIncomingLinkBreak(win, r,
-                        "Перенос пересоздает запись: связи из других записей на нее оборвутся "
-                      + "(станут «связи нет»). Перенести?", "Перенести")) return;
+            if (moving && !await ConfirmIncomingLinkBreak(win, r, move: true)) return;
 
             // Правка тоже готовит коллекцию: перенос — целевую целиком, а правка на месте
             // вернет удаленное «Описание». Спрашиваем и здесь — молча столбцы не появляются.
@@ -1039,6 +1038,9 @@ public partial class CalendarControllerView : UserControl
                 var targetRepo = RepoOf(rec);
                 var ok = TryWrite(targetRepo, () =>
                 {
+                    // Запрет удаления держит и перенос: проверяем до копии, иначе запись осталась бы
+                    // в обеих базах.
+                    sourceRepo.EnsureRecordsMovable([r.Id!.Value]);
                     targetRepo.AddCalendarRecord(rec);
                     targetRepo.CopyFieldValuesByName(sourceRepo, r.Id!.Value, r.CollectionId ?? 0,
                                                      rec.Id!.Value, rec.CollectionId ?? 0,
@@ -1141,11 +1143,13 @@ public partial class CalendarControllerView : UserControl
         // Календарь агрегирует события ИЗ ВСЕХ смонтированных БД, поэтому проверяем по каждой базе
         // отдельно; репозиторий берем прямым поиском по _dbs (не RepoOf: он подставляет DefaultRepo и
         // проверил бы чужую базу). Одна запись дает по событию на каждое поле-дату → id дедуплицируем.
-        var check = RelationDeleteImpact.CheckRecords(targets.GroupBy(r => r.DbId)
-            .Select(g => (Repo: _dbs.FirstOrDefault(d => d.DbId == g.Key).Repo, Ids: (IReadOnlyCollection<int>)g.Select(r => r.Id!.Value).Distinct().ToList()))
+        var byDb = targets.GroupBy(r => r.DbId).ToDictionary(g => g.Key,
+            g => (IReadOnlyCollection<int>)g.Select(r => r.Id!.Value).Distinct().ToList());
+        var check = await RelationDeleteImpact.CheckRecordsAsync(byDb
+            .Select(g => (Repo: _dbs.FirstOrDefault(d => d.DbId == g.Key).Repo, Ids: g.Value))
             .Where(g => g.Repo is not null).Select(g => (g.Repo!, g.Ids)));
         if (check.Blocked is { } blocked) { await ConfirmDialog.Info(blocked).ShowDialog(win); return; }
-        var linkWarn = check.Warning;
+        var linkWarn = check.Warning(targets.Count == 1 ? "нее" : "них");
 
         var dlg = new ConfirmDialog($"Вы удаляете {targets.Count} {RecordsPlural(targets.Count)}.{linkWarn} Подтвердить?");
         if (await dlg.ShowDialog<bool>(win) != true) return;
@@ -1153,16 +1157,23 @@ public partial class CalendarControllerView : UserControl
         // Немного записей — прежний мгновенный путь (каждую в ее БД). Много — bulk-SQL в фоне
         // на изолированных подключениях с окном прогресса (как удаление коллекции в сайдбаре):
         // цикл DeleteCalendarRecord с SaveChanges на КАЖДУЮ запись вешал UI на сотнях/тысячах.
+        var deleted = targets;
         if (targets.Count <= SmallOpCap)
         {
+            // Записи удаляются по одной, но ссылки между ними запрету удаления не мешают: весь
+            // набор своей базы уходит в этой же операции.
+            deleted = [];
             foreach (var r in targets)
-                // Не удалилось (база занята/пропала) — тост и стоп; вид перечитается ниже.
-                if (!TryWrite(RepoOf(r), () => RepoOf(r).DeleteCalendarRecord(r.Id!.Value))) break;
+            {
+                // Не удалилось (база занята/пропала, запрет) — тост и стоп; вид перечитается ниже.
+                if (!TryWrite(RepoOf(r), () => RepoOf(r).DeleteCalendarRecord(r.Id!.Value, byDb[r.DbId]))) break;
+                deleted.Add(r);
+            }
         }
         else
             await BulkDeleteWithProgress(win, targets);
 
-        _journalDelta = targets.Select(r => (r, -1)).ToList();
+        _journalDelta = deleted.Select(r => (r, -1)).ToList();
         NotifyChangedAndRefresh(structural: false);
     }
 

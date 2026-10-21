@@ -528,7 +528,7 @@ public sealed class RelationSelectBox : Panel
         {
             var target = new RelationTarget(_cfg.TargetDbId, result.RecordId);
             if (!_selected.Contains(target)) list.Add(new RelationOptionVm(target, _titles.GetValueOrDefault(target, ""),
-                _cfg.DisplayField == RelationConfig.TitleField ? "" : result.Title, this));
+                _cfg.DisplayKeys.Contains(RelationConfig.TitleField) ? "" : result.Title, this));
         }
         _canSelectForList = CanSelect;
         _shown.Clear();

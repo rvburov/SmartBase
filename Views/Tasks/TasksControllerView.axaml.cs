@@ -721,11 +721,11 @@ public partial class TasksControllerView : UserControl
 
         // Предупреждаем, что удаление оборвет ВХОДЯЩИЕ связи на эти записи — как в таблице и
         // календаре. Задачи собраны из всех допущенных БД, поэтому проверяем по каждой базе.
-        var check = RelationDeleteImpact.CheckRecords(targets.GroupBy(t => t.DbId)
+        var check = await RelationDeleteImpact.CheckRecordsAsync(targets.GroupBy(t => t.DbId)
             .Select(g => (Repo: RepoFor(g.Key), Ids: (IReadOnlyCollection<int>)g.Select(t => t.Id).ToList()))
             .Where(g => g.Repo is not null).Select(g => (g.Repo!, g.Ids)));
         if (check.Blocked is { } blocked) { await ConfirmDialog.Info(blocked).ShowDialog(win); return; }
-        var linkWarn = check.Warning;
+        var linkWarn = check.Warning(targets.Count == 1 ? "нее" : "них");
 
         var dlg = new ConfirmDialog($"Вы удаляете {targets.Count} {TasksPlural(targets.Count)}.{linkWarn} Подтвердить?");
         if (await dlg.ShowDialog<bool>(win) != true) return;
@@ -743,11 +743,12 @@ public partial class TasksControllerView : UserControl
         {
             foreach (var (repo, ids) in byDb)
             {
-                // Не удалилось (нет прав, база занята) — стоп: удаленное остается удаленным,
-                // список ниже перечитается и покажет фактическое состояние.
+                // Не удалилось (нет прав, база занята, запрет) — стоп: удаленное остается удаленным,
+                // список ниже перечитается и покажет фактическое состояние. Ссылки между задачами
+                // одной базы запрету удаления не мешают: весь набор уходит в этой же операции.
                 var stopped = false;
                 foreach (var id in ids)
-                    if (!TryWrite(repo, () => repo.DeleteCalendarRecord(id))) { stopped = true; break; }
+                    if (!TryWrite(repo, () => repo.DeleteCalendarRecord(id, ids))) { stopped = true; break; }
                 if (stopped) break;
             }
         }
@@ -837,13 +838,13 @@ public partial class TasksControllerView : UserControl
         // редактировании скрыт, а DbId ниже принудительно возвращается исходный.
         var movingCollection = res is { Deleted: false, Task: { } m } && m.CollectionId != t.CollectionId;
         if ((res.Deleted || movingCollection) && t.Id is int rid && RepoFor(t.DbId) is { } own
-            && RelationDeleteImpact.CheckRecords(own, [rid]) is { } check
-            && (check.Blocked is not null || check.Warning.Length > 0))
+            && await RelationDeleteImpact.CheckRecordsAsync(own, [rid], move: !res.Deleted) is { } check
+            && (check.Blocked is not null || check.References.Length > 0))
         {
             if (check.Blocked is { } blocked) { await ConfirmDialog.Info(blocked).ShowDialog(win); return; }
             var warn = res.Deleted
-                ? new ConfirmDialog($"Удалить задачу?{check.Warning}", "Удалить")
-                : new ConfirmDialog($"Перенос пересоздает задачу, и связи из других записей на нее оборвутся.{check.Warning} Перенести?", "Перенести");
+                ? new ConfirmDialog($"Удалить задачу?{check.Warning("нее")}", "Удалить")
+                : new ConfirmDialog($"Перенос пересоздает задачу.{check.Warning("нее", move: true)} Перенести?", "Перенести");
             if (await warn.ShowDialog<bool>(win) != true) return;
         }
 

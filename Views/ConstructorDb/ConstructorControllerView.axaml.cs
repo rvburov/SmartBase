@@ -432,12 +432,12 @@ public partial class ConstructorControllerView : UserControl
 
         // Предупреждаем ТОЛЬКО если удаление оборвет входящие связи (иначе — мгновенно, как раньше):
         // окно называет, кто ссылается; связь с запретом удаления не дает удалить вовсе.
-        var check = RelationDeleteImpact.CheckRecords(_repository, [recordId]);
-        if (check.Warning.Length > 0 || check.Blocked is not null)
+        var check = await RelationDeleteImpact.CheckRecordsAsync(_repository, [recordId]);
+        if (check.References.Length > 0 || check.Blocked is not null)
         {
             if (VisualRoot is not Avalonia.Controls.Window confirmWin) return;
             if (check.Blocked is { } blocked) { await ConfirmDialog.Info(blocked).ShowDialog(confirmWin); return; }
-            var warnDlg = new ConfirmDialog($"Удалить запись?{check.Warning}");
+            var warnDlg = new ConfirmDialog($"Удалить запись?{check.Warning("нее")}");
             if (await warnDlg.ShowDialog<bool>(confirmWin) != true) return;
         }
 
@@ -471,9 +471,9 @@ public partial class ConstructorControllerView : UserControl
         // Предупреждаем, что удаление оборвет ВХОДЯЩИЕ связи на эти записи (внутрибазовые + межбазовые
         // из открытых баз), и называем их. Связь с запретом удаления не дает удалить вовсе.
         // Best-effort: связи из закрытых баз чистятся лениво.
-        var check = RelationDeleteImpact.CheckRecords(_repository, ids);
+        var check = await RelationDeleteImpact.CheckRecordsAsync(_repository, ids);
         if (check.Blocked is { } blocked) { await ConfirmDialog.Info(blocked).ShowDialog(win); return; }
-        var linkWarn = check.Warning;
+        var linkWarn = check.Warning(ids.Count == 1 ? "нее" : "них");
         // Рутинный вопрос снимает настройка «Спрашивать подтверждение при удалении», а вот
         // предупреждение об обрыве связей она НЕ снимает: это про потерю чужих данных, о
         // которой из самого действия не догадаться.
@@ -489,13 +489,16 @@ public partial class ConstructorControllerView : UserControl
         // прежний цикл DeleteRecord с SaveChanges на каждую запись вешал UI на 1000+ строк. Индикатор
         // (RunBulkOp) появляется отложенно: мелкое удаление проходит без окна.
         var many = ids.Count > 1;
-        await RunBulkOp(many ? "Удаление записей" : "Удаление записи",
+        var deleted = await RunBulkOp(many ? "Удаление записей" : "Удаление записи",
             (p, setPhase) =>
             {
                 setPhase(many ? "Удаление записей" : "Удаление записи");
                 _repository.DeleteRecordsIsolated(ids, new IntProgress(done => p.Report((done, ids.Count))));
                 p.Report((ids.Count, ids.Count));   // финал → «Сохранение…»
             });
+        // Отказ (связь с запретом, поставленная, пока шел вопрос, занятость базы) — записи на месте:
+        // счетчик не уменьшаем и выделение не снимаем.
+        if (!deleted) { RefreshRows(structural: true); return; }
 
         RefreshRows(structural: true, countDelta: -ids.Count);
         TableViewCtrl.ClearRecordSelection();   // удаленные строки не должны оставаться «подсвеченными»
@@ -584,11 +587,12 @@ public partial class ConstructorControllerView : UserControl
             warnings.Add($"• потеряются связи в полях: {NameList(linksDropped)}");
 
         // Перенос = копия + удаление (у записи новый id), поэтому ВХОДЯЩИЕ связи на нее обрываются
-        // (за записью не следуют), а связь с запретом удаления держит и перенос.
-        var moveCheck = RelationDeleteImpact.CheckRecords(_repository, ids);
+        // (за записью не следуют) — в том числе ссылки между самими переносимыми записями, а связь
+        // с запретом удаления держит и перенос.
+        var moveCheck = await RelationDeleteImpact.CheckRecordsAsync(_repository, ids, move: true);
         if (moveCheck.Blocked is { } blocked) { await ConfirmDialog.Info(blocked).ShowDialog(win); return; }
-        if (moveCheck.Warning.Length > 0)
-            warnings.Add($"• оборвутся связи, ссылающиеся на переносимые записи:{moveCheck.Warning}");
+        if (moveCheck.References.Length > 0)
+            warnings.Add($"• оборвутся ссылки на переносимые записи: {moveCheck.References}");
 
         if (warnings.Count > 0)
         {
@@ -606,7 +610,7 @@ public partial class ConstructorControllerView : UserControl
         var sourceLinkId = RelationDbResolver.DbIdFor(_repository);
         var targetLinkId = RelationDbResolver.DbIdFor(targetRepo);
         var many = ids.Count > 1;
-        await RunBulkOp(many ? "Перемещение записей" : "Перемещение записи",
+        var moved = await RunBulkOp(many ? "Перемещение записей" : "Перемещение записи",
             (p, setPhase) =>
             {
                 setPhase(many ? "Перемещение записей" : "Перемещение записи");
@@ -616,6 +620,7 @@ public partial class ConstructorControllerView : UserControl
             });
 
         RefreshRows(structural: true);
+        if (!moved) return;   // отказ показан окном; записи на месте — выделение оставляем
         TableViewCtrl.ClearRecordSelection();   // перенесенные строки исчезли — снимаем подсветку
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
         RecordPageClosed?.Invoke(this, EventArgs.Empty);
@@ -1077,8 +1082,10 @@ public partial class ConstructorControllerView : UserControl
     // удаление шли СИНХРОННО на UI-потоке (на сотнях тысяч строк — фриз на несколько секунд, и лишь
     // потом индикатор). work репортит (готово, всего); пока всего неизвестно/0 — индикатор крутится
     // «Подсчет значений…». Окно МОДАЛЬНОЕ — вторую операцию нельзя начать, пока текущая не закрылась.
-    private async Task RunBulkOp(string windowTitle,
-                                 Action<IProgress<(long Done, long Total)>, Action<string>> work)
+    /// <summary>Массовая операция в фоне с отложенным окном прогресса. false — операция упала: ошибку
+    /// показывает DbErrors (занятость, недоступность, запрет удаления связью), остальное — в журнал.</summary>
+    private async Task<bool> RunBulkOp(string windowTitle,
+                                       Action<IProgress<(long Done, long Total)>, Action<string>> work)
     {
         // Порог медленности: массовая правка столбцов или записей дольше Diag.UiQuery — в журнал
         // (время самой правки: перенос журнала базы идет после нее, в фоне).
@@ -1111,10 +1118,12 @@ public partial class ConstructorControllerView : UserControl
             Dispatcher.UIThread.Post(() => Update(done, total)));
         Action<string> setPhase = ph => phase = ph;
 
-        var bg = Task.Run(() => { try { work(p, setPhase); } catch { /* фон: ошибку не валим в UI */ } });
+        // Ошибка фона не роняет UI: она запоминается и после окна уходит в DbErrors.
+        Exception? failure = null;
+        var bg = Task.Run(() => { try { work(p, setPhase); } catch (Exception ex) { failure = ex; } });
 
         // Успело быстро — окна не показываем вовсе.
-        if (await Task.WhenAny(bg, Task.Delay(FieldOpDialogDelayMs)) == bg) { await bg; return; }
+        if (await Task.WhenAny(bg, Task.Delay(FieldOpDialogDelayMs)) == bg) { await bg; return Finish(); }
 
         if (VisualRoot is Avalonia.Controls.Window win)
         {
@@ -1128,6 +1137,15 @@ public partial class ConstructorControllerView : UserControl
         else
         {
             await bg;   // некуда показать окно — просто дожидаемся фон
+        }
+        return Finish();
+
+        bool Finish()
+        {
+            if (failure is null) return true;
+            if (!DbErrors.Handle(failure, _repository?.DbPath))
+                Serilog.Log.Error(failure, "Массовая операция «{Title:l}» не завершилась", windowTitle);
+            return false;
         }
     }
 

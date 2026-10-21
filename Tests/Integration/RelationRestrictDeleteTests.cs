@@ -16,7 +16,7 @@ public sealed class RelationRestrictDeleteTests
     {
         using var f = new Fixture(restrict: true);
         var error = Assert.Throws<RelationDeleteRestrictedException>(() => f.Repo.DeleteRecord(f.Client));
-        Assert.Contains("«Счета · Клиент» — 1 запись", error.Message, StringComparison.Ordinal);
+        Assert.StartsWith("Удалить нельзя: на запись ссылается «Счета · Клиент» (1 запись)", error.Message, StringComparison.Ordinal);
         Assert.NotNull(f.Repo.GetRecord(f.Client));
         Assert.Equal([f.Client], f.Repo.GetLinkEdges(f.Relation, f.Invoice).Select(e => e.ToRecordId));
         // Запись без ссылок удаляется как обычно.
@@ -47,8 +47,8 @@ public sealed class RelationRestrictDeleteTests
     {
         using var f = new Fixture(restrict: true);
         Assert.Throws<RelationDeleteRestrictedException>(() => f.Repo.DeleteRecordsIsolated([f.Free, f.Client]));
-        Assert.NotNull(f.Repo.GetRecord(f.Free));
-        Assert.NotNull(f.Repo.GetRecord(f.Client));
+        // Читаем базу, а не трекер EF: удаляет отдельное подключение.
+        Assert.Equal(2, f.Repo.GetRecords(f.Clients).Count);
         Assert.Throws<RelationDeleteRestrictedException>(() => f.Repo.DeleteCalendarRecord(f.Client));
     }
 
@@ -98,8 +98,9 @@ public sealed class RelationRestrictDeleteTests
         Assert.NotNull(f.Repo.GetRecord(f.Client));
 
         using var other = new TempDatabase(dbId: 2, name: "Другая");
-        Assert.Throws<RelationDeleteRestrictedException>(() =>
+        var refused = Assert.Throws<RelationDeleteRestrictedException>(() =>
             other.Constructor.MoveCollectionIsolated(f.Db.Path, f.Clients, targetGroupId: null));
+        Assert.StartsWith("Перенести нельзя", refused.Message, StringComparison.Ordinal);
         Assert.Throws<RelationDeleteRestrictedException>(() =>
             other.Constructor.MoveGroupIsolated(f.Db.Path, f.Group, targetParentId: null));
         Assert.Throws<RelationDeleteRestrictedException>(() =>
@@ -109,26 +110,125 @@ public sealed class RelationRestrictDeleteTests
     }
 
     [Fact]
-    public void The_delete_window_names_who_points_in()
+    public async Task The_delete_window_names_who_points_in()
     {
         using var f = new Fixture(restrict: false);
         var second = SampleData.AddRecord(f.Repo, f.Invoices, "Счет 2").Id!.Value;
         f.Repo.SetLinks(f.Relation, second, [f.Client]);
-        var check = RelationDeleteImpact.CheckRecords(f.Repo, [f.Client]);
+        var check = await RelationDeleteImpact.CheckRecordsAsync(f.Repo, [f.Client]);
         Assert.Null(check.Blocked);
-        Assert.Equal(" На них ссылаются «Счета · Клиент» — 2 записи — эти связи будут удалены.", check.Warning);
-        Assert.Equal("", RelationDeleteImpact.CheckRecords(f.Repo, [f.Free]).Warning);
+        Assert.Equal(" На нее ссылается «Счета · Клиент» (2 записи) — эта связь будет удалена.", check.Warning("нее"));
+        Assert.Equal(" На нее ссылается «Счета · Клиент» (2 записи) — эта связь оборвется.", check.Warning("нее", move: true));
+        Assert.Equal("", (await RelationDeleteImpact.CheckRecordsAsync(f.Repo, [f.Free])).Warning("нее"));
         // Источники среди удаляемых не считаются.
-        Assert.Equal(" На них ссылаются «Счета · Клиент» — 1 запись — эти связи будут удалены.",
-            RelationDeleteImpact.CheckRecords(f.Repo, [f.Client, second]).Warning);
-        Assert.Contains("«Счета · Клиент» — 2 записи", RelationDeleteImpact.CheckCollections(f.Repo, [f.Clients]).Warning,
-            StringComparison.Ordinal);
+        Assert.Equal("«Счета · Клиент» (1 запись)", (await RelationDeleteImpact.CheckRecordsAsync(f.Repo, [f.Client, second])).References);
+        Assert.Equal("«Счета · Клиент» (2 записи)", (await RelationDeleteImpact.CheckCollectionsAsync([(f.Repo, [f.Clients])])).References);
 
         f.SetRestrict(true);
-        var blocked = RelationDeleteImpact.CheckRecords(f.Repo, [f.Client]);
-        Assert.StartsWith("Удалить или перенести нельзя: на записи ссылаются «Счета · Клиент» — 2 записи", blocked.Blocked);
-        Assert.NotNull(RelationDeleteImpact.CheckCollections(f.Repo, [f.Clients]).Blocked);
-        Assert.Null(RelationDeleteImpact.CheckCollections(f.Repo, [f.Clients, f.Invoices]).Blocked);
+        var blocked = await RelationDeleteImpact.CheckRecordsAsync(f.Repo, [f.Client]);
+        Assert.StartsWith("Удалить нельзя: на запись ссылается «Счета · Клиент» (2 записи)", blocked.Blocked);
+        Assert.NotNull((await RelationDeleteImpact.CheckCollectionsAsync([(f.Repo, [f.Clients])])).Blocked);
+        Assert.Null((await RelationDeleteImpact.CheckCollectionsAsync([(f.Repo, [f.Clients, f.Invoices])])).Blocked);
+    }
+
+    // Перенос копирует записи с новыми номерами: ссылка между переносимыми обрывается, поэтому
+    // запрет держит и ее — до копии, без дублей.
+    [Fact]
+    public async Task Moving_records_linked_to_each_other_is_refused_before_the_copy()
+    {
+        using var f = new Fixture(restrict: true);
+        var parent = SampleData.AddField(f.Repo, f.Clients, "Головная", "relation");
+        parent.ConfigJson = new RelationConfig(f.Clients, true, RestrictDelete: true).ToConfigJson();
+        f.Repo.UpdateField(parent);
+        f.Repo.SetLinks(f.Relation, f.Invoice, []);
+        f.Repo.SetLinks(parent.Id!.Value, f.Free, [f.Client]);
+        var archive = SampleData.AddCollection(f.Repo, "Архив").Id!.Value;
+
+        var error = Assert.Throws<RelationDeleteRestrictedException>(() => f.Repo.MoveRecordsToCollectionIsolated(
+            f.Db.Path, f.Clients, [f.Free, f.Client], archive, createMissingFields: true, sourceDbId: 0, targetDbId: 0));
+        Assert.StartsWith("Перенести нельзя: на записи ссылается «Клиенты · Головная» (1 запись)", error.Message, StringComparison.Ordinal);
+        Assert.Empty(f.Repo.GetRecords(archive));
+        Assert.Equal(2, f.Repo.GetRecords(f.Clients).Count);
+        Assert.NotNull((await RelationDeleteImpact.CheckRecordsAsync(f.Repo, [f.Free, f.Client], move: true)).Blocked);
+        // Удаление обеих — источник уходит вместе с целью.
+        Assert.Null((await RelationDeleteImpact.CheckRecordsAsync(f.Repo, [f.Free, f.Client])).Blocked);
+        f.Repo.DeleteRecordsData([f.Free, f.Client]);
+        Assert.Empty(f.Repo.GetRecords(f.Clients));
+    }
+
+    [Fact]
+    public async Task A_plain_link_between_moved_records_is_named_as_breaking()
+    {
+        using var f = new Fixture(restrict: false);
+        var parent = SampleData.AddField(f.Repo, f.Clients, "Головная", "relation");
+        parent.ConfigJson = new RelationConfig(f.Clients, true).ToConfigJson();
+        f.Repo.UpdateField(parent);
+        f.Repo.SetLinks(f.Relation, f.Invoice, []);
+        f.Repo.SetLinks(parent.Id!.Value, f.Free, [f.Client]);
+        Assert.Equal("«Клиенты · Головная» (1 запись)",
+            (await RelationDeleteImpact.CheckRecordsAsync(f.Repo, [f.Free, f.Client], move: true)).References);
+        Assert.Equal("", (await RelationDeleteImpact.CheckRecordsAsync(f.Repo, [f.Free, f.Client])).References);
+    }
+
+    // Входящее сообщение, календарь и задачи удаляют набор по одной записи: ссылки внутри набора
+    // запрету не мешают, иначе удаление обрывалось бы на середине.
+    [Fact]
+    public void Records_deleted_one_by_one_in_one_operation_do_not_block_each_other()
+    {
+        using var f = new Fixture(restrict: true);
+        Assert.Throws<RelationDeleteRestrictedException>(() => f.Repo.DeleteRecord(f.Client));
+        Assert.Throws<RelationDeleteRestrictedException>(() => f.Repo.DeleteCalendarRecord(f.Client, [f.Free]));
+        f.Repo.DeleteCalendarRecord(f.Client, [f.Client, f.Invoice]);
+        f.Repo.DeleteRecord(f.Invoice, [f.Client, f.Invoice]);
+        Assert.Equal([f.Free], f.Repo.GetRecords(f.Clients).Select(r => r.Id!.Value));
+        Assert.Empty(f.Repo.GetRecords(f.Invoices));
+    }
+
+    // Сайдбар удаляет выделенные узлы по одному: коллекции всей операции идут в каждый вызов.
+    [Fact]
+    public void Nodes_deleted_in_one_operation_do_not_block_each_other()
+    {
+        using var f = new Fixture(restrict: true);
+        Assert.Throws<RelationDeleteRestrictedException>(() => f.Repo.DeleteGroupIsolated(f.Group));
+        f.Repo.DeleteGroupIsolated(f.Group, collectionsTogether: [f.Clients, f.Invoices]);
+        f.Repo.DeleteCollectionIsolated(f.Invoices, collectionsTogether: [f.Clients, f.Invoices]);
+        Assert.DoesNotContain(f.Repo.GetAllCollections(), c => c.Id == f.Clients || c.Id == f.Invoices);
+    }
+
+    // Служебная уборка (откат копии, остаток прерванного переноса) запрет не проверяет: иначе
+    // маркер не снимался бы никогда, а записи оставались бы в двух базах.
+    [Fact]
+    public void Internal_cleanup_is_not_held_by_the_restriction()
+    {
+        using var f = new Fixture(restrict: true);
+        Assert.Throws<RelationDeleteRestrictedException>(() => f.Repo.DeleteCollectionData(f.Clients, log: false));
+        f.Repo.DeleteCollectionData(f.Clients, log: false, enforceRestrict: false);
+        Assert.Empty(f.Repo.GetRecords(f.Clients));
+    }
+
+    [Fact]
+    public async Task A_collection_closed_to_the_user_is_not_named()
+    {
+        using var f = new Fixture(restrict: false);
+        var me = f.Db.Context.DbUsers.First(u => u.UserKey == SmartBase.Utils.CurrentUser.Key);
+        f.Db.Permissions.SetMask(f.Db.Permissions.CurrentUserId, null, (int)PermAction.All);
+        f.Db.Permissions.SetMask(f.Db.Permissions.CurrentUserId, f.Invoices, (int)(PermAction.All & ~PermAction.ViewCollection));
+        me.IsAdmin = false;
+        me.IsApproved = true;
+        f.Db.Context.SaveChanges();
+        f.Db.Permissions.Reload(notify: false);
+
+        var references = (await RelationDeleteImpact.CheckRecordsAsync(f.Repo, [f.Client])).References;
+        Assert.Equal("связь закрытой коллекции", references);
+        Assert.DoesNotContain("Счета", references, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Counts_above_the_cap_are_written_as_more()
+    {
+        var reference = new RelationReference(1, "Клиент", 2, "Счета", ConstructorRepository.ReferenceCountCap, false, More: true);
+        Assert.Equal("«Счета · Клиент» из базы «Учет» (больше 10\u00a0000 записей)",
+            ConstructorRepository.DescribeReference(reference, "Учет"));
     }
 
     [Theory]

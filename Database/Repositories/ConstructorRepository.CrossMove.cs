@@ -66,7 +66,7 @@ public partial class ConstructorRepository
         }
         catch (Exception ex) when (ex is not PendingLostException)
         {
-            try { target.DeleteCollectionData(newColId, log: false); }
+            try { target.DeleteCollectionData(newColId, log: false, enforceRestrict: false); }
             catch { /* маркер остался — доудалит уборка */ }
             DropPending(targetCtx, pending);
             throw;
@@ -139,7 +139,7 @@ public partial class ConstructorRepository
         catch (Exception ex) when (ex is not PendingLostException)
         {
             // Сбой на фазе копии: убираем частичную ветку из приемника (не вышло — доудалит уборка).
-            try { target.DeleteGroupData(newRootId, log: false); }
+            try { target.DeleteGroupData(newRootId, log: false, enforceRestrict: false); }
             catch { /* маркер остался — доудалит уборка при следующем монтировании */ }
             DropPending(targetCtx, pending);
             throw;
@@ -200,8 +200,8 @@ public partial class ConstructorRepository
                 {
                     try
                     {
-                        if (group) target.DeleteGroupData(copyId, log: false);
-                        else       target.DeleteCollectionData(copyId, log: false);
+                        if (group) target.DeleteGroupData(copyId, log: false, enforceRestrict: false);
+                        else       target.DeleteCollectionData(copyId, log: false, enforceRestrict: false);
                     }
                     catch { /* копию убрать не удалось — данные целы в обеих базах */ }
                 }
@@ -404,7 +404,7 @@ public partial class ConstructorRepository
         {
             // Сбой заливки: убираем частичную копию сразу (не вышло — доудалит уборка по маркеру).
             // Маркер забрала уборка соседа — копию удаляет она.
-            try { target.DeleteCollectionData(newColId, log: false); }
+            try { target.DeleteCollectionData(newColId, log: false, enforceRestrict: false); }
             catch { /* доудалит уборка при следующем монтировании */ }
             if (ownPending) DropPending(tgtCtx, pending);
             throw;
@@ -434,7 +434,7 @@ public partial class ConstructorRepository
             {
                 Serilog.Log.Warning("Незавершенный перенос в {Db:l}: найден маркер {Key:l} — частичная копия коллекции {Id} удаляется",
                                     db.DisplayPath, PendingCollectionKey, colId);
-                DeleteCollectionData(colId, log: false);
+                DeleteCollectionData(colId, log: false, enforceRestrict: false);
                 RemoveMeta(db, PendingCollectionKey);
                 Serilog.Log.Information("Незавершенный перенос в {Db:l}: частичная копия коллекции {Id} удалена", db.DisplayPath, colId);
             }
@@ -442,7 +442,7 @@ public partial class ConstructorRepository
             {
                 Serilog.Log.Warning("Незавершенный дубль в {Db:l}: найден маркер {Key:l} — частичная копия коллекции {Id} удаляется",
                                     db.DisplayPath, PendingDuplicateKey, dupId);
-                DeleteCollectionData(dupId, log: false);
+                DeleteCollectionData(dupId, log: false, enforceRestrict: false);
                 RemoveMeta(db, PendingDuplicateKey);
                 Serilog.Log.Information("Незавершенный дубль в {Db:l}: частичная копия коллекции {Id} удалена", db.DisplayPath, dupId);
             }
@@ -450,7 +450,7 @@ public partial class ConstructorRepository
             {
                 Serilog.Log.Warning("Незавершенный перенос в {Db:l}: найден маркер {Key:l} — частичная копия группы {Id} удаляется",
                                     db.DisplayPath, PendingGroupKey, grpId);
-                DeleteGroupData(grpId, log: false);
+                DeleteGroupData(grpId, log: false, enforceRestrict: false);
                 RemoveMeta(db, PendingGroupKey);
                 Serilog.Log.Information("Незавершенный перенос в {Db:l}: частичная копия группы {Id} удалена", db.DisplayPath, grpId);
             }

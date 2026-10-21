@@ -244,8 +244,32 @@ public sealed class InboxModesTests : IDisposable
             """);
 
         Assert.Equal(422, answer.Status);
-        Assert.Contains("«Счета · Заказ» — 1 запись", answer.Body, StringComparison.Ordinal);
+        Assert.Contains("«Счета · Заказ» (1 запись)", answer.Body, StringComparison.Ordinal);
         Assert.Equal(3, _db.Constructor.GetRecords(id).Count);
+    }
+
+    /// <summary>Ссылки между записями одного сообщения не мешают: они удаляются вместе, и сообщение
+    /// не обрывается на середине, хотя записи удаляются по одной.</summary>
+    [Fact]
+    public void Links_between_records_of_one_delete_message_do_not_block_it()
+    {
+        var (id, _) = Orders();
+        var records = _db.Constructor.GetRecords(id);
+        var parent = SampleData.AddField(_db.Constructor, id, "Основной заказ", "relation");
+        parent.ConfigJson = new RelationConfig(id, true, RestrictDelete: true).ToConfigJson();
+        _db.Constructor.UpdateField(parent);
+        // А-3 ссылается на А-2, а в сообщении А-2 идет раньше А-3.
+        _db.Constructor.SetLinks(parent.Id!.Value, records.Single(r => r.Title == "Заказ 3").Id!.Value,
+            [records.Single(r => r.Title == "Заказ 2").Id!.Value]);
+        var secret = Issue(PermAction.DeleteRecord);
+
+        var answer = Post(secret, """
+            {"collection":"Заказы","mode":"delete","key":"Номер","rows":[{"Номер":"А-1"},{"Номер":"А-2"},{"Номер":"А-3"}]}
+            """);
+
+        Assert.Equal(200, answer.Status);
+        Assert.Equal(3, Body(answer).GetProperty("deleted").GetInt32());
+        Assert.Empty(_db.Constructor.GetRecords(id));
     }
 
     // ── Подготовка коллекции: маска ───────────────────────────────────────────

@@ -637,7 +637,7 @@ public partial class ConstructorRepository(AppDbContext db)
             // ветку удаляет она.
             if (ex is not PendingLostException)
             {
-                try { DeleteGroupData(newRootId, log: false); }
+                try { DeleteGroupData(newRootId, log: false, enforceRestrict: false); }
                 catch { /* маркер остался — доудалит монтирование */ }
                 DropPending(db, pending);
             }
@@ -769,29 +769,35 @@ public partial class ConstructorRepository(AppDbContext db)
     }
 
     /// <summary>Удалить группу со всей веткой на ОТДЕЛЬНОМ подключении (фон + прогресс) — для больших
-    /// веток. Не трогает общий Context (см. правило об общем AppDbContext), безопасно из Task.Run.</summary>
-    public void DeleteGroupIsolated(int groupId, IProgress<int>? progress = null)
+    /// веток. Не трогает общий Context (см. правило об общем AppDbContext), безопасно из Task.Run.
+    /// <paramref name="collectionsTogether"/> — коллекции, удаляемые в той же операции (выделение
+    /// нескольких узлов): ссылки из них запрету удаления не мешают.</summary>
+    public void DeleteGroupIsolated(int groupId, IProgress<int>? progress = null,
+                                    IReadOnlyCollection<int>? collectionsTogether = null)
     {
         Demand(PermAction.DeleteCollection);
         using var ctx = new AppDbContext(db.DbPath);
         ctx.ApplyBulkPerformancePragmas();
-        new ConstructorRepository(ctx).DeleteGroupData(groupId, progress);
+        new ConstructorRepository(ctx).DeleteGroupData(groupId, progress, collectionsTogether: collectionsTogether);
     }
 
     /// <summary>
     /// Удалить группу со всей веткой ПАКЕТАМИ: коллекции ветки по очереди тем же путем, что
     /// <see cref="DeleteCollectionData"/> (транзакция на пакет, явные bulk-DELETE значений/проекции,
     /// чистка UI-строк без FK), затем строки групп ветки. <paramref name="progress"/> — нарастающее
-    /// число удаленных записей по всей ветке (для %).
+    /// число удаленных записей по всей ветке (для %). <paramref name="enforceRestrict"/> = false —
+    /// служебная уборка (откат копии, остаток прерванного переноса): запрет удаления проверен до
+    /// операции или к ней не относится.
     /// </summary>
     public void DeleteGroupData(int groupId, IProgress<int>? progress = null, int? batchSize = null,
-                                bool log = true)
+                                bool log = true, IReadOnlyCollection<int>? collectionsTogether = null,
+                                bool enforceRestrict = true)
     {
         var groupName = db.DbGroups.Where(g => g.Id == groupId).Select(g => g.Name).FirstOrDefault();
         var groupIds = SubtreeGroupIds(groupId);
         var colIds   = db.DbCollections.Where(c => c.GroupId != null && groupIds.Contains(c.GroupId.Value))
                          .Select(c => c.Id).ToList();
-        EnsureDeleteAllowedForCollections(colIds);
+        if (enforceRestrict) EnsureDeleteAllowedForCollections(colIds, collectionsTogether);
         var total    = colIds.Count == 0 ? 0L : db.DbRecords.LongCount(r => colIds.Contains(r.CollectionId));
 
         long basis = 0;
@@ -968,7 +974,7 @@ public partial class ConstructorRepository(AppDbContext db)
     // Без строки журнала: пользователь этой коллекции не видел (сбой/отмена импорта).
     private void TryDeleteImported(int collectionId)
     {
-        try { DeleteCollectionData(collectionId, log: false); }
+        try { DeleteCollectionData(collectionId, log: false, enforceRestrict: false); }
         catch { /* best-effort */ }
     }
 
@@ -1261,12 +1267,13 @@ public partial class ConstructorRepository(AppDbContext db)
     /// Удалить коллекцию на ОТДЕЛЬНОМ подключении (фон + прогресс) — для больших коллекций.
     /// Не трогает общий Context (см. правило об общем AppDbContext), поэтому безопасно из Task.Run.
     /// </summary>
-    public void DeleteCollectionIsolated(int collectionId, IProgress<int>? progress = null)
+    public void DeleteCollectionIsolated(int collectionId, IProgress<int>? progress = null,
+                                         IReadOnlyCollection<int>? collectionsTogether = null)
     {
         Demand(PermAction.DeleteCollection, collectionId);
         using var ctx = new AppDbContext(db.DbPath);
         ctx.ApplyBulkPerformancePragmas();
-        new ConstructorRepository(ctx).DeleteCollectionData(collectionId, progress);
+        new ConstructorRepository(ctx).DeleteCollectionData(collectionId, progress, collectionsTogether: collectionsTogether);
         // Хвост журнала переносит закрытие контекста (AppDbContext.Dispose массового профиля).
     }
 
@@ -1284,9 +1291,10 @@ public partial class ConstructorRepository(AppDbContext db)
     /// <paramref name="progress"/> — нарастающее число удаленных записей.
     /// </summary>
     public void DeleteCollectionData(int collectionId, IProgress<int>? progress = null,
-                                     int? batchSize = null, bool log = true)
+                                     int? batchSize = null, bool log = true,
+                                     IReadOnlyCollection<int>? collectionsTogether = null, bool enforceRestrict = true)
     {
-        EnsureDeleteAllowedForCollections([collectionId]);
+        if (enforceRestrict) EnsureDeleteAllowedForCollections([collectionId], collectionsTogether);
         var name     = CollectionNameOf(collectionId);
         var recCount = db.DbRecords.Count(r => r.CollectionId == collectionId);
         DeleteCollectionRows(collectionId, 0, progress, batchSize);
@@ -1572,7 +1580,7 @@ public partial class ConstructorRepository(AppDbContext db)
             catch (Exception ex) when (ex is not PendingLostException)
             {
                 // Транзакция копии откатилась, а шелл и маркер зафиксированы раньше — шелл убираем.
-                try { DeleteCollectionData(newCollectionId, log: false); }
+                try { DeleteCollectionData(newCollectionId, log: false, enforceRestrict: false); }
                 catch { /* маркер остался — доудалит монтирование */ }
                 if (finishPending) DropPending(db, pending);
                 throw;
@@ -1713,7 +1721,7 @@ public partial class ConstructorRepository(AppDbContext db)
             try { db.Database.ExecuteSqlRaw("PRAGMA foreign_keys=ON;"); } catch { /* вернет следующее открытие */ }
             if (ex is not PendingLostException)
             {
-                try { DeleteCollectionData(newCollectionId, log: false); }
+                try { DeleteCollectionData(newCollectionId, log: false, enforceRestrict: false); }
                 catch { /* маркер остался — доудалит монтирование */ }
             }
             if (finishPending && ex is not PendingLostException) DropPending(db, pending);
@@ -2521,7 +2529,7 @@ public partial class ConstructorRepository(AppDbContext db)
         source.Demand(PermAction.DeleteCollection, collectionId);
         target.Demand(PermAction.CreateCollection);
         target.DemandMoveFromAllowed(source);
-        source.EnsureDeleteAllowedForCollections([collectionId]);   // до копии: откатывать нечего
+        source.EnsureDeleteAllowedForCollections([collectionId], move: true);   // до копии: откатывать нечего
         var snap = source.ExportCollection(collectionId);
         snap.Collection.Name = newName;
         var moved = target.ImportCollection(snap, targetGroupId);
@@ -2546,7 +2554,7 @@ public partial class ConstructorRepository(AppDbContext db)
         source.Demand(PermAction.DeleteCollection);
         target.Demand(PermAction.CreateCollection);
         target.DemandMoveFromAllowed(source);
-        source.EnsureDeleteAllowedForCollections(source.CollectionIdsInGroup(groupId));
+        source.EnsureDeleteAllowedForCollections(source.CollectionIdsInGroup(groupId), move: true);
         var snap = source.ExportGroup(groupId);
         snap.Group.Name = newName;
         var moved = target.ImportGroup(snap, targetParentId);
@@ -2708,8 +2716,8 @@ public partial class ConstructorRepository(AppDbContext db)
         if (state.NewId == 0) return;
         try
         {
-            if (group) DeleteGroupData(state.NewId, log: false);
-            else       DeleteCollectionData(state.NewId, log: false);
+            if (group) DeleteGroupData(state.NewId, log: false, enforceRestrict: false);
+            else       DeleteCollectionData(state.NewId, log: false, enforceRestrict: false);
         }
         catch { /* маркер остался — доудалит уборка */ }
         DropPending(db, state.Pending);
@@ -4367,10 +4375,12 @@ public partial class ConstructorRepository(AppDbContext db)
         db.SaveChanges();
     }
 
-    public void DeleteRecord(int recordId)
+    /// <summary>Удалить запись. <paramref name="deletedTogether"/> — записи, удаляемые в той же
+    /// операции по одной (входящее сообщение): ссылки из них запрету удаления не мешают.</summary>
+    public void DeleteRecord(int recordId, IReadOnlyCollection<int>? deletedTogether = null)
     {
         Demand(PermAction.DeleteRecord, CollectionOfRecord(recordId));
-        EnsureDeleteAllowed([recordId]);
+        EnsureDeleteAllowed([recordId], deletedTogether);
         var entity = db.DbRecords.Find(recordId);
         if (entity is not null)
         {
@@ -4490,11 +4500,11 @@ public partial class ConstructorRepository(AppDbContext db)
     /// чистим явно, иначе настройки видимости/высоты «осиротеют» и могут прилипнуть к новой записи с
     /// тем же rowid. Пакеты — ради гранулярности прогресса.</summary>
     public void DeleteRecordsData(IReadOnlyList<int> recordIds, IProgress<int>? progress = null, int batchSize = 10000,
-                                  bool log = true)
+                                  bool log = true, bool enforceRestrict = true)
     {
         if (recordIds.Count == 0) return;
         var ids = recordIds.Distinct().ToList();
-        EnsureDeleteAllowed(ids.ToHashSet());
+        if (enforceRestrict) EnsureDeleteAllowed(ids);
         var affectedCollections = db.DbRecords.AsNoTracking().Where(r => ids.Contains(r.Id))
             .Select(r => r.CollectionId).Distinct().ToList();
 
@@ -4893,8 +4903,9 @@ public partial class ConstructorRepository(AppDbContext db)
         if (!sameDb) { sourceCtx = new AppDbContext(sourceDbPath); sourceCtx.ApplyPerformancePragmas(); }
         var sourceRepo = sameDb ? targetRepo : new ConstructorRepository(sourceCtx!);
 
-        // Перенос — копия и удаление оригинала: связь с запретом удаления держит и перенос.
-        sourceRepo.EnsureDeleteAllowed(recordIds.ToHashSet());
+        // Перенос — копия и удаление оригинала: связь с запретом удаления держит и перенос, в том
+        // числе ссылки между переносимыми записями (копии их не сохраняют). Проверка — до копии.
+        sourceRepo.EnsureDeleteAllowed(recordIds, move: true);
         try { return targetRepo.MoveRecordsCore(sourceRepo, sourceCollectionId, recordIds, targetCollectionId, createMissingFields, sourceDbId, targetDbId, progress); }
         finally { sourceCtx?.Dispose(); }
     }
@@ -5149,7 +5160,9 @@ public partial class ConstructorRepository(AppDbContext db)
 
         // 4) Исходные записи — bulk-удалением (каскад уносит их значения и calendar_index).
         // Без строки «удалил» в журнале — это перенос, одна строка «перенес» ниже.
-        if (copiedSources.Count > 0) source.DeleteRecordsData(copiedSources, log: false);
+        // Запрет проверен до копии; повторная проверка после коммита копий нашла бы ссылки самих
+        // копий на оригиналы и оставила бы записи в двух местах.
+        if (copiedSources.Count > 0) source.DeleteRecordsData(copiedSources, log: false, enforceRestrict: false);
 
         if (newIds.Count > 0)
             LogNow("move", "records", "", CollectionNameOf(targetCollectionId), newIds.Count);
@@ -7191,10 +7204,12 @@ public partial class ConstructorRepository(AppDbContext db)
         db.SaveChanges();
     }
 
-    public void DeleteCalendarRecord(int id)
+    /// <summary>Удалить запись календаря или задачу. <paramref name="deletedTogether"/> — записи,
+    /// удаляемые в той же операции по одной: ссылки из них запрету удаления не мешают.</summary>
+    public void DeleteCalendarRecord(int id, IReadOnlyCollection<int>? deletedTogether = null)
     {
         Demand(PermAction.DeleteRecord, CollectionOfRecord(id));
-        EnsureDeleteAllowed([id]);
+        EnsureDeleteAllowed([id], deletedTogether);
         var rec = db.DbRecords.Find(id);
         if (rec is not null)
         {

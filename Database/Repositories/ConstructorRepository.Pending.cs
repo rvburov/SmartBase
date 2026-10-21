@@ -196,9 +196,9 @@ public partial class ConstructorRepository
                     : "Незавершенная копия в {Db:l} ({Kind:l} {Target}, начал {Owner:l}, последняя отметка {Beat:l}) — брошена, удаляется",
                 db.DisplayPath, v.Kind, v.Target, $"{v.User} ({v.Machine})", v.Beat);
             if (v.Kind is PendingKind.DuplicateGroup or PendingKind.MoveGroup or PendingKind.MovedGroup)
-                DeleteGroupData(v.Target, log: false);
+                DeleteGroupData(v.Target, log: false, enforceRestrict: false);
             else
-                DeleteCollectionData(v.Target, log: false);
+                DeleteCollectionData(v.Target, log: false, enforceRestrict: false);
             db.DbMeta.Where(m => m.Key == row.Key && m.Value == claim).ExecuteDelete();
             Serilog.Log.Information("Маркер {Kind:l} {Target} в {Db:l}: удалено", v.Kind, v.Target, db.DisplayPath);
         }

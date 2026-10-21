@@ -281,17 +281,18 @@ public partial class ConstructorRepository
 
         // Связь с запретом удаления держит сообщение целиком, до первой удаленной записи —
         // по той же причине, что и право: удаление наполовину не просил никто.
-        var restricted = repo.IncomingReferences(erase, repo.RelationTargetsOfThisBase(), erase.ToHashSet())
-                             .Where(r => r.Restrict).ToList();
+        var restricted = repo.IncomingReferences(erase, repo.RelationTargetsOfThisBase(), erase, restrictOnly: true);
         if (restricted.Count > 0)
         {
-            problem = RestrictedMessage(restricted);
+            problem = RestrictedMessage(restricted, move: false, erase.Count);
             return null;
         }
 
+        // Записи удаляются по одной, но ссылки между ними запрету не мешают: весь набор уходит
+        // в этой же операции.
         foreach (var recordId in erase)
         {
-            repo.DeleteRecord(recordId);
+            repo.DeleteRecord(recordId, erase);
 
             // То же правило, что у укладки ответа (см. ApplyRows): удаленное уже удалено,
             // и держать за ним в трекере EF строки журнала изменений незачем. Без этой строки

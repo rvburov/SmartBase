@@ -79,11 +79,11 @@ public partial class RecordDialog : Window
             if (_recordId is not { } rid) return;
             // Кто ссылается на запись (эта база и открытые чужие): связь с запретом удаления
             // не дает удалить, остальные называем в вопросе (окно — только при ссылках).
-            var links = RelationDeleteImpact.CheckRecords(_repository, [rid]);
+            var links = await RelationDeleteImpact.CheckRecordsAsync(_repository, [rid]);
             if (links.Blocked is { } blocked) { await ConfirmDialog.Info(blocked).ShowDialog(this); return; }
-            if (links.Warning.Length > 0)
+            if (links.References.Length > 0)
             {
-                var warn = new ConfirmDialog("Удалить запись?" + links.Warning);
+                var warn = new ConfirmDialog("Удалить запись?" + links.Warning("нее"));
                 if (await warn.ShowDialog<bool>(this) != true) return;
             }
             try { _repository.DeleteRecord(rid); }
