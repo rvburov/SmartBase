@@ -186,6 +186,45 @@ internal static class RelationIntegrityChecks
                 && Snapshot() == deniedBefore,
                 "отказ исходных прав не раскрывает записи и не предлагает исправления");
             CloseDialog(dialog);
+
+            // Окно свойства-связи проверяет только свое свойство тем же окном отчета. Кнопка
+            // есть, когда база подключена в рабочем пространстве.
+            SetAccess(true);
+            var other = repo.AddField(new DbField { CollectionId = collection, Name = "Другая связь", FieldType = "relation",
+                ConfigJson = new RelationConfig(collection, false).ToConfigJson() });
+            manager.Context.DbRecordLinks.Add(new DbRecordLinkEntity
+                { FieldId = other.Id!.Value, FromRecordId = record, ToRecordId = record, Position = 1000 });
+            manager.Context.SaveChanges();
+            var hidden = new PropertyEditorDialog(repo, collection, field.Id.Value);
+            Expect(!hidden.FindControl<StackPanel>("RelationCheckBlock")!.IsVisible,
+                "без подключенной базы окно свойства не предлагает проверку");
+            var workspace = Workspace.Attach(registry, manager);
+            RelationDbResolver.Configure(workspace);
+            try
+            {
+                var editor = new PropertyEditorDialog(repo, collection, field.Id.Value) { MaxHeight = 600 };
+                var editorClosed = editor.ShowDialog<bool>(owner);
+                Pump();
+                var check = editor.FindControl<Button>("RelationCheckBtn")!;
+                Expect(editor.FindControl<StackPanel>("RelationCheckBlock")!.IsVisible, "окно связи показывает «Проверить связи»");
+                check.BringIntoView();
+                Click(editor, check);
+                Wait(() => editor.OwnedWindows.OfType<RelationIntegrityDialog>().Any(), "кнопка окна свойства не открыла отчет");
+                var single = editor.OwnedWindows.OfType<RelationIntegrityDialog>().Single();
+                Wait(() => !Private<bool>(single, "_busy") && Private<RelationIntegrityReport?>(single, "_report") is not null,
+                    "проверка свойства не завершилась");
+                using (var frame = single.CaptureRenderedFrame()) frame?.Save(Path.Combine(outDir, "relation-integrity-field.png"));
+                var fieldReport = Private<RelationIntegrityReport?>(single, "_report")!;
+                Expect(single.FindControl<TextBlock>("DatabaseText")!.Text == $"Связь «Связь» · {entry.Name}"
+                    && fieldReport.ScannedFields == 1 && fieldReport.Issues.Count > 0
+                    && fieldReport.Issues.All(issue => issue.FieldId == field.Id.Value),
+                    "отчет из окна свойства называет связь и содержит только ее ребра");
+                Click(single, single.FindControl<Button>("CloseBtn")!);
+                Wait(() => !editor.OwnedWindows.Contains(single), "отчет свойства не закрылся");
+                Click(editor, editor.FindControl<Button>("CancelBtn")!);
+                Wait(() => editorClosed.IsCompleted, "окно свойства не закрылось");
+            }
+            finally { RelationDbResolver.Configure(null); }
             Console.WriteLine($"Целостность связей UI: проверок {checks}, провалов {failed}.");
             return failed == 0 ? 0 : 2;
 

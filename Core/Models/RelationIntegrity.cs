@@ -14,7 +14,9 @@ public enum RelationIntegrityIssueKind
     LegacyMixedTarget, TargetCollectionMismatch, NumericProjectionCollision,
 }
 
-public sealed record RelationIntegrityScanOptions(int PageSize = 500, int MaxIssues = 2000);
+/// <summary><see cref="FieldId"/> — проверить одно свойство-связь и столбцы данных из нее
+/// (окно свойства); null — всю базу (настройки).</summary>
+public sealed record RelationIntegrityScanOptions(int PageSize = 500, int MaxIssues = 2000, int? FieldId = null);
 public sealed record RelationIntegrityProgress(long ScannedEdges, long ScannedFields, long Issues);
 
 /// <summary>Один проверенный факт. Заголовки содержат только доступные пользователю данные.

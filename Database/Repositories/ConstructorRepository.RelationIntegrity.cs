@@ -15,7 +15,7 @@ public partial class ConstructorRepository
         IProgress<RelationIntegrityProgress>? progress = null, CancellationToken ct = default)
     {
         var settings = new RelationIntegrityScanOptions(Math.Clamp(options?.PageSize ?? 500, 50, 2000),
-            Math.Clamp(options?.MaxIssues ?? 2000, 1, 10000));
+            Math.Clamp(options?.MaxIssues ?? 2000, 1, 10000), options?.FieldId);
         var connections = CaptureIntegrityConnections();
         return Task.Run(() => WithIntegrityConnections(connections,
             repo => repo.ScanRelationIntegrityCore(settings, progress, ct)));
@@ -149,6 +149,8 @@ public partial class ConstructorRepository
                 if (!_source.Can(PermAction.ViewCollection, field.CollectionId)) continue;
                 if (!_source.Collections.ContainsKey(field.CollectionId) && !_source.Admin) continue;
                 if (field.FieldType is not ("relation" or "lookup" or "rollup")) continue;
+                if (options.FieldId is int only && field.Id != only
+                    && RelationComputedConfig.FromConfig(field.ConfigJson)?.RelationFieldId != only) continue;
                 _fields++;
                 CheckField(field);
             }
@@ -156,7 +158,9 @@ public partial class ConstructorRepository
             while (true)
             {
                 ct.ThrowIfCancellationRequested();
-                var page = owner.AutoContext.DbRecordLinks.AsNoTracking().Where(e => e.FieldId > lastField
+                var edges = owner.AutoContext.DbRecordLinks.AsNoTracking();
+                if (options.FieldId is int fieldId) edges = edges.Where(e => e.FieldId == fieldId);
+                var page = edges.Where(e => e.FieldId > lastField
                     || e.FieldId == lastField && e.FromRecordId > lastRecord
                     || e.FieldId == lastField && e.FromRecordId == lastRecord && e.Position > lastPosition
                     || e.FieldId == lastField && e.FromRecordId == lastRecord && e.Position == lastPosition && e.Id > lastId)

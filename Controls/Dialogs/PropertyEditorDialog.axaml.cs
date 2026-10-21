@@ -198,6 +198,7 @@ public partial class PropertyEditorDialog : Window
                 {
                     RestoreRelationConfig(field.ConfigJson);
                     RestoreRelationData(field.Id!.Value);
+                    InitializeRelationCheck(field.Id!.Value);
                 }
                 if (field.FieldType is "lookup" or "rollup")
                 {
@@ -790,6 +791,21 @@ public partial class PropertyEditorDialog : Window
             SelectRelationProperty(RelationAutoSourceCombo, auto.SourceField);
             SelectRelationProperty(RelationAutoTargetCombo, auto.TargetField);
         }
+    }
+
+    // Проверка связей этого свойства: то же окно, что и в настройках базы, но только по нему и
+    // его столбцам данных. Без рабочего пространства (стенды, окно без подключенной базы) скрыта.
+    private void InitializeRelationCheck(int fieldId)
+    {
+        if (_repository is null || RelationDbResolver.MountedEntryFor(_repository) is null) return;
+        RelationCheckBlock.IsVisible = true;
+        RelationCheckBtn.Click += async (_, _) =>
+        {
+            if (RelationDbResolver.MountedEntryFor(_repository) is not { } db) return;
+            var name = TitleText.FirstLine(_editField?.Name ?? NameBox.Text ?? "");
+            await RelationIntegrityDialog.ShowForAsync(this, db.Manager, db.Entry, db.Permissions,
+                $"Связь «{name}» · {db.Entry.Name}", fieldId);
+        };
     }
 
     // Собрать ConfigJson поля-связи. null — целевая коллекция не выбрана (ошибка показана).

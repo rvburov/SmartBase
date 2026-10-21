@@ -611,6 +611,20 @@
                         Content="+ Добавить столбец"
                         HorizontalAlignment="Left" />
             </StackPanel>
+
+            <!-- Проверка связей одного свойства тем же окном, что и проверка всей базы в
+                 настройках; видна у сохраненной связи в подключенной базе. -->
+            <StackPanel x:Name="RelationCheckBlock" Spacing="6" IsVisible="False">
+                <TextBlock Text="Проверка связей"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <TextBlock TextWrapping="Wrap" Foreground="{StaticResource BrushSecondaryText}"
+                           Text="Найдет ссылки на удаленные записи, повторы и ошибки настройки этого свойства и его столбцов. Исправление — только после резервной копии." />
+                <Button x:Name="RelationCheckBtn"
+                        Classes="link"
+                        Content="Проверить связи"
+                        HorizontalAlignment="Left" />
+            </StackPanel>
         </StackPanel>
 
         <!-- Столбец данных из связи, чья связь удалена до того, как они стали удаляться вместе:
