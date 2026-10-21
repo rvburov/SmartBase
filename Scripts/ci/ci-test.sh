@@ -1,192 +1,125 @@
-#!/bin/bash
-#
-# Тесты модуля полной проверки. Чистый bash: .NET, сеть и gh не нужны.
-#
-#   Scripts/ci/ci-test.sh
-#
-# Живут внутри модуля и удаляются вместе с ним — в Tests/Unit ничего не добавляется.
-# Главный инвариант тот же, что у workflow: прогон НИЧЕГО не меняет.
-#
-# Проверки 3 и 4 — машинная запись требования «не пересекаться с выпуском релиза». Словами оно
-# живет в комментариях, а здесь перестает зависеть от того, прочитал их кто-то или нет:
-# workflow не может запуститься ни на main, ни на теге и не вызывает никаких скриптов.
-set -uo pipefail
+#!/usr/bin/env bash
+# Проверки маршрутизации и обязательных гейтов. Без .NET, сети и изменений веток.
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+ci_here=Scripts/ci
+ci_workflow=.github/workflows/build.yml
+ci_passed=0
+ok() { printf 'OK: %s\n' "$1"; ci_passed=$((ci_passed + 1)); }
+fail() { printf 'ERROR: %s\n' "$1" >&2; exit 1; }
 
-ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-HERE="$(cd "$(dirname "$0")" && pwd)"
-cd "$ROOT" || exit 1
+for script in "$ci_here"/*.sh; do bash -n "$script"; done
+ok 'синтаксис bash'
 
-WF=".github/workflows/build.yml"
-
-# Пути модуля — единственное, что появляется в репозитории. Тот же список в разделе
-# «Как удалить модуль» файла docs/developer/guides/ci.md.
-MODULE_PATHS=(
-  "$WF"
-  "Scripts/ci/setup-remote.sh"
-  "Scripts/ci/ci-test.sh"
-  "docs/developer/guides/ci.md"
-)
-
-passed=0
-failed=0
-skipped=0
-
-ok()   { echo "✅ $1"; passed=$((passed + 1)); }
-bad()  { echo "❌ $1"; [ $# -gt 1 ] && printf '   %s\n' "${@:2}"; failed=$((failed + 1)); }
-skip() { echo "⏭  $1"; skipped=$((skipped + 1)); }
-
-STATUS_BEFORE="$(git status --porcelain)"
-
-echo "Тесты модуля полной проверки"
-echo
-
-[ -f "$WF" ] || { echo "❌ Нет файла $WF — проверять нечего"; exit 1; }
-
-# Шаги workflow без комментариев: проверки ниже смотрят на то, что действительно выполняется.
-# Знак «#» внутри значений в этом файле не встречается, поэтому обрезка по нему безопасна.
-WF_CODE="$(sed 's/#.*$//' "$WF")"
-
-# ── 1. Workflow разбирается как YAML ──────────────────────────────────────────
-# Не формальность: значение `if`, ключ с двоеточием внутри строки, многострочный `options` —
-# все это ломается молча. GitHub при неразбираемом файле просто не запускает workflow.
-if command -v actionlint > /dev/null 2>&1; then
-  out="$(actionlint "$WF" 2>&1)" \
-    && ok "1. actionlint не нашел замечаний" \
-    || bad "1. actionlint" "$out"
-elif python3 -c 'import yaml' > /dev/null 2>&1; then
-  out="$(python3 -c 'import sys, yaml; yaml.safe_load(open(sys.argv[1], encoding="utf-8"))' "$WF" 2>&1)" \
-    && ok "1. YAML разбирается (PyYAML)" \
-    || bad "1. YAML не разбирается" "$out"
-elif command -v ruby > /dev/null 2>&1; then
-  out="$(ruby -ryaml -e 'YAML.safe_load(File.read(ARGV[0]), aliases: true)' "$WF" 2>&1)" \
-    && ok "1. YAML разбирается (ruby)" \
-    || bad "1. YAML не разбирается" "$out"
-else
-  skip "1. Синтаксис YAML — нет ни actionlint, ни PyYAML, ни ruby"
-fi
-
-# ── 2. Синтаксис скриптов модуля ──────────────────────────────────────────────
-errs=""
-for s in "$HERE"/*.sh; do
-  bash -n "$s" 2>/dev/null || errs="$errs $(basename "$s")"
+expect_scope() {
+  local event=$1 ref=$2 base=$3 full=$4 expected=$5 actual
+  actual="$(GITHUB_EVENT_NAME="$event" GITHUB_REF="$ref" GITHUB_BASE_REF="$base" WORKFLOW_FULL="$full" \
+    bash "$ci_here/select-scope.sh")"
+  [[ "$actual" == "profile=$expected"$'\n'"full=$([[ "$expected" == full ]] && echo true || echo false)" ]] \
+    || fail "неверный профиль: $event $ref"
+}
+expect_scope push refs/heads/work '' false quick
+expect_scope push refs/heads/worktree-fix '' false quick
+expect_scope push refs/heads/ci '' false full
+expect_scope pull_request refs/pull/42/merge main false quick
+expect_scope workflow_dispatch refs/heads/main '' false full
+# Reusable workflow видит исходное событие release: push тега, а не workflow_call.
+expect_scope push refs/tags/v1.2.3 '' true full
+for ref in refs/heads/main refs/tags/v1.2.3; do
+  if GITHUB_EVENT_NAME=push GITHUB_REF="$ref" WORKFLOW_FULL=false bash "$ci_here/select-scope.sh" >/dev/null 2>&1; then
+    fail "самостоятельный push $ref не должен запускать проверки"
+  fi
 done
-[ -z "$errs" ] && ok "2. Синтаксис всех скриптов модуля" \
-               || bad "2. Синтаксис скриптов" "ошибки в:$errs"
-
-# ── 3. Прогон запускается только по команде ───────────────────────────────────
-# Блок `on:` целиком — от строки «on:» до следующего ключа нулевого отступа.
-on_block="$(awk '/^on:/ { f = 1 } f && /^[a-zA-Z]/ && !/^on:/ { exit } f' "$WF")"
-# Here-string, а не «printf | grep -q»: grep закрывает канал на первом совпадении, источник
-# получает SIGPIPE, и pipefail отдает ненулевой код ПРИ найденном совпадении — проверка начинает
-# врать наоборот. Ровно на этом однажды падал шаг workflow.
-triggers="$(awk '/^  [a-z_]+:/ { gsub(/[ :]/, ""); print }' <<< "$on_block" | sort | tr '\n' ' ')"
-
-prob=()
-[ "$triggers" = "push workflow_dispatch " ] \
-  || prob+=("триггеры: «${triggers}», ожидалось «push workflow_dispatch »")
-grep -q 'branches: \[ci\]' <<< "$on_block" \
-  || prob+=("нет фильтра «branches: [ci]» — прогон пошел бы не по команде")
-grep -q 'main' <<< "$on_block" \
-  && prob+=("в блоке on: упомянут main — обычный push начнет запускать прогон")
-grep -q 'tags' <<< "$on_block" \
-  && prob+=("в блоке on: упомянуты теги — это территория выпуска релиза")
-
-if [ ${#prob[@]} -eq 0 ]; then
-  ok "3. Запуск только по пушу ветки ci и вручную: ни main, ни тегов"
-else
-  bad "3. Триггеры разошлись с замыслом" "${prob[@]}"
+if GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=other WORKFLOW_FULL=false bash "$ci_here/select-scope.sh" >/dev/null 2>&1; then
+  fail 'PR не в main принят за разрешенный запуск'
 fi
+ok 'quick/full, ручной запуск и exact-tag reuse'
 
-# ── 4. Не вызывается ни один скрипт репозитория ───────────────────────────────
-# Разрешены только dotnet и psql. Условие нарочно строже, чем «не трогать выпуск»: пока
-# workflow не зависит ни от какого скрипта, он не сломается от чужой правки — и наоборот.
-# «\.sh» с хвостом-не-буквой: иначе под шаблон попадает github.sha из ссылки на коммит.
-hits="$(grep -nE 'Scripts/|\.sh([^a-zA-Z]|$)' <<< "$WF_CODE")"
-if [ -z "$hits" ]; then
-  ok "4. Скриптов репозитория не вызывает — только dotnet и psql"
-else
-  bad "4. Появилась зависимость от скрипта" "$hits"
+check_results() {
+  CI_PROFILE="$1" CI_SCOPE_RESULT=success CI_QUICK_RESULT="$2" CI_MATRIX_RESULT="$3" \
+    CI_CLOSED_RESULT="$4" CI_POSTGRES_RESULT="$5" CI_TOOLS_RESULT="$6" bash "$ci_here/check-results.sh" >/dev/null 2>&1
+}
+check_results quick success skipped skipped skipped skipped
+check_results full success success success success success
+if check_results full success success success skipped success; then fail 'пропуск PG не остановил полный гейт'; fi
+if check_results full success cancelled success success success; then fail 'отмена матрицы не остановила полный гейт'; fi
+if check_results quick skipped skipped skipped skipped skipped; then fail 'пропуск quick не остановил гейт'; fi
+if check_results unknown success skipped skipped skipped skipped; then fail 'неизвестный профиль принят'; fi
+if CI_REQUIRE_FULL=true check_results quick success skipped skipped skipped skipped; then
+  fail 'запрошенный полный профиль заменился быстрым'
 fi
+ok 'обязательный итог не принимает пропуск/отмену гейтов'
 
-# ── 5. То, что workflow собирает и гоняет, существует ─────────────────────────
-# Ловит переименование проекта или папки: без этой проверки расхождение всплывет только красным
-# прогоном, то есть через десять минут после пуша.
-prob=()
-for t in "SmartBase.csproj" "Tests/Unit" "Tests/Integration" \
-         "Tests/Benchmarks" "Tests/DbGenerator" "Tests/MultiProcess"; do
-  grep -qF "$t" <<< "$WF_CODE" || prob+=("workflow не упоминает $t")
-  [ -e "$t" ]                  || prob+=("в репозитории нет $t")
+if command -v actionlint >/dev/null 2>&1; then
+  actionlint "$ci_workflow"
+fi
+if python3 -c 'import yaml' >/dev/null 2>&1; then
+  python3 - "$ci_workflow" <<'PY'
+import sys, yaml
+with open(sys.argv[1], encoding="utf-8") as source:
+    data = yaml.load(source, Loader=yaml.BaseLoader)
+assert data["name"] == "Проверки"
+assert data["on"]["push"]["branches-ignore"] == ["main"]
+assert data["on"]["pull_request"]["branches"] == ["main"]
+assert "workflow_dispatch" in data["on"] and "workflow_call" in data["on"]
+assert data["on"]["workflow_call"]["inputs"]["full"]["type"] == "boolean"
+assert data["on"]["workflow_call"]["inputs"]["ref"]["type"] == "string"
+jobs = data["jobs"]
+assert set(jobs) == {"scope", "agent-tests", "test", "closed-loop", "postgres", "tools", "checks"}
+assert jobs["checks"]["if"] == "always()"
+assert set(jobs["checks"]["needs"]) == set(jobs) - {"checks"}
+for name in ("test", "closed-loop", "postgres", "tools"):
+    assert jobs[name]["needs"] == "scope"
+    assert jobs[name]["if"] == "needs.scope.outputs.full == 'true'"
+assert {m["os"] for m in jobs["test"]["strategy"]["matrix"]["include"]} == {
+    "ubuntu-latest", "windows-latest", "macos-latest", "macos-15-intel"}
+assert jobs["postgres"]["services"]["postgres"]["image"] == "postgres:16"
+for job in jobs.values():
+    for step in job.get("steps", []):
+        if step.get("uses", "").startswith("actions/checkout@"):
+            assert step["with"]["ref"] == "${{ inputs.ref || github.sha }}"
+PY
+else
+  echo 'SKIP: структурная проверка YAML требует PyYAML'
+fi
+ok 'workflow и общий набор гейтов'
+
+[[ ! -e .github/workflows/agent-tests.yml ]] || fail 'старый workflow дублирует общий'
+ci_status=0
+grep -nE 'contents: write|git/refs/heads|git push.*--delete|github-release/|release\.sh' "$ci_workflow" || ci_status=$?
+case "$ci_status" in
+  0) fail 'workflow проверок меняет ветки или запускает публикацию' ;;
+  1) ;;
+  *) fail 'не удалось проверить отсутствие публикации/удаления веток' ;;
+esac
+for target in SmartBase.csproj Tests/Unit Tests/Integration Tests/DocReader Tests/RecordPage Tests/Benchmarks Tests/DbGenerator Tests/MultiProcess Tests/run-extensions.sh; do
+  [[ -e "$target" ]] || fail "нет цели $target"
 done
-# Фильтры тестов заданы строками с именами классов — их легко осиротить переименованием.
-[ -f "Tests/Integration/PgProviderTests.cs" ] \
-  || prob+=("нет Tests/Integration/PgProviderTests.cs — фильтр в job postgres ничего не найдет")
-[ -f "Tests/Integration/PgCreateDatabaseTests.cs" ] \
-  || prob+=("нет Tests/Integration/PgCreateDatabaseTests.cs — фильтр в job postgres потеряет тесты создания баз")
-[ -f "Tests/Integration/LinuxNotificationsTests.cs" ] \
-  || prob+=("нет Tests/Integration/LinuxNotificationsTests.cs — шаг про D-Bus ничего не найдет")
+ok 'отдельной публикации и удаления веток нет; цели существуют'
 
-if [ ${#prob[@]} -eq 0 ]; then
-  ok "5. Все проекты и наборы тестов из workflow на месте"
-else
-  bad "5. Цели прогона разошлись с репозиторием" "${prob[@]}"
-fi
-
-# ── 6. Покрыты все операционные системы ───────────────────────────────────────
-prob=()
-for r in "ubuntu-latest" "windows-latest" "macos-latest" "macos-15-intel"; do
-  grep -qF "$r" <<< "$WF_CODE" || prob+=("в матрице нет $r")
-done
-[ ${#prob[@]} -eq 0 ] \
-  && ok "6. Матрица: Linux, Windows, macOS на Apple Silicon и на Intel" \
-  || bad "6. Матрица неполна" "${prob[@]}"
-
-# ── 7. Служебная ветка убирается после прогона ────────────────────────────────
-# Ветка `ci` — механизм запуска, а не место для кода: в репозитории должна оставаться одна main.
-# Без always() мусор копился бы ровно после неудачных прогонов, то есть чаще всего.
-prob=()
-grep -q '^  cleanup:'            <<< "$WF_CODE" || prob+=("нет job cleanup — ветка ci останется на сервере")
-grep -qF 'always()'              <<< "$WF_CODE" || prob+=("уборка не помечена always() — после красного или отмененного прогона ветка останется")
-grep -qF 'git/refs/heads/ci'     <<< "$WF_CODE" || prob+=("уборка не удаляет refs/heads/ci")
-grep -qF 'contents: write'       <<< "$WF_CODE" || prob+=("у уборки нет права на запись — удаление не пройдет")
-grep -qF 'contents: read'        <<< "$WF_CODE" || prob+=("права по умолчанию не сужены до чтения")
-grep -qF 'ref: ${{ github.sha }}' <<< "$WF_CODE" || prob+=("checkout не пришпилен к коммиту — сломается об удаленную ветку")
-
-[ ${#prob[@]} -eq 0 ] \
-  && ok "7. Ветка ci удаляется после прогона, права на запись только у уборки" \
-  || bad "7. Уборка ветки не гарантирована" "${prob[@]}"
-
-# ── 8. Отделяемость модуля ────────────────────────────────────────────────────
-# а) все файлы модуля на месте; б) ничто вне модуля на него не ссылается — значит удаление
-# не оставит битых ссылок; в) прогон тестов ничего не изменил.
-prob=()
-for p in "${MODULE_PATHS[@]}"; do
-  [ -f "$p" ] || prob+=("нет файла $p")
-  # В .gitignore есть стандартное для .NET правило «[Rr]elease/» — папка с похожим именем молча
-  # выпала бы из git целиком. Проверяем явно, чтобы это не всплыло при переименовании.
-  git check-ignore -q "$p" 2>/dev/null && prob+=("$p игнорируется git — файл не попадет в репозиторий")
-done
-
-# Ищем упоминания модуля в файлах ВНЕ модуля. Внутри модуля ссылки свободны.
-#
-# --others --exclude-standard добавляет к отслеживаемым еще и новые файлы, которые git пока
-# не видел, но и не игнорирует. Без них проверка слепа ровно в тот момент, когда нужна: файл
-# только что создан, ссылка на модуль в нем уже есть, а замечено это будет лишь после коммита.
-# Игнорируемое (artifacts/, packages/) не попадает — иначе обход занял бы минуты.
-refs="$(git ls-files -z --cached --others --exclude-standard -- . ':(exclude).github/workflows/build.yml' ':(exclude)Scripts/ci' \
-        ':(exclude)docs/developer/guides/ci.md' \
-        | xargs -0 grep -lIE 'Scripts/ci|guides/ci\.md|workflows/build\.yml' 2>/dev/null)"
-[ -n "$refs" ] && prob+=("на модуль ссылаются файлы вне него: $(echo "$refs" | tr '\n' ' ')")
-
-[ "$(git status --porcelain)" = "$STATUS_BEFORE" ] \
-  || prob+=("прогон тестов изменил рабочее дерево")
-
-if [ ${#prob[@]} -eq 0 ]; then
-  ok "8. Модуль отделяем: 4 файла на месте, ссылок извне нет, дерево не тронуто"
-else
-  bad "8. Отделяемость нарушена" "${prob[@]}"
-fi
-
-# ── Итог ──────────────────────────────────────────────────────────────────────
-echo
-echo "Пройдено: $passed, пропущено: $skipped, провалено: $failed"
-exit $(( failed > 0 ))
+# TRX guard проверяется на маленьких XML-фикстурах: нет доступа к настоящим тестовым БД.
+python3 -B - "$ci_here" <<'PY'
+import contextlib, importlib.util, io, pathlib, sys, tempfile
+folder = pathlib.Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("check_trx", folder / "check-trx.py")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+def report(names):
+    return '<TestRun><Results>' + ''.join(f'<UnitTestResult testName="{n}" outcome="{o}"/>' for n,o in names) + '</Results></TestRun>'
+good = [("X.LinuxNotificationsTests.Binding", "Passed"), ("X.PgProviderTests.Crud", "Passed"), ("X.PgBackupTests.Dump", "Passed")]
+with tempfile.TemporaryDirectory(prefix="smartbase-ci-") as temporary:
+    path = pathlib.Path(temporary) / "report.trx"
+    with contextlib.redirect_stdout(io.StringIO()):
+        path.write_text(report(good + [(next(iter(module.BASELINE_SKIPS)), "NotExecuted")]))
+        module.check(path, True)
+        for bad in ([], good + [("X.NewPgTests.NewCase", "NotExecuted")], good[:-1], good + [("X.Case", "Failed")]):
+            path.write_text(report(bad))
+            try:
+                module.check(path, True)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("TRX guard accepted missing/failed/skipped tests")
+PY
+ok 'TRX не принимает пустой отчет, новый skip и отсутствие native-backup тестов'
+printf 'Проверок модуля CI пройдено: %s\n' "$ci_passed"

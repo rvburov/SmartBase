@@ -1,42 +1,41 @@
-# Полная проверка кода на всех операционных системах: сборка, тесты, живой PostgreSQL.
-#
-# Запускается ТОЛЬКО по команде — пушем ветки `ci` или кнопкой на вкладке Actions.
-# Обычный `git push` не запускает ничего: триггера на main здесь нет намеренно.
-#
-# Команда на стороне разработчика одна — `git push actions`. Она отправляет main и заодно
-# перематывает ветку `ci`; удаленный репозиторий `actions` заводит Scripts/ci/setup-remote.sh,
-# один раз в копии репозитория.
-#
-# Ветка `ci` живет только на время прогона: GitHub умеет ловить push ветки или тега и ничего
-# больше, поэтому без нее запуска не сделать, — но последний job ее удаляет, и в репозитории
-# постоянно висит одна main. Все checkout'ы поэтому пришпилены к github.sha, а не к ссылке.
-#
-# С выпуском релиза не пересекается ни во времени, ни по файлам:
-#   • выпуск пушит main и тег `v*` — под фильтр `branches: [ci]` не подпадает ни то, ни другое;
-#   • отсюда не вызывается ни один скрипт репозитория, только `dotnet` и `psql`.
-# Поэтому любой из двух модулей удаляется, не задевая другой.
-#
-# Описание и порядок удаления — docs/developer/guides/ci.md.
-name: Build
+# Единая проверка: ветки/PR — быстрый профиль, ci/manual/release reuse — полный.
+# Ничего не публикует и не удаляет ветки. Выпуск отдельно вызывает этот workflow с full:true.
+name: Проверки
 
 on:
   push:
-    branches: [ci]
+    branches-ignore: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      full:
+        description: 'Полная проверка перед выпуском'
+        type: boolean
+        default: true
+      ref:
+        description: 'Неизменяемый SHA для проверки; выпуск передает SHA разрешенного тега'
+        type: string
+        default: ''
+    outputs:
+      profile:
+        description: 'Выполненный профиль: quick или full'
+        value: ${{ jobs.scope.outputs.profile }}
 
 permissions:
   contents: read
 
-# Отправили ветку `ci` второй раз, пока идет первый прогон, — старый отменяется, проверяется
-# только последний код. Отменять здесь безопасно: прогон ничего не публикует и никуда не пишет.
+# Быстрый push и его PR делят группу; чужая fork-ветка и ручная полная проверка — отдельные.
 concurrency:
-  group: build-${{ github.ref }}
+  group: checks-${{ github.workflow }}-${{ (inputs.full || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/ci') && 'full' || 'quick' }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ inputs.ref || github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 env:
   DOTNET_NOLOGO: 'true'
   DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 'true'
+  LANG: ru_RU.UTF-8
 
 # Явный `shell: bash` на весь файл, а не только ради одинакового шелла на трех ОС. Умолчание
 # GitHub — `bash -e`, БЕЗ pipefail: в шаге `dotnet test … | tee` код возврата взялся бы от tee,
@@ -46,9 +45,46 @@ defaults:
     shell: bash
 
 jobs:
+  scope:
+    name: Выбрать профиль
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      full: ${{ steps.scope.outputs.full }}
+      profile: ${{ steps.scope.outputs.profile }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - name: Проверка модуля CI
+        run: bash Scripts/ci/ci-test.sh
+      - id: scope
+        env:
+          WORKFLOW_FULL: ${{ inputs.full || false }}
+        run: bash Scripts/ci/select-scope.sh >> "$GITHUB_OUTPUT"
+
+  agent-tests:
+    name: Unit и расширения (Linux)
+    needs: scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Модульные тесты
+        run: dotnet test Tests/Unit --configuration Release --logger 'console;verbosity=minimal'
+      - name: Тесты расширений
+        run: bash Tests/run-extensions.sh --configuration Release --logger 'console;verbosity=minimal'
+
   # ── Сборка и тесты на каждой операционной системе ───────────────────────────
   test:
     name: ${{ matrix.name }}
+    needs: scope
+    if: needs.scope.outputs.full == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     strategy:
@@ -69,12 +105,10 @@ jobs:
           # Нынешняя метка живет до августа 2027, дальше Intel-раннеров у GitHub не будет вовсе.
           - { os: macos-15-intel, name: macOS Intel }
     steps:
-      # Пришпилено к коммиту, а не к ссылке: ветка `ci` удаляется в конце прогона, и checkout
-      # по `refs/heads/ci` стал бы зависеть от того, кто успел раньше. Коммит же остается
-      # достижим из main всегда.
+      # Все jobs проверяют один SHA, даже если ветку успели обновить во время прогона.
       - uses: actions/checkout@v5
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.ref || github.sha }}
 
       # Версии v5 у обоих действий, а не v4: те собраны под Node 20, который GitHub объявил
       # устаревшим, и раннер уже принудительно гонит их на Node 24, ругаясь в каждый прогон.
@@ -161,15 +195,14 @@ jobs:
           command -v dbus-run-session > /dev/null || sudo apt-get install -y -qq dbus
           dbus-run-session -- dotnet test Tests/Integration --configuration Release \
             --filter 'FullyQualifiedName~LinuxNotificationsTests' \
-            --logger 'console;verbosity=minimal' | tee dbus.log
+            --logger 'console;verbosity=minimal' --logger 'trx;LogFileName=dbus.trx' \
+            --results-directory "$RUNNER_TEMP/dbus-results"
 
       # Тест помечен SkippableFact: без этой проверки не поднявшаяся шина дала бы зеленый шаг,
       # ничего не проверивший, — а именно ради него шаг и добавлен.
       - name: Убедиться, что связка с D-Bus проверена
         if: runner.os == 'Linux'
-        run: |
-          grep -qE 'Skipped: *0' dbus.log \
-            || { echo "::error::тест уведомлений ушел в Skipped — шина D-Bus не поднялась"; exit 1; }
+        run: python3 Scripts/ci/check-trx.py "$RUNNER_TEMP/dbus-results/dbus.trx"
 
   # ── Сборка для закрытого контура ────────────────────────────────────────────
   # Второй дистрибутив программы: в нем отправляющего слоя нет физически — файл
@@ -195,13 +228,15 @@ jobs:
   # закрытая сборка задевает ровно так же, как открытая, — их уже проверила матрица.
   closed-loop:
     name: Закрытый контур
+    needs: scope
+    if: needs.scope.outputs.full == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      # Пришпилено к коммиту, а не к ссылке: ветка `ci` удаляется в конце прогона.
+      # Тот же SHA, что у остальных проверок.
       - uses: actions/checkout@v5
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.ref || github.sha }}
 
       - uses: actions/setup-dotnet@v5
         with:
@@ -235,8 +270,10 @@ jobs:
   # нужен поднятый docker-контейнер, а на остальных раннерах сервисы недоступны.
   postgres:
     name: PostgreSQL
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    needs: scope
+    if: needs.scope.outputs.full == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
     services:
       postgres:
         image: postgres:16
@@ -251,57 +288,68 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     steps:
-      # Пришпилено к коммиту, а не к ссылке: ветка `ci` удаляется в конце прогона, и checkout
-      # по `refs/heads/ci` стал бы зависеть от того, кто успел раньше. Коммит же остается
-      # достижим из main всегда.
+      # Ubuntu 24.04 содержит официальный client-16 той же версии, что у контейнера.
       - uses: actions/checkout@v5
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.ref || github.sha }}
 
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
+
+      # Сервер остается в проверенном контейнере; backup/recovery используют настоящие
+      # pg_dump/pg_restore той же основной версии, а не случайный клиент из PATH раннера.
+      - name: Нативные клиенты PostgreSQL 16 и D-Bus
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-16 dbus
+          # PgDump сначала ищет /usr/bin; Debian-wrapper иначе может выбрать клиент 17/18.
+          sudo ln -sf /usr/lib/postgresql/16/bin/pg_dump /usr/bin/pg_dump
+          sudo ln -sf /usr/lib/postgresql/16/bin/pg_restore /usr/bin/pg_restore
+          echo '/usr/lib/postgresql/16/bin' >> "$GITHUB_PATH"
+          /usr/bin/pg_dump --version | tee "$RUNNER_TEMP/pg-dump-version"
+          /usr/bin/pg_restore --version | tee "$RUNNER_TEMP/pg-restore-version"
+          grep -qE '\(PostgreSQL\) 16\.' "$RUNNER_TEMP/pg-dump-version"
+          grep -qE '\(PostgreSQL\) 16\.' "$RUNNER_TEMP/pg-restore-version"
 
       # Контейнер поднимается с одной базой postgres; тестам нужны две рабочие.
       - name: Базы стенда
         env:
           PGPASSWORD: postgres
         run: |
-          psql -h localhost -p 5455 -U postgres -c 'CREATE DATABASE smartbase'
-          psql -h localhost -p 5455 -U postgres -c 'CREATE DATABASE smartbase2'
+          psql -h localhost -p 5455 -U postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE smartbase'
+          psql -h localhost -p 5455 -U postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE smartbase2'
 
-      # Фильтр по классам, а не весь набор: остальное уже прогнано матрицей на четырех ОС,
-      # повторять его здесь — впустую жечь минуты.
-      - name: Тесты провайдера
+      # Весь набор, без списка классов: новые PG-теории библиотеки/связей/целостности иначе
+      # молча пропускались бы и здесь, и в матрице без сервера.
+      - name: Интеграционные тесты с PostgreSQL
         run: |
-          dotnet test Tests/Integration --configuration Release \
-            --filter 'FullyQualifiedName~PgProviderTests|FullyQualifiedName~PgCreateDatabaseTests|FullyQualifiedName~PgBulkWriteTests|FullyQualifiedName~PgLibraryTests|FullyQualifiedName~PgSearchTests|FullyQualifiedName~PgCalendarSummaryTests' \
-            --logger 'console;verbosity=minimal' | tee pg.log
+          dbus-run-session -- dotnet test Tests/Integration --configuration Release \
+            --logger 'console;verbosity=minimal' --logger 'trx;LogFileName=postgres.trx' \
+            --results-directory "$RUNNER_TEMP/pg-results"
 
       # Без этой проверки job был бы зеленым и в том случае, когда база не поднялась: тесты
       # помечены SkippableFact и молча уходят в Skipped. Зеленый прогон, не проверивший ничего,
       # хуже красного.
-      - name: Убедиться, что тесты не пропущены
-        run: |
-          grep -qE 'Skipped: *0' pg.log \
-            || { echo "::error::тесты PostgreSQL ушли в Skipped — база не поднялась"; exit 1; }
+      - name: Убедиться, что PostgreSQL и нативные клиенты проверены
+        run: python3 Scripts/ci/check-trx.py "$RUNNER_TEMP/pg-results/postgres.trx" --postgres
 
   # ── Вспомогательные проекты ─────────────────────────────────────────────────
   # Генератор стенда, бенчмарки, многопроцессный харнесс и стенд панели чтения в приложение не
   # входят и обычной сборкой не затрагиваются. Из-за этого они тихо гниют: правка в модели
   # ломает их, и это выясняется через полгода, когда стенд понадобился срочно. Стенд панели
-  # чтения здесь еще и ПРОГОНЯЕТСЯ — это проверки, а не инструмент. Один Linux-раннер.
+  # чтения и проверки связей страницы записи здесь еще и ПРОГОНЯЮТСЯ. Один Linux-раннер.
   tools:
     name: Вспомогательные проекты
+    needs: scope
+    if: needs.scope.outputs.full == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      # Пришпилено к коммиту, а не к ссылке: ветка `ci` удаляется в конце прогона, и checkout
-      # по `refs/heads/ci` стал бы зависеть от того, кто успел раньше. Коммит же остается
-      # достижим из main всегда.
+      # Тот же SHA, что у остальных проверок.
       - uses: actions/checkout@v5
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.ref || github.sha }}
 
       - uses: actions/setup-dotnet@v5
         with:
@@ -313,6 +361,7 @@ jobs:
           dotnet build Tests/DbGenerator  --configuration Release
           dotnet build Tests/MultiProcess --configuration Release
           dotnet build Tests/DocReader    --configuration Release
+          dotnet build Tests/RecordPage --framework net10.0 --configuration Release
 
       # Живая Avalonia без экрана: разметка панели, подсветка, переходы по совпадениям, страницы
       # PDF и таблица книги. Расхождение — код возврата 1, и job краснеет; сводка по разделам —
@@ -320,36 +369,32 @@ jobs:
       - name: Стенд панели чтения
         run: dotnet run --project Tests/DocReader --configuration Release --no-build
 
-  # ── Уборка служебной ветки ──────────────────────────────────────────────────
-  # Ветка `ci` нужна ровно затем, чтобы у запуска был сигнал: GitHub ловит push ветки или тега
-  # и ничего больше. Существовать после прогона ей незачем — в репозитории должна оставаться
-  # одна main.
-  #
-  # Единственный job с правом записи, и право узкое: удалить одну ссылку. Ни релиз, ни код,
-  # ни настройки ему недоступны.
-  cleanup:
-    name: Убрать ветку ci
-    needs: [test, closed-loop, postgres, tools]
-    # always(): ветка должна исчезнуть и после красного прогона, и после отмененного — иначе
-    # ровно неудачные запуски и оставляли бы за собой мусор.
-    # Проверка ссылки: при ручном запуске с main удалять нечего и не нужно.
-    if: always() && github.ref == 'refs/heads/ci'
+      # Эти режимы сами создают базы стенда. Явные out/ref не пишут в домашний каталог.
+      - name: Связи страницы записи
+        run: |
+          dotnet run --project Tests/RecordPage --framework net10.0 --configuration Release --no-build -- --only relations --out "$RUNNER_TEMP/relation-ui" --ref "$RUNNER_TEMP/ui-reference"
+          dotnet run --project Tests/RecordPage --framework net10.0 --configuration Release --no-build -- --only relationcomputed --out "$RUNNER_TEMP/relation-ui" --ref "$RUNNER_TEMP/ui-reference"
+          dotnet run --project Tests/RecordPage --framework net10.0 --configuration Release --no-build -- --only relationintegrity --out "$RUNNER_TEMP/relation-ui" --ref "$RUNNER_TEMP/ui-reference"
+
+  # Нельзя получить зеленый workflow, потеряв обязательный job из-за условия/needs.
+  checks:
+    name: Итог проверок
+    needs: [scope, agent-tests, test, closed-loop, postgres, tools]
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions:
-      contents: write
     steps:
-      # Через API, а не `git push --delete`: checkout здесь не нужен вовсе — ни одного файла
-      # репозитория этот job не читает.
-      - name: Удалить ветку
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - name: Все обязательные проверки завершены
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          if gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/ci" 2>err.log; then
-            echo "ветка ci удалена"
-          else
-            # Не ошибка: ветку мог уже убрать предыдущий прогон, отмененный по concurrency.
-            # Валить из-за этого зеленую проверку кода нельзя — предупреждения достаточно,
-            # а следующий `git push actions` пересоздаст ветку и уберет ее снова.
-            echo "::warning::не удалось удалить ветку ci: $(cat err.log)"
-          fi
+          CI_REQUIRE_FULL: ${{ inputs.full || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/ci' }}
+          CI_PROFILE: ${{ needs.scope.outputs.profile }}
+          CI_SCOPE_RESULT: ${{ needs.scope.result }}
+          CI_QUICK_RESULT: ${{ needs.agent-tests.result }}
+          CI_MATRIX_RESULT: ${{ needs.test.result }}
+          CI_CLOSED_RESULT: ${{ needs.closed-loop.result }}
+          CI_POSTGRES_RESULT: ${{ needs.postgres.result }}
+          CI_TOOLS_RESULT: ${{ needs.tools.result }}
+        run: bash Scripts/ci/check-results.sh

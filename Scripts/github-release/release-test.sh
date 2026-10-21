@@ -13,8 +13,8 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT" || exit 1
 
-# Пути модуля — единственное, что появляется в репозитории. Тот же список в разделе
-# «Как удалить модуль» файла docs/developer/guides/release.md.
+# Пути модуля. При удалении также убирается его единственная строка в docs/README.md.
+# Тот же список в разделе «Как удалить модуль» файла docs/developer/guides/release.md.
 MODULE_PATHS=(
   ".github/workflows/release.yml"
   "Scripts/github-release/release.sh"
@@ -39,6 +39,42 @@ VER="$(sed -nE 's#.*<Version>([^<]*)</Version>.*#\1#p' SmartBase.csproj | head -
 # Следующая версия — текущая с увеличенной patch-компонентой. Нужна для проверки «счастливого
 # пути» --dry-run: она заведомо свободна и заведомо больше текущей.
 NEXT="$(echo "$VER" | awk -F. '{ printf "%s.%s.%d", $1, $2, $3 + 1 }')"
+
+# Предусловия release.sh проверяем в отдельном репозитории с локальным origin. Настоящая
+# рабочая ветка может называться иначе, а ее origin может быть недоступен. Ни сеть, ни
+# переключение ветки пользователя для проверки выпуска не нужны.
+FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/smartbase-release-test.XXXXXX")" || exit 1
+trap 'rm -rf "$FIXTURE"' EXIT
+FIXTURE_ROOT="$FIXTURE/source"
+FIXTURE_HERE="$FIXTURE_ROOT/Scripts/github-release"
+fixture_git() { git -C "$FIXTURE_ROOT" "$@"; }
+fixture_commit() {
+  fixture_git -c user.name='Roman Burov' -c user.email='romanburov89@gmail.com' \
+    -c commit.gpgsign=false commit -qm "$1"
+}
+fixture_setup() {
+  mkdir -p "$FIXTURE_HERE" "$FIXTURE/no-hooks" || return 1
+  cp "$HERE/release.sh" "$HERE/check-version.sh" "$FIXTURE_HERE/" || return 1
+  cp "$ROOT/SmartBase.csproj" "$ROOT/README.md" "$FIXTURE_ROOT/" || return 1
+  printf '# История релизов\n\n## [%s]\n\n- Проверочная версия.\n' "$VER" \
+    > "$FIXTURE_HERE/release-history.md"
+  git init --bare -q "$FIXTURE/origin.git" || return 1
+  git init -q -b main "$FIXTURE_ROOT" || return 1
+  fixture_git config core.hooksPath "$FIXTURE/no-hooks" || return 1
+  fixture_git add . || return 1
+  fixture_commit 'Проверочная версия' || return 1
+  fixture_git remote add origin "$FIXTURE/origin.git" || return 1
+  fixture_git push -q -u origin main || return 1
+}
+fixture_state() {
+  fixture_git status --porcelain
+  fixture_git rev-parse HEAD
+  fixture_git show-ref
+}
+if ! fixture_setup; then
+  bad 'Не удалось создать изолированный стенд выпуска'
+  exit 1
+fi
 
 echo "Тесты модуля выпуска релизов (текущая версия $VER)"
 echo
@@ -65,37 +101,49 @@ else
 fi
 
 # ── 3. release.sh отвергает плохие версии ─────────────────────────────────────
-reject() {   # аргумент должен быть отвергнут
-  "$HERE/release.sh" "$1" --dry-run --skip-tests --allow-dirty >/dev/null 2>&1
-  [ $? -ne 0 ]
+reject() {   # отказ должен быть именно из-за версии, а не ветки/сети/истории
+  local result code
+  result="$(bash "$FIXTURE_HERE/release.sh" "$1" --dry-run --skip-tests 2>&1)"
+  code=$?
+  [ "$code" -ne 0 ] && printf '%s\n' "$result" | grep -F "$2" >/dev/null
 }
 bad3=""
-reject "1.0"        || bad3="$bad3 «1.0» (не X.Y.Z)"
-reject "1.0.4-rc.1" || bad3="$bad3 «1.0.4-rc.1» (предвыпускной суффикс)"
+reject "1.0" 'не в формате X.Y.Z'        || bad3="$bad3 «1.0» (не X.Y.Z)"
+reject "1.0.4-rc.1" 'не в формате X.Y.Z' || bad3="$bad3 «1.0.4-rc.1» (предвыпускной суффикс)"
 # Фигурные скобки обязательны везде, где за подстановкой сразу идет «»»: bash 3.2 из macOS
 # затягивает многобайтный символ в имя переменной и падает с «unbound variable». Строка живет
 # в ветке отказа, поэтому годами не выполняется — и сломала бы ровно тот прогон, ради которого
 # проверка написана.
-reject "$VER"       || bad3="$bad3 «${VER}» (не больше текущей)"
-reject "1.0.4.5"    || bad3="$bad3 «1.0.4.5» (четыре компоненты)"
+reject "$VER" 'не больше текущей'       || bad3="$bad3 «${VER}» (не больше текущей)"
+reject "1.0.4.5" 'не в формате X.Y.Z'    || bad3="$bad3 «1.0.4.5» (четыре компоненты)"
 [ -z "$bad3" ] && ok "3. release.sh отвергает некорректные версии" \
                || bad "3. release.sh пропустил:$bad3"
 
 # ── 4. Счастливый путь --dry-run ──────────────────────────────────────────────
-out="$("$HERE/release.sh" "$NEXT" --dry-run --skip-tests --allow-dirty 2>&1)"
+out="$(bash "$FIXTURE_HERE/release.sh" "$NEXT" --dry-run --skip-tests 2>&1)"
 code=$?
-if [ $code -ne 0 ]; then
-  # Секция под следующую версию в истории релизов еще не написана — это штатное состояние
-  # между релизами, а не поломка: именно ее отсутствие и должно останавливать выпуск.
-  if printf '%s\n' "$out" | grep "release-history.md не готов" > /dev/null; then
-    ok "4. release.sh --dry-run $NEXT: остановлен из-за незаполненной истории релизов (так и задумано)"
-  else
-    bad "4. release.sh --dry-run $NEXT завершился с ошибкой" "$out"
-  fi
-elif printf '%s\n' "$out" | grep "проверки пройдены" > /dev/null; then
-  ok "4. release.sh --dry-run $NEXT: план напечатан, файлы не тронуты"
+if [ "$code" -eq 0 ] || ! printf '%s\n' "$out" | grep -F 'release-history.md не готов' >/dev/null; then
+  bad '4. Незаполненная история должна останавливать выпуск' "$out"
 else
-  bad "4. release.sh --dry-run $NEXT не напечатал итог" "$out"
+  printf '\n## [%s]\n\n- Изменение для проверки выпуска.\n' "$NEXT" \
+    >> "$FIXTURE_HERE/release-history.md"
+  fixture_git add Scripts/github-release/release-history.md
+  if fixture_commit 'Описание следующей версии' && fixture_git push -q origin main; then
+    fixture_before="$(fixture_state)"
+    out="$(bash "$FIXTURE_HERE/release.sh" "$NEXT" --dry-run --skip-tests 2>&1)"
+    code=$?
+    if [ "$code" -ne 0 ]; then
+      bad "4. release.sh --dry-run $NEXT завершился с ошибкой" "$out"
+    elif ! printf '%s\n' "$out" | grep -F 'проверки пройдены' >/dev/null; then
+      bad "4. release.sh --dry-run $NEXT не напечатал итог" "$out"
+    elif [ "$(fixture_state)" != "$fixture_before" ]; then
+      bad '4. --dry-run изменил файлы, коммит или ссылки стенда'
+    else
+      ok "4. История обязательна; --dry-run $NEXT печатает план без изменения файлов и ссылок"
+    fi
+  else
+    bad '4. Не удалось подготовить историю на изолированном стенде'
+  fi
 fi
 
 # ── 5. release-notes.sh ───────────────────────────────────────────────────────
@@ -163,8 +211,8 @@ else
 fi
 
 # ── 8. Отделяемость модуля ────────────────────────────────────────────────────
-# а) все файлы модуля на месте; б) ничто вне модуля на него не ссылается — значит удаление
-# не оставит битых ссылок; в) прогон тестов ничего не изменил.
+# а) файлы на месте; б) снаружи есть только ссылка оглавления, указанная в инструкции
+# удаления; в) прогон тестов ничего не изменил.
 prob=()
 for p in "${MODULE_PATHS[@]}"; do
   [ -f "$p" ] || prob+=("нет файла $p")
@@ -176,16 +224,25 @@ done
 
 # Ищем упоминания модуля в отслеживаемых файлах ВНЕ модуля. Внутри модуля ссылки свободны.
 refs="$(git ls-files -z -- . ':(exclude).github' ':(exclude)Scripts/github-release' \
-        ':(exclude)docs/developer/guides/release.md' \
+        ':(exclude)docs/developer/guides/release.md' ':(exclude)docs/README.md' \
         | xargs -0 grep -lIE 'Scripts/github-release|release-history\.md|guides/release\.md|workflows/release\.yml' \
           2>/dev/null)"
 [ -n "$refs" ] && prob+=("на модуль ссылаются файлы вне него: $(echo "$refs" | tr '\n' ' ')")
+# Разрешается только точная Markdown-ссылка в начале строки оглавления. Остаток строки
+# проверяется обычным правилом: добавленная рядом зависимость не прячется за исключением.
+index_refs="$(awk '
+  /^- \[release[.]md\]\(developer\/guides\/release[.]md\)([[:space:]]|$)/ {
+    sub(/^- \[release[.]md\]\(developer\/guides\/release[.]md\)/, "")
+  }
+  /Scripts\/github-release|release-history[.]md|guides\/release[.]md|workflows\/release[.]yml/ { print NR ":" $0 }
+' docs/README.md)"
+[ -n "$index_refs" ] && prob+=("неразрешенные ссылки из docs/README.md: $index_refs")
 
 [ "$(git status --porcelain)" = "$STATUS_BEFORE" ] \
   || prob+=("прогон тестов изменил рабочее дерево")
 
 if [ ${#prob[@]} -eq 0 ]; then
-  ok "8. Модуль отделяем: 8 файлов на месте, ссылок извне нет, дерево не тронуто"
+  ok "8. Восемь файлов на месте; снаружи только ссылка оглавления; дерево не тронуто"
 else
   bad "8. Отделяемость нарушена" "${prob[@]}"
 fi

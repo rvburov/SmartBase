@@ -112,6 +112,7 @@ public partial class MainWindow : Window
         // Резолвер чужих баз для межбазовых связей (тип «relation» с TargetDbId>0).
         RelationDbResolver.Configure(workspace);
         ConfigureRelationChanges();
+        ConfigureRelationIntegrity();
 
         // Сообщения человеку — карточки в правом верхнем углу окна (стопкой, сами гаснут).
         Controls.Widgets.AppNotifications.Install(this);
@@ -1325,6 +1326,7 @@ public partial class MainWindow : Window
     {
         HookPermissionEvents();
         QueueAllRelationRefreshes();
+        QueueRelationIntegrityChecks();
         var pending = PendingDbs();
         ConstructorSidebar.InitializeWorkspace(_workspace.Mounted, Controls.Components.SidebarMode.Constructor, pending);
         CalendarSidebar.InitializeWorkspace(GrantedDbs(), Controls.Components.SidebarMode.Calendar, pending);
@@ -1375,6 +1377,7 @@ public partial class MainWindow : Window
     private void OnDbUsersChanged(int dbId)
     {
         if (_workspace.Get(dbId) is null) return;
+        QueueRelationIntegrityChecks(force: true);
 
         // Право просмотра коллекции рисуется замком в сайдбаре конструктора: выдали или
         // отобрали — дерево должно перестроиться без перезапуска.

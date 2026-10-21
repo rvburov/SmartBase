@@ -473,6 +473,13 @@
                                                     VerticalAlignment="Center"
                                                     IsVisible="{Binding ShowReconnect}" />
 
+                                            <Button Classes="dialog auto"
+                                                    Content="Проверить связи"
+                                                    Tag="{Binding Id}"
+                                                    Click="OnRelationIntegrityClick"
+                                                    VerticalAlignment="Center"
+                                                    IsVisible="{Binding IsMounted}" />
+
                                             <!-- Настройки базы: имя, файл/сервер, пароль —
                                                  действия строки переехали в это окно (копия —
                                                  в разделе «Резервное копирование») -->
