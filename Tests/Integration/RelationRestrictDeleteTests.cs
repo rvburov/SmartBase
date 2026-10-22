@@ -177,11 +177,42 @@ public sealed class RelationRestrictDeleteTests
     {
         using var f = new Fixture(restrict: true);
         Assert.Throws<RelationDeleteRestrictedException>(() => f.Repo.DeleteRecord(f.Client));
-        Assert.Throws<RelationDeleteRestrictedException>(() => f.Repo.DeleteCalendarRecord(f.Client, [f.Free]));
-        f.Repo.DeleteCalendarRecord(f.Client, [f.Client, f.Invoice]);
+        Assert.Throws<RelationDeleteRestrictedException>(() => f.Repo.DeleteRecord(f.Client, [f.Free]));
+        Assert.Throws<RelationDeleteRestrictedException>(() => f.Repo.DeleteCalendarRecords([f.Client, f.Free]));
+        f.Repo.DeleteRecord(f.Client, [f.Client, f.Invoice]);
         f.Repo.DeleteRecord(f.Invoice, [f.Client, f.Invoice]);
         Assert.Equal([f.Free], f.Repo.GetRecords(f.Clients).Select(r => r.Id!.Value));
         Assert.Empty(f.Repo.GetRecords(f.Invoices));
+    }
+
+    // Календарь и задачи удаляют набор базы одной операцией: цель и ссылающийся источник уходят
+    // вместе, а нехватка прав на любую запись набора не удаляет ни одной — иначе удаленная цель
+    // оставила бы источник с оборванной запрещающей связью.
+    [Fact]
+    public void A_calendar_set_is_deleted_whole_or_not_at_all()
+    {
+        using var f = new Fixture(restrict: true);
+        DenyDelete(f, f.Invoices);
+        Assert.Throws<PermissionDeniedException>(() => f.Repo.DeleteCalendarRecords([f.Client, f.Invoice]));
+        Assert.Equal(2, f.Repo.GetRecords(f.Clients).Count);
+        Assert.Equal([f.Client], f.Repo.GetLinkEdges(f.Relation, f.Invoice).Select(e => e.ToRecordId));
+
+        using var g = new Fixture(restrict: true);
+        g.Repo.DeleteCalendarRecords([g.Client, g.Invoice]);
+        Assert.Equal([g.Free], g.Repo.GetRecords(g.Clients).Select(r => r.Id!.Value));
+        Assert.Empty(g.Repo.GetRecords(g.Invoices));
+    }
+
+    // Перенос узлов сайдбара в другую базу идет по узлу за раз: ссылка между узлами обрывается,
+    // и окно ее называет; при удалении тех же узлов она не мешает.
+    [Fact]
+    public async Task Links_between_moved_nodes_count_as_breaking()
+    {
+        using var f = new Fixture(restrict: true);
+        Assert.NotNull((await RelationDeleteImpact.CheckCollectionsAsync([(f.Repo, [f.Clients]), (f.Repo, [f.Invoices])], move: true)).Blocked);
+        Assert.Null((await RelationDeleteImpact.CheckCollectionsAsync([(f.Repo, [f.Clients]), (f.Repo, [f.Invoices])])).Blocked);
+        // Ссылки внутри одного переносимого узла копия переписывает — они не мешают.
+        Assert.Null((await RelationDeleteImpact.CheckCollectionsAsync([(f.Repo, [f.Clients, f.Invoices])], move: true)).Blocked);
     }
 
     // Сайдбар удаляет выделенные узлы по одному: коллекции всей операции идут в каждый вызов.
@@ -219,16 +250,25 @@ public sealed class RelationRestrictDeleteTests
         f.Db.Permissions.Reload(notify: false);
 
         var references = (await RelationDeleteImpact.CheckRecordsAsync(f.Repo, [f.Client])).References;
-        Assert.Equal("связь закрытой коллекции", references);
+        Assert.Equal("связи закрытых коллекций", references);
         Assert.DoesNotContain("Счета", references, StringComparison.Ordinal);
+
+        // Охрана изолированного подключения называет ссылки с правами того, кто удаляет.
+        f.SetRestrictAsAdmin(true);
+        var refused = Assert.Throws<RelationDeleteRestrictedException>(() => f.Repo.DeleteRecordsIsolated([f.Client]));
+        Assert.Contains("связи закрытых коллекций", refused.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("Счета", refused.Message, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public void Counts_above_the_cap_are_written_as_more()
+    private static void DenyDelete(Fixture f, int collection)
     {
-        var reference = new RelationReference(1, "Клиент", 2, "Счета", ConstructorRepository.ReferenceCountCap, false, More: true);
-        Assert.Equal("«Счета · Клиент» из базы «Учет» (больше 10\u00a0000 записей)",
-            ConstructorRepository.DescribeReference(reference, "Учет"));
+        var me = f.Db.Context.DbUsers.First(u => u.UserKey == SmartBase.Utils.CurrentUser.Key);
+        f.Db.Permissions.SetMask(f.Db.Permissions.CurrentUserId, null, (int)PermAction.All);
+        f.Db.Permissions.SetMask(f.Db.Permissions.CurrentUserId, collection, (int)(PermAction.All & ~PermAction.DeleteRecord));
+        me.IsAdmin = false;
+        me.IsApproved = true;
+        f.Db.Context.SaveChanges();
+        f.Db.Permissions.Reload(notify: false);
     }
 
     [Theory]
@@ -265,6 +305,19 @@ public sealed class RelationRestrictDeleteTests
             Relation = SampleData.AddField(Repo, Invoices, "Клиент", "relation").Id!.Value;
             SetRestrict(restrict);
             Repo.SetLinks(Relation, Invoice, [Client]);
+        }
+
+        // Настройку свойства меняет администратор: у пониженного пользователя права на правку нет.
+        public void SetRestrictAsAdmin(bool restrict)
+        {
+            var me = Db.Context.DbUsers.First(u => u.UserKey == SmartBase.Utils.CurrentUser.Key);
+            me.IsAdmin = true;
+            Db.Context.SaveChanges();
+            Db.Permissions.Reload(notify: false);
+            SetRestrict(restrict);
+            me.IsAdmin = false;
+            Db.Context.SaveChanges();
+            Db.Permissions.Reload(notify: false);
         }
 
         public void SetRestrict(bool restrict)

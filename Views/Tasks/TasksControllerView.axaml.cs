@@ -741,16 +741,11 @@ public partial class TasksControllerView : UserControl
 
         if (targets.Count <= SmallOpCap)
         {
+            // Набор каждой базы — одной операцией: права и запрет удаления проверяются до первой
+            // задачи, ссылки между задачами набора не мешают. Не удалилось (нет прав, база занята,
+            // запрет) — стоп; список ниже перечитается и покажет фактическое состояние.
             foreach (var (repo, ids) in byDb)
-            {
-                // Не удалилось (нет прав, база занята, запрет) — стоп: удаленное остается удаленным,
-                // список ниже перечитается и покажет фактическое состояние. Ссылки между задачами
-                // одной базы запрету удаления не мешают: весь набор уходит в этой же операции.
-                var stopped = false;
-                foreach (var id in ids)
-                    if (!TryWrite(repo, () => repo.DeleteCalendarRecord(id, ids))) { stopped = true; break; }
-                if (stopped) break;
-            }
+                if (!TryWrite(repo, () => repo.DeleteCalendarRecords(ids))) break;
         }
         else
             await RunBulkAsync(byDb[0].Repo.DbPath, () =>

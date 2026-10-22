@@ -2542,8 +2542,8 @@ public partial class SidebarTree : UserControl
     {
         if (crossDb.Count == 0 || OwnerWindow is null) return true;
 
-        // Все переносимое — одной проверкой: ссылки между переносимыми коллекциями переписываются
-        // на копию и не обрываются.
+        // Все переносимое — одной проверкой. Узлы переносятся по одному: ссылки внутри узла
+        // переписываются на копию, ссылки между узлами обрываются и называются.
         var check = await RelationDeleteImpact.CheckCollectionsAsync(crossDb.Select(t =>
             (t.SrcRepo, (IReadOnlyCollection<int>)(t.IsGroup ? t.SrcRepo.CollectionIdsInGroup(t.Id) : [t.Id]))), move: true);
         if (check.Blocked is { } blocked) { await ConfirmDialog.Info(blocked).ShowDialog(OwnerWindow); return false; }
@@ -2726,6 +2726,17 @@ public partial class SidebarTree : UserControl
         // ОТКРЫТЫХ баз; из закрытых — не проверяем, вычистятся лениво). Разворачиваем группы в их ветки
         // и объединяем с одиночными коллекциями по базе (одну коллекцию не проверяем дважды), обрываемся
         // на первой найденной связи.
+        // Узлы удаляются по одному, а ссылки между ними запрету не мешают — поэтому права на ВСЕ
+        // узлы проверяются до первого удаления: отказ на втором узле оставил бы его записи со
+        // ссылками на уже удаленные.
+        foreach (var n in groups.Concat(colls))
+            if (RepoOf(n)?.Permissions is { } perms
+                && !perms.Can(PermAction.DeleteCollection, n.IsGroup ? null : n.Id))
+            {
+                PermissionNotice.Show(OwnerWindow, PermAction.DeleteCollection);
+                return;
+            }
+
         // Коллекции всей операции по базам: ссылки между удаляемыми запрету не мешают ни в окне,
         // ни в репозитории (DeleteGroupIsolated/DeleteCollectionIsolated получают весь набор базы).
         var together = new Dictionary<ConstructorRepository, IReadOnlyCollection<int>>();

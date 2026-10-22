@@ -426,19 +426,34 @@ public partial class ConstructorControllerView : UserControl
         }
     }
 
+    // Удаление и перенос записей ждут фоновую проверку ссылок и вопрос. За это время человек мог
+    // открыть другую коллекцию или нажать Delete еще раз: действие относится к той коллекции, где
+    // выделены записи, в чужую не уходит и не запускается дважды.
+    private bool _recordOpInFlight;
+
+    private bool StillOn(ConstructorRepository repo, int? collectionId) =>
+        ReferenceEquals(repo, _repository) && collectionId == _currentCollectionId;
+
     private async Task DeleteRecord(int recordId)
     {
-        if (_repository is null) return;
+        if (_repository is not { } repo || _recordOpInFlight) return;
+        _recordOpInFlight = true;
+        try { await DeleteRecordCore(repo, _currentCollectionId, recordId); }
+        finally { _recordOpInFlight = false; }
+    }
 
+    private async Task DeleteRecordCore(ConstructorRepository repo, int? collectionId, int recordId)
+    {
         // Предупреждаем ТОЛЬКО если удаление оборвет входящие связи (иначе — мгновенно, как раньше):
         // окно называет, кто ссылается; связь с запретом удаления не дает удалить вовсе.
-        var check = await RelationDeleteImpact.CheckRecordsAsync(_repository, [recordId]);
+        var check = await RelationDeleteImpact.CheckRecordsAsync(repo, [recordId]);
+        if (!StillOn(repo, collectionId)) return;
         if (check.References.Length > 0 || check.Blocked is not null)
         {
             if (VisualRoot is not Avalonia.Controls.Window confirmWin) return;
             if (check.Blocked is { } blocked) { await ConfirmDialog.Info(blocked).ShowDialog(confirmWin); return; }
             var warnDlg = new ConfirmDialog($"Удалить запись?{check.Warning("нее")}");
-            if (await warnDlg.ShowDialog<bool>(confirmWin) != true) return;
+            if (await warnDlg.ShowDialog<bool>(confirmWin) != true || !StillOn(repo, collectionId)) return;
         }
 
         // Удаление в середине таблицы — сохраняем вертикальную позицию, чтобы при
@@ -446,8 +461,8 @@ public partial class ConstructorControllerView : UserControl
         var keepVertical = TableViewCtrl.IsVisible ? TableViewCtrl.CurrentVerticalOffset() : (double?)null;
 
         // Право могли отозвать, пока меню было открыто: DbErrors покажет причину окном.
-        try { _repository.DeleteRecord(recordId); }
-        catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { return; }
+        try { repo.DeleteRecord(recordId); }
+        catch (Exception ex) when (DbErrors.Handle(ex, repo.DbPath)) { return; }
         RefreshRows(structural: true, countDelta: -1);
         TableViewCtrl.ClearRecordSelection();   // удаленная строка не должна оставаться «подсвеченной»
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
@@ -462,7 +477,14 @@ public partial class ConstructorControllerView : UserControl
     // тысячах записей таблицу не откидывало в начало.
     private async Task DeleteRecordsWithConfirm(IReadOnlyList<int> recordIds)
     {
-        if (_repository is null) return;
+        if (_repository is not { } repo || _recordOpInFlight) return;
+        _recordOpInFlight = true;
+        try { await DeleteRecordsCore(repo, _currentCollectionId, recordIds); }
+        finally { _recordOpInFlight = false; }
+    }
+
+    private async Task DeleteRecordsCore(ConstructorRepository repo, int? collectionId, IReadOnlyList<int> recordIds)
+    {
         if (VisualRoot is not Avalonia.Controls.Window win) return;
 
         var ids = recordIds.Distinct().ToList();
@@ -471,7 +493,8 @@ public partial class ConstructorControllerView : UserControl
         // Предупреждаем, что удаление оборвет ВХОДЯЩИЕ связи на эти записи (внутрибазовые + межбазовые
         // из открытых баз), и называем их. Связь с запретом удаления не дает удалить вовсе.
         // Best-effort: связи из закрытых баз чистятся лениво.
-        var check = await RelationDeleteImpact.CheckRecordsAsync(_repository, ids);
+        var check = await RelationDeleteImpact.CheckRecordsAsync(repo, ids);
+        if (!StillOn(repo, collectionId)) return;
         if (check.Blocked is { } blocked) { await ConfirmDialog.Info(blocked).ShowDialog(win); return; }
         var linkWarn = check.Warning(ids.Count == 1 ? "нее" : "них");
         // Рутинный вопрос снимает настройка «Спрашивать подтверждение при удалении», а вот
@@ -480,7 +503,7 @@ public partial class ConstructorControllerView : UserControl
         if (ConstructorSettings.ConfirmDelete || linkWarn.Length > 0)
         {
             var dlg = new ConfirmDialog($"Вы удаляете {ids.Count} {RecordsPlural(ids.Count)}.{linkWarn} Подтвердить?");
-            if (await dlg.ShowDialog<bool>(win) != true) return;
+            if (await dlg.ShowDialog<bool>(win) != true || !StillOn(repo, collectionId)) return;
         }
 
         var keepVertical = TableViewCtrl.IsVisible ? TableViewCtrl.CurrentVerticalOffset() : (double?)null;
@@ -493,7 +516,7 @@ public partial class ConstructorControllerView : UserControl
             (p, setPhase) =>
             {
                 setPhase(many ? "Удаление записей" : "Удаление записи");
-                _repository.DeleteRecordsIsolated(ids, new IntProgress(done => p.Report((done, ids.Count))));
+                repo.DeleteRecordsIsolated(ids, new IntProgress(done => p.Report((done, ids.Count))));
                 p.Report((ids.Count, ids.Count));   // финал → «Сохранение…»
             });
         // Отказ (связь с запретом, поставленная, пока шел вопрос, занятость базы) — записи на месте:
@@ -559,18 +582,27 @@ public partial class ConstructorControllerView : UserControl
     // дубль/удаление. Запись исчезает из исходной коллекции (move = copy + delete).
     private async Task RelocateRecords(IReadOnlyList<int> recordIds)
     {
-        if (_repository is null || _currentCollectionId is null || _dbs.Count == 0) return;
+        if (_repository is not { } repo || _currentCollectionId is not int sourceCollectionId
+            || _dbs.Count == 0 || _recordOpInFlight) return;
+        _recordOpInFlight = true;
+        try { await RelocateRecordsCore(repo, sourceCollectionId, recordIds); }
+        finally { _recordOpInFlight = false; }
+    }
+
+    private async Task RelocateRecordsCore(ConstructorRepository repo, int sourceCollectionId, IReadOnlyList<int> recordIds)
+    {
         if (VisualRoot is not Avalonia.Controls.Window win) return;
 
         var ids = recordIds.Distinct().ToList();
         if (ids.Count == 0) return;
+        var sourceDbId = CurrentDbId;
 
-        var dlg = new RecordLocationDialog(_dbs, CurrentDbId, _currentCollectionId);
+        var dlg = new RecordLocationDialog(_dbs, sourceDbId, sourceCollectionId);
         var res = await dlg.ShowDialog<RecordLocationResult?>(win);
-        if (res is null || RepoFor(res.DbId) is not { } targetRepo) return;
+        if (res is null || RepoFor(res.DbId) is not { } targetRepo || !StillOn(repo, sourceCollectionId)) return;
 
         // Та же коллекция — переносить некуда (no-op).
-        if (res.DbId == CurrentDbId && res.CollectionId == _currentCollectionId.Value) return;
+        if (res.DbId == sourceDbId && res.CollectionId == sourceCollectionId) return;
 
         // Все потери — в ОДНО окно: два-три подтверждения подряд просто «прокликивают».
         var warnings = new List<string>();
@@ -579,8 +611,8 @@ public partial class ConstructorControllerView : UserControl
         // поле-связь теряет связи — раньше и то и другое происходило МОЛЧА. Считается по схеме
         // (два списка полей), поэтому дешево независимо от числа переносимых записей.
         var (dropped, linksDropped) = targetRepo.FieldsLostOnMove(
-            _repository, _currentCollectionId.Value, res.CollectionId,
-            res.CreateMissingFields, RelationDbResolver.DbIdFor(_repository), RelationDbResolver.DbIdFor(targetRepo));
+            repo, sourceCollectionId, res.CollectionId,
+            res.CreateMissingFields, RelationDbResolver.DbIdFor(repo), RelationDbResolver.DbIdFor(targetRepo));
         if (dropped.Count > 0)
             warnings.Add($"• не перенесутся свойства: {NameList(dropped)}");
         if (linksDropped.Count > 0)
@@ -589,7 +621,8 @@ public partial class ConstructorControllerView : UserControl
         // Перенос = копия + удаление (у записи новый id), поэтому ВХОДЯЩИЕ связи на нее обрываются
         // (за записью не следуют) — в том числе ссылки между самими переносимыми записями, а связь
         // с запретом удаления держит и перенос.
-        var moveCheck = await RelationDeleteImpact.CheckRecordsAsync(_repository, ids, move: true);
+        var moveCheck = await RelationDeleteImpact.CheckRecordsAsync(repo, ids, move: true);
+        if (!StillOn(repo, sourceCollectionId)) return;
         if (moveCheck.Blocked is { } blocked) { await ConfirmDialog.Info(blocked).ShowDialog(win); return; }
         if (moveCheck.References.Length > 0)
             warnings.Add($"• оборвутся ссылки на переносимые записи: {moveCheck.References}");
@@ -599,15 +632,14 @@ public partial class ConstructorControllerView : UserControl
             var warnDlg = new ConfirmDialog(
                 "При переносе:\n" + string.Join("\n", warnings) + "\n\nПродолжить?",
                 confirmText: "Перенести");
-            if (await warnDlg.ShowDialog<bool>(win) != true) return;
+            if (await warnDlg.ShowDialog<bool>(win) != true || !StillOn(repo, sourceCollectionId)) return;
         }
 
         var keepVertical = TableViewCtrl.IsVisible ? TableViewCtrl.CurrentVerticalOffset() : (double?)null;
 
-        var sourcePath = _repository.DbPath;
-        var sourceCollectionId = _currentCollectionId.Value;
+        var sourcePath = repo.DbPath;
         // Номера баз для пересчета межбазовых связей — у самих баз, не номера реестра.
-        var sourceLinkId = RelationDbResolver.DbIdFor(_repository);
+        var sourceLinkId = RelationDbResolver.DbIdFor(repo);
         var targetLinkId = RelationDbResolver.DbIdFor(targetRepo);
         var many = ids.Count > 1;
         var moved = await RunBulkOp(many ? "Перемещение записей" : "Перемещение записи",

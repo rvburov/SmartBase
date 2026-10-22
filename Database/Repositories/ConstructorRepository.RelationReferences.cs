@@ -4,12 +4,11 @@ using SmartBase.Database.Entities;
 
 namespace SmartBase.Database.Repositories;
 
-/// <summary>Кто ссылается на записи: свойство-связь, его коллекция, число записей-источников
-/// (не больше <see cref="ConstructorRepository.ReferenceCountCap"/>, дальше <see cref="More"/>) и
+/// <summary>Кто ссылается на записи: свойство-связь, его коллекция, число записей-источников и
 /// запрещает ли настройка связи удалять цель. <see cref="Hidden"/> — коллекция-источник закрыта
 /// для пользователя: ее имен и чисел окно не показывает.</summary>
 public sealed record RelationReference(int FieldId, string Field, int CollectionId, string Collection, int Sources,
-    bool Restrict, bool More = false, bool Hidden = false);
+    bool Restrict, bool Hidden = false);
 
 /// <summary>Удаление или перенос записи запрещены настройкой связи «Запретить удаление».</summary>
 public sealed class RelationDeleteRestrictedException(string message) : InvalidOperationException(message);
@@ -24,14 +23,16 @@ public sealed class RelationDeleteRestrictedException(string message) : InvalidO
 /// целью и не мешает, а перенос записей копирует их с новыми номерами, и ссылка между
 /// переносимыми записями обрывается так же, как ссылка извне.
 ///
-/// Ребра в память не выгружаются: сначала дешевый EXISTS, затем число источников по каждому
-/// свойству-связи с потолком. Охрана репозитория смотрит только свойства с запретом и без таких
-/// свойств ребер не читает.
+/// Ребра в память не выгружаются: один запрос группирует их по свойству и считает источники.
+/// Он идет от целей по индексу ToRecordId: фильтр по свойству в SQL или коррелированный EXISTS по
+/// записям коллекции увели бы SQLite в перебор всех ребер свойства или базы (без ANALYZE план
+/// выбирается по равенству FieldId). Охрана репозитория без свойств с запретом ребер не читает.
 /// </summary>
 public partial class ConstructorRepository
 {
-    /// <summary>Сколько записей-источников одного свойства считать точно; дальше — «больше».</summary>
-    public const int ReferenceCountCap = 10_000;
+    /// <summary>Чьи права решают, называть ли коллекцию-источник в тексте (у изолированного
+    /// подключения своих прав нет — их передает общий репозиторий).</summary>
+    internal PermissionService? ReferenceViewer { get; set; }
 
     /// <summary>Ссылки на записи <paramref name="recordIds"/> из ребер с базой цели из
     /// <paramref name="targetDbIds"/>. Источники из <paramref name="excludedSources"/> и из коллекций
@@ -67,38 +68,41 @@ public partial class ConstructorRepository
         var ids = collectionIds.Distinct().ToList();
         var together = ids.Concat(collectionsTogether ?? []).Distinct().ToList();
         var targets = RelationTargetsOfThisBase().ToList();
+        // Цели — некоррелированным подзапросом: ToRecordId IN (записи коллекций) идет по индексу
+        // от записей, а не перебором всех ребер базы.
+        var inCollections = db.DbRecords.Where(t => ids.Contains(t.CollectionId)).Select(t => t.Id);
         var edges = db.DbRecordLinks.AsNoTracking().Where(l => targets.Contains(l.TargetDbId)
-            && db.DbRecords.Any(t => t.Id == l.ToRecordId && ids.Contains(t.CollectionId))
+            && inCollections.Contains(l.ToRecordId)
             && !db.DbRecords.Any(s => s.Id == l.FromRecordId && together.Contains(s.CollectionId)));
         return CountReferences(edges, restrictOnly);
     }
 
-    // Ссылки по свойствам-связям этой базы. Свойств немного, поэтому каждое считается своим
-    // запросом с потолком: DISTINCT источников обрывается на ReferenceCountCap + 1.
+    // Ссылки по свойствам-связям этой базы: один запрос группирует найденные ребра по свойству и
+    // считает разных источников, отбор свойств (запрет, есть ли такое свойство) — в памяти.
     private List<RelationReference> CountReferences(IQueryable<DbRecordLinkEntity> edges, bool restrictOnly)
     {
         var fields = db.DbFields.AsNoTracking().Where(f => f.FieldType == "relation").ToList()
             .Select(f => (Field: f, Config: RelationConfig.FromConfig(f.ConfigJson)))
-            .Where(p => !restrictOnly || p.Config?.RestrictDelete == true).ToList();
-        if (fields.Count == 0 || !edges.Any()) return [];
-        var counted = new List<(DbFieldEntity Field, bool Restrict, int Sources)>();
-        foreach (var (field, config) in fields)
-        {
-            var fieldId = field.Id;
-            var sources = edges.Where(l => l.FieldId == fieldId).Select(l => l.FromRecordId).Distinct()
-                .Take(ReferenceCountCap + 1).Count();
-            if (sources > 0) counted.Add((field, config?.RestrictDelete == true, sources));
-        }
+            .Where(p => !restrictOnly || p.Config?.RestrictDelete == true)
+            .ToDictionary(p => p.Field.Id);
+        if (fields.Count == 0) return [];
+        var counts = edges.GroupBy(l => l.FieldId)
+            .Select(g => new { FieldId = g.Key, Sources = g.Select(l => l.FromRecordId).Distinct().Count() })
+            .ToList();
+        var counted = counts.Where(c => fields.ContainsKey(c.FieldId))
+            .Select(c => (fields[c.FieldId].Field, Restrict: fields[c.FieldId].Config?.RestrictDelete == true, c.Sources))
+            .ToList();
         if (counted.Count == 0) return [];
         var collectionIds = counted.Select(c => c.Field.CollectionId).Distinct().ToList();
         var collections = db.DbCollections.AsNoTracking().Where(c => collectionIds.Contains(c.Id))
             .ToDictionary(c => c.Id, c => c.Name);
+        var viewer = ReferenceViewer ?? Permissions;
         return counted.Select(c =>
             {
-                var hidden = Permissions?.Can(PermAction.ViewCollection, c.Field.CollectionId) == false;
+                var hidden = viewer?.Can(PermAction.ViewCollection, c.Field.CollectionId) == false;
                 return new RelationReference(c.Field.Id, hidden ? "" : c.Field.Name, c.Field.CollectionId,
                     hidden ? "" : TitleText.FirstLine(collections.GetValueOrDefault(c.Field.CollectionId, "")),
-                    Math.Min(c.Sources, ReferenceCountCap), c.Restrict, c.Sources > ReferenceCountCap, hidden);
+                    c.Sources, c.Restrict, hidden);
             })
             .OrderBy(r => r.Hidden).ThenBy(r => r.Collection, StringComparer.CurrentCulture)
             .ThenBy(r => r.Field, StringComparer.CurrentCulture).ToList();
@@ -153,22 +157,27 @@ public partial class ConstructorRepository
         Func<RelationReference, string?>? database = null) =>
         $"{(move ? "Перенести" : "Удалить")} нельзя: на {(records == 1 ? "запись" : "записи")} " +
         $"{(restricted.Count == 1 ? "ссылается" : "ссылаются")} {DescribeReferenceList(restricted, database)}, " +
-        "а в этих связях запрещено удалять связанные записи. Уберите ссылки или выберите «Снять связь» в окне свойства-связи.";
+        $"а {(restricted.Count == 1 ? "в этой связи" : "в этих связях")} запрещено удалять связанные записи. " +
+        "Уберите ссылки или выберите «Снять связь» в окне свойства-связи.";
 
-    /// <summary>«Счета · Клиент» (3 записи), «Заказы · Клиент» из базы «Учет» (больше 10 000 записей).</summary>
+    /// <summary>«Счета · Клиент» (3 записи), «Заказы · Клиент» из базы «Учет» (1 запись). Свойства
+    /// закрытых коллекций одной базы — одной фразой, без имен и чисел.</summary>
     public static string DescribeReferenceList(IEnumerable<RelationReference> references,
-        Func<RelationReference, string?>? database = null) =>
-        string.Join(", ", references.Select(r => DescribeReference(r, database?.Invoke(r))));
+        Func<RelationReference, string?>? database = null)
+    {
+        var list = references.ToList();
+        var open = list.Where(r => !r.Hidden).Select(r => DescribeReference(r, database?.Invoke(r)));
+        var hidden = list.Where(r => r.Hidden).GroupBy(r => database?.Invoke(r))
+            .Select(g => DescribeReference(g.First(), g.Key));
+        return string.Join(", ", open.Concat(hidden));
+    }
 
     /// <summary>Одна ссылка для текста окна. Закрытая для пользователя коллекция — без имен и чисел.</summary>
     public static string DescribeReference(RelationReference reference, string? database = null)
     {
         var from = database is null ? "" : $" из базы «{database}»";
-        if (reference.Hidden) return $"связь закрытой коллекции{from}";
-        var count = reference.More
-            ? $"больше {ReferenceCountCap.ToString("N0", System.Globalization.CultureInfo.GetCultureInfo("ru-RU"))} записей"
-            : $"{reference.Sources} {RecordsWord(reference.Sources)}";
-        return $"«{reference.Collection} · {reference.Field}»{from} ({count})";
+        if (reference.Hidden) return $"связи закрытых коллекций{from}";
+        return $"«{reference.Collection} · {reference.Field}»{from} ({reference.Sources} {RecordsWord(reference.Sources)})";
     }
 
     internal static string RecordsWord(int n) => (n % 100, n % 10) switch

@@ -123,8 +123,9 @@ public static class RelationDeleteImpact
     }
 
     /// <summary>То же для записей коллекций (удаление и перенос коллекции или ветки группы). Ссылки
-    /// изнутри удаляемых или переносимых коллекций не считаются: при удалении они уходят вместе с
-    /// ними, при переносе ветки переписываются на копию.</summary>
+    /// изнутри удаляемых коллекций не считаются — они уходят вместе с ними; при переносе не
+    /// считаются только ссылки внутри одного узла (группы или коллекции) — их переписывает копия.
+    /// Каждая пара в <paramref name="groups"/> — один узел.</summary>
     public static Task<RelationDeleteCheck> CheckCollectionsAsync(
         IEnumerable<(ConstructorRepository Repo, IReadOnlyCollection<int> Collections)> groups, bool move = false)
     {
@@ -136,8 +137,12 @@ public static class RelationDeleteImpact
             var items = new List<(string? Database, RelationReference Reference)>();
             foreach (var (owner, collections) in sets)
             {
-                IReadOnlyCollection<int> Together(BaseRef b) =>
-                    sets.Where(s => s.Base.Path == b.Path).SelectMany(s => s.Collections).ToList();
+                // Удаление: ссылки из всех коллекций операции в базе b уходят вместе с ними. Перенос
+                // в другую базу идет по узлу за раз со своей картой копии: переписываются только
+                // ссылки внутри этого узла, ссылки между узлами обрываются и считаются.
+                IReadOnlyCollection<int> Together(BaseRef b) => move
+                    ? (b.Path == owner.Path ? collections : [])
+                    : sets.Where(s => s.Base.Path == b.Path).SelectMany(s => s.Collections).ToList();
                 using (var repo = owner.Open())
                     items.AddRange(repo.Repo.IncomingReferencesToCollections(collections, Together(owner)).Select(r => ((string?)null, r)));
                 if (owner.LinkId <= 0) continue;

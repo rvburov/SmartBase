@@ -192,7 +192,8 @@ public partial class ConstructorRepository
                                          IEnumerable<ImportRow> rows, out string problem)
     {
         using var ctx = new AppDbContext(db.DbPath);
-        var repo = new ConstructorRepository(ctx);
+        // Текст отказа уходит отправителю: закрытые для робота коллекции в нем не называются.
+        var repo = new ConstructorRepository(ctx) { ReferenceViewer = Permissions };
 
         if (repo.FindInboxCollection(message.Collection, out problem) is not { } collectionId)
             return null;
@@ -289,7 +290,9 @@ public partial class ConstructorRepository
         }
 
         // Записи удаляются по одной, но ссылки между ними запрету не мешают: весь набор уходит
-        // в этой же операции.
+        // в этой же операции — одной транзакцией, чтобы сбой на середине не оставил источник
+        // ссылки без удаленной цели.
+        using var write = repo.BeginWrite();
         foreach (var recordId in erase)
         {
             repo.DeleteRecord(recordId, erase);
@@ -300,6 +303,7 @@ public partial class ConstructorRepository
             // список, — и удаление тысяч записей упиралось не в базу, а в этот обход.
             ctx.ChangeTracker.Clear();
         }
+        write.Commit();
 
         return new InboxErase(erase.Count, missing, ambiguous, empty);
     }

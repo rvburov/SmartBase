@@ -1160,19 +1160,28 @@ public partial class CalendarControllerView : UserControl
         var deleted = targets;
         if (targets.Count <= SmallOpCap)
         {
-            // Записи удаляются по одной, но ссылки между ними запрету удаления не мешают: весь
-            // набор своей базы уходит в этой же операции.
+            // Набор каждой базы — одной операцией: права и запрет удаления проверяются до первой
+            // записи, а ссылки между записями набора не мешают (набор уходит целиком или никак).
             deleted = [];
-            foreach (var r in targets)
+            foreach (var g in targets.GroupBy(r => r.DbId))
             {
-                // Не удалилось (база занята/пропала, запрет) — тост и стоп; вид перечитается ниже.
-                if (!TryWrite(RepoOf(r), () => RepoOf(r).DeleteCalendarRecord(r.Id!.Value, byDb[r.DbId]))) break;
-                deleted.Add(r);
+                var repo = RepoOf(g.First());
+                // Не удалилось (база занята/пропала, нет прав, запрет) — тост и стоп; вид перечитается ниже.
+                if (!TryWrite(repo, () => repo.DeleteCalendarRecords(byDb[g.Key]))) break;
+                deleted.AddRange(g);
             }
         }
-        else
-            await BulkDeleteWithProgress(win, targets);
+        else if (!await BulkDeleteWithProgress(win, targets))
+            deleted = [];
 
+        if (deleted.Count != targets.Count)
+        {
+            // Отказ на части набора: что удалено, знает только база — перечитываем вид целиком.
+            _journalDelta = null;
+            CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty);
+            RefreshCurrent();
+            return;
+        }
         _journalDelta = deleted.Select(r => (r, -1)).ToList();
         NotifyChangedAndRefresh(structural: false);
     }
@@ -1182,7 +1191,7 @@ public partial class CalendarControllerView : UserControl
 
     // Массовое удаление: по каждой БД — DeleteRecordsIsolated (bulk-SQL пакетами, мимо EF;
     // значения и calendar_index уходят каскадом по FK) в фоне с окном прогресса.
-    private Task BulkDeleteWithProgress(Avalonia.Controls.Window win, List<CalendarRecord> targets) =>
+    private Task<bool> BulkDeleteWithProgress(Avalonia.Controls.Window win, List<CalendarRecord> targets) =>
         RunCalendarBulk(win, "Удаление", "Удаление записей…", targets.Count, report =>
         {
             long done = 0;
@@ -1241,8 +1250,9 @@ public partial class CalendarControllerView : UserControl
     // (заголовок, фаза, «Количество записей: N», проценты — как удаление коллекции в сайдбаре)
     // появляется, только если операция не уложилась в задержку; средние объемы проходят без
     // окна. В конце — «Сохранение…» (коммит транзакции). report зовется из фона — маршалим сами.
-    private async Task RunCalendarBulk(Avalonia.Controls.Window win, string title, string phase,
-                                       int total, Action<Action<long>> work)
+    // false — работа упала: ошибку показывает DbErrors (занятость, недоступность, запрет), остальное — в журнал.
+    private async Task<bool> RunCalendarBulk(Avalonia.Controls.Window win, string title, string phase,
+                                             int total, Action<Action<long>> work)
     {
         ProgressDialog? dlg = null;
         var lastPct = -1;
@@ -1257,20 +1267,16 @@ public partial class CalendarControllerView : UserControl
             else dlg.SetProgress(pct / 100.0, phase);
         }
 
+        // Ошибка фона не роняет UI: запоминается и после окна уходит в DbErrors.
+        Exception? failure = null;
         var bg = Task.Run(() =>
         {
-            try
-            {
-                work(done => Dispatcher.UIThread.Post(() => Update(done)));
-            }
-            catch
-            {
-                // Фон: ошибку не валим в UI — фактическое состояние покажет обновление ленты.
-            }
+            try { work(done => Dispatcher.UIThread.Post(() => Update(done))); }
+            catch (Exception ex) { failure = ex; }
         });
 
         // Успело быстро — окна не показываем вовсе.
-        if (await Task.WhenAny(bg, Task.Delay(400)) == bg) { await bg; return; }
+        if (await Task.WhenAny(bg, Task.Delay(400)) == bg) { await bg; return Finish(); }
 
         dlg = new ProgressDialog { Title = title };
         dlg.SetInfo($"Количество записей: {total}");
@@ -1279,6 +1285,15 @@ public partial class CalendarControllerView : UserControl
         await bg;
         dlg.Done();
         await closed;
+        return Finish();
+
+        bool Finish()
+        {
+            if (failure is null) return true;
+            if (!DbErrors.Handle(failure, _dbs.FirstOrDefault().Repo?.DbPath))
+                Serilog.Log.Error(failure, "Массовая операция календаря «{Title:l}» не завершилась", title);
+            return false;
+        }
     }
 
     // Адаптер IProgress<int> для прогресса с фонового потока (передается в *Isolated-методы).

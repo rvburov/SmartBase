@@ -778,7 +778,8 @@ public partial class ConstructorRepository(AppDbContext db)
         Demand(PermAction.DeleteCollection);
         using var ctx = new AppDbContext(db.DbPath);
         ctx.ApplyBulkPerformancePragmas();
-        new ConstructorRepository(ctx).DeleteGroupData(groupId, progress, collectionsTogether: collectionsTogether);
+        new ConstructorRepository(ctx) { ReferenceViewer = Permissions }
+            .DeleteGroupData(groupId, progress, collectionsTogether: collectionsTogether);
     }
 
     /// <summary>
@@ -1273,7 +1274,8 @@ public partial class ConstructorRepository(AppDbContext db)
         Demand(PermAction.DeleteCollection, collectionId);
         using var ctx = new AppDbContext(db.DbPath);
         ctx.ApplyBulkPerformancePragmas();
-        new ConstructorRepository(ctx).DeleteCollectionData(collectionId, progress, collectionsTogether: collectionsTogether);
+        new ConstructorRepository(ctx) { ReferenceViewer = Permissions }
+            .DeleteCollectionData(collectionId, progress, collectionsTogether: collectionsTogether);
         // Хвост журнала переносит закрытие контекста (AppDbContext.Dispose массового профиля).
     }
 
@@ -4487,7 +4489,7 @@ public partial class ConstructorRepository(AppDbContext db)
     {
         using var ctx = new AppDbContext(db.DbPath);
         ctx.ApplyPerformancePragmas();
-        var repo = new ConstructorRepository(ctx);
+        var repo = new ConstructorRepository(ctx) { ReferenceViewer = Permissions };
         // Право проверяем по коллекции ПЕРВОЙ записи (мультивыделение таблицы всегда
         // в одной коллекции); лукап — через свежий контекст (обертка работает в фоне).
         if (recordIds.Count > 0)
@@ -4896,7 +4898,7 @@ public partial class ConstructorRepository(AppDbContext db)
 
         using var targetCtx = new AppDbContext(DbPath);
         targetCtx.ApplyPerformancePragmas();
-        var targetRepo = new ConstructorRepository(targetCtx);
+        var targetRepo = new ConstructorRepository(targetCtx) { ReferenceViewer = Permissions };
 
         var sameDb = string.Equals(sourceDbPath, DbPath, StringComparison.OrdinalIgnoreCase);
         AppDbContext? sourceCtx = null;
@@ -7204,12 +7206,31 @@ public partial class ConstructorRepository(AppDbContext db)
         db.SaveChanges();
     }
 
-    /// <summary>Удалить запись календаря или задачу. <paramref name="deletedTogether"/> — записи,
-    /// удаляемые в той же операции по одной: ссылки из них запрету удаления не мешают.</summary>
-    public void DeleteCalendarRecord(int id, IReadOnlyCollection<int>? deletedTogether = null)
+    public void DeleteCalendarRecord(int id)
     {
         Demand(PermAction.DeleteRecord, CollectionOfRecord(id));
-        EnsureDeleteAllowed([id], deletedTogether);
+        EnsureDeleteAllowed([id]);
+        DeleteCalendarRecordCore(id);
+    }
+
+    /// <summary>Удалить набор записей календаря или задач одной базы одной операцией: права на все
+    /// их коллекции и запрет удаления проверяются до первой записи, удаление идет одной
+    /// транзакцией. Ссылки между записями набора запрету не мешают — набор уходит целиком или не
+    /// уходит вовсе, поэтому сбой на середине не оставит источник без удаленной цели.</summary>
+    public void DeleteCalendarRecords(IReadOnlyCollection<int> ids)
+    {
+        var list = ids.Distinct().ToList();
+        if (list.Count == 0) return;
+        foreach (var collection in list.Select(CollectionOfRecord).Distinct())
+            Demand(PermAction.DeleteRecord, collection);
+        EnsureDeleteAllowed(list);
+        using var write = BeginWrite();
+        foreach (var id in list) DeleteCalendarRecordCore(id);
+        write.Commit();
+    }
+
+    private void DeleteCalendarRecordCore(int id)
+    {
         var rec = db.DbRecords.Find(id);
         if (rec is not null)
         {
