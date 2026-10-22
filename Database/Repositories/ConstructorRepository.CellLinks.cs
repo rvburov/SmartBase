@@ -41,7 +41,10 @@ public sealed partial class ConstructorRepository
         public string? Config { get; init; }
     }
 
-    public sealed record LinkBulkResult(int Changed, int Conflicts, IReadOnlyList<LinkChange> Changes, bool ChangesTruncated = false)
+    /// <param name="ConditionRefused">Ячеек, пропущенных целиком: новая связь не подходит под
+    /// условие выбора записей.</param>
+    public sealed record LinkBulkResult(int Changed, int Conflicts, IReadOnlyList<LinkChange> Changes, bool ChangesTruncated = false,
+        int ConditionRefused = 0)
     {
         public static LinkBulkResult Nothing { get; } = new(0, 0, []);
     }
@@ -176,6 +179,7 @@ public sealed partial class ConstructorRepository
 
         var changes = new List<LinkChange>();
         var conflicts = 0;
+        var conditionRefused = 0;
         var changed = 0;
         long undoUnits = 0;
         var truncated = false;
@@ -211,8 +215,12 @@ public sealed partial class ConstructorRepository
             // Старый API сохраняет поведение SetLinks. Структурная вставка не теряет лишние цели.
             if (write.Targets is not null && config.Single && requested.Distinct().Count() > 1)
             { conflicts++; continue; }
+            // Новая цель вне условия выбора — ячейка пропускается целиком: частично вставленный
+            // набор связей человек не просил.
+            var refused = new List<RelationTarget>();
             var wanted = NormalizeRelationTargets(config, write.RecordId, requested,
-                write.RestoreTargets is null ? old : old.Concat(write.RestoreTargets).Distinct().ToList());
+                write.RestoreTargets is null ? old : old.Concat(write.RestoreTargets).Distinct().ToList(), refused: refused);
+            if (refused.Count > 0) { conditionRefused++; continue; }
             if (write.Targets is not null && wanted.Count != requested.Distinct().Count())
             { conflicts++; continue; }
             if (old.SequenceEqual(wanted)) continue;
@@ -249,7 +257,7 @@ public sealed partial class ConstructorRepository
                     { OldTargets = old.Take(5).ToList(), NewTargets = wanted.Take(5).ToList(), Config = field.ConfigJson });
             }
         }
-        if (changed == 0) return new(0, conflicts, []);
+        if (changed == 0) return new(0, conflicts, [], ConditionRefused: conditionRefused);
         db.SaveChanges();
         Run(db.Database.GetDbConnection(), tx.GetDbTransaction(),
             "UPDATE db_records SET UpdatedAt = @at, UpdatedBy = @by WHERE Id = @rid",
@@ -264,7 +272,7 @@ public sealed partial class ConstructorRepository
         foreach (var id in touched)
             if (db.DbRecords.Local.FirstOrDefault(x => x.Id == id) is { } tracked)
             { tracked.UpdatedAt = stamp; tracked.UpdatedBy = author; }
-        return truncated ? new(changed, conflicts, [], true) : new(changed, conflicts, changes);
+        return truncated ? new(changed, conflicts, [], true, conditionRefused) : new(changed, conflicts, changes, false, conditionRefused);
     }
 
     // «До → после» первых изменений названиями записей — как строка журнала SetLinks.

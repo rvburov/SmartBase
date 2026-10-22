@@ -242,6 +242,97 @@ internal static class RelationChecks
                 && repo.GetFields(source).Any(f => f.Id == lookup.Id),
                 "удаленная строка удалила только свой столбец");
 
+            // Условие выбора записей: строки окна, сохранение, переспрос пустого условия, список выбора.
+            var state = Field(target, "Состояние", "select", JsonSerializer.Serialize(new { options = new[] { "Активен", "Закрыт" } }));
+            var stateKey = state.Id!.Value.ToString();
+            repo.SetFieldValue(a, state.Id.Value, "Активен");
+            repo.SetFieldValue(b, state.Id.Value, "Закрыт");
+            var conditioned = Field(source, "Активный клиент", "relation", legacyJson);
+            repo.SetLinks(conditioned.Id!.Value, record, [b]);
+            var conditionDialog = new PropertyEditorDialog(repo, source, conditioned.Id.Value) { MaxHeight = 600 };
+            var conditionClosed = conditionDialog.ShowDialog<bool>(owner);
+            Pump();
+            Expect(conditionDialog.FindControl<TextBlock>("RelationConditionEmpty")!.IsVisible && ConditionRows(conditionDialog).Count == 0,
+                "у связи без условия блок пишет, что выбрать можно любую запись");
+            var addCondition = conditionDialog.FindControl<Button>("AddConditionBtn")!;
+            addCondition.BringIntoView();
+            Click(conditionDialog, addCondition);
+            var conditionRow = ConditionRows(conditionDialog).Single();
+            Choose(RowCombo(conditionRow, "Property"), "Key", stateKey);
+            var choices = ((WrapPanel)conditionRow.GetType().GetProperty("Choices")!.GetValue(conditionRow)!).Children.OfType<CheckBox>().ToList();
+            Expect(SelectedOp(conditionRow) == RelationCondition.Equal && choices.Select(c => c.Tag).SequenceEqual(["Активен", "Закрыт"])
+                && !((TextBox)conditionRow.GetType().GetProperty("Text")!.GetValue(conditionRow)!).IsVisible
+                && !conditionDialog.FindControl<TextBlock>("RelationConditionEmpty")!.IsVisible,
+                "у списка условие «равно» предлагает пункты галочками, а не поле для текста");
+            choices[0].IsChecked = true;
+            ((Control)conditionRow.GetType().GetProperty("Root")!.GetValue(conditionRow)!).BringIntoView();
+            Pump();
+            using (var frame = conditionDialog.CaptureRenderedFrame()) frame?.Save(Path.Combine(outDir, "relations-condition-dialog.png"));
+            Click(conditionDialog, conditionDialog.FindControl<Button>("SaveBtn")!);
+            Wait(() => conditionClosed.IsCompleted, "связь с условием не сохранилась");
+            var conditionCfg = RelationConfig.FromConfig(repo.GetFields(source).Single(f => f.Id == conditioned.Id).ConfigJson)!;
+            Expect(conditionClosed.Result && conditionCfg.Where is { Count: 1 } savedWhere
+                && savedWhere[0] == new RelationCondition(stateKey, RelationCondition.Equal, ["Активен"])
+                && repo.GetLinkTargetIds(conditioned.Id.Value, record).SequenceEqual([b]),
+                "сохранение записало условие, прежняя связь вне условия осталась");
+
+            var emptyDialog = new PropertyEditorDialog(repo, source, conditioned.Id.Value) { MaxHeight = 600 };
+            var emptyClosed = emptyDialog.ShowDialog<bool>(owner);
+            Pump();
+            var restoredRow = ConditionRows(emptyDialog).Single();
+            var restoredChoices = ((WrapPanel)restoredRow.GetType().GetProperty("Choices")!.GetValue(restoredRow)!).Children.OfType<CheckBox>().ToList();
+            Expect(SelectedKey(RowCombo(restoredRow, "Property")) == stateKey && SelectedOp(restoredRow) == RelationCondition.Equal
+                && restoredChoices.Select(c => c.IsChecked == true).SequenceEqual([true, false]),
+                "повторное открытие восстановило условие строкой с отмеченным пунктом");
+            Choose(RowCombo(restoredRow, "Op"), "Op", RelationCondition.Empty);
+            Expect(!((WrapPanel)restoredRow.GetType().GetProperty("Choices")!.GetValue(restoredRow)!).IsVisible
+                && ((TextBlock)restoredRow.GetType().GetProperty("NoValue")!.GetValue(restoredRow)!).IsVisible,
+                "у «пусто» значения нет, окно так и пишет");
+            Click(emptyDialog, emptyDialog.FindControl<Button>("SaveBtn")!);
+            Wait(() => emptyDialog.OwnedWindows.OfType<ConfirmDialog>().Any(), "условие, под которое ничего не подходит, не переспросило");
+            var emptyAsk = emptyDialog.OwnedWindows.OfType<ConfirmDialog>().Single();
+            Expect(emptyAsk.FindControl<TextBlock>("MessageLabel")!.Text!.Contains("ни одна запись коллекции «Клиенты»", StringComparison.Ordinal),
+                "переспрос называет коллекцию, в которой ничего не подходит");
+            Click(emptyAsk, emptyAsk.FindControl<Button>("CancelBtn")!);
+            Wait(() => !emptyDialog.OwnedWindows.OfType<ConfirmDialog>().Any(), "переспрос не закрылся");
+            Expect(!emptyClosed.IsCompleted
+                && RelationConfig.FromConfig(repo.GetFields(source).Single(f => f.Id == conditioned.Id).ConfigJson)!.Where![0].Op == RelationCondition.Equal,
+                "«Вернуться» оставляет окно открытым и прежнее условие в базе");
+            Click(emptyDialog, emptyDialog.FindControl<Button>("CancelBtn")!);
+            Wait(() => emptyClosed.IsCompleted, "окно условия не закрылось");
+
+            var conditionPicker = new RelationSelectBox(repo, conditioned.Id.Value, conditionCfg, editing: true) { RecordId = record, Height = 38 };
+            owner.Content = conditionPicker;
+            Pump();
+            conditionPicker.OpenSearch("");
+            Wait(() => SearchReady(conditionPicker) && Shown(conditionPicker).Length == 2, "список связи с условием не загрузился");
+            var conditionPopup = Private<Popup>(conditionPicker, "_popup");
+            LayoutPopup(conditionPopup);
+            var hint = Private<TextBlock>(conditionPicker, "_conditionHint");
+            Expect(hint.IsVisible && hint.Text == "Только записи, где «Состояние» равно «Активен»",
+                "под поиском написано условие выбора");
+            var outsideMarks = conditionPopup.Child!.GetVisualDescendants().OfType<TextBlock>()
+                .Where(t => t.Text == "не подходит под условие выбора").ToList();
+            Expect(Shown(conditionPicker).Select(VmId).SequenceEqual([b, a]) && outsideMarks.Count(t => t.IsVisible) == 1
+                && (bool)Shown(conditionPicker)[0].GetType().GetProperty("Outside")!.GetValue(Shown(conditionPicker)[0])!,
+                "в списке только подходящая запись и прежняя связь с пометкой в строке");
+            var outsideVm = Shown(conditionPicker)[0];
+            outsideVm.GetType().GetProperty("Checked")!.SetValue(outsideVm, false);
+            Wait(() => owner.OwnedWindows.OfType<ConfirmDialog>().Any(), "снятие связи вне условия не переспросило");
+            var lossAsk = owner.OwnedWindows.OfType<ConfirmDialog>().Single();
+            Expect(lossAsk.FindControl<TextBlock>("MessageLabel")!.Text
+                    == "Запись «Компания Б» не подходит под условие выбора: снятую связь выбрать снова будет нельзя.",
+                "переспрос говорит, что снятую связь вернуть будет нельзя");
+            Click(lossAsk, lossAsk.FindControl<Button>("CancelBtn")!);
+            Wait(() => !owner.OwnedWindows.OfType<ConfirmDialog>().Any(), "переспрос снятия не закрылся");
+            Expect(repo.GetLinkTargetIds(conditioned.Id.Value, record).SequenceEqual([b]), "отказ от снятия оставил связь");
+            var matchingVm = Shown(conditionPicker).Single(item => VmId(item) == a);
+            matchingVm.GetType().GetProperty("Checked")!.SetValue(matchingVm, true);
+            Pump();
+            Expect(repo.GetLinkTargetIds(conditioned.Id.Value, record).SequenceEqual([b, a]),
+                "подходящая запись выбирается, прежняя связь вне условия остается");
+            conditionPopup.IsOpen = false;
+
             var filterDisplay = typeof(TableView).GetMethod("DisplayValue", BindingFlags.NonPublic | BindingFlags.Static)!;
             Expect((string?)filterDisplay.Invoke(null, ["1.5", "rollup", ", ", null]) == "1,5"
                 && (string?)filterDisplay.Invoke(null, ["1.5", "lookup", ", ", null]) == "1.5",
@@ -429,6 +520,11 @@ internal static class RelationChecks
     private static ComboBox Combo(Window window, string name) => window.FindControl<ComboBox>(name)!;
     private static List<object> DataRows(PropertyEditorDialog dialog) =>
         Private<System.Collections.IEnumerable>(dialog, "_relationData").Cast<object>().ToList();
+    private static List<object> ConditionRows(PropertyEditorDialog dialog) =>
+        Private<System.Collections.IEnumerable>(dialog, "_conditionRows").Cast<object>().ToList();
+    private static string? SelectedOp(object row) =>
+        RowCombo(row, "Op").SelectedItem?.GetType().GetProperty("Op")?.GetValue(RowCombo(row, "Op").SelectedItem) as string;
+    private static int VmId(object item) => (int)item.GetType().GetProperty("Id")!.GetValue(item)!;
     private static ComboBox RowCombo(object row, string name) => (ComboBox)row.GetType().GetProperty(name)!.GetValue(row)!;
     private static TextBox RowName(object row) => (TextBox)row.GetType().GetProperty("Name")!.GetValue(row)!;
     private static string? RowText(object row) => RowName(row).Text;

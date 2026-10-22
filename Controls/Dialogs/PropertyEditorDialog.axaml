@@ -523,6 +523,22 @@
                 <Button x:Name="AddSearchBtn" Classes="link" Content="+ Еще свойство"
                         HorizontalAlignment="Left" />
             </StackPanel>
+            <!-- Условие выбора записей: строки строятся в code-behind
+                 (PropertyEditorDialog.RelationCondition). -->
+            <StackPanel Spacing="6">
+                <TextBlock Text="Условие выбора записей" FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <TextBlock TextWrapping="Wrap" Foreground="{StaticResource BrushSecondaryText}"
+                           Text="Связать можно только записи, которые подходят под все условия: при выборе, вставке, импорте и автоподборе. Уже выбранные связи не снимаются — несоответствия покажет «Проверить связи»." />
+                <w:NoticeBanner x:Name="RelationConditionNote" />
+                <TextBlock x:Name="RelationConditionEmpty" Text="Условий нет — можно выбрать любую запись коллекции."
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <StackPanel x:Name="RelationConditionList" Spacing="8" />
+                <Button x:Name="AddConditionBtn" Classes="link" Content="+ Добавить условие"
+                        HorizontalAlignment="Left" />
+                <Button x:Name="RemoveConditionBtn" Classes="link" Content="Убрать условие"
+                        HorizontalAlignment="Left" IsVisible="False" />
+            </StackPanel>
             <StackPanel Spacing="6">
                 <TextBlock Text="Режим связи" FontWeight="{StaticResource FontWeightBold}"
                            Foreground="{StaticResource BrushSecondaryText}" />

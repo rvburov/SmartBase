@@ -56,6 +56,10 @@ public sealed class RelationSelectBox : Panel
     private readonly Popup?    _popup;
     private TextBox?   _search;
     private TextBlock? _moreHint;
+    // Строка под поиском: условие выбора записей или почему новые связи не выбираются.
+    private TextBlock? _conditionHint;
+    // Выбранные раньше записи вне условия выбора: связь остается, снятую выбрать снова нельзя.
+    private HashSet<RelationTarget> _outside = [];
     private int _recordId;
     private CancellationTokenSource? _pickerSearch;
     private int _searchGeneration;
@@ -367,6 +371,15 @@ public sealed class RelationSelectBox : Panel
                                   valuesList, _search, Brush("BrushSecondaryText", Colors.Gray), fontBase),
         };
 
+        _conditionHint = new TextBlock
+        {
+            FontSize     = Res("FontSizeSmall", 11.0),
+            Foreground   = Brush("BrushSecondaryText", Colors.Gray),
+            TextWrapping = TextWrapping.Wrap,
+            Margin       = new Thickness(2, 0, 2, 4),
+            IsVisible    = false,
+        };
+
         // Подсказка «показаны первые N — уточните в поиске» (видна, когда кандидатов больше капа).
         _moreHint = new TextBlock
         {
@@ -380,6 +393,7 @@ public sealed class RelationSelectBox : Panel
         // записей дочитываются горизонтальной полосой карточки, а не растягивают попап.
         var stack = new StackPanel { Spacing = 2, Width = Res("PopupContentWidth", 240) };
         stack.Children.Add(_search);
+        stack.Children.Add(_conditionHint);
         stack.Children.Add(valuesCard);
         stack.Children.Add(_moreHint);
 
@@ -409,9 +423,19 @@ public sealed class RelationSelectBox : Panel
             };
             detail.Bind(TextBlock.TextProperty, new Binding(nameof(RelationOptionVm.Detail)));
             detail.Bind(IsVisibleProperty, new Binding(nameof(RelationOptionVm.HasDetail)));
+            // Пометка в самой строке, не в подсказке: выбранная раньше запись вне условия выбора.
+            var outside = new TextBlock
+            {
+                Text = "не подходит под условие выбора",
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                FontSize = Math.Max(9, fontBase - 1),
+                Foreground = Brush("BrushOrange", Colors.DarkOrange),
+            };
+            outside.Bind(IsVisibleProperty, new Binding(nameof(RelationOptionVm.Outside)));
             var label = new StackPanel();
             label.Children.Add(name);
             label.Children.Add(detail);
+            label.Children.Add(outside);
 
             var cb = new CheckBox
             {
@@ -514,6 +538,14 @@ public sealed class RelationSelectBox : Panel
 
     private void ApplyPickerData(RelationPickerData data, string q)
     {
+        _outside = data.SelectedOutside?.ToHashSet() ?? [];
+        if (_conditionHint is not null)
+        {
+            _conditionHint.Text = data.ConditionProblem ?? (data.Condition.Length > 0 ? $"Только записи, где {data.Condition}" : "");
+            _conditionHint.Foreground = data.ConditionProblem is null
+                ? Brush("BrushSecondaryText", Colors.Gray) : Brush("BrushOrange", Colors.DarkOrange);
+            _conditionHint.IsVisible = _conditionHint.Text.Length > 0;
+        }
         foreach (var pair in data.SelectedLabels) _titles[pair.Key] = pair.Value;
         foreach (var value in data.Candidates) _titles[new(_cfg.TargetDbId, value.RecordId)] = value.Display;
         var list = new List<RelationOptionVm>();
@@ -551,6 +583,27 @@ public sealed class RelationSelectBox : Panel
         if (on) { if (!next.Contains(target)) next.Add(target); }
         else next.Remove(target);
         if (next.SequenceEqual(_selected)) return;
+        // Снимается запись вне условия выбора (сама или заменой в режиме «Одну»): вернуть ее будет
+        // нельзя — спрашиваем.
+        var lost = _selected.Where(t => !next.Contains(t) && _outside.Contains(t)).ToList();
+        if (lost.Count > 0) { _ = ConfirmOutsideRemovalAsync(next, lost, replacing: on); return; }
+        Apply(next);
+    }
+
+    private async Task ConfirmOutsideRemovalAsync(List<RelationTarget> next, List<RelationTarget> lost, bool replacing)
+    {
+        var name = TitleText.FirstLine(_titles.GetValueOrDefault(lost[0], ""));
+        var text = replacing
+            ? $"Прежняя связь «{name}» не подходит под условие выбора: вернуть ее после замены будет нельзя."
+            : $"Запись «{name}» не подходит под условие выбора: снятую связь выбрать снова будет нельзя.";
+        var ok = TopLevel.GetTopLevel(this) is Window owner && await new SmartBase.Controls.Dialogs.ConfirmDialog(
+            text, replacing ? "Заменить" : "Снять связь").ShowDialog<bool>(owner);
+        if (ok) Apply(next);
+        else foreach (var item in _shown) item.Refresh();
+    }
+
+    private void Apply(List<RelationTarget> next)
+    {
         try
         {
             if (_recordId > 0) _repo.SetLinkEdges(_fieldId, _recordId, next);
@@ -559,6 +612,13 @@ public sealed class RelationSelectBox : Panel
         {
             SmartBase.Controls.Dialogs.PermissionNotice.Show(this, PermAction.EditRecord);
             foreach (var item in _shown) item.Refresh();
+            return;
+        }
+        catch (RelationConditionException ex)
+        {
+            // Список устарел: запись перестала подходить, пока он был открыт.
+            AppNotifications.Info(ex.Message + " Список обновлен.");
+            RefreshList(_search?.Text);
             return;
         }
         _cache?.Invalidate(_fieldId, _recordId);
@@ -583,6 +643,7 @@ public sealed class RelationSelectBox : Panel
         public string Title => title.Length == 0 ? "(пусто)" : TitleText.FirstLine(title);
         public string Detail => recordTitle is RelationProperty.NoAccess or RelationProperty.Unavailable or RelationProperty.UnknownBase ? "" : TitleText.FirstLine(recordTitle);
         public bool HasDetail => Detail.Length > 0 && Detail != Title;
+        public bool Outside => owner._outside.Contains(target);
 
         public bool Checked
         {

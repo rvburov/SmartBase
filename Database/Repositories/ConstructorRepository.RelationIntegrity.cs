@@ -171,6 +171,7 @@ public partial class ConstructorRepository
                 var sources = owner.AutoContext.DbRecords.AsNoTracking().Where(r => sourceIds.Contains(r.Id))
                     .ToList().ToDictionary(r => r.Id);
                 var targets = ReadTargets(page);
+                var conditions = ReadConditionVerdicts(page);
                 foreach (var edge in page)
                 {
                     ct.ThrowIfCancellationRequested();
@@ -180,7 +181,7 @@ public partial class ConstructorRepository
                     _source.Fields.TryGetValue(edge.FieldId, out var field);
                     AddHash(source is null ? "missing-source" : JsonSerializer.Serialize(new { source.Id, source.CollectionId,
                         Title = _source.Can(PermAction.ViewCollection, source.CollectionId) ? source.Title : "" }));
-                    CheckEdge(edge, field, source, targets);
+                    CheckEdge(edge, field, source, targets, conditions);
                 }
                 var last = page[^1];
                 (lastField, lastRecord, lastPosition, lastId) = (last.FieldId, last.FromRecordId, last.Position, last.Id);
@@ -267,10 +268,19 @@ public partial class ConstructorRepository
                 }
                 var target = CheckTarget(field, relation);
                 if (target is null) return;
-                if (!relation.DisplayKeys.Concat(relation.SearchKeys).All(key => Property(target, relation.TargetCollectionId, key))
+                if (relation.WhereUnreadable is not null)
+                    FieldIssue(field, RelationIntegrityIssueKind.InvalidConfiguration,
+                        "Условие выбора записей повреждено или задано более новой версией программы: новые связи не выбираются.");
+                if (!relation.DisplayKeys.Concat(relation.SearchKeys).Concat(relation.Where?.Select(c => c.Field) ?? [])
+                        .All(key => Property(target, relation.TargetCollectionId, key))
                     || relation.Auto is { } auto && (!Property(_source, field.CollectionId, auto.SourceField)
                         || !Property(target, relation.TargetCollectionId, auto.TargetField)))
-                    FieldIssue(field, RelationIntegrityIssueKind.MissingDependency, "Одно из свойств показа, поиска или сопоставления отсутствует.");
+                    FieldIssue(field, RelationIntegrityIssueKind.MissingDependency,
+                        "Одно из свойств показа, поиска, сопоставления или условия выбора отсутствует.");
+                else if (relation.Where?.Any(c => !RelationCondition.OpsFor(
+                             RelationCondition.TypeOf(c.Field, PropertyType(target, c.Field))).Contains(c.Op)) == true)
+                    FieldIssue(field, RelationIntegrityIssueKind.InvalidDependency,
+                        "Условие выбора не подходит к типу свойства цели: новые связи не выбираются.");
                 else if (relation.Auto is { } rule)
                 {
                     var sourceType = PropertyType(_source, rule.SourceField);
@@ -419,8 +429,35 @@ public partial class ConstructorRepository
             return result;
         }
 
+        // Решения условия выбора по странице ребер: поле → подходящие цели и текст условия. Поля без
+        // условия, со сломанным условием или с недоступной целью здесь не оцениваются — о сломанном
+        // говорит замечание к свойству, а недоступность не доказывает несоответствия.
+        private Dictionary<int, (IReadOnlySet<int> Allowed, string Condition)> ReadConditionVerdicts(
+            IReadOnlyList<DbRecordLinkEntity> page)
+        {
+            var result = new Dictionary<int, (IReadOnlySet<int>, string)>();
+            foreach (var group in page.GroupBy(e => e.FieldId))
+            {
+                if (!_source.Fields.TryGetValue(group.Key, out var field) || field.FieldType != "relation") continue;
+                if (!_configs.TryGetValue(field.Id, out var cfg)) _configs[field.Id] = cfg = StrictConfig(field.ConfigJson, out _);
+                if (cfg is not { Where.Count: > 0 } || cfg.WhereUnreadable is not null) continue;
+                var configuredDb = cfg.TargetDbId == _dbId && _dbId > 0 ? 0 : cfg.TargetDbId;
+                if (Target(cfg.TargetDbId) is not { } catalog || !catalog.Can(PermAction.ViewCollection, cfg.TargetCollectionId)) continue;
+                var ids = group.Where(e => (e.TargetDbId == _dbId && _dbId > 0 ? 0 : e.TargetDbId) == configuredDb)
+                    .Select(e => e.ToRecordId).Distinct().ToList();
+                try
+                {
+                    var verdict = catalog.Owner.EvaluateRelationCondition(cfg.TargetCollectionId, cfg, ids);
+                    if (verdict.Broken is null) result[field.Id] = (verdict.Allowed, verdict.Condition);
+                }
+                catch (Exception ex) when (ex is DbException or IOException) { /* несоответствие не доказано */ }
+            }
+            return result;
+        }
+
         private void CheckEdge(DbRecordLinkEntity edge, DbFieldEntity? field, DbRecordEntity? source,
-            IReadOnlyDictionary<int, TargetProof> targets)
+            IReadOnlyDictionary<int, TargetProof> targets,
+            IReadOnlyDictionary<int, (IReadOnlySet<int> Allowed, string Condition)> conditions)
         {
             if (source is not null && !_source.Can(PermAction.ViewCollection, source.CollectionId)
                 || field is not null && !_source.Can(PermAction.ViewCollection, field.CollectionId)
@@ -481,6 +518,10 @@ public partial class ConstructorRepository
                 else if (canonicalDb == configuredDb && targetCollection != cfg.TargetCollectionId)
                     Add(RelationIntegrityIssueKind.TargetCollectionMismatch,
                         "Прежняя цель находится в другой коллекции. Ее полная идентичность сохранена, исправление не требуется.");
+                else if (canonicalDb == configuredDb && conditions.TryGetValue(edge.FieldId, out var condition)
+                         && !condition.Allowed.Contains(edge.ToRecordId))
+                    Add(RelationIntegrityIssueKind.ConditionMismatch,
+                        $"Не подходит под условие выбора: {condition.Condition}. Связь сохранена; снять ее можно вручную.");
                 return;
             }
             if (canonicalDb != configuredDb && !proof.Catalog.Admin
@@ -505,12 +546,12 @@ public partial class ConstructorRepository
 
         private void AddIssue(RelationIntegrityIssue issue)
         {
-            if (issue.Kind is RelationIntegrityIssueKind.LegacyMixedTarget
-                or RelationIntegrityIssueKind.NumericProjectionCollision or RelationIntegrityIssueKind.TargetCollectionMismatch)
-                issue = issue with { IsInformational = true };
+            if (RelationIntegrityKinds.IsInformational(issue.Kind)) issue = issue with { IsInformational = true };
             _counts[issue.Kind] = _counts.GetValueOrDefault(issue.Kind) + 1;
             if (issue.IsConfirmed) _confirmed++; else _unverified++;
-            AddHash(JsonSerializer.Serialize(issue));
+            // Несоответствие условию выбора зависит от значений цели, которые исправление не
+            // трогает: смена статуса не должна делать устаревшим план исправления ребер.
+            if (issue.Kind != RelationIntegrityIssueKind.ConditionMismatch) AddHash(JsonSerializer.Serialize(issue));
             if (_issues.Count < options.MaxIssues) _issues.Add(issue);
         }
 

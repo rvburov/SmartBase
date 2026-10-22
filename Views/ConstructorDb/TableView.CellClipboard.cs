@@ -313,8 +313,10 @@ public partial class TableView
 
     // ── Запись ────────────────────────────────────────────────────────────────
 
-    /// <summary>Итог записи ячеек: сколько изменилось и сколько связей не нашлось по названию.</summary>
-    private readonly record struct WriteOutcome(int Changed, int RelationNotFound, int RelationAmbiguous);
+    /// <summary>Итог записи ячеек: сколько изменилось, сколько связей не нашлось по названию и
+    /// сколько ячеек-связей пропущено условием выбора записей.</summary>
+    private readonly record struct WriteOutcome(int Changed, int RelationNotFound, int RelationAmbiguous,
+                                                int RelationOutsideCondition = 0);
 
     /// <summary>Итог одного пакета — и значения, и связи; для отмены нужны оба.</summary>
     private sealed record WriteBatch(ConstructorRepository.CellBulkResult Values,
@@ -356,7 +358,8 @@ public partial class TableView
         RememberForUndo(operation, batch.Values, batch.Links);
         var changed = batch.Values.Changed + batch.Links.Changed;
         if (changed > 0) ReloadRows();   // строки перечитываем целиком: правок много и они разные
-        return new WriteOutcome(changed, batch.RelationNotFound, batch.RelationAmbiguous + batch.Links.Conflicts);
+        return new WriteOutcome(changed, batch.RelationNotFound, batch.RelationAmbiguous + batch.Links.Conflicts,
+                                batch.Links.ConditionRefused);
     }
 
     // Небольшой пакет — сразу, на общем подключении. null — значения не записались (база занята или
@@ -462,6 +465,8 @@ public partial class TableView
             .ToList();
         if (outcome.RelationNotFound > 0)  reasons.Add((outcome.RelationNotFound,  "связей не нашлись по названию"));
         if (outcome.RelationAmbiguous > 0) reasons.Add((outcome.RelationAmbiguous, "связей с неоднозначным названием"));
+        if (outcome.RelationOutsideCondition > 0)
+            reasons.Add((outcome.RelationOutsideCondition, "связей не подходят под условие выбора записей"));
 
         var skippedTotal = reasons.Sum(r => r.Count);
         if (outcome.Changed == 0 && skippedTotal == 0) return;

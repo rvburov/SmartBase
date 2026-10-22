@@ -43,6 +43,7 @@ public partial class ConstructorRepository
                     keys.AddRange(relation.DisplayKeys);
                     if (relation.SearchField is not null) keys.AddRange(relation.SearchKeys);
                     if (relation.Auto is { } rule) keys.Add(rule.TargetField);
+                    keys.AddRange(relation.Where?.Select(c => c.Field) ?? []);
                 }
                 if (keys.Any(k => int.TryParse(k, out var id) && !includedFields.Contains(id)))
                     throw new ExportException($"Для экспорта связи «{field.Name}» включите используемые ей свойства этой коллекции.");
@@ -159,6 +160,13 @@ public partial class ConstructorRepository
                 });
             ValidatePortableRelationProjections(portable, map, ct);
             RemapCopiedRelationConfigs(map.Collections, map.Fields, map.SourceDbId, map.TargetDbId, map.CrossDatabase);
+            // Условие выбора держит и импорт: файл можно поправить руками. Неподходящие связи не
+            // создаются, остальное — как в файле; число пропущенных — в уведомлении.
+            var newFieldIds = fieldMap.Values.ToList();
+            var conditioned = db.DbFields.AsNoTracking().Where(f => newFieldIds.Contains(f.Id) && f.FieldType == "relation").ToList()
+                .Select(f => (f.Id, Config: RelationConfig.FromConfig(f.ConfigJson)))
+                .Where(p => p.Config is { HasCondition: true }).ToDictionary(p => p.Id, p => p.Config!);
+            var skipped = new Dictionary<int, int>();
             long after = 0;
             while (true)
             {
@@ -167,6 +175,7 @@ public partial class ConstructorRepository
                 if (staged.Count == 0) break;
                 var records = ReadRelationRecordMap(staged.SelectMany(e => new[] { e.From, e.Target.RecordId }));
                 var edges = new List<object?[]>();
+                var checks = new List<(int Field, int TargetDbId, int TargetId, int SourceDbId, object?[] Row)>();
                 foreach (var edge in staged)
                 {
                     var internalTarget = IsRelationSourceDatabase(edge.Target.DbId, portable.SourceDbId) && records.ContainsKey(edge.Target.RecordId);
@@ -181,7 +190,19 @@ public partial class ConstructorRepository
                         target.Demand(PermAction.ViewCollection, targetCollection);
                     }
                     if (targetDbId == 0 && targetId == records[edge.From]) throw new ImportException("Переносимая связь ссылается на саму запись.");
-                    edges.Add([fieldMap[edge.Field], records[edge.From], targetId, targetDbId, edge.Position]);
+                    object?[] row = [fieldMap[edge.Field], records[edge.From], targetId, targetDbId, edge.Position];
+                    if (conditioned.TryGetValue(fieldMap[edge.Field], out var cfg) && targetDbId == cfg.TargetDbId)
+                        checks.Add((fieldMap[edge.Field], targetDbId, targetId, edge.Target.DbId, row));
+                    else edges.Add(row);
+                }
+                foreach (var group in checks.GroupBy(c => (c.Field, c.TargetDbId, c.SourceDbId)))
+                {
+                    var cfg = conditioned[group.Key.Field];
+                    var owner = group.Key.TargetDbId == 0 ? this : SnapshotExternalDatabase(shell, group.Key.SourceDbId);
+                    var verdict = owner.EvaluateRelationCondition(cfg.TargetCollectionId, cfg, group.Select(c => c.TargetId).ToList());
+                    foreach (var check in group)
+                        if (verdict.Broken is null && verdict.Allowed.Contains(check.TargetId)) edges.Add(check.Row);
+                        else skipped[group.Key.Field] = skipped.GetValueOrDefault(group.Key.Field) + 1;
                 }
                 InsertRows(db, "db_record_links", "FieldId,FromRecordId,ToRecordId,TargetDbId,Position", edges);
                 after = staged[^1].Seq;
@@ -191,6 +212,7 @@ public partial class ConstructorRepository
             db.Database.ExecuteSqlRaw("DROP TABLE _portable_relation_edges");
             NotifyRelationDataChanged(collection.Id);
             tx.Commit();
+            ReportSkippedLinks(skipped, "Коллекция загружена. Не создано связей");
             return collection.Id;
         }
         catch

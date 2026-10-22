@@ -23,6 +23,8 @@ public sealed class RelationAutoPreview
     public int Removed { get; }
     public int Unmatched { get; }
     public int Ambiguous { get; }
+    /// <summary>Записей-источников, чье совпадение отброшено условием выбора записей.</summary>
+    public int OutsideCondition { get; }
     public int Unavailable => Status is RelationAutoStatus.Unavailable or RelationAutoStatus.NoAccess ? 1 : 0;
     public string Message { get; }
     public IReadOnlyList<RelationAutoChange> Changes { get; }
@@ -33,7 +35,7 @@ public sealed class RelationAutoPreview
     internal RelationAutoPreview(RelationAutoStatus status, int fieldId, int collectionId,
         string configJson, string message, IReadOnlyList<RelationAutoChange>? changes = null,
         int unmatched = 0, int ambiguous = 0, string fingerprint = "", string databaseIdentity = "",
-        DbField? proposedField = null)
+        DbField? proposedField = null, int outsideCondition = 0)
     {
         Status = status;
         FieldId = fieldId;
@@ -46,6 +48,7 @@ public sealed class RelationAutoPreview
         Changed = Changes.Count - Added - Removed;
         Unmatched = unmatched;
         Ambiguous = ambiguous;
+        OutsideCondition = outsideCondition;
         Fingerprint = fingerprint;
         DatabaseIdentity = databaseIdentity;
         ProposedField = proposedField;

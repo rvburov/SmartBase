@@ -3148,6 +3148,7 @@ public partial class ConstructorRepository(AppDbContext db)
             return ToDbField(db.DbFields.AsNoTracking().Single(f => f.Id == id));
         }
         ValidateRelationComputedField(field);
+        ValidateRelationCondition(field);
         if (db.DbFields.Any(f => f.CollectionId == field.CollectionId && f.Name == field.Name))
             throw new InvalidOperationException("Поле с таким именем уже существует.");
 
@@ -3179,6 +3180,7 @@ public partial class ConstructorRepository(AppDbContext db)
             return;
         }
         ValidateRelationComputedField(field);
+        ValidateRelationCondition(field);
         var oldType = db.DbFields.AsNoTracking().Where(f => f.Id == field.Id).Select(f => f.FieldType).FirstOrDefault();
         using var transaction = db.Database.CurrentTransaction is null &&
             (oldType == "relation" || field.FieldType == "relation") ? db.Database.BeginTransaction() : null;
@@ -4425,7 +4427,14 @@ public partial class ConstructorRepository(AppDbContext db)
 
         // Исходящие связи (relation): копия ссылается на те же записи-цели (ToRecordId/Position без
         // изменений), FromRecordId — новая копия. Входящие ссылки на исходную запись НЕ копируются.
+        // Связи на записи вне условия выбора не копируются: иначе дубль стал бы обходом условия.
+        var refused = RefusedDuplicateTargets(src.CollectionId, [recordId])
+            .Select(r => (r.FieldId, r.TargetDbId, r.ToRecordId)).ToHashSet();
         var links = db.DbRecordLinks.AsNoTracking().Where(l => l.FromRecordId == recordId).ToList();
+        var skipped = links.Where(l => refused.Contains((l.FieldId, l.TargetDbId, l.ToRecordId)))
+            .GroupBy(l => l.FieldId).ToDictionary(g => g.Key, g => g.Count());
+        links = links.Where(l => !refused.Contains((l.FieldId, l.TargetDbId, l.ToRecordId))).ToList();
+        ReportSkippedDuplicateLinks(skipped);
         if (links.Count > 0)
         {
             foreach (var l in links)
@@ -4601,6 +4610,8 @@ public partial class ConstructorRepository(AppDbContext db)
         // (см. CopyCollectionDataPg — та же причина: identity-последовательность общая).
         if (db.IsPostgres) return DuplicateRecordsDataPg(collectionId, ids, progress, batchSize);
 
+        // Связи на записи вне условия выбора копии не получают (см. RefusedDuplicateTargets).
+        var refused = RefusedDuplicateTargets(collectionId, ids);
         using var tx = db.Database.BeginTransaction();
 
         // Временный набор выбранных Id — чтобы ранг (ROW_NUMBER по Position,Id) и JOIN значений шли
@@ -4685,10 +4696,13 @@ public partial class ConstructorRepository(AppDbContext db)
                   FROM _dup_recsel s JOIN db_records rr ON rr.Id = s.src_id
                   WHERE rr.CollectionId = {collectionId}) r
               ON r.old_id = l.FromRecordId");
+        var skipped = refused.Count == 0 ? []
+            : DropRefusedDuplicateLinks(refused, $"SELECT Id FROM db_records WHERE Id BETWEEN {firstNew} AND {firstNew + count - 1}");
 
         db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS temp._dup_recsel");
         NotifyRelationDataChanged(collectionId);
         tx.Commit();
+        ReportSkippedDuplicateLinks(skipped);
 
         // Копии могли принести значения видимых полей-дат → наполняем их проекцию календаря
         // по диапазону новых id (без удаления — строки новые).
@@ -4707,6 +4721,8 @@ public partial class ConstructorRepository(AppDbContext db)
                                              IProgress<int>? progress, int batchSize)
     {
         List<int> newIds;
+        var refused = RefusedDuplicateTargets(collectionId, ids);
+        Dictionary<int, int> skipped = [];
         using (var tx = db.Database.BeginTransaction())
         {
             db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS _dup_recsel");
@@ -4780,6 +4796,7 @@ public partial class ConstructorRepository(AppDbContext db)
                 SELECT l.FieldId, m.new_id, l.ToRecordId, l.TargetDbId, l.Position
                 FROM db_record_links l
                 JOIN _dup_rmap m ON m.old_id = l.FromRecordId");
+            if (refused.Count > 0) skipped = DropRefusedDuplicateLinks(refused, "SELECT new_id FROM _dup_rmap");
 
             newIds = new List<int>(count);
             using (var c = db.Database.GetDbConnection().CreateCommand())
@@ -4795,6 +4812,7 @@ public partial class ConstructorRepository(AppDbContext db)
             NotifyRelationDataChanged(collectionId);
             tx.Commit();
         }
+        ReportSkippedDuplicateLinks(skipped);
 
         // Копии могли принести значения видимых полей-дат → наполняем их проекцию по списку id.
         if (newIds.Count > 0)

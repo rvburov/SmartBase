@@ -206,9 +206,14 @@ public partial class ConstructorRepository
     }
 
     /// <summary>Общие правила выбора; прежние смешанные/временно недоступные ребра сохраняются по полной паре.</summary>
+    /// <summary>Ворота новых связей. Цели из <paramref name="allowedExisting"/> (прежние ребра ячейки,
+    /// возврат отмены) проходят без проверок; новые обязаны существовать в целевой коллекции и
+    /// подходить под условие выбора. Отклоненные условием: при <paramref name="refused"/> = null —
+    /// <see cref="RelationConditionException"/>, иначе они складываются в список. Сломанное условие
+    /// закрывает новые связи всегда.</summary>
     internal List<RelationTarget> NormalizeRelationTargets(RelationConfig cfg, int sourceId,
         IReadOnlyList<RelationTarget> targets, IReadOnlyCollection<RelationTarget>? allowedExisting = null,
-        bool allowUnresolved = false)
+        bool allowUnresolved = false, List<RelationTarget>? refused = null)
     {
         var previous = allowedExisting?.ToHashSet() ?? [];
         var wanted = new List<RelationTarget>();
@@ -222,6 +227,9 @@ public partial class ConstructorRepository
         {
             if (targetRepo is null)
             {
+                // Старый API доверял недоступной базе, но условие без нее не проверить: иначе
+                // он стал бы обходом условия.
+                if (cfg.HasCondition) throw new InvalidOperationException("Целевая база связи недоступна: условие выбора проверить нельзя.");
                 if (!allowUnresolved) throw new InvalidOperationException("Целевая база связи недоступна.");
                 valid = newTargets.Select(t => t.RecordId).ToHashSet();
             }
@@ -231,6 +239,20 @@ public partial class ConstructorRepository
                 var ids = newTargets.Select(t => t.RecordId).ToList();
                 valid = targetRepo.ReadRelationPropertyValues(cfg.TargetCollectionId, RelationConfig.TitleField, ids)
                     .Select(r => r.RecordId).ToHashSet();
+                if (cfg.HasCondition && valid.Count > 0)
+                {
+                    var verdict = targetRepo.EvaluateRelationCondition(cfg.TargetCollectionId, cfg, valid);
+                    if (verdict.Broken is { } broken) throw new RelationConditionException(broken);
+                    var outside = valid.Where(id => !verdict.Allowed.Contains(id)).ToList();
+                    if (outside.Count > 0)
+                    {
+                        if (refused is null)
+                            throw new RelationConditionException(
+                                targetRepo.ConditionRefusal(cfg.TargetCollectionId, outside, verdict.Condition));
+                        refused.AddRange(outside.Select(id => new RelationTarget(cfg.TargetDbId, id)));
+                        valid = verdict.Allowed.ToHashSet();
+                    }
+                }
             }
         }
         foreach (var target in candidates)

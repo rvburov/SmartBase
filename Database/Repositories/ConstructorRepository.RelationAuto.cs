@@ -242,6 +242,16 @@ public partial class ConstructorRepository
         ct.ThrowIfCancellationRequested();
         var targets = target.ReadRelationPropertyValues(cfg.TargetCollectionId, rule.TargetField);
         ct.ThrowIfCancellationRequested();
+        // Условие выбора: подбираются только подходящие записи цели; прежняя цель остается, пока
+        // совпадает ключ. Сломанное условие — отказ, прежние связи сохраняются.
+        IReadOnlySet<int>? allowed = null;
+        if (cfg.HasCondition)
+        {
+            var verdict = target.EvaluateRelationCondition(cfg.TargetCollectionId, cfg, null);
+            if (verdict.Broken is { } broken) return AutoFailure(RelationAutoStatus.InvalidRule, field, broken + " Прежние связи сохранены.");
+            allowed = verdict.Allowed;
+            ct.ThrowIfCancellationRequested();
+        }
         var targetDbId = cfg.TargetDbId;
         var targetIndex = new Dictionary<string, List<RelationTarget>>(StringComparer.Ordinal);
         var sourceDbId = RelationDbResolver.DbIdFor(this);
@@ -264,27 +274,30 @@ public partial class ConstructorRepository
         var changes = new List<RelationAutoChange>();
         var unmatched = 0;
         var ambiguous = 0;
+        var outside = 0;
         foreach (var source in sources)
         {
             ct.ThrowIfCancellationRequested();
             if (!RelationAutoMatch.TryKey(source.Raw, source.FieldType, out var key, sourceDbId))
                 return AutoValueFailure(field, source, "исходном");
-            var wanted = key is not null && targetIndex.TryGetValue(key, out var matches)
-                ? matches.Where(t => t.DbId != 0 || t.RecordId != source.RecordId)
-                    .Distinct().OrderBy(t => t.DbId).ThenBy(t => t.RecordId).ToArray()
+            var old = previousByRecord.GetValueOrDefault(source.RecordId, []);
+            var found = key is not null && targetIndex.TryGetValue(key, out var matches)
+                ? matches.Where(t => t.DbId != 0 || t.RecordId != source.RecordId).Distinct().ToArray()
                 : [];
+            var wanted = found.Where(t => allowed is null || allowed.Contains(t.RecordId) || old.Contains(t))
+                .OrderBy(t => t.DbId).ThenBy(t => t.RecordId).ToArray();
+            if (wanted.Length < found.Length) outside++;
             if (wanted.Length == 0) unmatched++;
             if (cfg.Single && wanted.Length > 1) { ambiguous++; continue; }
-            var old = previousByRecord.GetValueOrDefault(source.RecordId, []);
             if (old.SequenceEqual(wanted)) continue;
             changes.Add(new(source.RecordId, source.Title, Array.AsReadOnly(old), Array.AsReadOnly(wanted)));
         }
         ct.ThrowIfCancellationRequested();
-        var fingerprint = AutoFingerprint(field, rule, target, sources, targets, previous);
+        var fingerprint = AutoFingerprint(field, rule, target, sources, targets, previous, allowed);
         return new(ambiguous > 0 ? RelationAutoStatus.Ambiguous : RelationAutoStatus.Ready,
             field.Id ?? 0, field.CollectionId, field.ConfigJson,
             ambiguous > 0 ? $"Для {ambiguous} записей найдено несколько целей. Выберите режим «Несколько» или уточните значения."
-                : "Подбор готов к сохранению.", changes, unmatched, ambiguous, fingerprint, AutoDatabaseIdentity(), field);
+                : "Подбор готов к сохранению.", changes, unmatched, ambiguous, fingerprint, AutoDatabaseIdentity(), field, outside);
     }
 
     private int SaveAutoRelationFieldCore(DbField field, RelationAutoPreview preview, CancellationToken ct,
@@ -439,7 +452,8 @@ public partial class ConstructorRepository
 
     private string AutoFingerprint(DbField field, RelationAutoRule rule, ConstructorRepository target,
         IReadOnlyList<RelationPropertyValue> sources,
-        IReadOnlyList<RelationPropertyValue> targets, IReadOnlyList<DbRecordLinkEntity> previous)
+        IReadOnlyList<RelationPropertyValue> targets, IReadOnlyList<DbRecordLinkEntity> previous,
+        IReadOnlySet<int>? allowed = null)
     {
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         void Add(string value)
@@ -468,6 +482,8 @@ public partial class ConstructorRepository
             foreach (var value in set.OrderBy(v => v.RecordId)) Add(JsonSerializer.Serialize(value));
         }
         foreach (var edge in previous) Add($"{edge.FromRecordId}:{edge.TargetDbId}:{edge.ToRecordId}:{edge.Position}");
+        // Подошедшие под условие выбора: смена статуса цели после просмотра требует нового просмотра.
+        if (allowed is not null) Add(string.Join(",", allowed.Order()));
         return Convert.ToHexString(hash.GetHashAndReset());
     }
 
@@ -550,7 +566,9 @@ public partial class ConstructorRepository
             if (cfg.Auto is not { } auto) return false;
             if (Property(owner, field.CollectionId, auto.SourceField)) return true;
             var target = cfg.TargetDbId == 0 ? owner : RelationDbResolver.RepoFor(cfg.TargetDbId);
-            return target is not null && Property(target, cfg.TargetCollectionId, auto.TargetField);
+            // Подбор зависит и от свойств условия выбора: запись цели могла начать или перестать подходить.
+            return target is not null && (Property(target, cfg.TargetCollectionId, auto.TargetField)
+                || (cfg.Where ?? []).Any(c => Property(target, cfg.TargetCollectionId, c.Field)));
         }
         return RelationConfig.FromConfig(proposed.ConfigJson) is { } cfg && Rule(this, proposed, cfg);
     }

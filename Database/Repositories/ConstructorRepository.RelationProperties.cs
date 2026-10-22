@@ -45,7 +45,7 @@ public partial class ConstructorRepository
             new(RelationConfig.TitleField, GetSystemFieldNames(collectionId).GetValueOrDefault(TitleKey, "Название"), "text"),
         };
         result.AddRange(GetFields(collectionId).Where(f => f.Id.HasValue)
-            .Select(f => new RelationPropertyOption(f.Id!.Value.ToString(), f.Name, f.FieldType)));
+            .Select(f => new RelationPropertyOption(f.Id!.Value.ToString(), f.Name, f.FieldType, f.ConfigJson)));
         return result;
     }
 
@@ -157,8 +157,11 @@ public partial class ConstructorRepository
         return result;
     }
 
+    /// <summary>Записи для выбора в связь. <paramref name="condition"/> — настройка связи с условием
+    /// выбора: тогда находятся только подходящие записи.</summary>
     public List<RelationPropertyValue> SearchRelationRecords(int collectionId, string fieldKey, string? query,
-        int excludeId = 0, int take = 200) => SearchRelationRecordsCore(collectionId, fieldKey, query, excludeId, take, default);
+        int excludeId = 0, int take = 200, RelationConfig? condition = null) =>
+        SearchRelationRecordsCore(collectionId, fieldKey, query, excludeId, take, default, condition);
 
     public Task<List<RelationPropertyValue>> SearchRelationRecordsAsync(int collectionId, string fieldKey, string? query,
         int excludeId = 0, int take = 200, CancellationToken ct = default)
@@ -186,7 +189,7 @@ public partial class ConstructorRepository
             ct.ThrowIfCancellationRequested();
             var target = cfg.TargetDbId == 0 ? repo : RelationDbResolver.RepoFor(cfg.TargetDbId);
             var found = target?.SearchRelationRecordsCore(cfg.TargetCollectionId, cfg.EffectiveSearchField,
-                query, cfg.TargetDbId == 0 ? recordId : 0, 201, ct) ?? [];
+                query, cfg.TargetDbId == 0 ? recordId : 0, 201, ct, cfg) ?? [];
             ct.ThrowIfCancellationRequested();
             var more = found.Count > 200;
             var candidateIds = found.Take(200).Select(v => v.RecordId).ToList();
@@ -201,17 +204,26 @@ public partial class ConstructorRepository
             var titles = cfg.DisplayKeys.Contains(RelationConfig.TitleField) ? new Dictionary<RelationTarget, string>()
                 : repo.ResolveRelationLabels(targets, RelationConfig.TitleField);
             ct.ThrowIfCancellationRequested();
-            return new RelationPickerData(ordered, labels, search, titles, more);
+            if (!cfg.HasCondition || target is null) return new RelationPickerData(ordered, labels, search, titles, more);
+            // Условие выбора: текст для строки под поиском и выбранные раньше записи вне условия.
+            var own = targets.Where(t => t.DbId == cfg.TargetDbId).Select(t => t.RecordId).ToList();
+            var verdict = target.EvaluateRelationCondition(cfg.TargetCollectionId, cfg, own);
+            var outside = verdict.Broken is null
+                ? targets.Where(t => t.DbId == cfg.TargetDbId && !verdict.Allowed.Contains(t.RecordId)).ToHashSet()
+                : new HashSet<RelationTarget>();
+            return new RelationPickerData(ordered, labels, search, titles, more, verdict.Condition, verdict.Broken, outside);
         }), ct);
     }
 
     private List<RelationPropertyValue> SearchRelationRecordsCore(int collectionId, string fieldKey, string? query,
-        int excludeId, int take, CancellationToken ct)
+        int excludeId, int take, CancellationToken ct, RelationConfig? condition = null)
     {
         ct.ThrowIfCancellationRequested();
         if (!CanReadRelationCollection(collectionId)) return [];
         take = Math.Clamp(take, 1, 1000);
         var term = query?.Trim() ?? "";
+        if (condition is { HasCondition: true })
+            return SearchRelationRecordsWithCondition(collectionId, fieldKey, term, excludeId, take, condition, ct);
         if (fieldKey.Contains(RelationConfig.KeySeparator) && term.Length > 0)
         {
             // Поиск по нескольким свойствам — «или»: запись найдена, если запрос есть хотя бы в

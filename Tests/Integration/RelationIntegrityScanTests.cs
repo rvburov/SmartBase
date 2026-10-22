@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Data.Common;
+using System.Diagnostics;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -284,12 +285,27 @@ internal sealed class RelationIntegrityFixture : IDisposable
             RemoteRecords = [SampleData.AddRecord(Target.Constructor, RemoteCollection, SecretTitle).Id!.Value,
                 SampleData.AddRecord(Target.Constructor, RemoteCollection, "Удаленная Б").Id!.Value];
             Relation = RelationField(SourceCollection, LocalCollection, "Ручная связь");
+            WaitStartupRepairs(Source);
+            WaitStartupRepairs(Target);
         }
         catch
         {
             Dispose();
             throw;
         }
+    }
+
+    // Разовые ремонты открытия SQLite (RepairNullTitles, RepairFormattedNumbers) идут в фоне и
+    // дописывают метку в db_meta: без ожидания она попадает между снимками «до» и «после».
+    private static void WaitStartupRepairs(DatabaseManager manager)
+    {
+        if (manager.Context.IsPostgres) return;
+        using var connection = Open(manager);
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM db_meta WHERE \"Key\" IN ('repair.title-null', 'repair.number-display')";
+        var watch = Stopwatch.StartNew();
+        while (Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture) < 2 && watch.Elapsed < TimeSpan.FromSeconds(10))
+            Thread.Sleep(20);
     }
 
     public RelationIntegrityReport Scan(RelationIntegrityScanOptions? options = null,

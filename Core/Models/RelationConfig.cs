@@ -18,7 +18,7 @@ namespace SmartBase.Core.Models;
 /// </summary>
 public sealed record RelationConfig(int TargetCollectionId, bool Single, string Separator = "comma", int TargetDbId = 0,
     string DisplayField = "__title__", string? SearchField = null, RelationAutoRule? Auto = null,
-    bool RestrictDelete = false)
+    bool RestrictDelete = false, IReadOnlyList<RelationCondition>? Where = null, string? WhereUnreadable = null)
 {
     public const string TitleField = "__title__";
 
@@ -38,9 +38,24 @@ public sealed record RelationConfig(int TargetCollectionId, bool Single, string 
 
     public static string JoinKeys(IEnumerable<string> keys) => string.Join(KeySeparator, keys.Distinct(StringComparer.Ordinal));
 
-    /// <summary>Все ключи свойств цели, на которые ссылается настройка: показ, поиск, автоподбор.</summary>
+    /// <summary>Все ключи свойств цели, на которые ссылается настройка: показ, поиск, автоподбор
+    /// и условие выбора.</summary>
     public IEnumerable<string> TargetPropertyKeys =>
-        DisplayKeys.Concat(SearchKeys).Concat(Auto is null ? [] : [Auto.TargetField]).Distinct(StringComparer.Ordinal);
+        DisplayKeys.Concat(SearchKeys).Concat(Auto is null ? [] : [Auto.TargetField])
+            .Concat(Where?.Select(c => c.Field) ?? []).Distinct(StringComparer.Ordinal);
+
+    /// <summary>Есть ли условие выбора записей — читаемое или нечитаемое (закрывает выбор).</summary>
+    public bool HasCondition => Where is { Count: > 0 } || WhereUnreadable is not null;
+
+    // Списки сравниваются по составу: иначе две одинаковые настройки различались бы ссылкой на список.
+    public bool Equals(RelationConfig? other) => other is not null
+        && TargetCollectionId == other.TargetCollectionId && Single == other.Single && Separator == other.Separator
+        && TargetDbId == other.TargetDbId && DisplayField == other.DisplayField && SearchField == other.SearchField
+        && Equals(Auto, other.Auto) && RestrictDelete == other.RestrictDelete
+        && (Where ?? []).SequenceEqual(other.Where ?? []) && WhereUnreadable == other.WhereUnreadable;
+
+    public override int GetHashCode() => HashCode.Combine(TargetCollectionId, Single, Separator, TargetDbId,
+        DisplayField, SearchField, Auto, (RestrictDelete, Where?.Count ?? 0, WhereUnreadable));
     /// <summary>Цель — в другой БД (межбазовая связь).</summary>
     public bool IsCrossDb => TargetDbId > 0;
 
@@ -78,8 +93,10 @@ public sealed record RelationConfig(int TargetCollectionId, bool Single, string 
             // «restrict» запрещает удалять цель, пока на нее ссылаются.
             var restrict = root.TryGetProperty("onDelete", out var onDelete) && onDelete.ValueKind == JsonValueKind.String
                            && onDelete.GetString() == "restrict";
+            // Условие выбора — последним ключом; нечитаемое хранится как есть (см. RelationCondition).
+            var (where, unreadable) = RelationCondition.Read(root);
             if (target <= 0) return null;
-            return new RelationConfig(target, single, separator, targetDb, display, search, auto, restrict);
+            return new RelationConfig(target, single, separator, targetDb, display, search, auto, restrict, where, unreadable);
         }
         catch (JsonException ex)
         {
@@ -127,6 +144,9 @@ public sealed record RelationConfig(int TargetCollectionId, bool Single, string 
         }
         if (Auto is not null) value["auto"] = new { sourceField = Auto.SourceField, targetField = Auto.TargetField };
         if (RestrictDelete) value["onDelete"] = "restrict";
+        // Без условия JSON остается байт в байт прежним: с ним сверяются отпечатки правок.
+        if (WhereUnreadable is not null) value["where"] = JsonDocument.Parse(WhereUnreadable).RootElement.Clone();
+        else if (Where is { Count: > 0 }) value["where"] = Where.Select(c => c.ToConfigObject()).ToList();
         return value;
     }
 

@@ -167,7 +167,7 @@ public static class RelationDeleteImpact
         int records)
     {
         if (items.Count == 0) return RelationDeleteCheck.None;
-        var names = items.ToDictionary(i => i.Reference, i => i.Database, ReferenceEqualityComparer.Instance);
+        var names = items.ToDictionary(i => (object)i.Reference, i => i.Database, ReferenceEqualityComparer.Instance);
         string? Database(RelationReference r) => names.GetValueOrDefault(r);
         var restricted = items.Select(i => i.Reference).Where(r => r.Restrict).ToList();
         if (restricted.Count > 0)

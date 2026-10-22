@@ -133,6 +133,10 @@ public partial class ConstructorRepository
                     SourceField = RemapRelationFieldKey(auto.SourceField, fieldMap),
                     TargetField = internalTarget ? RemapRelationFieldKey(auto.TargetField, fieldMap) : auto.TargetField,
                 } : null,
+                // Условие выбора ссылается на свойства цели: у копии своей коллекции — на свойства копии.
+                Where = internalTarget && config.Where is { } where
+                    ? where.Select(c => c with { Field = RemapRelationFieldKey(c.Field, fieldMap) }).ToList()
+                    : config.Where,
             };
             field.ConfigJson = updated.ToConfigJson();
         }

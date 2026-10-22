@@ -8,7 +8,7 @@ namespace SmartBase.Controls.Dialogs;
 
 public partial class PropertyEditorDialog
 {
-    private sealed record RelationPropertyItem(string Key, string Name, string FieldType)
+    private sealed record RelationPropertyItem(string Key, string Name, string FieldType, string? ConfigJson = null)
     {
         public override string ToString() => Name;
     }
@@ -36,7 +36,7 @@ public partial class PropertyEditorDialog
 
     private List<RelationPropertyItem> RelationProperties(ConstructorRepository? repo, int collectionId) =>
         repo is null ? [] : repo.GetRelationPropertyOptions(collectionId)
-            .Select(p => new RelationPropertyItem(p.Key, p.Name, p.FieldType)).ToList();
+            .Select(p => new RelationPropertyItem(p.Key, p.Name, p.FieldType, p.ConfigJson)).ToList();
 
     private void PopulateRelationProperties()
     {
@@ -54,6 +54,7 @@ public partial class PropertyEditorDialog
             .Where(p => p.Key != _editFieldId?.ToString()).ToList();
         SetRelationProperties(RelationAutoSourceCombo, sources);
         RefreshRelationKeyRows();
+        RefreshRelationConditionRows(keepSelection);
         RefreshRelationDataProperties();
     }
 
@@ -128,7 +129,9 @@ public partial class PropertyEditorDialog
         if (!preview.CanApply) { ShowError(preview.Message); return null; }
         var accepted = await new ConfirmDialog(
             $"Автоматические связи: добавить — {preview.Added}, изменить — {preview.Changed}, " +
-            $"очистить — {preview.Removed}, без совпадения — {preview.Unmatched}. Применить?", "Применить")
+            $"очистить — {preview.Removed}, без совпадения — {preview.Unmatched}" +
+            (preview.OutsideCondition > 0 ? $", не подходят под условие выбора — {preview.OutsideCondition}" : "") +
+            ". Применить?", "Применить")
             .ShowDialog<bool>(this);
         if (!accepted) return null;
         return await RunRelationWorkAsync(

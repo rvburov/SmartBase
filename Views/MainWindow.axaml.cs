@@ -137,6 +137,8 @@ public partial class MainWindow : Window
         // Отказ по правам — окном с причиной (тост тут легко пропустить): так ведут себя
         // и запрещенные пункты меню, и замок у коллекции без права просмотра.
         DbErrors.NotifyDenied  = message => Controls.Dialogs.PermissionNotice.Show(this, message);
+        // Дубль записи не скопировал связи на записи вне условия выбора — человек должен знать.
+        Database.Repositories.ConstructorRepository.ConditionNotice = Controls.Widgets.AppNotifications.Info;
         // Календарь и панель записи пока работают с дефолтной БД (мульти-БД календаря — Этап 3.3).
         _categories  = workspace.Default.Categories;
         _constructor = workspace.Default.Constructor;

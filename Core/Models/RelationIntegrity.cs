@@ -12,11 +12,21 @@ public enum RelationIntegrityIssueKind
     MissingConfiguration, InvalidConfiguration, MissingDependency, InvalidDependency, DependencyCycle, DependencyUnverified,
     CanonicalDuplicate, SingleCardinality, InvalidSelfLink, InvalidTargetIdentity,
     LegacyMixedTarget, TargetCollectionMismatch, NumericProjectionCollision,
+    ConditionMismatch,
 }
 
 /// <summary><see cref="FieldId"/> — проверить одно свойство-связь и столбцы данных из нее
 /// (окно свойства); null — всю базу (настройки).</summary>
 public sealed record RelationIntegrityScanOptions(int PageSize = 500, int MaxIssues = 2000, int? FieldId = null);
+/// <summary>Виды замечаний-сведений: связь цела и исправлять ее не нужно (старые цели из другой базы,
+/// цель вне условия выбора записей — связь выбрана раньше и сохранена).</summary>
+public static class RelationIntegrityKinds
+{
+    public static bool IsInformational(RelationIntegrityIssueKind kind) => kind is RelationIntegrityIssueKind.LegacyMixedTarget
+        or RelationIntegrityIssueKind.NumericProjectionCollision or RelationIntegrityIssueKind.TargetCollectionMismatch
+        or RelationIntegrityIssueKind.ConditionMismatch;
+}
+
 public sealed record RelationIntegrityProgress(long ScannedEdges, long ScannedFields, long Issues);
 
 /// <summary>Один проверенный факт. Заголовки содержат только доступные пользователю данные.
@@ -57,8 +67,7 @@ public sealed class RelationIntegrityReport
         ScannedEdges = edges;
         ScannedFields = fields;
         UnverifiedIssues = unverifiedIssues;
-        InformationalIssues = counts.Where(p => p.Key is RelationIntegrityIssueKind.LegacyMixedTarget
-            or RelationIntegrityIssueKind.NumericProjectionCollision or RelationIntegrityIssueKind.TargetCollectionMismatch).Sum(p => p.Value);
+        InformationalIssues = counts.Where(p => RelationIntegrityKinds.IsInformational(p.Key)).Sum(p => p.Value);
         ConfirmedIssues = Math.Max(0, confirmedIssues - InformationalIssues);
         Issues = Array.AsReadOnly(issues.ToArray());
         Counts = new System.Collections.ObjectModel.ReadOnlyDictionary<RelationIntegrityIssueKind, long>(

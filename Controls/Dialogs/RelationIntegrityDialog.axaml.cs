@@ -370,6 +370,7 @@ public partial class RelationIntegrityDialog : Window
         RelationIntegrityIssueKind.LegacyMixedTarget => "Старые цели из другой базы",
         RelationIntegrityIssueKind.TargetCollectionMismatch => "Цель из другой коллекции",
         RelationIntegrityIssueKind.NumericProjectionCollision => "Свойство цели из другой базы",
+        RelationIntegrityIssueKind.ConditionMismatch => "Не подходит под условие выбора",
         _ => "Замечание",
     };
 }

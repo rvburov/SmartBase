@@ -6,16 +6,22 @@ public readonly record struct RelationTarget(int DbId, int RecordId);
 /// <summary>Правило автосвязи: канонические ключи свойств двух коллекций.</summary>
 public sealed record RelationAutoRule(string SourceField, string TargetField);
 
-public sealed record RelationPropertyOption(string Key, string Name, string FieldType);
+/// <param name="ConfigJson">Настройка свойства цели (пункты списка — для условия выбора записей).</param>
+public sealed record RelationPropertyOption(string Key, string Name, string FieldType, string? ConfigJson = null);
 
 /// <summary>Сырое значение для сопоставления и отдельный текст для показа/поиска.</summary>
 public sealed record RelationPropertyValue(int RecordId, string Title, string Raw, string Display,
     string FieldType, string? ConfigJson);
 
+/// <param name="Condition">Текст условия выбора записей («Статус» равно «Активен»); пусто — условия нет.</param>
+/// <param name="ConditionProblem">Почему новые связи не выбираются (условие сломано); null — выбирать можно.</param>
+/// <param name="SelectedOutside">Выбранные раньше записи, которые под условие не подходят: связь
+/// остается, но снятую выбрать снова нельзя.</param>
 public sealed record RelationPickerData(IReadOnlyList<RelationPropertyValue> Candidates,
     IReadOnlyDictionary<RelationTarget, string> SelectedLabels,
     IReadOnlyDictionary<RelationTarget, string> SelectedSearch,
-    IReadOnlyDictionary<RelationTarget, string> SelectedTitles, bool HasMore);
+    IReadOnlyDictionary<RelationTarget, string> SelectedTitles, bool HasMore,
+    string Condition = "", string? ConditionProblem = null, IReadOnlySet<RelationTarget>? SelectedOutside = null);
 
 public static class RelationProperty
 {

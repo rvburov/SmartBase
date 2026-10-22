@@ -159,6 +159,7 @@ public partial class PropertyEditorDialog : Window
         PopulateRelationDatabases();
         InitializeExtendedRelations();
         InitializeRelationKeys();
+        InitializeRelationCondition();
         InitializeRelationData();
 
         // Новое свойство открывается с типом из «Настройки → Конструктор базы данных»;
@@ -785,6 +786,7 @@ public partial class PropertyEditorDialog : Window
         RelationSeparatorCombo.SelectedIndex = sepIdx >= 0 ? sepIdx : 0;
         RelationDeleteCombo.SelectedIndex = cfg.RestrictDelete ? 1 : 0;
         RestoreRelationKeys(cfg);
+        RestoreRelationCondition(cfg);
         RelationModeCombo.SelectedIndex = cfg.Auto is null ? 0 : 1;
         if (cfg.Auto is { } auto)
         {
@@ -835,7 +837,9 @@ public partial class PropertyEditorDialog : Window
             auto = new RelationAutoRule(source.Key, target.Key);
         }
         var restrict = RelationDeleteCombo.SelectedIndex == 1;           // 0 — Снять связь, 1 — Запретить удаление
-        return new RelationConfig(t.Id, single, separator, targetDbId, display, search, auto, restrict).ToConfigJson();
+        if (BuildRelationCondition() is not { } condition) return null;
+        return new RelationConfig(t.Id, single, separator, targetDbId, display, search, auto, restrict,
+            condition.Where, condition.Unreadable).ToConfigJson();
     }
 
     // Под-опции формата числа: блок опций (точность/разряды/валюта) скрыт для «Обычного числа»
@@ -1188,6 +1192,7 @@ public partial class PropertyEditorDialog : Window
         if (!await ConfirmRoleLossOnTypeChange()) return;
         if (!await ConfirmRelationDependentsLoss()) return;
         if (!await ConfirmRelationDataRemoval()) return;
+        if (_selectedType == "relation" && !await ConfirmEmptyRelationCondition(relationConfig)) return;
 
         // Включение авто-привязки на поле с уже сохраненными значениями — подтверждаем затирание.
         if (fileAuto && _editFieldId is int existId && _repository.FieldHasValues(existId))
