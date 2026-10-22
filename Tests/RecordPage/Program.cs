@@ -52,6 +52,20 @@ SmartBase.Utils.FontScale.Init();
 AppSettings.AttachStore(new MemoryStore());
 Dispatcher.UIThread.UnhandledException += (_, e) => Console.WriteLine($"    [исключение UI] {e.Exception}");
 
+// Нулевые метрики системного шрифта превращают подписи и ссылки в области нулевой
+// высоты: клики тогда промахиваются, а стенд ошибочно сообщает о дефектах контролов.
+Application.Current!.TryFindResource("FontFamilyBase", out var fontResource);
+using (var fontProbe = new Avalonia.Media.TextFormatting.TextLayout("Аа",
+           new Avalonia.Media.Typeface(fontResource as Avalonia.Media.FontFamily ?? Avalonia.Media.FontFamily.Default),
+           FontScale.BaseFontSize, Avalonia.Media.Brushes.Black))
+{
+    if (!double.IsFinite(fontProbe.Height) || fontProbe.Height <= 0)
+    {
+        Console.Error.WriteLine("Стенд не может измерить текст системным шрифтом. Выберите доступный шрифт TrueType/OpenType; на Linux проверьте fontconfig.");
+        return 2;
+    }
+}
+
 // Самодостаточная проверка фильтра пустых свойств: собственная малая база, wide20 не требуется.
 if (only == "empty") return EmptyPropertiesChecks.Run(outDir);
 if (only == "fileauto") return FileAutoChecks.Run(outDir);

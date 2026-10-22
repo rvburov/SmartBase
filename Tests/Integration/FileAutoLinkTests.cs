@@ -329,10 +329,12 @@ public sealed class FileAutoLinkTests : IDisposable
         byTitle.ConfigJson = new FileAutoRule(FileAutoRule.TitleSource, _folder, "pdf", PartialMatch: true).ToConfigJson();
         repo.UpdateField(byText);
         repo.UpdateField(byTitle);
-        var first = SampleData.AddRecord(repo, collectionId, "R1").Id!.Value;
-        var second = SampleData.AddRecord(repo, collectionId, "R2").Id!.Value;
+        // Создание записи теперь тоже использует снимок каталога: файлы сценария
+        // должны существовать до первого автоматического поиска.
         var report = SortedPaths(MakeFile("Отчет-копия.pdf"), Path.Combine(_folder, "Отчет.pdf"));
         var estimate = SortedPaths(MakeFile("Смета-копия.pdf"), Path.Combine(_folder, "Смета.pdf"));
+        var first = SampleData.AddRecord(repo, collectionId, "R1").Id!.Value;
+        var second = SampleData.AddRecord(repo, collectionId, "R2").Id!.Value;
 
         var result = repo.SetCellsBulk(collectionId,
             [new(first, src.Id!.Value, "Отчет"), new(second, src.Id!.Value, "Смета")],

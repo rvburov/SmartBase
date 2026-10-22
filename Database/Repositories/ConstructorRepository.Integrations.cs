@@ -152,8 +152,8 @@ public partial class ConstructorRepository
     /// потока трогать нельзя: его параллельно использует интерфейс, и EF отвечает на это
     /// «A second operation was started on this context instance» (см. <c>ImportStreamedCollectionIsolated</c>).
     ///
-    /// Права спрашиваются ЗДЕСЬ, на публичной точке входа: изолированный клон репозитория прав
-    /// не несет, и внутри проверять их уже нечем.
+    /// Права ручной записи спрашиваются ЗДЕСЬ, на публичной точке входа. Автоподстановка
+    /// наследует исходные права отдельно: ее отложенная работа проверит их перед записью.
     /// </summary>
     public BindingResult ApplyRowsIsolated(
         CollectionBinding      binding,
@@ -165,7 +165,8 @@ public partial class ConstructorRepository
         DemandRights(binding);
 
         using var ctx = new AppDbContext(db.DbPath);
-        return new ConstructorRepository(ctx).ApplyRows(binding, schema, rows, ct, progress);
+        return new ConstructorRepository(ctx) { FileAutoPermissions = AutoFilePermissions }
+            .ApplyRows(binding, schema, rows, ct, progress);
     }
 
     /// <summary>
@@ -176,9 +177,9 @@ public partial class ConstructorRepository
     /// Подключение открывается ОДНО на всю работу, а не на строку: сообщений в пачке бывает
     /// несколько сотен, и подключение на каждое стоило бы дороже самой записи.
     ///
-    /// Права спрашиваются ЗДЕСЬ, на публичной точке входа, — как и у
-    /// <see cref="ApplyRowsIsolated"/>: изолированный клон репозитория прав не несет, и внутри
-    /// проверять их уже нечем. По умолчанию спрашивается право заводить записи.
+    /// Права ручной записи спрашиваются ЗДЕСЬ, на публичной точке входа, — как и у
+    /// <see cref="ApplyRowsIsolated"/>. По умолчанию спрашивается право заводить записи;
+    /// исходные ограничения автоподстановки передаются клону независимо от этого контракта.
     /// Для операции, выбирающей права по входным данным, checkInside передает живой кеш прав
     /// клону: его мутаторы проверяют свои права, а чтение проверяет само действие.
     /// </summary>
@@ -190,7 +191,11 @@ public partial class ConstructorRepository
         if (!checkInside) Demand(PermAction.CreateRecord, collectionId);
 
         using var ctx = new AppDbContext(db.DbPath);
-        return work(new ConstructorRepository(ctx) { Permissions = checkInside ? Permissions : null });
+        return work(new ConstructorRepository(ctx)
+        {
+            Permissions = checkInside ? Permissions : null,
+            FileAutoPermissions = AutoFilePermissions,
+        });
     }
 
     /// <summary>

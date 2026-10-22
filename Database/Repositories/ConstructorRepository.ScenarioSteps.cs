@@ -95,7 +95,7 @@ public partial class ConstructorRepository
         if (createMissing) Demand(PermAction.CreateRecord, collectionId);
 
         using var ctx = new AppDbContext(db.DbPath);
-        var repo = new ConstructorRepository(ctx);
+        var repo = new ConstructorRepository(ctx) { FileAutoPermissions = AutoFilePermissions };
 
         var collection = repo.CollectionName(collectionId);
         if (collection.Length == 0)

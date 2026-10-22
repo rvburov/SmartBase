@@ -112,6 +112,11 @@ dotnet run -c Release --project Tests/RecordPage -- --only relationintegrity --o
 
 Прогнать автотесты ядра, стенд панели чтения и BackupUi: `./Tests/run-all.sh`; вместе с расширениями — `./Tests/run-all.sh --with-extensions`.
 
+`RecordPage` перед проверками измеряет текст системным шрифтом. Если высота равна нулю,
+стенд останавливается с сообщением о шрифте: результаты кликов и геометрии в такой среде
+недостоверны. Нужен рабочий шрифт TrueType/OpenType; на Linux выбор проверяется через
+fontconfig, в том числе с отдельной конфигурацией `FONTCONFIG_FILE`.
+
 Тесты расширений живут отдельно намеренно: расширение удаляется вместе со своей папкой тестов, и
 тесты ядра о расширениях не знают — см.
 [docs/developer/testing/extension-tests.md](../docs/developer/testing/extension-tests.md).

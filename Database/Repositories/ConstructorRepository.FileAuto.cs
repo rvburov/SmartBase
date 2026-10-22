@@ -50,7 +50,7 @@ public partial class ConstructorRepository
         if (field?.FieldType != "file") return FileAutoResolveResult.NoRule;
         Demand(PermAction.EditRecord, field.CollectionId);
         var path = DbPath;
-        var permissions = Permissions;
+        var permissions = AutoFilePermissions;
         var config = field.ConfigJson;
         var result = await Task.Run(() =>
         {
@@ -180,14 +180,17 @@ public partial class ConstructorRepository
 
     private void DemandFreshFileAccess(int collectionId)
     {
-        if (Permissions is null) return;
-        Permissions.Demand(PermAction.EditRecord, collectionId);
-        Permissions.Demand(PermAction.ViewCollection, collectionId);
+        if (AutoFilePermissions is not { } permissions) return;
+        permissions.Demand(PermAction.EditRecord, collectionId);
+        permissions.Demand(PermAction.ViewCollection, collectionId);
         var fresh = new PermissionService(db);
         fresh.Reload(notify: false);
         fresh.Demand(PermAction.EditRecord, collectionId);
         fresh.Demand(PermAction.ViewCollection, collectionId);
     }
+
+    private bool CanWriteAutoFiles(int collectionId) => AutoFilePermissions is not { } permissions
+        || permissions.Can(PermAction.EditRecord, collectionId) && permissions.Can(PermAction.ViewCollection, collectionId);
 
     private string ReadFileSourceSnapshot(int fieldId, int collectionId, FileAutoRule rule, int? recordId,
         Action<int, string, string>? accept, CancellationToken ct)
@@ -264,23 +267,36 @@ public partial class ConstructorRepository
     // передается планировщику после коммита и никогда не сканирует диск на UI-потоке.
     private string? ResolveOrQueueAutoFile(int fieldId, int recordId, FileAutoRule rule)
     {
+        var collectionId = CollectionOfRecord(recordId);
+        if (collectionId is not int collection || !CanWriteAutoFiles(collection)
+            || !ValidFileSource(rule, collection)) return null;
         if (QueueAutoFileWork(fieldId, recordId)) return null;
-        var source = ReadSourceValue(rule, recordId);
-        if (source.Length == 0 || rule.PartialMatch && string.IsNullOrWhiteSpace(source)) return "";
         try
         {
+            DemandFreshFileAccess(collection);
+            var source = ReadSourceValue(rule, recordId);
+            if (source.Length == 0 || rule.PartialMatch && string.IsNullOrWhiteSpace(source)) return "";
             using var catalog = FileAutoCatalogCache.Acquire(rule, refresh: false, default);
-            return catalog.Match(rule, source, default);
+            var matched = catalog.Match(rule, source, default);
+            DemandFreshFileAccess(collection);
+            return matched;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DbException or FileAutoMatchLimitException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DbException
+            or FileAutoMatchLimitException or PermissionDeniedException)
         { return null; } // недоступность/слишком широкий поиск не стирают прежнее значение
     }
 
     private void ResolveAutoFileForRecord(int collectionId, int recordId)
     {
+        // Создание разрешено отдельно от последующего автозаполнения: отсутствие EditRecord
+        // не отменяет новую запись. Пустой источник дождется обычной правки значения.
+        if (!CanWriteAutoFiles(collectionId)) return;
         foreach (var field in db.DbFields.AsNoTracking().Where(f => f.CollectionId == collectionId && f.FieldType == "file")
                      .Select(f => new { f.Id, f.ConfigJson }).ToList())
             if (FileAutoRule.FromConfig(field.ConfigJson) is { } rule
+                && ValidFileSource(rule, collectionId)
+                && ReadSourceValue(rule, recordId) is { Length: > 0 } source
+                && (!rule.PartialMatch || !string.IsNullOrWhiteSpace(source))
                 && ResolveOrQueueAutoFile(field.Id, recordId, rule) is { } matched)
                 SetAutoFileValue(field.Id, recordId, matched);
     }

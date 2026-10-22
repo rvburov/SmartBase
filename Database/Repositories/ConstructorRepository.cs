@@ -50,6 +50,11 @@ public partial class ConstructorRepository(AppDbContext db)
     /// </summary>
     public PermissionService? Permissions { get; init; }
 
+    // Изолированные команды уже разрешены внешним репозиторием. Их отложенная
+    // автоподстановка отдельно сохраняет права для повторной проверки перед записью.
+    internal PermissionService? FileAutoPermissions { get; init; }
+    private PermissionService? AutoFilePermissions => FileAutoPermissions ?? Permissions;
+
     private void Demand(PermAction action, int? collectionId = null) =>
         Permissions?.Demand(action, collectionId);
 
@@ -4151,6 +4156,7 @@ public partial class ConstructorRepository(AppDbContext db)
             db.SaveChanges();
         }
 
+        ResolveAutoFileForRecord(record.CollectionId, entity.Id);
         NotifyRelationDataChanged(record.CollectionId, recordId: entity.Id);
         return record;
     }
@@ -4278,6 +4284,8 @@ public partial class ConstructorRepository(AppDbContext db)
         var entity = db.DbRecords.Find(record.Id.Value);
         if (entity is null) return;
 
+        var titleChanged = entity.Title != record.Title;
+
         // Перестановки (Position) журнал не засоряют — только смысловые изменения.
         // «до → после» — для переименования (даты видны в самой записи, описание ведет
         // журнал своим путем как обычное поле — см. SetFieldValue).
@@ -4299,6 +4307,11 @@ public partial class ConstructorRepository(AppDbContext db)
         entity.Title        = record.Title;
         if (meaningfulChange) TouchUpdated(entity);   // аудит «последней правки» (не для чистых перестановок)
         db.SaveChanges();
+        if (titleChanged)
+        {
+            ReactToSourceEdit(entity.Id, rule => rule.SourceIsTitle);
+            NotifyRelationDataChanged(entity.CollectionId, recordId: entity.Id);
+        }
     }
 
     public void ReorderRecords(List<int> orderedIds)
@@ -4434,7 +4447,7 @@ public partial class ConstructorRepository(AppDbContext db)
         Demand(PermAction.CreateRecord, record.CollectionId);
         using var ctx = new AppDbContext(db.DbPath);
         ctx.ApplyPerformancePragmas();
-        var repo = new ConstructorRepository(ctx);
+        var repo = new ConstructorRepository(ctx) { FileAutoPermissions = AutoFilePermissions };
         if (afterRecordId is { } aid) return repo.AddRecordAfter(record, aid);
         record.Position = repo.AllocatePositions(record.CollectionId, null, 1).At(0);
         return repo.AddRecord(record);
@@ -7016,7 +7029,9 @@ public partial class ConstructorRepository(AppDbContext db)
     // ─── CalendarRecord API (для календарных представлений) ───────────────────
     // ══════════════════════════════════════════════════════════════════════════
 
-    public CalendarRecord AddCalendarRecord(CalendarRecord r)
+    public CalendarRecord AddCalendarRecord(CalendarRecord r) => AddCalendarRecordCore(r, resolveAutoFiles: true);
+
+    private CalendarRecord AddCalendarRecordCore(CalendarRecord r, bool resolveAutoFiles)
     {
         Demand(PermAction.CreateRecord, r.CollectionId);
         var colId = r.CollectionId ?? GetOrCreateDefaultCollection();
@@ -7045,6 +7060,7 @@ public partial class ConstructorRepository(AppDbContext db)
         r.Id           = rec.Id;
         r.CollectionId = colId;
         r.FieldId      = dateFieldId;
+        if (resolveAutoFiles) ResolveAutoFileForRecord(colId, rec.Id);
         NotifyRelationDataChanged(colId, recordId: rec.Id);
         return r;
     }
@@ -7099,10 +7115,13 @@ public partial class ConstructorRepository(AppDbContext db)
                 }
                 r.CollectionId = newColId;
                 r.Id = null;
-                AddCalendarRecord(r);
+                // Перенос сначала копирует все значения. Иначе старый файловый путь
+                // затрет результат начального подбора, а источник-текст еще не заполнен.
+                AddCalendarRecordCore(r, resolveAutoFiles: false);
                 CopyFieldValuesByName(this, oldId, oldColId, r.Id!.Value, newColId,
                                       createMissingFields: false, excludeTargetFieldId: r.FieldId);
                 CopyRelationLinksByName(this, oldId, oldColId, r.Id!.Value, newColId);
+                ResolveAutoFileForRecord(newColId, r.Id.Value);
                 RestoreMovedRecordAudit(r.Id!.Value, audit);
                 DeleteRecord(oldId);
                 move.Commit();
@@ -7115,6 +7134,7 @@ public partial class ConstructorRepository(AppDbContext db)
             return;
         }
 
+        var titleChanged = rec.Title != r.Title;
         rec.StartDt     = DateTime.SpecifyKind(r.StartDt, DateTimeKind.Unspecified).ToString("o");
         rec.EndDt       = DateTime.SpecifyKind(r.EndDt,   DateTimeKind.Unspecified).ToString("o");
         rec.AllDay      = r.AllDay;
@@ -7127,6 +7147,7 @@ public partial class ConstructorRepository(AppDbContext db)
         r.FieldId = dateFieldId;
         // Описание — обычное поле: правка события пишет его туда же, куда и создание.
         SetFieldValue(rec.Id, EnsureDescriptionField(newColId), r.Description ?? "");
+        if (titleChanged) ReactToSourceEdit(rec.Id, rule => rule.SourceIsTitle);
         NotifyRelationDataChanged(newColId, recordId: rec.Id);
     }
 

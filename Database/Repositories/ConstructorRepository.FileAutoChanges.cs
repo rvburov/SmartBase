@@ -21,7 +21,7 @@ public partial class ConstructorRepository
         if (FileAutoWorkRequested is null) return false;
         if (FileAutoWorkSupported is { } supported
             && !supported.GetInvocationList().Cast<Func<string, bool>>().Any(accepts => accepts(DbPath))) return false;
-        var work = new FileAutoWork(DbPath, fieldId, recordId, Permissions);
+        var work = new FileAutoWork(DbPath, fieldId, recordId, AutoFilePermissions);
         if (db.Database.CurrentTransaction is not null)
         {
             var pending = PendingFiles.GetValue(db, _ => new());

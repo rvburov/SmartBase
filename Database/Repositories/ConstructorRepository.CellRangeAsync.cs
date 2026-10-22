@@ -12,7 +12,8 @@ namespace SmartBase.Database.Repositories;
 /// путем, что фоновая подгрузка страниц таблицы (<see cref="LoadPageAsync"/>) и применение
 /// привязки (<see cref="ApplyRowsIsolated"/>).
 ///
-/// Права спрашиваются ЗДЕСЬ, на публичной точке входа: изолированный клон прав не несет.
+/// Права ручной записи спрашиваются ЗДЕСЬ, на публичной точке входа. Отложенная
+/// автоподстановка получает исходные права отдельно и повторно проверяет их перед записью.
 ///
 /// После записи общий контекст не знает, что поменялось: отслеживаемые им значения и записи
 /// затронутых ячеек снимаются с учета (<see cref="ForgetTracked"/>), и следующее чтение берет
@@ -74,7 +75,8 @@ public sealed partial class ConstructorRepository
             // после того как значения видны (WalCheckpointer).
             ctx.ApplyBulkPerformancePragmas();
             ctx.DeferCheckpoint();
-            return new ConstructorRepository(ctx).SetCellsBulk(collectionId, cells, titles, operation);
+            return new ConstructorRepository(ctx) { FileAutoPermissions = AutoFilePermissions }
+                .SetCellsBulk(collectionId, cells, titles, operation);
         });
 
         // Итог без списка изменений (больше предела отмены) не говорит, какие ячейки тронуты, —
