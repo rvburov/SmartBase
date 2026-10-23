@@ -1946,6 +1946,11 @@ public partial class TableView : UserControl
         // снятых» (CappedFilterSelection). Null — обычный список всех значений.
         CappedFilterSelection? capped = null;
         CancellationTokenSource? cappedSearch = null;
+        // Последний пришедший ограниченный список; его снимок значений берут поиск и итоги окна.
+        ConstructorRepository.ColumnValueList? cappedList = null;
+        // Чтение значений живет не дольше окна: закрытое окно отменяет расчет (у данных из связанных
+        // записей он бывает долгим), иначе он доживал бы свое в фоне.
+        var windowWork = new CancellationTokenSource();
         // Значения действующего фильтра колонки — при открытии они идут первыми (их видно сразу,
         // не листая весь список). Снимок на момент открытия: от щелчков по галочкам строки не прыгают.
         var initialChosen = _filters.TryGetValue(def.Key, out var f0) ? new HashSet<string>(f0) : null;
@@ -2219,7 +2224,7 @@ public partial class TableView : UserControl
         {
             capped!.OnSearch(search.Text);
             cappedSearch?.Cancel();
-            var cts  = cappedSearch = new CancellationTokenSource();
+            var cts  = cappedSearch = CancellationTokenSource.CreateLinkedTokenSource(windowWork.Token);
             var text = search.Text;
             RefreshChecks();
             SyncSelectAll();
@@ -2231,7 +2236,7 @@ public partial class TableView : UserControl
                 {
                     await Task.Delay(250, cts.Token);
                     var list = await _repository!.GetColumnValueListAsync(_collectionId, def.Key, _filters,
-                                   excludeHidden: AnyHiddenRecords, search: text, ct: cts.Token);
+                                   excludeHidden: AnyHiddenRecords, search: text, ct: cts.Token, reuse: cappedList?.Snapshot);
                     if (cts.IsCancellationRequested) return;
                     ShowCapped(list);
                 }
@@ -2247,7 +2252,6 @@ public partial class TableView : UserControl
 
         // Ограниченный список пришел (при открытии или поиском): строки, галочки, подпись.
         // «(Пусто)» и число значений досчитываются позже (LoadCappedTotalsAsync).
-        ConstructorRepository.ColumnValueList? cappedList = null;
         long cappedDistinct = -1;
         var  cappedEmpty    = 0;
         void ShowCapped(ConstructorRepository.ColumnValueList list)
@@ -2281,12 +2285,14 @@ public partial class TableView : UserControl
             try
             {
                 var (distinct, empty) = await _repository!.GetColumnValueTotalsAsync(_collectionId, def.Key, _filters,
-                                                                                    excludeHidden: AnyHiddenRecords);
+                                                                                    excludeHidden: AnyHiddenRecords,
+                                                                                    ct: windowWork.Token, reuse: cappedList?.Snapshot);
                 cappedDistinct = distinct;
                 cappedEmpty    = empty;
                 if (!capped!.Searching && cappedList is { } shownList) ShowCapped(shownList);
                 else UpdateCappedNote();
             }
+            catch (OperationCanceledException) { }
             catch (Exception ex)
             {
                 DbErrors.HandleRead(ex, _repository!.DbPath);
@@ -2367,14 +2373,16 @@ public partial class TableView : UserControl
         // уходят в запрос (каскад); свой фильтр колонки репозиторий отбрасывает сам.
         var countsSlow = Diag.Measure("список значений фильтра", Diag.UiQuery,
                                       $"{DbErrors.Display(_repository!.DbPath)}, коллекция {_collectionId}, колонка {def.Header}");
+        panel.DetachedFromVisualTree += (_, _) => windowWork.Cancel();
         _repository!.GetColumnValueListAsync(_collectionId, def.Key, _filters,
-                                             excludeHidden: AnyHiddenRecords).ContinueWith(t =>
+                                             excludeHidden: AnyHiddenRecords, ct: windowWork.Token).ContinueWith(t =>
         {
             countsSlow.Dispose();
             if (t.IsFaulted)
             {
                 // Окно так и останется с «Загрузка…» — без записи причину не найти.
                 var ex = t.Exception?.GetBaseException();
+                if (ex is OperationCanceledException) return;   // окно закрыли
                 if (ex is not null)
                 {
                     DbErrors.HandleRead(ex, _repository.DbPath);

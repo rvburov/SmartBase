@@ -1,0 +1,247 @@
+using System.Runtime.CompilerServices;
+using Microsoft.EntityFrameworkCore;
+using SmartBase.Core.Models;
+
+namespace SmartBase.Database.Repositories;
+
+/// <summary>
+/// Данные из связанных записей по столбцу целиком — для отбора, сортировки и окна фильтра.
+/// Раньше столбец считался страницами по 1000 записей, и каждая страница заново читала цели: на
+/// миллионе записей — тысячи запросов и минуты. Теперь один проход по ребрам свойства-связи
+/// (индекс (FieldId, FromRecordId, Position), без сортировки), значения различных целей —
+/// пакетами по 1000 тем же читателем, что у страницы (<see cref="ReadComputedTargetProperties"/>),
+/// по одному подключению на базу за весь расчет, и та же свертка (<see cref="RelationComputedFold"/>).
+/// Поэтому значение записи в столбце совпадает со значением на странице и в карточке байт в байт.
+///
+/// Малый срез (<see cref="SubsetLimit"/>) считается только по своим записям — тем же путем, что
+/// страница.
+/// </summary>
+public partial class ConstructorRepository
+{
+    /// <summary>До скольких записей срез считается сам, без столбца целиком.</summary>
+    internal static int SubsetLimit = 20_000;
+
+    private const int ComputedTargetBatch = 1000;
+
+    /// <summary>Обращения движка к базе (проход по ребрам, пакеты целей) — тест сверяет, что их число
+    /// не растет с числом записей. null — не считать.</summary>
+    internal static readonly AsyncLocal<StrongBox<int>?> ColumnQueries = new();
+
+    private static void CountColumnQuery()
+    {
+        if (ColumnQueries.Value is { } counter) counter.Value++;
+    }
+
+    /// <summary>Фоновый расчет, в котором идет чтение (отбор, сортировка, окно фильтра): отмена и
+    /// строка хода. null — расчет не в фоне (страница, тесты).</summary>
+    internal RelationColumnRun? ComputedRun { get; set; }
+
+    private CancellationToken ComputedToken(CancellationToken ct) =>
+        ct.CanBeCanceled ? ct : ComputedRun?.Token ?? CancellationToken.None;
+
+    /// <summary>Столбец <paramref name="field"/> по всем записям коллекции.</summary>
+    internal RelationComputedColumn ReadRelationComputedColumn(int collectionId, DbField field, CancellationToken ct = default)
+    {
+        ct = ComputedToken(ct);
+        var run = ComputedRun;
+        if (field.Id is not int fid || field.CollectionId != collectionId) return RelationComputedColumn.Constant("");
+        if (Permissions?.Can(PermAction.ViewCollection, field.CollectionId) == false)
+            return RelationComputedColumn.Constant(RelationProperty.NoAccess);
+        using var scope = RelationPropertyResolution.Enter(DbPath, fid);
+        if (scope is null) return RelationComputedColumn.Constant(RelationProperty.Cycle);
+        if (RelationComputedSetup(field) is not var (cfg, relationConfig))
+            return RelationComputedColumn.Constant("(вычисление не настроено)");
+        var separator = relationConfig.SeparatorString;
+        var defaultValue = RelationComputedFold.Fold(field.FieldType, cfg.Aggregate, separator, field.ConfigJson, []).Value;
+
+        // Ребра записей коллекции по записи-источнику и порядку ребер; повтор пары цели у записи
+        // отбрасывается, как у страницы.
+        var sources = new List<int>();
+        var starts = new List<int>();
+        var edgeDb = new List<int>();
+        var edgeTo = new List<int>();
+        var wanted = new Dictionary<int, HashSet<int>>();
+        var seen = new HashSet<(int, int)>();
+        var rows = 0;
+        CountColumnQuery();
+        foreach (var edge in ComputedColumnEdges(collectionId, cfg.RelationFieldId))
+        {
+            if ((++rows & 0x3FFF) == 0)
+            {
+                ct.ThrowIfCancellationRequested();
+                run?.Report($"Столбец «{field.Name}»: прочитано {sources.Count:N0} записей");
+            }
+            if (sources.Count == 0 || sources[^1] != edge.FromRecordId)
+            {
+                sources.Add(edge.FromRecordId);
+                starts.Add(edgeDb.Count);
+                seen.Clear();
+            }
+            if (!seen.Add((edge.TargetDbId, edge.ToRecordId))) continue;
+            edgeDb.Add(edge.TargetDbId);
+            edgeTo.Add(edge.ToRecordId);
+            if (!wanted.TryGetValue(edge.TargetDbId, out var ids)) wanted[edge.TargetDbId] = ids = [];
+            ids.Add(edge.ToRecordId);
+        }
+        starts.Add(edgeDb.Count);
+        ct.ThrowIfCancellationRequested();
+
+        var (targets, groupError) = ReadComputedTargets(wanted, cfg, relationConfig, field.Name, ct);
+        var valueIndex = new int[sources.Count];
+        var values = new List<string>();
+        var interned = new Dictionary<string, int>(StringComparer.Ordinal);
+        var selected = new List<RelationPropertyValue>();
+        for (var i = 0; i < sources.Count; i++)
+        {
+            string? failed = null;
+            selected.Clear();
+            for (var e = starts[i]; e < starts[i + 1]; e++)
+            {
+                if (failed is null && groupError.TryGetValue(edgeDb[e], out var error)) failed = error;
+                if (targets.TryGetValue((edgeDb[e], edgeTo[e]), out var value)) selected.Add(value);
+            }
+            var text = failed ?? RelationComputedFold.Fold(field.FieldType, cfg.Aggregate, separator, field.ConfigJson, selected).Value;
+            if (!interned.TryGetValue(text, out var index))
+            {
+                interned[text] = index = values.Count;
+                values.Add(text);
+            }
+            valueIndex[i] = index;
+        }
+        return new RelationComputedColumn { Default = defaultValue, Ids = [.. sources], ValueIndex = valueIndex, Values = [.. values] };
+    }
+
+    /// <summary>Ребра свойства-связи от записей коллекции в порядке записи-источника и ребер — проход
+    /// по индексу (FieldId, FromRecordId, Position) без сортировки (план проверяет тест).</summary>
+    internal IQueryable<ComputedEdge> ComputedColumnEdges(int collectionId, int relationFieldId) =>
+        from l in db.DbRecordLinks.AsNoTracking()
+        join s in db.DbRecords.AsNoTracking() on l.FromRecordId equals s.Id
+        where l.FieldId == relationFieldId && s.CollectionId == collectionId
+        orderby l.FromRecordId, l.Position, l.Id
+        select new ComputedEdge(l.FromRecordId, l.TargetDbId, l.ToRecordId);
+
+    internal readonly record struct ComputedEdge(int FromRecordId, int TargetDbId, int ToRecordId);
+
+    /// <summary>Значения столбца у записей <paramref name="ordered"/>: малый срез — сам, тем же
+    /// путем, что страница; больший — из столбца целиком.</summary>
+    internal Func<int, string> RelationComputedValuesFor(int collectionId, DbField field, IReadOnlyList<int> ordered,
+        CancellationToken ct = default)
+    {
+        ct = ComputedToken(ct);
+        if (ordered.Count > SubsetLimit)
+            return ReadRelationComputedColumn(collectionId, field, ct).ValueOf;
+        var fid = field.Id!.Value;
+        var values = new Dictionary<int, string>(ordered.Count);
+        foreach (var chunk in ordered.Chunk(ComputedTargetBatch))
+        {
+            ct.ThrowIfCancellationRequested();
+            var batch = GetRelationComputedValues(chunk, [field]);
+            foreach (var id in chunk) values[id] = batch.GetValueOrDefault(id)?.GetValueOrDefault(fid, "") ?? "";
+        }
+        return id => values.GetValueOrDefault(id, "");
+    }
+
+    // Настройка вычисляемого столбца, если она годна: связь своей коллекции, итог подходит к типу.
+    private (RelationComputedConfig Config, RelationConfig Relation)? RelationComputedSetup(DbField field)
+    {
+        var cfg = RelationComputedConfig.FromConfig(field.ConfigJson);
+        if (cfg is null) return null;
+        var relation = db.DbFields.AsNoTracking().FirstOrDefault(f => f.Id == cfg.RelationFieldId);
+        if (relation is null || relation.CollectionId != field.CollectionId || relation.FieldType != "relation"
+            || RelationConfig.FromConfig(relation.ConfigJson) is not { } relationConfig
+            || field.FieldType == "lookup" && cfg.Aggregate != "lookup"
+            || field.FieldType == "rollup" && !RelationComputedConfig.Aggregates.Contains(cfg.Aggregate, StringComparer.Ordinal))
+            return null;
+        return (cfg, relationConfig);
+    }
+
+    // Значения различных целей по базам и отказы баз — по тем же правилам, что у страницы
+    // (CalculateRelationComputedValues): старое ребро с числовым ключом свойства не открывает чужую
+    // базу, недоступная база и закрытая коллекция — отказ группы.
+    private (Dictionary<(int Db, int Record), RelationPropertyValue> Targets, Dictionary<int, string> Errors)
+        ReadComputedTargets(Dictionary<int, HashSet<int>> wanted, RelationComputedConfig cfg, RelationConfig relationConfig,
+            string column, CancellationToken ct)
+    {
+        var run = ComputedRun;
+        var targets = new Dictionary<(int Db, int Record), RelationPropertyValue>();
+        var errors = new Dictionary<int, string>();
+        var propertyKey = cfg.Aggregate == "count" ? TitleKey : cfg.TargetField;
+        foreach (var (dbId, ids) in wanted)
+        {
+            if (int.TryParse(propertyKey, out _) && !IsExpectedRelationTargetDatabase(dbId, relationConfig.TargetDbId))
+            {
+                foreach (var id in ids) targets[(dbId, id)] = new(id, "", "", RelationProperty.MissingField, "", null);
+                continue;
+            }
+            AppDbContext? isolatedDb = null;
+            try
+            {
+                var targetRepo = dbId == 0 ? this : RelationDbResolver.RepoFor(dbId);
+                if (targetRepo is null) { errors[dbId] = UnavailableLabel(dbId); continue; }
+                if (propertyKey != TitleKey
+                    && targetRepo.Permissions?.Can(PermAction.ViewCollection, relationConfig.TargetCollectionId) == false)
+                { errors[dbId] = RelationProperty.NoAccess; continue; }
+                var reader = this;
+                if (dbId != 0)
+                {
+                    // Чужой общий контекст в фон не уходит: одно свое подключение на базу за расчет.
+                    isolatedDb = new AppDbContext(targetRepo.DbPath);
+                    isolatedDb.ApplyPerformancePragmas();
+                    reader = new ConstructorRepository(isolatedDb) { Permissions = targetRepo.Permissions };
+                }
+                var done = 0;
+                foreach (var chunk in ids.Order().Chunk(ComputedTargetBatch))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    run?.Report($"Столбец «{column}»: {(dbId == 0 ? "связанные записи" : $"база «{run.BaseName(dbId)}»")}, " +
+                                $"{done:N0} из {ids.Count:N0}", done, ids.Count);
+                    done += chunk.Length;
+                    CountColumnQuery();
+                    foreach (var value in ReadComputedTargetProperties(reader, relationConfig.TargetCollectionId, propertyKey, chunk))
+                        targets[(dbId, value.RecordId)] = value;
+                }
+            }
+            catch (PermissionDeniedException) { errors[dbId] = RelationProperty.NoAccess; }
+            catch (Exception ex) when (ex is System.Data.Common.DbException or System.IO.IOException
+                                                or InvalidOperationException or ArgumentException)
+            { errors[dbId] = "(вычисление недоступно)"; }
+            finally { isolatedDb?.Dispose(); }
+        }
+        return (targets, errors);
+    }
+}
+
+/// <summary>
+/// Фоновый расчет данных из связанных записей (отбор, сортировка, окно фильтра): токен отмены и
+/// строка в значке фоновых работ — «Данные из связанных записей», под ней столбец и ход, — если
+/// расчет идет дольше секунды (решение пользователя 23.10.2026). Остановки нет: расчет отменяется
+/// сам, когда таблица просит новый отбор или сортировку или закрыто окно фильтра. Имена баз
+/// снимаются на UI-потоке (<see cref="Capture"/>): путей и строк подключения в строке хода нет.
+/// </summary>
+internal sealed class RelationColumnRun(CancellationToken ct, IReadOnlyDictionary<int, string> baseNames) : IDisposable
+{
+    internal static TimeSpan ShowAfter = TimeSpan.FromSeconds(1);
+    private readonly string _id = "relation-column:" + Guid.NewGuid().ToString("N");
+    private readonly System.Diagnostics.Stopwatch _watch = System.Diagnostics.Stopwatch.StartNew();
+    private bool _shown;
+
+    public CancellationToken Token => ct;
+
+    /// <summary>Только с UI-потока: имена подключенных баз по номеру связи.</summary>
+    public static RelationColumnRun Capture(CancellationToken ct) => new(ct,
+        RelationDbResolver.MountedReposExcept(0).ToDictionary(p => p.DbId, p => RelationDbResolver.DbName(p.DbId) ?? ""));
+
+    public string BaseName(int dbId) => baseNames.GetValueOrDefault(dbId) is { Length: > 0 } name ? name : "другая база";
+
+    public void Report(string detail, int done = 0, int total = 0)
+    {
+        if (!_shown && _watch.Elapsed < ShowAfter) return;
+        _shown = true;
+        Core.BackgroundJobs.Report(_id, "Данные из связанных записей", detail, done, total, icon: "IconFieldRelation");
+    }
+
+    public void Dispose()
+    {
+        if (_shown) Core.BackgroundJobs.Finish(_id);
+    }
+}

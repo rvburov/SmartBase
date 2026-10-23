@@ -13,12 +13,17 @@ public partial class ConstructorRepository
         return entity is null ? null : ToDbField(entity);
     }
 
-    private List<(string Value, int Count)> RelatedComputedCounts(int fieldId, IQueryable<DbRecordEntity> scope)
+    // Значения одной колонки по срезу в порядке таблицы; «(Пусто)» последним. Считается только эта
+    // колонка: малый срез — сам, больший — столбцом целиком.
+    private List<(string Value, int Count)> RelatedComputedCounts(int fieldId, IQueryable<DbRecordEntity> scope,
+        CancellationToken ct = default)
     {
-        var records = scope.OrderBy(r => r.Position).ThenBy(r => r.Id).Select(r => r.Id).ToList();
-        var values = GetRelationComputedValues(records);
-        var groups = records.Select((id, index) => (Index: index,
-                Value: values.GetValueOrDefault(id)?.GetValueOrDefault(fieldId, "") ?? ""))
+        var field = RelatedComputedField(fieldId);
+        var ordered = scope.OrderBy(r => r.Position).ThenBy(r => r.Id).Select(r => new { r.Id, r.CollectionId }).ToList();
+        if (field is null || ordered.Count == 0) return ordered.Count == 0 ? [] : [("", ordered.Count)];
+        var records = ordered.Select(r => r.Id).ToList();
+        var valueOf = RelationComputedValuesFor(ordered[0].CollectionId, field, records, ComputedToken(ct));
+        var groups = records.Select((id, index) => (Index: index, Value: valueOf(id)))
             .GroupBy(x => x.Value)
             .Select(g => (Value: g.Key, Count: g.Count(), Position: g.Min(x => x.Index)))
             .ToList();

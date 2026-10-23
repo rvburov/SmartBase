@@ -217,6 +217,37 @@ public sealed class RelationComputedTests
     }
 
     [Fact]
+    public void An_unavailable_database_marks_only_the_records_that_link_into_it()
+    {
+        // Значение записи не зависит от соседей по пакету: страница, карточка и столбец целиком
+        // показывают одно и то же. Ребро в базу, которой нет, дает подпись только своей записи.
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+        var s = Seed(repo);
+        var lookup = Computed(repo, s, "lookup", "__title__");
+        var count = Computed(repo, s, "rollup", "__title__", "count");
+        var linked = SampleData.AddRecord(repo, s.Source, "Со ссылкой в пропавшую базу").Id!.Value;
+        var plain = SampleData.AddRecord(repo, s.Source, "Без ребер").Id!.Value;
+        repo.SetLinks(s.Relation, linked, [s.A]);
+        db.Context.DbRecordLinks.Add(new SmartBase.Database.Entities.DbRecordLinkEntity
+            { FieldId = s.Relation, FromRecordId = linked, ToRecordId = s.B, TargetDbId = 1_234_567, Position = 2000 });
+        db.Context.SaveChanges();
+        var batch = repo.GetRelationComputedValues([s.Record, linked, plain]);
+        Assert.StartsWith("(база", batch[linked][lookup.Id!.Value], StringComparison.Ordinal);
+        Assert.Equal(batch[linked][lookup.Id.Value], batch[linked][count.Id!.Value]);
+        Assert.Equal("Второй, Первый", batch[s.Record][lookup.Id.Value]);
+        Assert.Equal("2", batch[s.Record][count.Id.Value]);
+        Assert.Equal("", batch[plain][lookup.Id.Value]);
+        Assert.Equal("0", batch[plain][count.Id.Value]);
+        foreach (var id in new[] { s.Record, linked, plain })
+            Assert.Equal(batch[id], repo.GetRelationComputedValues([id])[id]);
+        var column = repo.GetRelationComputedColumnValues(s.Source, lookup);
+        Assert.Equal(batch[s.Record][lookup.Id.Value], column[s.Record]);
+        Assert.Equal(batch[linked][lookup.Id.Value], column[linked]);
+        Assert.Equal("", column[plain]);
+    }
+
+    [Fact]
     public void Lookup_does_not_disclose_a_target_collection_hidden_from_the_user()
     {
         using var db = new TempDatabase();

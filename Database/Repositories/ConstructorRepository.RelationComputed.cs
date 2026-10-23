@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using SmartBase.Core.Models;
 
@@ -92,7 +91,9 @@ public partial class ConstructorRepository
                 g => g.Select(e => (e.TargetDbId, e.ToRecordId)).Distinct().ToArray());
             var propertyKey = cfg.Aggregate == "count" ? TitleKey : cfg.TargetField;
             var targets = new Dictionary<(int Db, int Record), RelationPropertyValue>();
-            string? error = null;
+            // Отказ — у группы целей одной базы, а не у пакета: запись без ребер в эту базу считается
+            // как обычно, и значение записи не зависит от соседей по странице.
+            var groupError = new Dictionary<int, string>();
             foreach (var group in fieldEdges.GroupBy(e => e.TargetDbId))
             {
                 var wanted = group.Select(e => e.ToRecordId).Distinct().ToArray();
@@ -112,10 +113,10 @@ public partial class ConstructorRepository
                     try
                     {
                         var targetRepo = group.Key == 0 ? this : RelationDbResolver.RepoFor(group.Key);
-                        if (targetRepo is null) { error = UnavailableLabel(group.Key); break; }
+                        if (targetRepo is null) { groupError[group.Key] = UnavailableLabel(group.Key); continue; }
                         if (propertyKey != TitleKey
                             && targetRepo.Permissions?.Can(PermAction.ViewCollection, relationConfig.TargetCollectionId) == false)
-                        { error = "(нет доступа)"; break; }
+                        { groupError[group.Key] = RelationProperty.NoAccess; continue; }
                         // Чужой общий контекст не уходит в фоновый поток чтения страницы.
                         if (group.Key != 0)
                         {
@@ -129,10 +130,10 @@ public partial class ConstructorRepository
                             foreach (var value in ReadComputedTargetProperties(this, relationConfig.TargetCollectionId, propertyKey, missing))
                                 values[value.RecordId] = value;
                     }
-                    catch (PermissionDeniedException) { error = "(нет доступа)"; break; }
+                    catch (PermissionDeniedException) { groupError[group.Key] = RelationProperty.NoAccess; continue; }
                     catch (Exception ex) when (ex is System.Data.Common.DbException or System.IO.IOException
                                                         or InvalidOperationException or ArgumentException)
-                    { error = "(вычисление недоступно)"; break; }
+                    { groupError[group.Key] = "(вычисление недоступно)"; continue; }
                 }
                 foreach (var id in wanted)
                     if (values.TryGetValue(id, out var value)) targets[(group.Key, id)] = value;
@@ -140,23 +141,13 @@ public partial class ConstructorRepository
 
             foreach (var id in ownIds)
             {
-                if (error is not null) { Store(id, fid, error); continue; }
-                var selected = bySource.GetValueOrDefault(id, []).Where(targets.ContainsKey)
-                    .Select(key => targets[key]).ToList();
-                var invalid = selected.FirstOrDefault(v => v.FieldType.Length == 0 && v.Display.Length > 0);
-                var cycle = selected.Any(v => v.Display == "(циклическая связь)" || v.Raw == "(циклическая связь)");
-                var value = cycle ? "(циклическая связь)" : invalid is not null ? invalid.Display : field.FieldType == "lookup"
-                    ? string.Join(relationConfig.SeparatorString, selected.Select(v => v.Display).Where(v => v.Length > 0))
-                    : RelationRollupValue.Calculate(cfg.Aggregate, selected.Select(v => v.Raw));
-                if (cycle || invalid is not null) { Store(id, fid, value); continue; }
-                var typed = field.FieldType == "rollup"
-                    ? new RelationComputedValue(value, FieldTypeInfo.FormatComputedDisplay(value, "rollup"),
-                        RelationComputedConfig.IsDateAggregate(cfg.Aggregate) ? "date" : "number", "{}")
-                    : selected.Count == 1
-                    ? new RelationComputedValue(selected[0].Raw, value, selected[0].FieldType, selected[0].ConfigJson)
-                    : new RelationComputedValue(JsonSerializer.Serialize(selected.Select(v => new
-                        { raw = v.Raw, fieldType = v.FieldType, configJson = v.ConfigJson })), value, "lookup", field.ConfigJson);
-                Store(id, fid, value, typed);
+                var edgesOf = bySource.GetValueOrDefault(id, []);
+                // Первая отказавшая база по порядку ребер записи.
+                var failed = edgesOf.Select(e => groupError.GetValueOrDefault(e.TargetDbId)).FirstOrDefault(e => e is not null);
+                var folded = failed is not null ? RelationComputedFold.Error(failed)
+                    : RelationComputedFold.Fold(field.FieldType, cfg.Aggregate, relationConfig.SeparatorString, field.ConfigJson,
+                        edgesOf.Where(targets.ContainsKey).Select(key => targets[key]).ToList());
+                Store(id, fid, folded.Value, folded.Typed);
             }
         }
         return result;
@@ -203,23 +194,15 @@ public partial class ConstructorRepository
         }
     }
 
-    /// <summary>Вычисляемая колонка для фильтра и сортировки. Чтение идет страницами, чтобы одна
-    /// большая коллекция не превращалась в один SQL IN с миллионами параметров.</summary>
+    /// <summary>Вычисляемая колонка по всем записям коллекции в порядке таблицы (Position, Id): при
+    /// повторах значения первой берется та же запись, что раньше. Считается столбцом целиком
+    /// (<see cref="ReadRelationComputedColumn"/>).</summary>
     public Dictionary<int, string> GetRelationComputedColumnValues(int collectionId, DbField field)
     {
-        var result = new Dictionary<int, string>();
-        int? afterPosition = null, afterId = null;
-        while (true)
-        {
-            var page = GetRecordsPageAfter(collectionId, afterPosition, afterId, 1000);
-            if (page.Count == 0) break;
-            var ids = page.Select(r => r.Id!.Value).ToArray();
-            var values = GetRelationComputedValues(ids, [field]);
-            foreach (var id in ids) result[id] = values.GetValueOrDefault(id)?.GetValueOrDefault(field.Id!.Value, "") ?? "";
-            afterPosition = page[^1].Position;
-            afterId = page[^1].Id;
-        }
-        return result;
+        var column = ReadRelationComputedColumn(collectionId, field);
+        return db.DbRecords.AsNoTracking().Where(r => r.CollectionId == collectionId)
+            .OrderBy(r => r.Position).ThenBy(r => r.Id).Select(r => r.Id).ToList()
+            .ToDictionary(id => id, column.ValueOf);
     }
 
     /// <summary>Проверка настройки до сохранения: цель существует, числовой итог считает числа,

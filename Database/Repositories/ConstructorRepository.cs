@@ -5333,15 +5333,13 @@ public partial class ConstructorRepository(AppDbContext db)
         // проверяется через `r.Id IN (SELECT RecordId ... WHERE Value IN (...))` — некоррелированный
         // подзапрос: список id собирается ОДИН раз по индексу (FieldId, Value), дальше только
         // проба по нему (те же 10 млн × 1444 — 12 с). Ветка «(Пусто)» коррелирована, но без списка.
+        // Данные из связанных записей отбираются вторым проходом, по срезу остальных фильтров.
+        var computedFilters = new List<(DbField Field, HashSet<string> Allowed)>();
         foreach (var (key, allowed) in filters)
         {
             if (int.TryParse(key, out var computedId) && relatedComputed.TryGetValue(computedId, out var computedField))
             {
-                var excluded = FilterExclusion.IsExclude(allowed);
-                var selected = excluded ? FilterExclusion.Values(allowed).ToHashSet() : allowed;
-                var values = GetRelationComputedColumnValues(collectionId, computedField);
-                var matching = values.Where(kv => selected.Contains(kv.Value)).Select(kv => kv.Key).ToHashSet();
-                q = excluded ? q.Where(r => !matching.Contains(r.Id)) : q.Where(r => matching.Contains(r.Id));
+                computedFilters.Add((computedField, allowed));
                 continue;
             }
             if (int.TryParse(key, out var boxId) && boxFieldIds.Contains(boxId))
@@ -5422,7 +5420,37 @@ public partial class ConstructorRepository(AppDbContext db)
             }
         }
 
+        foreach (var (field, allowed) in computedFilters) q = ComputedFilter(q, collectionId, field, allowed);
         return q;
+    }
+
+    // Отбор по данным из связанных записей. Малый срез считается сам и отбирается списком
+    // подошедших. Иначе — столбец целиком: у большинства записей одно значение (Default, итог без
+    // целей), поэтому список строится из меньшей стороны — подошедших или не подошедших записей с
+    // ребрами.
+    private IQueryable<DbRecordEntity> ComputedFilter(IQueryable<DbRecordEntity> q, int collectionId, DbField field,
+        HashSet<string> allowed)
+    {
+        var excluded = FilterExclusion.IsExclude(allowed);
+        var selected = excluded ? FilterExclusion.Values(allowed).ToHashSet() : allowed;
+        bool Keep(string value) => selected.Contains(value) != excluded;
+        var ct = ComputedToken(default);
+        var scope = q.OrderBy(r => r.Position).ThenBy(r => r.Id).Select(r => r.Id).Take(SubsetLimit + 1).ToList();
+        if (scope.Count <= SubsetLimit)
+        {
+            var valueOf = RelationComputedValuesFor(collectionId, field, scope, ct);
+            var hit = scope.Where(id => Keep(valueOf(id))).ToList();
+            return q.Where(r => hit.Contains(r.Id));
+        }
+        var column = ReadRelationComputedColumn(collectionId, field, ct);
+        if (column.ColumnError is { } constant) return Keep(constant) ? q : q.Where(r => false);
+        if (Keep(column.Default))
+        {
+            var miss = column.IdsWhere(v => !Keep(v));
+            return q.Where(r => !miss.Contains(r.Id));
+        }
+        var matching = column.IdsWhere(Keep);
+        return q.Where(r => matching.Contains(r.Id));
     }
 
     // Отбор по чекбоксу: в наборе (или в исключениях отбора «кроме») важна только группа значения.
@@ -5679,22 +5707,6 @@ public partial class ConstructorRepository(AppDbContext db)
         return bySource;
     }
 
-    // Пути (для AppDbContext) к чужим базам, на которые ссылается поле-связь из этой коллекции.
-    // Снимается на UI-потоке (реестр/общие репозитории — только оттуда): фон затем открывает по этим
-    // путям СВЕЖИЕ изолированные подключения и читает Title целей, не трогая общий контекст чужой базы.
-    private Dictionary<int, string> CrossDbPathsForField(int collectionId, int fieldId)
-    {
-        var dbIds = (from l in db.DbRecordLinks.AsNoTracking()
-                     where l.FieldId == fieldId && l.TargetDbId != 0
-                     join src in db.DbRecords.AsNoTracking() on l.FromRecordId equals src.Id
-                     where src.CollectionId == collectionId
-                     select l.TargetDbId).Distinct().ToList();
-        var map = new Dictionary<int, string>();
-        foreach (var dbId in dbIds)
-            if (RelationDbResolver.RepoFor(dbId)?.DbPath is { } p) map[dbId] = p;
-        return map;
-    }
-
     /// <summary>
     /// Значения столбца-связи с количеством для панели фильтра (Excel-стиль): каждый пункт —
     /// НАЗВАНИЕ связанной записи (Title цели, в т.ч. из ДРУГОЙ базы), счетчик — сколько записей-
@@ -5801,8 +5813,32 @@ public partial class ConstructorRepository(AppDbContext db)
     /// <see cref="FilterValueCap"/>: в <paramref name="Values"/> первые по алфавиту или найденные поиском
     /// (не больше <see cref="FilterValueCap"/>), «(Пусто)» последним (без поиска);
     /// <paramref name="DistinctTotal"/> — сколько разных значений всего (без поиска; −1 — не считалось),
-    /// <paramref name="More"/> — найдено больше показанного.</summary>
-    public sealed record ColumnValueList(List<(string Value, int Count)> Values, bool Capped, long DistinctTotal, bool More);
+    /// <paramref name="More"/> — найдено больше показанного. <paramref name="Snapshot"/> — значения
+    /// колонки данных из связанных записей, посчитанные для окна: поиск и итоги того же окна идут по
+    /// нему, не пересчитывая столбец.</summary>
+    public sealed record ColumnValueList(List<(string Value, int Count)> Values, bool Capped, long DistinctTotal, bool More,
+        ColumnValueSnapshot? Snapshot = null);
+
+    /// <summary>Значения колонки данных из связанных записей с числом записей — на время окна
+    /// фильтра. Годен только для той же базы, коллекции, колонки и тех же фильтров остальных
+    /// колонок; живет не дольше окна, поэтому права и данные не устаревают дольше открытого окна.</summary>
+    public sealed class ColumnValueSnapshot
+    {
+        internal ColumnValueSnapshot(string scope, List<(string Value, int Count)> counts)
+        {
+            Scope = scope;
+            Counts = counts;
+        }
+
+        internal string Scope { get; }
+        internal List<(string Value, int Count)> Counts { get; }
+    }
+
+    // Чем определен срез окна фильтра: база, коллекция, колонка, фильтры остальных колонок, скрытые.
+    private string SnapshotScope(int collectionId, string key, Dictionary<string, HashSet<string>> others, bool excludeHidden) =>
+        string.Join("\u0001", new[] { db.DbPath, collectionId.ToString(), key, excludeHidden ? "1" : "0" }
+            .Concat(others.OrderBy(kv => kv.Key, StringComparer.Ordinal)
+                .Select(kv => kv.Key + "=" + string.Join("\u0002", kv.Value.Order(StringComparer.Ordinal)))));
 
     /// <summary>
     /// Значения колонки для окна фильтра — как <see cref="GetColumnCountsAsync"/> (Excel-каскад,
@@ -5814,41 +5850,48 @@ public partial class ConstructorRepository(AppDbContext db)
     /// </summary>
     public Task<ColumnValueList> GetColumnValueListAsync(int collectionId, string key,
         IReadOnlyDictionary<string, HashSet<string>>? filters = null, bool excludeHidden = false,
-        string? search = null, CancellationToken ct = default)
+        string? search = null, CancellationToken ct = default, ColumnValueSnapshot? reuse = null)
     {
         var others     = OtherFilters(filters, key);
         var crossPaths = CrossDbPathsForKeys(collectionId, others.Keys.Append(key));
+        var run        = RelationColumnRun.Capture(ct);
         return Task.Run(() =>
         {
+            using var _ = run;
             using var ctx = new AppDbContext(db.DbPath);
             ctx.ApplyPerformancePragmas();
-            var repo = new ConstructorRepository(ctx) { Permissions = Permissions };
-            return repo.ColumnValues(collectionId, key, others, excludeHidden, ForeignResolver(crossPaths), search, ct);
+            var repo = new ConstructorRepository(ctx) { Permissions = Permissions, ComputedRun = run };
+            return repo.ColumnValues(collectionId, key, others, excludeHidden, ForeignResolver(crossPaths), search, ct, reuse);
         }, ct);
     }
 
     private ColumnValueList ColumnValues(int collectionId, string key, Dictionary<string, HashSet<string>> others,
         bool excludeHidden, Func<int, IReadOnlyList<int>, Dictionary<int, string>?>? resolveForeign,
-        string? search, CancellationToken ct)
+        string? search, CancellationToken ct, ColumnValueSnapshot? reuse = null)
     {
         int? fid = int.TryParse(key, out var parsed) ? parsed : null;
         if (fid is int fileId && IsFileField(fileId))
             return FileColumnValues(fileId, FilteredRecords(collectionId, others, excludeHidden, resolveForeign), search, ct);
-        if (fid is int computedId && RelatedComputedField(computedId) is not null)
+        if (fid is int computedId && RelatedComputedField(computedId) is { } computedField)
         {
-            using var foreignScope = (resolveForeign?.Target as ForeignPropertyReader)?.OpenScope();
-            ct.ThrowIfCancellationRequested();
-            var computedScope = FilteredRecords(collectionId, others, excludeHidden, resolveForeign);
-            var counts = RelatedComputedCounts(computedId, computedScope);
+            var snapshot = ComputedSnapshot(collectionId, key, computedId, others, excludeHidden, resolveForeign, ct, reuse);
+            // Поиск — по показанному тексту («11,7» находит итог 11.75), первые значения — порядком
+            // колонки (итог — как число).
+            var counts = snapshot.Counts;
             var computedPattern = search?.Trim();
             if (!string.IsNullOrEmpty(computedPattern))
-                counts = counts.Where(v => v.Value.Contains(computedPattern, StringComparison.OrdinalIgnoreCase)).ToList();
+                counts = counts.Where(v => FieldTypeInfo.FormatComputedDisplay(v.Value, computedField.FieldType)
+                    .Contains(computedPattern, StringComparison.OrdinalIgnoreCase)).ToList();
             var total = counts.Count(v => v.Value.Length > 0);
-            var computedPage = counts.Where(v => v.Value.Length > 0).OrderBy(v => v.Value, StringComparer.CurrentCulture)
-                .Take(FilterValueCap).ToList();
-            computedPage.AddRange(counts.Where(v => v.Value.Length == 0));
+            var capped = total > FilterValueCap;
+            var compare = ColumnSort.BuildComparer(computedField.FieldType == "rollup" ? "rollup" : "text", true);
+            var computedPage = counts.Where(v => v.Value.Length > 0)
+                .OrderBy(v => v.Value, Comparer<string>.Create((a, b) => compare(a, b))).Take(FilterValueCap).ToList();
+            // Ограниченный список досчитывает «(Пусто)» итогами окна сам: здесь его нет, иначе
+            // строка встала бы дважды.
+            if (!capped) computedPage.AddRange(counts.Where(v => v.Value.Length == 0));
             ct.ThrowIfCancellationRequested();
-            return new(computedPage, total > FilterValueCap, total, total > FilterValueCap);
+            return new(computedPage, capped, total, capped, snapshot);
         }
         var cappable = key == TitleKey || (fid is { } id && db.DbFields.AsNoTracking()
                            .Any(f => f.Id == id && f.FieldType != "relation" && f.FieldType != "date"
@@ -5921,6 +5964,21 @@ public partial class ConstructorRepository(AppDbContext db)
         return new(page, true, -1, more);
     }
 
+    // Значения колонки данных из связанных записей по срезу окна: из снимка того же окна, если он
+    // годен, иначе расчет одной колонки.
+    private ColumnValueSnapshot ComputedSnapshot(int collectionId, string key, int fieldId,
+        Dictionary<string, HashSet<string>> others, bool excludeHidden,
+        Func<int, IReadOnlyList<int>, Dictionary<int, string>?>? resolveForeign, CancellationToken ct, ColumnValueSnapshot? reuse,
+        IQueryable<DbRecordEntity>? scope = null)
+    {
+        var scopeKey = SnapshotScope(collectionId, key, others, excludeHidden);
+        if (reuse?.Scope == scopeKey) return reuse;
+        using var foreignScope = (resolveForeign?.Target as ForeignPropertyReader)?.OpenScope();
+        ct.ThrowIfCancellationRequested();
+        scope ??= FilteredRecords(collectionId, others, excludeHidden, resolveForeign);
+        return new ColumnValueSnapshot(scopeKey, RelatedComputedCounts(fieldId, scope, ct));
+    }
+
     // Непустые значения поля ограниченного списка — по срезу, если его сузили фильтры других
     // колонок или скрытые записи (иначе значения поля и есть значения записей коллекции).
     private IQueryable<DbFieldValueEntity> CappedValues(int fieldId, IQueryable<DbRecordEntity> scope, bool narrowed)
@@ -5936,15 +5994,17 @@ public partial class ConstructorRepository(AppDbContext db)
     /// </summary>
     public Task<(long Distinct, int Empty)> GetColumnValueTotalsAsync(int collectionId, string key,
         IReadOnlyDictionary<string, HashSet<string>>? filters = null, bool excludeHidden = false,
-        CancellationToken ct = default)
+        CancellationToken ct = default, ColumnValueSnapshot? reuse = null)
     {
         var others     = OtherFilters(filters, key);
         var crossPaths = CrossDbPathsForKeys(collectionId, others.Keys.Append(key));
+        var run        = RelationColumnRun.Capture(ct);
         return Task.Run(() =>
         {
+            using var _ = run;
             using var ctx = new AppDbContext(db.DbPath);
             ctx.ApplyPerformancePragmas();
-            var repo  = new ConstructorRepository(ctx) { Permissions = Permissions };
+            var repo  = new ConstructorRepository(ctx) { Permissions = Permissions, ComputedRun = run };
             var resolver = ForeignResolver(crossPaths);
             using var foreignScope = (resolver?.Target as ForeignPropertyReader)?.OpenScope();
             var scope = repo.FilteredRecords(collectionId, others, excludeHidden, resolver);
@@ -5953,7 +6013,7 @@ public partial class ConstructorRepository(AppDbContext db)
                 if (repo.IsFileField(fid)) return repo.FileColumnValueTotals(fid, scope, ct);
                 if (repo.RelatedComputedField(fid) is not null)
                 {
-                    var counts = repo.RelatedComputedCounts(fid, scope);
+                    var counts = repo.ComputedSnapshot(collectionId, key, fid, others, excludeHidden, resolver, ct, reuse, scope).Counts;
                     return ((long)counts.Count(v => v.Value.Length > 0), counts.Where(v => v.Value.Length == 0).Sum(v => v.Count));
                 }
                 var values = repo.CappedValues(fid, scope, others.Count > 0 || excludeHidden);
@@ -5995,12 +6055,14 @@ public partial class ConstructorRepository(AppDbContext db)
         // RelationTitlesBySource (RelationDbResolver.RepoFor → общий контекст чужой базы) НИКОГДА не
         // выполнялся из фона. Путь не снят на UI → dbId нет в карте → null → «(база недоступна)».
         var crossPaths = CrossDbPathsForKeys(collectionId, others.Keys.Append(key));
+        var run        = RelationColumnRun.Capture(CancellationToken.None);
 
         return Task.Run(() =>
         {
+            using var _ = run;
             using var ctx = new AppDbContext(db.DbPath);
             ctx.ApplyPerformancePragmas();
-            var repo = new ConstructorRepository(ctx) { Permissions = Permissions };
+            var repo = new ConstructorRepository(ctx) { Permissions = Permissions, ComputedRun = run };
             return repo.GetColumnCounts(collectionId, key, others, excludeHidden, ForeignResolver(crossPaths));
         });
     }

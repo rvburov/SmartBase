@@ -513,15 +513,17 @@ public sealed partial class ConstructorRepository
         var filtersCopy = filters.ToDictionary(kv => kv.Key, kv => new HashSet<string>(kv.Value));
         var crossPaths  = CrossDbPathsForKeys(collectionId, filtersCopy.Keys.Append(sortKey ?? ""));
         var dbPath      = db.DbPath;
+        var run         = RelationColumnRun.Capture(ct);
 
         return Task.Run(async () =>
         {
+            using var _ = run;
             using var slow = Diag.Measure("отбор и сортировка таблицы", Diag.UiQuery,
                                           $"{SmartBase.Utils.DbErrors.Display(dbPath)}, коллекция {collectionId}, фильтров {filtersCopy.Count}" +
                                           (sortKey is null ? "" : $", сортировка по {sortKey}"));
             await using var ctx = new AppDbContext(dbPath);
             ctx.ApplyPerformancePragmas();
-            var repo = new ConstructorRepository(ctx) { Permissions = Permissions };
+            var repo = new ConstructorRepository(ctx) { Permissions = Permissions, ComputedRun = run };
             var ids  = await repo.FilteredIdsSortedAsync(collectionId, filtersCopy, excludeHidden, sortKey, sortAsc,
                                                          sortFieldType, ForeignResolver(crossPaths), ct);
             slow.Context += $", отобрано {ids.Count:N0}";
@@ -569,11 +571,9 @@ public sealed partial class ConstructorRepository
             var field = db.DbFields.AsNoTracking().Where(f => f.Id == fid).ToList().Select(ToDbField).FirstOrDefault();
             if (field is null) return ordered;
             using var foreignScope = (resolveForeign?.Target as ForeignPropertyReader)?.OpenScope();
-            var values = GetRelationComputedColumnValues(collectionId, field);
+            var valueOf = RelationComputedValuesFor(collectionId, field, ordered, ct);
             ct.ThrowIfCancellationRequested();
-            var cmp = ColumnSort.BuildComparer(fieldType == "rollup" ? "rollup" : "text", sortAsc);
-            return ordered.OrderBy(id => values.GetValueOrDefault(id, ""),
-                Comparer<string>.Create((a, b) => cmp(a, b))).ToList();
+            return RelationComputedSort.Order(ordered, valueOf, fieldType, sortAsc);
         }
 
         if (fieldType == "relation")
@@ -684,7 +684,10 @@ public sealed partial class ConstructorRepository
     }
 
     // Пути баз межбазовых связей для полей-связей среди ключей (UI-поток: реестр/общие репозитории
-    // только отсюда). null — связей среди ключей нет, фон резолвер не получает.
+    // только отсюда). null — связей среди ключей нет, фон резолвер не получает. Без SQL: пути всех
+    // подключенных баз и настроенной цели. Прежний DISTINCT по всем ребрам поля шел на UI-потоке при
+    // каждой загрузке страницы и подключал базы из реестра синхронно; ребро в неподключенную базу,
+    // кроме настроенной цели, показывает «(база недоступна)».
     private Dictionary<int, string>? CrossDbPathsForKeys(int collectionId, IEnumerable<string> keys)
     {
         Dictionary<int, string>? crossPaths = null;
@@ -703,8 +706,7 @@ public sealed partial class ConstructorRepository
             if (field is null) return;
             if (field.FieldType == "relation")
             {
-                crossPaths ??= new();
-                foreach (var (dbId, path) in repo.CrossDbPathsForField(col, fid)) crossPaths[dbId] = path;
+                AddMounted();
                 if (RelationConfig.FromConfig(field.ConfigJson) is { } cfg)
                     VisitTarget(repo, cfg, cfg.DisplayField, depth + 1);
             }
@@ -714,10 +716,15 @@ public sealed partial class ConstructorRepository
                 var relation = repo.RelationComputedContext.DbFields.AsNoTracking()
                     .FirstOrDefault(f => f.Id == computed.RelationFieldId && f.CollectionId == col && f.FieldType == "relation");
                 if (RelationConfig.FromConfig(relation?.ConfigJson) is not { } cfg) return;
-                crossPaths ??= new();
-                foreach (var (dbId, path) in repo.CrossDbPathsForField(col, computed.RelationFieldId)) crossPaths[dbId] = path;
+                AddMounted();
                 VisitTarget(repo, cfg, computed.Aggregate == "count" ? TitleKey : computed.TargetField, depth + 1);
             }
+        }
+
+        void AddMounted()
+        {
+            crossPaths ??= new();
+            foreach (var (dbId, repo) in RelationDbResolver.MountedReposExcept(0)) crossPaths[dbId] = repo.DbPath;
         }
 
         void VisitTarget(ConstructorRepository repo, RelationConfig cfg, string targetKey, int depth)
