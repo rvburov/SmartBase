@@ -196,6 +196,13 @@ public sealed class RelationBacklinkTests
             Assert.Contains("COVERING INDEX IX_db_record_links_ToRecordId_TargetDbId_FieldId_FromRecordId", plan, StringComparison.Ordinal);
             Assert.DoesNotContain("TEMP B-TREE", plan, StringComparison.Ordinal);
         }
+        // Сверка источников — по первичному ключу, а не проходом по коллекции-источнику.
+        foreach (var term in new[] { null, "Счет" })
+        {
+            var plan = Explain(f.Database.Context, f.Repo.BacklinkVerifyQuery([f.Client, f.Other, 999], term));
+            Assert.Contains("INTEGER PRIMARY KEY", plan, StringComparison.Ordinal);
+            Assert.DoesNotContain("CollectionId", plan, StringComparison.Ordinal);
+        }
         // Прежнего индекса нет: новый покрывает его запросы своим началом.
         var indexes = f.Database.Context.Database.SqlQueryRaw<string>(
             "SELECT name AS Value FROM sqlite_master WHERE type = 'index' AND tbl_name = 'db_record_links'").ToList();
@@ -231,7 +238,7 @@ public sealed class RelationBacklinkTests
         Assert.DoesNotContain("IX_db_record_links_torecordid", indexes);
     }
 
-    private static string Explain(DbContext context, IQueryable<int> query)
+    private static string Explain(DbContext context, IQueryable query)
     {
         using var command = query.CreateDbCommand();
         command.CommandText = "EXPLAIN QUERY PLAN " + command.CommandText;
@@ -375,13 +382,29 @@ public sealed class RelationBacklinkWorkspaceTests
                 Assert.Equal(["Счет 1"], reader.Sources(group, null, null, 200, default).Items.Select(s => s.Title));
                 Assert.Equal(1, reader.Total(group, default));
 
-                // Без допуска к базе «Учет» ее раздела нет.
+                // Своя база не прочиталась — ее раздел «Ссылки не прочитаны», другие базы видны.
+                var broken = RelationBacklinkReader.Capture(defDb.Constructor, client, clients);
+                defDb.Context.Database.ExecuteSqlRaw("ALTER TABLE db_fields RENAME TO db_fields_hidden");
+                try
+                {
+                    var partial = broken.Load(default);
+                    Assert.Equal(2, partial.Count);
+                    Assert.True(partial[0].Failed);
+                    Assert.Equal((0, null), (partial[0].SourceDbId, partial[0].BaseName));
+                    Assert.Single(partial[1].Groups);
+                }
+                finally { defDb.Context.Database.ExecuteSqlRaw("ALTER TABLE db_fields_hidden RENAME TO db_fields"); }
+
+                // Без допуска к базе «Учет» она не читается вовсе: даже если ее файл не прочитать,
+                // раздела «Ссылки не прочитаны» с ее именем нет.
                 var me = accounting.Context.DbUsers.First(u => u.Id == accounting.Permissions.CurrentUserId);
                 me.IsAdmin = false;
                 me.IsApproved = false;
                 accounting.Context.SaveChanges();
                 accounting.Permissions.Reload(notify: false);
-                Assert.Single(RelationBacklinkReader.Capture(defDb.Constructor, client, clients).Load(default));
+                accounting.Context.Database.ExecuteSqlRaw("ALTER TABLE db_fields RENAME TO db_fields_hidden");
+                try { Assert.Single(RelationBacklinkReader.Capture(defDb.Constructor, client, clients).Load(default)); }
+                finally { accounting.Context.Database.ExecuteSqlRaw("ALTER TABLE db_fields_hidden RENAME TO db_fields"); }
             }
             finally
             {

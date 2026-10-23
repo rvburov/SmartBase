@@ -103,9 +103,12 @@ public static class RefreshPlan
         }
 
         // Ссылки на запись панели: коммит в базе-источнике — своей или другой подключенной.
-        // Перечитанная целиком панель читает и их. Повтора не нужно: ответ, пришедший во время
-        // ввода, панель сама применит, когда редактор освободится.
-        if (s.RecordPanelBacklinkSource && IsStale(s.RecordPanelBacklinksStamp, stamp) && !steps.Has(Steps.RecordPanel))
+        // Перечитанная целиком панель читает и их. Пока в панели печатают, коммиты своей базы — это
+        // чаще всего сам набор (входящих ссылок он не меняет): ссылки прочитает панель, когда
+        // повтор перечитает ее целиком. Ответ из другой базы, пришедший во время ввода, панель
+        // применит сама, когда редактор освободится, — повтора ради него нет.
+        if (s.RecordPanelBacklinkSource && IsStale(s.RecordPanelBacklinksStamp, stamp) && !steps.Has(Steps.RecordPanel)
+            && !(s.RecordPanelShowsDb && s.RecordPanelFocused))
             steps |= Steps.RecordPanelBacklinks;
 
         return steps;

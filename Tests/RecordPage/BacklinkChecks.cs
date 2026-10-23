@@ -107,16 +107,26 @@ internal static class BacklinkChecks
             Wait(() => !box.IsLoading && box.ShownSources.Count == 450);
             Expect(box.ShownSources.Select(s => s.RecordId).Distinct().Count() == 450 && box.HintText == "",
                    "подгрузка доводит до конца без повторов, подсказка уходит");
+            // Чужая правка перечитывает панель — открытый список не закрывается, перечитывание ждет.
+            var stamp = page.DataStamp;
+            page.ReloadFromDb();
+            Pump();
+            Expect(box.IsListOpen && box.ShownSources.Count == 450 && page.DataStamp == stamp,
+                   "перечитывание панели ждет, пока открыт список источников");
             box.Search("АКТ СВЕРКИ");
             Wait(() => !box.IsLoading && box.ShownSources.Count == 1);
             Expect(box.ShownSources.SingleOrDefault().Title == "Акт сверки 77", "поиск по названию без учета регистра");
             Press(InputKey.Enter);
             Expect(related.SequenceEqual(new[] { billIds[76] }) && !box.IsListOpen, "Enter переходит к записи-источнику и закрывает список");
-            box.OpenList();
-            Wait(() => !box.IsLoading && box.ShownSources.Count > 0);
+            Wait(() => page.DataStamp > stamp);
+            Expect(page.DataStamp > stamp, "закрытый список отпускает отложенное перечитывание");
+            // Перечитанная панель построила карточки заново: список открывается на новой.
+            ClickCard("Счета · Клиент", value: false);
+            box = list.CurrentEditor as RelationBacklinkBox;
+            Wait(() => box is { IsLoading: false, ShownSources.Count: > 0 });
             var popup = box.GetLogicalDescendants().OfType<Popup>().Single();
             // Строка первой записи списка: контейнеры строк идут не по порядку, часть — за краем.
-            var first = box.ShownSources[0].RecordId;
+            var first = box!.ShownSources[0].RecordId;
             var row = popup.Child!.GetVisualDescendants().OfType<Grid>().First(g => g.IsEffectivelyVisible
                 && g.DataContext?.GetType().GetProperty("Id")?.GetValue(g.DataContext) is int id && id == first);
             ClickPopup(popup, row);
@@ -127,6 +137,18 @@ internal static class BacklinkChecks
 
             RightClickCard("Счета · Клиент");
             Expect(list.Surface.ContextMenu is null, "правый клик по карточке ссылок меню не дает");
+            RightClickCard(note.Name);
+            Expect(list.Surface.ContextMenu is not null, "правый клик по свойству дает его меню");
+            list.Surface.ContextMenu?.Close();
+            Pump();
+            // Поверхность ловит нажатие только там, где рисует: подпись раздела — серый текст у
+            // нижнего края места карточки.
+            var sectionIndex = Index("Ссылаются на эту запись");
+            list.ScrollIntoView(sectionIndex);
+            Pump();
+            var label = list.CardRect(sectionIndex);
+            ClickAt(list.Surface.TranslatePoint(new Point(label.X + 24, label.Y + 29), host)!.Value, MouseButton.Right);
+            Expect(list.Surface.ContextMenu is null, "правый клик по подписи раздела не открывает меню прежнего свойства");
 
             // Набор снизу при скрытых пустых: фильтр пересчитывается на каждую букву, а карточки — те же.
             Click(toggle);

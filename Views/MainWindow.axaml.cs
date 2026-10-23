@@ -966,7 +966,7 @@ public partial class MainWindow : Window
         if (_recordPanelLogicalOpen && RecordPanel.Shows(changedDb.Constructor))
             RecordPanel.ReloadFromDb();
         else if (_recordPanelLogicalOpen && RecordPanel.BacklinksWatch(changedDb.Constructor)
-                 && changes.Any(c => c.TargetType is "record" or "records" or "field" or "collection"))
+                 && changes.Any(c => c.TargetType is "record" or "records" or "field" or "collection" or "group"))
             RecordPanel.RefreshBacklinks();
     }
 
@@ -1034,7 +1034,9 @@ public partial class MainWindow : Window
     // под тестами), здесь только снимок экрана и выполнение шагов. Повторяемо: пока человек
     // печатает в ячейке таблицы или в панели записи, их перечитывание откладывается и заходит
     // снова — остальные части к тому времени уже свежие (их отметки новее) и не трогаются.
-    private void ApplyLocalChanges(int dbId, bool structural, long stamp)
+    /// <param name="links">Коммит мог поменять ребра связей: блоку ссылок панели есть что перечитать.
+    /// Пересчет автосвязей без изменений (<see cref="FlushRelationChanges"/>) их не меняет.</param>
+    private void ApplyLocalChanges(int dbId, bool structural, long stamp, bool links = true)
     {
         if (_workspace.Get(dbId) is not { } db) return;
 
@@ -1056,7 +1058,7 @@ public partial class MainWindow : Window
             RecordPanelShowsDb:      _recordPanelLogicalOpen && RecordPanel.Shows(db.Constructor),
             RecordPanelStamp:        RecordPanel.DataStamp,
             RecordPanelFocused:      RecordPanel.IsKeyboardFocusWithin,
-            RecordPanelBacklinkSource: _recordPanelLogicalOpen && RecordPanel.BacklinksWatch(db.Constructor),
+            RecordPanelBacklinkSource: links && _recordPanelLogicalOpen && RecordPanel.BacklinksWatch(db.Constructor),
             RecordPanelBacklinksStamp: RecordPanel.BacklinksStamp));
 
         // Сайдбары — раньше разделов: набор галочек читается уже с перестроенного дерева.
@@ -1076,7 +1078,7 @@ public partial class MainWindow : Window
         if (steps.Has(RefreshPlan.Steps.RecordPanelBacklinks)) RecordPanel.RefreshBacklinks();
 
         if (steps.Has(RefreshPlan.Steps.Retry))
-            DispatcherTimer.RunOnce(() => ApplyLocalChanges(dbId, structural, stamp), LocalRetryDelay);
+            DispatcherTimer.RunOnce(() => ApplyLocalChanges(dbId, structural, stamp, links), LocalRetryDelay);
     }
 
     // Сообщение человеку — карточка в правом верхнем углу окна (AppNotifications), стопкой с

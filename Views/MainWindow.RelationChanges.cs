@@ -99,8 +99,13 @@ public partial class MainWindow
                 else if (failures.Length == 0 && results.Any(r => r.Applied)) _relationFailureFingerprint = null;
             }
             if (!_relationChangesClosed)
+            {
+                // Ребра поменял только подбор, который что-то записал; без этого блоку ссылок
+                // перечитывать нечего — иначе он читался бы после каждой паузы в наборе.
+                var links = results.Any(r => r.Applied);
                 foreach (var dbId in mounted.Select(m => m.DbId))
-                    ApplyLocalChanges(dbId, structural: false, ChangeBus.Now());
+                    ApplyLocalChanges(dbId, structural: false, ChangeBus.Now(), links);
+            }
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {

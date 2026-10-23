@@ -55,9 +55,6 @@ public partial class RecordPageView : UserControl
     {
         if (_vm is null) return;
         Touch();
-        // Своя правка входящих ссылок записи не меняет (ссылка на себя не показывается): блок ссылок
-        // остается свежим, если его чтение сейчас не идет.
-        if (!BacklinksLoading) BacklinksStamp = DataStamp;
         RecordChanged?.Invoke(this, _vm.RecordId);
     }
     public event EventHandler<bool>? CollectionPanelToggled;
@@ -284,6 +281,7 @@ public partial class RecordPageView : UserControl
         Touch();
         // Та же запись открыта снова — прежние ссылки видны сразу, пока читаются свежие.
         if (!Shows(repository) || _vm?.RecordId != recordId) ResetBacklinks();
+        _reloadAfterList = false;   // показ строит панель заново — отложенное перечитывание не нужно
         _repo = repository;
         _dbId = dbId;
         _vm = new RecordPageViewModel(repository, recordId, collectionId);
@@ -317,7 +315,7 @@ public partial class RecordPageView : UserControl
     /// </summary>
     public void ReloadFromDb()
     {
-        if (_vm is null || _repo is null) return;
+        if (_vm is null || _repo is null || DeferReloadForList()) return;
         Touch();
 
         var recordId     = _vm.RecordId;
@@ -345,6 +343,7 @@ public partial class RecordPageView : UserControl
     public void Clear()
     {
         ResetBacklinks();
+        _reloadAfterList = false;
         _vm = null;
         _repo = null;
         DataContext = null;

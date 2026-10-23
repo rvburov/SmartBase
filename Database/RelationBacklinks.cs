@@ -53,24 +53,30 @@ public sealed class RelationBacklinkReader
         using var slow = Logging.Diag.Measure("обратные ссылки страницы записи", Logging.Diag.Background,
             $"{DbErrors.Display(_own.Path)}, запись {RecordId}");
         var sections = new List<RelationBacklinkSection>();
-        using (var opened = _own.Open())
-            sections.Add(new(0, null, opened.Repo.RelationBacklinkGroups(0, RecordId, CollectionId, _own.LinkId, ct)));
+        // Своя база занята или недоступна — ее раздел говорит об этом, другие базы читаются дальше.
+        sections.Add(Read(_own, 0));
         foreach (var other in _others)
         {
             ct.ThrowIfCancellationRequested();
+            var section = Read(other, other.LinkId);
+            if (section.Groups.Count > 0 || section.Failed) sections.Add(section);
+        }
+        return sections;
+
+        RelationBacklinkSection Read(RelationBaseRef b, int sourceDbId)
+        {
+            var name = sourceDbId == 0 ? null : b.Name;
             try
             {
-                using var opened = other.Open();
-                var groups = opened.Repo.RelationBacklinkGroups(other.LinkId, RecordId, CollectionId, _own.LinkId, ct);
-                if (groups.Count > 0) sections.Add(new(other.LinkId, other.Name, groups));
+                using var opened = b.Open();
+                return new(sourceDbId, name, opened.Repo.RelationBacklinkGroups(sourceDbId, RecordId, CollectionId, _own.LinkId, ct));
             }
             catch (Exception ex) when (ex is System.Data.Common.DbException or InvalidOperationException or IOException)
             {
-                Log.Warning(ex, "Обратные ссылки из базы {Db:l} не прочитаны", DbErrors.Display(other.Path));
-                sections.Add(new(other.LinkId, other.Name, [], Failed: true));
+                Log.Warning(ex, "Обратные ссылки из базы {Db:l} не прочитаны", DbErrors.Display(b.Path));
+                return new(sourceDbId, name, [], Failed: true);
             }
         }
-        return sections;
     }
 
     /// <summary>Страница источников карточки <paramref name="group"/> (см.

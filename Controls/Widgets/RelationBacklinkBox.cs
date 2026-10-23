@@ -48,9 +48,14 @@ public sealed class RelationBacklinkBox : Panel
     private int? _next;
     private int? _total;
     private bool _loading;
+    // Точное число уже считается — следующие страницы второго подсчета не заводят.
+    private bool _counting;
 
     /// <summary>Переход к записи-источнику: (база-источник — 0, если это база записи; номер записи).</summary>
     public event EventHandler<(int SourceDbId, int RecordId)>? Navigate;
+
+    /// <summary>Список источников закрыт.</summary>
+    public event EventHandler? ListClosed;
 
     public RelationBacklinkBox(RelationBacklinkReader reader, RelationBacklinkGroup group)
     {
@@ -92,7 +97,11 @@ public sealed class RelationBacklinkBox : Panel
             Child                 = WindowZoom.WrapPopupContent(BuildList()),
         };
         Children.Add(_popup);
-        _popup.Closed += (_, _) => CancelWork();
+        _popup.Closed += (_, _) =>
+        {
+            CancelWork();
+            ListClosed?.Invoke(this, EventArgs.Empty);
+        };
         DetachedFromVisualTree += (_, _) => CancelWork();
         PointerPressed += (_, e) =>
         {
@@ -290,6 +299,7 @@ public sealed class RelationBacklinkBox : Panel
         _work?.Dispose();
         _work = null;
         _loading = false;
+        _counting = false;
     }
 
     // Новый поиск: прежний ответ больше не нужен, список и ключ страницы — с начала.
@@ -320,7 +330,7 @@ public sealed class RelationBacklinkBox : Panel
             _loading = false;
             UpdateHint();
             // Без поиска точное число нужно, только пока показаны не все.
-            if (query.Length == 0 && _next is not null && _total is null) _ = CountAsync(generation, ct);
+            if (query.Length == 0 && _next is not null && _total is null && !_counting) _ = CountAsync(generation, ct);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -336,6 +346,7 @@ public sealed class RelationBacklinkBox : Panel
 
     private async Task CountAsync(int generation, CancellationToken ct)
     {
+        _counting = true;
         try
         {
             var total = await Task.Run(() => _reader.Total(_group, ct), ct);
@@ -345,6 +356,7 @@ public sealed class RelationBacklinkBox : Panel
         }
         catch (OperationCanceledException) { }
         catch (Exception ex) { Serilog.Log.Warning(ex, "Не удалось посчитать ссылки на запись"); }
+        finally { if (generation == _generation) _counting = false; }
     }
 
     private void UpdateHint()

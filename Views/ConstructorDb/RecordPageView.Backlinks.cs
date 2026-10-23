@@ -41,13 +41,14 @@ public partial class RecordPageView
     /// <summary>Чтение ссылок еще идет (стенды ждут ответа).</summary>
     internal bool BacklinksLoading => _backlinksCts is not null;
 
-    /// <summary>Панель показывает запись этой базы.</summary>
-    public bool Shows(ConstructorRepository? repo) =>
-        _vm is not null && _repo is not null && repo is not null && (ReferenceEquals(_repo, repo) || _repo.DbPath == repo.DbPath);
+    /// <summary>Панель показывает запись этой базы — тем же репозиторием. База, отключенная и
+    /// подключенная снова, — новый репозиторий: прежний закрыт, и панель его не перечитывает.</summary>
+    public bool Shows(ConstructorRepository? repo) => _vm is not null && repo is not null && ReferenceEquals(_repo, repo);
 
-    /// <summary>Коммит в этой базе может изменить блок ссылок: база записи или прочитанная другая база.</summary>
+    /// <summary>Коммит в этой базе может изменить блок ссылок: база записи или прочитанная другая
+    /// база. Пока блок не прочитан (первое чтение, сбой), годится любая подключенная база.</summary>
     public bool BacklinksWatch(ConstructorRepository? repo) =>
-        repo is not null && (Shows(repo) || _vm is not null && _backlinkReader?.Reads(repo.DbPath) == true);
+        repo is not null && _vm is not null && (Shows(repo) || (_backlinkReader?.Reads(repo.DbPath) ?? true));
 
     /// <summary>Перечитать блок ссылок: коммит в базе-источнике, подключили или отключили базу,
     /// сменились права.</summary>
@@ -69,7 +70,14 @@ public partial class RecordPageView
         if (_vm is null || _repo is null) return;
         // Чтение уже идет — повторим после него: отменять почти готовое незачем.
         if (_backlinksCts is not null) { _backlinksAgain = true; return; }
-        var reader = RelationBacklinkReader.Capture(_repo, _vm.RecordId, _vm.CollectionId);
+        RelationBacklinkReader reader;
+        try { reader = RelationBacklinkReader.Capture(_repo, _vm.RecordId, _vm.CollectionId); }
+        catch (Exception ex) when (ex is ObjectDisposedException or System.Data.Common.DbException or InvalidOperationException)
+        {
+            // База записи только что отключена: ее репозиторий закрыт, читать нечего.
+            Serilog.Log.Warning(ex, "Ссылки на запись не прочитаны: база записи закрыта");
+            return;
+        }
         var cts = _backlinksCts = new CancellationTokenSource();
         var stamp = ChangeBus.Now();
         _ = RunAsync();
@@ -160,7 +168,26 @@ public partial class RecordPageView
         if (_backlinkReader is not { } reader) return null;
         var box = new RelationBacklinkBox(reader, group);
         box.Navigate += (_, t) => NavigateTo(t.SourceDbId, t.RecordId);
+        box.ListClosed += (_, _) => Dispatcher.UIThread.Post(ApplyDeferredReload, DispatcherPriority.Background);
         return box;
+    }
+
+    // Открытый список источников — долгий просмотр (поиск, подгрузка): перечитывание панели по
+    // чужой правке закрыло бы его на полуслове. Оно ждет, пока список закроют.
+    private bool _reloadAfterList;
+
+    private bool DeferReloadForList()
+    {
+        if (PropertiesHost.CurrentEditor is not RelationBacklinkBox { IsListOpen: true }) return false;
+        _reloadAfterList = true;
+        return true;
+    }
+
+    private void ApplyDeferredReload()
+    {
+        if (!_reloadAfterList || PropertiesHost.CurrentEditor is RelationBacklinkBox { IsListOpen: true }) return;
+        _reloadAfterList = false;
+        ReloadFromDb();
     }
 
     // Нажатие на карточку ссылок (кроме ручки ⋮): выделение свойств снимается, открывается список

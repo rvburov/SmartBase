@@ -174,7 +174,7 @@ public sealed class RefreshPlanTests
     }
 
     [Fact]
-    public void Backlinks_ride_with_the_whole_panel_and_do_not_wait_for_typing()
+    public void Backlinks_ride_with_the_whole_panel_and_typing_does_not_reread_them()
     {
         var own = AllFresh() with
         {
@@ -182,12 +182,14 @@ public sealed class RefreshPlanTests
         };
         // Перечитанная панель читает и ссылки.
         Assert.Equal(Steps.RecordPanel, After(own));
-        // Фокус в панели: сама она ждет, ссылки читаются сразу — панель применит их, когда поле
-        // освободится, и повтора ради них нет.
-        var typing = After(own with { RecordPanelFocused = true });
-        Assert.Equal(Steps.Retry | Steps.RecordPanelBacklinks, typing);
+        // Набор в панели: коммиты своей базы — сам набор; ссылки прочитает панель целиком, когда
+        // повтор ее перечитает.
+        Assert.Equal(Steps.Retry, After(own with { RecordPanelFocused = true }));
+        Assert.Equal(Steps.None, After(own with { RecordPanelStamp = Fresh, RecordPanelFocused = true }));
+        // Коммит в другой базе во время набора: ссылки читаются сразу, панель применит их, когда
+        // поле освободится, и повтора ради них нет.
         Assert.Equal(Steps.RecordPanelBacklinks,
-            After(own with { RecordPanelStamp = Fresh, RecordPanelFocused = true }));
+            After(own with { RecordPanelShowsDb = false, RecordPanelFocused = true }));
     }
 
     [Fact]

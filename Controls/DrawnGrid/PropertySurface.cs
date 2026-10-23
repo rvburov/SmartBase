@@ -479,7 +479,13 @@ public sealed class PropertySurface : Control, IEditorSurface
         base.OnPointerPressed(e);
         var p   = e.GetPosition(this);
         var hit = HitTest(p);
-        if (hit.Zone == PropertyZone.None) return;
+        if (hit.Zone == PropertyZone.None)
+        {
+            // Мимо карточек (подпись раздела, пустое место) меню нет: иначе открылось бы меню
+            // карточки, по которой щелкали правой кнопкой раньше.
+            if (e.GetCurrentPoint(this).Properties.IsRightButtonPressed) ContextMenu = null;
+            return;
+        }
 
         if (hit.Zone == PropertyZone.Grip && e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
         {

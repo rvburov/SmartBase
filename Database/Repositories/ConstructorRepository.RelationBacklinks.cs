@@ -11,8 +11,9 @@ namespace SmartBase.Database.Repositories;
 /// источников по убыванию (сначала новые записи) — только из индекса ребер (ToRecordId,
 /// TargetDbId, FieldId, FromRecordId), без чтения таблицы и без сортировки. Затем сверка по
 /// первичному ключу db_records: источник лежит в коллекции свойства. Ребро записи, которую
-/// перенесли в другую коллекцию, не считается и не называется. План не зависит от ANALYZE и
-/// объема — урок поиска входящих перед удалением (см. RelationReferences).
+/// перенесли в другую коллекцию, не считается и не называется; коллекция сверяется в памяти, чтобы
+/// и этот шаг оставался поиском по ключу. План не зависит от ANALYZE и объема — урок поиска
+/// входящих перед удалением (см. RelationReferences).
 ///
 /// Своя база хранит ребра на свою запись с базой цели 0 и, у старых ребер, со своим номером —
 /// обе формы сливаются без повторов; непосредственная ссылка записи на себя не показывается.
@@ -135,10 +136,20 @@ public partial class ConstructorRepository
     }
 
     // Источники порции, которые лежат в коллекции свойства (и чье название содержит
-    // <paramref name="term"/>), — по первичному ключу; порядок порции сохраняется.
+    // <paramref name="term"/>); порядок порции сохраняется.
     private List<int> BacklinkVerified(List<int> ids, int collectionId, string? term)
     {
-        var records = db.DbRecords.AsNoTracking().Where(r => ids.Contains(r.Id) && r.CollectionId == collectionId);
+        var found = BacklinkVerifyQuery(ids, term).ToList().Where(r => r.CollectionId == collectionId)
+            .Select(r => r.Id).ToHashSet();
+        return ids.Where(found.Contains).ToList();
+    }
+
+    /// <summary>Записи порции по первичному ключу. Коллекция сверяется в памяти: условие на нее в SQL
+    /// увело бы SQLite без ANALYZE в проход по всей коллекции-источнику индексом (CollectionId,
+    /// Position) на каждую порцию (план проверяет тест).</summary>
+    internal IQueryable<(int Id, int CollectionId)> BacklinkVerifyQuery(List<int> ids, string? term)
+    {
+        var records = db.DbRecords.AsNoTracking().Where(r => ids.Contains(r.Id));
         if (term is not null)
         {
             // Без учета регистра, и у кириллицы тоже, — как поиск в списке связи.
@@ -146,8 +157,7 @@ public partial class ConstructorRepository
             records = db.IsPostgres ? records.Where(r => EF.Functions.ILike(r.Title, pattern, "\\"))
                 : records.Where(r => SqlText.ContainsIgnoreCase(r.Title, term));
         }
-        var found = records.Select(r => r.Id).ToHashSet();
-        return ids.Where(found.Contains).ToList();
+        return records.Select(r => new ValueTuple<int, int>(r.Id, r.CollectionId));
     }
 
     private List<RelationBacklinkSource> BacklinkTitles(IReadOnlyCollection<int> ids)
