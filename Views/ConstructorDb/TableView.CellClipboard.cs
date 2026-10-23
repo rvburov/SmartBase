@@ -313,11 +313,15 @@ public partial class TableView
 
     // ── Запись ────────────────────────────────────────────────────────────────
 
-    /// <summary>Итог записи ячеек: сколько изменилось, сколько связей не нашлось по названию и
-    /// сколько ячеек-связей пропущено условием выбора записей.</summary>
-    private readonly record struct WriteOutcome(int Changed, int RelationNotFound, int RelationAmbiguous,
-                                                int RelationOutsideCondition = 0, int RelationUnchecked = 0,
-                                                string? ConditionProblem = null);
+    /// <summary>Итог записи ячеек: сколько изменилось и почему пропущены ячейки-связи — не нашлось
+    /// или неоднозначно название, не подошли условию выбора, не подошли самой связи (несколько
+    /// записей в связь на одну, записи нет в связанной коллекции), база цели недоступна, ячейку
+    /// изменили за время вставки.</summary>
+    internal readonly record struct WriteOutcome(int Changed, int RelationNotFound, int RelationAmbiguous,
+                                                 int RelationOutsideCondition = 0, int RelationUnchecked = 0,
+                                                 string? ConditionProblem = null, int RelationSeveralForSingle = 0,
+                                                 int RelationTargetsMissing = 0, int RelationTargetUnavailable = 0,
+                                                 int RelationChangedMeanwhile = 0);
 
     /// <summary>Итог одного пакета — и значения, и связи; для отмены нужны оба.</summary>
     private sealed record WriteBatch(ConstructorRepository.CellBulkResult Values,
@@ -359,9 +363,15 @@ public partial class TableView
         RememberForUndo(operation, batch.Values, batch.Links);
         var changed = batch.Values.Changed + batch.Links.Changed;
         if (changed > 0) ReloadRows();   // строки перечитываем целиком: правок много и они разные
-        return new WriteOutcome(changed, batch.RelationNotFound, batch.RelationAmbiguous + batch.Links.Conflicts,
-                                batch.Links.ConditionRefused, batch.Links.ConditionUnchecked, batch.Links.ConditionProblem);
+        return OutcomeOf(changed, batch.RelationNotFound, batch.RelationAmbiguous, batch.Links);
     }
+
+    // Пропуски связей — каждый своей причиной: отказ самой связи — не «неоднозначное название».
+    // Остаток конфликтов — ячейки, которые изменили за время вставки.
+    internal static WriteOutcome OutcomeOf(int changed, int notFound, int ambiguous, ConstructorRepository.LinkBulkResult links) =>
+        new(changed, notFound, ambiguous, links.ConditionRefused, links.ConditionUnchecked, links.ConditionProblem,
+            links.SeveralForSingle, links.TargetsMissing, links.TargetUnavailable,
+            links.Conflicts - links.SeveralForSingle - links.TargetsMissing);
 
     // Небольшой пакет — сразу, на общем подключении. null — значения не записались (база занята или
     // недоступна, человеку уже сказано).
@@ -458,6 +468,12 @@ public partial class TableView
 
     private static void ReportPaste(WriteOutcome outcome, IReadOnlyDictionary<PasteSkipReason, int> skipped)
     {
+        if (PasteSummary(outcome, skipped) is { } message) AppNotifications.Info(message);
+    }
+
+    /// <summary>Текст итога вставки; null — нечего сказать.</summary>
+    internal static string? PasteSummary(WriteOutcome outcome, IReadOnlyDictionary<PasteSkipReason, int> skipped)
+    {
         // Итог говорит, ПОЧЕМУ пропущено: «пропущено 6» без причины заставляло гадать, что не так
         // со вставкой, и перепроверять ячейки по одной.
         var reasons = skipped
@@ -470,9 +486,17 @@ public partial class TableView
             reasons.Add((outcome.RelationOutsideCondition, "связей не подходят под условие выбора записей"));
         if (outcome.RelationUnchecked > 0)
             reasons.Add((outcome.RelationUnchecked, "связей не проверить по условию выбора записей"));
+        if (outcome.RelationSeveralForSingle > 0)
+            reasons.Add((outcome.RelationSeveralForSingle, "связей с несколькими записями там, где связь допускает одну"));
+        if (outcome.RelationTargetsMissing > 0)
+            reasons.Add((outcome.RelationTargetsMissing, "связей на записи, которых нет в связанной коллекции"));
+        if (outcome.RelationTargetUnavailable > 0)
+            reasons.Add((outcome.RelationTargetUnavailable, "связей с записями недоступной базы"));
+        if (outcome.RelationChangedMeanwhile > 0)
+            reasons.Add((outcome.RelationChangedMeanwhile, "связей изменены за время вставки"));
 
         var skippedTotal = reasons.Sum(r => r.Count);
-        if (outcome.Changed == 0 && skippedTotal == 0) return;
+        if (outcome.Changed == 0 && skippedTotal == 0) return null;
 
         var message = outcome.Changed > 0
             ? $"Вставлено {outcome.Changed:N0} {ValuesPlural(outcome.Changed)}"
@@ -482,7 +506,7 @@ public partial class TableView
                        string.Join(", ", reasons.OrderByDescending(r => r.Count).Select(r => $"{r.Count:N0} {r.Phrase}"));
 
         // Почему условие не проверить (сломано, база недоступна) — отдельной фразой, как ее пишут ворота.
-        AppNotifications.Info(message + "." + (outcome.ConditionProblem is { } problem ? " " + problem : ""));
+        return message + "." + (outcome.ConditionProblem is { } problem ? " " + problem : "");
     }
 
     private static string SkipPhrase(PasteSkipReason reason) => reason switch

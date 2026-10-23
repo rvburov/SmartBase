@@ -254,7 +254,13 @@ public partial class ConstructorRepository
                     refused.Problem ??= unavailable;
                     newTargets.Clear();
                 }
-                else if (!allowUnresolved) throw new InvalidOperationException("Целевая база связи недоступна.");
+                else if (!allowUnresolved)
+                {
+                    if (refused is null) throw new InvalidOperationException("Целевая база связи недоступна.");
+                    // Вставка пропускает ячейку: исключение оборвало бы ее на середине пакета.
+                    refused.TargetUnavailable = true;
+                    newTargets.Clear();
+                }
                 else valid = newTargets.Select(t => t.RecordId).ToHashSet();
             }
             else

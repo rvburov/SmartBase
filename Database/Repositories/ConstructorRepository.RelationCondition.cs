@@ -15,6 +15,9 @@ internal sealed class RelationConditionRefusals
     public List<RelationTarget> Outside { get; } = [];
     /// <summary>Решить нельзя: условие сломано или база цели недоступна (текст причины).</summary>
     public string? Problem { get; set; }
+    /// <summary>База цели недоступна, а условия нет: новые записи не проверить даже на
+    /// существование. Ячейка пропускается, остальная вставка идет дальше.</summary>
+    public bool TargetUnavailable { get; set; }
     public bool Any => Outside.Count > 0 || Problem is not null;
 }
 

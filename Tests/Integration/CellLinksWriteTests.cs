@@ -1,4 +1,5 @@
 using SmartBase.Core.Models;
+using SmartBase.Database;
 using SmartBase.Database.Repositories;
 
 namespace SmartBase.Tests.Integration;
@@ -118,6 +119,49 @@ public sealed class CellLinksWriteTests
         repo.SetLinksBulk(taskCol, [new(t1, rel, [t1, t2, p2, p1])]);
 
         Assert.Equal([p2], repo.GetLinkTargetIds(rel, t1));
+    }
+
+    /// <summary>Вставка из своего буфера (полные цели) не отбрасывает лишнего: ячейка пропускается, и
+    /// пакет называет причину — несколько записей в связь на одну, записи нет в связанной коллекции,
+    /// база цели недоступна. Недоступная база не обрывает пакет исключением.</summary>
+    [Fact]
+    public void Structured_paste_counts_each_skip_reason_separately()
+    {
+        using var db = new TempDatabase();
+        var (repo, taskCol, single, projCol) = Setup(db, single: true);
+        var many  = SampleData.AddField(repo, taskCol, "Проекты", "relation");
+        many.ConfigJson = new RelationConfig(projCol, false).ToConfigJson();
+        repo.UpdateField(many);
+        var remote = SampleData.AddField(repo, taskCol, "Архив", "relation");
+        db.Context.DbFields.Single(f => f.Id == remote.Id).ConfigJson = new RelationConfig(1, false, TargetDbId: 777).ToConfigJson();
+        db.Context.SaveChanges();
+        var p1   = SampleData.AddRecord(repo, projCol, "П1").Id!.Value;
+        var p2   = SampleData.AddRecord(repo, projCol, "П2").Id!.Value;
+        var gone = SampleData.AddRecord(repo, projCol, "Удалена").Id!.Value;
+        var t1   = SampleData.AddRecord(repo, taskCol, "З1").Id!.Value;
+        var t2   = SampleData.AddRecord(repo, taskCol, "З2").Id!.Value;
+        repo.DeleteRecord(gone);
+        using var resolver = RelationDbResolver.UseScopedResolver(_ => null);
+
+        var result = repo.SetLinksBulk(taskCol,
+        [
+            ConstructorRepository.LinkWrite.FromTargets(t1, single, [new(0, p1), new(0, p2)]),
+            ConstructorRepository.LinkWrite.FromTargets(t1, many.Id!.Value, [new(0, p1), new(0, gone)]),
+            ConstructorRepository.LinkWrite.FromTargets(t2, many.Id!.Value, [new(0, p2), new(0, t1)]),
+            ConstructorRepository.LinkWrite.FromTargets(t1, remote.Id!.Value, [new(777, 5)]),
+            ConstructorRepository.LinkWrite.FromTargets(t2, single, [new(0, p2)]),
+        ], "Вставка");
+
+        Assert.Equal(1, result.Changed);
+        Assert.Equal(3, result.Conflicts);
+        Assert.Equal(1, result.SeveralForSingle);
+        Assert.Equal(2, result.TargetsMissing);
+        Assert.Equal(1, result.TargetUnavailable);
+        Assert.Equal(0, result.ConditionUnchecked);
+        Assert.Empty(repo.GetLinkTargetIds(single, t1));
+        Assert.Empty(repo.GetLinkTargetIds(many.Id!.Value, t1));
+        Assert.Empty(repo.GetLinkEdges(remote.Id!.Value, t1));
+        Assert.Equal([p2], repo.GetLinkTargetIds(single, t2));
     }
 
     /// <summary>Запись удалили, пока ее строка была на экране, — пакет ее пропускает и не падает.</summary>
