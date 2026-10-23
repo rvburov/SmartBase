@@ -5435,6 +5435,8 @@ public partial class ConstructorRepository(AppDbContext db)
         var selected = excluded ? FilterExclusion.Values(allowed).ToHashSet() : allowed;
         bool Keep(string value) => selected.Contains(value) != excluded;
         var ct = ComputedToken(default);
+        using var phase = ComputedRun?.Phase($"Столбец «{field.Name}»: чтение записей");
+        ct.ThrowIfCancellationRequested();
         var scope = q.OrderBy(r => r.Position).ThenBy(r => r.Id).Select(r => r.Id).Take(SubsetLimit + 1).ToList();
         if (scope.Count <= SubsetLimit)
         {
@@ -5870,8 +5872,15 @@ public partial class ConstructorRepository(AppDbContext db)
         string? search, CancellationToken ct, ColumnValueSnapshot? reuse = null)
     {
         int? fid = int.TryParse(key, out var parsed) ? parsed : null;
+        // Отбор по данным из связанных записей в других колонках считается сразу — через снятые на
+        // UI-потоке пути баз (область чтения), а не через общие подключения окна.
+        IQueryable<DbRecordEntity> Scope()
+        {
+            using var foreignScope = (resolveForeign?.Target as ForeignPropertyReader)?.OpenScope();
+            return FilteredRecords(collectionId, others, excludeHidden, resolveForeign);
+        }
         if (fid is int fileId && IsFileField(fileId))
-            return FileColumnValues(fileId, FilteredRecords(collectionId, others, excludeHidden, resolveForeign), search, ct);
+            return FileColumnValues(fileId, Scope(), search, ct);
         if (fid is int computedId && RelatedComputedField(computedId) is { } computedField)
         {
             var snapshot = ComputedSnapshot(collectionId, key, computedId, others, excludeHidden, resolveForeign, ct, reuse);
@@ -5910,7 +5919,7 @@ public partial class ConstructorRepository(AppDbContext db)
         ct.ThrowIfCancellationRequested();
 
         var narrowed = others.Count > 0 || excludeHidden;
-        var scope    = FilteredRecords(collectionId, others, excludeHidden, resolveForeign);
+        var scope    = Scope();
         var query    = FilterSelection.IsEmptyQuery(search) ? null : search!.Trim();
         var pattern  = query is null ? null : "%" + query.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
 

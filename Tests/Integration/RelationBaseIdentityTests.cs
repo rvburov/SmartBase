@@ -24,12 +24,12 @@ public sealed class RelationBaseIdentityTests
             using var context = new AppDbContext(path);
             context.Database.ExecuteSqlRaw($"DELETE FROM db_meta WHERE Key = '{ConstructorRepository.RelationBaseKey}'");
             ConstructorRepository.ForgetRelationBaseId(path);
-            ConstructorRepository.MissedBaseIdTtl = 400;
+            ConstructorRepository.MissedBaseIdTtl = 2000;
             var repo = new ConstructorRepository(context);
             Assert.Equal(0, repo.RelationBaseId);
             context.Database.ExecuteSqlRaw($"INSERT INTO db_meta (Key, Value) VALUES ('{ConstructorRepository.RelationBaseKey}', '1234567')");
             Assert.Equal(0, repo.RelationBaseId);
-            Thread.Sleep(600);
+            Thread.Sleep(2500);
             Assert.Equal(1_234_567, repo.RelationBaseId);
         }
         finally

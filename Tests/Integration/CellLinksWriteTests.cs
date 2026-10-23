@@ -44,6 +44,22 @@ public sealed class CellLinksWriteTests
         Assert.Empty(found[""].Ids);
     }
 
+    /// <summary>Два найденных названия в связь «Одну» — не тезки, а несколько записей там, где связь
+    /// допускает одну: своя причина пропуска.</summary>
+    [Fact]
+    public void Several_titles_for_a_single_link_are_not_namesakes()
+    {
+        using var db = new TempDatabase();
+        var (repo, _, rel, projCol) = Setup(db, single: true);
+        SampleData.AddRecord(repo, projCol, "П1");
+        SampleData.AddRecord(repo, projCol, "П2");
+
+        var found = repo.ResolveRelationTitles(rel, ["П1, П2", "П1"]);
+
+        Assert.Equal(ConstructorRepository.TitleMatch.SeveralForSingle, found["П1, П2"].Match);
+        Assert.Equal(ConstructorRepository.TitleMatch.Found, found["П1"].Match);
+    }
+
     /// <summary>Тезки — не угадываем, какую из записей имели в виду.</summary>
     [Fact]
     public void Namesakes_are_ambiguous()
@@ -140,6 +156,9 @@ public sealed class CellLinksWriteTests
         var gone = SampleData.AddRecord(repo, projCol, "Удалена").Id!.Value;
         var t1   = SampleData.AddRecord(repo, taskCol, "З1").Id!.Value;
         var t2   = SampleData.AddRecord(repo, taskCol, "З2").Id!.Value;
+        var parent = SampleData.AddField(repo, taskCol, "Родитель", "relation");
+        parent.ConfigJson = new RelationConfig(taskCol, false).ToConfigJson();
+        repo.UpdateField(parent);
         repo.DeleteRecord(gone);
         using var resolver = RelationDbResolver.UseScopedResolver(_ => null);
 
@@ -150,12 +169,15 @@ public sealed class CellLinksWriteTests
             ConstructorRepository.LinkWrite.FromTargets(t2, many.Id!.Value, [new(0, p2), new(0, t1)]),
             ConstructorRepository.LinkWrite.FromTargets(t1, remote.Id!.Value, [new(777, 5)]),
             ConstructorRepository.LinkWrite.FromTargets(t2, single, [new(0, p2)]),
+            // Связь записи на себя (коллекция связана сама с собой) — своя причина, не «нет в коллекции».
+            ConstructorRepository.LinkWrite.FromTargets(t2, parent.Id!.Value, [new(0, t2)]),
         ], "Вставка");
 
         Assert.Equal(1, result.Changed);
-        Assert.Equal(3, result.Conflicts);
+        Assert.Equal(4, result.Conflicts);
         Assert.Equal(1, result.SeveralForSingle);
         Assert.Equal(2, result.TargetsMissing);
+        Assert.Equal(1, result.SelfLinks);
         Assert.Equal(1, result.TargetUnavailable);
         Assert.Equal(0, result.ConditionUnchecked);
         Assert.Empty(repo.GetLinkTargetIds(single, t1));

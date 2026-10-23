@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Microsoft.EntityFrameworkCore;
 using SmartBase.Core.Models;
 using SmartBase.Database;
@@ -282,8 +283,79 @@ public sealed class RelationComputedColumnTests
             early.Dispose();
             await Task.Delay(600);
             Assert.False(Shown());
+
+            // Фазы: быстрая фаза строки не дает, даже если работа после нее долгая; конец фазы снимает
+            // строку; следующая фаза отсчитывает секунду заново.
+            using (var run = new RelationColumnRun(default, new Dictionary<int, string>()))
+            {
+                using (run.Phase("Столбец «Итого»: чтение записей")) { }
+                await Task.Delay(600);
+                Assert.False(Shown());
+                var phase = run.Phase("Столбец «Итого»: чтение записей");
+                for (var i = 0; i < 100 && !Shown(); i++) await Task.Delay(50);
+                Assert.True(Shown());
+                phase.Dispose();
+                Assert.False(Shown());
+                run.Report("Столбец «Итого»: чтение связей");
+                Assert.False(Shown());
+                for (var i = 0; i < 100 && !Shown(); i++) await Task.Delay(50);
+                Assert.True(Shown());
+            }
+            Assert.False(Shown());
         }
         finally { RelationColumnRun.ShowAfter = previousShow; }
+    }
+
+    /// <summary>Отмена с отчетом хода не начинает следующего обращения к базе: ни прохода по ребрам
+    /// столбца, ни пакета малого среза (их два — 1 500 записей).</summary>
+    [Fact]
+    public void A_cancelled_calculation_reads_nothing_after_the_cancelling_report()
+    {
+        using var db = new TempDatabase();
+        var f = new Fixture(db, seed: 6, sources: 1500);
+        var field = f.Computed.Single(c => c.Name == "Номера");
+        var previousShow = RelationColumnRun.ShowAfter;
+        RelationColumnRun.ShowAfter = TimeSpan.Zero;
+        var counter = new StrongBox<int>();
+        ConstructorRepository.ColumnQueries.Value = counter;
+        try
+        {
+            foreach (var whole in new[] { true, false })
+            {
+                using var cts = new CancellationTokenSource();
+                void CancelOnProgress()
+                {
+                    if (SmartBase.Core.BackgroundJobs.All.Any(j => j.Id.StartsWith("relation-column:", StringComparison.Ordinal)))
+                        cts.Cancel();
+                }
+                using var run = new RelationColumnRun(cts.Token, new Dictionary<int, string>());
+                SmartBase.Core.BackgroundJobs.Changed += CancelOnProgress;
+                f.Repo.ComputedRun = run;
+                counter.Value = 0;
+                try
+                {
+                    Assert.Throws<OperationCanceledException>(() => whole
+                        ? f.Repo.ReadRelationComputedColumn(f.Sources, field)
+                        : f.Repo.RelationComputedValuesFor(f.Sources, field, f.SourceIds));
+                }
+                finally
+                {
+                    SmartBase.Core.BackgroundJobs.Changed -= CancelOnProgress;
+                    f.Repo.ComputedRun = null;
+                }
+                Assert.True(cts.IsCancellationRequested);
+                Assert.Equal(0, counter.Value);
+            }
+            // Без отмены малый срез читает оба пакета — счетчик их видит.
+            Assert.Equal(1500, f.SourceIds.Count);
+            f.Repo.RelationComputedValuesFor(f.Sources, field, f.SourceIds);
+            Assert.Equal(2, counter.Value);
+        }
+        finally
+        {
+            ConstructorRepository.ColumnQueries.Value = null;
+            RelationColumnRun.ShowAfter = previousShow;
+        }
     }
 
     /// <summary>Запись с сотнями ребер не сбивает счет следующих: набор пар цели заводится заново
@@ -519,9 +591,12 @@ public sealed class RelationComputedWorkspaceTests
                 ws.Unmount(entry.Id);
 
                 var card = repo.GetRelationComputedValues([source, plain], [titles]);
+                var shown = repo.GetRelationLinks(relation.Id!.Value, source);
                 var list = await repo.GetColumnValueListAsync(sources, key.ToString());
 
                 Assert.Null(ws.Get(entry.Id));
+                // Текст самой связи в карточке — по тому же правилу, что данные из нее.
+                Assert.Equal([RelationProperty.Unavailable], shown.Select(l => l.Display));
                 Assert.Equal(RelationProperty.Unavailable, card[source][key]);
                 Assert.Equal("Цель", card[plain][key]);
                 Assert.Equal([RelationProperty.Unavailable, "Цель"], list.Values.Select(v => v.Value).Order(StringComparer.Ordinal));

@@ -567,8 +567,9 @@ public sealed partial class ConstructorRepository
 
         if (FieldTypeInfo.IsRelationComputed(fieldType))
         {
-            var ordered = await q.OrderBy(r => r.Position).ThenBy(r => r.Id).Select(r => r.Id).ToListAsync(ct);
             var field = db.DbFields.AsNoTracking().Where(f => f.Id == fid).ToList().Select(ToDbField).FirstOrDefault();
+            using var phase = field is null ? null : ComputedRun?.Phase($"Столбец «{field.Name}»: чтение записей");
+            var ordered = await q.OrderBy(r => r.Position).ThenBy(r => r.Id).Select(r => r.Id).ToListAsync(ct);
             if (field is null) return ordered;
             using var foreignScope = (resolveForeign?.Target as ForeignPropertyReader)?.OpenScope();
             var valueOf = RelationComputedValuesFor(collectionId, field, ordered, ct);

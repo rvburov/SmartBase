@@ -301,7 +301,13 @@ public partial class ConstructorRepository
         var labels = new Dictionary<RelationTarget, string>();
         foreach (var group in targets.Distinct().GroupBy(t => t.DbId))
         {
-            var target = group.Key == 0 ? this : RelationDbResolver.RepoFor(group.Key);
+            // Настроенная цель подключается из реестра; другие базы старых ребер — только уже
+            // подключенные, как у данных из связи (ComputedTargetRepo) и в фоне таблицы: карточка
+            // не подключает базу синхронно и показывает то же, что таблица.
+            var target = group.Key == 0 ? this
+                : expectedTargetDbId is int configured && !IsExpectedRelationTargetDatabase(group.Key, configured)
+                    ? RelationDbResolver.MountedRepoFor(group.Key)
+                    : RelationDbResolver.RepoFor(group.Key);
             var differentPropertyDatabase = RelationConfig.SplitKeys(fieldKey).Any(k => int.TryParse(k, out _))
                 && expectedTargetDbId is int expected && !IsExpectedRelationTargetDatabase(group.Key, expected);
             // Численный id свойства имеет смысл только в базе, для которой выбран этот selector.

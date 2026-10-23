@@ -19,6 +19,7 @@ public partial class ConstructorRepository
         CancellationToken ct = default)
     {
         var field = RelatedComputedField(fieldId);
+        using var phase = field is null ? null : ComputedRun?.Phase($"Столбец «{field.Name}»: чтение записей");
         var ordered = scope.OrderBy(r => r.Position).ThenBy(r => r.Id).Select(r => new { r.Id, r.CollectionId }).ToList();
         if (field is null || ordered.Count == 0) return ordered.Count == 0 ? [] : [("", ordered.Count)];
         var records = ordered.Select(r => r.Id).ToList();

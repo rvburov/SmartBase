@@ -70,7 +70,7 @@ public partial class ConstructorRepository
                 if (target is null) throw new InvalidOperationException("Целевая база связи недоступна.");
                 var resolved = target.ResolveRelationTexts(config, scalars.Select(v => v.Value).Distinct().ToList());
                 if (resolved.Values.Any(r => r.Match != TitleMatch.Found))
-                    throw new InvalidOperationException("Часть значений не найдена или неоднозначна. Преобразование в связь отменено.");
+                    throw new InvalidOperationException("Часть значений не найдена, неоднозначна или называет несколько записей, а связь допускает одну. Преобразование в связь отменено.");
                 // Прежние ребра от старого типа не должны появиться снова.
                 db.DbRecordLinks.RemoveRange(edges);
                 db.SaveChanges();

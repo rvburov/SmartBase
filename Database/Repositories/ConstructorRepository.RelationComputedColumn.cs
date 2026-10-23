@@ -54,6 +54,7 @@ public partial class ConstructorRepository
         var separator = relationConfig.SeparatorString;
         var defaultValue = RelationComputedFold.Fold(field.FieldType, cfg.Aggregate, separator, field.ConfigJson, []).Value;
         run?.Report($"Столбец «{field.Name}»: чтение связей");
+        ct.ThrowIfCancellationRequested();
 
         // Ребра записей коллекции по записи-источнику и порядку ребер; повтор пары цели у записи
         // отбрасывается, как у страницы.
@@ -146,6 +147,7 @@ public partial class ConstructorRepository
             ComputedRun?.Report($"Столбец «{field.Name}»: {done:N0} из {ordered.Count:N0} записей", done, ordered.Count);
             ct.ThrowIfCancellationRequested();
             done += chunk.Length;
+            CountColumnQuery();
             var batch = GetRelationComputedValues(chunk, [field]);
             foreach (var id in chunk) values[id] = batch.GetValueOrDefault(id)?.GetValueOrDefault(fid, "") ?? "";
         }
@@ -238,23 +240,28 @@ public partial class ConstructorRepository
 /// <summary>
 /// Фоновый расчет данных из связанных записей (отбор, сортировка, окно фильтра): токен отмены и
 /// строка в значке фоновых работ — «Данные из связанных записей», под ней столбец и ход, — если
-/// расчет идет дольше секунды (решение пользователя 23.10.2026). Секунда отсчитывается от начала
-/// расчета, и строка появляется и без следующего отчета: один долгий запрос к сетевой базе не прячет
-/// ход. Расчет без данных из связанных записей (обычный отбор) отчетов не шлет и строки не дает.
-/// Остановки нет: расчет отменяется сам, когда таблица просит новый отбор или сортировку или
-/// закрыто окно фильтра. Имена баз снимаются на UI-потоке (<see cref="Capture"/>): путей и строк
-/// подключения в строке хода нет.
+/// расчет идет дольше секунды (решение пользователя 23.10.2026). Расчет идет фазами
+/// (<see cref="Phase"/>: отбор, сортировка или список значений по такой колонке): секунда
+/// отсчитывается от начала фазы, строка встает по таймеру и без следующего отчета — один долгий
+/// запрос к сетевой базе ее не прячет, — а конец фазы строку снимает: долгий обычный запрос после
+/// нее (сортировка по другой колонке) строки не дает. Работа без данных из связанных записей
+/// отчетов не шлет. Остановки нет: расчет отменяется сам, когда таблица просит новый отбор или
+/// сортировку или закрыто окно фильтра. Имена баз снимаются на UI-потоке (<see cref="Capture"/>):
+/// путей и строк подключения в строке хода нет.
 /// </summary>
 internal sealed class RelationColumnRun(CancellationToken ct, IReadOnlyDictionary<int, string> baseNames) : IDisposable
 {
     internal static TimeSpan ShowAfter = TimeSpan.FromSeconds(1);
     private const string Title = "Данные из связанных записей";
     private readonly string _id = "relation-column:" + Guid.NewGuid().ToString("N");
-    private readonly System.Diagnostics.Stopwatch _watch = System.Diagnostics.Stopwatch.StartNew();
+    private readonly System.Diagnostics.Stopwatch _phase = new();
+    // _lock — состояние; _publish — порядок отчетов значку работ: поздний отчет несет последний ход,
+    // а закрытие и конец фазы не обгоняют идущий отчет. Порядок захвата: _publish, затем _lock.
     private readonly object _lock = new();
+    private readonly object _publish = new();
     private (string Detail, int Done, int Total) _last;
     private Timer? _timer;
-    private bool _shown, _disposed;
+    private bool _active, _shown, _disposed;
 
     public CancellationToken Token => ct;
 
@@ -264,52 +271,90 @@ internal sealed class RelationColumnRun(CancellationToken ct, IReadOnlyDictionar
 
     public string BaseName(int dbId) => baseNames.GetValueOrDefault(dbId) is { Length: > 0 } name ? name : "другая база";
 
+    /// <summary>Начать фазу расчета первым отчетом; конец фазы — Dispose результата.</summary>
+    public IDisposable Phase(string detail)
+    {
+        Report(detail);
+        return new PhaseEnd(this);
+    }
+
+    private sealed class PhaseEnd(RelationColumnRun run) : IDisposable
+    {
+        public void Dispose() => run.Pause();
+    }
+
     public void Report(string detail, int done = 0, int total = 0)
     {
         lock (_lock)
         {
             if (_disposed) return;
             _last = (detail, done, total);
+            if (!_active)
+            {
+                _active = true;
+                _phase.Restart();
+            }
             if (!_shown)
             {
-                var wait = ShowAfter - _watch.Elapsed;
+                var wait = ShowAfter - _phase.Elapsed;
                 if (wait > TimeSpan.Zero)
                 {
-                    _timer ??= new Timer(_ => Show(), null, wait, Timeout.InfiniteTimeSpan);
+                    _timer ??= new Timer(_ => Publish(), null, wait, Timeout.InfiniteTimeSpan);
                     return;
                 }
             }
         }
-        Show();
+        Publish();
     }
 
-    // Строка с последним ходом. Отчет — вне замка: подписчики значка работ не ждут расчета, а
-    // закрытый за это время расчет убирает строку сам.
-    private void Show()
+    // Фаза кончилась: несработавший таймер снимается, показанная строка уходит.
+    private void Pause()
     {
-        (string Detail, int Done, int Total) last;
-        lock (_lock)
+        lock (_publish)
         {
-            if (_disposed) return;
-            _shown = true;
-            last = _last;
+            bool shown;
+            lock (_lock)
+            {
+                if (_disposed || !_active) return;
+                _active = false;
+                _timer?.Dispose();
+                _timer = null;
+                shown = _shown;
+                _shown = false;
+            }
+            if (shown) Core.BackgroundJobs.Finish(_id);
         }
-        Core.BackgroundJobs.Report(_id, Title, last.Detail, last.Done, last.Total, icon: "IconFieldRelation");
-        bool closed;
-        lock (_lock) closed = _disposed;
-        if (closed) Core.BackgroundJobs.Finish(_id);
+    }
+
+    private void Publish()
+    {
+        lock (_publish)
+        {
+            (string Detail, int Done, int Total) last;
+            lock (_lock)
+            {
+                if (_disposed || !_active) return;
+                _shown = true;
+                last = _last;
+            }
+            Core.BackgroundJobs.Report(_id, Title, last.Detail, last.Done, last.Total, icon: "IconFieldRelation");
+        }
     }
 
     public void Dispose()
     {
-        bool shown;
-        lock (_lock)
+        lock (_publish)
         {
-            if (_disposed) return;
-            _disposed = true;
-            shown = _shown;
-            _timer?.Dispose();
+            bool shown;
+            lock (_lock)
+            {
+                if (_disposed) return;
+                _disposed = true;
+                _timer?.Dispose();
+                _timer = null;
+                shown = _shown;
+            }
+            if (shown) Core.BackgroundJobs.Finish(_id);
         }
-        if (shown) Core.BackgroundJobs.Finish(_id);
     }
 }

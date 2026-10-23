@@ -48,18 +48,24 @@ public sealed partial class ConstructorRepository
     /// <param name="SeveralForSingle">Из <paramref name="Conflicts"/>: ячеек, где записей несколько,
     /// а связь допускает одну, — вставка из своего буфера лишние записи не отбрасывает.</param>
     /// <param name="TargetsMissing">Из <paramref name="Conflicts"/>: ячеек, где части записей нет в
-    /// целевой коллекции (удалены, из другой коллекции или базы, сама запись-источник).</param>
-    /// <param name="TargetUnavailable">Ячеек, пропущенных потому, что база цели недоступна и новые
-    /// записи не проверить.</param>
+    /// целевой коллекции (удалены, из другой коллекции или базы).</param>
+    /// <param name="SelfLinks">Из <paramref name="Conflicts"/>: ячеек, где среди записей — сама
+    /// запись-источник (связь записи на себя не ставится).</param>
+    /// <param name="TargetUnavailable">Ячеек, пропущенных потому, что база цели пропала посреди
+    /// записи и новые записи не проверить.</param>
+    /// У записей без ожидаемых прежних ребер (вставка) <paramref name="Conflicts"/> — ровно сумма
+    /// <paramref name="SeveralForSingle"/>, <paramref name="TargetsMissing"/> и <paramref name="SelfLinks"/>;
+    /// остальное — отмена, у которой ячейку поправили после.
     public sealed record LinkBulkResult(int Changed, int Conflicts, IReadOnlyList<LinkChange> Changes, bool ChangesTruncated = false,
         int ConditionRefused = 0, int ConditionUnchecked = 0, string? ConditionProblem = null,
-        int SeveralForSingle = 0, int TargetsMissing = 0, int TargetUnavailable = 0)
+        int SeveralForSingle = 0, int TargetsMissing = 0, int TargetUnavailable = 0, int SelfLinks = 0)
     {
         public static LinkBulkResult Nothing { get; } = new(0, 0, []);
     }
 
-    /// <summary>Нашлись ли записи по названию.</summary>
-    public enum TitleMatch { Found, NotFound, Ambiguous }
+    /// <summary>Нашлись ли записи по названию. <see cref="SeveralForSingle"/> — названия нашлись, но
+    /// записей несколько, а связь допускает одну: какую оставить, не угадывается.</summary>
+    public enum TitleMatch { Found, NotFound, Ambiguous, SeveralForSingle }
 
     /// <summary>Итог поиска по названию: <paramref name="Ids"/> — найденные записи в порядке
     /// названий; пустой при <see cref="TitleMatch.Found"/> — текст пустой, связи снять.</summary>
@@ -167,7 +173,8 @@ public sealed partial class ConstructorRepository
             var decoded = Decode(false);
             if (decoded.Count == 0) decoded = Decode(true);
             result[text] = decoded.Count == 0 ? new(TitleMatch.NotFound, [])
-                : decoded.Count > 1 || config.Single && decoded.Ids!.Distinct().Count() > 1 ? new(TitleMatch.Ambiguous, [])
+                : decoded.Count > 1 ? new(TitleMatch.Ambiguous, [])
+                : config.Single && decoded.Ids!.Distinct().Count() > 1 ? new(TitleMatch.SeveralForSingle, [])
                 : new(TitleMatch.Found, decoded.Ids!);
         }
 
@@ -191,7 +198,7 @@ public sealed partial class ConstructorRepository
         var conditionRefused = 0;
         var conditionUnchecked = 0;
         string? conditionProblem = null;
-        var (severalForSingle, targetsMissing, targetUnavailable) = (0, 0, 0);
+        var (severalForSingle, targetsMissing, selfLinks, targetUnavailable) = (0, 0, 0, 0);
         var changed = 0;
         long undoUnits = 0;
         var truncated = false;
@@ -236,7 +243,13 @@ public sealed partial class ConstructorRepository
             if (refused.Problem is not null) { conditionUnchecked++; conditionProblem ??= refused.Problem; continue; }
             if (refused.Any) { conditionRefused++; continue; }
             if (write.Targets is not null && wanted.Count != requested.Distinct().Count())
-            { conflicts++; targetsMissing++; continue; }
+            {
+                conflicts++;
+                // Связь записи на себя ворота отсеивают так же, как чужую запись, но причина другая.
+                if (requested.Any(t => t.DbId == 0 && t.RecordId == write.RecordId)) selfLinks++;
+                else targetsMissing++;
+                continue;
+            }
             if (old.SequenceEqual(wanted)) continue;
             var wantedSet = wanted.ToHashSet();
             var kept = new Dictionary<RelationTarget, DbRecordLinkEntity>();
@@ -273,7 +286,8 @@ public sealed partial class ConstructorRepository
         }
         if (changed == 0) return new(0, conflicts, [], ConditionRefused: conditionRefused,
             ConditionUnchecked: conditionUnchecked, ConditionProblem: conditionProblem,
-            SeveralForSingle: severalForSingle, TargetsMissing: targetsMissing, TargetUnavailable: targetUnavailable);
+            SeveralForSingle: severalForSingle, TargetsMissing: targetsMissing, TargetUnavailable: targetUnavailable,
+            SelfLinks: selfLinks);
         db.SaveChanges();
         Run(db.Database.GetDbConnection(), tx.GetDbTransaction(),
             "UPDATE db_records SET UpdatedAt = @at, UpdatedBy = @by WHERE Id = @rid",
@@ -289,7 +303,7 @@ public sealed partial class ConstructorRepository
             if (db.DbRecords.Local.FirstOrDefault(x => x.Id == id) is { } tracked)
             { tracked.UpdatedAt = stamp; tracked.UpdatedBy = author; }
         return new(changed, conflicts, truncated ? [] : changes, truncated, conditionRefused, conditionUnchecked, conditionProblem,
-            severalForSingle, targetsMissing, targetUnavailable);
+            severalForSingle, targetsMissing, targetUnavailable, selfLinks);
     }
 
     // «До → после» первых изменений названиями записей — как строка журнала SetLinks.

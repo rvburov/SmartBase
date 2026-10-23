@@ -315,18 +315,22 @@ public partial class TableView
 
     /// <summary>Итог записи ячеек: сколько изменилось и почему пропущены ячейки-связи — не нашлось
     /// или неоднозначно название, не подошли условию выбора, не подошли самой связи (несколько
-    /// записей в связь на одну, записи нет в связанной коллекции), база цели недоступна, ячейку
-    /// изменили за время вставки.</summary>
+    /// записей в связь на одну, записи нет в связанной коллекции, связь записи на себя), база цели
+    /// пропала посреди вставки. Чужую правку ячейки вставка не замечает: прежних ребер она не
+    /// сверяет, значение ложится поверх.</summary>
     internal readonly record struct WriteOutcome(int Changed, int RelationNotFound, int RelationAmbiguous,
                                                  int RelationOutsideCondition = 0, int RelationUnchecked = 0,
                                                  string? ConditionProblem = null, int RelationSeveralForSingle = 0,
                                                  int RelationTargetsMissing = 0, int RelationTargetUnavailable = 0,
-                                                 int RelationChangedMeanwhile = 0);
+                                                 int RelationSelfLinks = 0);
+
+    /// <summary>Пропуски связей, вставленных текстом: название не нашлось, неоднозначно или дало
+    /// несколько записей связи на одну.</summary>
+    internal readonly record struct TextSkips(int NotFound, int Ambiguous, int SeveralForSingle);
 
     /// <summary>Итог одного пакета — и значения, и связи; для отмены нужны оба.</summary>
     private sealed record WriteBatch(ConstructorRepository.CellBulkResult Values,
-                                     ConstructorRepository.LinkBulkResult Links,
-                                     int RelationNotFound, int RelationAmbiguous);
+                                     ConstructorRepository.LinkBulkResult Links, TextSkips Text);
 
     // Одним пакетом: значения полей, названия записей и связи разделяются здесь — «Название» живет
     // в самой записи, связи — ребрами, а не текстом. operation — имя действия для журнала и отмены.
@@ -363,15 +367,14 @@ public partial class TableView
         RememberForUndo(operation, batch.Values, batch.Links);
         var changed = batch.Values.Changed + batch.Links.Changed;
         if (changed > 0) ReloadRows();   // строки перечитываем целиком: правок много и они разные
-        return OutcomeOf(changed, batch.RelationNotFound, batch.RelationAmbiguous, batch.Links);
+        return OutcomeOf(changed, batch.Text, batch.Links);
     }
 
     // Пропуски связей — каждый своей причиной: отказ самой связи — не «неоднозначное название».
-    // Остаток конфликтов — ячейки, которые изменили за время вставки.
-    internal static WriteOutcome OutcomeOf(int changed, int notFound, int ambiguous, ConstructorRepository.LinkBulkResult links) =>
-        new(changed, notFound, ambiguous, links.ConditionRefused, links.ConditionUnchecked, links.ConditionProblem,
-            links.SeveralForSingle, links.TargetsMissing, links.TargetUnavailable,
-            links.Conflicts - links.SeveralForSingle - links.TargetsMissing);
+    // Несколько записей в связь на одну — одна причина, вставлены они текстом или из своего буфера.
+    internal static WriteOutcome OutcomeOf(int changed, TextSkips text, ConstructorRepository.LinkBulkResult links) =>
+        new(changed, text.NotFound, text.Ambiguous, links.ConditionRefused, links.ConditionUnchecked, links.ConditionProblem,
+            text.SeveralForSingle + links.SeveralForSingle, links.TargetsMissing, links.TargetUnavailable, links.SelfLinks);
 
     // Небольшой пакет — сразу, на общем подключении. null — значения не записались (база занята или
     // недоступна, человеку уже сказано).
@@ -389,20 +392,20 @@ public partial class TableView
         // Связи — вторым пакетом: значения к этому моменту уже записаны, и сбой здесь не должен
         // лишить их отмены.
         var links = ConstructorRepository.LinkBulkResult.Nothing;
-        var (notFound, ambiguous) = (0, 0);
+        var skips = default(TextSkips);
         if (relations.Count > 0)
         {
             try
             {
                 var found = relations.Where(r => r.Targets is null).GroupBy(r => r.FieldId).ToDictionary(
                     g => g.Key, g => repository.ResolveRelationTitles(g.Key, [.. g.Select(r => r.Text).Distinct()]));
-                (var linkWrites, notFound, ambiguous) = LinkWritesOf(relations, found);
+                (var linkWrites, skips) = LinkWritesOf(relations, found);
                 links = repository.SetLinksBulk(_collectionId, linkWrites, operation);
             }
             catch (Exception ex) when (DbErrors.Handle(ex, repository.DbPath)) { }
         }
 
-        return new WriteBatch(values, links, notFound, ambiguous);
+        return new WriteBatch(values, links, skips);
     }
 
     // Большой пакет — в фоне, на отдельном подключении: окно остается живым, прогресс виден.
@@ -418,7 +421,7 @@ public partial class TableView
         }
 
         var links = ConstructorRepository.LinkBulkResult.Nothing;
-        var (notFound, ambiguous) = (0, 0);
+        var skips = default(TextSkips);
         if (relations.Count > 0)
         {
             try
@@ -427,23 +430,25 @@ public partial class TableView
                 foreach (var byField in relations.Where(r => r.Targets is null).GroupBy(r => r.FieldId))
                     found[byField.Key] = await repository.ResolveRelationTitlesIsolatedAsync(
                         byField.Key, [.. byField.Select(r => r.Text).Distinct()]);
-                (var linkWrites, notFound, ambiguous) = LinkWritesOf(relations, found);
+                (var linkWrites, skips) = LinkWritesOf(relations, found);
                 links = await repository.SetLinksBulkIsolatedAsync(_collectionId, linkWrites, operation);
             }
             catch (Exception ex) when (DbErrors.Handle(ex, repository.DbPath)) { }
         }
 
-        return new WriteBatch(values, links, notFound, ambiguous);
+        return new WriteBatch(values, links, skips);
     }
 
-    // Найденные по названиям связи — в записи ребер; ненайденные и тезки идут в счет пропуска.
-    private static (List<ConstructorRepository.LinkWrite> Writes, int NotFound, int Ambiguous) LinkWritesOf(
+    // Найденные по названиям связи — в записи ребер; ненайденные, тезки и несколько записей в связь
+    // на одну идут в счет пропуска.
+    internal static (List<ConstructorRepository.LinkWrite> Writes, TextSkips Skips) LinkWritesOf(
         List<(int RecordId, int FieldId, string Text, IReadOnlyList<RelationTarget>? Targets)> relations,
         IReadOnlyDictionary<int, Dictionary<string, ConstructorRepository.TitleResolution>> found)
     {
         var writes    = new List<ConstructorRepository.LinkWrite>();
         var notFound  = 0;
         var ambiguous = 0;
+        var several   = 0;
 
         foreach (var (recordId, fieldId, text, targets) in relations)
         {
@@ -457,13 +462,14 @@ public partial class TableView
 
             switch (resolution.Match)
             {
-                case ConstructorRepository.TitleMatch.NotFound:  notFound++;  break;
-                case ConstructorRepository.TitleMatch.Ambiguous: ambiguous++; break;
+                case ConstructorRepository.TitleMatch.NotFound:         notFound++;  break;
+                case ConstructorRepository.TitleMatch.Ambiguous:        ambiguous++; break;
+                case ConstructorRepository.TitleMatch.SeveralForSingle: several++;   break;
                 default: writes.Add(new(recordId, fieldId, resolution.Ids)); break;
             }
         }
 
-        return (writes, notFound, ambiguous);
+        return (writes, new(notFound, ambiguous, several));
     }
 
     private static void ReportPaste(WriteOutcome outcome, IReadOnlyDictionary<PasteSkipReason, int> skipped)
@@ -490,10 +496,10 @@ public partial class TableView
             reasons.Add((outcome.RelationSeveralForSingle, "связей с несколькими записями там, где связь допускает одну"));
         if (outcome.RelationTargetsMissing > 0)
             reasons.Add((outcome.RelationTargetsMissing, "связей на записи, которых нет в связанной коллекции"));
+        if (outcome.RelationSelfLinks > 0)
+            reasons.Add((outcome.RelationSelfLinks, "связей записи на саму себя"));
         if (outcome.RelationTargetUnavailable > 0)
             reasons.Add((outcome.RelationTargetUnavailable, "связей с записями недоступной базы"));
-        if (outcome.RelationChangedMeanwhile > 0)
-            reasons.Add((outcome.RelationChangedMeanwhile, "связей изменены за время вставки"));
 
         var skippedTotal = reasons.Sum(r => r.Count);
         if (outcome.Changed == 0 && skippedTotal == 0) return null;
