@@ -10,6 +10,36 @@ namespace SmartBase.Tests.Integration;
 /// номер реестра того компьютера, где их создали.</summary>
 public sealed class RelationBaseIdentityTests
 {
+    /// <summary>У базы без номера пустое чтение помнится недолго: списки подключенных баз на
+    /// UI-потоке не спрашивают db_meta на каждой загрузке страницы, а номер, заведенный за это время
+    /// другим компьютером, становится виден.</summary>
+    [Fact]
+    public void A_missing_link_number_is_remembered_for_a_while()
+    {
+        var path = TempDatabase.NewTempPath();
+        var previous = ConstructorRepository.MissedBaseIdTtl;
+        try
+        {
+            using (DatabaseManager.Open(1, "A", path)) { }
+            using var context = new AppDbContext(path);
+            context.Database.ExecuteSqlRaw($"DELETE FROM db_meta WHERE Key = '{ConstructorRepository.RelationBaseKey}'");
+            ConstructorRepository.ForgetRelationBaseId(path);
+            ConstructorRepository.MissedBaseIdTtl = 400;
+            var repo = new ConstructorRepository(context);
+            Assert.Equal(0, repo.RelationBaseId);
+            context.Database.ExecuteSqlRaw($"INSERT INTO db_meta (Key, Value) VALUES ('{ConstructorRepository.RelationBaseKey}', '1234567')");
+            Assert.Equal(0, repo.RelationBaseId);
+            Thread.Sleep(600);
+            Assert.Equal(1_234_567, repo.RelationBaseId);
+        }
+        finally
+        {
+            ConstructorRepository.MissedBaseIdTtl = previous;
+            ConstructorRepository.ForgetRelationBaseId(path);
+            TempDatabase.Cleanup(path);
+        }
+    }
+
     [Fact]
     public void Every_database_keeps_one_link_number_for_all_connections_and_reopens()
     {

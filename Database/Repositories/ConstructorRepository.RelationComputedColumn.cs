@@ -53,6 +53,7 @@ public partial class ConstructorRepository
             return RelationComputedColumn.Constant("(вычисление не настроено)");
         var separator = relationConfig.SeparatorString;
         var defaultValue = RelationComputedFold.Fold(field.FieldType, cfg.Aggregate, separator, field.ConfigJson, []).Value;
+        run?.Report($"Столбец «{field.Name}»: чтение связей");
 
         // Ребра записей коллекции по записи-источнику и порядку ребер; повтор пары цели у записи
         // отбрасывается, как у страницы.
@@ -68,14 +69,16 @@ public partial class ConstructorRepository
         {
             if ((++rows & 0x3FFF) == 0)
             {
-                ct.ThrowIfCancellationRequested();
                 run?.Report($"Столбец «{field.Name}»: прочитано {sources.Count:N0} записей");
+                ct.ThrowIfCancellationRequested();
             }
             if (sources.Count == 0 || sources[^1] != edge.FromRecordId)
             {
                 sources.Add(edge.FromRecordId);
                 starts.Add(edgeDb.Count);
-                seen.Clear();
+                // Clear стоит размера таблицы, а не числа элементов: после записи с тысячами ребер
+                // каждая следующая чистила бы ее целиком.
+                if (seen.Count > 256) seen = []; else seen.Clear();
             }
             if (!seen.Add((edge.TargetDbId, edge.ToRecordId))) continue;
             edgeDb.Add(edge.TargetDbId);
@@ -93,6 +96,11 @@ public partial class ConstructorRepository
         var selected = new List<RelationPropertyValue>();
         for (var i = 0; i < sources.Count; i++)
         {
+            if ((i & 0x3FFF) == 0x3FFF)
+            {
+                run?.Report($"Столбец «{field.Name}»: {i + 1:N0} из {sources.Count:N0} записей", i + 1, sources.Count);
+                ct.ThrowIfCancellationRequested();
+            }
             string? failed = null;
             selected.Clear();
             for (var e = starts[i]; e < starts[i + 1]; e++)
@@ -132,9 +140,12 @@ public partial class ConstructorRepository
             return ReadRelationComputedColumn(collectionId, field, ct).ValueOf;
         var fid = field.Id!.Value;
         var values = new Dictionary<int, string>(ordered.Count);
+        var done = 0;
         foreach (var chunk in ordered.Chunk(ComputedTargetBatch))
         {
+            ComputedRun?.Report($"Столбец «{field.Name}»: {done:N0} из {ordered.Count:N0} записей", done, ordered.Count);
             ct.ThrowIfCancellationRequested();
+            done += chunk.Length;
             var batch = GetRelationComputedValues(chunk, [field]);
             foreach (var id in chunk) values[id] = batch.GetValueOrDefault(id)?.GetValueOrDefault(fid, "") ?? "";
         }
@@ -176,25 +187,18 @@ public partial class ConstructorRepository
             AppDbContext? isolatedDb = null;
             try
             {
-                var targetRepo = dbId == 0 ? this : RelationDbResolver.RepoFor(dbId);
+                var targetRepo = ComputedTargetRepo(dbId, relationConfig.TargetDbId);
                 if (targetRepo is null) { errors[dbId] = UnavailableLabel(dbId); continue; }
                 if (propertyKey != TitleKey
                     && targetRepo.Permissions?.Can(PermAction.ViewCollection, relationConfig.TargetCollectionId) == false)
                 { errors[dbId] = RelationProperty.NoAccess; continue; }
-                var reader = this;
-                if (dbId != 0)
-                {
-                    // Чужой общий контекст в фон не уходит: одно свое подключение на базу за расчет.
-                    isolatedDb = new AppDbContext(targetRepo.DbPath);
-                    isolatedDb.ApplyPerformancePragmas();
-                    reader = new ConstructorRepository(isolatedDb) { Permissions = targetRepo.Permissions };
-                }
+                var reader = ComputedTargetReader(dbId, targetRepo, out isolatedDb);
                 var done = 0;
                 foreach (var chunk in ids.Order().Chunk(ComputedTargetBatch))
                 {
-                    ct.ThrowIfCancellationRequested();
                     run?.Report($"Столбец «{column}»: {(dbId == 0 ? "связанные записи" : $"база «{run.BaseName(dbId)}»")}, " +
                                 $"{done:N0} из {ids.Count:N0}", done, ids.Count);
+                    ct.ThrowIfCancellationRequested();
                     done += chunk.Length;
                     CountColumnQuery();
                     foreach (var value in ReadComputedTargetProperties(reader, relationConfig.TargetCollectionId, propertyKey, chunk))
@@ -209,21 +213,48 @@ public partial class ConstructorRepository
         }
         return (targets, errors);
     }
+
+    // База группы целей. Настроенная цель подключается из реестра (RepoFor), другие базы старых
+    // ребер — только уже подключенные: фон снимает пути подключенных баз (CrossDbPathsForKeys), и
+    // значение записи одно на странице, в карточке и в отборе.
+    private ConstructorRepository? ComputedTargetRepo(int dbId, int configuredDbId) =>
+        dbId == 0 ? this
+        : IsExpectedRelationTargetDatabase(dbId, configuredDbId) ? RelationDbResolver.RepoFor(dbId)
+        : RelationDbResolver.MountedRepoFor(dbId);
+
+    // Читатель целей базы. В фоне репозиторий области (ReadScope) уже на своем подключении — второе
+    // не открывается. Без области общий контекст чужой базы в фон не уходит: свое подключение,
+    // его освобождает вызывающий (owned).
+    private static ConstructorRepository ComputedTargetReader(int dbId, ConstructorRepository targetRepo, out AppDbContext? owned)
+    {
+        owned = null;
+        if (dbId == 0 || RelationDbResolver.HasScopedResolver) return targetRepo;
+        owned = new AppDbContext(targetRepo.DbPath);
+        owned.ApplyPerformancePragmas();
+        return new ConstructorRepository(owned) { Permissions = targetRepo.Permissions };
+    }
 }
 
 /// <summary>
 /// Фоновый расчет данных из связанных записей (отбор, сортировка, окно фильтра): токен отмены и
 /// строка в значке фоновых работ — «Данные из связанных записей», под ней столбец и ход, — если
-/// расчет идет дольше секунды (решение пользователя 23.10.2026). Остановки нет: расчет отменяется
-/// сам, когда таблица просит новый отбор или сортировку или закрыто окно фильтра. Имена баз
-/// снимаются на UI-потоке (<see cref="Capture"/>): путей и строк подключения в строке хода нет.
+/// расчет идет дольше секунды (решение пользователя 23.10.2026). Секунда отсчитывается от начала
+/// расчета, и строка появляется и без следующего отчета: один долгий запрос к сетевой базе не прячет
+/// ход. Расчет без данных из связанных записей (обычный отбор) отчетов не шлет и строки не дает.
+/// Остановки нет: расчет отменяется сам, когда таблица просит новый отбор или сортировку или
+/// закрыто окно фильтра. Имена баз снимаются на UI-потоке (<see cref="Capture"/>): путей и строк
+/// подключения в строке хода нет.
 /// </summary>
 internal sealed class RelationColumnRun(CancellationToken ct, IReadOnlyDictionary<int, string> baseNames) : IDisposable
 {
     internal static TimeSpan ShowAfter = TimeSpan.FromSeconds(1);
+    private const string Title = "Данные из связанных записей";
     private readonly string _id = "relation-column:" + Guid.NewGuid().ToString("N");
     private readonly System.Diagnostics.Stopwatch _watch = System.Diagnostics.Stopwatch.StartNew();
-    private bool _shown;
+    private readonly object _lock = new();
+    private (string Detail, int Done, int Total) _last;
+    private Timer? _timer;
+    private bool _shown, _disposed;
 
     public CancellationToken Token => ct;
 
@@ -235,13 +266,50 @@ internal sealed class RelationColumnRun(CancellationToken ct, IReadOnlyDictionar
 
     public void Report(string detail, int done = 0, int total = 0)
     {
-        if (!_shown && _watch.Elapsed < ShowAfter) return;
-        _shown = true;
-        Core.BackgroundJobs.Report(_id, "Данные из связанных записей", detail, done, total, icon: "IconFieldRelation");
+        lock (_lock)
+        {
+            if (_disposed) return;
+            _last = (detail, done, total);
+            if (!_shown)
+            {
+                var wait = ShowAfter - _watch.Elapsed;
+                if (wait > TimeSpan.Zero)
+                {
+                    _timer ??= new Timer(_ => Show(), null, wait, Timeout.InfiniteTimeSpan);
+                    return;
+                }
+            }
+        }
+        Show();
+    }
+
+    // Строка с последним ходом. Отчет — вне замка: подписчики значка работ не ждут расчета, а
+    // закрытый за это время расчет убирает строку сам.
+    private void Show()
+    {
+        (string Detail, int Done, int Total) last;
+        lock (_lock)
+        {
+            if (_disposed) return;
+            _shown = true;
+            last = _last;
+        }
+        Core.BackgroundJobs.Report(_id, Title, last.Detail, last.Done, last.Total, icon: "IconFieldRelation");
+        bool closed;
+        lock (_lock) closed = _disposed;
+        if (closed) Core.BackgroundJobs.Finish(_id);
     }
 
     public void Dispose()
     {
-        if (_shown) Core.BackgroundJobs.Finish(_id);
+        bool shown;
+        lock (_lock)
+        {
+            if (_disposed) return;
+            _disposed = true;
+            shown = _shown;
+            _timer?.Dispose();
+        }
+        if (shown) Core.BackgroundJobs.Finish(_id);
     }
 }

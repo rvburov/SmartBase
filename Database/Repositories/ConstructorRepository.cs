@@ -5884,9 +5884,8 @@ public partial class ConstructorRepository(AppDbContext db)
                     .Contains(computedPattern, StringComparison.OrdinalIgnoreCase)).ToList();
             var total = counts.Count(v => v.Value.Length > 0);
             var capped = total > FilterValueCap;
-            var compare = ColumnSort.BuildComparer(computedField.FieldType == "rollup" ? "rollup" : "text", true);
-            var computedPage = counts.Where(v => v.Value.Length > 0)
-                .OrderBy(v => v.Value, Comparer<string>.Create((a, b) => compare(a, b))).Take(FilterValueCap).ToList();
+            var computedPage = RelationComputedSort.Ascending(counts.Where(v => v.Value.Length > 0), v => v.Value,
+                computedField.FieldType).Take(FilterValueCap).ToList();
             // Ограниченный список досчитывает «(Пусто)» итогами окна сам: здесь его нет, иначе
             // строка встала бы дважды.
             if (!capped) computedPage.AddRange(counts.Where(v => v.Value.Length == 0));

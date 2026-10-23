@@ -1946,8 +1946,12 @@ public partial class TableView : UserControl
         // снятых» (CappedFilterSelection). Null — обычный список всех значений.
         CappedFilterSelection? capped = null;
         CancellationTokenSource? cappedSearch = null;
-        // Последний пришедший ограниченный список; его снимок значений берут поиск и итоги окна.
+        // Последний показанный ограниченный список (его признак «больше» — в подписи поиска).
         ConstructorRepository.ColumnValueList? cappedList = null;
+        // Снимок значений данных из связанных записей на время окна — его берут поиск и итоги. Живет
+        // отдельно от cappedList: список при открытии мог не показаться (печатать начали раньше), а
+        // снимок он уже посчитал.
+        ConstructorRepository.ColumnValueSnapshot? cappedSnapshot = null;
         // Чтение значений живет не дольше окна: закрытое окно отменяет расчет (у данных из связанных
         // записей он бывает долгим), иначе он доживал бы свое в фоне.
         var windowWork = new CancellationTokenSource();
@@ -2236,7 +2240,7 @@ public partial class TableView : UserControl
                 {
                     await Task.Delay(250, cts.Token);
                     var list = await _repository!.GetColumnValueListAsync(_collectionId, def.Key, _filters,
-                                   excludeHidden: AnyHiddenRecords, search: text, ct: cts.Token, reuse: cappedList?.Snapshot);
+                                   excludeHidden: AnyHiddenRecords, search: text, ct: cts.Token, reuse: cappedSnapshot);
                     if (cts.IsCancellationRequested) return;
                     ShowCapped(list);
                 }
@@ -2257,6 +2261,7 @@ public partial class TableView : UserControl
         void ShowCapped(ConstructorRepository.ColumnValueList list)
         {
             cappedList = list;
+            cappedSnapshot = list.Snapshot ?? cappedSnapshot;
             baseCounts.Clear();
             baseCounts.AddRange(list.Values);
             if (!capped!.Searching && cappedEmpty > 0) baseCounts.Add(("", cappedEmpty));
@@ -2286,7 +2291,7 @@ public partial class TableView : UserControl
             {
                 var (distinct, empty) = await _repository!.GetColumnValueTotalsAsync(_collectionId, def.Key, _filters,
                                                                                     excludeHidden: AnyHiddenRecords,
-                                                                                    ct: windowWork.Token, reuse: cappedList?.Snapshot);
+                                                                                    ct: windowWork.Token, reuse: cappedSnapshot);
                 cappedDistinct = distinct;
                 cappedEmpty    = empty;
                 if (!capped!.Searching && cappedList is { } shownList) ShowCapped(shownList);
@@ -2401,6 +2406,7 @@ public partial class TableView : UserControl
                 {
                     capped = new CappedFilterSelection(_filters.TryGetValue(def.Key, out var cur) ? cur : null);
                     valuesHost.Child = EmptyListHint.Wrap(valuesList, search, secondary, fontBase, content: valuesBox);
+                    cappedSnapshot = list.Snapshot;
                     if (FilterSelection.IsEmptyQuery(search.Text)) ShowCapped(list);
                     else SearchCapped();   // печатать начали до загрузки — ищем по базе
                     loaded = true;

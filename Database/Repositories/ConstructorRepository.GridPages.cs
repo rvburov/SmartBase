@@ -691,6 +691,7 @@ public sealed partial class ConstructorRepository
     private Dictionary<int, string>? CrossDbPathsForKeys(int collectionId, IEnumerable<string> keys)
     {
         Dictionary<int, string>? crossPaths = null;
+        var mountedAdded = false;
         var seen = new HashSet<(string Db, int Field)>();
         foreach (var k in keys)
             if (int.TryParse(k, out var fid)) Visit(this, collectionId, fid, 0);
@@ -723,6 +724,8 @@ public sealed partial class ConstructorRepository
 
         void AddMounted()
         {
+            if (mountedAdded) return;
+            mountedAdded = true;
             crossPaths ??= new();
             foreach (var (dbId, repo) in RelationDbResolver.MountedReposExcept(0)) crossPaths[dbId] = repo.DbPath;
         }

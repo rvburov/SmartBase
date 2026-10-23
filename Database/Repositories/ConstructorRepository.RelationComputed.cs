@@ -112,22 +112,15 @@ public partial class ConstructorRepository
                 {
                     try
                     {
-                        var targetRepo = group.Key == 0 ? this : RelationDbResolver.RepoFor(group.Key);
+                        var targetRepo = ComputedTargetRepo(group.Key, relationConfig.TargetDbId);
                         if (targetRepo is null) { groupError[group.Key] = UnavailableLabel(group.Key); continue; }
                         if (propertyKey != TitleKey
                             && targetRepo.Permissions?.Can(PermAction.ViewCollection, relationConfig.TargetCollectionId) == false)
                         { groupError[group.Key] = RelationProperty.NoAccess; continue; }
                         // Чужой общий контекст не уходит в фоновый поток чтения страницы.
-                        if (group.Key != 0)
-                        {
-                            using var targetDb = new AppDbContext(targetRepo.DbPath);
-                            targetDb.ApplyPerformancePragmas();
-                            var isolated = new ConstructorRepository(targetDb) { Permissions = targetRepo.Permissions };
-                            foreach (var value in ReadComputedTargetProperties(isolated, relationConfig.TargetCollectionId, propertyKey, missing))
-                                values[value.RecordId] = value;
-                        }
-                        else
-                            foreach (var value in ReadComputedTargetProperties(this, relationConfig.TargetCollectionId, propertyKey, missing))
+                        var reader = ComputedTargetReader(group.Key, targetRepo, out var owned);
+                        using (owned)
+                            foreach (var value in ReadComputedTargetProperties(reader, relationConfig.TargetCollectionId, propertyKey, missing))
                                 values[value.RecordId] = value;
                     }
                     catch (PermissionDeniedException) { groupError[group.Key] = RelationProperty.NoAccess; continue; }

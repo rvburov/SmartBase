@@ -33,21 +33,20 @@ public sealed class RelationComputedColumn
 }
 
 /// <summary>
-/// Порядок записей по значению данных из связанных записей — тем же компаратором, что раньше
-/// (<see cref="ColumnSort.BuildComparer"/>: lookup — текст, rollup — итог), но ключ разбирается
-/// один раз на различное значение: различные значения сортируются, записи раскладываются по рангу
-/// устойчиво, равные для компаратора («abc» и «ABC») остаются в порядке таблицы. Пустые — в конце.
-/// Подписи ошибок итога («(нет доступа)», «(база недоступна)», «(нечисловое значение)») — тоже в
-/// конце, вместе с пустыми и в порядке таблицы, при любом направлении (решение пользователя
-/// 23.10.2026), как нечисловые значения колонки «Число».
+/// Порядок записей по значению данных из связанных записей — тем же порядком, что раньше
+/// (<see cref="ColumnSort.BuildComparer"/>: lookup — текст по культуре без учета регистра, rollup —
+/// итог как число или начало даты), но сортируются различные значения, а не записи, и ключ итога
+/// разбирается один раз на различное значение. Записи раскладываются по рангу устойчиво: равные для
+/// порядка («abc» и «ABC») остаются в порядке таблицы. Пустые — в конце. Подписи ошибок итога
+/// («(нет доступа)», «(база недоступна)», «(нечисловое значение)») — тоже в конце, вместе с пустыми и
+/// в порядке таблицы, при любом направлении (решение пользователя 23.10.2026), как нечисловые
+/// значения колонки «Число». У данных lookup подпись ошибки — текст и сортируется как текст: значение
+/// цели само может быть текстом в скобках.
 /// </summary>
 public static class RelationComputedSort
 {
     public static List<int> Order(IReadOnlyList<int> ordered, Func<int, string> valueOf, string fieldType, bool asc)
     {
-        var rollup = fieldType == "rollup";
-        var comparerType = rollup ? "rollup" : "text";
-        var compare = ColumnSort.BuildComparer(comparerType, asc);
         var values = new string[ordered.Count];
         var distinct = new Dictionary<string, int>(StringComparer.Ordinal);
         for (var i = 0; i < ordered.Count; i++)
@@ -55,18 +54,9 @@ public static class RelationComputedSort
             values[i] = valueOf(ordered[i]);
             distinct.TryAdd(values[i], 0);
         }
-        bool Tail(string v) => v.Length == 0 || rollup && double.IsPositiveInfinity(ColumnSort.RollupKey(v));
-        var sorted = distinct.Keys.Where(v => !Tail(v)).ToList();
-        sorted.Sort((a, b) => compare(a, b));
-        // Ранг растет только на значениях, различных для компаратора.
-        var rank = 0;
-        for (var i = 0; i < sorted.Count; i++)
-        {
-            if (i > 0 && compare(sorted[i - 1], sorted[i]) != 0) rank++;
-            distinct[sorted[i]] = rank;
-        }
-        var tail = sorted.Count == 0 ? 0 : rank + 1;
-        foreach (var v in distinct.Keys.Where(Tail).ToList()) distinct[v] = tail;
+        var sorted = Ranked(distinct.Keys, fieldType, asc, out var tail);
+        foreach (var (value, rank) in sorted) distinct[value] = rank;
+        foreach (var v in distinct.Keys.Where(v => !sorted.ContainsKey(v)).ToList()) distinct[v] = tail;
         // Устойчивая раскладка подсчетом: внутри ранга — порядок таблицы.
         var counts = new int[tail + 2];
         foreach (var v in values) counts[distinct[v] + 1]++;
@@ -74,5 +64,44 @@ public static class RelationComputedSort
         var result = new int[ordered.Count];
         for (var i = 0; i < ordered.Count; i++) result[counts[distinct[values[i]]]++] = ordered[i];
         return [.. result];
+    }
+
+    /// <summary>Непустые значения столбца по возрастанию — порядком <see cref="Order"/> (окно фильтра
+    /// показывает первые). Равные остаются в исходном порядке.</summary>
+    public static IEnumerable<T> Ascending<T>(IEnumerable<T> items, Func<T, string> value, string fieldType) =>
+        fieldType == "rollup"
+            ? items.OrderBy(i => ColumnSort.RollupKey(value(i)))
+            : items.OrderBy(value, StringComparer.CurrentCultureIgnoreCase);
+
+    // Ранги значений, которые стоят по порядку; <paramref name="tail"/> — ранг пустых и подписей ошибок
+    // итога (их в словаре нет). Ранг растет только на значениях, различных для порядка.
+    private static Dictionary<string, int> Ranked(IEnumerable<string> distinct, string fieldType, bool asc, out int tail)
+    {
+        var ranks = new Dictionary<string, int>(StringComparer.Ordinal);
+        var rank = -1;
+        if (fieldType == "rollup")
+        {
+            var keyed = distinct.Where(v => v.Length > 0).Select(v => (Value: v, Key: ColumnSort.RollupKey(v)))
+                .Where(k => !double.IsPositiveInfinity(k.Key));
+            var sorted = (asc ? keyed.OrderBy(k => k.Key) : keyed.OrderByDescending(k => k.Key)).ToList();
+            for (var i = 0; i < sorted.Count; i++)
+            {
+                if (i == 0 || sorted[i - 1].Key.CompareTo(sorted[i].Key) != 0) rank++;
+                ranks[sorted[i].Value] = rank;
+            }
+        }
+        else
+        {
+            var compare = ColumnSort.BuildComparer("text", asc);
+            var sorted = distinct.Where(v => v.Length > 0).ToList();
+            sorted.Sort((a, b) => compare(a, b));
+            for (var i = 0; i < sorted.Count; i++)
+            {
+                if (i == 0 || compare(sorted[i - 1], sorted[i]) != 0) rank++;
+                ranks[sorted[i]] = rank;
+            }
+        }
+        tail = rank + 1;
+        return ranks;
     }
 }

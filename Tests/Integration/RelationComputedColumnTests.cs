@@ -215,8 +215,34 @@ public sealed class RelationComputedColumnTests
             using var cancelled = new CancellationTokenSource();
             cancelled.Cancel();
             Assert.Throws<OperationCanceledException>(() => f.Repo.ReadRelationComputedColumn(f.Sources, field, cancelled.Token));
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-                f.Repo.GetFilteredRecordIdsAsync(f.Sources, filters, false, null, true, null, cancelled.Token));
+
+            // Отмена посреди расчета — с первой строкой хода, и столбцом целиком, и малым срезом: расчет
+            // обрывается, а не доживает свое в фоне.
+            foreach (var limit in new[] { 10, 100_000 })
+            {
+                ConstructorRepository.SubsetLimit = limit;
+                using var cts = new CancellationTokenSource();
+                void CancelOnProgress()
+                {
+                    if (SmartBase.Core.BackgroundJobs.All.Any(j => j.Id.StartsWith("relation-column:", StringComparison.Ordinal)))
+                        cts.Cancel();
+                }
+                SmartBase.Core.BackgroundJobs.Changed += CancelOnProgress;
+                try
+                {
+                    await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                        f.Repo.GetFilteredRecordIdsAsync(f.Sources, filters, false, null, true, null, cts.Token));
+                }
+                finally { SmartBase.Core.BackgroundJobs.Changed -= CancelOnProgress; }
+                Assert.True(cts.IsCancellationRequested);
+            }
+
+            // Малый срез тоже показывает ход.
+            ConstructorRepository.SubsetLimit = 100_000;
+            lock (seen) seen.Clear();
+            Assert.NotEmpty(await f.Repo.GetFilteredRecordIdsAsync(f.Sources, filters, false, null, true, null, default));
+            lock (seen) Assert.Contains(seen, j => j.Detail.StartsWith("Столбец «Номера»: 0 из ", StringComparison.Ordinal) && j.Detail.EndsWith(" записей", StringComparison.Ordinal));
+            Assert.DoesNotContain(SmartBase.Core.BackgroundJobs.All, j => j.Id.StartsWith("relation-column:", StringComparison.Ordinal));
         }
         finally
         {
@@ -224,6 +250,73 @@ public sealed class RelationComputedColumnTests
             ConstructorRepository.SubsetLimit = previousLimit;
             RelationColumnRun.ShowAfter = previousShow;
         }
+    }
+
+    /// <summary>Строка хода появляется через секунду от начала расчета и без следующего отчета: один
+    /// долгий запрос к базе ее не прячет. Закрытый расчет убирает строку.</summary>
+    [Fact]
+    public async Task The_progress_row_appears_on_time_without_a_further_report()
+    {
+        var previousShow = RelationColumnRun.ShowAfter;
+        RelationColumnRun.ShowAfter = TimeSpan.FromMilliseconds(300);
+        bool Shown() => SmartBase.Core.BackgroundJobs.All.Any(j => j.Id.StartsWith("relation-column:", StringComparison.Ordinal));
+        try
+        {
+            using (var run = new RelationColumnRun(default, new Dictionary<int, string>()))
+            {
+                run.Report("Столбец «Итого»: чтение связей");
+                Assert.False(Shown());
+                for (var i = 0; i < 100 && !Shown(); i++) await Task.Delay(50);
+                Assert.Contains(SmartBase.Core.BackgroundJobs.All, j => j.Title == "Данные из связанных записей"
+                                                                        && j.Detail == "Столбец «Итого»: чтение связей");
+            }
+            Assert.False(Shown());
+
+            // Расчет без данных из связанных записей отчетов не шлет — и строки не бывает.
+            using (new RelationColumnRun(default, new Dictionary<int, string>())) await Task.Delay(600);
+            Assert.False(Shown());
+
+            // Закрытый до срока расчет строку не оставляет.
+            var early = new RelationColumnRun(default, new Dictionary<int, string>());
+            early.Report("Столбец «Итого»: чтение связей");
+            early.Dispose();
+            await Task.Delay(600);
+            Assert.False(Shown());
+        }
+        finally { RelationColumnRun.ShowAfter = previousShow; }
+    }
+
+    /// <summary>Запись с сотнями ребер не сбивает счет следующих: набор пар цели заводится заново
+    /// после большой записи и чистится после малой.</summary>
+    [Fact]
+    public void A_record_with_many_links_does_not_hide_the_links_of_the_next_records()
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+        var targets = SampleData.AddCollection(repo, "Цели").Id!.Value;
+        var sources = SampleData.AddCollection(repo, "Источники").Id!.Value;
+        var relation = SampleData.AddField(repo, sources, "Связь", "relation");
+        relation.ConfigJson = new RelationConfig(targets, false).ToConfigJson();
+        repo.UpdateField(relation);
+        var targetIds = repo.BulkAddRecords(targets, [], Enumerable.Range(1, 300).Select(i => new BulkRecordRow($"Ц{i}", [])), 300, default);
+        var sourceIds = repo.BulkAddRecords(sources, [], Enumerable.Range(1, 4).Select(i => new BulkRecordRow($"И{i}", [])), 4, default);
+        db.Context.DbRecordLinks.AddRange(targetIds.Select((to, i) => new DbRecordLinkEntity
+            { FieldId = relation.Id!.Value, FromRecordId = sourceIds[0], ToRecordId = to, Position = i * 1000 }));
+        foreach (var source in sourceIds.Skip(1))
+            db.Context.DbRecordLinks.Add(new DbRecordLinkEntity { FieldId = relation.Id!.Value, FromRecordId = source, ToRecordId = targetIds[0], Position = 0 });
+        db.Context.SaveChanges();
+        db.Context.ChangeTracker.Clear();
+        var count = repo.AddField(new DbField
+        {
+            CollectionId = sources, Name = "Количество", FieldType = "rollup",
+            ConfigJson = new RelationComputedConfig(relation.Id!.Value, RelationConfig.TitleField, "count").ToConfigJson(),
+        });
+
+        var column = repo.ReadRelationComputedColumn(sources, count);
+
+        Assert.Equal(["300", "1", "1", "1"], sourceIds.Select(column.ValueOf));
+        var page = repo.GetRelationComputedValues(sourceIds, [count]);
+        Assert.Equal(sourceIds.Select(id => page[id][count.Id!.Value]), sourceIds.Select(column.ValueOf));
     }
 
     [Fact]
@@ -259,6 +352,12 @@ public sealed class RelationComputedColumnTests
         {
             0 => "", 1 => "(нет доступа)", _ => (random.Next(-20, 20) / 4m).ToString(System.Globalization.CultureInfo.InvariantCulture),
         });
+        // Итоги с равными ключами в разной записи («10» и «10.0») и итоги по датам.
+        var mixed = ids.ToDictionary(id => id, _ => random.Next(7) switch
+        {
+            0 => "", 1 => "(база недоступна)", 2 => "10", 3 => "10.0", 4 => "2026-01-0" + random.Next(1, 4),
+            5 => "2026-01-02T10:00", _ => random.Next(-3, 3).ToString(System.Globalization.CultureInfo.InvariantCulture),
+        });
         foreach (var asc in new[] { true, false })
         {
             var text = ColumnSort.BuildComparer("text", asc);
@@ -270,6 +369,21 @@ public sealed class RelationComputedColumnTests
                     : numbers.OrderByDescending(id => decimal.Parse(totals[id], System.Globalization.CultureInfo.InvariantCulture)))
                 .Concat(ids.Where(id => !numbers.Contains(id))).ToList();
             Assert.Equal(expected, RelationComputedSort.Order(ids, id => totals[id], "rollup", asc));
+            // Тот же порядок, что устойчивая сортировка прежним компаратором, с хвостом в порядке таблицы.
+            var rollup = ColumnSort.BuildComparer("rollup", asc);
+            bool Tail(string v) => v.Length == 0 || double.IsPositiveInfinity(ColumnSort.RollupKey(v));
+            Assert.Equal(ids.Where(id => !Tail(mixed[id])).OrderBy(id => mixed[id], Comparer<string>.Create((a, b) => rollup(a, b)))
+                    .Concat(ids.Where(id => Tail(mixed[id]))).ToList(),
+                RelationComputedSort.Order(ids, id => mixed[id], "rollup", asc));
+        }
+
+        // Первые значения окна фильтра — тем же порядком.
+        var shown = mixed.Values.Concat(lookup.Values).Where(v => v.Length > 0).Distinct().ToList();
+        foreach (var type in new[] { "rollup", "lookup" })
+        {
+            var compare = ColumnSort.BuildComparer(type == "rollup" ? "rollup" : "text", true);
+            Assert.Equal(shown.OrderBy(v => v, Comparer<string>.Create((a, b) => compare(a, b))).ToList(),
+                RelationComputedSort.Ascending(shown, v => v, type).ToList());
         }
     }
 
@@ -357,5 +471,67 @@ public sealed class RelationComputedColumnTests
             Computed.Add(Add("Самая ранняя", "rollup", date.ToString(), "earliest"));
             Computed.Add(Add("Самая поздняя", "rollup", date.ToString(), "latest"));
         }
+    }
+}
+
+public sealed class RelationComputedWorkspaceTests
+{
+    /// <summary>Старое ребро в базу из списка, которая сейчас не подключена: карточка не подключает ее
+    /// синхронно и показывает то же, что таблица и окно фильтра, — «(база недоступна)».</summary>
+    [Fact]
+    public async Task An_unmounted_base_of_an_old_link_reads_the_same_in_the_card_and_in_the_filter()
+    {
+        var appDb = TempDatabase.NewTempPath();
+        var def = TempDatabase.NewTempPath();
+        var archivePath = TempDatabase.NewTempPath();
+        try
+        {
+            using var registry = DatabaseRegistry.Open(def, appDb);
+            var defDb = DatabaseManager.Open(registry.GetAll().First(d => d.IsDefault).Id, "def", def);
+            var ws = Workspace.Attach(registry, defDb);
+            var entry = registry.Add("Архив", archivePath);
+            var archive = ws.Mount(entry)!;
+            RelationDbResolver.Configure(ws);
+            try
+            {
+                var repo = defDb.Constructor;
+                var archived = SampleData.AddCollection(archive.Constructor, "Старые").Id!.Value;
+                var old = SampleData.AddRecord(archive.Constructor, archived, "Старая цель").Id!.Value;
+                var archiveId = archive.Constructor.RelationBaseId;
+                var targets = SampleData.AddCollection(repo, "Цели").Id!.Value;
+                var target = SampleData.AddRecord(repo, targets, "Цель").Id!.Value;
+                var sources = SampleData.AddCollection(repo, "Источники").Id!.Value;
+                var source = SampleData.AddRecord(repo, sources, "И1").Id!.Value;
+                var plain = SampleData.AddRecord(repo, sources, "И2").Id!.Value;
+                var relation = SampleData.AddField(repo, sources, "Связь", "relation");
+                relation.ConfigJson = new RelationConfig(targets, false).ToConfigJson();
+                repo.UpdateField(relation);
+                repo.SetLinks(relation.Id!.Value, plain, [target]);
+                defDb.Context.DbRecordLinks.Add(new DbRecordLinkEntity
+                    { FieldId = relation.Id!.Value, FromRecordId = source, ToRecordId = old, TargetDbId = archiveId, Position = 0 });
+                defDb.Context.SaveChanges();
+                var titles = repo.AddField(new DbField
+                {
+                    CollectionId = sources, Name = "Названия", FieldType = "lookup",
+                    ConfigJson = new RelationComputedConfig(relation.Id!.Value, RelationConfig.TitleField, "lookup").ToConfigJson(),
+                });
+                var key = titles.Id!.Value;
+                ws.Unmount(entry.Id);
+
+                var card = repo.GetRelationComputedValues([source, plain], [titles]);
+                var list = await repo.GetColumnValueListAsync(sources, key.ToString());
+
+                Assert.Null(ws.Get(entry.Id));
+                Assert.Equal(RelationProperty.Unavailable, card[source][key]);
+                Assert.Equal("Цель", card[plain][key]);
+                Assert.Equal([RelationProperty.Unavailable, "Цель"], list.Values.Select(v => v.Value).Order(StringComparer.Ordinal));
+            }
+            finally
+            {
+                RelationDbResolver.Configure(null);
+                ws.CloseAll(TimeSpan.FromSeconds(30));
+            }
+        }
+        finally { foreach (var p in new[] { archivePath, def, appDb }) TempDatabase.Cleanup(p); }
     }
 }

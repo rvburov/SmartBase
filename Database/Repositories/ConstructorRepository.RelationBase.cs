@@ -20,14 +20,23 @@ public partial class ConstructorRepository
     // при заведении. Ключ — адрес базы: фоновые подключения той же базы видят тот же номер.
     private static readonly ConcurrentDictionary<string, int> RelationBaseIds = new(StringComparer.Ordinal);
 
+    // У базы без номера (подключена только на чтение) пустое чтение помнится недолго: номер ищут
+    // списки подключенных баз на UI-потоке при каждой загрузке страницы, и без памяти каждый поиск
+    // был бы запросом к db_meta. Номер, заведенный за это время другим компьютером, виден через
+    // MissedBaseIdTtl, заведенный здесь (EnsureRelationBaseId) — сразу.
+    private static readonly ConcurrentDictionary<string, long> RelationBaseMisses = new(StringComparer.Ordinal);
+    internal static long MissedBaseIdTtl = 30_000;
+
     /// <summary>Номер базы для связей; 0 — номера нет (база еще не подключалась на запись).</summary>
     public int RelationBaseId
     {
         get
         {
             if (RelationBaseIds.TryGetValue(DbPath, out var cached)) return cached;
+            if (RelationBaseMisses.TryGetValue(DbPath, out var until) && Environment.TickCount64 < until) return 0;
             var stored = ReadRelationBaseId(db);
             if (stored > 0) RelationBaseIds[DbPath] = stored;
+            else RelationBaseMisses[DbPath] = Environment.TickCount64 + MissedBaseIdTtl;
             return stored;
         }
     }
@@ -69,5 +78,9 @@ public partial class ConstructorRepository
     }
 
     /// <summary>Забыть номер, запомненный по адресу (файл базы подменили или база отключена).</summary>
-    internal static void ForgetRelationBaseId(string dbPath) => RelationBaseIds.TryRemove(dbPath, out _);
+    internal static void ForgetRelationBaseId(string dbPath)
+    {
+        RelationBaseIds.TryRemove(dbPath, out _);
+        RelationBaseMisses.TryRemove(dbPath, out _);
+    }
 }
