@@ -5337,6 +5337,12 @@ public partial class ConstructorRepository(AppDbContext db)
         var computedFilters = new List<(DbField Field, HashSet<string> Allowed)>();
         foreach (var (key, allowed) in filters)
         {
+            // Отбор по цвету ячеек колонки (ColorQuery) — особый ключ, набор — метки цвета.
+            if (ColorQuery.IsColorKey(key))
+            {
+                q = ColorFilter(q, collectionId, ColorQuery.ColumnOf(key), allowed);
+                continue;
+            }
             if (int.TryParse(key, out var computedId) && relatedComputed.TryGetValue(computedId, out var computedField))
             {
                 computedFilters.Add((computedField, allowed));
@@ -6037,10 +6043,11 @@ public partial class ConstructorRepository(AppDbContext db)
 
     // Фильтры остальных колонок — снимок (копия наборов): фон читает его, пока UI может
     // менять живой словарь таблицы.
+    // Свой отбор колонки — и по значениям, и по цвету (ColorQuery) — ее список не режет.
     private static Dictionary<string, HashSet<string>> OtherFilters(
         IReadOnlyDictionary<string, HashSet<string>>? filters, string key) =>
         filters is null ? new()
-            : filters.Where(kv => kv.Key != key)
+            : filters.Where(kv => ColorQuery.ColumnOf(kv.Key) != key)
                      .ToDictionary(kv => kv.Key, kv => new HashSet<string>(kv.Value));
 
     /// <summary>

@@ -469,6 +469,8 @@ public static class AppSettings
     public const bool   ConstructorRestoreRecordDefault      = false;
     public const bool   ConstructorRememberLayoutDefault     = false;
     public const bool   ConstructorRememberFiltersDefault    = false;
+    public const bool   ConstructorExpandCellEditorDefault   = true;      // поле правки ячейки растет под текст
+    public const bool   ConstructorPasteGrowsTableDefault    = false;     // вставка за край таблицы отбрасывается
     public const int    ConstructorPollSecondsDefault        = 3;         // = прежний ForegroundMs
 
     // Допустимые значения плотности строк и периода опроса: список закрыт, потому что
@@ -608,6 +610,24 @@ public static class AppSettings
     {
         if (on == ConstructorRememberFiltersDefault) _store?.Remove(KeyConstructorRememberFilters);
         else                                         _store?.Set(KeyConstructorRememberFilters, on.ToString());
+    }
+
+    public static bool LoadConstructorExpandCellEditor() =>
+        bool.TryParse(_store?.Get(KeyConstructorExpandCellEditor), out var on) ? on : ConstructorExpandCellEditorDefault;
+
+    public static void SaveConstructorExpandCellEditor(bool on)
+    {
+        if (on == ConstructorExpandCellEditorDefault) _store?.Remove(KeyConstructorExpandCellEditor);
+        else                                          _store?.Set(KeyConstructorExpandCellEditor, on.ToString());
+    }
+
+    public static bool LoadConstructorPasteGrowsTable() =>
+        bool.TryParse(_store?.Get(KeyConstructorPasteGrowsTable), out var on) ? on : ConstructorPasteGrowsTableDefault;
+
+    public static void SaveConstructorPasteGrowsTable(bool on)
+    {
+        if (on == ConstructorPasteGrowsTableDefault) _store?.Remove(KeyConstructorPasteGrowsTable);
+        else                                         _store?.Set(KeyConstructorPasteGrowsTable, on.ToString());
     }
 
     public static int LoadConstructorPollSeconds()
@@ -1587,6 +1607,8 @@ public static class AppSettings
     private const string KeyConstructorRestoreRecord      = "constructorRestoreRecord";
     private const string KeyConstructorRememberLayout     = "constructorRememberLayout";
     private const string KeyConstructorRememberFilters    = "constructorRememberFilters";
+    private const string KeyConstructorExpandCellEditor   = "constructorExpandCellEditor";
+    private const string KeyConstructorPasteGrowsTable    = "constructorPasteGrowsTable";
     private const string KeyConstructorPollSeconds        = "constructorPollSeconds";
     private const string KeyConstructorPropsHeight        = "constructorPropsHeight";
     private const string KeyConstructorNameColWidth       = "constructorNameColWidth";

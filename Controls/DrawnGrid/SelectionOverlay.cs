@@ -20,7 +20,8 @@ public sealed class SelectionOverlay : Control
         _surface         = surface;
         IsHitTestVisible = false;
         ClipToBounds     = true;
-        surface.ViewChanged += (_, _) => InvalidateVisual();
+        surface.ViewChanged  += (_, _) => InvalidateVisual();
+        surface.FrameChanged += (_, _) => InvalidateVisual();
     }
 
     public override void Render(DrawingContext ctx) =>

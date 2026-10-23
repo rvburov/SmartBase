@@ -40,6 +40,7 @@ using SmartBase.ViewModels.ConstructorDb;
 using SmartBase.Views.ConstructorDb;
 using SmartBase.Controls.DrawnGrid;
 using SmartBase.Views.ConstructorDb.DrawnGrid;
+using SmartBase.Utils;
 
 var path = Arg("--db") ?? "";
 if (!args.Contains("--files") && !File.Exists(path)) { Console.WriteLine("Нужен --db PATH к файлу базы."); return 1; }
@@ -976,6 +977,35 @@ int RunKeys()
     Click(Center(2, f[1]));
     Expect(table.SelectedColumnKeys.Count == 0, "клик по ячейке гасит колонки");
 
+    // Ctrl+Shift+клик — диапазон от последней выделенной кликом, как в задачах; добавляется к
+    // выделенному, якорь не сдвигается.
+    var CtrlShift = RawInputModifiers.Control | RawInputModifiers.Shift;
+    s.OffsetY = 0; Pump();
+    Click(Center(2, num));
+    var openedBefore = opened.Count;
+    Click(Center(6, num), CtrlShift);
+    Expect(table.SelectedRecordIds().OrderBy(x => x).SequenceEqual(Enumerable.Range(2, 5).Select(i => rows[i].RecordId).OrderBy(x => x)),
+           $"Ctrl+Shift+клик по «№» — записи со 2-й по 6-ю ({table.SelectedRecordIds().Count})");
+    Click(Center(9, num), RawInputModifiers.Control);
+    Click(Center(11, num), CtrlShift);
+    Expect(table.SelectedRecordIds().Count == 8 && table.SelectedRecordIds().Contains(rows[10].RecordId),
+           $"второй диапазон — от последней добавленной, прежние остаются ({table.SelectedRecordIds().Count})");
+    Click(Center(0, num), CtrlShift);
+    Expect(table.SelectedRecordIds().Count == 12 && table.SelectedRecordIds().Contains(rows[0].RecordId),
+           $"диапазон вверх от того же якоря — с 1-й по 12-ю ({table.SelectedRecordIds().Count})");
+    Expect(Range() is null && opened.Count == openedBefore, "диапазон ничего не открывает и ячеек не выделяет");
+    Click(HeaderAt(f[1]));
+    Click(HeaderAt(f[4]), CtrlShift);
+    Expect(table.SelectedColumnKeys.SequenceEqual([f[1], f[2], f[3], f[4]]),
+           $"Ctrl+Shift+клик по заголовку — колонки подряд, скрытая не входит: {string.Join(", ", table.SelectedColumnKeys)}");
+    Click(HeaderAt(f[2]), RawInputModifiers.Control);
+    Expect(table.SelectedColumnKeys.SequenceEqual([f[1], f[3], f[4]]), "Ctrl+клик по заголовку снимает одну, как Shift+клик");
+    // Снятие якорь не двигает: диапазон влево считается от первой выделенной кликом.
+    Click(HeaderAt(f[0]), CtrlShift);
+    Expect(table.SelectedColumnKeys.SequenceEqual([f[0], f[1], f[3], f[4]]),
+           $"Ctrl+Shift+клик влево — от якоря до «Названия»: {string.Join(", ", table.SelectedColumnKeys)}");
+    Click(Center(2, f[1]));
+
     Console.WriteLine("Буфер обмена и отмена:");
     var textId = textField.Id!.Value;
     var rid2   = rows[2].RecordId;
@@ -1025,6 +1055,149 @@ int RunKeys()
     Key(Avalonia.Input.Key.Z, RawInputModifiers.Control);
     Expect(WaitUntil(() => repo3.GetFieldValues(rid2).GetValueOrDefault(textId) == value2, TimeSpan.FromSeconds(10)), "Ctrl+Z: вырезание отменено");
     WaitUntil(() => p.QueryTask.IsCompleted && s.VisibleCellsLoaded(), TimeSpan.FromSeconds(20)); Pump();
+
+    RunRectangle();
+
+    // Прямоугольник из нескольких строк и столбцов: Delete, Ctrl+X и Ctrl+V обязаны дойти до
+    // КАЖДОЙ ячейки, в том числе до левой верхней, с которой начато выделение, — как бы его ни
+    // поставили: протягиванием, Shift+кликом, клавишами или после открытой на ней правки.
+    // Протягивание ОТ ячейки в правке выделяет текст в поле, а не ячейки (как в табличном
+    // редакторе), — такого сценария здесь нет.
+    void RunRectangle()
+    {
+        Console.WriteLine("Прямоугольник 3 × 2:");
+        string kText = f[1], kDate = f[2];
+        int fText = int.Parse(kText), fDate = int.Parse(kDate);
+        var ids = Enumerable.Range(10, 3).Select(r => p.Rows!.TryGetCached(r)!.RecordId).ToList();
+        string Val(int i, int field) => repo3.GetFieldValues(ids[i]).GetValueOrDefault(field, "");
+        bool AllEmpty() => Enumerable.Range(0, 3).All(i => Val(i, fText) == "" && Val(i, fDate) == "");
+        bool AllFilled() => Enumerable.Range(0, 3).All(i => Val(i, fText) != "" && Val(i, fDate) != "");
+        string Dump() => string.Join(" | ", Enumerable.Range(0, 3).Select(i => $"«{Val(i, fText)}» «{Val(i, fDate)}»"));
+        void Settled() { WaitUntil(() => p.QueryTask.IsCompleted && s.VisibleCellsLoaded(), TimeSpan.FromSeconds(20)); Pump(); }
+        void Fill()
+        {
+            for (var i = 0; i < 3; i++)
+            {
+                repo3.SetFieldValue(ids[i], fText, $"строка {i + 1}");
+                repo3.SetFieldValue(ids[i], fDate, $"2026-03-0{i + 1}");
+            }
+            table.ReloadRows(); Pump(); Settled();
+        }
+        void Fresh() { Key(Avalonia.Input.Key.Escape); Click(Center(20, f[3])); Key(Avalonia.Input.Key.Escape); }
+        var whole = new CellRange(10, Col(kText), 12, Col(kDate));
+
+        void Clear(string how, Action select)
+        {
+            Fill(); Fresh();
+            select();
+            Expect(Range() is { } got && got.Top == whole.Top && got.Bottom == whole.Bottom && got.Left == whole.Left
+                   && got.Right == whole.Right && !table.IsCellEditing, $"{how}: выделено 3 × 2 без правки {R(Range())}, правка {table.IsCellEditing}");
+            Key(Avalonia.Input.Key.Delete);
+            Expect(WaitUntil(AllEmpty, TimeSpan.FromSeconds(10)), $"{how}: Delete стер все шесть, левую верхнюю тоже: {Dump()}");
+            Settled();
+        }
+
+        Clear("протягивание", () => Drag(Center(10, kText), Center(12, kDate)));
+        Clear("протягивание снизу вверх", () => Drag(Center(12, kDate), Center(10, kText)));
+        Clear("клик и Shift+клик", () => { Click(Center(10, kText)); Click(Center(12, kDate), RawInputModifiers.Shift); });
+        Clear("Shift+стрелки", () =>
+        {
+            Click(Center(10, kText));
+            Key(Avalonia.Input.Key.Down, RawInputModifiers.Shift);
+            Key(Avalonia.Input.Key.Down, RawInputModifiers.Shift);
+            Key(Avalonia.Input.Key.Right, RawInputModifiers.Shift);
+        });
+        Clear("правка на левой верхней, затем Shift+клик", () =>
+        {
+            Click(Center(10, kText));
+            Click(Center(10, kText));            // второй клик открывает правку
+            Click(Center(12, kDate), RawInputModifiers.Shift);
+        });
+        Clear("клик, затем протягивание от той же ячейки", () =>
+        {
+            Click(Center(10, kText));
+            Drag(Center(10, kText), Center(12, kDate));
+        });
+        Clear("правка на левой верхней, протягивание к ней снизу справа", () =>
+        {
+            Click(Center(10, kText));
+            Click(Center(10, kText));
+            Drag(Center(12, kDate), Center(10, kText));
+        });
+        Clear("набор на левой верхней, Shift+клик", () =>
+        {
+            Click(Center(10, kText));
+            w.KeyTextInput("ж"); Pump();
+            Click(Center(12, kDate), RawInputModifiers.Shift);
+        });
+        Clear("набор на левой верхней, Enter, Shift+клик", () =>
+        {
+            Click(Center(10, kText));
+            w.KeyTextInput("ж"); Pump();
+            Key(Avalonia.Input.Key.Enter);
+            Click(Center(12, kDate), RawInputModifiers.Shift);
+        });
+        Clear("набор на левой верхней, Shift+стрелки", () =>
+        {
+            Click(Center(10, kText));
+            w.KeyTextInput("ж"); Pump();
+            Key(Avalonia.Input.Key.Down, RawInputModifiers.Shift);
+            Key(Avalonia.Input.Key.Down, RawInputModifiers.Shift);
+            Key(Avalonia.Input.Key.Right, RawInputModifiers.Shift);
+        });
+        Clear("набор на левой верхней, Escape, Shift+клик", () =>
+        {
+            Click(Center(10, kText));
+            w.KeyTextInput("ж"); Pump();
+            Key(Avalonia.Input.Key.Escape);
+            Click(Center(12, kDate), RawInputModifiers.Shift);
+        });
+
+        // С «Названием» в левом верхнем углу: стертое название хранится «Без названия» (TitleText).
+        Fill(); Fresh();
+        Drag(Center(10, title), Center(12, kText));
+        Key(Avalonia.Input.Key.Delete);
+        Expect(WaitUntil(() => Enumerable.Range(0, 3).All(i => Val(i, fText) == ""), TimeSpan.FromSeconds(10)), $"с «Названием»: текст стерт: {Dump()}");
+        Settled();
+        var titles = Enumerable.Range(0, 3).Select(i => repo3.GetRecord(ids[i], refresh: true)?.Title ?? "?").ToList();
+        var shownTitles = Enumerable.Range(10, 3).Select(r => p.Rows!.TryGetCached(r)?[title] ?? "?").ToList();
+        Expect(titles.All(t => t == TitleText.Placeholder) && shownTitles.All(t => t == TitleText.Placeholder),
+               $"с «Названием»: стертое название — «{TitleText.Placeholder}», как в любом месте правки: {string.Join(" | ", shownTitles)}");
+        Key(Avalonia.Input.Key.Z, RawInputModifiers.Control);
+        Settled();
+
+        Fill(); Fresh();
+        Drag(Center(10, kText), Center(12, kDate));
+        Key(Avalonia.Input.Key.X, RawInputModifiers.Control);
+        Expect(WaitUntil(() => AllEmpty() && Clip()?.Split('\n').Length >= 3, TimeSpan.FromSeconds(10)),
+               $"Ctrl+X: все шесть в буфере и стерты: {Dump()}");
+        Settled();
+        Key(Avalonia.Input.Key.Z, RawInputModifiers.Control);
+        Expect(WaitUntil(AllFilled, TimeSpan.FromSeconds(10)), $"Ctrl+Z вернул все шесть: {Dump()}");
+        Settled();
+
+        // Блок 3 × 2 в одну ячейку — разливается вниз и вправо.
+        Fresh();
+        Expect(clipboard.SetTextAsync("а1\t01.04.2026\nа2\t02.04.2026\nа3\t03.04.2026").Wait(2000), "буфер: блок 3 × 2");
+        Click(Center(10, kText));
+        Key(Avalonia.Input.Key.V, RawInputModifiers.Control);
+        Expect(WaitUntil(() => Val(0, fText) == "а1" && Val(2, fText) == "а3" && Val(0, fDate) == "2026-04-01" && Val(2, fDate) == "2026-04-03",
+                         TimeSpan.FromSeconds(10)), $"Ctrl+V блока в одну ячейку: {Dump()}");
+        Settled();
+
+        // Замена значений прямоугольника одним значением строки.
+        Fresh();
+        Expect(clipboard.SetTextAsync("з\t05.05.2026").Wait(2000), "буфер: строка из двух значений");
+        Drag(Center(10, kText), Center(12, kDate));
+        Key(Avalonia.Input.Key.V, RawInputModifiers.Control);
+        Expect(WaitUntil(() => Enumerable.Range(0, 3).All(i => Val(i, fText) == "з" && Val(i, fDate) == "2026-05-05"), TimeSpan.FromSeconds(10)),
+               $"Ctrl+V строки в 3 × 2 заменил все шесть, левую верхнюю тоже: {Dump()}");
+        Settled();
+        Key(Avalonia.Input.Key.Z, RawInputModifiers.Control);
+        Expect(WaitUntil(() => Val(0, fText) == "а1" && Val(2, fDate) == "2026-04-03", TimeSpan.FromSeconds(10)), $"Ctrl+Z вернул блок: {Dump()}");
+        Settled();
+        Key(Avalonia.Input.Key.Escape);
+    }
 
     Console.WriteLine("Автопрокрутка при протягивании:");
     Key(Avalonia.Input.Key.Escape);   // ячейка выделена прошлым шагом — второй клик открыл бы правку
@@ -1287,6 +1460,97 @@ int RunKeys()
     w2.Close();
     Pump();
 
+    // Боковая панель: тот же Ctrl+Shift+клик — диапазон видимых строк одной базы от якоря.
+    Console.WriteLine("Боковая панель:");
+    {
+        var names = Enumerable.Range(1, 5).Select(i => $"Диапазон {i}").ToList();
+        foreach (var n in names) repo3.AddCollection(new DbCollection { Name = n });
+        var tree = new SmartBase.Controls.Components.SidebarTree();
+        var ws   = new Window { Width = 320, Height = 900, Content = tree };
+        ws.Show();
+        tree.Initialize(repo3, SmartBase.Controls.Components.SidebarMode.Constructor);
+        Settle(ws);
+        Border? RowOf(string name) => tree.GetVisualDescendants().OfType<Border>()
+            .FirstOrDefault(b => b.DataContext is SmartBase.Controls.Components.SidebarRow r && r.Node.Name == name
+                                 && b.Classes.Count >= 0 && b.IsVisible && b.Bounds.Height > 0
+                                 && b.GetVisualParent() is not Border { DataContext: SmartBase.Controls.Components.SidebarRow });
+        void ClickRow(string name, RawInputModifiers m = RawInputModifiers.None)
+        {
+            if (RowOf(name) is not { } row) { Expect(false, $"строка «{name}» на экране"); return; }
+            var at = row.TranslatePoint(new Point(row.Bounds.Width / 2, row.Bounds.Height / 2), ws)!.Value;
+            ws.MouseMove(at, m); ws.MouseDown(at, MouseButton.Left, m); ws.MouseUp(at, MouseButton.Left, m); Pump();
+        }
+        List<string> Picked() => tree.GetVisualDescendants().OfType<Control>()
+            .Select(c => c.DataContext).OfType<SmartBase.Controls.Components.SidebarRow>().Distinct()
+            .Where(r => r.Selected).Select(r => r.Node.Name).OrderBy(n => n, StringComparer.Ordinal).ToList();
+
+        ClickRow(names[0], RawInputModifiers.Control);
+        ClickRow(names[3], RawInputModifiers.Control | RawInputModifiers.Shift);
+        Expect(Picked().SequenceEqual(names.Take(4)), $"Ctrl+клик и Ctrl+Shift+клик — с 1-й по 4-ю: {string.Join(", ", Picked())}");
+        ClickRow(names[1], RawInputModifiers.Shift);
+        Expect(Picked().SequenceEqual([names[0], names[2], names[3]]), $"Shift+клик снимает одну: {string.Join(", ", Picked())}");
+        ClickRow(names[4], RawInputModifiers.Control | RawInputModifiers.Shift);
+        Expect(Picked().SequenceEqual(names),
+               $"диапазон — от якоря (1-й) до 5-й, снятая внутри добавляется снова, как в задачах: {string.Join(", ", Picked())}");
+        ws.Close();
+        Pump();
+    }
+
+    // Вставка за край таблицы — последней: она заводит записи и столбцы. Блок 2 × 3 от последней
+    // строки в последнем видимом столбце: одна строка и два столбца не помещаются.
+    Console.WriteLine("Вставка за край таблицы:");
+    w.Activate(); Pump();
+    int Records() => repo3.GetRecords(cid3).Count;
+    List<DbField> PasteFields() => repo3.GetFields(cid3).Where(fl => fl.Name.StartsWith("Колонка ", StringComparison.Ordinal)).ToList();
+    void Settle2() { WaitUntil(() => p.QueryTask.IsCompleted && s.VisibleCellsLoaded(), TimeSpan.FromSeconds(20)); Pump(); }
+    // Уведомления без окна копятся в очереди AppNotifications — по ним видно, что действие кончилось.
+    System.Collections.IList NoticeList() => (System.Collections.IList)typeof(AppNotifications)
+        .GetField("_pending", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!.GetValue(null)!;
+    List<string> Notices() => NoticeList().Cast<object>().Select(o => o.ToString() ?? "").Select(t => t.Split(", ", 2)[^1].TrimEnd(')')).ToList();
+    void PasteAtCorner()
+    {
+        Key(Avalonia.Input.Key.Escape);
+        s.OffsetY = 0; s.OffsetX = 0; Pump();
+        Click(CellNow(0, title));
+        Key(Avalonia.Input.Key.End, RawInputModifiers.Control);
+        Expect(clipboard.SetTextAsync("x1\tx2\tx3\ny1\ty2\ty3").Wait(2000), "буфер: блок 2 × 3");
+        NoticeList().Clear();
+        Key(Avalonia.Input.Key.V, RawInputModifiers.Control);
+        // Вставка асинхронна (буфер читается с ожиданием): ждем ее итог — уведомление «Вставлено…».
+        Expect(WaitUntil(() => Notices().Any(n => n.StartsWith("Вставл", StringComparison.Ordinal)), TimeSpan.FromSeconds(10)),
+               $"вставка закончилась: {string.Join(" | ", Notices())}");
+        Settle2();
+    }
+    var recordsBefore = Records();
+    PasteAtCorner();
+    Expect(Records() == recordsBefore && PasteFields().Count == 0, "настройка выключена (стандарт): ни записей, ни столбцов не заведено");
+
+    ConstructorSettings.SetPasteGrowsTable(true);
+    try
+    {
+        PasteAtCorner();
+        var grown = PasteFields();
+        Expect(Records() == recordsBefore + 1, $"досоздана одна запись: {recordsBefore} → {Records()}");
+        Expect(grown.Select(fl => fl.Name).SequenceEqual(["Колонка 1", "Колонка 2"]) && grown.All(fl => fl.FieldType == "text"),
+               $"досозданы текстовые «Колонка 1», «Колонка 2»: {string.Join(", ", grown.Select(fl => $"{fl.Name} ({fl.FieldType})"))}");
+        var newRecord = repo3.GetRecords(cid3).Last().Id!.Value;
+        var lastOld   = repo3.GetRecords(cid3)[^2].Id!.Value;
+        Expect(grown.Count == 2 && repo3.GetFieldValues(lastOld).GetValueOrDefault(grown[0].Id!.Value) == "x2"
+               && repo3.GetFieldValues(newRecord).GetValueOrDefault(grown[1].Id!.Value) == "y3",
+               "значения легли в новые строку и столбцы");
+        Expect(s.Columns.IndexOf(grown.Last().Id!.Value.ToString()) >= 0 && p.Rows!.Count - 1 == recordsBefore + 1,
+               "таблица показывает новые столбцы и строку без перезахода");
+
+        NoticeList().Clear();
+        Key(Avalonia.Input.Key.Z, RawInputModifiers.Control);
+        WaitUntil(() => Notices().Any(n => n.StartsWith("Вставка отменена", StringComparison.Ordinal)), TimeSpan.FromSeconds(10));
+        Settle2();
+        Expect(Records() == recordsBefore && PasteFields().Count == 0, $"Ctrl+Z убрал досозданное: записей {Records()}, столбцов «Колонка» {PasteFields().Count}");
+        Expect(s.Columns.Count > 0 && grown.All(fl => s.Columns.IndexOf(fl.Id!.Value.ToString()) < 0) && p.Rows!.Count - 1 == recordsBefore,
+               "столбцы и строка ушли и из таблицы на экране");
+    }
+    finally { ConstructorSettings.SetPasteGrowsTable(false); }
+
     w.Close();
     SecurityJournal.Attach(null);
     Console.WriteLine();
@@ -1405,7 +1669,9 @@ int RunEdit()
     Expect(table.IsCellEditing && Box() is { } b0 && b0.IsFocused, "медленный второй клик по той же ячейке — правка, фокус в поле");
     Expect(Box() is { CaretIndex: 0, SelectionStart: 0, SelectionEnd: 0 }, "каретка в начале, без выделения — как у нынешней таблицы");
     Expect(Range() == CellRange.Single(2, Col(K(fText))) && s.CellSelectionBounds() is not null, "рамка выделения на правящейся ячейке");
-    Expect(p.Editor.EditorBounds is { } eb && s.EditorRect(2, K(fText)) is { } er && eb == er, "редактор стоит в области ячейки");
+    // Длинное значение поле раскрывает сразу (см. «Раскрытие ячейки при вводе» ниже) — от той же точки.
+    Expect(p.Editor.EditorBounds is { } eb && s.EditorRect(2, K(fText)) is { } er && eb.Position == er.Position
+           && (eb == er || eb.Width > er.Width), "редактор стоит в области ячейки (или раскрыт от нее под длинный текст)");
     Key(Avalonia.Input.Key.Escape);
     Expect(!table.IsCellEditing && Db(rid2, fText) == text2 && (s.IsFocused || s.IsKeyboardFocusWithin), "Escape без набора — правка закрыта, фокус в таблице");
     DoubleClick(Center(4, K(fText)));
@@ -1417,6 +1683,64 @@ int RunEdit()
     Key(Avalonia.Input.Key.F2);
     Expect(table.IsCellEditing, "F2 — правка");
     Key(Avalonia.Input.Key.Escape);
+
+    // Раскрытие поля под длинный текст (настройка «Раскрывать ячейку при вводе», стандартно
+    // включена): вправо целыми колонками до края окна, дальше перенос строк и рост вниз; первая
+    // строка не сдвигается. Выключено — поле в границах ячейки.
+    Console.WriteLine("Раскрытие ячейки при вводе:");
+    {
+        var key5 = K(fText);
+        var cell = s.EditorRect(5, key5)!.Value;
+        OpenBySecondClick(5, key5);
+        Key(Avalonia.Input.Key.A, RawInputModifiers.Control);
+        Type("кот");
+        Expect(p.Editor.EditorBounds == cell, "короткий текст — поле в границах ячейки");
+        var caretTop = Box()!.TranslatePoint(new Point(0, 0), s)!.Value.Y;
+        Type(" — длинная строка, которая в ширину ячейки никак не помещается");
+        Pump();
+        var wide = p.Editor.EditorBounds;
+        var cols = Enumerable.Range(0, L.Count).Select(i => L.Right(i) - s.OffsetX).ToList();
+        Expect(wide is { } wb && wb.X == cell.X && wb.Y == cell.Y && wb.Width > cell.Width && wb.Height == cell.Height,
+               $"длинный текст — поле тянется вправо в одну строку: {cell.Width:N0} → {wide?.Width:N0}");
+        Expect(wide is { } wr && cols.Any(r => Math.Abs(r - (wr.Right + s.LineWidth)) < 0.6), "правый край поля — на границе колонки");
+        Expect(Box()!.TextWrapping == Avalonia.Media.TextWrapping.NoWrap, "в одну строку — без переноса");
+        Type(string.Concat(Enumerable.Repeat(" и еще немного слов, чтобы не поместилось в окно", 40)));
+        Pump();
+        var tall = p.Editor.EditorBounds;
+        Expect(tall is { } tb && tb.Height > cell.Height && tb.Right <= s.ViewportWidth + 0.5 && tb.X == cell.X,
+               $"текст шире окна — перенос строк и рост вниз: {tall?.Width:N0} × {tall?.Height:N0}, окно {s.ViewportWidth:N0}");
+        Expect(Box()!.TextWrapping == Avalonia.Media.TextWrapping.Wrap, "перенос строк включен");
+        Expect(Math.Abs(Box()!.TranslatePoint(new Point(0, 0), s)!.Value.Y + Box()!.Padding.Top - caretTop - Box()!.Padding.Top) < 40,
+               "поле начинается у той же строки, что и ячейка");
+        Key(Avalonia.Input.Key.A, RawInputModifiers.Control);
+        Type("снова коротко");
+        Pump();
+        Expect(p.Editor.EditorBounds == cell && Box()!.TextWrapping == Avalonia.Media.TextWrapping.NoWrap,
+               "текст снова помещается — поле вернулось в ячейку");
+        Key(Avalonia.Input.Key.Escape);
+        Expect(!table.IsCellEditing && p.Editor.EditorBounds is null, "Escape — правка закрыта");
+
+        ConstructorSettings.SetExpandCellEditor(false);
+        try
+        {
+            OpenBySecondClick(5, key5);
+            Key(Avalonia.Input.Key.A, RawInputModifiers.Control);
+            Type("длинная строка, которая в ширину ячейки никак не помещается, и еще слова");
+            Pump();
+            Expect(p.Editor.EditorBounds == cell, "настройка выключена — поле в границах ячейки");
+            Key(Avalonia.Input.Key.Escape);
+        }
+        finally { ConstructorSettings.SetExpandCellEditor(true); }
+
+        // Число не раскрывается: оно прижато вправо, и раскрытое поле увело бы его от показа.
+        var numCell = s.EditorRect(5, K(fNum))!.Value;
+        OpenBySecondClick(5, K(fNum));
+        Key(Avalonia.Input.Key.A, RawInputModifiers.Control);
+        Type("12345678901234567890123456789012345");
+        Pump();
+        Expect(p.Editor.EditorBounds == numCell, "число — поле в границах ячейки");
+        Key(Avalonia.Input.Key.Escape);
+    }
 
     Console.WriteLine("Набор с паузами и запись при выходе:");
     OpenBySecondClick(2, K(fText));

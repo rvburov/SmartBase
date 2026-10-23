@@ -290,6 +290,66 @@ static class OpsStand
         ClearFilter(K(fNum));
         Expect(p.Rows!.Source is PlainRowSource, "сортировка снята");
 
+        // ── По цвету ───────────────────────────────────────────────────────────
+        // Две ячейки текста красные: «Фильтр по цвету» оставляет их, «Сортировка по цвету» ставит
+        // наверх, остальные — в порядке таблицы.
+        Console.WriteLine("По цвету:");
+        {
+            var head3 = Head(3).Select(r => r.RecordId).ToList();
+            const string red = "#FF3B30";
+            repo.SetCellStyle(cid, [(head3[0], K(fText)), (head3[2], K(fText))], StyleAspect.Background, red);
+            table.ReloadRows(); Settled();
+
+            // Пункт цвета в своей секции окна: секция — заголовок-переключатель и список под ним.
+            Button? ColorItem(Flyout fl, string section, string name)
+            {
+                var header = Find<Button>(fl).FirstOrDefault(b => b.Content is Control c
+                    && c.GetSelfAndLogicalDescendants().OfType<TextBlock>().Any(t => t.Text == section));
+                return (header?.Parent as StackPanel)?.GetLogicalDescendants().OfType<Button>()
+                    .FirstOrDefault(b => !ReferenceEquals(b, header) && b.Content is Control c
+                        && c.GetSelfAndLogicalDescendants().OfType<TextBlock>().Any(t => t.Text == name));
+            }
+            bool SectionShown(Flyout fl, string section) =>
+                Find<Button>(fl).FirstOrDefault(b => b.Content is Control c
+                    && c.GetSelfAndLogicalDescendants().OfType<TextBlock>().Any(t => t.Text == section))?.Parent is StackPanel { IsVisible: true };
+
+            var flNum = OpenFilter(K(fNum))!;
+            WaitUntil(() => false, TimeSpan.FromMilliseconds(300));
+            Expect(!SectionShown(flNum, "Фильтр по цвету") && !SectionShown(flNum, "Сортировка по цвету"),
+                   "у колонки без цветов секций «по цвету» нет");
+            flNum.Hide(); Pump();
+
+            var fl = OpenFilter(K(fText))!;
+            Expect(WaitUntil(() => SectionShown(fl, "Фильтр по цвету"), TimeSpan.FromSeconds(10)) && SectionShown(fl, "Сортировка по цвету"),
+                   "у колонки с цветом — секции «Сортировка по цвету» и «Фильтр по цвету»");
+            Press(ButtonWith(fl, "Фильтр по цвету"));
+            var redItem = ColorItem(fl, "Фильтр по цвету", "Красный");
+            Expect(redItem?.Content is Control rc && rc.GetSelfAndLogicalDescendants().OfType<TextBlock>().Any(t => t.Text == "2"),
+                   "в списке — «Красный» с числом записей 2");
+            Press(redItem!);
+            Press(ButtonWith(fl, "Готово"));
+            Settled();
+            Expect(DataRows() == 2 && Head(2).Select(r => r.RecordId).SequenceEqual([head3[0], head3[2]]) && s.IsColumnFiltered(K(fText)),
+                   $"фильтр по цвету — только красные, воронка горит ({DataRows()} строк)");
+
+            fl = OpenFilter(K(fText))!;
+            WaitUntil(() => SectionShown(fl, "Фильтр по цвету"), TimeSpan.FromSeconds(10));
+            Press(ColorItem(fl, "Фильтр по цвету", "Красный")!);   // повторный щелчок снимает выбор
+            Press(ButtonWith(fl, "Сортировка по цвету"));
+            Press(ColorItem(fl, "Сортировка по цвету", "Красный")!);
+            Press(ButtonWith(fl, "Готово"));
+            Settled();
+            var sorted = Head(4).Select(r => r.RecordId).ToList();
+            Expect(DataRows() == total && sorted.Take(2).SequenceEqual([head3[0], head3[2]]) && sorted[2] == head3[1]
+                   && p.Rows!.Source is IdListRowSource && s.IsColumnFiltered(K(fText)),
+                   "сортировка по цвету — красные сверху, дальше порядок таблицы; отбор по цвету снят");
+
+            Sort(K(fText), "Снять сортировку");
+            Expect(p.Rows!.Source is PlainRowSource && !s.IsColumnFiltered(K(fText)), "«Снять сортировку» снимает и сортировку по цвету");
+            repo.SetCellStyle(cid, [(head3[0], K(fText)), (head3[2], K(fText))], StyleAspect.Background, null);
+            table.ReloadRows(); Settled();
+        }
+
         // ── Память отбора ──────────────────────────────────────────────────────
         Console.WriteLine("Запомненный отбор:");
         ConstructorSettings.SetRememberFilters(true);

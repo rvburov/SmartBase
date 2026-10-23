@@ -17,6 +17,9 @@ namespace SmartBase.Views.ConstructorDb;
 ///
 /// Шаги живут в памяти этой таблицы и этой коллекции: переход в другую коллекцию их забывает —
 /// отмена «из прошлого», которую человек уже не видит, скорее навредила бы.
+///
+/// Вставка, досоздавшая записи и столбцы (<c>PasteGrowth</c>), отменяется вместе с ними: после
+/// возврата значений заведенное убирается — кроме того, что человек успел заполнить после вставки.
 /// </summary>
 public partial class TableView
 {
@@ -25,7 +28,8 @@ public partial class TableView
 
     private sealed record UndoStep(int CollectionId, string Operation,
                                    IReadOnlyList<ConstructorRepository.CellChange> Changes,
-                                   IReadOnlyList<ConstructorRepository.LinkChange> Links);
+                                   IReadOnlyList<ConstructorRepository.LinkChange> Links,
+                                   PasteGrowth Growth);
 
     private readonly List<UndoStep> _undoSteps = [];
 
@@ -36,13 +40,15 @@ public partial class TableView
     // Шаг запоминается, только если его можно вернуть целиком: итог без старых значений (больше
     // UndoChangesLimit) отменить нельзя, и об этом человека спросили до записи.
     private void RememberForUndo(string operation, ConstructorRepository.CellBulkResult values,
-                                 ConstructorRepository.LinkBulkResult links)
+                                 ConstructorRepository.LinkBulkResult links, PasteGrowth? growth = null)
     {
-        if (values.Changed + links.Changed == 0 || values.ChangesTruncated || links.ChangesTruncated
+        growth ??= PasteGrowth.None;
+        if (values.Changed + links.Changed == 0 && growth.IsEmpty) return;
+        if (values.ChangesTruncated || links.ChangesTruncated
             || values.Changed + links.Changes.Sum(c => (long)Math.Max(1, c.OldTargets.Count + c.NewTargets.Count))
                 > ConstructorRepository.UndoChangesLimit) return;
 
-        _undoSteps.Add(new UndoStep(_collectionId, operation, values.Changes, links.Changes));
+        _undoSteps.Add(new UndoStep(_collectionId, operation, values.Changes, links.Changes, growth));
         if (_undoSteps.Count > UndoDepth) _undoSteps.RemoveAt(0);
     }
 
@@ -103,9 +109,32 @@ public partial class TableView
         var conflicts = values.Conflicts + edges.Conflicts;
         if (changed > 0) ReloadRows();
 
-        var message = changed > 0
+        // Досозданное вставкой — уже без значений: убираем записи и столбцы, в которые после
+        // вставки никто ничего не вписал. Без права удалять записи или свойства они остаются:
+        // создать их право было, а убрать — нет.
+        var (removedRecords, removedFields) = (0, 0);
+        var growthRecords = Can(PermAction.DeleteRecord) ? step.Growth.Records : [];
+        var growthFields  = Can(PermAction.DeleteField)  ? step.Growth.Fields  : [];
+        if (growthRecords.Count + growthFields.Count > 0)
+        {
+            try
+            {
+                (removedRecords, removedFields) = repository.RemoveUntouchedPasteGrowth(
+                    _collectionId, growthRecords, growthFields);
+            }
+            catch (Exception ex) when (DbErrors.Handle(ex, repository.DbPath)) { }
+            if (removedFields > 0) ReloadColumns();
+            if (removedRecords > 0) ReloadRowsStructural(-removedRecords);
+            if (removedRecords + removedFields > 0) TableStructureChanged?.Invoke(this, EventArgs.Empty);
+        }
+
+        var message = changed + removedRecords + removedFields > 0
             ? $"{Undone(step.Operation)}: возвращено {changed:N0} {ValuesPlural(changed)}"
             : $"{Undone(step.Operation)}: возвращать нечего";
+        if (removedRecords > 0)
+            message += $", убрано {removedRecords:N0} {Plural(removedRecords, "запись", "записи", "записей")}";
+        if (removedFields > 0)
+            message += $", убрано {removedFields:N0} {Plural(removedFields, "столбец", "столбца", "столбцов")}";
         if (conflicts > 0)
             message += $"; {conflicts:N0} {ValuesPlural(conflicts)} уже поменяли после этого — их не трогали";
         AppNotifications.Info(message + ".");

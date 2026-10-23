@@ -164,8 +164,11 @@ public partial class SidebarTree : UserControl
             d.Repo)).ToList();
 
     // Выделение: подсветка + цель удаления. Обычный клик — одна запись; Shift/Ctrl/Cmd-клик
-    // — точечный toggle (группы и коллекции вместе) для пакетного удаления.
+    // — точечный toggle (группы и коллекции вместе) для пакетного удаления; Ctrl+Shift-клик —
+    // все видимые строки той же базы от якоря до кликнутой (как в задачах и таблице).
     private readonly HashSet<SidebarNode> _selectedNodes = [];
+    // Якорь диапазона — последний узел, выделенный кликом (обычным или добавлением).
+    private SidebarNode? _rangeAnchor;
     // Открытая в основном окне коллекция — для подсветки и восстановления после Refresh.
     private EntityRef? _open;
     // Был ли последний клик мышью внутри сайдбара. Delete удаляет выделение сайдбара
@@ -795,6 +798,28 @@ public partial class SidebarTree : UserControl
 
     // ── Взаимодействие со строками ───────────────────────────────────────────────
 
+    /// <summary>Ctrl+Shift+клик: добавить к выделению видимые строки от якоря до <paramref name="node"/>
+    /// — группы и коллекции, только той же базы: пакетные действия работают в одной базе, а корни
+    /// баз в выделение не входят. false — якоря нет, он из другой базы или его строка свернута:
+    /// клик работает как Ctrl+клик.</summary>
+    private bool SelectRange(SidebarNode node)
+    {
+        if (_rangeAnchor is not { } anchor || anchor.DbId != node.DbId) return false;
+        var from = -1;
+        var to   = -1;
+        for (var i = 0; i < _rows.Count; i++)
+        {
+            if (ReferenceEquals(_rows[i].Node, anchor)) from = i;
+            if (ReferenceEquals(_rows[i].Node, node))   to   = i;
+        }
+        if (from < 0 || to < 0) return false;
+
+        for (var i = Math.Min(from, to); i <= Math.Max(from, to); i++)
+            if (_rows[i].Node is { Id: not null, IsDatabase: false } n && n.DbId == node.DbId)
+                _selectedNodes.Add(n);
+        return true;
+    }
+
     private void OnRowTapped(object? sender, TappedEventArgs e)
     {
         if (sender is not Control { DataContext: SidebarRow row }) return;
@@ -803,16 +828,18 @@ public partial class SidebarTree : UserControl
         // Shift/Ctrl/Cmd + клик — точечный toggle узла в мультивыделение (группы и
         // коллекции вместе), без раскрытия/открытия. Так набираются элементы для
         // пакетного удаления через контекстное меню.
-        var additive = e.KeyModifiers.HasFlag(KeyModifiers.Shift)
-                    || e.KeyModifiers.HasFlag(KeyModifiers.Control)
-                    || e.KeyModifiers.HasFlag(KeyModifiers.Meta);
+        var shift    = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
+        var ctrl     = e.KeyModifiers.HasFlag(KeyModifiers.Control) || e.KeyModifiers.HasFlag(KeyModifiers.Meta);
+        var additive = shift || ctrl;
         // Корень-БД в мультивыделение не добавляем (БД удаляются только из настроек).
         if (additive && node.Id.HasValue && !node.IsDatabase)
         {
-            if (!_selectedNodes.Remove(node)) _selectedNodes.Add(node);
+            if (shift && ctrl && SelectRange(node)) { RebuildRows(); return; }
+            if (!_selectedNodes.Remove(node)) { _selectedNodes.Add(node); _rangeAnchor = node; }
             RebuildRows();
             return;
         }
+        _rangeAnchor = node.Id.HasValue && !node.IsDatabase ? node : null;
 
         // Немонтированная база (очередь/обновление/недоступна): вместо раскрытия —
         // подсказка с текущим статусом (раскрывать нечего, содержимое еще не готово).

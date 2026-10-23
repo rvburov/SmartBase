@@ -547,6 +547,10 @@ public sealed partial class ConstructorRepository
         if (sortKey is null)
             return await q.OrderBy(r => r.Position).ThenBy(r => r.Id).Select(r => r.Id).ToListAsync(ct);
 
+        // Сортировка по цвету (ColorQuery): записи цвета сверху или снизу, остальное — порядок таблицы.
+        if (ColorQuery.TryParseSortKey(sortKey, out var colorColumn, out var colorToken))
+            return await ColorSortedIdsAsync(q, collectionId, colorColumn, colorToken, sortAsc, ct);
+
         if (sortKey == TitleKey)
             return await OrderedIds(q, r => r.Title, sortAsc).ToListAsync(ct);
 

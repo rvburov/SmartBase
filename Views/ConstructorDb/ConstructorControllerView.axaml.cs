@@ -91,6 +91,11 @@ public partial class ConstructorControllerView : UserControl
         TableViewCtrl.RecordsDeleteRequested    += (_, ids)  => _ = DeleteRecordsWithConfirm(ids);
         TableViewCtrl.RecordDuplicateRequested  += (_, ids)  => _ = DuplicateRecords(ids);
         TableViewCtrl.RecordRelocateRequested   += (_, ids)  => _ = RelocateRecords(ids);
+        TableViewCtrl.TableStructureChanged     += (_, _)    =>
+        {
+            NotifyFieldsChanged();
+            CollectionsChanged?.Invoke(this, EventArgs.Empty);
+        };
 
         ListViewCtrl.RecordClicked              += (_, rid) => OpenPage(rid);
         ListViewCtrl.RecordCreateRequested      += (_, _)   => _ = CreateAndOpen();

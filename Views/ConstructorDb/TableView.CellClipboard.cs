@@ -240,6 +240,15 @@ public partial class TableView
         // секунды.
         if (TooManyRows(Math.Max(values.Count, range.RowCount))) return;
 
+        // Блок не помещается, а настройка разрешает досоздать недостающее, — записи и столбцы
+        // заводятся ДО планирования: дальше вставка идет обычным путем по уже выросшей таблице.
+        var growth = PasteGrowth.None;
+        if (ConstructorSettings.PasteGrowsTable)
+        {
+            if (GrowForPaste(values, range) is not { } grown) return;
+            growth = grown;
+        }
+
         // Вставка идет только по ВИДИМЫМ столбцам — тем же, что копируются: скрытый столбец места в
         // блоке не занимает (PlanInGrid), иначе скопированный блок ложился бы обратно со сдвигом на
         // чужие столбцы. В плане столбец — уже позиция в сетке.
@@ -288,8 +297,64 @@ public partial class TableView
                 }
         }
 
-        var outcome = await WriteCellsAsync(writes, "Вставка", identities);
-        ReportPaste(outcome, plan.Skipped);
+        var outcome = await WriteCellsAsync(writes, "Вставка", identities, growth);
+        ReportPaste(outcome, plan.Skipped, growth);
+    }
+
+    /// <summary>Что вставка завела под блок, не поместившийся в таблицу: id новых записей и свойств
+    /// (их убирает отмена) и не досозданы ли строки из-за отбора или сортировки.</summary>
+    internal sealed record PasteGrowth(IReadOnlyList<int> Records, IReadOnlyList<int> Fields, bool RowsRefused)
+    {
+        public static readonly PasteGrowth None = new([], [], false);
+        public bool IsEmpty => Records.Count == 0 && Fields.Count == 0;
+    }
+
+    /// <summary>
+    /// Досоздать записи и столбцы под блок из буфера, если он выходит за таблицу. Размножение блока
+    /// по выделению таблицу не растит — оно и так живет в границах выделения. Строки заводятся
+    /// только в таблице без отбора и сортировки: новая запись встает в конец коллекции, а в
+    /// отобранном или отсортированном списке ее место не «под последней строкой». Без права
+    /// создавать записи или свойства недостающее просто не заводится — оно уйдет в пропуск «за
+    /// краем таблицы». null — база отказала, вставка не идет.
+    /// </summary>
+    private PasteGrowth? GrowForPaste(IReadOnlyList<IReadOnlyList<string>> values, CellRange range)
+    {
+        if (_repository is null) return null;
+
+        var visible   = VisibleDataColumns();
+        var start     = visible.FindIndex(c => c >= range.Left);
+        var blockRows = values.Count;
+        var blockCols = values.Max(v => v.Count);
+        var selCols   = Math.Max(1, range.VisibleColumns(visible).Count);
+        var tile      = range.RowCount >= blockRows && selCols >= blockCols
+                     && (range.RowCount > blockRows || selCols > blockCols);
+        if (start < 0 || tile) return PasteGrowth.None;
+
+        var needRows = range.Top + blockRows - VisibleRowCount;
+        var needCols = start + blockCols - visible.Count;
+        if (needRows <= 0 && needCols <= 0) return PasteGrowth.None;
+
+        var plain       = RecordsGrid.Rows?.Source is PlainRowSource;
+        var rowsRefused = needRows > 0 && !plain;
+        List<int> records = [], fields = [];
+        try
+        {
+            if (needCols > 0 && Can(PermAction.CreateField))
+                fields = _repository.AddPasteTextFields(_collectionId, needCols);
+            if (needRows > 0 && plain && Can(PermAction.CreateRecord))
+                records = _repository.AddEmptyRecords(_collectionId, needRows);
+        }
+        catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath))
+        {
+            // Заведенное до отказа остается: оно пустое, а отмены у несостоявшейся вставки нет.
+            if (fields.Count > 0) ReloadColumns();
+            return null;
+        }
+
+        if (fields.Count > 0) ReloadColumns();
+        if (records.Count > 0) ReloadRowsStructural(records.Count);
+        if (fields.Count + records.Count > 0) TableStructureChanged?.Invoke(this, EventArgs.Empty);
+        return new PasteGrowth(records, fields, rowsRefused);
     }
 
     // Список допущенных пользователей для столбцов «Пользователь»: вставка сверяет с ним имена,
@@ -336,9 +401,18 @@ public partial class TableView
     // в самой записи, связи — ребрами, а не текстом. operation — имя действия для журнала и отмены.
     private async Task<WriteOutcome> WriteCellsAsync(
         IReadOnlyList<(TableRowVm Row, TableColumnDef Column, string Value)> writes, string operation,
-        IReadOnlyDictionary<(int RecordId, int FieldId), IReadOnlyList<RelationTarget>>? identities = null)
+        IReadOnlyDictionary<(int RecordId, int FieldId), IReadOnlyList<RelationTarget>>? identities = null,
+        PasteGrowth? growth = null)
     {
-        if (writes.Count == 0 || _repository is null) return default;
+        if (_repository is null) return default;
+        if (writes.Count == 0)
+        {
+            // Досозданное без единого записанного значения отмене все равно надо помнить.
+            if (growth is { IsEmpty: false })
+                RememberForUndo(operation, ConstructorRepository.CellBulkResult.Nothing,
+                                ConstructorRepository.LinkBulkResult.Nothing, growth);
+            return default;
+        }
         var repository = _repository;
         // Порог медленности: запись значений ячеек (очистка, вставка, вырезание) дольше Diag.UiQuery.
         using var slow = Diag.Measure($"{operation.ToLowerInvariant()} ячеек", Diag.UiQuery,
@@ -364,7 +438,7 @@ public partial class TableView
                                       cancellable: false);
         if (batch is null) return default;
 
-        RememberForUndo(operation, batch.Values, batch.Links);
+        RememberForUndo(operation, batch.Values, batch.Links, growth);
         var changed = batch.Values.Changed + batch.Links.Changed;
         if (changed > 0) ReloadRows();   // строки перечитываем целиком: правок много и они разные
         return OutcomeOf(changed, batch.Text, batch.Links);
@@ -472,14 +546,18 @@ public partial class TableView
         return (writes, new(notFound, ambiguous, several));
     }
 
-    private static void ReportPaste(WriteOutcome outcome, IReadOnlyDictionary<PasteSkipReason, int> skipped)
+    private static void ReportPaste(WriteOutcome outcome, IReadOnlyDictionary<PasteSkipReason, int> skipped,
+                                    PasteGrowth growth)
     {
-        if (PasteSummary(outcome, skipped) is { } message) AppNotifications.Info(message);
+        if (PasteSummary(outcome, skipped, growth) is { } message) AppNotifications.Info(message);
     }
 
-    /// <summary>Текст итога вставки; null — нечего сказать.</summary>
-    internal static string? PasteSummary(WriteOutcome outcome, IReadOnlyDictionary<PasteSkipReason, int> skipped)
+    /// <summary>Текст итога вставки; null — нечего сказать. <paramref name="growth"/> — что вставка
+    /// досоздала под блок, не поместившийся в таблицу.</summary>
+    internal static string? PasteSummary(WriteOutcome outcome, IReadOnlyDictionary<PasteSkipReason, int> skipped,
+                                         PasteGrowth? growth = null)
     {
+        growth ??= PasteGrowth.None;
         // Итог говорит, ПОЧЕМУ пропущено: «пропущено 6» без причины заставляло гадать, что не так
         // со вставкой, и перепроверять ячейки по одной.
         var reasons = skipped
@@ -502,7 +580,7 @@ public partial class TableView
             reasons.Add((outcome.RelationTargetUnavailable, "связей с записями недоступной базы"));
 
         var skippedTotal = reasons.Sum(r => r.Count);
-        if (outcome.Changed == 0 && skippedTotal == 0) return null;
+        if (outcome.Changed == 0 && skippedTotal == 0 && growth.IsEmpty) return null;
 
         var message = outcome.Changed > 0
             ? $"Вставлено {outcome.Changed:N0} {ValuesPlural(outcome.Changed)}"
@@ -510,6 +588,12 @@ public partial class TableView
         if (skippedTotal > 0)
             message += $", пропущено {skippedTotal:N0}: " +
                        string.Join(", ", reasons.OrderByDescending(r => r.Count).Select(r => $"{r.Count:N0} {r.Phrase}"));
+        if (growth.Records.Count > 0)
+            message += $"; добавлено {growth.Records.Count:N0} {Plural(growth.Records.Count, "запись", "записи", "записей")}";
+        if (growth.Fields.Count > 0)
+            message += $"; добавлено {growth.Fields.Count:N0} {Plural(growth.Fields.Count, "столбец", "столбца", "столбцов")}";
+        if (growth.RowsRefused)
+            message += "; новые строки не добавлены: таблица отобрана или отсортирована";
 
         // Почему условие не проверить (сломано, база недоступна) — отдельной фразой, как ее пишут ворота.
         return message + "." + (outcome.ConditionProblem is { } problem ? " " + problem : "");

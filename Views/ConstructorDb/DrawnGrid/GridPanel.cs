@@ -194,7 +194,9 @@ public sealed class GridPanel : Avalonia.Controls.Grid
 
         Surface.IsRecordSelected = rid => _selectedRecordSet.Contains(rid);
         Surface.IsColumnSelected = key => _selectedColumns.Contains(key);
-        Surface.IsColumnFiltered = key => _filters.ContainsKey(key) || _sortKey == key;
+        // Воронка горит и от условий по цвету: их ключи ведут к своей колонке (ColorQuery.ColumnOf).
+        Surface.IsColumnFiltered = key => _filters.Keys.Any(k => ColorQuery.ColumnOf(k) == key)
+                                       || _sortKey is { } sort && ColorQuery.ColumnOf(sort) == key;
 
         // Редактор лежит над поверхностью и забирает указатель: наведение и колесо — ей. Колесо из
         // раскрытого списка редактора (свое окно-попап) таблицу не крутит.

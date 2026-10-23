@@ -88,6 +88,10 @@ public partial class TableView : UserControl
     /// <summary>Срабатывает после построения колонок — родитель может навесить хуки на дефы.</summary>
     public event EventHandler<IReadOnlyList<TableColumnDef>>? ColumnsBuilt;
 
+    /// <summary>Таблица сама завела или убрала записи и свойства (вставка за край таблицы и ее
+    /// отмена) — панели записи и боковой панели пора перечитаться.</summary>
+    public event EventHandler? TableStructureChanged;
+
     // ── Константы геометрии ───────────────────────────────────────────────────
     // MinColWidth — СТАНДАРТНАЯ ширина движимой колонки (настройка раздела, стандарт 160):
     // колонка без ручной ширины в стандартном режиме не бывает уже нее. Значение читается на
@@ -1182,6 +1186,10 @@ public partial class TableView : UserControl
 
     // ── Выделение колонок голубой заливкой (одиночное и Shift-диапазон) ────────
 
+    // Якорь диапазона колонок — последняя выделенная кликом: Ctrl+Shift+клик по заголовку
+    // добавляет все видимые колонки между ней и кликнутой.
+    private string? _columnAnchor;
+
     private void SelectColumn(string key, bool shift)
     {
         // Служебные колонки № и + не выделяем. «Название»/«Описание» выделять можно
@@ -1196,19 +1204,43 @@ public partial class TableView : UserControl
         {
             // Точечно добавить/убрать одну колонку (toggle), не трогая остальные.
             if (!_selectedColumnKeys.Remove(key))
+            {
                 _selectedColumnKeys.Add(key);
+                _columnAnchor = key;
+            }
         }
         else
         {
             // Обычный клик — выделить только эту колонку.
             _selectedColumnKeys.Clear();
             _selectedColumnKeys.Add(key);
+            _columnAnchor = key;
         }
 
         // Порядок выделения держим по порядку колонок — как в списке ключей на удаление.
         _selectedColumnKeys.Sort((a, b) =>
             _colDefs.FindIndex(d => d.Key == a).CompareTo(_colDefs.FindIndex(d => d.Key == b)));
 
+        ApplyColumnSelection();
+    }
+
+    /// <summary>Ctrl+Shift+клик по заголовку: добавить к выделению видимые колонки от якоря до
+    /// <paramref name="key"/>. Якоря нет или он ушел из видимых — работает как Shift+клик.</summary>
+    private void SelectColumnRange(string key)
+    {
+        var visible = VisibleDataColumns();
+        var to      = visible.FindIndex(c => _colDefs[c].Key == key);
+        var from    = _columnAnchor is { } anchor ? visible.FindIndex(c => _colDefs[c].Key == anchor) : -1;
+        if (to < 0 || from < 0) { SelectColumn(key, shift: true); return; }
+
+        ClearCellSelection();
+        for (var i = Math.Min(from, to); i <= Math.Max(from, to); i++)
+        {
+            var k = _colDefs[visible[i]].Key;
+            if (!_selectedColumnKeys.Contains(k)) _selectedColumnKeys.Add(k);
+        }
+        _selectedColumnKeys.Sort((a, b) =>
+            _colDefs.FindIndex(d => d.Key == a).CompareTo(_colDefs.FindIndex(d => d.Key == b)));
         ApplyColumnSelection();
     }
 
@@ -1970,6 +2002,16 @@ public partial class TableView : UserControl
         };
         bool? pendingSort = _sortKey == def.Key ? _sortAsc : null;
 
+        // По цвету (ColorQuery) — тоже до «Готово». Сортировка по цвету и по значениям исключают
+        // друг друга: у таблицы одна сортировка.
+        var colorPick = new ColorPick
+        {
+            Sort   = ColorQuery.TryParseSortKey(_sortKey, out var sortColumn, out var sortToken) && sortColumn == def.Key
+                     ? sortToken : null,
+            Filter = _filters.TryGetValue(ColorQuery.FilterKey(def.Key), out var colorFilter) ? colorFilter.FirstOrDefault() : null,
+        };
+        Action renderColorSort = () => { };
+
         var sortSection = new StackPanel { Spacing = 2 };
         panel.Children.Add(sortSection);
 
@@ -1990,18 +2032,36 @@ public partial class TableView : UserControl
         {
             sortSection.Children.Clear();
             sortSection.Children.Add(MakeFlatItem(ascLabel,
-                () => { pendingSort = true;  RenderSort(); ReloadCounts(); rebuildListRef(); },
+                () => { pendingSort = true;  colorPick.Sort = null; RenderSort(); ReloadCounts(); rebuildListRef(); },
                 SortAzIcon, active: pendingSort == true));
             sortSection.Children.Add(MakeFlatItem(descLabel,
-                () => { pendingSort = false; RenderSort(); ReloadCounts(); rebuildListRef(); },
+                () => { pendingSort = false; colorPick.Sort = null; RenderSort(); ReloadCounts(); rebuildListRef(); },
                 SortZaIcon, active: pendingSort == false));
             sortSection.Children.Add(MakeFlatItem("Снять сортировку",
-                () => { pendingSort = null;  RenderSort(); ReloadCounts(); rebuildListRef(); },
+                () => { pendingSort = null;  colorPick.Sort = null; RenderSort(); ReloadCounts(); rebuildListRef(); },
                 XIcon));
+            renderColorSort();
         }
         RenderSort();
 
+        var colorSort = BuildColorSection("Сортировка по цвету", () => colorPick.Sort, token =>
+        {
+            colorPick.Sort = token;
+            if (token is not null) pendingSort = null;
+            RenderSort(); ReloadCounts(); rebuildListRef();
+        });
+        renderColorSort = colorSort.Render;
+        panel.Children.Add(colorSort.Root);
+
         panel.Children.Add(MakeSeparator());
+
+        ColorSection? colorFilterSection = null;
+        colorFilterSection = BuildColorSection("Фильтр по цвету", () => colorPick.Filter, token =>
+        {
+            colorPick.Filter = token;
+            colorFilterSection!.Render();
+        });
+        panel.Children.Add(colorFilterSection!.Root);
 
         // ── Поиск по значениям ──
         var search = new TextBox
@@ -2341,19 +2401,30 @@ public partial class TableView : UserControl
             Margin              = new Thickness(0, 4, 0, 0),
         };
         okBtn.Classes.Add("dialog");
+        // Сортировка и отбор по цвету — их выбор не зависит от загрузки значений.
+        void ApplySortAndColor()
+        {
+            if (colorPick.Sort is { } token) { _sortKey = ColorQuery.SortKey(def.Key, token); _sortAsc = true; }
+            else if (pendingSort is bool asc) { _sortKey = def.Key; _sortAsc = asc; }
+            else if (_sortKey is { } current && ColorQuery.ColumnOf(current) == def.Key) _sortKey = null;
+
+            var colorKey = ColorQuery.FilterKey(def.Key);
+            if (colorPick.Filter is { } filterToken) _filters[colorKey] = [filterToken];
+            else _filters.Remove(colorKey);
+        }
+
         void Apply()
         {
-            // Данные еще грузятся — применять нечего (фильтр по колонке не трогаем).
+            // Данные еще грузятся — значения применять нечего (их фильтр по колонке не трогаем).
             if (!loaded)
             {
-                if (pendingSort is bool a) { _sortKey = def.Key; _sortAsc = a; ApplyFilters(); }
-                else if (_sortKey == def.Key) { _sortKey = null; ApplyFilters(); }
+                ApplySortAndColor();
+                ApplyFilters();
                 close();
                 return;
             }
 
-            if (pendingSort is bool asc) { _sortKey = def.Key; _sortAsc = asc; }
-            else if (_sortKey == def.Key) _sortKey = null;
+            ApplySortAndColor();
 
             // Режим «Заменить»: при поиске фильтр = отмеченные СРЕДИ найденного, остальное
             // отсекается; без поиска — все отмеченные. Отмечено все, что есть в колонке (с учетом
@@ -2376,6 +2447,24 @@ public partial class TableView : UserControl
         // (на UI-потоке) наполняем список. Если окно успели закрыть — операции над уже
         // отсоединенными контролами безвредны. Фильтры других колонок и скрытые записи
         // уходят в запрос (каскад); свой фильтр колонки репозиторий отбрасывает сам.
+        // Цвета колонки для секций «по цвету» — отдельным фоновым запросом: список значений их не ждет.
+        _repository!.GetColumnColorsAsync(_collectionId, def.Key, _filters, excludeHidden: AnyHiddenRecords).ContinueWith(t =>
+        {
+            if (!t.IsCompletedSuccessfully)
+            {
+                if (t.Exception?.GetBaseException() is { } ex)
+                    Serilog.Log.Warning(ex, "Цвета колонки для фильтра не посчитаны: {Db:l}, коллекция {Collection}, колонка {Column:l}",
+                                        DbErrors.Display(_repository.DbPath), _collectionId, def.Header);
+                return;
+            }
+            var colors = t.Result;
+            Dispatcher.UIThread.Post(() =>
+            {
+                colorSort.Fill(colors);
+                colorFilterSection!.Fill(colors);
+            });
+        });
+
         var countsSlow = Diag.Measure("список значений фильтра", Diag.UiQuery,
                                       $"{DbErrors.Display(_repository!.DbPath)}, коллекция {_collectionId}, колонка {def.Header}");
         panel.DetachedFromVisualTree += (_, _) => windowWork.Cancel();
@@ -2735,10 +2824,11 @@ public partial class TableView : UserControl
     // «Отображении» колонки остаются в _colDefs — их отбор действует. true — что-то снято.
     private bool PruneFilters()
     {
+        // Условия по цвету (ColorQuery) живут особыми ключами — они уходят вместе со своей колонкой.
         var validKeys = _colDefs.Select(d => d.Key).ToHashSet();
-        var stale     = _filters.Keys.Where(k => !validKeys.Contains(k)).ToList();
+        var stale     = _filters.Keys.Where(k => !validKeys.Contains(ColorQuery.ColumnOf(k))).ToList();
         foreach (var key in stale) _filters.Remove(key);
-        var sortGone = _sortKey is not null && !validKeys.Contains(_sortKey);
+        var sortGone = _sortKey is not null && !validKeys.Contains(ColorQuery.ColumnOf(_sortKey));
         if (sortGone) _sortKey = null;
         return stale.Count > 0 || sortGone;
     }

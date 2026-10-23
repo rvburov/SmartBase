@@ -61,6 +61,10 @@ public sealed class ConstructorSettingsTests
         Assert.False(ConstructorSettings.RestoreRecord);
         Assert.False(ConstructorSettings.RememberLayout);
         Assert.False(ConstructorSettings.RememberFilters);
+        // Поле правки ячейки по стандарту раскрывается под длинный текст, а вставка за край таблицы
+        // по стандарту ничего не заводит.
+        Assert.True(ConstructorSettings.ExpandCellEditor);
+        Assert.False(ConstructorSettings.PasteGrowsTable);
         Assert.Equal(3, ConstructorSettings.PollSeconds);
         Assert.Equal(15, ConstructorSettings.BackgroundPollSeconds);
     }
@@ -120,6 +124,8 @@ public sealed class ConstructorSettingsTests
     [InlineData("constructorRestoreRecord")]
     [InlineData("constructorRememberLayout")]
     [InlineData("constructorRememberFilters")]
+    [InlineData("constructorExpandCellEditor")]
+    [InlineData("constructorPasteGrowsTable")]
     public void Every_toggle_stores_only_the_delta(string key)
     {
         var store = Attach();
@@ -158,6 +164,10 @@ public sealed class ConstructorSettingsTests
             () => ConstructorSettings.RememberLayout, AppSettings.ConstructorRememberLayoutDefault),
         "constructorRememberFilters" => (ConstructorSettings.SetRememberFilters,
             () => ConstructorSettings.RememberFilters, AppSettings.ConstructorRememberFiltersDefault),
+        "constructorExpandCellEditor" => (ConstructorSettings.SetExpandCellEditor,
+            () => ConstructorSettings.ExpandCellEditor, AppSettings.ConstructorExpandCellEditorDefault),
+        "constructorPasteGrowsTable" => (ConstructorSettings.SetPasteGrowsTable,
+            () => ConstructorSettings.PasteGrowsTable, AppSettings.ConstructorPasteGrowsTableDefault),
         _ => throw new ArgumentOutOfRangeException(nameof(key), key, "нет такой настройки раздела"),
     };
 

@@ -153,7 +153,10 @@ public partial class TableView
                 if (left && hit.Kind == GridHitKind.Header && hdef.Key != TableColumnDef.NumKey)
                 {
                     hdef.OnHeaderClick?.Invoke(hdef);
-                    SelectColumn(hdef.Key, shift);   // выделение колонки гасит выделение ячеек
+                    // Выделение колонки гасит выделение ячеек. Shift или Ctrl — добавить или снять
+                    // одну, Ctrl+Shift — все от последней выделенной кликом (как у «№» и в задачах).
+                    if (shift && ctrl) SelectColumnRange(hdef.Key);
+                    else               SelectColumn(hdef.Key, shift || ctrl);
                 }
                 // Кнопка фильтра — кнопка: окно фильтра открывается на отпускании над ней, выделение
                 // колонки не трогается.
@@ -194,7 +197,7 @@ public partial class TableView
 
         if (def.Key == TableColumnDef.NumKey)
         {
-            OnNumPressed(vm, left, right, toggle: shift || ctrl, e.Pointer.ClickCount);
+            OnNumPressed(vm, left, right, toggle: shift || ctrl, range: shift && ctrl, e.Pointer.ClickCount);
             return;
         }
         if (def.Key == TableColumnDef.AddPropKey)
@@ -260,18 +263,26 @@ public partial class TableView
     }
 
     // Столбец «№» — он и только он работает со СТРОКАМИ: Shift и Ctrl точечно добавляют или
-    // убирают запись из выделения, обычный клик выделяет одну и открывает запись (при настройке
+    // убирают запись из выделения, Ctrl+Shift добавляет все записи от последней выделенной кликом
+    // до этой (как в задачах), обычный клик выделяет одну и открывает запись (при настройке
     // «двойным кликом» — на втором клике), правый — меню записи: вне выделения запись выделяется
     // одна, внутри — выделение сохраняется, и меню работает по всему набору.
-    private void OnNumPressed(TableRowVm vm, bool left, bool right, bool toggle, int clickCount)
+    private void OnNumPressed(TableRowVm vm, bool left, bool right, bool toggle, bool range, int clickCount)
     {
         ClearCellSelection();   // либо ячейки, либо строки: иначе Delete был бы двусмысленным
         if (vm.IsAddRow || vm.RecordId <= 0) return;   // заглушка «Загрузка…» — записи еще нет
 
-        if (left && toggle) { RecordsGrid.ToggleRecordSelection(vm.RecordId); return; }
+        if (left && range && SelectRecordRange(vm)) return;
+        if (left && toggle)
+        {
+            RecordsGrid.ToggleRecordSelection(vm.RecordId);
+            if (RecordsGrid.IsRecordSelected(vm.RecordId)) _recordAnchor = vm.RecordId;
+            return;
+        }
         if (left)
         {
             RecordsGrid.SetRecordSelection([vm.RecordId]);
+            _recordAnchor = vm.RecordId;
             if (!ConstructorSettings.OpenByDoubleClick || clickCount >= 2) RecordClicked?.Invoke(this, vm.RecordId);
             return;
         }
@@ -280,6 +291,30 @@ public partial class TableView
             if (!RecordsGrid.IsRecordSelected(vm.RecordId)) RecordsGrid.SetRecordSelection([vm.RecordId]);
             OpenMenu(BuildRowContextMenu(() => vm));
         }
+    }
+
+    // Якорь диапазона записей — последняя выделенная кликом по «№»: Ctrl+Shift+клик добавляет все
+    // записи между ней и кликнутой. Хранится записью, а не номером строки: после сортировки или
+    // правки соседа строка якоря могла переехать.
+    private int _recordAnchor;
+
+    /// <summary>Ctrl+Shift+клик по «№»: добавить к выделению записи от якоря до <paramref name="vm"/>
+    /// по порядку показа. false — якоря нет или его строки сейчас нет в загруженных: тогда клик
+    /// работает как Ctrl+клик.</summary>
+    private bool SelectRecordRange(TableRowVm vm)
+    {
+        if (_recordAnchor <= 0 || RowsSource?.FindCachedByRecordId(_recordAnchor) is not { } anchor) return false;
+        var from  = Math.Min(anchor.RowNumber, vm.RowNumber) - 1;
+        var count = Math.Abs(anchor.RowNumber - vm.RowNumber) + 1;
+        Fire(async () =>
+        {
+            // Строки между якорем и кликом бывают не загружены (прокрутили далеко) — их id
+            // дочитываются тем же путем, что и выделение ячеек.
+            if (await RowsOfRangeAsync(from, count, []) is not { } rows) return;
+            RecordsGrid.SetRecordSelection(RecordsGrid.SelectedRecordIds.Concat(
+                rows.Where(r => !r.IsAddRow && r.RecordId > 0).Select(r => r.RecordId)).ToList());
+        });
+        return true;
     }
 
     private int ColumnIndexOf(string key) => _colDefs.FindIndex(d => d.Key == key);
@@ -469,7 +504,10 @@ public partial class TableView
                         : TextLineCount(CellDisplayText.Of(def.FieldType, vm[def.Key], def.NumberFormat, def.Separator));
             if (editor is MultiSelectBox multi) multi.Changed += (_, _) => RelayoutEditor(multi);
         }
-        RecordsGrid.Editor.Open(row, def.Key, editor, lines);
+        // Длинный текст виден целиком: поле ввода текста и ссылки раскрывается поверх соседних ячеек
+        // (настройка «Раскрывать ячейку при вводе»). Число и прочие типы остаются в ячейке.
+        var grow = ConstructorSettings.ExpandCellEditor && editor is TextBox && def.FieldType is "text" or "url";
+        RecordsGrid.Editor.Open(row, def.Key, editor, lines, grow);
     }
 
     private void RelayoutEditor(Control editor)

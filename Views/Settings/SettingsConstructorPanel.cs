@@ -83,6 +83,8 @@ public partial class SettingsView
 
         ConstructorColResizeToggle.IsChecked = ConstructorSettings.ColResize;
         ConstructorRowResizeToggle.IsChecked = ConstructorSettings.RowResize;
+        ConstructorExpandCellEditorToggle.IsChecked = ConstructorSettings.ExpandCellEditor;
+        ConstructorPasteGrowsTableToggle.IsChecked  = ConstructorSettings.PasteGrowsTable;
 
         ConstructorOpenClickCombo.ItemsSource   = ConstructorOpenClickLabels;
         ConstructorOpenClickCombo.SelectedIndex =
@@ -187,6 +189,18 @@ public partial class SettingsView
     {
         if (_constructorBuilding) return;
         ConstructorSettings.SetRememberLayout(ConstructorRememberLayoutToggle.IsChecked == true);
+    }
+
+    private void OnConstructorExpandCellEditorToggled(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (_constructorBuilding) return;
+        ConstructorSettings.SetExpandCellEditor(ConstructorExpandCellEditorToggle.IsChecked == true);
+    }
+
+    private void OnConstructorPasteGrowsTableToggled(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (_constructorBuilding) return;
+        ConstructorSettings.SetPasteGrowsTable(ConstructorPasteGrowsTableToggle.IsChecked == true);
     }
 
     private void OnConstructorRememberFiltersToggled(object? sender, Avalonia.Interactivity.RoutedEventArgs e)

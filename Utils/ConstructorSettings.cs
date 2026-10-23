@@ -56,6 +56,14 @@ public static class ConstructorSettings
     /// <summary>Запоминать фильтры и сортировку коллекций между открытиями.</summary>
     public static bool RememberFilters { get; private set; } = AppSettings.ConstructorRememberFiltersDefault;
 
+    /// <summary>Поле правки ячейки таблицы растет под набранный текст — вправо по соседним
+    /// колонкам и вниз строками, — чтобы длинный текст был виден целиком (false — в границах ячейки).</summary>
+    public static bool ExpandCellEditor { get; private set; } = AppSettings.ConstructorExpandCellEditorDefault;
+
+    /// <summary>Вставка, вышедшая за последнюю строку или столбец, досоздает записи и текстовые
+    /// свойства (false — не поместившееся отбрасывается).</summary>
+    public static bool PasteGrowsTable { get; private set; } = AppSettings.ConstructorPasteGrowsTableDefault;
+
     /// <summary>Период проверки чужих правок при активном окне, секунды (3/10/30).</summary>
     public static int PollSeconds { get; private set; } = AppSettings.ConstructorPollSecondsDefault;
 
@@ -81,6 +89,8 @@ public static class ConstructorSettings
         RestoreRecord      = AppSettings.LoadConstructorRestoreRecord();
         RememberLayout     = AppSettings.LoadConstructorRememberLayout();
         RememberFilters    = AppSettings.LoadConstructorRememberFilters();
+        ExpandCellEditor   = AppSettings.LoadConstructorExpandCellEditor();
+        PasteGrowsTable    = AppSettings.LoadConstructorPasteGrowsTable();
         PollSeconds        = AppSettings.LoadConstructorPollSeconds();
 
         PublishRowHeight();
@@ -219,6 +229,22 @@ public static class ConstructorSettings
         RememberFilters = on;
         AppSettings.SaveConstructorRememberFilters(on);
         if (!on) ConstructorFilterMemory.Clear();
+        Publish();
+    }
+
+    public static void SetExpandCellEditor(bool on)
+    {
+        if (on == ExpandCellEditor) return;
+        ExpandCellEditor = on;
+        AppSettings.SaveConstructorExpandCellEditor(on);
+        Publish();
+    }
+
+    public static void SetPasteGrowsTable(bool on)
+    {
+        if (on == PasteGrowsTable) return;
+        PasteGrowsTable = on;
+        AppSettings.SaveConstructorPasteGrowsTable(on);
         Publish();
     }
 

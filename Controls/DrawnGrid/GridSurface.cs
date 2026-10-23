@@ -271,6 +271,54 @@ public sealed class GridSurface : Control, IEditorSurface
     /// <summary>Область редактора — тело таблицы под шапкой (<see cref="IEditorSurface"/>).</summary>
     public Rect EditorClip => new(0, HeaderHeight, ViewportWidth, ViewportHeight);
 
+    /// <summary>
+    /// Куда раскрыть поле ввода под длинный текст (<see cref="IEditorSurface.EditorGrowRect"/>): от
+    /// ячейки вправо целыми колонками и вниз целыми строками, пока не хватит места, но не дальше
+    /// видимой области — раскрытое поле не уезжает за край окна. Правее последней колонки и под
+    /// последней строкой поле растет по пустому месту (вниз — шагом стандартной строки).
+    /// </summary>
+    public Rect? EditorGrowRect(int row, string key, Size need)
+    {
+        EnsureTokens();
+        var c = _columns.IndexOf(key);
+        if (c < 0 || row < 0 || row >= RowCount) return null;
+        var cell = CellRect(row, c);
+        var t    = _s.LineWidth;
+
+        var maxRight = Math.Max(cell.Right, ViewportWidth);
+        var right    = cell.Right;
+        for (var k = c + 1; right - cell.X - t < need.Width && k < _columns.Count && right < maxRight; k++)
+            right += _columns.Width(k);
+        // Колонки кончились раньше окна — дальше пустое место справа от таблицы, поле идет по нему.
+        if (right - cell.X - t < need.Width) right = cell.X + need.Width + t;
+        right = Math.Min(right, maxRight);
+
+        var maxBottom = Math.Max(cell.Bottom, HeaderHeight + ViewportHeight);
+        var bottom    = cell.Bottom;
+        for (var k = row + 1; bottom - cell.Y - t < need.Height && bottom < maxBottom; k++)
+            bottom += k < RowCount ? _rowLayout.Height(k) : RowPitch;
+        bottom = Math.Min(bottom, maxBottom);
+
+        return ContentRect(new Rect(cell.X, cell.Y, right - cell.X, bottom - cell.Y), c);
+    }
+
+    /// <summary>Подложка раскрытого поля — фон тела таблицы.</summary>
+    public IBrush? EditorGrowBackground { get { EnsureTokens(); return _s.Bg; } }
+
+    // Раскрытое поле правки: рамка выделения обводит его целиком, а не одну ячейку под ним.
+    private Rect? _editorOverflow;
+
+    /// <summary>Рамка выделения сменила место без смены выделения (раскрылось или свернулось поле
+    /// правки) — слою рамки пора перерисоваться.</summary>
+    public event EventHandler? FrameChanged;
+
+    public void SetEditorOverflow(Rect? area)
+    {
+        if (_editorOverflow == area) return;
+        _editorOverflow = area;
+        FrameChanged?.Invoke(this, EventArgs.Empty);
+    }
+
     /// <summary>Цвет правящейся ячейки (ячейка → строка → колонка). Поверхность рисует ее без значения
     /// и цвета, а цвет кладет под редактор держатель правки — на всю ячейку: редактор текста,
     /// прижатого к верху или низу высокой строки, занимает лишь полосу у края. null — без цвета.</summary>
@@ -1068,7 +1116,10 @@ public sealed class GridSurface : Control, IEditorSurface
         EnsureTokens();
         if (_rows is null || _columns.Count == 0) return;
         var body = new Rect(0, HeaderHeight, Bounds.Width, Math.Max(0, Bounds.Height - HeaderHeight));
-        if (CellSelectionBounds() is not { } sel || !sel.Intersects(body)) return;
+        if (CellSelectionBounds() is not { } sel) return;
+        // Раскрытое поле — до вертикальной линии справа включительно, как и сама ячейка.
+        if (_editorOverflow is { } o) sel = sel.Union(new Rect(o.X, o.Y, o.Width + _s.LineWidth, o.Height));
+        if (!sel.Intersects(body)) return;
         using (ctx.PushClip(body))
             DrawSelectionFrame(ctx, sel, scale);
     }

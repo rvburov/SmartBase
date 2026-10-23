@@ -51,8 +51,9 @@ public static class ColorMenu
     }
 
     /// Квадратик цвета в слоте иконки пункта. «Без цвета» — пустой квадрат с серой
-    /// обводкой (как чекбокс коллекции в сайдбаре); текущий выбор — темная рамка.
-    private static Border Swatch(string? hex, bool isCurrent)
+    /// обводкой (как чекбокс коллекции в сайдбаре); текущий выбор — темная рамка. Им же
+    /// показан цвет фона в пунктах «Фильтр по цвету» и «Сортировка по цвету» окна фильтра.
+    public static Border Swatch(string? hex, bool isCurrent = false)
     {
         var ring = isCurrent
             ? Brush("BrushPrimaryText", "#1C1C1E")
@@ -68,6 +69,18 @@ public static class ColorMenu
             BorderThickness = new Thickness(ring is null ? 0 : 1.5),
         };
     }
+
+    /// Образец цвета текста — буква «А» этим цветом, как текст в ячейке (ColorTools.Text);
+    /// стандартный цвет — обычным цветом текста.
+    public static TextBlock TextSample(string? hex) => new()
+    {
+        Text                = "А",
+        Width               = SwatchSize,
+        TextAlignment       = TextAlignment.Center,
+        FontWeight          = FontWeight.SemiBold,
+        VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Center,
+        Foreground          = ColorTools.Text(hex) ?? Brush("BrushPrimaryText", "#1C1C1E"),
+    };
 
     private static IBrush Brush(string key, string fallbackHex) =>
         Application.Current!.TryFindResource(key, out var res) && res is IBrush b

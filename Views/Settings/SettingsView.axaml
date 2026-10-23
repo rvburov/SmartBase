@@ -1282,6 +1282,38 @@
                         <Grid ColumnDefinitions="*,Auto">
                             <StackPanel Grid.Column="0" Spacing="4"
                                         VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Раскрывать ячейку при вводе" />
+                                <TextBlock Classes="desc"
+                                           Text="Включено — поле правки ячейки растет под набранный текст: вправо поверх соседних столбцов и вниз строками, и длинный текст виден целиком. Выключено — поле остается в границах ячейки." />
+                            </StackPanel>
+                            <ToggleSwitch Grid.Column="1" x:Name="ConstructorExpandCellEditorToggle"
+                                          OnContent="" OffContent=""
+                                          VerticalAlignment="Center"
+                                          IsCheckedChanged="OnConstructorExpandCellEditorToggled" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Досоздавать строки и столбцы при вставке" />
+                                <TextBlock Classes="desc"
+                                           Text="Включено — если вставленный блок не помещается в таблицу, недостающие записи добавляются в конец, а недостающие столбцы — текстовыми свойствами «Колонка 1», «Колонка 2». Выключено — все, что не поместилось, отбрасывается." />
+                            </StackPanel>
+                            <ToggleSwitch Grid.Column="1" x:Name="ConstructorPasteGrowsTableToggle"
+                                          OnContent="" OffContent=""
+                                          VerticalAlignment="Center"
+                                          IsCheckedChanged="OnConstructorPasteGrowsTableToggled" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
                                 <TextBlock Classes="title" Text="Открывать запись" />
                                 <TextBlock Classes="desc"
                                            Text="Клик по номеру строки (первый столбец «№») открывает запись в панели справа. «Двойным кликом» — одиночный клик только выделяет строку; так проще выделять и копировать, не открывая запись каждый раз." />
