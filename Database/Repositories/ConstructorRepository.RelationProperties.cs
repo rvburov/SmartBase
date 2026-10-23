@@ -164,13 +164,13 @@ public partial class ConstructorRepository
         SearchRelationRecordsCore(collectionId, fieldKey, query, excludeId, take, default, condition);
 
     public Task<List<RelationPropertyValue>> SearchRelationRecordsAsync(int collectionId, string fieldKey, string? query,
-        int excludeId = 0, int take = 200, CancellationToken ct = default)
+        int excludeId = 0, int take = 200, CancellationToken ct = default, RelationConfig? condition = null)
     {
         ct.ThrowIfCancellationRequested();
         var connections = CaptureAutoConnections(new DbField { CollectionId = collectionId });
         return Task.Run(() => WithAutoConnections(connections, repo =>
         {
-            var result = repo.SearchRelationRecordsCore(collectionId, fieldKey, query, excludeId, take, ct);
+            var result = repo.SearchRelationRecordsCore(collectionId, fieldKey, query, excludeId, take, ct, condition);
             ct.ThrowIfCancellationRequested();
             return result;
         }), ct);

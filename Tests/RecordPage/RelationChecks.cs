@@ -302,6 +302,28 @@ internal static class RelationChecks
             Click(emptyDialog, emptyDialog.FindControl<Button>("CancelBtn")!);
             Wait(() => emptyClosed.IsCompleted, "окно условия не закрылось");
 
+            // Текстовое условие с несколькими значениями (из файла или после смены типа) окно не
+            // сужает до первого: значения видны строкой и сохраняются, пока поле не меняли.
+            var keptJson = repo.GetFields(source).Single(f => f.Id == conditioned.Id).ConfigJson;
+            var twoValues = new RelationConfig(target, false, Where: [new RelationCondition(sku.Id.Value.ToString(),
+                RelationCondition.Equal, ["А-01", "Б-02"])]).ToConfigJson();
+            manager.Context.Database.ExecuteSqlRaw("UPDATE db_fields SET ConfigJson = {0} WHERE Id = {1}", twoValues, conditioned.Id.Value);
+            var textDialog = new PropertyEditorDialog(repo, source, conditioned.Id.Value) { MaxHeight = 600 };
+            var textClosed = textDialog.ShowDialog<bool>(owner);
+            Pump();
+            var textRow = ConditionRows(textDialog).Single();
+            var textNote = (TextBlock)textRow.GetType().GetProperty("TextNote")!.GetValue(textRow)!;
+            Expect(textNote.IsVisible && textNote.Text!.StartsWith("Еще значения: «Б-02»", StringComparison.Ordinal),
+                "второе значение текстового условия видно строкой под полем");
+            textDialog.FindControl<TextBox>("NameBox")!.Text = "Активный клиент (текст)";
+            Click(textDialog, textDialog.FindControl<Button>("SaveBtn")!);
+            Wait(() => textClosed.IsCompleted, "связь с текстовым условием не сохранилась");
+            Expect(RelationConfig.FromConfig(repo.GetFields(source).Single(f => f.Id == conditioned.Id).ConfigJson)!.Where![0].Values
+                    .SequenceEqual(["А-01", "Б-02"]),
+                "сохранение без правки поля оставило оба значения");
+            manager.Context.Database.ExecuteSqlRaw("UPDATE db_fields SET ConfigJson = {0}, Name = {1} WHERE Id = {2}",
+                keptJson, "Активный клиент", conditioned.Id.Value);
+
             var conditionPicker = new RelationSelectBox(repo, conditioned.Id.Value, conditionCfg, editing: true) { RecordId = record, Height = 38 };
             owner.Content = conditionPicker;
             Pump();

@@ -3138,23 +3138,25 @@ public partial class ConstructorRepository(AppDbContext db)
     /// события ЧЕРЕЗ календарь: там источник дат доводит <see cref="EnsureCalendarDateField"/>,
     /// иначе созданная запись не появилась бы в разделе, из которого ее и завели.
     /// </summary>
-    public DbField AddField(DbField field) => AddField(field, matchAuto: true);
+    public DbField AddField(DbField field) => AddField(field, copy: false);
 
-    /// <param name="matchAuto">false — поле-автосвязь создается без подбора: ключи его правила еще
-    /// чужие (перенос записей переписывает их после создания), подбор пойдет после переноса.</param>
-    private DbField AddField(DbField field, bool matchAuto)
+    /// <param name="copy">Поле — копия уже сохраненного (перенос записей с созданием недостающих
+    /// свойств): автосвязь создается без подбора — ключи ее правила еще чужие, их перепишут после
+    /// создания, подбор пойдет после переноса; условие выбора не проверяется заново — оно уже было
+    /// принято (нечитаемое копируется как есть и так же закрывает новые связи).</param>
+    private DbField AddField(DbField field, bool copy)
     {
         Demand(PermAction.CreateField, field.CollectionId);
         // Правило, которое не готово к подбору (потеряно, новее, повреждено), сохраняется как есть,
         // без подбора: связей у нового поля еще нет.
-        if (matchAuto && field.FieldType == "relation" && RelationConfig.FromConfig(field.ConfigJson)?.Auto is { IsReady: true }
+        if (!copy && field.FieldType == "relation" && RelationConfig.FromConfig(field.ConfigJson)?.Auto is { IsReady: true }
             && !IsApplyingAutoRelation)
         {
             var id = SaveAutoRelationField(field, PreviewAutoRelation(field));
             return ToDbField(db.DbFields.AsNoTracking().Single(f => f.Id == id));
         }
         ValidateRelationComputedField(field);
-        ValidateRelationCondition(field);
+        if (!copy) ValidateRelationCondition(field);
         if (db.DbFields.Any(f => f.CollectionId == field.CollectionId && f.Name == field.Name))
             throw new InvalidOperationException("Поле с таким именем уже существует.");
 
@@ -4418,6 +4420,10 @@ public partial class ConstructorRepository(AppDbContext db)
         Demand(PermAction.DuplicateRecord, CollectionOfRecord(recordId));
         var src = db.DbRecords.Find(recordId);
         if (src is null) throw new InvalidOperationException($"Record {recordId} not found");
+        // Связи на записи вне условия выбора копия не получает (иначе дубль стал бы обходом условия).
+        // Решается до сохранения копии: сбой базы цели не оставит копию без связей.
+        var (refused, problems) = RefusedDuplicateTargets(src.CollectionId, [recordId]);
+        var refusedSet = refused.ToHashSet();
 
         var copy = new DbRecordEntity
         {
@@ -4441,14 +4447,11 @@ public partial class ConstructorRepository(AppDbContext db)
 
         // Исходящие связи (relation): копия ссылается на те же записи-цели (ToRecordId/Position без
         // изменений), FromRecordId — новая копия. Входящие ссылки на исходную запись НЕ копируются.
-        // Связи на записи вне условия выбора не копируются: иначе дубль стал бы обходом условия.
-        var refused = RefusedDuplicateTargets(src.CollectionId, [recordId])
-            .Select(r => (r.FieldId, r.TargetDbId, r.ToRecordId)).ToHashSet();
         var links = db.DbRecordLinks.AsNoTracking().Where(l => l.FromRecordId == recordId).ToList();
-        var skipped = links.Where(l => refused.Contains((l.FieldId, l.TargetDbId, l.ToRecordId)))
-            .GroupBy(l => l.FieldId).ToDictionary(g => g.Key, g => g.Count());
-        links = links.Where(l => !refused.Contains((l.FieldId, l.TargetDbId, l.ToRecordId))).ToList();
-        ReportSkippedDuplicateLinks(skipped);
+        var skipped = links.Where(l => refusedSet.Contains((l.FieldId, l.TargetDbId, l.ToRecordId)))
+            .GroupBy(l => l.FieldId).ToDictionary(g => g.Key, g => new SkippedLinks(g.Count(), problems.GetValueOrDefault(g.Key)));
+        links = links.Where(l => !refusedSet.Contains((l.FieldId, l.TargetDbId, l.ToRecordId))).ToList();
+        ReportSkippedDuplicateLinks(skipped, 1);
         if (links.Count > 0)
         {
             foreach (var l in links)
@@ -4625,7 +4628,7 @@ public partial class ConstructorRepository(AppDbContext db)
         if (db.IsPostgres) return DuplicateRecordsDataPg(collectionId, ids, progress, batchSize);
 
         // Связи на записи вне условия выбора копии не получают (см. RefusedDuplicateTargets).
-        var refused = RefusedDuplicateTargets(collectionId, ids);
+        var (refused, problems) = RefusedDuplicateTargets(collectionId, ids);
         using var tx = db.Database.BeginTransaction();
 
         // Временный набор выбранных Id — чтобы ранг (ROW_NUMBER по Position,Id) и JOIN значений шли
@@ -4711,12 +4714,12 @@ public partial class ConstructorRepository(AppDbContext db)
                   WHERE rr.CollectionId = {collectionId}) r
               ON r.old_id = l.FromRecordId");
         var skipped = refused.Count == 0 ? []
-            : DropRefusedDuplicateLinks(refused, $"SELECT Id FROM db_records WHERE Id BETWEEN {firstNew} AND {firstNew + count - 1}");
+            : DropRefusedDuplicateLinks(refused, problems, $"SELECT Id FROM db_records WHERE Id BETWEEN {firstNew} AND {firstNew + count - 1}");
 
         db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS temp._dup_recsel");
         NotifyRelationDataChanged(collectionId);
         tx.Commit();
-        ReportSkippedDuplicateLinks(skipped);
+        ReportSkippedDuplicateLinks(skipped, count);
 
         // Копии могли принести значения видимых полей-дат → наполняем их проекцию календаря
         // по диапазону новых id (без удаления — строки новые).
@@ -4735,8 +4738,8 @@ public partial class ConstructorRepository(AppDbContext db)
                                              IProgress<int>? progress, int batchSize)
     {
         List<int> newIds;
-        var refused = RefusedDuplicateTargets(collectionId, ids);
-        Dictionary<int, int> skipped = [];
+        var (refused, problems) = RefusedDuplicateTargets(collectionId, ids);
+        Dictionary<int, SkippedLinks> skipped = [];
         using (var tx = db.Database.BeginTransaction())
         {
             db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS _dup_recsel");
@@ -4810,7 +4813,7 @@ public partial class ConstructorRepository(AppDbContext db)
                 SELECT l.FieldId, m.new_id, l.ToRecordId, l.TargetDbId, l.Position
                 FROM db_record_links l
                 JOIN _dup_rmap m ON m.old_id = l.FromRecordId");
-            if (refused.Count > 0) skipped = DropRefusedDuplicateLinks(refused, "SELECT new_id FROM _dup_rmap");
+            if (refused.Count > 0) skipped = DropRefusedDuplicateLinks(refused, problems, "SELECT new_id FROM _dup_rmap");
 
             newIds = new List<int>(count);
             using (var c = db.Database.GetDbConnection().CreateCommand())
@@ -4826,7 +4829,7 @@ public partial class ConstructorRepository(AppDbContext db)
             NotifyRelationDataChanged(collectionId);
             tx.Commit();
         }
-        ReportSkippedDuplicateLinks(skipped);
+        ReportSkippedDuplicateLinks(skipped, ids.Count);
 
         // Копии могли принести значения видимых полей-дат → наполняем их проекцию по списку id.
         if (newIds.Count > 0)
@@ -5084,7 +5087,7 @@ public partial class ConstructorRepository(AppDbContext db)
                     FieldType    = sf.FieldType,        ConfigJson = cfgJson,
                     Position     = nextFieldPos,        IsCalStart = false,
                     IsCalEnd     = sf.IsCalEnd,         IsRequired = sf.IsRequired,
-                }, matchAuto: false);
+                }, copy: true);
                 nextFieldPos += 1000;
                 targetByName[sf.Name] = tf;
                 createdFields.Add(tf.Id!.Value);
@@ -5110,6 +5113,20 @@ public partial class ConstructorRepository(AppDbContext db)
                 if (tc.Single) EnsureSingleRelationMove(source, sf.Id!.Value, recordIds, tf.Name);
                 relPlan.Add((sf.Id!.Value, tf.Id!.Value));
             }
+
+        // Новые записи приемника не получают связей вне условия выбора его свойства — как дубль,
+        // иначе перенос стал бы обходом условия. Решается до транзакции, по всем переносимым записям.
+        var conditionChecks = new Dictionary<int, (RelationConditionVerdict Verdict, int TargetDbId)>();
+        foreach (var (srcFid, tgtFid) in relPlan)
+        {
+            var tc = RelationConfig.FromConfig(db.DbFields.AsNoTracking().Where(f => f.Id == tgtFid)
+                .Select(f => f.ConfigJson).FirstOrDefault());
+            if (tc is not { HasCondition: true }) continue;
+            var targets = recordIds.SelectMany(id => source.GetLinkEdges(srcFid, id))
+                .Where(e => RelTargetDb(e.TargetDbId) == tc.TargetDbId).Select(e => e.ToRecordId).ToHashSet();
+            if (targets.Count > 0) conditionChecks[tgtFid] = (EvaluateConditionOnTarget(tc, targets), tc.TargetDbId);
+        }
+        var skippedLinks = new Dictionary<int, SkippedLinks>();
 
         // 2) Копируем записи (одна транзакция, один коммит). Position новых — в конец, по 1000.
         var posBase = db.DbRecords.Where(r => r.CollectionId == targetCollectionId)
@@ -5168,12 +5185,22 @@ public partial class ConstructorRepository(AppDbContext db)
                     foreach (var (srcFid, tgtFid) in relPlan)
                     {
                         var edges = source.GetLinkEdges(srcFid, srcId);
-                        for (var i = 0; i < edges.Count; i++)
+                        var position = 0;
+                        foreach (var edge in edges)
+                        {
+                            var targetDb = RelTargetDb(edge.TargetDbId);
+                            if (conditionChecks.TryGetValue(tgtFid, out var check) && targetDb == check.TargetDbId
+                                && !check.Verdict.Allowed.Contains(edge.ToRecordId))
+                            {
+                                skippedLinks[tgtFid] = new(skippedLinks.GetValueOrDefault(tgtFid).Count + 1, check.Verdict.Broken);
+                                continue;
+                            }
                             linkRows.Add(new DbRecordLinkEntity
                             {
-                                FieldId = tgtFid, FromRecordId = rec.Id, ToRecordId = edges[i].ToRecordId,
-                                TargetDbId = RelTargetDb(edges[i].TargetDbId), Position = (i + 1) * 1000,
+                                FieldId = tgtFid, FromRecordId = rec.Id, ToRecordId = edge.ToRecordId,
+                                TargetDbId = targetDb, Position = ++position * 1000,
                             });
+                        }
                     }
                     if (linkRows.Count > 0) { db.DbRecordLinks.AddRange(linkRows); db.SaveChanges(); }
                 }
@@ -5187,6 +5214,7 @@ public partial class ConstructorRepository(AppDbContext db)
             NotifyRelationDataChanged(targetCollectionId);
             tx.Commit();
         }
+        ReportSkippedLinks(skippedLinks, newIds.Count == 1 ? "Запись перенесена." : "Записи перенесены.", "перенесено");
 
         // 3) Проекция календаря — один раз по СПИСКУ новых id (EF переведет Contains в IN):
         // диапазон firstNew..lastNew полагался на непрерывность новых id — на PG соседние id

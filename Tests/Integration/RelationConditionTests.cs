@@ -1,5 +1,6 @@
 using SmartBase.Core.Exporters.TableWriters;
 using SmartBase.Core.Importers.TableSources;
+using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using SmartBase.Core.Models;
 using SmartBase.Database;
@@ -303,9 +304,151 @@ public sealed class RelationConditionTests
         Assert.Equal(report.Fingerprint, again.Fingerprint);
     }
 
+    [Fact]
+    public void Moved_records_do_not_bring_links_outside_the_condition_of_the_new_collection()
+    {
+        using var f = new Fixture(condition: false);
+        f.Repo.SetLinks(f.Relation, f.Order, [f.Active, f.Closed]);
+        // «Заявки» — та же связь «Клиент», но с условием.
+        var requests = SampleData.AddCollection(f.Repo, "Заявки").Id!.Value;
+        var client = SampleData.AddField(f.Repo, requests, "Клиент", "relation");
+        client.ConfigJson = new RelationConfig(f.Clients, false,
+            Where: [new RelationCondition(f.Status.ToString(), RelationCondition.Equal, ["Активен"])]).ToConfigJson();
+        f.Repo.UpdateField(client);
+        var notices = new List<string>();
+        ConstructorRepository.ConditionNotice = notices.Add;
+        try
+        {
+            var moved = f.Repo.MoveRecordsToCollectionIsolated(f.Database.Path, f.Orders, [f.Order], requests,
+                createMissingFields: false, sourceDbId: 0, targetDbId: 0);
+            Assert.Equal([f.Active], f.Repo.GetLinkEdges(client.Id!.Value, moved.Single()).Select(e => e.ToRecordId));
+            Assert.Equal("Запись перенесена. Не перенесено связей — 1 («Клиент»): записи не подходят под условие выбора.",
+                Assert.Single(notices));
+
+            // Пересоздание записи календаря или задачи в другой коллекции — тот же путь.
+            var second = SampleData.AddRecord(f.Repo, f.Orders, "Заказ 2").Id!.Value;
+            f.Repo.SetLinks(f.Relation, second, [f.Closed, f.Renewal]);
+            var recreated = SampleData.AddRecord(f.Repo, requests, "Заказ 2").Id!.Value;
+            f.Repo.CopyRelationLinksByName(f.Repo, second, f.Orders, recreated, requests);
+            Assert.Empty(f.Repo.GetLinkEdges(client.Id.Value, recreated));
+            Assert.Equal(2, notices.Count);
+        }
+        finally { ConstructorRepository.ConditionNotice = null; }
+    }
+
+    [Fact]
+    public void Paste_into_a_broken_condition_skips_the_cell_and_names_the_reason()
+    {
+        using var f = new Fixture();
+        f.Repo.DeleteField(f.Status);
+        var result = f.Repo.SetLinksBulk(f.Orders, [new ConstructorRepository.LinkWrite(f.Order, f.Relation, [f.Active])]);
+        Assert.Equal(0, result.Changed);
+        Assert.Equal(1, result.ConditionUnchecked);
+        Assert.Contains("удаленное свойство", result.ConditionProblem, StringComparison.Ordinal);
+        Assert.Empty(f.Links());
+    }
+
+    [Fact]
+    public void Notices_name_the_reason_and_one_operation_gives_one_notice()
+    {
+        using var f = new Fixture(condition: false);
+        var second = SampleData.AddRecord(f.Repo, f.Orders, "Заказ 2").Id!.Value;
+        f.Repo.SetLinks(f.Relation, f.Order, [f.Closed]);
+        f.Repo.SetLinks(f.Relation, second, [f.Closed, f.Active]);
+        f.SetCondition(true);
+        var notices = new List<string>();
+        ConstructorRepository.ConditionNotice = notices.Add;
+        try
+        {
+            f.Repo.DuplicateRecordsData(f.Orders, [f.Order, second]);
+            Assert.Equal("Копии созданы. Не скопировано связей — 2 («Клиент»): записи не подходят под условие выбора.",
+                Assert.Single(notices));
+            notices.Clear();
+            using (ConstructorRepository.BatchConditionNotices("Копии созданы."))
+            {
+                f.Repo.DuplicateRecord(f.Order);
+                f.Repo.DuplicateRecord(second);
+            }
+            Assert.Equal("Копии созданы. Не скопировано связей — 2 («Клиент»): записи не подходят под условие выбора.",
+                Assert.Single(notices));
+            notices.Clear();
+            // Сломанное условие — своя причина, а не «не подходят».
+            f.Repo.DeleteField(f.Status);
+            f.Repo.DuplicateRecord(second);
+            Assert.Contains("удаленное свойство", Assert.Single(notices), StringComparison.Ordinal);
+            Assert.DoesNotContain("не подходят", notices[0], StringComparison.Ordinal);
+        }
+        finally { ConstructorRepository.ConditionNotice = null; }
+    }
+
+    [Fact]
+    public void Information_does_not_push_real_issues_out_of_the_report_nor_count_as_unverified()
+    {
+        using var f = new Fixture(condition: false);
+        var others = Enumerable.Range(0, 4).Select(i => SampleData.AddRecord(f.Repo, f.Orders, $"Заказ {i}").Id!.Value).ToList();
+        foreach (var order in others) f.Repo.SetLinks(f.Relation, order, [f.Closed]);
+        f.SetCondition(true);
+        // Настоящий дефект — связь на удаленную запись (вставлена в обход ворот).
+        var missing = SampleData.AddRecord(f.Repo, f.Clients, "Удаляемый").Id!.Value;
+        f.Repo.SetFieldValue(missing, f.Status, "Активен");
+        f.Repo.SetLinks(f.Relation, f.Order, [missing]);
+        f.Database.Context.Database.ExecuteSqlRaw("DELETE FROM db_records WHERE Id = {0}", missing);
+        var report = f.Repo.ScanRelationIntegrityAsync(new RelationIntegrityScanOptions(MaxIssues: 2, FieldId: f.Relation))
+            .GetAwaiter().GetResult();
+        Assert.Contains(report.Issues, i => i.Kind == RelationIntegrityIssueKind.MissingTargetRecord && i.CanRepair);
+        Assert.Equal(4, report.Counts[RelationIntegrityIssueKind.ConditionMismatch]);
+        Assert.Equal(4, report.InformationalIssues);
+        Assert.Equal(1, report.ConfirmedIssues);
+        Assert.Equal(0, report.UnverifiedIssues);
+        Assert.False(report.IsTruncated);
+    }
+
+    [Fact]
+    public void A_record_without_a_title_has_an_empty_title()
+    {
+        using var f = new Fixture(condition: false);
+        var untitled = SampleData.AddRecord(f.Repo, f.Clients, TitleText.Placeholder).Id!.Value;
+        var cfg = f.Config() with { Where = [new RelationCondition(RelationConfig.TitleField, RelationCondition.NotEmpty, [])] };
+        Assert.DoesNotContain(untitled, f.Repo.EvaluateRelationCondition(f.Clients, cfg, null).Allowed);
+        var empty = f.Config() with { Where = [new RelationCondition(RelationConfig.TitleField, RelationCondition.Empty, [])] };
+        Assert.Equal([untitled], f.Repo.EvaluateRelationCondition(f.Clients, empty, null).Allowed);
+    }
+
+    [Fact]
+    public void Search_by_title_with_a_text_condition_narrows_records_in_sql()
+    {
+        using var f = new Fixture(condition: false);
+        var text = f.Config() with { Where = [new RelationCondition(RelationConfig.TitleField, RelationCondition.NotEqual, ["Активный"])] };
+        Assert.Equal([f.Renewal], f.Repo.SearchRelationRecords(f.Clients, RelationConfig.TitleField, "ооо", condition: text)
+            .Select(v => v.RecordId));
+        Assert.Empty(f.Repo.SearchRelationRecords(f.Clients, RelationConfig.TitleField, "актив", condition: text));
+    }
+
+    [Fact]
+    public void Moving_records_copies_an_unreadable_condition_as_is()
+    {
+        using var f = new Fixture(condition: false);
+        f.Database.Context.Database.ExecuteSqlRaw("UPDATE db_fields SET ConfigJson = {0} WHERE Id = {1}",
+            $"{{\"targetCollectionId\":{f.Clients},\"single\":false,\"where\":[ {{ \"field\": \"5\", \"op\": \"между\" }} ]}}", f.Relation);
+        var archive = SampleData.AddCollection(f.Repo, "Архив").Id!.Value;
+        var moved = f.Repo.MoveRecordsToCollectionIsolated(f.Database.Path, f.Orders, [f.Order], archive,
+            createMissingFields: true, sourceDbId: 0, targetDbId: 0);
+        Assert.Single(moved);
+        var copied = RelationConfig.FromConfig(f.Repo.GetFields(archive).Single(x => x.Name == "Клиент").ConfigJson)!;
+        Assert.NotNull(copied.WhereUnreadable);
+        // Сохранение без изменений (переименование) не спотыкается о вид записи нечитаемого JSON.
+        var field = f.Repo.GetFields(f.Orders).Single(x => x.Id == f.Relation);
+        var json = field.ConfigJson;
+        field.ConfigJson = RelationConfig.FromConfig(json)!.ToConfigJson();
+        field.Name = "Клиент заказа";
+        f.Repo.UpdateField(field);
+        Assert.Equal("Клиент заказа", f.Repo.GetFields(f.Orders).Single(x => x.Id == f.Relation).Name);
+    }
+
     private sealed class Fixture : IDisposable
     {
         private readonly TempDatabase? _db;
+        public TempDatabase Database => _db!;
         private readonly DatabaseManager? _pg;
         public ConstructorRepository Repo => _db?.Constructor ?? _pg!.Constructor;
         public int Clients { get; }

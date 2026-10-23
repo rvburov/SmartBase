@@ -51,6 +51,14 @@ public static class DbErrors
             Dispatcher.UIThread.Post(() => (NotifyDenied ?? Notify)?.Invoke(ex.Message));
             return true;
         }
+        if (ex is Database.Repositories.RelationConditionException)
+        {
+            // Новая связь не подходит под условие выбора записей (или его нельзя проверить). Список
+            // выбора и вставка говорят это сами; сюда доходят остальные пути и гонки.
+            Log.Information("Связь отклонена условием выбора: {Path:l}", Display(dbPath));
+            Dispatcher.UIThread.Post(() => (NotifyDenied ?? Notify)?.Invoke(ex.Message));
+            return true;
+        }
         if (ex is Database.Repositories.RelationDeleteRestrictedException)
         {
             // Запись держит связь с запретом удаления. Окна удаления говорят это заранее, сюда

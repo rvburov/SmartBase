@@ -125,6 +125,11 @@ public partial class ConstructorRepository
         private readonly IncrementalHash _hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         private readonly Dictionary<string, IntegrityCatalog?> _catalogs = new(StringComparer.Ordinal);
         private readonly List<RelationIntegrityIssue> _issues = [];
+        // Сведения (связь цела) — отдельно: их бывает много (связи, выбранные до условия выбора),
+        // и общий потолок списка они не занимают — иначе вытесняли бы исправимые дефекты.
+        private readonly List<RelationIntegrityIssue> _information = [];
+        private readonly Dictionary<int, int> _informationByField = [];
+        private const int InformationPerField = 20;
         private readonly Dictionary<RelationIntegrityIssueKind, long> _counts = [];
         private readonly Dictionary<int, RelationConfig?> _configs = [];
         private readonly string _identity = owner.RelationDatabaseIdentity;
@@ -558,12 +563,22 @@ public partial class ConstructorRepository
 
         private void AddIssue(RelationIntegrityIssue issue)
         {
-            if (RelationIntegrityKinds.IsInformational(issue.Kind)) issue = issue with { IsInformational = true };
             _counts[issue.Kind] = _counts.GetValueOrDefault(issue.Kind) + 1;
-            if (issue.IsConfirmed) _confirmed++; else _unverified++;
             // Несоответствие условию выбора зависит от значений цели, которые исправление не
             // трогает: смена статуса не должна делать устаревшим план исправления ребер.
             if (issue.Kind != RelationIntegrityIssueKind.ConditionMismatch) AddHash(JsonSerializer.Serialize(issue));
+            if (RelationIntegrityKinds.IsInformational(issue.Kind))
+            {
+                // Сведения не входят ни в подтвержденные, ни в непроверенные: считаются по видам.
+                var field = issue.FieldId ?? 0;
+                if (_information.Count < options.MaxIssues && _informationByField.GetValueOrDefault(field) < InformationPerField)
+                {
+                    _informationByField[field] = _informationByField.GetValueOrDefault(field) + 1;
+                    _information.Add(issue with { IsInformational = true });
+                }
+                return;
+            }
+            if (issue.IsConfirmed) _confirmed++; else _unverified++;
             if (_issues.Count < options.MaxIssues) _issues.Add(issue);
         }
 
@@ -576,7 +591,7 @@ public partial class ConstructorRepository
 
         public RelationIntegrityReport Failure(RelationIntegrityStatus status, string message) => Result(status, message, "");
         private RelationIntegrityReport Result(RelationIntegrityStatus status, string message, string fingerprint) =>
-            new(status, _dbId, _identity, _edges, _fields, _confirmed, _unverified, _issues, _counts,
+            new(status, _dbId, _identity, _edges, _fields, _confirmed, _unverified, [.. _issues, .. _information], _counts,
                 _confirmed + _unverified > _issues.Count, message, fingerprint, options);
         public void Dispose() => _hash.Dispose();
     }

@@ -110,7 +110,9 @@ public sealed record RelationCondition(string Field, string Op, IReadOnlyList<st
     internal static (IReadOnlyList<RelationCondition>? Where, string? Unreadable) Read(JsonElement root)
     {
         if (!root.TryGetProperty("where", out var list)) return (null, null);
-        var raw = list.GetRawText();
+        // Нечитаемое хранится в одном виде записи: файл другой версии мог быть с пробелами или без
+        // экранирования, а сравнивается он с тем, что пишет эта версия.
+        var raw = JsonSerializer.Serialize(list);
         if (list.ValueKind != JsonValueKind.Array) return (null, raw);
         var result = new List<RelationCondition>();
         foreach (var item in list.EnumerateArray())

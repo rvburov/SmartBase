@@ -43,8 +43,10 @@ public sealed partial class ConstructorRepository
 
     /// <param name="ConditionRefused">Ячеек, пропущенных целиком: новая связь не подходит под
     /// условие выбора записей.</param>
+    /// <param name="ConditionUnchecked">Ячеек, пропущенных потому, что условие выбора проверить
+    /// нельзя (сломано, база цели недоступна); причина — <paramref name="ConditionProblem"/>.</param>
     public sealed record LinkBulkResult(int Changed, int Conflicts, IReadOnlyList<LinkChange> Changes, bool ChangesTruncated = false,
-        int ConditionRefused = 0)
+        int ConditionRefused = 0, int ConditionUnchecked = 0, string? ConditionProblem = null)
     {
         public static LinkBulkResult Nothing { get; } = new(0, 0, []);
     }
@@ -180,6 +182,8 @@ public sealed partial class ConstructorRepository
         var changes = new List<LinkChange>();
         var conflicts = 0;
         var conditionRefused = 0;
+        var conditionUnchecked = 0;
+        string? conditionProblem = null;
         var changed = 0;
         long undoUnits = 0;
         var truncated = false;
@@ -217,10 +221,11 @@ public sealed partial class ConstructorRepository
             { conflicts++; continue; }
             // Новая цель вне условия выбора — ячейка пропускается целиком: частично вставленный
             // набор связей человек не просил.
-            var refused = new List<RelationTarget>();
+            var refused = new RelationConditionRefusals();
             var wanted = NormalizeRelationTargets(config, write.RecordId, requested,
                 write.RestoreTargets is null ? old : old.Concat(write.RestoreTargets).Distinct().ToList(), refused: refused);
-            if (refused.Count > 0) { conditionRefused++; continue; }
+            if (refused.Problem is not null) { conditionUnchecked++; conditionProblem ??= refused.Problem; continue; }
+            if (refused.Any) { conditionRefused++; continue; }
             if (write.Targets is not null && wanted.Count != requested.Distinct().Count())
             { conflicts++; continue; }
             if (old.SequenceEqual(wanted)) continue;
@@ -257,7 +262,8 @@ public sealed partial class ConstructorRepository
                     { OldTargets = old.Take(5).ToList(), NewTargets = wanted.Take(5).ToList(), Config = field.ConfigJson });
             }
         }
-        if (changed == 0) return new(0, conflicts, [], ConditionRefused: conditionRefused);
+        if (changed == 0) return new(0, conflicts, [], ConditionRefused: conditionRefused,
+            ConditionUnchecked: conditionUnchecked, ConditionProblem: conditionProblem);
         db.SaveChanges();
         Run(db.Database.GetDbConnection(), tx.GetDbTransaction(),
             "UPDATE db_records SET UpdatedAt = @at, UpdatedBy = @by WHERE Id = @rid",
@@ -272,7 +278,8 @@ public sealed partial class ConstructorRepository
         foreach (var id in touched)
             if (db.DbRecords.Local.FirstOrDefault(x => x.Id == id) is { } tracked)
             { tracked.UpdatedAt = stamp; tracked.UpdatedBy = author; }
-        return truncated ? new(changed, conflicts, [], true, conditionRefused) : new(changed, conflicts, changes, false, conditionRefused);
+        return truncated ? new(changed, conflicts, [], true, conditionRefused, conditionUnchecked, conditionProblem)
+            : new(changed, conflicts, changes, false, conditionRefused, conditionUnchecked, conditionProblem);
     }
 
     // «До → после» первых изменений названиями записей — как строка журнала SetLinks.

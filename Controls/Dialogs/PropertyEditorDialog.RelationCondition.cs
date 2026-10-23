@@ -28,6 +28,10 @@ public partial class PropertyEditorDialog
         public required TextBox Text { get; init; }
         public required WrapPanel Choices { get; init; }
         public required TextBlock NoValue { get; init; }
+        public required TextBlock TextNote { get; init; }
+        // Сохраненные значения текстовой строки. Окно задает тексту одно значение; несколько (из файла
+        // или после смены типа свойства) сохраняются, пока поле не меняли.
+        public IReadOnlyList<string> TextValues { get; set; } = [];
         public IReadOnlyList<string> Restore { get; set; } = [];
         // Свойство, для которого построены галочки: при повторной постройке (сменилось
         // сравнение, перечитан список свойств) отмеченные пункты сохраняются.
@@ -90,22 +94,32 @@ public partial class PropertyEditorDialog
         {
             Text = "Значение не нужно", Foreground = ResourceBrush("BrushSecondaryText", Brushes.Gray),
         };
+        var textNote = new TextBlock
+        {
+            Foreground = ResourceBrush("BrushSecondaryText", Brushes.Gray), TextWrapping = TextWrapping.Wrap, IsVisible = false,
+        };
         var root = new StackPanel { Spacing = 6 };
         if (_conditionRows.Count > 0)
             root.Children.Add(new TextBlock { Text = "и", Foreground = ResourceBrush("BrushSecondaryText", Brushes.Gray) });
         root.Children.Add(head);
         root.Children.Add(text);
+        root.Children.Add(textNote);
         root.Children.Add(choices);
         root.Children.Add(noValue);
         var row = new ConditionRow
         {
-            Root = root, Property = property, Op = op, Text = text, Choices = choices, NoValue = noValue,
+            Root = root, Property = property, Op = op, Text = text, Choices = choices, NoValue = noValue, TextNote = textNote,
             Restore = condition?.Values ?? [],
         };
         _conditionRows.Add(row);
         RelationConditionList.Children.Add(root);
 
-        property.SelectionChanged += (_, _) => FillConditionOps(row, null);
+        property.SelectionChanged += (_, _) =>
+        {
+            // Другое свойство — прежние значения текста к нему не относятся.
+            row.TextValues = [];
+            FillConditionOps(row, null);
+        };
         op.SelectionChanged += (_, _) => UpdateConditionValue(row);
         delete.Click += (_, _) =>
         {
@@ -120,7 +134,12 @@ public partial class PropertyEditorDialog
         var key = condition?.Field ?? properties.FirstOrDefault()?.Key;
         property.SelectedIndex = properties.FindIndex(p => p.Key == key);
         FillConditionOps(row, condition?.Op);
-        if (condition is not null && !RelationCondition.IsChoice(Type(row))) text.Text = condition.Values.FirstOrDefault() ?? "";
+        if (condition is not null && !RelationCondition.IsChoice(Type(row)))
+        {
+            text.Text = condition.Values.FirstOrDefault() ?? "";
+            row.TextValues = condition.Values;
+        }
+        text.TextChanged += (_, _) => UpdateConditionValue(row);
         UpdateConditionState();
         if (condition is null) property.Focus();
     }
@@ -175,9 +194,18 @@ public partial class PropertyEditorDialog
         var needs = row.Op.SelectedItem is ConditionOpItem item && RelationCondition.NeedsValues(item.Op);
         var choice = RelationCondition.IsChoice(Type(row));
         row.Text.IsVisible = needs && !choice;
+        // Несколько значений текста: пока поле не меняли, сохраняются все.
+        var kept = needs && !choice && KeepsTextValues(row);
+        row.TextNote.IsVisible = kept;
+        if (kept)
+            row.TextNote.Text = $"Еще значения: {string.Join(", ", row.TextValues.Skip(1).Select(v => $"«{v.Trim()}»"))} " +
+                                "(запись подходит, если совпало любое). Если изменить поле, останется только введенное.";
         row.Choices.IsVisible = needs && choice;
         row.NoValue.IsVisible = !needs && row.Property.SelectedItem is not null && Type(row) != "checkbox";
     }
+
+    private static bool KeepsTextValues(ConditionRow row) =>
+        row.TextValues.Count > 1 && (row.Text.Text ?? "").Trim() == row.TextValues[0].Trim();
 
     private void UpdateConditionState()
     {
@@ -197,6 +225,7 @@ public partial class PropertyEditorDialog
             (row.Property.SelectedItem as RelationPropertyItem)?.Key ?? "",
             (row.Op.SelectedItem as ConditionOpItem)?.Op ?? "",
             RelationCondition.IsChoice(Type(row)) ? CheckedChoices(row)
+                : KeepsTextValues(row) ? row.TextValues
                 : (row.Text.Text ?? "") is { Length: > 0 } text ? [text] : [])).ToList() : [];
         _conditionRows.Clear();
         RelationConditionList.Children.Clear();
@@ -220,7 +249,9 @@ public partial class PropertyEditorDialog
     }
 
     // Новое или измененное условие, под которое сейчас не подходит ни одна запись цели: выбрать
-    // будет нечего — спрашиваем, не ошибка ли это.
+    // будет нечего — спрашиваем, не ошибка ли это. Поиск идет в фоне на своих подключениях: если
+    // не подходит ничего, он просматривает всю целевую коллекцию; дольше 0,2 с — окно хода с отменой.
+    // Сбой базы не мешает сохранению — переспрос нужен только для подсказки.
     private async Task<bool> ConfirmEmptyRelationCondition(string configJson)
     {
         if (RelationConfig.FromConfig(configJson) is not { Where.Count: > 0 } cfg) return true;
@@ -229,12 +260,16 @@ public partial class PropertyEditorDialog
             && (before.Where ?? []).SequenceEqual(cfg.Where!)) return true;
         var dbId = cfg.TargetDbId == 0 ? _currentDbId : cfg.TargetDbId;
         if (RepoForDb(dbId) is not { } target) return true;
+        using var cancellation = new CancellationTokenSource();
         try
         {
-            if (target.SearchRelationRecords(cfg.TargetCollectionId, RelationConfig.TitleField, null, take: 1, condition: cfg).Count > 0)
-                return true;
+            var found = await RunRelationWorkAsync(token => target.SearchRelationRecordsAsync(cfg.TargetCollectionId,
+                RelationConfig.TitleField, null, take: 1, ct: token, condition: cfg), "Проверка условия выбора", cancellation);
+            if (found.Count > 0) return true;
         }
-        catch (Exception ex) when (ex is InvalidOperationException) { return true; }
+        catch (OperationCanceledException) { return false; }
+        catch (Exception ex) when (ex is InvalidOperationException or System.Data.Common.DbException or IOException
+                                       or PermissionDeniedException) { return true; }
         var name = (RelationTargetCombo.SelectedItem as TargetCollectionItem)?.Name ?? "";
         return await new ConfirmDialog(
             $"Сейчас ни одна запись коллекции «{name}» не подходит под условие выбора — выбрать будет нечего. Сохранить так?",
@@ -258,6 +293,7 @@ public partial class PropertyEditorDialog
             {
                 values = RelationCondition.IsChoice(Type(row))
                     ? row.Choices.Children.OfType<CheckBox>().Where(c => c.IsChecked == true).Select(c => (string)c.Tag!).ToList()
+                    : KeepsTextValues(row) ? row.TextValues
                     : (row.Text.Text ?? "").Trim() is { Length: > 0 } text ? [text] : [];
                 if (values.Count == 0)
                 {

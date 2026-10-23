@@ -789,6 +789,9 @@ public partial class TasksControllerView : UserControl
             });
         else
         {
+            // Связи вне условия выбора копии не получают — одно уведомление на всю операцию.
+            using var notices = Database.Repositories.ConstructorRepository.BatchConditionNotices(
+                targets.Count == 1 ? "Копия создана." : "Копии созданы.");
             foreach (var (repo, _, ids) in groups)
             {
                 var stopped = false;

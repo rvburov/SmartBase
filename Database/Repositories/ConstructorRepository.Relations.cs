@@ -116,6 +116,7 @@ public partial class ConstructorRepository
         if (targetByName.Count == 0) return;
 
         var rows = new List<DbRecordLinkEntity>();
+        var skipped = new Dictionary<int, SkippedLinks>();
         foreach (var sf in srcRel)
         {
             if (!targetByName.TryGetValue(sf.Name, out var tf)) continue;
@@ -126,17 +127,33 @@ public partial class ConstructorRepository
 
             var edges = source.GetLinkEdges(sf.Id!.Value, sourceRecordId);
             if (tc.Single) EnsureSingleRelationMove(source, sf.Id.Value, [sourceRecordId], tf.Name);
-            for (var i = 0; i < edges.Count; i++)
+            // Запись приемника новая: связи вне условия выбора его свойства она не получает — как
+            // дубль, иначе перенос стал бы обходом условия.
+            var check = tc.HasCondition ? EvaluateConditionOnTarget(tc, edges
+                .Where(e => RelTargetDb(e.TargetDbId) == tc.TargetDbId).Select(e => e.ToRecordId).ToHashSet()) : null;
+            var position = 0;
+            foreach (var edge in edges)
+            {
+                var targetDb = RelTargetDb(edge.TargetDbId);
+                if (check is not null && targetDb == tc.TargetDbId && !check.Allowed.Contains(edge.ToRecordId))
+                {
+                    skipped[tf.Id!.Value] = new(skipped.GetValueOrDefault(tf.Id.Value).Count + 1, check.Broken);
+                    continue;
+                }
                 rows.Add(new DbRecordLinkEntity
                 {
                     FieldId    = tf.Id!.Value,                 FromRecordId = targetRecordId,
-                    ToRecordId = edges[i].ToRecordId,          Position     = (i + 1) * 1000,
-                    TargetDbId = RelTargetDb(edges[i].TargetDbId),
+                    ToRecordId = edge.ToRecordId,              Position     = ++position * 1000,
+                    TargetDbId = targetDb,
                 });
+            }
         }
-        if (rows.Count == 0) return;
-        db.DbRecordLinks.AddRange(rows);
-        db.SaveChanges();
+        if (rows.Count > 0)
+        {
+            db.DbRecordLinks.AddRange(rows);
+            db.SaveChanges();
+        }
+        ReportSkippedLinks(skipped, "Запись перенесена.", "перенесено");
     }
 
     /// <summary>
@@ -209,11 +226,12 @@ public partial class ConstructorRepository
     /// <summary>Ворота новых связей. Цели из <paramref name="allowedExisting"/> (прежние ребра ячейки,
     /// возврат отмены) проходят без проверок; новые обязаны существовать в целевой коллекции и
     /// подходить под условие выбора. Отклоненные условием: при <paramref name="refused"/> = null —
-    /// <see cref="RelationConditionException"/>, иначе они складываются в список. Сломанное условие
-    /// закрывает новые связи всегда.</summary>
+    /// <see cref="RelationConditionException"/>, иначе они складываются в него (вставка пропускает
+    /// ячейку, а не отказывает всей операцией). Сломанное условие и недоступная база цели
+    /// закрывают новые связи всегда.</summary>
     internal List<RelationTarget> NormalizeRelationTargets(RelationConfig cfg, int sourceId,
         IReadOnlyList<RelationTarget> targets, IReadOnlyCollection<RelationTarget>? allowedExisting = null,
-        bool allowUnresolved = false, List<RelationTarget>? refused = null)
+        bool allowUnresolved = false, RelationConditionRefusals? refused = null)
     {
         var previous = allowedExisting?.ToHashSet() ?? [];
         var wanted = new List<RelationTarget>();
@@ -229,9 +247,15 @@ public partial class ConstructorRepository
             {
                 // Старый API доверял недоступной базе, но условие без нее не проверить: иначе
                 // он стал бы обходом условия.
-                if (cfg.HasCondition) throw new InvalidOperationException("Целевая база связи недоступна: условие выбора проверить нельзя.");
-                if (!allowUnresolved) throw new InvalidOperationException("Целевая база связи недоступна.");
-                valid = newTargets.Select(t => t.RecordId).ToHashSet();
+                if (cfg.HasCondition)
+                {
+                    const string unavailable = "Целевая база связи недоступна: условие выбора проверить нельзя.";
+                    if (refused is null) throw new InvalidOperationException(unavailable);
+                    refused.Problem ??= unavailable;
+                    newTargets.Clear();
+                }
+                else if (!allowUnresolved) throw new InvalidOperationException("Целевая база связи недоступна.");
+                else valid = newTargets.Select(t => t.RecordId).ToHashSet();
             }
             else
             {
@@ -242,14 +266,19 @@ public partial class ConstructorRepository
                 if (cfg.HasCondition && valid.Count > 0)
                 {
                     var verdict = targetRepo.EvaluateRelationCondition(cfg.TargetCollectionId, cfg, valid);
-                    if (verdict.Broken is { } broken) throw new RelationConditionException(broken);
+                    if (verdict.Broken is { } broken)
+                    {
+                        if (refused is null) throw new RelationConditionException(broken);
+                        refused.Problem ??= broken;
+                        valid = [];
+                    }
                     var outside = valid.Where(id => !verdict.Allowed.Contains(id)).ToList();
                     if (outside.Count > 0)
                     {
                         if (refused is null)
                             throw new RelationConditionException(
                                 targetRepo.ConditionRefusal(cfg.TargetCollectionId, outside, verdict.Condition));
-                        refused.AddRange(outside.Select(id => new RelationTarget(cfg.TargetDbId, id)));
+                        refused.Outside.AddRange(outside.Select(id => new RelationTarget(cfg.TargetDbId, id)));
                         valid = verdict.Allowed.ToHashSet();
                     }
                 }

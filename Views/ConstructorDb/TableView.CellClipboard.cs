@@ -316,7 +316,8 @@ public partial class TableView
     /// <summary>Итог записи ячеек: сколько изменилось, сколько связей не нашлось по названию и
     /// сколько ячеек-связей пропущено условием выбора записей.</summary>
     private readonly record struct WriteOutcome(int Changed, int RelationNotFound, int RelationAmbiguous,
-                                                int RelationOutsideCondition = 0);
+                                                int RelationOutsideCondition = 0, int RelationUnchecked = 0,
+                                                string? ConditionProblem = null);
 
     /// <summary>Итог одного пакета — и значения, и связи; для отмены нужны оба.</summary>
     private sealed record WriteBatch(ConstructorRepository.CellBulkResult Values,
@@ -359,7 +360,7 @@ public partial class TableView
         var changed = batch.Values.Changed + batch.Links.Changed;
         if (changed > 0) ReloadRows();   // строки перечитываем целиком: правок много и они разные
         return new WriteOutcome(changed, batch.RelationNotFound, batch.RelationAmbiguous + batch.Links.Conflicts,
-                                batch.Links.ConditionRefused);
+                                batch.Links.ConditionRefused, batch.Links.ConditionUnchecked, batch.Links.ConditionProblem);
     }
 
     // Небольшой пакет — сразу, на общем подключении. null — значения не записались (база занята или
@@ -467,6 +468,8 @@ public partial class TableView
         if (outcome.RelationAmbiguous > 0) reasons.Add((outcome.RelationAmbiguous, "связей с неоднозначным названием"));
         if (outcome.RelationOutsideCondition > 0)
             reasons.Add((outcome.RelationOutsideCondition, "связей не подходят под условие выбора записей"));
+        if (outcome.RelationUnchecked > 0)
+            reasons.Add((outcome.RelationUnchecked, "связей не проверить по условию выбора записей"));
 
         var skippedTotal = reasons.Sum(r => r.Count);
         if (outcome.Changed == 0 && skippedTotal == 0) return;
@@ -478,7 +481,8 @@ public partial class TableView
             message += $", пропущено {skippedTotal:N0}: " +
                        string.Join(", ", reasons.OrderByDescending(r => r.Count).Select(r => $"{r.Count:N0} {r.Phrase}"));
 
-        AppNotifications.Info(message + ".");
+        // Почему условие не проверить (сломано, база недоступна) — отдельной фразой, как ее пишут ворота.
+        AppNotifications.Info(message + "." + (outcome.ConditionProblem is { } problem ? " " + problem : ""));
     }
 
     private static string SkipPhrase(PasteSkipReason reason) => reason switch

@@ -69,7 +69,8 @@ public sealed class RelationIntegrityReport
         ScannedFields = fields;
         UnverifiedIssues = unverifiedIssues;
         InformationalIssues = counts.Where(p => RelationIntegrityKinds.IsInformational(p.Key)).Sum(p => p.Value);
-        ConfirmedIssues = Math.Max(0, confirmedIssues - InformationalIssues);
+        // Сведения в подтвержденные и непроверенные не входят: проверка считает их только по видам.
+        ConfirmedIssues = confirmedIssues;
         Issues = Array.AsReadOnly(issues.ToArray());
         Counts = new System.Collections.ObjectModel.ReadOnlyDictionary<RelationIntegrityIssueKind, long>(
             new Dictionary<RelationIntegrityIssueKind, long>(counts));

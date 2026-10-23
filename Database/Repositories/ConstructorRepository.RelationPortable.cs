@@ -166,7 +166,7 @@ public partial class ConstructorRepository
             var conditioned = db.DbFields.AsNoTracking().Where(f => newFieldIds.Contains(f.Id) && f.FieldType == "relation").ToList()
                 .Select(f => (f.Id, Config: RelationConfig.FromConfig(f.ConfigJson)))
                 .Where(p => p.Config is { HasCondition: true }).ToDictionary(p => p.Id, p => p.Config!);
-            var skipped = new Dictionary<int, int>();
+            var skipped = new Dictionary<int, SkippedLinks>();
             long after = 0;
             while (true)
             {
@@ -202,7 +202,7 @@ public partial class ConstructorRepository
                     var verdict = owner.EvaluateRelationCondition(cfg.TargetCollectionId, cfg, group.Select(c => c.TargetId).ToList());
                     foreach (var check in group)
                         if (verdict.Broken is null && verdict.Allowed.Contains(check.TargetId)) edges.Add(check.Row);
-                        else skipped[group.Key.Field] = skipped.GetValueOrDefault(group.Key.Field) + 1;
+                        else skipped[group.Key.Field] = new(skipped.GetValueOrDefault(group.Key.Field).Count + 1, verdict.Broken);
                 }
                 InsertRows(db, "db_record_links", "FieldId,FromRecordId,ToRecordId,TargetDbId,Position", edges);
                 after = staged[^1].Seq;
@@ -212,7 +212,7 @@ public partial class ConstructorRepository
             db.Database.ExecuteSqlRaw("DROP TABLE _portable_relation_edges");
             NotifyRelationDataChanged(collection.Id);
             tx.Commit();
-            ReportSkippedLinks(skipped, "Коллекция загружена. Не создано связей");
+            ReportSkippedLinks(skipped, "Коллекция загружена.", "создано");
             return collection.Id;
         }
         catch

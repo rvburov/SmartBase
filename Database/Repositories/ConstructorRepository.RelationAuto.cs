@@ -280,16 +280,6 @@ public partial class ConstructorRepository
         var targetRows = AutoRows(targets);
         if (sourceRows is null || targetRows is null)
             return AutoFailure(RelationAutoStatus.Conflict, field, "Данные изменились во время подбора. Повторите предварительный просмотр.");
-        // Условие выбора: подбираются только подходящие записи цели; прежняя цель остается, пока
-        // совпадает ключ. Сломанное условие — отказ, прежние связи сохраняются.
-        IReadOnlySet<int>? allowed = null;
-        if (cfg.HasCondition)
-        {
-            var verdict = target.EvaluateRelationCondition(cfg.TargetCollectionId, cfg, null);
-            if (verdict.Broken is { } broken) return AutoFailure(RelationAutoStatus.InvalidRule, field, broken + " Прежние связи сохранены.");
-            allowed = verdict.Allowed;
-            ct.ThrowIfCancellationRequested();
-        }
         var targetDbId = cfg.TargetDbId;
         var sourceDbId = RelationDbResolver.DbIdFor(this);
         var absoluteTargetDbId = cfg.TargetDbId == 0 ? sourceDbId : cfg.TargetDbId;
@@ -310,6 +300,29 @@ public partial class ConstructorRepository
                 && exact is not null)
                 exactIndex[exact] = exactIndex.GetValueOrDefault(exact) + 1;
         }
+        // Ключи источников — один раз: по ним же собираются совпавшие цели для условия выбора.
+        var sourceKeys = new (string? Key, bool FirstEmpty)[sourceRows.Count];
+        for (var i = 0; i < sourceRows.Count; i++)
+        {
+            if (i % 4096 == 4095) ct.ThrowIfCancellationRequested();
+            if (!RelationAutoMatch.TryRuleKey(sourceRows[i].Parts, rule.Fold, sourceDbId, buffer, out var key, out var firstEmpty))
+                return AutoValueFailure(field, FailedAutoPart(sourceRows[i], rule.Fold, sourceDbId), "исходном");
+            sourceKeys[i] = (key, firstEmpty);
+        }
+        // Условие выбора: подбираются только подходящие записи цели; прежняя цель остается, пока
+        // совпадает ключ. Решается только для совпавших по ключу целей, а не для всей коллекции.
+        // Сломанное условие — отказ, прежние связи сохраняются.
+        IReadOnlySet<int>? allowed = null;
+        if (cfg.HasCondition)
+        {
+            var matched = new HashSet<int>();
+            foreach (var (key, _) in sourceKeys)
+                if (key is not null && targetIndex.TryGetValue(key, out var list))
+                    foreach (var t in list) matched.Add(t.RecordId);
+            var verdict = target.EvaluateRelationCondition(cfg.TargetCollectionId, cfg, matched, ct);
+            if (verdict.Broken is { } broken) return AutoFailure(RelationAutoStatus.InvalidRule, field, broken + " Прежние связи сохранены.");
+            allowed = verdict.Allowed;
+        }
         var previous = field.Id is int existingField
             ? db.DbRecordLinks.AsNoTracking().Where(l => l.FieldId == existingField)
                 .OrderBy(l => l.FromRecordId).ThenBy(l => l.Position).ThenBy(l => l.Id).ToList()
@@ -323,12 +336,11 @@ public partial class ConstructorRepository
         var outside = 0;
         var foldOnly = 0;
         var examples = new List<string>();
-        count = 0;
-        foreach (var source in sourceRows)
+        for (var index = 0; index < sourceRows.Count; index++)
         {
-            if (++count % 4096 == 0) ct.ThrowIfCancellationRequested();
-            if (!RelationAutoMatch.TryRuleKey(source.Parts, rule.Fold, sourceDbId, buffer, out var key, out var firstEmpty))
-                return AutoValueFailure(field, FailedAutoPart(source, rule.Fold, sourceDbId), "исходном");
+            if (index % 4096 == 4095) ct.ThrowIfCancellationRequested();
+            var source = sourceRows[index];
+            var (key, firstEmpty) = sourceKeys[index];
             var old = previousByRecord.GetValueOrDefault(source.RecordId, []);
             var found = key is not null && targetIndex.TryGetValue(key, out var matches)
                 ? matches.Where(t => t.DbId != 0 || t.RecordId != source.RecordId).Distinct().ToArray()

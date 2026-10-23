@@ -1102,6 +1102,9 @@ public partial class CalendarControllerView : UserControl
         if (byRecord.Count <= SmallOpCap)
         {
             copies = new List<CalendarRecord>(targets.Count);
+            // Связи вне условия выбора копии не получают — одно уведомление на всю операцию.
+            using var notices = Database.Repositories.ConstructorRepository.BatchConditionNotices(
+                byRecord.Count == 1 ? "Копия создана." : "Копии созданы.");
             foreach (var g in byRecord)
             {
                 var repo = RepoOf(g.First());

@@ -90,7 +90,8 @@ public sealed class RelationAutoRule : IEquatable<RelationAutoRule>
             if (source is null || target is null) return null;
             return source == GuardSource && target == GuardTarget ? LostRule() : new RelationAutoRule(source, target);
         }
-        var raw = auto.GetRawText();
+        // В одном виде записи, как его пишет эта версия: с ним сверяется сохранение без изменений.
+        var raw = JsonSerializer.Serialize(auto);
         if (format.ValueKind != JsonValueKind.Number || !format.TryGetInt32(out var version) || version < Format)
             return new(RelationAutoState.Damaged, raw);
         if (version > Format) return new(RelationAutoState.Newer, raw);
