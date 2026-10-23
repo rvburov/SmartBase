@@ -34,7 +34,9 @@ internal sealed class SourceRow(SourceCell[] cells, double? height)
 internal sealed class BreakdownNode
 {
     public string     Key        { get; init; } = "";
-    public int        Occurrence { get; init; }
+    /// <summary>Индекс из столбца B как он записан («Изделие», «1», «1.2.»). По нему строки
+    /// изделий разных дат встают друг напротив друга (<see cref="BreakdownMerge"/>).</summary>
+    public string     Index      { get; init; } = "";
     public int        Level      { get; init; } = -1;
     public SourceRow? Row        { get; init; }
 
@@ -67,10 +69,9 @@ internal sealed class BreakdownSheet(BreakdownFile file, BreakdownNode root, Sty
 /// C — наименование или операция, D — обозначение КД (у операции — вид работ), E — обозначение
 /// ТД, F — кол-во, G — Т (1 шт.), H — Т всего, L — комментарий.
 ///
-/// Строка с индексом — изделие, без индекса — операция ближайшего изделия выше. Изделие
-/// узнается среди соседей по обозначению КД, без обозначения — по наименованию; повтор того же
-/// ключа под одним родителем различает порядковый номер. Индекс в ключ не входит: макрос
-/// пересчитывает его при вставке изделия, и все строки ниже вставки сменили бы номер.
+/// Строка с индексом — изделие, без индекса — операция ближайшего изделия выше. Индекс узла
+/// (<see cref="BreakdownNode.Index"/>) сводит строки разных дат; ключ (обозначение КД, без него
+/// наименование) нужен проверке «все файлы — одно изделие» по верхнему изделию.
 /// </summary>
 internal static partial class BreakdownReader
 {
@@ -145,7 +146,7 @@ internal static partial class BreakdownReader
                     var node = new BreakdownNode
                     {
                         Key        = key,
-                        Occurrence = parent.Children.Count(c => c.Key == key),
+                        Index      = index,
                         Level      = level,
                         Row        = source,
                     };

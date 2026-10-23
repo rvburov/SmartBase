@@ -82,10 +82,12 @@ public sealed class BreakdownCompareRunTests : IDisposable
         Assert.EndsWith(".xlsm", result.OutputPath);
     }
 
-    // ── Сопоставление ─────────────────────────────────────────────────────────
+    // ── Сопоставление — по индексу ────────────────────────────────────────────
 
+    // Так решил пользователь: «2» напротив «2». После вставки изделия напротив друг друга
+    // встают разные изделия — по этому и видно, что номер сменил содержимое.
     [Fact]
-    public void Products_are_matched_by_designation_even_when_the_index_shifts()
+    public void Products_are_matched_by_index_and_an_insert_shifts_the_rows_below()
     {
         Breakdown("2026.01.01",
             new BRow("Изделие", "Комплекс", "АБВГ.000", 1),
@@ -99,20 +101,21 @@ public sealed class BreakdownCompareRunTests : IDisposable
 
         var result = RunAndCheck(ws =>
         {
-            // Порядок — по последней дате: новый модуль встал перед платой.
+            Assert.Equal("Изделие",  ws.Text(First, Col(0, ColIndex)));
             Assert.Equal("Комплекс", ws.Text(First, Col(1, ColName)));
-            Assert.Equal("Новый модуль", ws.Text(First + 1, Col(1, ColName)));
-            Assert.Equal("", ws.Text(First + 1, Col(0, ColName)));               // на первую дату его не было
 
-            // Плата — в одной строке на обе даты, хотя индекс сменился с 1 на 2.
-            Assert.Equal("Плата", ws.Text(First + 2, Col(0, ColName)));
-            Assert.Equal("1",     ws.Text(First + 2, Col(0, ColIndex)));
+            Assert.Equal("1",            ws.Text(First + 1, Col(0, ColIndex)));
+            Assert.Equal("1",            ws.Text(First + 1, Col(1, ColIndex)));
+            Assert.Equal("Плата",        ws.Text(First + 1, Col(0, ColName)));
+            Assert.Equal("Новый модуль", ws.Text(First + 1, Col(1, ColName)));
+
+            Assert.Equal("Блок",  ws.Text(First + 2, Col(0, ColName)));
             Assert.Equal("Плата", ws.Text(First + 2, Col(1, ColName)));
-            Assert.Equal("2",     ws.Text(First + 2, Col(1, ColIndex)));
-            Assert.Equal(2.0, ws.Cell(First + 2, Col(0, ColQty)).GetDouble());
+            Assert.Equal(1.0, ws.Cell(First + 2, Col(0, ColQty)).GetDouble());
             Assert.Equal(3.0, ws.Cell(First + 2, Col(1, ColQty)).GetDouble());
 
-            Assert.Equal("Блок", ws.Text(First + 3, Col(0, ColName)));
+            Assert.Equal("",     ws.Text(First + 3, Col(0, ColName)));            // «3» на первую дату не было
+            Assert.Equal("3",    ws.Text(First + 3, Col(1, ColIndex)));
             Assert.Equal("Блок", ws.Text(First + 3, Col(1, ColName)));
         });
 
@@ -121,53 +124,7 @@ public sealed class BreakdownCompareRunTests : IDisposable
     }
 
     [Fact]
-    public void Same_designation_under_different_parents_stays_apart()
-    {
-        Breakdown("2026.01.01",
-            new BRow("Изделие", "Комплекс", "АБВГ.000"),
-            new BRow("1", "Шкаф 1", "АБВГ.100"),
-            new BRow("1.1", "Плата", "АБВГ.001"),
-            new BRow("2", "Шкаф 2", "АБВГ.200"));
-        Breakdown("2026.02.01",
-            new BRow("Изделие", "Комплекс", "АБВГ.000"),
-            new BRow("1", "Шкаф 1", "АБВГ.100"),
-            new BRow("2", "Шкаф 2", "АБВГ.200"),
-            new BRow("2.1", "Плата", "АБВГ.001"));
-
-        RunAndCheck(ws =>
-        {
-            // Плата ушла из первого шкафа во второй: в первом она только на первую дату,
-            // во втором — только на вторую.
-            Assert.Equal("Шкаф 1", ws.Text(First + 1, Col(0, ColName)));
-            Assert.Equal("Плата",  ws.Text(First + 2, Col(0, ColName)));
-            Assert.Equal("",       ws.Text(First + 2, Col(1, ColName)));
-            Assert.Equal("Шкаф 2", ws.Text(First + 3, Col(1, ColName)));
-            Assert.Equal("",       ws.Text(First + 4, Col(0, ColName)));
-            Assert.Equal("Плата",  ws.Text(First + 4, Col(1, ColName)));
-        });
-    }
-
-    [Fact]
-    public void Product_without_designation_is_matched_by_name()
-    {
-        Breakdown("2026.01.01",
-            new BRow("Изделие", "Комплекс", "АБВГ.000"),
-            new BRow("1", "Комплект средств сопряжения"));
-        Breakdown("2026.02.01",
-            new BRow("Изделие", "Комплекс", "АБВГ.000"),
-            new BRow("1", "Новое изделие", "АБВГ.005"),
-            new BRow("2", "Комплект средств сопряжения"));
-
-        var result = RunAndCheck(ws =>
-        {
-            Assert.Equal("Комплект средств сопряжения", ws.Text(First + 2, Col(0, ColName)));
-            Assert.Equal("Комплект средств сопряжения", ws.Text(First + 2, Col(1, ColName)));
-        });
-        Assert.Equal(3, result.TotalRows);
-    }
-
-    [Fact]
-    public void Removed_product_keeps_its_former_place()
+    public void Removed_product_shifts_the_numbers_and_leaves_the_last_row_empty()
     {
         Breakdown("2026.01.01",
             new BRow("Изделие", "Комплекс", "АБВГ.000"),
@@ -183,9 +140,66 @@ public sealed class BreakdownCompareRunTests : IDisposable
         {
             Assert.Equal("Плата",  ws.Text(First + 1, Col(1, ColName)));
             Assert.Equal("Кабель", ws.Text(First + 2, Col(0, ColName)));
-            Assert.Equal("",       ws.Text(First + 2, Col(1, ColName)));
-            Assert.Equal("Блок",   ws.Text(First + 3, Col(1, ColName)));
+            Assert.Equal("Блок",   ws.Text(First + 2, Col(1, ColName)));
+            Assert.Equal("Блок",   ws.Text(First + 3, Col(0, ColName)));
+            Assert.Equal("",       ws.Text(First + 3, Col(1, ColName)));
         });
+    }
+
+    // Порядок — по индексу как по номерам, вложенные — сразу за своим изделием; запись индекса
+    // приводится к одному виду: «1.» = «1», «1,2» = «1.2», «01» = «1».
+    [Fact]
+    public void Index_is_ordered_as_numbers_and_written_forms_match()
+    {
+        Breakdown("2026.01.01",
+            new BRow("Изделие", "Комплекс", "АБВГ.000"),
+            new BRow("1.", "Шкаф", "АБВГ.100"),
+            new BRow("1.2", "Плата 1.2", "АБВГ.012"),
+            new BRow("1.10", "Плата 1.10", "АБВГ.110"),
+            new BRow("2", "Блок", "АБВГ.200"));
+        Breakdown("2026.02.01",
+            new BRow("Изделие", "Комплекс", "АБВГ.000"),
+            new BRow("1", "Шкаф", "АБВГ.100"),
+            new BRow("1,2", "Плата 1.2", "АБВГ.012"),
+            new BRow("1.9", "Плата 1.9", "АБВГ.109"),
+            new BRow("1.10", "Плата 1.10", "АБВГ.110"),
+            new BRow("02", "Блок", "АБВГ.200"));
+
+        var result = RunAndCheck(ws =>
+        {
+            string[] expected = ["Комплекс", "Шкаф", "Плата 1.2", "Плата 1.9", "Плата 1.10", "Блок"];
+            for (var r = 0; r < expected.Length; r++)
+                Assert.Equal(expected[r], ws.Text(First + r, Col(1, ColName)));
+
+            // «1.» и «1», «1.2» и «1,2», «2» и «02» — одни и те же строки.
+            Assert.Equal("Шкаф",      ws.Text(First + 1, Col(0, ColName)));
+            Assert.Equal("Плата 1.2", ws.Text(First + 2, Col(0, ColName)));
+            Assert.Equal("",          ws.Text(First + 3, Col(0, ColName)));      // 1.9 — только во второй
+            Assert.Equal("Блок",      ws.Text(First + 5, Col(0, ColName)));
+        });
+        Assert.Equal(6, result.TotalRows);
+    }
+
+    // Повтор одного индекса в файле — ошибка расшифровки; строки не склеиваются.
+    [Fact]
+    public void Repeated_index_in_a_file_is_not_glued_together()
+    {
+        Breakdown("2026.01.01",
+            new BRow("Изделие", "Комплекс", "АБВГ.000"),
+            new BRow("1", "Первая", "АБВГ.001"),
+            new BRow("1", "Вторая", "АБВГ.002"));
+        Breakdown("2026.02.01",
+            new BRow("Изделие", "Комплекс", "АБВГ.000"),
+            new BRow("1", "Первая", "АБВГ.001"));
+
+        var result = RunAndCheck(ws =>
+        {
+            Assert.Equal("Первая", ws.Text(First + 1, Col(0, ColName)));
+            Assert.Equal("Первая", ws.Text(First + 1, Col(1, ColName)));
+            Assert.Equal("Вторая", ws.Text(First + 2, Col(0, ColName)));
+            Assert.Equal("",       ws.Text(First + 2, Col(1, ColName)));
+        });
+        Assert.Equal(3, result.TotalRows);
     }
 
     // ── Операции ──────────────────────────────────────────────────────────────
