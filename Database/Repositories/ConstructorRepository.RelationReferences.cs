@@ -180,11 +180,5 @@ public partial class ConstructorRepository
         return $"«{reference.Collection} · {reference.Field}»{from} ({reference.Sources} {RecordsWord(reference.Sources)})";
     }
 
-    internal static string RecordsWord(int n) => (n % 100, n % 10) switch
-    {
-        ( >= 11 and <= 14, _) => "записей",
-        (_, 1) => "запись",
-        (_, >= 2 and <= 4) => "записи",
-        _ => "записей",
-    };
+    internal static string RecordsWord(int n) => RelationBacklinkText.RecordsWord(n);
 }

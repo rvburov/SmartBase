@@ -64,6 +64,33 @@ public sealed class PermissionServiceTests
     }
 
     [Fact]
+    public void A_permission_reload_is_seen_whole_from_another_thread()
+    {
+        // Окно удаления, автосвязи и обратные ссылки проверяют права в фоне, пока панель
+        // администратора их перечитывает: проверка не застает права без масок коллекций.
+        using var db = new TempDatabase();
+        var col = SampleData.AddCollection(db.Constructor).Id!.Value;
+        var userId = db.Permissions.CurrentUserId;
+        db.Permissions.SetMask(userId, null, (int)PermAction.All);
+        db.Permissions.SetMask(userId, col, 0);
+        var me = db.Context.DbUsers.First(u => u.Id == userId);
+        me.IsAdmin = false;
+        me.IsApproved = true;
+        db.Context.SaveChanges();
+        db.Permissions.Reload(notify: false);
+        using var stop = new CancellationTokenSource(TimeSpan.FromMilliseconds(400));
+        var leaks = 0;
+        var reader = Task.Run(() =>
+        {
+            while (!stop.IsCancellationRequested)
+                if (db.Permissions.Can(PermAction.ViewCollection, col)) Interlocked.Increment(ref leaks);
+        });
+        while (!stop.IsCancellationRequested) db.Permissions.Reload(notify: false);
+        reader.Wait();
+        Assert.Equal(0, leaks);
+    }
+
+    [Fact]
     public void Password_unlock_flow()
     {
         using var db = new TempDatabase();

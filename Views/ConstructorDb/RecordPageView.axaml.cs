@@ -55,6 +55,9 @@ public partial class RecordPageView : UserControl
     {
         if (_vm is null) return;
         Touch();
+        // Своя правка входящих ссылок записи не меняет (ссылка на себя не показывается): блок ссылок
+        // остается свежим, если его чтение сейчас не идет.
+        if (!BacklinksLoading) BacklinksStamp = DataStamp;
         RecordChanged?.Invoke(this, _vm.RecordId);
     }
     public event EventHandler<bool>? CollectionPanelToggled;
@@ -148,7 +151,7 @@ public partial class RecordPageView : UserControl
 
     // База ПОКАЗЫВАЕМОЙ записи (0 — активная). Панель может быть открыта межбазовым переходом, и тогда
     // «текущая база» для нее и для приложения — РАЗНЫЕ. Без этого внутрибазовая связь чужой записи
-    // уводила бы в активную базу (см. Navigate ниже).
+    // уводила бы в активную базу (см. NavigateTo).
     private int _dbId;
 
     // Гасит авто-сейв описания на время служебной установки текста (Show/ReloadFromDb), чтобы
@@ -279,6 +282,8 @@ public partial class RecordPageView : UserControl
                                               $"{Utils.DbErrors.Display(repository.DbPath)}, коллекция {collectionId}, запись {recordId}");
 
         Touch();
+        // Та же запись открыта снова — прежние ссылки видны сразу, пока читаются свежие.
+        if (!Shows(repository) || _vm?.RecordId != recordId) ResetBacklinks();
         _repo = repository;
         _dbId = dbId;
         _vm = new RecordPageViewModel(repository, recordId, collectionId);
@@ -293,6 +298,7 @@ public partial class RecordPageView : UserControl
         BuildProperties();
         ApplyPropsHeight();
         RefreshActions();
+        LoadBacklinks();
 
         // Новая запись — нижний блок по умолчанию на «Описании»; описания у коллекции нет —
         // снизу пусто, а в крошке снова видна ссылка + «Добавить описание» (выбор другого
@@ -327,6 +333,7 @@ public partial class RecordPageView : UserControl
 
         BuildProperties();
         ApplyPropsHeight();
+        LoadBacklinks();
 
         FooterBar.IsPreview = preview;
 
@@ -337,6 +344,7 @@ public partial class RecordPageView : UserControl
 
     public void Clear()
     {
+        ResetBacklinks();
         _vm = null;
         _repo = null;
         DataContext = null;
@@ -595,7 +603,10 @@ public partial class RecordPageView : UserControl
         var items = _vm.OrderedItems.Where(item => item is not FieldItem fi ||
             !FooterBar.HideEmptyProperties || !IsEmptyProperty(fi.Row)).ToList();
         // Набор текста обычно не меняет состав списка: не создаем карточки и их делегаты заново.
-        if (_cards.Count == items.Count + 1 && items.Select((item, index) => item switch
+        // Свои карточки — до «Добавить свойство», хвост ссылок — из того же ответа.
+        if (_cards.FindIndex(c => c.Kind == PropertyCardKind.Add) == items.Count
+            && ReferenceEquals(_cardsBacklinks, _backlinks) && _cardsHideEmpty == FooterBar.HideEmptyProperties
+            && items.Select((item, index) => item switch
             {
                 FieldItem fi => ReferenceEquals(_cards[index].Tag, fi.Row),
                 _ => _cards[index].Kind == PropertyCardKind.Title,
@@ -608,9 +619,9 @@ public partial class RecordPageView : UserControl
         // Порядок строго как в таблице: VM уже отсортировала элементы по эффективной позиции
         // колонки. «Описание» — обычное поле и идет в этом же списке, отдельной карточки у него
         // нет; «Название» — системная колонка, у него своя карточка на ее месте. «Добавить
-        // свойство» — единственная карточка с фиксированным местом (всегда внизу); тоже входит в
-        // общий ресайз колонки названий (ручка ⋮). Карточки — описания для рисованного списка;
-        // контролы значений строятся только под указателем (BuildEditor).
+        // свойство» стоит внизу своих свойств, под ним — блок ссылок на запись (BacklinkCards); обе
+        // входят в общий ресайз колонки названий (ручка ⋮). Карточки — описания для рисованного
+        // списка; контролы значений строятся только под указателем (BuildEditor).
         foreach (var item in items)
         {
             switch (item)
@@ -633,6 +644,7 @@ public partial class RecordPageView : UserControl
             }
         }
         cards.Add(new PropertyCard { Name = "Добавить свойство", IconKey = "IconPlus", Kind = PropertyCardKind.Add });
+        cards.AddRange(BacklinkCards());
         PropertiesHost.CloseEditor();
         _cards = cards;
         _titleIndex = titleIndex;
@@ -724,6 +736,7 @@ public partial class RecordPageView : UserControl
         {
             PropertyCardKind.Field when card.Tag is PropertyRowVm row => MakeInputForField(row),
             PropertyCardKind.Title => MakeTitleInput(),
+            PropertyCardKind.Backlink when card.Tag is RelationBacklinkGroup group => MakeBacklinkBox(group),
             _ => null,
         };
         if (input is null) return null;
@@ -760,7 +773,11 @@ public partial class RecordPageView : UserControl
         if (TargetAt(index) is { } target && editor is TextBox tb) target.Inline = tb;
     }
 
-    private void OnPropertyEditorLostFocus(object? sender, RoutedEventArgs e) => SchedulePropertyFilter();
+    private void OnPropertyEditorLostFocus(object? sender, RoutedEventArgs e)
+    {
+        SchedulePropertyFilter();
+        SchedulePendingBacklinks();
+    }
 
     // Редактор снят: ссылки на него отпускаются, карточка снова рисуется из модели.
     private void OnEditorClosed(int index, Control editor)
@@ -772,6 +789,7 @@ public partial class RecordPageView : UserControl
             _fileEditors.Remove(fid);
         PropertiesHost.RefreshValues();
         SchedulePropertyFilter();
+        SchedulePendingBacklinks();
     }
 
     private BottomTextTarget? TargetAt(int index)
@@ -814,6 +832,12 @@ public partial class RecordPageView : UserControl
             return;
         }
         if (!props.IsLeftButtonPressed) return;
+
+        if (card.Kind == PropertyCardKind.Backlink)
+        {
+            PressBacklink(index, e);
+            return;
+        }
 
         if (card.Kind == PropertyCardKind.Add)
         {
@@ -1684,15 +1708,7 @@ public partial class RecordPageView : UserControl
                     HorizontalAlignment = HorizontalAlignment.Stretch,
                     RecordId            = _vm?.RecordId ?? 0,
                 };
-                rel.Navigate += (_, t) =>
-                {
-                    // t.DbId = 0 означает «в базе ЭТОЙ записи», а она не обязательно активная: панель
-                    // могла быть открыта межбазовым переходом. Подставляем базу панели (_dbId), иначе
-                    // внутрибазовая связь чужой записи открывалась бы в АКТИВНОЙ базе — чужая/пустая.
-                    var db = t.DbId > 0 ? t.DbId : _dbId;
-                    if (db > 0) CrossDbRelatedRecordRequested?.Invoke(this, (db, t.RecordId));
-                    else RelatedRecordRequested?.Invoke(this, t.RecordId);            // панель в активной БД
-                };
+                rel.Navigate += (_, t) => NavigateTo(t.DbId, t.RecordId);
                 rel.Changed += (_, _) =>
                 {
                     _relationText.Remove(relFid);

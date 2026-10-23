@@ -665,8 +665,10 @@ public class AppDbContext : DbContext
             e.HasKey(x => x.Id);
             // Чипы ячейки: связи одного поля одной записи в порядке Position (горячий путь показа).
             e.HasIndex(x => new { x.FieldId, x.FromRecordId, x.Position });
-            // Очистка при удалении цели В ЭТОЙ ЖЕ БД (TargetDbId=0): кто ссылается на запись.
-            e.HasIndex(x => x.ToRecordId);
+            // Кто ссылается на запись: очистка при удалении цели, запрет удаления и обратные ссылки
+            // страницы записи. Покрывающий: свойство, база цели и источник читаются из индекса, а
+            // «сначала новые источники» — обратным проходом без сортировки (на миллионе ребер).
+            e.HasIndex(x => new { x.ToRecordId, x.TargetDbId, x.FieldId, x.FromRecordId });
             // Не даем задвоить связь; TargetDbId в ключе различает одинаковые id в разных целевых БД.
             e.HasIndex(x => new { x.FieldId, x.FromRecordId, x.TargetDbId, x.ToRecordId }).IsUnique();
             // Каскады на поле-связь и запись-источник (всегда в этой же БД). FK на ToRecordId НЕТ:

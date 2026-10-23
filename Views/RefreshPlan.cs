@@ -33,6 +33,7 @@ public static class RefreshPlan
         Retry              = 1 << 8,   // идет ввод — зайти снова позже с тем же коммитом
         LibrarySidebar     = 1 << 9,
         Library            = 1 << 10,  // видимая библиотека: SetActiveIds(force) — тихо
+        RecordPanelBacklinks = 1 << 11, // блок ссылок открытой панели записи: RefreshBacklinks
     }
 
     /// <summary>Снимок частей экрана на момент применения коммита ОДНОЙ базы.</summary>
@@ -43,6 +44,8 @@ public static class RefreshPlan
     /// <param name="CellEditing">В таблице открыт редактор ячейки.</param>
     /// <param name="RecordPanelShowsDb">Панель записи открыта и показывает запись этой базы.</param>
     /// <param name="RecordPanelFocused">Фокус ввода в панели записи — человек может печатать.</param>
+    /// <param name="RecordPanelBacklinkSource">Коммит этой базы может изменить блок «Ссылаются на эту
+    /// запись» открытой панели: это база записи или прочитанная блоком другая база.</param>
     public sealed record Screen(
         long   CommitStamp,
         bool   Structural,
@@ -59,7 +62,9 @@ public static class RefreshPlan
         bool   CellEditing,
         bool   RecordPanelShowsDb,
         long   RecordPanelStamp,
-        bool   RecordPanelFocused);
+        bool   RecordPanelFocused,
+        bool   RecordPanelBacklinkSource = false,
+        long   RecordPanelBacklinksStamp = 0);
 
     public static Steps After(Screen s)
     {
@@ -96,6 +101,12 @@ public static class RefreshPlan
             if (s.RecordPanelFocused) steps |= Steps.Retry;
             else                      steps |= Steps.RecordPanel;
         }
+
+        // Ссылки на запись панели: коммит в базе-источнике — своей или другой подключенной.
+        // Перечитанная целиком панель читает и их. Повтора не нужно: ответ, пришедший во время
+        // ввода, панель сама применит, когда редактор освободится.
+        if (s.RecordPanelBacklinkSource && IsStale(s.RecordPanelBacklinksStamp, stamp) && !steps.Has(Steps.RecordPanel))
+            steps |= Steps.RecordPanelBacklinks;
 
         return steps;
     }

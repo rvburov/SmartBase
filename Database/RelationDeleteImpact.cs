@@ -106,7 +106,7 @@ public static class RelationDeleteImpact
                 // Источники, удаляемые в той же операции в базе b, не считаются. Перенос копирует
                 // записи с новыми номерами: ссылка между переносимыми обрывается так же, как ссылка
                 // извне, поэтому при переносе считаются все.
-                IReadOnlyCollection<int>? Together(BaseRef b) => move ? null
+                IReadOnlyCollection<int>? Together(RelationBaseRef b) => move ? null
                     : sets.Where(s => s.Base.Path == b.Path).SelectMany(s => s.Ids).ToList();
                 using (var repo = owner.Open())
                     items.AddRange(repo.Repo.IncomingReferences(ids, owner.Targets, Together(owner)).Select(r => ((string?)null, r)));
@@ -140,7 +140,7 @@ public static class RelationDeleteImpact
                 // Удаление: ссылки из всех коллекций операции в базе b уходят вместе с ними. Перенос
                 // в другую базу идет по узлу за раз со своей картой копии: переписываются только
                 // ссылки внутри этого узла, ссылки между узлами обрываются и считаются.
-                IReadOnlyCollection<int> Together(BaseRef b) => move
+                IReadOnlyCollection<int> Together(RelationBaseRef b) => move
                     ? (b.Path == owner.Path ? collections : [])
                     : sets.Where(s => s.Base.Path == b.Path).SelectMany(s => s.Collections).ToList();
                 using (var repo = owner.Open())
@@ -175,31 +175,9 @@ public static class RelationDeleteImpact
         return new(null, ConstructorRepository.DescribeReferenceList(items.Select(i => i.Reference), Database), items.Count);
     }
 
-    // Снимок базы для фоновой проверки (берется на UI-потоке): общий контекст в фон не уходит.
-    private sealed record BaseRef(int LinkId, string Path, PermissionService? Permissions, string? Name)
-    {
-        public int[] Targets => LinkId > 0 ? [0, LinkId] : [0];
+    private static RelationBaseRef Capture(ConstructorRepository repo) => RelationBaseRef.Of(repo);
 
-        public OpenedBase Open()
-        {
-            var context = new AppDbContext(Path);
-            return new(context, new ConstructorRepository(context) { Permissions = Permissions });
-        }
-    }
-
-    private sealed record OpenedBase(AppDbContext Context, ConstructorRepository Repo) : IDisposable
-    {
-        public void Dispose() => Context.Dispose();
-    }
-
-    private static BaseRef Capture(ConstructorRepository repo)
-    {
-        var linkId = RelationDbResolver.DbIdFor(repo);
-        return new(linkId, repo.DbPath, repo.Permissions, linkId > 0 ? RelationDbResolver.DbName(linkId) : null);
-    }
-
-    private static List<BaseRef> Mounted() => RelationDbResolver.MountedReposExcept(0)
-        .Select(p => new BaseRef(p.DbId, p.Repo.DbPath, p.Repo.Permissions, RelationDbResolver.DbName(p.DbId))).ToList();
+    private static List<RelationBaseRef> Mounted() => RelationBaseRef.Mounted();
 }
 
 /// <summary>Итог проверки ссылок перед удалением или переносом. <see cref="Blocked"/> — текст отказа

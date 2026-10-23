@@ -159,6 +159,38 @@ public sealed class RefreshPlanTests
     }
 
     [Fact]
+    public void A_commit_in_a_source_database_rereads_the_backlinks_only()
+    {
+        // Коммит в другой базе, на которую смотрит блок ссылок: сама панель показывает другую базу.
+        var source = AllFresh() with
+        {
+            RecordPanelShowsDb = false, RecordPanelStamp = Old,
+            RecordPanelBacklinkSource = true, RecordPanelBacklinksStamp = Old,
+        };
+        Assert.Equal(Steps.RecordPanelBacklinks, After(source));
+        // Блок прочитан после коммита — нечего делать; база не источник — тоже.
+        Assert.Equal(Steps.None, After(source with { RecordPanelBacklinksStamp = Fresh }));
+        Assert.Equal(Steps.None, After(source with { RecordPanelBacklinkSource = false }));
+    }
+
+    [Fact]
+    public void Backlinks_ride_with_the_whole_panel_and_do_not_wait_for_typing()
+    {
+        var own = AllFresh() with
+        {
+            RecordPanelStamp = Old, RecordPanelBacklinkSource = true, RecordPanelBacklinksStamp = Old,
+        };
+        // Перечитанная панель читает и ссылки.
+        Assert.Equal(Steps.RecordPanel, After(own));
+        // Фокус в панели: сама она ждет, ссылки читаются сразу — панель применит их, когда поле
+        // освободится, и повтора ради них нет.
+        var typing = After(own with { RecordPanelFocused = true });
+        Assert.Equal(Steps.Retry | Steps.RecordPanelBacklinks, typing);
+        Assert.Equal(Steps.RecordPanelBacklinks,
+            After(own with { RecordPanelStamp = Fresh, RecordPanelFocused = true }));
+    }
+
+    [Fact]
     public void Retry_round_after_typing_finds_the_rest_already_fresh()
     {
         // Первый заход: таблица в редакторе, календарь устарел → календарь перечитан, таблица ждет.

@@ -55,23 +55,25 @@ public sealed partial class PermissionService(AppDbContext db)
 
     // ── Снапшот текущего пользователя (кеш; обновляет Reload) ────────────────
     public int  CurrentUserId { get; private set; }
-    public bool IsAdmin       { get; private set; }
-    public bool IsApproved    { get; private set; }
+    public bool IsAdmin       => _grants.IsAdmin;
+    public bool IsApproved    => _grants.IsApproved;
     /// <summary>У базы установлен пароль (хеш в db_meta).</summary>
     public bool HasPassword   { get; private set; }
     /// <summary>Автоочистка журнала включена (политика в db_meta, применяется при монтировании).</summary>
     public bool RetentionEnabled { get; private set; }
     /// <summary>Сколько месяцев журнала хранить при включенной автоочистке.</summary>
     public int  RetentionMonths  { get; private set; } = DefaultRetentionMonths;
-    private int _dbMask = (int)PermAction.All;
-    private Dictionary<int, int> _collectionMasks = [];
+    // Допуск и маски — одним снимком: Can из фонового потока (обратные ссылки, окно удаления)
+    // не застанет половину пересчета и не читает словарь, пока его заполняют.
+    private sealed record Grants(bool IsAdmin, bool IsApproved, int DbMask, IReadOnlyDictionary<int, int> Collections);
+    private volatile Grants _grants = new(false, false, (int)PermAction.All, new Dictionary<int, int>());
 
     /// <summary>Права пересчитаны (допуск, маски, пароль) — UI перечитывает кнопки
     /// и списки пользователей (опции полей «пользователь»).</summary>
     public event EventHandler? Changed;
 
     /// <summary>Текущему пользователю доступно содержимое базы.</summary>
-    public bool AccessGranted => IsAdmin || IsApproved;
+    public bool AccessGranted => _grants is var g && (g.IsAdmin || g.IsApproved);
 
     // ── Свежие чтения (мимо кеша EF) ──────────────────────────────────────────
     //
@@ -198,11 +200,12 @@ public sealed partial class PermissionService(AppDbContext db)
     /// <summary>Разрешено ли действие текущему пользователю (в коллекции или на уровне базы).</summary>
     public bool Can(PermAction action, int? collectionId = null)
     {
-        if (IsAdmin) return true;
-        if (!IsApproved) return false;
-        var mask = collectionId is int cid && _collectionMasks.TryGetValue(cid, out var m)
+        var grants = _grants;
+        if (grants.IsAdmin) return true;
+        if (!grants.IsApproved) return false;
+        var mask = collectionId is int cid && grants.Collections.TryGetValue(cid, out var m)
             ? m
-            : _dbMask;
+            : grants.DbMask;
         return (mask & (int)action) == (int)action;
     }
 
@@ -218,8 +221,6 @@ public sealed partial class PermissionService(AppDbContext db)
     {
         var me = FreshUsers.FirstOrDefault(u => u.UserKey == CurrentUser.Key);
         CurrentUserId = me?.Id ?? 0;
-        IsAdmin       = me?.IsAdmin    ?? false;
-        IsApproved    = me?.IsApproved ?? false;
         HasPassword   = _db.DbMeta.Any(m => m.Key == MetaPasswordHash);
         PasswordAccessEnabled = GetMeta(MetaPasswordAccess) != "0";
         LastPasswordUnlock = System.DateTimeOffset.TryParse(
@@ -231,14 +232,15 @@ public sealed partial class PermissionService(AppDbContext db)
         RetentionMonths  = int.TryParse(GetMeta(MetaRetentionMonths), out var rm) && rm > 0
             ? rm : DefaultRetentionMonths;
 
-        _dbMask = (int)PermAction.All;
-        _collectionMasks = [];
+        var dbMask = (int)PermAction.All;
+        var collectionMasks = new Dictionary<int, int>();
         if (me is not null)
             foreach (var p in FreshPerms.Where(p => p.UserId == me.Id).ToList())
             {
-                if (p.CollectionId is int cid) _collectionMasks[cid] = p.ActionsMask;
-                else                           _dbMask               = p.ActionsMask;
+                if (p.CollectionId is int cid) collectionMasks[cid] = p.ActionsMask;
+                else                           dbMask               = p.ActionsMask;
             }
+        _grants = new(me?.IsAdmin ?? false, me?.IsApproved ?? false, dbMask, collectionMasks);
 
         if (notify) Changed?.Invoke(this, EventArgs.Empty);
     }

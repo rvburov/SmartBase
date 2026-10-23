@@ -446,9 +446,11 @@ public partial class MainWindow : Window
         // если это та же запись (значения свойств, имя и описание перечитываются из БД).
         ConstructorModule.RecordValueEdited   += (_, rid) =>
         {
-            // Только для записи ТЕКУЩЕЙ базы (DbId=0): правка в таблице к межбазовой записи в панели
-            // отношения не имеет, а id в разных базах могут совпасть.
-            if (_recordPanelLogicalOpen && _lastOpened is { DbId: 0 } l && rid == l.RecordId)
+            // Только если панель показывает запись базы таблицы: правка в таблице к записи другой
+            // базы отношения не имеет, а id в разных базах могут совпасть. База — по репозиторию
+            // панели, а не по способу открытия: восстановленная при запуске панель открывает
+            // активную базу по ее постоянному номеру.
+            if (_recordPanelLogicalOpen && RecordPanel.Shows(CurrentConstructorRepo) && _lastOpened is { } l && rid == l.RecordId)
                 RecordPanel.ReloadFromDb();
         };
         // Состав/имена свойств изменились в таблице (добавили/удалили/переименовали/дублировали поле) —
@@ -959,9 +961,13 @@ public partial class MainWindow : Window
         else if (_activeModule == "library" && changes.Any(c => c.TargetType != "user"))
             _libraryView?.RefreshRemote(LibrarySidebar.GetActiveIds());
 
-        // Открытая панель записи могла показывать измененную запись — перечитать значения.
-        if (_recordPanelLogicalOpen && _currentConstructorDbId == dbId)
+        // Открытая панель записи могла показывать измененную запись — перечитать значения. Правка
+        // в другой базе могла добавить или снять ссылку на ее запись — перечитать блок ссылок.
+        if (_recordPanelLogicalOpen && RecordPanel.Shows(changedDb.Constructor))
             RecordPanel.ReloadFromDb();
+        else if (_recordPanelLogicalOpen && RecordPanel.BacklinksWatch(changedDb.Constructor)
+                 && changes.Any(c => c.TargetType is "record" or "records" or "field" or "collection"))
+            RecordPanel.RefreshBacklinks();
     }
 
     // ── Свои изменения: единая шина ───────────────────────────────────────────
@@ -1030,7 +1036,7 @@ public partial class MainWindow : Window
     // снова — остальные части к тому времени уже свежие (их отметки новее) и не трогаются.
     private void ApplyLocalChanges(int dbId, bool structural, long stamp)
     {
-        if (_workspace.Get(dbId) is null) return;
+        if (_workspace.Get(dbId) is not { } db) return;
 
         var steps = RefreshPlan.After(new RefreshPlan.Screen(
             CommitStamp:             stamp,
@@ -1047,9 +1053,11 @@ public partial class MainWindow : Window
             ConstructorShowsDb:      _currentConstructorDbId == dbId && ConstructorModule.IsVisible,
             ConstructorStamp:        ConstructorModule.DataStamp,
             CellEditing:             ConstructorModule.IsCellEditing,
-            RecordPanelShowsDb:      _recordPanelLogicalOpen && _currentConstructorDbId == dbId,
+            RecordPanelShowsDb:      _recordPanelLogicalOpen && RecordPanel.Shows(db.Constructor),
             RecordPanelStamp:        RecordPanel.DataStamp,
-            RecordPanelFocused:      RecordPanel.IsKeyboardFocusWithin));
+            RecordPanelFocused:      RecordPanel.IsKeyboardFocusWithin,
+            RecordPanelBacklinkSource: _recordPanelLogicalOpen && RecordPanel.BacklinksWatch(db.Constructor),
+            RecordPanelBacklinksStamp: RecordPanel.BacklinksStamp));
 
         // Сайдбары — раньше разделов: набор галочек читается уже с перестроенного дерева.
         if (steps.Has(RefreshPlan.Steps.CalendarSidebar))    CalendarSidebar.Refresh();
@@ -1065,6 +1073,7 @@ public partial class MainWindow : Window
         else if (steps.Has(RefreshPlan.Steps.ConstructorRows)) ConstructorModule.RefreshRowsRemote();
 
         if (steps.Has(RefreshPlan.Steps.RecordPanel)) RecordPanel.ReloadFromDb();
+        if (steps.Has(RefreshPlan.Steps.RecordPanelBacklinks)) RecordPanel.RefreshBacklinks();
 
         if (steps.Has(RefreshPlan.Steps.Retry))
             DispatcherTimer.RunOnce(() => ApplyLocalChanges(dbId, structural, stamp), LocalRetryDelay);
@@ -1362,6 +1371,7 @@ public partial class MainWindow : Window
         _settingsView?.RefreshDatabases();   // обновить статус «подключена/не подключена»
         _profileView?.OnDatabasesChanged();  // история — только базы с допуском, панель администратора — свои базы
         SyncProfileSidebar();                // админство пропало вместе с базой — «Журнал безопасности» уходит из меню
+        if (_recordPanelLogicalOpen) RecordPanel.RefreshBacklinks();   // ссылки из подключенной или отключенной базы
     }
 
     // ── Живой состав пользователей базы ───────────────────────────────────────
@@ -1404,7 +1414,10 @@ public partial class MainWindow : Window
         ConstructorSidebar.Refresh();
 
         if (_activeModule == "tasks") _tasksView?.Refresh();
-        if (_recordPanelLogicalOpen && _currentConstructorDbId == dbId) RecordPanel.ReloadFromDb();
+        // Права любой базы решают, какие ссылки на запись видны: закрытая коллекция-источник
+        // пропадает из блока ссылок без перезапуска.
+        if (_recordPanelLogicalOpen && RecordPanel.Shows(_workspace.Get(dbId)?.Constructor)) RecordPanel.ReloadFromDb();
+        else if (_recordPanelLogicalOpen) RecordPanel.RefreshBacklinks();
     }
 
     // Клик по запертой базе в сайдбаре — это и есть просьба о доступе. Включен доступ по

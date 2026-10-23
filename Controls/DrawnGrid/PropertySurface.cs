@@ -9,8 +9,9 @@ using SmartBase.Utils;
 
 namespace SmartBase.Controls.DrawnGrid;
 
-/// <summary>Вид карточки списка свойств: свойство записи, системное «Название», «Добавить свойство».</summary>
-public enum PropertyCardKind { Field, Title, Add }
+/// <summary>Вид карточки списка свойств: свойство записи, системное «Название», «Добавить свойство»,
+/// подпись раздела ссылок («Ссылаются на эту запись») и карточка ссылок («Счета · Клиент»).</summary>
+public enum PropertyCardKind { Field, Title, Add, Section, Backlink }
 
 /// <summary>
 /// Карточка списка свойств страницы записи — что рисовать: название и иконка типа, тип и значение
@@ -28,7 +29,8 @@ public sealed class PropertyCard
     public string FieldType        { get; init; } = "text";
     /// <summary>Значение хранения из модели; у «Названия» — редактируемый текст названия.</summary>
     public Func<string> Value      { get; init; } = static () => "";
-    /// <summary>Серая подсказка при пустом значении (url — «https://», название — «Без названия»).</summary>
+    /// <summary>Серая подсказка при пустом значении (url — «https://», название — «Без названия»,
+    /// карточка ссылок — «ссылок нет»).</summary>
     public string Placeholder      { get; init; } = "";
     /// <summary>Значение приглушенным серым (вычисляемые, «связь не настроена»).</summary>
     public bool Muted              { get; init; }
@@ -232,10 +234,10 @@ public sealed class PropertySurface : Control, IEditorSurface
 
     /// <summary>Полоса самого контрола значения — как он стоял в карточке (поле в 14 по центру, дата и
     /// файл 16, мультисписок и связь 30, галочка 24×16); клик по ней — правка, мимо нее в карточке —
-    /// выделение. У «Добавить свойство» значения нет.</summary>
+    /// выделение. У «Добавить свойство» и подписи раздела значения нет.</summary>
     public Rect ValueControlRect(int index)
     {
-        if (index < 0 || index >= _cards.Count || _cards[index].Kind == PropertyCardKind.Add) return default;
+        if (index < 0 || index >= _cards.Count || _cards[index].Kind is PropertyCardKind.Add or PropertyCardKind.Section) return default;
         var value = ValueRect(index);
         var scale = CurrentScale();
         var textH = TextBoxHeight(scale);
@@ -290,7 +292,8 @@ public sealed class PropertySurface : Control, IEditorSurface
         var i = (int)Math.Floor((p.Y + _offsetY - MarginTop) / Pitch);
         if (i < 0 || i >= _cards.Count) return PropertyHit.None;
         var card = CardRect(i);
-        if (!card.Contains(p)) return PropertyHit.None;
+        // Подпись раздела — не карточка: ни наведения, ни нажатия.
+        if (!card.Contains(p) || _cards[i].Kind == PropertyCardKind.Section) return PropertyHit.None;
         if (GripRect(i).Contains(p)) return new PropertyHit(i, PropertyZone.Grip, card);
         var control = ValueControlRect(i);
         if (control.Width > 0 && control.Contains(p)) return new PropertyHit(i, PropertyZone.Value, card);
@@ -534,7 +537,15 @@ public sealed class PropertySurface : Control, IEditorSurface
         var card     = _cards[i];
         var rect     = CardRect(i);
         var content  = ContentRect(rect);
-        var selected = card.Kind != PropertyCardKind.Add && IsSelected(i);
+        if (card.Kind == PropertyCardKind.Section)
+        {
+            // Подпись раздела без плашки и ручки: серый текст у нижнего края места карточки, над
+            // карточками своего раздела, — во всю ширину (имя базы бывает длинным).
+            var label = new Rect(content.X, content.Bottom - IconSize, content.Width, IconSize);
+            DrawLabel(ctx, card.Name, label, _s.Secondary, "s", scale, TextTrimming.CharacterEllipsis);
+            return;
+        }
+        var selected = card.Kind is PropertyCardKind.Field or PropertyCardKind.Title && IsSelected(i);
         var hovered  = _hover == i;
 
         // Плашка: как Border с равномерной рамкой — заливка и обводка одним прямоугольником по краю,
@@ -640,7 +651,8 @@ public sealed class PropertySurface : Control, IEditorSurface
                 var textArea = new Rect(box.X, box.Y, Math.Max(1, box.Width - (ClipPadLeft + IconSize + ClipPadRight)), box.Height);
                 if (card.Muted) DrawLabel(ctx, text, textArea, _s.Secondary, "s", scale, TextTrimming.CharacterEllipsis);
                 else if (text.Length > 0) DrawLabel(ctx, text, textArea, _s.Primary, "p", scale, TextTrimming.CharacterEllipsis);
-                else DrawLabel(ctx, "связи нет", textArea, _s.Secondary, "s", scale, TextTrimming.CharacterEllipsis);
+                else DrawLabel(ctx, card.Placeholder.Length > 0 ? card.Placeholder : "связи нет", textArea, _s.Secondary, "s", scale,
+                               TextTrimming.CharacterEllipsis);
                 if (!card.Muted && _s.CachedIcon("IconFieldRelation") is { } link)
                     _s.DrawIcon(ctx, link, box.Right - ClipPadRight - IconSize, box.Y + SurfaceStyle.Snap((box.Height - IconSize) / 2, scale), _s.Secondary);
                 return;

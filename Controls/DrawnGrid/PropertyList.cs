@@ -89,7 +89,10 @@ public sealed class PropertyList : Panel, ILogicalScrollable
         Editor.AddHandler(PointerPressedEvent, (_, e) =>
         {
             if (_editing < 0) return;
-            if (e.Source is Visual v && v.GetVisualRoot() is PopupRoot) return;   // клик в выпадающем списке
+            // Клик в выпадающем списке редактора — его окне или слое окна (так списки живут без
+            // экрана и на платформах со списками в слое окна): событие идет к контролу по
+            // логическому родителю, но карточку не нажимает.
+            if (e.Source is Visual v && (v.GetVisualRoot() is PopupRoot || v.FindAncestorOfType<OverlayPopupHost>(includeSelf: true) is not null)) return;
             CardPressed?.Invoke(this, new PropertyPointerEventArgs(new PropertyHit(_editing, PropertyZone.Value, Surface.CardRect(_editing)), e));
         }, RoutingStrategies.Tunnel);
     }

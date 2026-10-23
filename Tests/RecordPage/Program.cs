@@ -10,7 +10,7 @@
 // Карточки — индексы рисованного списка (PropertyList): их прямоугольники считает поверхность,
 // редактор над карточкой появляется под указателем.
 //
-//   dotnet run -c Release --project Tests/RecordPage -- [--db PATH] [--wide PATH] [--out DIR] [--ref DIR] [--only frames|behave|perf|empty|fileauto|fileprobe|fileload|relations|relationcomputed|relationintegrity] [--gate]
+//   dotnet run -c Release --project Tests/RecordPage -- [--db PATH] [--wide PATH] [--out DIR] [--ref DIR] [--only frames|behave|perf|empty|fileauto|fileprobe|fileload|relations|relationcomputed|relationintegrity|backlinks] [--gate]
 
 using System.Diagnostics;
 using System.Reflection;
@@ -40,7 +40,7 @@ var gate    = args.Contains("--gate");
 Directory.CreateDirectory(outDir);
 Directory.CreateDirectory(refDir);
 Console.OutputEncoding = System.Text.Encoding.UTF8;
-if (only is not ("empty" or "fileauto" or "fileprobe" or "fileload" or "relationcomputed" or "relations" or "relationintegrity") && !File.Exists(dbPath)) { Console.WriteLine($"Нет базы стенда: {dbPath}"); return 1; }
+if (only is not ("empty" or "fileauto" or "fileprobe" or "fileload" or "relationcomputed" or "relations" or "relationintegrity" or "backlinks") && !File.Exists(dbPath)) { Console.WriteLine($"Нет базы стенда: {dbPath}"); return 1; }
 
 // Порядок важен: UseSkia ДО UseHeadless (как в Tests/GridProto).
 AppBuilder.Configure<SmartBase.App>()
@@ -74,6 +74,7 @@ if (only == "fileload") return FileAutoLoadChecks.Run(Arg("--files"));
 if (only == "relationcomputed") return RelationComputedChecks.Run(outDir);
 if (only == "relations") return RelationChecks.Run(outDir);
 if (only == "relationintegrity") return RelationIntegrityChecks.Run(outDir);
+if (only == "backlinks") return BacklinkChecks.Run(outDir);
 
 // Копия базы: стенд пишет значения свойств.
 var copy = Path.Combine(outDir, "page-" + Path.GetFileName(dbPath));
@@ -139,6 +140,7 @@ if (only is null or "behave")
 
 if (only is null && EmptyPropertiesChecks.Run(outDir) != 0) failed++;
 if (only is null && FileAutoChecks.Run(outDir) != 0) failed++;
+if (only is null && BacklinkChecks.Run(outDir) != 0) failed++;
 
 if (only is null or "perf")
 {
@@ -167,6 +169,8 @@ return worst == 0 && failed == 0 ? 0 : 2;
     Settle(w);
     page.Show(r, recordId, collectionId);
     Pump();
+    // Блок ссылок читается в фоне: кадр снимается после ответа, иначе он зависел бы от скорости диска.
+    for (var i = 0; i < 1000 && page.BacklinksLoading; i++) { Pump(); Thread.Sleep(5); }
     for (var i = 0; i < 8; i++) { Pump(); w.UpdateLayout(); w.CaptureRenderedFrame(); Thread.Sleep(5); }
     return (w, page);
 }

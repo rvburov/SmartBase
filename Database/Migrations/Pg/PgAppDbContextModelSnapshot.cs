@@ -564,12 +564,12 @@ namespace SmartBase.Database.Migrations.Pg
 
                     b.HasIndex("FromRecordId");
 
-                    b.HasIndex("ToRecordId");
-
                     b.HasIndex("FieldId", "FromRecordId", "Position");
 
                     b.HasIndex("FieldId", "FromRecordId", "TargetDbId", "ToRecordId")
                         .IsUnique();
+
+                    b.HasIndex("ToRecordId", "TargetDbId", "FieldId", "FromRecordId");
 
                     b.ToTable("db_record_links", (string)null);
                 });

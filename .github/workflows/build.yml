@@ -402,6 +402,7 @@ jobs:
           dotnet run --project Tests/RecordPage --framework net10.0 --configuration Release --no-build -- --only relations --out "$RUNNER_TEMP/relation-ui" --ref "$RUNNER_TEMP/ui-reference"
           dotnet run --project Tests/RecordPage --framework net10.0 --configuration Release --no-build -- --only relationcomputed --out "$RUNNER_TEMP/relation-ui" --ref "$RUNNER_TEMP/ui-reference"
           dotnet run --project Tests/RecordPage --framework net10.0 --configuration Release --no-build -- --only relationintegrity --out "$RUNNER_TEMP/relation-ui" --ref "$RUNNER_TEMP/ui-reference"
+          dotnet run --project Tests/RecordPage --framework net10.0 --configuration Release --no-build -- --only backlinks --out "$RUNNER_TEMP/relation-ui" --ref "$RUNNER_TEMP/ui-reference"
           dotnet run --project Tests/RecordPage --framework net10.0 --configuration Release --no-build -- --only fileauto --out "$RUNNER_TEMP/file-ui" --ref "$RUNNER_TEMP/ui-reference"
           dotnet run --project Tests/RecordPage --framework net10.0 --configuration Release --no-build -- --only fileprobe --out "$RUNNER_TEMP/file-ui" --ref "$RUNNER_TEMP/ui-reference"
           dotnet run --project Tests/RecordPage --framework net10.0 --configuration Release --no-build -- --only fileload --files 100000 --out "$RUNNER_TEMP/file-ui" --ref "$RUNNER_TEMP/ui-reference"

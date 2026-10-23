@@ -92,7 +92,7 @@ internal static class EmptyPropertiesChecks
                    "пустые значения скрыты, ноль, false, мультисписок и заполненная связь видны в исходном порядке");
             Expect(editor.IsFocused && editor.Text == "" && Crumb() == description.Name,
                    "скрытие карточки пустого описания сохраняет нижний редактор и его фокус");
-            Expect(list.Cards.Any(c => c.Kind == PropertyCardKind.Title) && list.Cards[^1].Kind == PropertyCardKind.Add,
+            Expect(list.Cards.Any(c => c.Kind == PropertyCardKind.Title) && Names()[^1] == "Добавить свойство",
                    "название и добавление свойства остаются");
             Click(toggle);
             Expect(!footer.HideEmptyProperties && Names().SequenceEqual(originalOrder),
@@ -203,7 +203,10 @@ internal static class EmptyPropertiesChecks
                 if (!ok) failed++;
             }
 
-            string[] Names() => list.Cards.Select(c => c.Name).ToArray();
+            // Свои карточки: блок ссылок на запись (подпись раздела и карточки связей коллекции на
+            // саму себя) читается в фоне и проверяется стендом --only backlinks.
+            string[] Names() => list.Cards.Where(c => c.Kind is not (PropertyCardKind.Section or PropertyCardKind.Backlink))
+                .Select(c => c.Name).ToArray();
             string Crumb() => crumb.Children.OfType<TextBlock>().FirstOrDefault()?.Text ?? "";
             string Value(DbField field) => repo.GetFieldValues(recordId).GetValueOrDefault(field.Id!.Value, "");
             PropertyCard Card(string name) => list.Cards.First(c => c.Name == name);
