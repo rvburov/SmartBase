@@ -5,8 +5,8 @@ namespace SmartBase.Core.Models;
 /// <summary>
 /// Условие выбора записей связи: свойство цели, сравнение и значения («Статус» равно «Активен»
 /// или «На продлении»). Условия одной связи соединяются по «и». Сравнивается сохраненное значение
-/// записи-цели: у текста — без учета регистра и пробелов по краям, у списков и пользователя —
-/// точно, как фильтр столбца, у флажка — отмечен он или нет.
+/// записи-цели: у текста — без учета регистра и пробелов по краям («е с точками» равна «е»), у
+/// списков и пользователя — точно, как фильтр столбца, у флажка — отмечен он или нет.
 ///
 /// Условие держит новые связи (выбор, вставка, импорт, автоподбор); уже выбранные оно не
 /// снимает — несоответствия показывает проверка связей. Нечитаемое условие (повреждено или задано
@@ -83,14 +83,15 @@ public sealed record RelationCondition(string Field, string Op, IReadOnlyList<st
             };
         }
         // Окно задает тексту одно значение; несколько (настройка из файла, бывший список)
-        // читаются через «или», как и в тексте условия. Пустые значения не участвуют.
-        var text = (raw ?? "").Trim();
-        var expected = Values.Select(v => v.Trim()).Where(v => v.Length > 0).ToList();
+        // читаются через «или», как и в тексте условия. Пустые значения не участвуют. Свертка —
+        // общая с автоподбором (RelationAutoMatch.FoldText).
+        var text = RelationAutoMatch.FoldText(raw);
+        var expected = Values.Select(RelationAutoMatch.FoldText).Where(v => v.Length > 0).ToList();
         return Op switch
         {
-            Equal => expected.Any(v => string.Equals(text, v, StringComparison.OrdinalIgnoreCase)),
-            NotEqual => !expected.Any(v => string.Equals(text, v, StringComparison.OrdinalIgnoreCase)),
-            Contains => expected.Any(v => text.Contains(v, StringComparison.OrdinalIgnoreCase)),
+            Equal => expected.Contains(text, StringComparer.Ordinal),
+            NotEqual => !expected.Contains(text, StringComparer.Ordinal),
+            Contains => expected.Any(v => text.Contains(v, StringComparison.Ordinal)),
             Empty => text.Length == 0,
             _ => text.Length > 0,
         };

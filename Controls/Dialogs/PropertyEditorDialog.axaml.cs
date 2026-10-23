@@ -160,6 +160,7 @@ public partial class PropertyEditorDialog : Window
         InitializeExtendedRelations();
         InitializeRelationKeys();
         InitializeRelationCondition();
+        InitializeRelationAuto();
         InitializeRelationData();
 
         // Новое свойство открывается с типом из «Настройки → Конструктор базы данных»;
@@ -788,11 +789,7 @@ public partial class PropertyEditorDialog : Window
         RestoreRelationKeys(cfg);
         RestoreRelationCondition(cfg);
         RelationModeCombo.SelectedIndex = cfg.Auto is null ? 0 : 1;
-        if (cfg.Auto is { } auto)
-        {
-            SelectRelationProperty(RelationAutoSourceCombo, auto.SourceField);
-            SelectRelationProperty(RelationAutoTargetCombo, auto.TargetField);
-        }
+        if (cfg.Auto is { } auto) RestoreRelationAuto(auto);
     }
 
     // Проверка связей этого свойства: то же окно, что и в настройках базы, но только по нему и
@@ -831,10 +828,8 @@ public partial class PropertyEditorDialog : Window
         RelationAutoRule? auto = null;
         if (RelationModeCombo.SelectedIndex == 1)
         {
-            if (RelationAutoSourceCombo.SelectedItem is not RelationPropertyItem source ||
-                RelationAutoTargetCombo.SelectedItem is not RelationPropertyItem target)
-            { ShowError("Выберите свойства для автоматического сопоставления"); return null; }
-            auto = new RelationAutoRule(source.Key, target.Key);
+            auto = BuildRelationAutoRule();
+            if (auto is null) return null;
         }
         var restrict = RelationDeleteCombo.SelectedIndex == 1;           // 0 — Снять связь, 1 — Запретить удаление
         if (BuildRelationCondition() is not { } condition) return null;
@@ -1220,7 +1215,8 @@ public partial class PropertyEditorDialog : Window
                 else if (_selectedType == "file")             field.ConfigJson = fileConfig;
                 else if (_selectedType == "relation")         field.ConfigJson = relationConfig;
                 else if (_selectedType is "lookup" or "rollup") field.ConfigJson = computedConfig;
-                if (field.FieldType == "relation" && RelationConfig.FromConfig(field.ConfigJson)?.Auto is not null)
+                // Правило более новой версии сохраняется как есть, без подбора (UpdateField).
+                if (field.FieldType == "relation" && RelationConfig.FromConfig(field.ConfigJson)?.Auto is { IsReady: true })
                 {
                     var saved = await SaveAutoRelationAsync(field);
                     if (saved is null) return;
@@ -1250,7 +1246,7 @@ public partial class PropertyEditorDialog : Window
                                  : _selectedType is "lookup" or "rollup"     ? computedConfig
                                  : "{}",
                 };
-                if (_selectedType == "relation" && RelationConfig.FromConfig(relationConfig)?.Auto is not null)
+                if (_selectedType == "relation" && RelationConfig.FromConfig(relationConfig)?.Auto is { IsReady: true })
                 {
                     var saved = await SaveAutoRelationAsync(proposed);
                     if (saved is null) return;

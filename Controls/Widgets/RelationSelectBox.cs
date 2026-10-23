@@ -58,6 +58,7 @@ public sealed class RelationSelectBox : Panel
     private TextBlock? _moreHint;
     // Строка под поиском: условие выбора записей или почему новые связи не выбираются.
     private TextBlock? _conditionHint;
+    private TextBlock? _autoHint;
     // Выбранные раньше записи вне условия выбора: связь остается, снятую выбрать снова нельзя.
     private HashSet<RelationTarget> _outside = [];
     private int _recordId;
@@ -230,9 +231,32 @@ public sealed class RelationSelectBox : Panel
     private void OpenPopup()
     {
         if (_recordId <= 0 || _popup is null) return;
+        UpdateAutoHint();
         RefreshList("");
         _popup.IsOpen = true;
         _search?.Focus();
+    }
+
+    // «Подбирается автоматически: «ИНН» и «КПП».» — названия свойств этой коллекции.
+    private void UpdateAutoHint()
+    {
+        if (_autoHint is null) return;
+        _autoHint.IsVisible = _cfg.Auto is not null;
+        if (_cfg.Auto is not { } auto) return;
+        if (!auto.IsReady)
+        {
+            _autoHint.Text = ConstructorRepository.NotReadyMessage(auto);
+            return;
+        }
+        try
+        {
+            var collection = _repo.GetRecord(_recordId)?.CollectionId ?? 0;
+            var names = _repo.GetRelationPropertyOptions(collection).ToDictionary(o => o.Key, o => o.Name);
+            var list = auto.SourceKeys.Select(k => $"«{names.GetValueOrDefault(k, "?")}»").ToList();
+            var joined = list.Count == 1 ? list[0] : string.Join(", ", list.Take(list.Count - 1)) + " и " + list[^1];
+            _autoHint.Text = $"Подбирается автоматически: {joined}.";
+        }
+        catch (PermissionDeniedException) { _autoHint.Text = "Подбирается автоматически."; }
     }
 
     /// <summary>
@@ -266,6 +290,7 @@ public sealed class RelationSelectBox : Panel
     public void OpenSearch(string text)
     {
         if (_recordId <= 0 || _popup is null || _search is null) return;
+        UpdateAutoHint();
         if (_search.Text == text) RefreshList(text);
         else _search.Text = text;
         _popup.IsOpen = true;
@@ -380,6 +405,16 @@ public sealed class RelationSelectBox : Panel
             IsVisible    = false,
         };
 
+        // Автосвязь: по каким свойствам подбирается (галочки поэтому неактивны) или почему не подбирается.
+        _autoHint = new TextBlock
+        {
+            FontSize     = Res("FontSizeSmall", 11.0),
+            Foreground   = Brush("BrushSecondaryText", Colors.Gray),
+            TextWrapping = TextWrapping.Wrap,
+            Margin       = new Thickness(2, 0, 2, 4),
+            IsVisible    = false,
+        };
+
         // Подсказка «показаны первые N — уточните в поиске» (видна, когда кандидатов больше капа).
         _moreHint = new TextBlock
         {
@@ -393,6 +428,7 @@ public sealed class RelationSelectBox : Panel
         // записей дочитываются горизонтальной полосой карточки, а не растягивают попап.
         var stack = new StackPanel { Spacing = 2, Width = Res("PopupContentWidth", 240) };
         stack.Children.Add(_search);
+        stack.Children.Add(_autoHint);
         stack.Children.Add(_conditionHint);
         stack.Children.Add(valuesCard);
         stack.Children.Add(_moreHint);

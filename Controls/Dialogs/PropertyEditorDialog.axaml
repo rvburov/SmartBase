@@ -548,20 +548,24 @@
                     <ComboBoxItem Content="Автоматически по совпадению свойств" />
                 </ComboBox>
             </StackPanel>
+            <!-- Пары свойств автоподбора: первая — в сетке, остальные строками
+                 (PropertyEditorDialog.RelationAuto). -->
             <StackPanel x:Name="RelationAutoOptions" Spacing="10" IsVisible="False">
-                <StackPanel Spacing="6">
-                    <TextBlock Text="Свойство этой коллекции" FontWeight="{StaticResource FontWeightBold}"
-                               Foreground="{StaticResource BrushSecondaryText}" />
-                    <ComboBox x:Name="RelationAutoSourceCombo" HorizontalAlignment="Stretch"
+                <w:NoticeBanner x:Name="RelationAutoNote" />
+                <Grid ColumnDefinitions="*,8,*,36" RowDefinitions="Auto,6,Auto">
+                    <TextBlock Grid.Column="0" Text="Свойство этой коллекции" FontWeight="{StaticResource FontWeightBold}"
+                               Foreground="{StaticResource BrushSecondaryText}" TextWrapping="Wrap" />
+                    <TextBlock Grid.Column="2" Text="Свойство целевой коллекции" FontWeight="{StaticResource FontWeightBold}"
+                               Foreground="{StaticResource BrushSecondaryText}" TextWrapping="Wrap" />
+                    <ComboBox Grid.Row="2" Grid.Column="0" x:Name="RelationAutoSourceCombo" HorizontalAlignment="Stretch"
                               Height="{StaticResource ControlHeightStandard}" />
-                </StackPanel>
-                <StackPanel Spacing="6">
-                    <TextBlock Text="Совпадает со свойством целевой коллекции" FontWeight="{StaticResource FontWeightBold}"
-                               Foreground="{StaticResource BrushSecondaryText}" />
-                    <ComboBox x:Name="RelationAutoTargetCombo" HorizontalAlignment="Stretch"
+                    <ComboBox Grid.Row="2" Grid.Column="2" x:Name="RelationAutoTargetCombo" HorizontalAlignment="Stretch"
                               Height="{StaticResource ControlHeightStandard}" />
-                </StackPanel>
-                <TextBlock Text="Пустые значения не связываются. Перед сохранением будет показан результат подбора."
+                </Grid>
+                <StackPanel x:Name="RelationAutoExtra" Spacing="8" />
+                <Button x:Name="AddAutoPairBtn" Classes="link" Content="+ Еще пара" HorizontalAlignment="Left" />
+                <CheckBox x:Name="RelationAutoFoldCheck" Content="Не различать регистр и пробелы по краям" IsChecked="True" />
+                <TextBlock Text="Запись связывается, если совпали все пары. Пустое значение в первой паре не связывается, в остальных совпадает только с пустым. Перед сохранением будет показан результат подбора."
                            TextWrapping="Wrap" Foreground="{StaticResource BrushSecondaryText}" />
             </StackPanel>
 

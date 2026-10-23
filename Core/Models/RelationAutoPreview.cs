@@ -25,6 +25,10 @@ public sealed class RelationAutoPreview
     public int Ambiguous { get; }
     /// <summary>Записей-источников, чье совпадение отброшено условием выбора записей.</summary>
     public int OutsideCondition { get; }
+    /// <summary>Из записей без совпадения — с пустым значением первой пары.</summary>
+    public int UnmatchedEmpty { get; }
+    /// <summary>Записей, совпавших только без учета регистра и пробелов по краям (считается для окна).</summary>
+    public int FoldOnly { get; }
     public int Unavailable => Status is RelationAutoStatus.Unavailable or RelationAutoStatus.NoAccess ? 1 : 0;
     public string Message { get; }
     public IReadOnlyList<RelationAutoChange> Changes { get; }
@@ -35,7 +39,7 @@ public sealed class RelationAutoPreview
     internal RelationAutoPreview(RelationAutoStatus status, int fieldId, int collectionId,
         string configJson, string message, IReadOnlyList<RelationAutoChange>? changes = null,
         int unmatched = 0, int ambiguous = 0, string fingerprint = "", string databaseIdentity = "",
-        DbField? proposedField = null, int outsideCondition = 0)
+        DbField? proposedField = null, int outsideCondition = 0, int unmatchedEmpty = 0, int foldOnly = 0)
     {
         Status = status;
         FieldId = fieldId;
@@ -49,6 +53,8 @@ public sealed class RelationAutoPreview
         Unmatched = unmatched;
         Ambiguous = ambiguous;
         OutsideCondition = outsideCondition;
+        UnmatchedEmpty = unmatchedEmpty;
+        FoldOnly = foldOnly;
         Fingerprint = fingerprint;
         DatabaseIdentity = databaseIdentity;
         ProposedField = proposedField;

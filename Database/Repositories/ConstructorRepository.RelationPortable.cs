@@ -37,12 +37,12 @@ public partial class ConstructorRepository
             if (field.FieldType == "relation" && RelationConfig.FromConfig(field.ConfigJson) is { } relation)
             {
                 var keys = new List<string>();
-                if (relation.Auto is { } auto) keys.Add(auto.SourceField);
+                if (relation.Auto is { } auto) keys.AddRange(auto.SourceKeys);
                 if (selfRelations.Contains(field.Id))
                 {
                     keys.AddRange(relation.DisplayKeys);
                     if (relation.SearchField is not null) keys.AddRange(relation.SearchKeys);
-                    if (relation.Auto is { } rule) keys.Add(rule.TargetField);
+                    if (relation.Auto is { } rule) keys.AddRange(rule.TargetKeys);
                     keys.AddRange(relation.Where?.Select(c => c.Field) ?? []);
                 }
                 if (keys.Any(k => int.TryParse(k, out var id) && !includedFields.Contains(id)))

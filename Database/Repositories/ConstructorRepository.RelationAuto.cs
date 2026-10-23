@@ -28,9 +28,11 @@ public partial class ConstructorRepository
         return PreviewAutoRelation(proposed, ct);
     }
 
-    public RelationAutoPreview PreviewAutoRelation(DbField proposedField, CancellationToken ct = default)
+    /// <param name="detailed">Для окна подтверждения: еще и сколько записей совпало только без учета
+    /// регистра и пробелов (второй, точный индекс целей).</param>
+    public RelationAutoPreview PreviewAutoRelation(DbField proposedField, CancellationToken ct = default, bool detailed = false)
     {
-        try { return PreviewAutoRelationCore(CloneAutoField(proposedField), ct); }
+        try { return PreviewAutoRelationCore(CloneAutoField(proposedField), ct, detailed); }
         catch (OperationCanceledException) { return AutoFailure(RelationAutoStatus.Cancelled, proposedField, "Подбор отменен."); }
         catch (PermissionDeniedException) { return AutoFailure(RelationAutoStatus.NoAccess, proposedField, "Нет доступа к свойствам для подбора связей."); }
         catch (DbException) { return AutoFailure(RelationAutoStatus.Unavailable, proposedField, "База данных недоступна. Прежние связи сохранены."); }
@@ -39,7 +41,8 @@ public partial class ConstructorRepository
 
     /// <summary>Фон использует собственные контексты всех читаемых баз. Общие репозитории окна
     /// и монтирование базы из фонового потока не используются.</summary>
-    public Task<RelationAutoPreview> PreviewAutoRelationAsync(DbField proposedField, CancellationToken ct = default)
+    public Task<RelationAutoPreview> PreviewAutoRelationAsync(DbField proposedField, CancellationToken ct = default,
+        bool detailed = false)
     {
         Demand(PermAction.ViewCollection, proposedField.CollectionId);
         if (db.Database.CurrentTransaction is not null)
@@ -47,7 +50,7 @@ public partial class ConstructorRepository
                 "Фоновый подбор недоступен внутри незавершенной транзакции. Используйте синхронный подбор или завершите операцию."));
         var field = CloneAutoField(proposedField);
         var connections = CaptureAutoConnections(field);
-        return Task.Run(() => WithAutoConnections(connections, repo => repo.PreviewAutoRelation(field, ct)));
+        return Task.Run(() => WithAutoConnections(connections, repo => repo.PreviewAutoRelation(field, ct, detailed)));
     }
 
     /// <summary>Сохранение настройки и результата — одна транзакция. Изменившийся после
@@ -101,6 +104,10 @@ public partial class ConstructorRepository
             else
             {
                 Demand(PermAction.EditRecord, proposed.CollectionId);
+                // Настройка та же и менять нечего — без транзакции записи и второго чтения: на
+                // сетевом диске это большинство фоновых пересчетов. Следующая правка данных сама
+                // запустит новый пересчет.
+                if (preview.Changes.Count == 0) return new(RelationAutoStatus.Applied, 0, "Автоматические связи обновлены.");
                 if (db.Database.CurrentTransaction is not null)
                     SaveAutoRelationFieldCore(proposed, preview, ct, saveMetadata: false);
                 else
@@ -124,8 +131,10 @@ public partial class ConstructorRepository
         int? changedFieldId = null, int? recordId = null, CancellationToken ct = default)
     {
         if (_savingAutoRelation || _refreshingAutoRelations) return [];
+        // Правило, которое не готово к подбору (потеряно, новее, повреждено), не пересчитывается:
+        // его связи остаются как есть и не мешают зависимым правилам.
         var fields = db.DbFields.AsNoTracking().Where(f => f.FieldType == "relation").ToList()
-            .Select(ToDbField).Where(f => RelationConfig.FromConfig(f.ConfigJson)?.Auto is not null
+            .Select(ToDbField).Where(f => RelationConfig.FromConfig(f.ConfigJson)?.Auto is { IsReady: true }
                 && AutoDependsOnChange(f, DbPath, collectionId, changedFieldId))
             .ToList();
         return RefreshAutoRelationFields(fields, ct);
@@ -139,7 +148,7 @@ public partial class ConstructorRepository
         if (_savingAutoRelation || _refreshingAutoRelations || targetDbId <= 0) return [];
         var changed = RelationDbResolver.RepoFor(targetDbId);
         var fields = db.DbFields.AsNoTracking().Where(f => f.FieldType == "relation").ToList()
-            .Select(ToDbField).Where(f => RelationConfig.FromConfig(f.ConfigJson) is { Auto: not null } cfg
+            .Select(ToDbField).Where(f => RelationConfig.FromConfig(f.ConfigJson) is { Auto.IsReady: true } cfg
                 && (cfg.TargetDbId == targetDbId && cfg.TargetCollectionId == targetCollectionId
                     || changed is not null && AutoDependsOnChange(f, changed.DbPath, targetCollectionId, null))).ToList();
         return RefreshAutoRelationFields(fields, ct);
@@ -211,37 +220,66 @@ public partial class ConstructorRepository
         return results;
     }
 
-    private RelationAutoPreview PreviewAutoRelationCore(DbField field, CancellationToken ct)
+    /// <summary>Почему правило, которое не готово к подбору, не считается. Прежние связи остаются.</summary>
+    internal static string NotReadyMessage(RelationAutoRule rule) => rule.State switch
+    {
+        RelationAutoState.Lost => "Пары свойств автоподбора потеряны в прежней версии программы. Задайте их заново в окне свойства. Прежние связи сохранены.",
+        RelationAutoState.Newer => "Правило автоподбора создано более новой версией программы. Прежние связи сохранены.",
+        _ => "Настройка автоподбора повреждена. Прежние связи сохранены.",
+    };
+
+    private RelationAutoPreview PreviewAutoRelationCore(DbField field, CancellationToken ct, bool detailed = false)
     {
         ct.ThrowIfCancellationRequested();
         Demand(PermAction.ViewCollection, field.CollectionId);
         if (field.FieldType != "relation" || RelationConfig.FromConfig(field.ConfigJson) is not { Auto: { } rule } cfg)
             return AutoFailure(RelationAutoStatus.NoRule, field, "Правило автоматической связи не задано.");
-        if (field.Id is int fid && (rule.SourceField == fid.ToString()
-            || cfg.TargetDbId == 0 && cfg.TargetCollectionId == field.CollectionId && rule.TargetField == fid.ToString()))
-            return AutoFailure(RelationAutoStatus.InvalidRule, field, "Свойство не может подбирать связи по самому себе.");
+        if (!rule.IsReady) return AutoFailure(RelationAutoStatus.InvalidRule, field, NotReadyMessage(rule));
+        var pairs = rule.Pairs;
+        // У правила из одной пары тексты прежние; при нескольких — с номером пары.
+        string Pair(int index, string text) => pairs.Count == 1 ? text : $"Пара {index + 1}: {char.ToLowerInvariant(text[0])}{text[1..]}";
+        for (var i = 0; i < pairs.Count; i++)
+            if (field.Id is int fid && (pairs[i].SourceField == fid.ToString()
+                || cfg.TargetDbId == 0 && cfg.TargetCollectionId == field.CollectionId && pairs[i].TargetField == fid.ToString()))
+                return AutoFailure(RelationAutoStatus.InvalidRule, field, Pair(i, "Свойство не может подбирать связи по самому себе."));
         var target = cfg.TargetDbId == 0 ? this : RelationDbResolver.RepoFor(cfg.TargetDbId);
         if (target is null) return AutoFailure(RelationAutoStatus.Unavailable, field, "Целевая база недоступна. Прежние связи сохранены.");
         target.Demand(PermAction.ViewCollection, cfg.TargetCollectionId);
         if (!db.DbCollections.AsNoTracking().Any(c => c.Id == field.CollectionId)
             || !target.AutoContext.DbCollections.AsNoTracking().Any(c => c.Id == cfg.TargetCollectionId))
             return AutoFailure(RelationAutoStatus.InvalidRule, field, "Коллекция для подбора связей не найдена.");
-        var sourceOption = GetRelationPropertyOptions(field.CollectionId).FirstOrDefault(p => p.Key == rule.SourceField);
-        var targetOption = target.GetRelationPropertyOptions(cfg.TargetCollectionId).FirstOrDefault(p => p.Key == rule.TargetField);
-        if (sourceOption is null || targetOption is null)
-            return AutoFailure(RelationAutoStatus.InvalidRule, field, "Свойство для сопоставления не найдено.");
-        var family = RelationAutoMatch.Category(sourceOption.FieldType);
-        if (family.Length == 0 || RelationAutoMatch.Category(targetOption.FieldType).Length == 0
-            || sourceOption.FieldType != "lookup" && targetOption.FieldType != "lookup"
-                && family != RelationAutoMatch.Category(targetOption.FieldType))
-            return AutoFailure(RelationAutoStatus.InvalidRule, field, "Для сопоставления выбраны несовместимые типы свойств.");
+        var sourceOptions = GetRelationPropertyOptions(field.CollectionId);
+        var targetOptions = target.GetRelationPropertyOptions(cfg.TargetCollectionId);
+        for (var i = 0; i < pairs.Count; i++)
+        {
+            var sourceOption = sourceOptions.FirstOrDefault(p => p.Key == pairs[i].SourceField);
+            var targetOption = targetOptions.FirstOrDefault(p => p.Key == pairs[i].TargetField);
+            if (sourceOption is null || targetOption is null)
+                return AutoFailure(RelationAutoStatus.InvalidRule, field, Pair(i, "Свойство для сопоставления не найдено."));
+            if (!RelationAutoMatch.Compatible(sourceOption.FieldType, sourceOption.ConfigJson, targetOption.FieldType, targetOption.ConfigJson))
+                return AutoFailure(RelationAutoStatus.InvalidRule, field, Pair(i, "Для сопоставления выбраны несовместимые типы свойств."));
+        }
         if (HasAutoDependencyCycle(field))
             return AutoFailure(RelationAutoStatus.InvalidRule, field, "Правило образует циклическую зависимость между свойствами.");
 
-        var sources = ReadRelationPropertyValues(field.CollectionId, rule.SourceField);
-        ct.ThrowIfCancellationRequested();
-        var targets = target.ReadRelationPropertyValues(cfg.TargetCollectionId, rule.TargetField);
-        ct.ThrowIfCancellationRequested();
+        var sources = new List<IReadOnlyList<RelationPropertyValue>>();
+        foreach (var pair in pairs)
+        {
+            sources.Add(ReadRelationPropertyValues(field.CollectionId, pair.SourceField));
+            ct.ThrowIfCancellationRequested();
+        }
+        var targets = new List<IReadOnlyList<RelationPropertyValue>>();
+        foreach (var pair in pairs)
+        {
+            targets.Add(target.ReadRelationPropertyValues(cfg.TargetCollectionId, pair.TargetField));
+            ct.ThrowIfCancellationRequested();
+        }
+        // Пары читаются по очереди: если между чтениями изменился состав записей, части ключа
+        // разойдутся. Недостающая часть никогда не считается пустой.
+        var sourceRows = AutoRows(sources);
+        var targetRows = AutoRows(targets);
+        if (sourceRows is null || targetRows is null)
+            return AutoFailure(RelationAutoStatus.Conflict, field, "Данные изменились во время подбора. Повторите предварительный просмотр.");
         // Условие выбора: подбираются только подходящие записи цели; прежняя цель остается, пока
         // совпадает ключ. Сломанное условие — отказ, прежние связи сохраняются.
         IReadOnlySet<int>? allowed = null;
@@ -253,17 +291,24 @@ public partial class ConstructorRepository
             ct.ThrowIfCancellationRequested();
         }
         var targetDbId = cfg.TargetDbId;
-        var targetIndex = new Dictionary<string, List<RelationTarget>>(StringComparer.Ordinal);
         var sourceDbId = RelationDbResolver.DbIdFor(this);
         var absoluteTargetDbId = cfg.TargetDbId == 0 ? sourceDbId : cfg.TargetDbId;
-        foreach (var value in targets)
+        var buffer = new StringBuilder();
+        var targetIndex = new Dictionary<string, List<RelationTarget>>(StringComparer.Ordinal);
+        // Точный индекс — только для окна: сколько записей совпало лишь благодаря свертке текста.
+        var exactIndex = detailed && rule.Fold ? new Dictionary<string, int>(StringComparer.Ordinal) : null;
+        var count = 0;
+        foreach (var row in targetRows)
         {
-            ct.ThrowIfCancellationRequested();
-            if (!RelationAutoMatch.TryKey(value.Raw, value.FieldType, out var key, absoluteTargetDbId))
-                return AutoValueFailure(field, value, "целевом");
+            if (++count % 4096 == 0) ct.ThrowIfCancellationRequested();
+            if (!RelationAutoMatch.TryRuleKey(row.Parts, rule.Fold, absoluteTargetDbId, buffer, out var key, out _))
+                return AutoValueFailure(field, FailedAutoPart(row, rule.Fold, absoluteTargetDbId), "целевом");
             if (key is null) continue;
             if (!targetIndex.TryGetValue(key, out var list)) targetIndex[key] = list = [];
-            list.Add(new(targetDbId, value.RecordId));
+            list.Add(new(targetDbId, row.RecordId));
+            if (exactIndex is not null && RelationAutoMatch.TryRuleKey(row.Parts, false, absoluteTargetDbId, buffer, out var exact, out _)
+                && exact is not null)
+                exactIndex[exact] = exactIndex.GetValueOrDefault(exact) + 1;
         }
         var previous = field.Id is int existingField
             ? db.DbRecordLinks.AsNoTracking().Where(l => l.FieldId == existingField)
@@ -273,13 +318,17 @@ public partial class ConstructorRepository
             g => g.Select(l => new RelationTarget(l.TargetDbId, l.ToRecordId)).ToArray());
         var changes = new List<RelationAutoChange>();
         var unmatched = 0;
+        var unmatchedEmpty = 0;
         var ambiguous = 0;
         var outside = 0;
-        foreach (var source in sources)
+        var foldOnly = 0;
+        var examples = new List<string>();
+        count = 0;
+        foreach (var source in sourceRows)
         {
-            ct.ThrowIfCancellationRequested();
-            if (!RelationAutoMatch.TryKey(source.Raw, source.FieldType, out var key, sourceDbId))
-                return AutoValueFailure(field, source, "исходном");
+            if (++count % 4096 == 0) ct.ThrowIfCancellationRequested();
+            if (!RelationAutoMatch.TryRuleKey(source.Parts, rule.Fold, sourceDbId, buffer, out var key, out var firstEmpty))
+                return AutoValueFailure(field, FailedAutoPart(source, rule.Fold, sourceDbId), "исходном");
             var old = previousByRecord.GetValueOrDefault(source.RecordId, []);
             var found = key is not null && targetIndex.TryGetValue(key, out var matches)
                 ? matches.Where(t => t.DbId != 0 || t.RecordId != source.RecordId).Distinct().ToArray()
@@ -287,8 +336,20 @@ public partial class ConstructorRepository
             var wanted = found.Where(t => allowed is null || allowed.Contains(t.RecordId) || old.Contains(t))
                 .OrderBy(t => t.DbId).ThenBy(t => t.RecordId).ToArray();
             if (wanted.Length < found.Length) outside++;
-            if (wanted.Length == 0) unmatched++;
-            if (cfg.Single && wanted.Length > 1) { ambiguous++; continue; }
+            if (wanted.Length == 0)
+            {
+                unmatched++;
+                if (firstEmpty) unmatchedEmpty++;
+            }
+            else if (exactIndex is not null && (!RelationAutoMatch.TryRuleKey(source.Parts, false, sourceDbId, buffer, out var exact, out _)
+                         || exact is null || exactIndex.GetValueOrDefault(exact) < found.Length))
+                foldOnly++;
+            if (cfg.Single && wanted.Length > 1)
+            {
+                ambiguous++;
+                if (examples.Count < 3) examples.Add($"«{TitleText.FirstLine(source.Title)}»");
+                continue;
+            }
             if (old.SequenceEqual(wanted)) continue;
             changes.Add(new(source.RecordId, source.Title, Array.AsReadOnly(old), Array.AsReadOnly(wanted)));
         }
@@ -296,8 +357,47 @@ public partial class ConstructorRepository
         var fingerprint = AutoFingerprint(field, rule, target, sources, targets, previous, allowed);
         return new(ambiguous > 0 ? RelationAutoStatus.Ambiguous : RelationAutoStatus.Ready,
             field.Id ?? 0, field.CollectionId, field.ConfigJson,
-            ambiguous > 0 ? $"Для {ambiguous} записей найдено несколько целей. Выберите режим «Несколько» или уточните значения."
-                : "Подбор готов к сохранению.", changes, unmatched, ambiguous, fingerprint, AutoDatabaseIdentity(), field, outside);
+            ambiguous > 0 ? AmbiguousMessage(ambiguous, examples, pairs.Count < RelationAutoRule.MaxPairs)
+                : "Подбор готов к сохранению.", changes, unmatched, ambiguous, fingerprint, AutoDatabaseIdentity(), field, outside,
+            unmatchedEmpty, foldOnly);
+    }
+
+    // «Для 4 записей найдено несколько целей, например «Заказ 15», «Заказ 16». …»
+    private static string AmbiguousMessage(int count, IReadOnlyList<string> examples, bool canAddPair) =>
+        $"Для {count} {(count % 10 == 1 && count % 100 != 11 ? "записи" : "записей")} найдено несколько целей, " +
+        $"например {string.Join(", ", examples)}. " +
+        (canAddPair ? "Добавьте пару свойств или выберите «Несколько»." : "Уточните значения или выберите «Несколько».");
+
+    /// <summary>Строка подбора: запись и сырые значения всех пар по порядку.</summary>
+    private sealed record AutoRow(int RecordId, string Title, (string? Raw, string FieldType)[] Parts,
+        IReadOnlyList<RelationPropertyValue> Values);
+
+    // Склеить значения пар по записи. null — состав записей между чтениями разошелся.
+    private static List<AutoRow>? AutoRows(IReadOnlyList<IReadOnlyList<RelationPropertyValue>> columns)
+    {
+        var others = columns.Skip(1).Select(c => c.ToDictionary(v => v.RecordId)).ToList();
+        if (others.Any(o => o.Count != columns[0].Count)) return null;
+        var rows = new List<AutoRow>(columns[0].Count);
+        foreach (var first in columns[0])
+        {
+            var values = new RelationPropertyValue[columns.Count];
+            values[0] = first;
+            for (var i = 1; i < columns.Count; i++)
+            {
+                if (!others[i - 1].TryGetValue(first.RecordId, out var other)) return null;
+                values[i] = other;
+            }
+            rows.Add(new(first.RecordId, first.Title, values.Select(v => ((string?)v.Raw, v.FieldType)).ToArray(), values));
+        }
+        return rows;
+    }
+
+    // Часть ключа, на которой подбор отказал: по ней видно, нет доступа, база недоступна или значение повреждено.
+    private static RelationPropertyValue FailedAutoPart(AutoRow row, bool fold, int localDbId)
+    {
+        for (var i = 0; i < row.Parts.Length; i++)
+            if (!RelationAutoMatch.TryKey(row.Parts[i].Raw, row.Parts[i].FieldType, out _, localDbId, fold)) return row.Values[i];
+        return row.Values[0];
     }
 
     private int SaveAutoRelationFieldCore(DbField field, RelationAutoPreview preview, CancellationToken ct,
@@ -451,8 +551,8 @@ public partial class ConstructorRepository
     }
 
     private string AutoFingerprint(DbField field, RelationAutoRule rule, ConstructorRepository target,
-        IReadOnlyList<RelationPropertyValue> sources,
-        IReadOnlyList<RelationPropertyValue> targets, IReadOnlyList<DbRecordLinkEntity> previous,
+        IReadOnlyList<IReadOnlyList<RelationPropertyValue>> sources,
+        IReadOnlyList<IReadOnlyList<RelationPropertyValue>> targets, IReadOnlyList<DbRecordLinkEntity> previous,
         IReadOnlySet<int>? allowed = null)
     {
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
@@ -474,9 +574,12 @@ public partial class ConstructorRepository
             var property = owner.AutoContext.DbFields.AsNoTracking().FirstOrDefault(f => f.Id == propertyId);
             Add(property is null ? "" : JsonSerializer.Serialize(ToDbField(property)));
         }
-        AddProperty(this, rule.SourceField);
-        AddProperty(target, rule.TargetField);
-        foreach (var set in new[] { sources, targets })
+        foreach (var pair in rule.Pairs)
+        {
+            AddProperty(this, pair.SourceField);
+            AddProperty(target, pair.TargetField);
+        }
+        foreach (var set in sources.Concat(targets))
         {
             Add(set.Count.ToString());
             foreach (var value in set.OrderBy(v => v.RecordId)) Add(JsonSerializer.Serialize(value));
@@ -508,9 +611,9 @@ public partial class ConstructorRepository
             var cycle = false;
             if (field.FieldType == "relation" && RelationConfig.FromConfig(field.ConfigJson) is { Auto: { } rule } relation)
             {
-                cycle = WalkProperty(owner, rule.SourceField);
+                cycle = rule.SourceKeys.Any(key => WalkProperty(owner, key));
                 var target = relation.TargetDbId == 0 ? owner : RelationDbResolver.RepoFor(relation.TargetDbId);
-                if (!cycle && target is not null) cycle = WalkProperty(target, rule.TargetField);
+                if (!cycle && target is not null) cycle = rule.TargetKeys.Any(key => WalkProperty(target, key));
             }
             else if (field.FieldType is "lookup" or "rollup"
                      && RelationComputedConfig.FromConfig(field.ConfigJson) is { } computed)
@@ -563,11 +666,12 @@ public partial class ConstructorRepository
         }
         bool Rule(ConstructorRepository owner, DbField field, RelationConfig cfg)
         {
-            if (cfg.Auto is not { } auto) return false;
-            if (Property(owner, field.CollectionId, auto.SourceField)) return true;
+            // Правило, которое не готово к подбору, не пересчитывается — зависимостей у него нет.
+            if (cfg.Auto is not { IsReady: true } auto) return false;
+            if (auto.SourceKeys.Any(key => Property(owner, field.CollectionId, key))) return true;
             var target = cfg.TargetDbId == 0 ? owner : RelationDbResolver.RepoFor(cfg.TargetDbId);
             // Подбор зависит и от свойств условия выбора: запись цели могла начать или перестать подходить.
-            return target is not null && (Property(target, cfg.TargetCollectionId, auto.TargetField)
+            return target is not null && (auto.TargetKeys.Any(key => Property(target, cfg.TargetCollectionId, key))
                 || (cfg.Where ?? []).Any(c => Property(target, cfg.TargetCollectionId, c.Field)));
         }
         return RelationConfig.FromConfig(proposed.ConfigJson) is { } cfg && Rule(this, proposed, cfg);

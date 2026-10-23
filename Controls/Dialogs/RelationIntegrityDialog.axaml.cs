@@ -371,6 +371,7 @@ public partial class RelationIntegrityDialog : Window
         RelationIntegrityIssueKind.TargetCollectionMismatch => "Цель из другой коллекции",
         RelationIntegrityIssueKind.NumericProjectionCollision => "Свойство цели из другой базы",
         RelationIntegrityIssueKind.ConditionMismatch => "Не подходит под условие выбора",
+        RelationIntegrityIssueKind.NewerAutoRule => "Автоподбор более новой версии",
         _ => "Замечание",
     };
 }

@@ -3,9 +3,6 @@ namespace SmartBase.Core.Models;
 /// <summary>Идентичность цели; DbId=0 означает базу записи-источника.</summary>
 public readonly record struct RelationTarget(int DbId, int RecordId);
 
-/// <summary>Правило автосвязи: канонические ключи свойств двух коллекций.</summary>
-public sealed record RelationAutoRule(string SourceField, string TargetField);
-
 /// <param name="ConfigJson">Настройка свойства цели (пункты списка — для условия выбора записей).</param>
 public sealed record RelationPropertyOption(string Key, string Name, string FieldType, string? ConfigJson = null);
 

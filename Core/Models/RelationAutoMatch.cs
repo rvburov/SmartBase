@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 
 namespace SmartBase.Core.Models;
@@ -22,12 +23,78 @@ public static class RelationAutoMatch
         _ => "",
     };
 
-    /// <summary>Пустое значение дает null. false означает поврежденное или неподдерживаемое
-    /// значение: такой пересчет нельзя применять как отсутствие совпадений.</summary>
-    public static bool TryKey(string? raw, string fieldType, out string? key, int localDbId = 0)
-        => TryKeyCore(raw, fieldType, out key, localDbId, 0);
+    /// <summary>Семейство свойства с учетом его настройки: итог «самая ранняя/поздняя дата» —
+    /// дата, остальные итоги — число.</summary>
+    public static string Family(string? fieldType, string? configJson) =>
+        fieldType == "rollup" && RelationComputedConfig.IsDateAggregate(RelationComputedConfig.FromConfig(configJson)?.Aggregate)
+            ? "date" : Category(fieldType);
 
-    private static bool TryKeyCore(string? raw, string fieldType, out string? key, int localDbId, int depth)
+    /// <summary>Можно ли сопоставлять свойства: одно семейство либо значения из связанных записей
+    /// с одной из сторон (их тип известен только по значению). Одно правило для подбора, окна и
+    /// проверки связей.</summary>
+    public static bool Compatible(string? sourceType, string? sourceConfig, string? targetType, string? targetConfig)
+    {
+        var source = Family(sourceType, sourceConfig);
+        var target = Family(targetType, targetConfig);
+        return source.Length > 0 && target.Length > 0
+            && (sourceType == "lookup" || targetType == "lookup" || source == target);
+    }
+
+    /// <summary>Текст для сравнения без учета регистра и пробелов по краям: края без пробельных и
+    /// невидимых знаков, составные буквы в одном виде (NFC), нижний регистр, «е с точками» как «е».
+    /// Пробелы внутри не трогаются. Одна функция для автоподбора и условия выбора записей.</summary>
+    public static string FoldText(string? value)
+    {
+        if (string.IsNullOrEmpty(value)) return "";
+        int start = 0, end = value.Length;
+        while (start < end && IsEdge(value[start])) start++;
+        while (end > start && IsEdge(value[end - 1])) end--;
+        var core = value[start..end];
+        try
+        {
+            if (!core.IsNormalized(NormalizationForm.FormC)) core = core.Normalize(NormalizationForm.FormC);
+        }
+        catch (ArgumentException) { /* одиночный суррогат: сравниваем как есть */ }
+        return CellTyping.Fold(core);
+    }
+
+    private static bool IsEdge(char c) => char.IsWhiteSpace(c) || c is '\u200B' or '\u2060' or '\uFEFF';
+
+    /// <summary>Пустое значение дает null. false означает поврежденное или неподдерживаемое
+    /// значение: такой пересчет нельзя применять как отсутствие совпадений. <paramref name="fold"/>
+    /// сворачивает текст и пункты мультисписка (<see cref="FoldText"/>); пользователь, пути файлов,
+    /// числа, даты, флажки и связи сравниваются как раньше.</summary>
+    public static bool TryKey(string? raw, string fieldType, out string? key, int localDbId = 0, bool fold = false)
+        => TryKeyCore(raw, fieldType, out key, localDbId, 0, fold);
+
+    /// <summary>Ключ записи по всем парам правила. Любая поврежденная часть — отказ всего подбора
+    /// (false). Пустая первая часть — <paramref name="key"/> = null и <paramref name="firstEmpty"/>:
+    /// запись без совпадения. Пустая дополнительная часть совпадает только с пустой. Части
+    /// склеиваются с длиной, чтобы («a|b», «c») не совпало с («a», «b|c»).</summary>
+    public static bool TryRuleKey(IReadOnlyList<(string? Raw, string FieldType)> parts, bool fold, int localDbId,
+        StringBuilder buffer, out string? key, out bool firstEmpty)
+    {
+        key = null;
+        firstEmpty = false;
+        buffer.Clear();
+        string? first = null;
+        for (var i = 0; i < parts.Count; i++)
+        {
+            if (!TryKey(parts[i].Raw, parts[i].FieldType, out var part, localDbId, fold)) return false;
+            if (i == 0) first = part;
+            if (part is null)
+            {
+                if (i == 0) firstEmpty = true;
+                buffer.Append("-;");
+            }
+            else buffer.Append(part.Length).Append(':').Append(part).Append(';');
+        }
+        // Одна пара — прежний ключ без обертки.
+        if (!firstEmpty) key = parts.Count == 1 ? first : buffer.ToString();
+        return true;
+    }
+
+    private static bool TryKeyCore(string? raw, string fieldType, out string? key, int localDbId, int depth, bool fold = false)
     {
         key = null;
         if (depth >= 16) return false;
@@ -65,7 +132,7 @@ public static class RelationAutoMatch
                 else return false;
                 return true;
             case "multiselect":
-                var options = MultiSelectValue.Parse(value).Where(x => !string.IsNullOrEmpty(x))
+                var options = MultiSelectValue.Parse(value).Select(x => fold ? FoldText(x) : x).Where(x => !string.IsNullOrEmpty(x))
                     .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
                 if (options.Length > 0) key = "m:" + JsonSerializer.Serialize(options);
                 return true;
@@ -108,7 +175,7 @@ public static class RelationAutoMatch
                         if (item.ValueKind != JsonValueKind.Object
                             || !item.TryGetProperty("raw", out var r) || r.ValueKind != JsonValueKind.String
                             || !item.TryGetProperty("fieldType", out var type) || type.ValueKind != JsonValueKind.String
-                            || !TryKeyCore(r.GetString(), type.GetString()!, out var itemKey, localDbId, depth + 1)) return false;
+                            || !TryKeyCore(r.GetString(), type.GetString()!, out var itemKey, localDbId, depth + 1, fold)) return false;
                         if (itemKey is not null) keys.Add(itemKey);
                     }
                     if (keys.Count > 0)
@@ -117,7 +184,11 @@ public static class RelationAutoMatch
                 }
                 catch (JsonException) { return false; }
             default:
-                key = (category == "user" ? "u:" : "s:") + value;
+                if (category == "user") { key = "u:" + value; return true; }
+                if (!fold) { key = "s:" + value; return true; }
+                // Строка из одних пробелов и невидимых знаков после свертки пуста.
+                var folded = FoldText(value);
+                if (folded.Length > 0) key = "s:" + folded;
                 return true;
         }
     }

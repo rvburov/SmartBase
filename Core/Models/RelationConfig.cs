@@ -41,7 +41,7 @@ public sealed record RelationConfig(int TargetCollectionId, bool Single, string 
     /// <summary>Все ключи свойств цели, на которые ссылается настройка: показ, поиск, автоподбор
     /// и условие выбора.</summary>
     public IEnumerable<string> TargetPropertyKeys =>
-        DisplayKeys.Concat(SearchKeys).Concat(Auto is null ? [] : [Auto.TargetField])
+        DisplayKeys.Concat(SearchKeys).Concat(Auto?.TargetKeys ?? [])
             .Concat(Where?.Select(c => c.Field) ?? []).Distinct(StringComparer.Ordinal);
 
     /// <summary>Есть ли условие выбора записей — читаемое или нечитаемое (закрывает выбор).</summary>
@@ -85,10 +85,7 @@ public sealed record RelationConfig(int TargetCollectionId, bool Single, string 
             // свой «displayField» и показывает первое свойство.
             var display = ReadFields(root, "displayFields", MaxDisplayFields) ?? ReadField(root, "displayField") ?? TitleField;
             var search = ReadFields(root, "searchFields", MaxSearchFields) ?? ReadField(root, "searchField");
-            RelationAutoRule? auto = null;
-            if (root.TryGetProperty("auto", out var a) && a.ValueKind == JsonValueKind.Object
-                && ReadField(a, "sourceField") is { } source && ReadField(a, "targetField") is { } destination)
-                auto = new RelationAutoRule(source, destination);
+            var auto = root.TryGetProperty("auto", out var a) ? RelationAutoRule.Read(a) : null;
             // Что делать с записью-целью при ее удалении: «clear» (по умолчанию) снимает связь,
             // «restrict» запрещает удалять цель, пока на нее ссылаются.
             var restrict = root.TryGetProperty("onDelete", out var onDelete) && onDelete.ValueKind == JsonValueKind.String
@@ -142,7 +139,7 @@ public sealed record RelationConfig(int TargetCollectionId, bool Single, string 
             value["searchField"] = search[0];
             if (search.Count > 1) value["searchFields"] = search;
         }
-        if (Auto is not null) value["auto"] = new { sourceField = Auto.SourceField, targetField = Auto.TargetField };
+        if (Auto is not null) value["auto"] = Auto.ToConfigObject();
         if (RestrictDelete) value["onDelete"] = "restrict";
         // Без условия JSON остается байт в байт прежним: с ним сверяются отпечатки правок.
         if (WhereUnreadable is not null) value["where"] = JsonDocument.Parse(WhereUnreadable).RootElement.Clone();

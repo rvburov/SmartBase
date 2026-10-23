@@ -17,7 +17,7 @@ public partial class ConstructorRepository
             .Where(f => f.Config is { } cfg && IsRelationSourceDatabase(cfg.TargetDbId, sourceDbId)
                 && collectionMap.ContainsKey(cfg.TargetCollectionId)).ToDictionary(f => f.Id, f => f.Config!);
         var changed = internalRelations.Where(f => Changes(f.Value.DisplayField) || Changes(f.Value.SearchField)
-            || Changes(f.Value.Auto?.TargetField)).Select(f => f.Key).ToHashSet();
+            || f.Value.Auto?.TargetKeys.Any(Changes) == true).Select(f => f.Key).ToHashSet();
         foreach (var field in fields.Where(f => f.FieldType is "lookup" or "rollup"))
             if (RelationComputedConfig.FromConfig(field.ConfigJson) is { } cfg && cfg.Aggregate != "count"
                 && internalRelations.ContainsKey(cfg.RelationFieldId) && Changes(cfg.TargetField))

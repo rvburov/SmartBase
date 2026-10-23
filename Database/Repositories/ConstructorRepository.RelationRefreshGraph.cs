@@ -47,7 +47,7 @@ public partial class ConstructorRepository
                 repo => owners.FirstOrDefault(o => o.Repo == repo || o.Connection.Path == repo.DbPath).Connection?.DbId ?? 0);
             var nodes = owners.SelectMany(o => o.Repo.AutoContext.DbFields.AsNoTracking()
                     .Where(f => f.FieldType == "relation").ToList().Select(ToDbField)
-                    .Where(f => RelationConfig.FromConfig(f.ConfigJson)?.Auto is not null)
+                    .Where(f => RelationConfig.FromConfig(f.ConfigJson)?.Auto is { IsReady: true })
                     .Select(f => new AutoRefreshNode(o.Repo, f)))
                 .OrderBy(n => n.Owner.DbPath, StringComparer.Ordinal).ThenBy(n => n.Field.Id).ToArray();
             if (nodes.Length == 0) return [];

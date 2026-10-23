@@ -128,11 +128,8 @@ public partial class ConstructorRepository
                 TargetDbId = internalTarget ? 0 : RebaseRelationDatabase(config.TargetDbId, sourceDbId, targetDbId, crossDatabase),
                 DisplayField = internalTarget ? RemapRelationFieldKeys(config.DisplayField, fieldMap) : config.DisplayField,
                 SearchField = internalTarget && config.SearchField is { } search ? RemapRelationFieldKeys(search, fieldMap) : config.SearchField,
-                Auto = config.Auto is { } auto ? auto with
-                {
-                    SourceField = RemapRelationFieldKey(auto.SourceField, fieldMap),
-                    TargetField = internalTarget ? RemapRelationFieldKey(auto.TargetField, fieldMap) : auto.TargetField,
-                } : null,
+                Auto = config.Auto?.MapKeys(key => RemapRelationFieldKey(key, fieldMap),
+                    key => internalTarget ? RemapRelationFieldKey(key, fieldMap) : key),
                 // Условие выбора ссылается на свойства цели: у копии своей коллекции — на свойства копии.
                 Where = internalTarget && config.Where is { } where
                     ? where.Select(c => c with { Field = RemapRelationFieldKey(c.Field, fieldMap) }).ToList()

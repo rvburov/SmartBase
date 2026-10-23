@@ -247,6 +247,9 @@ public partial class ConstructorRepository
         private string PropertyType(IntegrityCatalog catalog, string key) => key == RelationConfig.TitleField ? "text"
             : int.TryParse(key, out var id) && catalog.Fields.TryGetValue(id, out var field) ? field.FieldType : "";
 
+        private static string? PropertyConfig(IntegrityCatalog catalog, string key) =>
+            int.TryParse(key, out var id) && catalog.Fields.TryGetValue(id, out var field) ? field.ConfigJson : null;
+
         private void CheckField(DbFieldEntity field)
         {
             if (!_source.Collections.ContainsKey(field.CollectionId))
@@ -271,26 +274,35 @@ public partial class ConstructorRepository
                 if (relation.WhereUnreadable is not null)
                     FieldIssue(field, RelationIntegrityIssueKind.InvalidConfiguration,
                         "Условие выбора записей повреждено или задано более новой версией программы: новые связи не выбираются.");
+                switch (relation.Auto?.State)
+                {
+                    case RelationAutoState.Lost:
+                        FieldIssue(field, RelationIntegrityIssueKind.InvalidConfiguration,
+                            "Пары свойств автоподбора потеряны в прежней версии программы: связи не пересчитываются. Задайте пары заново в окне свойства.");
+                        break;
+                    case RelationAutoState.Damaged:
+                        FieldIssue(field, RelationIntegrityIssueKind.InvalidConfiguration,
+                            "Настройка автоподбора повреждена: связи не пересчитываются. Задайте пары заново в окне свойства.");
+                        break;
+                    case RelationAutoState.Newer:
+                        FieldIssue(field, RelationIntegrityIssueKind.NewerAutoRule,
+                            "Правило автоподбора создано более новой версией программы: здесь связи не пересчитываются.", confirmed: false);
+                        break;
+                }
                 if (!relation.DisplayKeys.Concat(relation.SearchKeys).Concat(relation.Where?.Select(c => c.Field) ?? [])
                         .All(key => Property(target, relation.TargetCollectionId, key))
-                    || relation.Auto is { } auto && (!Property(_source, field.CollectionId, auto.SourceField)
-                        || !Property(target, relation.TargetCollectionId, auto.TargetField)))
+                    || relation.Auto is { } auto && (!auto.SourceKeys.All(key => Property(_source, field.CollectionId, key))
+                        || !auto.TargetKeys.All(key => Property(target, relation.TargetCollectionId, key))))
                     FieldIssue(field, RelationIntegrityIssueKind.MissingDependency,
                         "Одно из свойств показа, поиска, сопоставления или условия выбора отсутствует.");
                 else if (relation.Where?.Any(c => !RelationCondition.OpsFor(
                              RelationCondition.TypeOf(c.Field, PropertyType(target, c.Field))).Contains(c.Op)) == true)
                     FieldIssue(field, RelationIntegrityIssueKind.InvalidDependency,
                         "Условие выбора не подходит к типу свойства цели: новые связи не выбираются.");
-                else if (relation.Auto is { } rule)
-                {
-                    var sourceType = PropertyType(_source, rule.SourceField);
-                    var targetType = PropertyType(target, rule.TargetField);
-                    var sourceFamily = RelationAutoMatch.Category(sourceType);
-                    var targetFamily = RelationAutoMatch.Category(targetType);
-                    if (sourceFamily.Length == 0 || targetFamily.Length == 0
-                        || sourceType != "lookup" && targetType != "lookup" && sourceFamily != targetFamily)
-                        FieldIssue(field, RelationIntegrityIssueKind.InvalidDependency, "Для автосвязи выбраны несовместимые или неподдерживаемые типы свойств.");
-                }
+                else if (relation.Auto is { } rule && rule.Pairs.Any(pair => !RelationAutoMatch.Compatible(
+                             PropertyType(_source, pair.SourceField), PropertyConfig(_source, pair.SourceField),
+                             PropertyType(target, pair.TargetField), PropertyConfig(target, pair.TargetField))))
+                    FieldIssue(field, RelationIntegrityIssueKind.InvalidDependency, "Для автосвязи выбраны несовместимые или неподдерживаемые типы свойств.");
             }
             else
             {
@@ -374,8 +386,8 @@ public partial class ConstructorRepository
                             .Any(key => Key(target, relation.TargetCollectionId, key));
                     if (!cycle && relation.Auto is { } auto)
                     {
-                        cycle = Key(catalog, field.CollectionId, auto.SourceField);
-                        if (!cycle && target is not null) cycle = Key(target, relation.TargetCollectionId, auto.TargetField);
+                        cycle = auto.SourceKeys.Any(key => Key(catalog, field.CollectionId, key));
+                        if (!cycle && target is not null) cycle = auto.TargetKeys.Any(key => Key(target, relation.TargetCollectionId, key));
                     }
                 }
                 else if (field.FieldType is "lookup" or "rollup" && RelationComputedConfig.FromConfig(field.ConfigJson) is { } computed

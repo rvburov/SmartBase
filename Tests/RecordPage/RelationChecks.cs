@@ -154,9 +154,10 @@ internal static class RelationChecks
             SaveWithPreview(auto, autoClosed);
             var saved = repo.GetFields(source).Single(f => f.Name == "Авто клиент");
             var autoCfg = RelationConfig.FromConfig(saved.ConfigJson);
-            Expect(autoClosed.Result && autoCfg?.Auto == new RelationAutoRule(sourceInn.Id.Value.ToString(), targetInn.Id.Value.ToString())
+            Expect(autoClosed.Result
+                && autoCfg?.Auto == new RelationAutoRule([new(sourceInn.Id.Value.ToString(), targetInn.Id.Value.ToString())], fold: true)
                 && autoCfg.DisplayField == sku.Id.Value.ToString() && !autoCfg.Single,
-                "сохранение нового автополя записало оба ключа сопоставления и режим нескольких целей");
+                "сохранение нового автополя записало оба ключа сопоставления, сравнение без учета регистра и режим нескольких целей");
             Expect(repo.GetLinkTargetIds(saved.Id!.Value, record).SequenceEqual([a]),
                 "подтвержденное сохранение связало заказ с клиентом по ИНН");
 
@@ -338,6 +339,78 @@ internal static class RelationChecks
                 && (string?)filterDisplay.Invoke(null, ["1.5", "lookup", ", ", null]) == "1.5",
                 "фильтр показывает итог как число с запятой, а текст lookup оставляет без преобразования");
 
+            // Несколько пар: ИНН совпадает у обоих клиентов, артикул — только у второго, и то без учета
+            // регистра и пробелов по краям.
+            var orderSku = Field(source, "Артикул заказа");
+            repo.SetFieldValue(record, orderSku.Id!.Value, "  б-02 ");
+            var pairs = CreateAuto("Авто по паре");
+            var pairsClosed = pairs.ShowDialog<bool>(owner);
+            Pump();
+            ConfigureAuto(pairs);
+            var fold = pairs.FindControl<CheckBox>("RelationAutoFoldCheck")!;
+            Expect(fold.IsChecked == true && fold.IsEnabled, "у нового правила по тексту сравнение без учета регистра включено");
+            var addPair = pairs.FindControl<Button>("AddAutoPairBtn")!;
+            addPair.BringIntoView();
+            Click(pairs, addPair);
+            var pairRow = AutoRows(pairs).Single();
+            Choose(RowCombo(pairRow, "Source"), "Key", orderSku.Id.Value.ToString());
+            Choose(RowCombo(pairRow, "Target"), "Key", sku.Id.Value.ToString());
+            ((Control)pairRow.GetType().GetProperty("Root")!.GetValue(pairRow)!).BringIntoView();
+            Pump();
+            using (var frame = pairs.CaptureRenderedFrame()) frame?.Save(Path.Combine(outDir, "relations-auto-pairs.png"));
+            Click(pairs, pairs.FindControl<Button>("SaveBtn")!);
+            Wait(() => pairs.OwnedWindows.OfType<ConfirmDialog>().Any(), "не появился результат подбора по двум парам");
+            var pairsAsk = pairs.OwnedWindows.OfType<ConfirmDialog>().Single();
+            Expect(pairsAsk.FindControl<TextBlock>("MessageLabel")!.Text!.Contains("Совпали только без учета регистра и пробелов — 1.", StringComparison.Ordinal),
+                "итог подбора называет записи, совпавшие только без учета регистра");
+            Click(pairsAsk, pairsAsk.FindControl<Button>("ConfirmBtn")!);
+            Wait(() => pairsClosed.IsCompleted, "связь по двум парам не сохранилась");
+            var pairsField = repo.GetFields(source).Single(f => f.Name == "Авто по паре");
+            Expect(pairsClosed.Result && RelationConfig.FromConfig(pairsField.ConfigJson)?.Auto == new RelationAutoRule(
+                    [new(sourceInn.Id.Value.ToString(), targetInn.Id.Value.ToString()), new(orderSku.Id.Value.ToString(), sku.Id.Value.ToString())], fold: true)
+                && repo.GetLinkTargetIds(pairsField.Id!.Value, record).SequenceEqual([b]),
+                "правило из двух пар сохранено, связана только запись, у которой совпали обе пары");
+
+            var pairsAgain = new PropertyEditorDialog(repo, source, pairsField.Id.Value) { MaxHeight = 600 };
+            var pairsAgainClosed = pairsAgain.ShowDialog<bool>(owner);
+            Pump();
+            var restoredPair = AutoRows(pairsAgain).Single();
+            Expect(SelectedKey(RowCombo(restoredPair, "Source")) == orderSku.Id.Value.ToString()
+                && SelectedKey(RowCombo(restoredPair, "Target")) == sku.Id.Value.ToString()
+                && pairsAgain.FindControl<CheckBox>("RelationAutoFoldCheck")!.IsChecked == true,
+                "повторное открытие восстановило вторую пару и флажок");
+            var addAgain = pairsAgain.FindControl<Button>("AddAutoPairBtn")!;
+            addAgain.BringIntoView();
+            Click(pairsAgain, addAgain);
+            var third = AutoRows(pairsAgain)[1];
+            Choose(RowCombo(third, "Source"), "Key", sourceInn.Id.Value.ToString());
+            Choose(RowCombo(third, "Target"), "Key", targetInn.Id.Value.ToString());
+            Expect(!addAgain.IsVisible, "на третьей паре кнопка «+ Еще пара» скрыта");
+            Click(pairsAgain, pairsAgain.FindControl<Button>("SaveBtn")!);
+            Expect(!pairsAgainClosed.IsCompleted && pairsAgain.FindControl<NoticeBanner>("NoticeBanner")!.Message == "Пара 3 повторяет пару 1.",
+                "повтор пары не сохраняется и назван номером");
+            Click(pairsAgain, pairsAgain.FindControl<Button>("CancelBtn")!);
+            Wait(() => pairsAgainClosed.IsCompleted, "окно правила из двух пар не закрылось");
+
+            // Правило более новой версии программы: строки неактивны, переименование его не меняет.
+            var newerJson = $"{{\"targetCollectionId\":{target},\"single\":false,\"separator\":\"comma\"," +
+                            "\"auto\":{\"sourceField\":\"__title__\",\"targetField\":\"2147483647\",\"format\":3,\"pairs\":[]}}";
+            manager.Context.Database.ExecuteSqlRaw("UPDATE db_fields SET ConfigJson = {0} WHERE Id = {1}", newerJson, pairsField.Id.Value);
+            var newer = new PropertyEditorDialog(repo, source, pairsField.Id.Value) { MaxHeight = 600 };
+            var newerClosed = newer.ShowDialog<bool>(owner);
+            Pump();
+            Expect(newer.FindControl<NoticeBanner>("RelationAutoNote")!.Message?.StartsWith("Правило автоподбора создано более новой версией", StringComparison.Ordinal) == true
+                && !Combo(newer, "RelationAutoSourceCombo").IsEnabled && !newer.FindControl<Button>("AddAutoPairBtn")!.IsVisible,
+                "правило более новой версии показано плашкой, пары не меняются");
+            newer.FindControl<TextBox>("NameBox")!.Text = "Авто новой версии";
+            Click(newer, newer.FindControl<Button>("SaveBtn")!);
+            Wait(() => newerClosed.IsCompleted, "переименование связи с правилом новой версии не сохранилось");
+            var renamedNewer = repo.GetFields(source).Single(f => f.Id == pairsField.Id);
+            Expect(newerClosed.Result && renamedNewer.Name == "Авто новой версии"
+                && RelationConfig.FromConfig(renamedNewer.ConfigJson)?.Auto?.State == RelationAutoState.Newer
+                && repo.GetLinkTargetIds(pairsField.Id.Value, record).SequenceEqual([b]),
+                "переименование оставило правило новой версии и связи как есть");
+
             var autoPicker = new RelationSelectBox(repo, saved.Id.Value, autoCfg!, editing: true) { RecordId = record, Height = 38 };
             owner.Content = autoPicker;
             Pump();
@@ -348,6 +421,9 @@ internal static class RelationChecks
             var autoBoxes = autoPopup.Child!.GetVisualDescendants().OfType<CheckBox>().ToArray();
             Expect(autoBoxes.Length == 2 && autoBoxes.All(cb => !cb.IsEnabled),
                 "чекбоксы автоматической связи отключены, но найденные цели видны");
+            var autoHint = Private<TextBlock>(autoPicker, "_autoHint");
+            Expect(autoHint.IsVisible && autoHint.Text == "Подбирается автоматически: «ИНН заказа».",
+                "список автосвязи пишет, по каким свойствам она подбирается");
             var autoEdges = repo.GetLinkEdges(saved.Id.Value, record).ToArray();
             var firstVm = Shown(autoPicker)[0];
             firstVm.GetType().GetProperty("Checked")!.SetValue(firstVm, false);
@@ -520,6 +596,8 @@ internal static class RelationChecks
     private static ComboBox Combo(Window window, string name) => window.FindControl<ComboBox>(name)!;
     private static List<object> DataRows(PropertyEditorDialog dialog) =>
         Private<System.Collections.IEnumerable>(dialog, "_relationData").Cast<object>().ToList();
+    private static List<object> AutoRows(PropertyEditorDialog dialog) =>
+        Private<System.Collections.IEnumerable>(dialog, "_autoExtra").Cast<object>().ToList();
     private static List<object> ConditionRows(PropertyEditorDialog dialog) =>
         Private<System.Collections.IEnumerable>(dialog, "_conditionRows").Cast<object>().ToList();
     private static string? SelectedOp(object row) =>

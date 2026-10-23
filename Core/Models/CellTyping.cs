@@ -113,7 +113,7 @@ public static class CellTyping
     }
 
     // Вид для сравнения: нижний регистр, «е с точками» как «е» — набирают обычно через «е».
-    private static string Fold(string s)
+    internal static string Fold(string s)
     {
         var chars = s.ToLowerInvariant().ToCharArray();
         for (var i = 0; i < chars.Length; i++)

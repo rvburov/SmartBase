@@ -54,6 +54,7 @@ public partial class PropertyEditorDialog
             .Where(p => p.Key != _editFieldId?.ToString()).ToList();
         SetRelationProperties(RelationAutoSourceCombo, sources);
         RefreshRelationKeyRows();
+        RefreshRelationAutoRows();
         RefreshRelationConditionRows(keepSelection);
         RefreshRelationDataProperties();
     }
@@ -125,17 +126,33 @@ public partial class PropertyEditorDialog
     {
         using var cancellation = new CancellationTokenSource();
         var preview = await RunRelationWorkAsync(
-            token => _repository.PreviewAutoRelationAsync(proposed, token), "Подбор связей", cancellation);
+            token => _repository.PreviewAutoRelationAsync(proposed, token, detailed: true), "Подбор связей", cancellation);
         if (!preview.CanApply) { ShowError(preview.Message); return null; }
-        var accepted = await new ConfirmDialog(
-            $"Автоматические связи: добавить — {preview.Added}, изменить — {preview.Changed}, " +
-            $"очистить — {preview.Removed}, без совпадения — {preview.Unmatched}" +
-            (preview.OutsideCondition > 0 ? $", не подходят под условие выбора — {preview.OutsideCondition}" : "") +
-            ". Применить?", "Применить")
-            .ShowDialog<bool>(this);
+        var accepted = await new ConfirmDialog(AutoPreviewText(preview, proposed), "Применить").ShowDialog<bool>(this);
         if (!accepted) return null;
         return await RunRelationWorkAsync(
             token => _repository.SaveAutoRelationFieldAsync(proposed, preview, token), "Сохранение связей", cancellation);
+    }
+
+    // Итог подбора для подтверждения; каждая дополнительная строка — только при ненулевом числе.
+    private string AutoPreviewText(RelationAutoPreview preview, DbField proposed)
+    {
+        var lines = new List<string>
+        {
+            $"Автоматические связи: добавить — {preview.Added}, изменить — {preview.Changed}, очистить — {preview.Removed}.",
+        };
+        if (preview.Unmatched > 0)
+        {
+            var first = RelationConfig.FromConfig(proposed.ConfigJson)?.Auto?.Pairs.FirstOrDefault()?.SourceField;
+            var name = (RelationAutoSourceCombo.ItemsSource as IEnumerable<RelationPropertyItem>)?
+                .FirstOrDefault(p => p.Key == first)?.Name;
+            lines.Add($"Без совпадения — {preview.Unmatched}" +
+                      (preview.UnmatchedEmpty > 0 && name is not null ? $", из них не заполнено «{name}» — {preview.UnmatchedEmpty}" : "") + ".");
+        }
+        if (preview.FoldOnly > 0) lines.Add($"Совпали только без учета регистра и пробелов — {preview.FoldOnly}.");
+        if (preview.OutsideCondition > 0) lines.Add($"Не подходят под условие выбора — {preview.OutsideCondition}.");
+        lines.Add("Применить?");
+        return string.Join("\n", lines);
     }
 
     private async Task<T> RunRelationWorkAsync<T>(Func<CancellationToken, Task<T>> work, string title,

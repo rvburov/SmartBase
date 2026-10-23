@@ -3138,10 +3138,16 @@ public partial class ConstructorRepository(AppDbContext db)
     /// события ЧЕРЕЗ календарь: там источник дат доводит <see cref="EnsureCalendarDateField"/>,
     /// иначе созданная запись не появилась бы в разделе, из которого ее и завели.
     /// </summary>
-    public DbField AddField(DbField field)
+    public DbField AddField(DbField field) => AddField(field, matchAuto: true);
+
+    /// <param name="matchAuto">false — поле-автосвязь создается без подбора: ключи его правила еще
+    /// чужие (перенос записей переписывает их после создания), подбор пойдет после переноса.</param>
+    private DbField AddField(DbField field, bool matchAuto)
     {
         Demand(PermAction.CreateField, field.CollectionId);
-        if (field.FieldType == "relation" && RelationConfig.FromConfig(field.ConfigJson)?.Auto is not null
+        // Правило, которое не готово к подбору (потеряно, новее, повреждено), сохраняется как есть,
+        // без подбора: связей у нового поля еще нет.
+        if (matchAuto && field.FieldType == "relation" && RelationConfig.FromConfig(field.ConfigJson)?.Auto is { IsReady: true }
             && !IsApplyingAutoRelation)
         {
             var id = SaveAutoRelationField(field, PreviewAutoRelation(field));
@@ -3173,11 +3179,19 @@ public partial class ConstructorRepository(AppDbContext db)
     public void UpdateField(DbField field)
     {
         Demand(PermAction.EditField, field.CollectionId);
-        if (field.FieldType == "relation" && RelationConfig.FromConfig(field.ConfigJson)?.Auto is not null
+        if (field.FieldType == "relation" && RelationConfig.FromConfig(field.ConfigJson)?.Auto is { } auto
             && !IsApplyingAutoRelation)
         {
-            SaveAutoRelationField(field, PreviewAutoRelation(field));
-            return;
+            if (auto.IsReady)
+            {
+                SaveAutoRelationField(field, PreviewAutoRelation(field));
+                return;
+            }
+            // Правило, которое не готово к подбору, можно только оставить как есть (переименовать
+            // свойство, сменить разделитель); задать его заново — выбрать пары.
+            var stored = db.DbFields.AsNoTracking().Where(f => f.Id == field.Id).Select(f => f.ConfigJson).FirstOrDefault();
+            if (RelationConfig.FromConfig(stored)?.Auto != auto)
+                throw new InvalidOperationException("Выберите пары свойств автоподбора.");
         }
         ValidateRelationComputedField(field);
         ValidateRelationCondition(field);
@@ -5062,13 +5076,15 @@ public partial class ConstructorRepository(AppDbContext db)
                 // перенос ЦЕЛОЙ коллекции (DuplicateCollection, CrossMove) ее сохраняет — там
                 // коллекция и остается собой. Показать приехавшую дату в календаре — решение
                 // владельца приемника, тумблером в свойствах столбца.
+                // Автосвязь создается без подбора: ее ключи — номера свойств источника, их перепишет
+                // RemapCopiedRelationConfigs ниже, а подбор запустит уведомление после переноса.
                 tf = AddField(new DbField
                 {
                     CollectionId = targetCollectionId, Name = sf.Name,
                     FieldType    = sf.FieldType,        ConfigJson = cfgJson,
                     Position     = nextFieldPos,        IsCalStart = false,
                     IsCalEnd     = sf.IsCalEnd,         IsRequired = sf.IsRequired,
-                });
+                }, matchAuto: false);
                 nextFieldPos += 1000;
                 targetByName[sf.Name] = tf;
                 createdFields.Add(tf.Id!.Value);
