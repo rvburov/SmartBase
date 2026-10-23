@@ -150,7 +150,20 @@ public partial class PropertyEditorDialog
                 _ => "Настройка автоподбора повреждена. Выберите пары заново. До сохранения связи не меняются.",
             });
             if (rule.State == RelationAutoState.Newer) _keptAutoRule = rule;
+            // Пары не известны: списки пустые (сохранение без выбора попросит выбрать пары), флажок
+            // не изображает свертку, которой, может быть, нет.
+            RelationAutoSourceCombo.SelectedIndex = RelationAutoTargetCombo.SelectedIndex = -1;
+            RelationAutoFoldCheck.IsChecked = false;
         }
+        UpdateAutoPairsState();
+    }
+
+    private void ForgetKeptAutoRule()
+    {
+        _keptAutoRule = null;
+        RelationAutoNote.Kind = Widgets.NoticeBanner.BannerKind.Info;
+        RelationAutoNote.Show("Целевая коллекция изменилась: правило автоподбора более новой версии к ней не подходит. Выберите пары заново.");
+        RelationAutoSourceCombo.SelectedIndex = RelationAutoTargetCombo.SelectedIndex = -1;
         UpdateAutoPairsState();
     }
 

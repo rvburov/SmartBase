@@ -256,7 +256,12 @@ public sealed class RelationSelectBox : Panel
             var joined = list.Count == 1 ? list[0] : string.Join(", ", list.Take(list.Count - 1)) + " и " + list[^1];
             _autoHint.Text = $"Подбирается автоматически: {joined}.";
         }
-        catch (PermissionDeniedException) { _autoHint.Text = "Подбирается автоматически."; }
+        catch (Exception ex)
+        {
+            // База на сетевом диске пропала, нет прав: строка без названий, список открывается.
+            Serilog.Log.Warning(ex, "Не удалось прочитать свойства автосвязи");
+            _autoHint.Text = "Подбирается автоматически.";
+        }
     }
 
     /// <summary>

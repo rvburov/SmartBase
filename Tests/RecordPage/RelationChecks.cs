@@ -432,6 +432,31 @@ internal static class RelationChecks
                 && RelationConfig.FromConfig(renamedNewer.ConfigJson)?.Auto?.State == RelationAutoState.Newer
                 && repo.GetLinkTargetIds(pairsField.Id.Value, record).SequenceEqual([b]),
                 "переименование оставило правило новой версии и связи как есть");
+            var newerAgain = new PropertyEditorDialog(repo, source, pairsField.Id.Value) { MaxHeight = 600 };
+            var newerAgainClosed = newerAgain.ShowDialog<bool>(owner);
+            Pump();
+            Choose(Combo(newerAgain, "RelationTargetCombo"), "Id", source);
+            Expect(newerAgain.FindControl<NoticeBanner>("RelationAutoNote")!.Message?.StartsWith("Целевая коллекция изменилась", StringComparison.Ordinal) == true
+                && Combo(newerAgain, "RelationAutoSourceCombo").IsEnabled && newerAgain.FindControl<Button>("AddAutoPairBtn")!.IsVisible,
+                "смена цели у правила новой версии требует выбрать пары заново");
+            Click(newerAgain, newerAgain.FindControl<Button>("CancelBtn")!);
+            Wait(() => newerAgainClosed.IsCompleted, "окно правила новой версии не закрылось");
+
+            // Потерянное правило: пар нет — списки пустые, сохранение без выбора просит выбрать пары.
+            var lostJson = $"{{\"targetCollectionId\":{target},\"single\":false,\"separator\":\"comma\"," +
+                           "\"auto\":{\"sourceField\":\"__title__\",\"targetField\":\"2147483647\"}}";
+            manager.Context.Database.ExecuteSqlRaw("UPDATE db_fields SET ConfigJson = {0} WHERE Id = {1}", lostJson, pairsField.Id.Value);
+            var lost = new PropertyEditorDialog(repo, source, pairsField.Id.Value) { MaxHeight = 600 };
+            var lostClosed = lost.ShowDialog<bool>(owner);
+            Pump();
+            Expect(Combo(lost, "RelationAutoSourceCombo").SelectedIndex == -1 && Combo(lost, "RelationAutoTargetCombo").SelectedIndex == -1
+                && lost.FindControl<NoticeBanner>("RelationAutoNote")!.Message?.StartsWith("Пары свойств автоподбора потеряны", StringComparison.Ordinal) == true,
+                "потерянное правило показано плашкой, пары не подставлены");
+            Click(lost, lost.FindControl<Button>("SaveBtn")!);
+            Expect(!lostClosed.IsCompleted && lost.FindControl<NoticeBanner>("NoticeBanner")!.Message == "Выберите свойства для автоматического сопоставления",
+                "сохранение потерянного правила без выбора просит выбрать пары, а не подбирает по названию");
+            Click(lost, lost.FindControl<Button>("CancelBtn")!);
+            Wait(() => lostClosed.IsCompleted, "окно потерянного правила не закрылось");
 
             var autoPicker = new RelationSelectBox(repo, saved.Id.Value, autoCfg!, editing: true) { RecordId = record, Height = 38 };
             owner.Content = autoPicker;

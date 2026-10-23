@@ -89,9 +89,14 @@ public partial class ConstructorRepository
     }
 
     public RelationAutoApplyResult ApplyAutoRelation(int fieldId, string? configJson = null,
-        CancellationToken ct = default) => ApplyAutoRelation(PreviewAutoRelation(fieldId, configJson, ct), ct);
+        CancellationToken ct = default) => ApplyAutoRelation(PreviewAutoRelation(fieldId, configJson, ct), ct, freshPreview: true);
 
-    public RelationAutoApplyResult ApplyAutoRelation(RelationAutoPreview preview, CancellationToken ct = default)
+    /// <summary>Применить просмотр, сделанный раньше: снимок перепроверяется в транзакции, чужая
+    /// правка после просмотра дает Conflict.</summary>
+    public RelationAutoApplyResult ApplyAutoRelation(RelationAutoPreview preview, CancellationToken ct = default) =>
+        ApplyAutoRelation(preview, ct, freshPreview: false);
+
+    private RelationAutoApplyResult ApplyAutoRelation(RelationAutoPreview preview, CancellationToken ct, bool freshPreview)
     {
         if (!preview.CanApply || preview.ProposedField is null)
             return new(preview.Status, 0, preview.Message);
@@ -104,10 +109,11 @@ public partial class ConstructorRepository
             else
             {
                 Demand(PermAction.EditRecord, proposed.CollectionId);
-                // Настройка та же и менять нечего — без транзакции записи и второго чтения: на
-                // сетевом диске это большинство фоновых пересчетов. Следующая правка данных сама
-                // запустит новый пересчет.
-                if (preview.Changes.Count == 0) return new(RelationAutoStatus.Applied, 0, "Автоматические связи обновлены.");
+                // Настройка та же, просмотр только что сделан и менять нечего — без транзакции записи
+                // и второго чтения: на сетевом диске это большинство фоновых пересчетов. Следующая
+                // правка данных сама запустит новый пересчет. Просмотр, сделанный раньше, так не
+                // пропускается: его снимок обязан перепроверяться.
+                if (freshPreview && preview.Changes.Count == 0) return new(RelationAutoStatus.Applied, 0, "Автоматические связи обновлены.");
                 if (db.Database.CurrentTransaction is not null)
                     SaveAutoRelationFieldCore(proposed, preview, ct, saveMetadata: false);
                 else
@@ -285,8 +291,8 @@ public partial class ConstructorRepository
         var absoluteTargetDbId = cfg.TargetDbId == 0 ? sourceDbId : cfg.TargetDbId;
         var buffer = new StringBuilder();
         var targetIndex = new Dictionary<string, List<RelationTarget>>(StringComparer.Ordinal);
-        // Точный индекс — только для окна: сколько записей совпало лишь благодаря свертке текста.
-        var exactIndex = detailed && rule.Fold ? new Dictionary<string, int>(StringComparer.Ordinal) : null;
+        // Точные ключи целей — только для окна: сколько записей связано лишь благодаря свертке текста.
+        var exactOf = detailed && rule.Fold ? new Dictionary<int, string?>() : null;
         var count = 0;
         foreach (var row in targetRows)
         {
@@ -296,9 +302,9 @@ public partial class ConstructorRepository
             if (key is null) continue;
             if (!targetIndex.TryGetValue(key, out var list)) targetIndex[key] = list = [];
             list.Add(new(targetDbId, row.RecordId));
-            if (exactIndex is not null && RelationAutoMatch.TryRuleKey(row.Parts, false, absoluteTargetDbId, buffer, out var exact, out _)
-                && exact is not null)
-                exactIndex[exact] = exactIndex.GetValueOrDefault(exact) + 1;
+            if (exactOf is not null)
+                exactOf[row.RecordId] = RelationAutoMatch.TryRuleKey(row.Parts, false, absoluteTargetDbId, buffer, out var exact, out _)
+                    ? exact : null;
         }
         // Ключи источников — один раз: по ним же собираются совпавшие цели для условия выбора.
         var sourceKeys = new (string? Key, bool FirstEmpty)[sourceRows.Count];
@@ -353,8 +359,9 @@ public partial class ConstructorRepository
                 unmatched++;
                 if (firstEmpty) unmatchedEmpty++;
             }
-            else if (exactIndex is not null && (!RelationAutoMatch.TryRuleKey(source.Parts, false, sourceDbId, buffer, out var exact, out _)
-                         || exact is null || exactIndex.GetValueOrDefault(exact) < found.Length))
+            // Связана лишь благодаря свертке: хоть у одной выбранной цели точный ключ другой.
+            else if (exactOf is not null && (!RelationAutoMatch.TryRuleKey(source.Parts, false, sourceDbId, buffer, out var exact, out _)
+                         || exact is null || wanted.Any(t => exactOf.GetValueOrDefault(t.RecordId) != exact)))
                 foldOnly++;
             if (cfg.Single && wanted.Length > 1)
             {

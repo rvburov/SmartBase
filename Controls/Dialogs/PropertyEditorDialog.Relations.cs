@@ -54,6 +54,8 @@ public partial class PropertyEditorDialog
             .Where(p => p.Key != _editFieldId?.ToString()).ToList();
         SetRelationProperties(RelationAutoSourceCombo, sources);
         RefreshRelationKeyRows();
+        // Правило более новой версии относится к прежней цели: с новой его пары задаются заново.
+        if (!keepSelection && _keptAutoRule is not null) ForgetKeptAutoRule();
         RefreshRelationAutoRows();
         RefreshRelationConditionRows(keepSelection);
         RefreshRelationDataProperties();

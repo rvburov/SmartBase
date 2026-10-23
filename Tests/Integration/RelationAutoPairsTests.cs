@@ -207,6 +207,7 @@ public sealed class RelationAutoPairsTests
         var report = f.Repo.ScanRelationIntegrityAsync(new RelationIntegrityScanOptions(FieldId: f.Relation)).GetAwaiter().GetResult();
         var issue = Assert.Single(report.Issues, i => i.Kind == RelationIntegrityIssueKind.NewerAutoRule);
         Assert.True(issue.IsInformational);
+        Assert.Equal((0, 0, 1), (report.ConfirmedIssues, report.UnverifiedIssues, report.InformationalIssues));
         Assert.DoesNotContain(report.Issues, i => i.Kind is RelationIntegrityIssueKind.MissingDependency or RelationIntegrityIssueKind.InvalidConfiguration);
 
         f.Database.Context.Database.ExecuteSqlRaw("UPDATE db_fields SET ConfigJson = {0} WHERE Id = {1}",
@@ -265,6 +266,77 @@ public sealed class RelationAutoPairsTests
         f.Repo.SetFieldValue(moved.Single(), kpp, "99");
         f.Repo.RefreshAutoRelationsForChange(archive, kpp);
         Assert.Empty(f.Repo.GetLinkEdges(relation.Id!.Value, moved.Single()));
+    }
+
+    [Fact]
+    public void An_earlier_preview_is_checked_again_even_when_it_changes_nothing()
+    {
+        using var f = new Fixture();
+        var client = f.Client("Головной офис", "7700", "01");
+        var order = f.Order("Заказ", "7700", "01");
+        f.Repo.SaveAutoRelationField(f.Proposed(f.InnAndKpp()), f.Repo.PreviewAutoRelation(f.Proposed(f.InnAndKpp())));
+        var stale = f.Repo.PreviewAutoRelation(f.Repo.GetFields(f.Orders).Single(x => x.Id == f.Relation));
+        Assert.Empty(stale.Changes);
+        Assert.Equal([client], f.Links(order));
+        f.Repo.SetFieldValue(order, f.OrderKpp, "02");
+        Assert.Equal(RelationAutoStatus.Conflict, f.Repo.ApplyAutoRelation(stale).Status);
+        // Свежий просмотр по номеру поля применяет изменение.
+        Assert.True(f.Repo.ApplyAutoRelation(f.Relation).Applied);
+        Assert.Empty(f.Links(order));
+    }
+
+    [Fact]
+    public void Fold_only_counts_links_that_exist_only_thanks_to_folding()
+    {
+        using var f = new Fixture();
+        var head = SampleData.AddField(f.Repo, f.Clients, "Головной ИНН", "text").Id!.Value;
+        var self = SampleData.AddField(f.Repo, f.Clients, "Головной офис", "relation");
+        self.ConfigJson = new RelationConfig(f.Clients, false).ToConfigJson();
+        f.Repo.UpdateField(self);
+        var office = f.Client("Головной офис", "7700", "01");
+        f.Repo.SetFieldValue(office, head, "7700");
+        f.Client("Филиал", "7700", "01 ");
+        var rule = new RelationAutoRule([new(head.ToString(), f.Inn.ToString()), new(f.Kpp.ToString(), f.Kpp.ToString())], fold: true);
+        self.ConfigJson = new RelationConfig(f.Clients, false, Auto: rule).ToConfigJson();
+        // Сама запись совпадает с собой точно, но связь с филиалом есть только благодаря свертке.
+        Assert.Equal(1, f.Repo.PreviewAutoRelation(self, detailed: true).FoldOnly);
+    }
+
+    [Fact]
+    public void A_newer_rule_keeps_its_target()
+    {
+        using var f = new Fixture();
+        var other = SampleData.AddCollection(f.Repo, "Контрагенты").Id!.Value;
+        f.Database.Context.Database.ExecuteSqlRaw("UPDATE db_fields SET ConfigJson = {0} WHERE Id = {1}",
+            $"{{\"targetCollectionId\":{f.Clients},\"single\":true,\"auto\":{{\"sourceField\":\"__title__\",\"targetField\":\"2147483647\",\"format\":3}}}}",
+            f.Relation);
+        var field = f.Repo.GetFields(f.Orders).Single(x => x.Id == f.Relation);
+        var auto = RelationConfig.FromConfig(field.ConfigJson)!.Auto;
+        field.ConfigJson = new RelationConfig(other, true, Auto: auto).ToConfigJson();
+        var error = Assert.Throws<InvalidOperationException>(() => f.Repo.UpdateField(field));
+        Assert.StartsWith("Правило автоподбора создано более новой версией программы", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Moving_records_creates_data_columns_of_the_relation_too()
+    {
+        using var f = new Fixture();
+        var client = f.Client("Головной офис", "7700", "01");
+        var order = f.Order("Заказ", "7700", "01");
+        f.Repo.SetLinks(f.Relation, order, [client]);
+        f.Repo.AddField(new DbField
+        {
+            CollectionId = f.Orders, Name = "КПП покупателя (из связи)", FieldType = "lookup", Position = 5000,
+            ConfigJson = new RelationComputedConfig(f.Relation, f.Kpp.ToString()).ToConfigJson(),
+        });
+        var archive = SampleData.AddCollection(f.Repo, "Архив заказов").Id!.Value;
+        var moved = f.Repo.MoveRecordsToCollectionIsolated(f.Database.Path, f.Orders, [order], archive,
+            createMissingFields: true, sourceDbId: 0, targetDbId: 0);
+        var fields = f.Repo.GetFields(archive);
+        var relation = fields.Single(x => x.Name == "Покупатель").Id!.Value;
+        var lookup = fields.Single(x => x.Name == "КПП покупателя (из связи)");
+        Assert.Equal(relation, RelationComputedConfig.FromConfig(lookup.ConfigJson)!.RelationFieldId);
+        Assert.Equal("01", f.Repo.GetFieldValues(moved.Single())[lookup.Id!.Value]);
     }
 
     [Fact]

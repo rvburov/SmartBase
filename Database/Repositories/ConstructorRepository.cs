@@ -3142,8 +3142,9 @@ public partial class ConstructorRepository(AppDbContext db)
 
     /// <param name="copy">Поле — копия уже сохраненного (перенос записей с созданием недостающих
     /// свойств): автосвязь создается без подбора — ключи ее правила еще чужие, их перепишут после
-    /// создания, подбор пойдет после переноса; условие выбора не проверяется заново — оно уже было
-    /// принято (нечитаемое копируется как есть и так же закрывает новые связи).</param>
+    /// создания, подбор пойдет после переноса; условие выбора и столбец данных не проверяются
+    /// заново — они уже были приняты, а номера в них перепишутся (нечитаемое условие копируется как
+    /// есть и так же закрывает новые связи).</param>
     private DbField AddField(DbField field, bool copy)
     {
         Demand(PermAction.CreateField, field.CollectionId);
@@ -3155,8 +3156,12 @@ public partial class ConstructorRepository(AppDbContext db)
             var id = SaveAutoRelationField(field, PreviewAutoRelation(field));
             return ToDbField(db.DbFields.AsNoTracking().Single(f => f.Id == id));
         }
-        ValidateRelationComputedField(field);
-        if (!copy) ValidateRelationCondition(field);
+        // Копия столбца данных ссылается на связь источника, пока ее не переписали: проверять нечего.
+        if (!copy)
+        {
+            ValidateRelationComputedField(field);
+            ValidateRelationCondition(field);
+        }
         if (db.DbFields.Any(f => f.CollectionId == field.CollectionId && f.Name == field.Name))
             throw new InvalidOperationException("Поле с таким именем уже существует.");
 
@@ -3190,10 +3195,19 @@ public partial class ConstructorRepository(AppDbContext db)
                 return;
             }
             // Правило, которое не готово к подбору, можно только оставить как есть (переименовать
-            // свойство, сменить разделитель); задать его заново — выбрать пары.
-            var stored = db.DbFields.AsNoTracking().Where(f => f.Id == field.Id).Select(f => f.ConfigJson).FirstOrDefault();
-            if (RelationConfig.FromConfig(stored)?.Auto != auto)
+            // свойство, сменить разделитель); задать его заново — выбрать пары. Цель связи с ним не
+            // меняется: номера свойств в его парах относятся к прежней коллекции. Исключение — выбор
+            // базы для старой межбазовой связи: коллекция та же, прежний номер базы не определен.
+            var stored = RelationConfig.FromConfig(db.DbFields.AsNoTracking().Where(f => f.Id == field.Id)
+                .Select(f => f.ConfigJson).FirstOrDefault());
+            var proposed = RelationConfig.FromConfig(field.ConfigJson)!;
+            if (stored?.Auto != auto)
                 throw new InvalidOperationException("Выберите пары свойств автоподбора.");
+            if (stored.TargetCollectionId != proposed.TargetCollectionId
+                || stored.TargetDbId != proposed.TargetDbId && !IsLegacyRelationDb(stored.TargetDbId))
+                throw new InvalidOperationException(auto.State == RelationAutoState.Newer
+                    ? "Правило автоподбора создано более новой версией программы: чтобы сменить цель связи, выберите «Ручной выбор» или обновите программу."
+                    : "Цель связи изменилась: выберите пары свойств автоподбора заново.");
         }
         ValidateRelationComputedField(field);
         ValidateRelationCondition(field);
@@ -5064,6 +5078,10 @@ public partial class ConstructorRepository(AppDbContext db)
 
         var plan = new Dictionary<int, (int FieldId, string From, string To)>();
         var createdFields = new HashSet<int>();
+        // Недостающие свойства и перепись их ключей — одна операция: копии ссылаются на номера
+        // свойств источника, и сбой между созданием и переписью оставил бы готовое правило или
+        // столбец данных, указывающие на чужие свойства.
+        using var schemaTx = createMissingFields && db.Database.CurrentTransaction is null ? db.Database.BeginTransaction() : null;
         foreach (var sf in srcFields)
         {
             if (!targetByName.TryGetValue(sf.Name, out var tf))
@@ -5097,6 +5115,7 @@ public partial class ConstructorRepository(AppDbContext db)
         if (createdFields.Count > 0)
             RemapCopiedRelationConfigs(new Dictionary<int, int>(), plan.ToDictionary(p => p.Key, p => p.Value.FieldId),
                 0, 0, onlyNewFieldIds: createdFields);
+        schemaTx?.Commit();
 
         // Связи (relation): переносим там, где исходное И целевое поле — «Связь», а конфиг цели указывает
         // на ту же коллекцию И ту же (переписанную под целевую базу) целевую БД. Созданные выше поля уже
