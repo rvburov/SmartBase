@@ -246,10 +246,11 @@ public partial class ConstructorRepository
         foreach (var group in refused.GroupBy(r => (r.FieldId, r.TargetDbId)))
             foreach (var chunk in group.Select(r => r.ToRecordId).Chunk(ConditionChunk))
             {
+                // Имена колонок без кавычек: в PostgreSQL они строчные, в SQLite регистр не важен.
                 #pragma warning disable EF1002   // в SQL только числа из базы
                 var count = db.Database.ExecuteSqlRaw(
-                    $"DELETE FROM db_record_links WHERE \"FieldId\" = {group.Key.FieldId} AND \"TargetDbId\" = {group.Key.TargetDbId} " +
-                    $"AND \"ToRecordId\" IN ({string.Join(",", chunk)}) AND \"FromRecordId\" IN ({newIdsSql})");
+                    $"DELETE FROM db_record_links WHERE FieldId = {group.Key.FieldId} AND TargetDbId = {group.Key.TargetDbId} " +
+                    $"AND ToRecordId IN ({string.Join(",", chunk)}) AND FromRecordId IN ({newIdsSql})");
                 #pragma warning restore EF1002
                 dropped[group.Key.FieldId] = dropped.GetValueOrDefault(group.Key.FieldId) + count;
             }

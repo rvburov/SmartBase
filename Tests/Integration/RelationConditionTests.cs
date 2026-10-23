@@ -1,6 +1,8 @@
 using SmartBase.Core.Exporters.TableWriters;
 using SmartBase.Core.Importers.TableSources;
+using Npgsql;
 using SmartBase.Core.Models;
+using SmartBase.Database;
 using SmartBase.Database.Repositories;
 
 namespace SmartBase.Tests.Integration;
@@ -183,6 +185,32 @@ public sealed class RelationConditionTests
         Assert.Equal([f.Active, f.Closed], f.Links());
     }
 
+    [SkippableFact]
+    public void The_condition_works_on_PostgreSQL()
+    {
+        // Отдельный SQL дубля набора (DuplicateRecordsDataPg), поиск от индекса значений и ворота.
+        Skip.IfNot(PgTestServer.IsAvailable, "Стенд PostgreSQL sb-pg (порт 5455) не поднят");
+        using var f = new Fixture(condition: false, postgres: true);
+        f.Repo.SetLinks(f.Relation, f.Order, [f.Active, f.Closed]);
+        f.SetCondition(true);
+        Assert.Equal([f.Active, f.Renewal], f.Repo.SearchRelationRecords(f.Clients, RelationConfig.TitleField, null, condition: f.Config())
+            .Select(v => v.RecordId));
+        var notices = new List<string>();
+        ConstructorRepository.ConditionNotice = notices.Add;
+        try
+        {
+            var copies = f.Repo.DuplicateRecordsData(f.Orders, [f.Order]);
+            Assert.Equal([f.Active], f.Repo.GetLinkEdges(f.Relation, copies.Single()).Select(e => e.ToRecordId));
+            Assert.Equal("Копия создана. Не скопировано связей — 1 («Клиент»): записи не подходят под условие выбора.", Assert.Single(notices));
+        }
+        finally { ConstructorRepository.ConditionNotice = null; }
+        // Прежняя связь вне условия переживает перестановку; снятую выбрать снова нельзя.
+        f.Repo.SetLinkEdges(f.Relation, f.Order, [new RelationTarget(0, f.Closed), new RelationTarget(0, f.Active), new RelationTarget(0, f.Renewal)]);
+        Assert.Equal([f.Closed, f.Active, f.Renewal], f.Links());
+        f.Repo.SetLinkEdges(f.Relation, f.Order, [new RelationTarget(0, f.Active)]);
+        Assert.Throws<RelationConditionException>(() => f.Repo.AddLink(f.Relation, f.Order, f.Closed));
+    }
+
     [Fact]
     public void Import_does_not_create_links_outside_the_condition()
     {
@@ -277,8 +305,9 @@ public sealed class RelationConditionTests
 
     private sealed class Fixture : IDisposable
     {
-        private readonly TempDatabase _db = new();
-        public ConstructorRepository Repo => _db.Constructor;
+        private readonly TempDatabase? _db;
+        private readonly DatabaseManager? _pg;
+        public ConstructorRepository Repo => _db?.Constructor ?? _pg!.Constructor;
         public int Clients { get; }
         public int Status { get; }
         public int Active { get; }
@@ -288,8 +317,21 @@ public sealed class RelationConditionTests
         public int Order { get; }
         public int Relation { get; }
 
-        public Fixture(bool condition = true)
+        public Fixture(bool condition = true, bool postgres = false)
         {
+            if (postgres)
+            {
+                var cs = PgTestServer.ConnectionString(PgTestServer.Database1);
+                using (var connection = new NpgsqlConnection(cs))
+                {
+                    connection.Open();
+                    using var reset = connection.CreateCommand();
+                    reset.CommandText = "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;";
+                    reset.ExecuteNonQuery();
+                }
+                _pg = DatabaseManager.Open(101, "pg-condition", cs, provider: "postgres");
+            }
+            else _db = new();
             Clients = SampleData.AddCollection(Repo, "Клиенты").Id!.Value;
             var status = SampleData.AddField(Repo, Clients, "Статус", "status");
             Status = status.Id!.Value;
@@ -320,6 +362,10 @@ public sealed class RelationConditionTests
 
         public List<int> Links() => Repo.GetLinkEdges(Relation, Order).Select(e => e.ToRecordId).ToList();
 
-        public void Dispose() => _db.Dispose();
+        public void Dispose()
+        {
+            _db?.Dispose();
+            _pg?.Dispose();
+        }
     }
 }
