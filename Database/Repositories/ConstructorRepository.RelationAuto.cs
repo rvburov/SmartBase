@@ -431,6 +431,7 @@ public partial class ConstructorRepository
                 preview.CanApply ? "Настройка изменилась. Повторите предварительный просмотр." : preview.Message);
         ct.ThrowIfCancellationRequested();
         using var tx = new AutoWriteScope(db);
+        LockAutoRelationParents(field, preview.Changes, ct);
         var fresh = PreviewAutoRelation(field, ct);
         if (!fresh.CanApply) throw new RelationAutoApplyException(fresh.Status, fresh.Message);
         if (fresh.Fingerprint != preview.Fingerprint)
@@ -457,6 +458,55 @@ public partial class ConstructorRepository
             return fieldId;
         }
         finally { _savingAutoRelation = false; }
+    }
+
+    // Для локальной цели нет FK на ToRecordId: межбазовые ребра имеют тот же формат.
+    // Подбор и ручной SetLinks обязаны удерживать одинаковые parent locks до коммита,
+    // иначе ReadCommitted-удаление цели может завершиться после просмотра и до INSERT.
+    private void LockAutoRelationParents(DbField field, IReadOnlyList<RelationAutoChange> changes,
+        CancellationToken ct)
+    {
+        if (changes.Count == 0) return;
+        var localDatabases = RelationTargetsOfThisBase().ToHashSet();
+        var sourceIds = changes.Select(change => change.RecordId).ToHashSet();
+        var targetIds = changes.SelectMany(change => change.NewTargets)
+            .Where(target => localDatabases.Contains(target.DbId)).Select(target => target.RecordId).ToHashSet();
+        if (db.IsPostgres)
+        {
+            try
+            {
+                // Один запрос на пакет, а не сетевой round-trip на каждое ребро.
+                foreach (var chunk in sourceIds.Concat(targetIds).Distinct().Order().Chunk(512))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    using var command = db.Database.GetDbConnection().CreateCommand();
+                    command.Transaction = db.Database.CurrentTransaction!.GetDbTransaction();
+                    command.CommandTimeout = db.Database.GetCommandTimeout() ?? 30;
+                    command.CommandText = "SELECT id FROM db_records WHERE id = ANY(@ids) ORDER BY id FOR UPDATE";
+                    AddAutoParameter(command, "@ids", chunk);
+                    using var reader = command.ExecuteReader();
+                    while (reader.Read()) ct.ThrowIfCancellationRequested();
+                }
+            }
+            catch (Exception error) when (IsWriteConflict(error))
+            {
+                throw new RelationAutoApplyException(RelationAutoStatus.Conflict,
+                    "Записи изменились во время подбора. Повторите предварительный просмотр.");
+            }
+        }
+        ct.ThrowIfCancellationRequested();
+        // FOR UPDATE пропускает уже исчезнувшую строку; внутри внешней ReadCommitted
+        // транзакции это не обязано дать 40001. Проверяем живых родителей явно.
+        var liveSources = db.DbRecords.AsNoTracking()
+            .Where(record => record.CollectionId == field.CollectionId && sourceIds.Contains(record.Id))
+            .Select(record => record.Id).ToHashSet();
+        var cfg = RelationConfig.FromConfig(field.ConfigJson)!;
+        HashSet<int> liveTargets = targetIds.Count == 0 ? [] : db.DbRecords.AsNoTracking()
+            .Where(record => record.CollectionId == cfg.TargetCollectionId && targetIds.Contains(record.Id))
+            .Select(record => record.Id).ToHashSet();
+        if (!sourceIds.SetEquals(liveSources) || !targetIds.SetEquals(liveTargets))
+            throw new RelationAutoApplyException(RelationAutoStatus.Conflict,
+                "Записи изменились или удалены. Повторите предварительный просмотр.");
     }
 
     // Вложенный отказ не оставляет удаленные ребра или измененную настройку даже тогда,

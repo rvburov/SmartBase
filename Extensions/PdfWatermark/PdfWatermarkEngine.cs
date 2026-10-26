@@ -1,5 +1,6 @@
 using SmartBase.Database;
 using SmartBase.Database.Repositories;
+using Microsoft.EntityFrameworkCore;
 
 namespace SmartBase.Extensions.PdfWatermark;
 
@@ -122,12 +123,14 @@ public static class PdfWatermarkEngine
         // Свое подключение: фоновая работа с базой идет на свежем контексте, а не на общем.
         using var ctx = new AppDbContext(request.DbPath);
         ctx.ApplyPerformancePragmas();
+        // SQLite data_version надежен только на одном физическом подключении. Держим его
+        // открытым до конца прогона; между резервами транзакции и блокировки не удерживаются.
+        ctx.Database.OpenConnection();
         var repo = new ConstructorRepository(ctx);
 
-        // Занятые номера читаются ОДИН раз на весь прогон — двумя запросами, сколько бы файлов
-        // ни было. Иначе подбор номера перечитывал бы растущий журнал на каждый файл, и пачка в
-        // 20 000 документов встала бы на квадрате.
-        var ledger = NumberLedger.Load(repo, request.Shape,
+        // Базовый снимок — два запроса на пачку. Повторяем его только после чужой записи
+        // в SQLite; у PG без такого счетчика резерв заново проверяет текущий документ.
+        var ledger = NumberLedger.LoadPinned(repo, request.Shape,
                                        files.Select(CopyNumber.DocumentOf).ToHashSet(StringComparer.Ordinal));
 
         var items     = new List<StampItem>(files.Count);

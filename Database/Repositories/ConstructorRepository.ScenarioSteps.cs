@@ -158,55 +158,64 @@ public partial class ConstructorRepository
             ctx.ChangeTracker.Clear();
 
             var title = row.FirstOrDefault(v => Same(v.Key, titleLabel)).Value ?? "";
-
-            if (matching)
+            var key = matching
+                ? ((keyFieldId is int fieldId
+                    ? row.FirstOrDefault(v => known.TryGetValue(v.Key.Trim(), out var at) && at == fieldId).Value
+                    : title) ?? "").Trim()
+                : "";
+            var committed = repo.InCollectionWriteTransaction(collectionId, () =>
             {
-                var key = (keyFieldId is int fieldId
-                    ? row.FirstOrDefault(v => known.TryGetValue(v.Key.Trim(), out var at)
-                                           && at == fieldId).Value
-                    : title) ?? "";
-
-                key = key.Trim();
-
-                // Пустой ключ — сопоставлять не по чему. Завести такую запись значило бы плодить
-                // дубли при каждом следующем запуске.
-                if (key.Length == 0)         { skipped++;   continue; }
-                if (duplicates.Contains(key)) { ambiguous++; continue; }
-
-                if (index.TryGetValue(key, out var found))
+                ct.ThrowIfCancellationRequested();
+                if (matching)
                 {
-                    Fill(repo, found, row, known, titleLabel, title, clearing: true);
-                    updated++;
-                    continue;
+                    if (key.Length == 0) return new ExchangeRowResult(ExchangeRowChange.Skipped);
+                    if (duplicates.Contains(key)) return new ExchangeRowResult(ExchangeRowChange.Ambiguous);
+                    if (index.TryGetValue(key, out var original) && !repo.Exists(original))
+                        return new ExchangeRowResult(ExchangeRowChange.Skipped);
+                    var matches = repo.FindExchangeKey(collectionId, keyFieldId, key);
+                    if (matches.Count > 1) return new ExchangeRowResult(ExchangeRowChange.Ambiguous);
+                    if (matches.Count == 1)
+                    {
+                        Fill(repo, matches[0], row, known, titleLabel, title, clearing: true);
+                        repo.ValidateExchangeFields(collectionId,
+                            row.Keys.Where(name => !Same(name, titleLabel)).Select(name => known[name.Trim()]));
+                        return new ExchangeRowResult(ExchangeRowChange.Updated, matches[0]);
+                    }
+                    if (index.ContainsKey(key) || !createMissing)
+                        return new ExchangeRowResult(ExchangeRowChange.Skipped);
                 }
 
-                if (!createMissing) { skipped++; continue; }
-            }
-
-            var record = repo.AddRecord(new DbRecord
-            {
-                CollectionId = collectionId,
-                Title        = title,
-                Position     = position,
+                var record = repo.AddRecord(new DbRecord
+                {
+                    CollectionId = collectionId,
+                    Title        = title,
+                    Position     = position,
+                });
+                Fill(repo, record.Id!.Value, row, known, titleLabel, title, clearing: false);
+                repo.ValidateExchangeFields(collectionId,
+                    row.Keys.Where(name => !Same(name, titleLabel)).Select(name => known[name.Trim()]));
+                return new ExchangeRowResult(ExchangeRowChange.Created, record.Id.Value);
             });
 
-            position += 1000;
-
-            Fill(repo, record.Id!.Value, row, known, titleLabel, title, clearing: false);
-
-            // Заведенное в этом же запуске попадает в индекс: две строки с одним ключом в одной
-            // пачке — это одна запись, обновленная дважды, а не два дубля.
-            if (matching)
+            // Счетчики и снимок следующей строки меняются только после COMMIT. При повторе
+            // транзакции не остается подтверждения несуществующей или неполной записи.
+            switch (committed.Change)
             {
-                var key = (keyFieldId is int fieldId
-                    ? row.FirstOrDefault(v => known.TryGetValue(v.Key.Trim(), out var at)
-                                           && at == fieldId).Value
-                    : title) ?? "";
-
-                if (key.Trim() is { Length: > 0 } fresh) index[fresh] = record.Id!.Value;
+                case ExchangeRowChange.Created:
+                    position += 1000;
+                    created++;
+                    if (matching) index[key] = committed.RecordId!.Value;
+                    break;
+                case ExchangeRowChange.Updated:
+                    updated++;
+                    index[key] = committed.RecordId!.Value;
+                    break;
+                case ExchangeRowChange.Ambiguous: ambiguous++; break;
+                default:
+                    skipped++;
+                    if (matching) index.Remove(key);
+                    break;
             }
-
-            created++;
         }
 
         return new MadeRecords(created, collection, null, updated, skipped, ambiguous);

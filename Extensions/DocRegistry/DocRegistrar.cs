@@ -73,7 +73,11 @@ public static class DocRegistrar
     /// вид записи: строка та же, меняется только хвост номера.
     /// </summary>
     public static Registration Register(ConstructorRepository repo, RegistryShape shape,
-                                        RegistrationInput input, DateTime now)
+                                        RegistrationInput input, DateTime now) =>
+        repo.InCollectionWriteTransaction(shape.CollectionId, () => RegisterCore(repo, shape, input, now));
+
+    private static Registration RegisterCore(ConstructorRepository repo, RegistryShape shape,
+                                             RegistrationInput input, DateTime now)
     {
         var name    = input.Name.Trim();
         var org     = input.Org.Trim();
@@ -85,6 +89,8 @@ public static class DocRegistrar
         if (!EskdCatalog.IsFullCode(eskd))
             throw new DocRegistryException($"Код ЕСКД должен быть из {EskdCatalog.CodeLength} цифр.");
         if (project.Length == 0) throw new DocRegistryException("Не заполнен проект.");
+
+        VerifyShape(repo, shape);
 
         var designations = Designations(repo, shape);
         var number       = PickNumber(designations, org, eskd, input.Number);
@@ -119,43 +125,47 @@ public static class DocRegistrar
     public static int RegisterAll(ConstructorRepository repo, RegistryShape shape,
                                   IReadOnlyList<ImportRow> rows, DateTime now,
                                   IProgress<int>? progress = null,
-                                  CancellationToken ct = default)
+                                  CancellationToken ct = default) =>
+        repo.InCollectionWriteTransaction(shape.CollectionId,
+            () => RegisterAllCore(repo, shape, rows, now, progress, ct));
+
+    private static int RegisterAllCore(ConstructorRepository repo, RegistryShape shape,
+                                      IReadOnlyList<ImportRow> rows, DateTime now,
+                                      IProgress<int>? progress, CancellationToken ct)
     {
-        var written = new List<int>(rows.Count);
+        VerifyShape(repo, shape);
+        var written = 0;
+        // Номера подготовлены до начала записи: за время чтения файла сосед мог занять
+        // обозначение. Повторная проверка идет под тем же замком коллекции, что и запись.
+        var occupied = Designations(repo, shape).Select(value => value.Trim())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        try
+        foreach (var row in rows)
         {
-            foreach (var row in rows)
-            {
-                ct.ThrowIfCancellationRequested();
+            ct.ThrowIfCancellationRequested();
 
-                // Второй рубеж: строки приходят проверенными (RegistryImport), но окно — не
-                // единственный вход в запись, а строка без обозначения или без наименования
-                // сделала бы журнал непригодным молча.
-                if (row.Designation.Trim().Length == 0)
-                    throw new DocRegistryException(
-                        $"Строка {row.Line}: не заполнено «{RegistrySchema.DesignationColumn}».");
+            // Второй рубеж: строки приходят проверенными (RegistryImport), но окно — не
+            // единственный вход в запись, а строка без обозначения или без наименования
+            // сделала бы журнал непригодным молча.
+            if (row.Designation.Trim().Length == 0)
+                throw new DocRegistryException(
+                    $"Строка {row.Line}: не заполнено «{RegistrySchema.DesignationColumn}».");
 
-                if (row.Name.Trim().Length == 0)
-                    throw new DocRegistryException(
-                        $"Строка {row.Line}: не заполнено «{RegistrySchema.TitleColumn}».");
+            if (row.Name.Trim().Length == 0)
+                throw new DocRegistryException(
+                    $"Строка {row.Line}: не заполнено «{RegistrySchema.TitleColumn}».");
 
-                written.Add(WriteRow(repo, shape, row.Name, row.Designation, row.Fio,
-                                     StampFor(shape.DateFieldType, now),
-                                     row.Project, row.Accounting, row.FirstUse, row.Summary));
+            if (!occupied.Add(row.Designation.Trim()))
+                throw new DocRegistryException($"{row.Designation.Trim()} уже зарегистрировано.");
 
-                progress?.Report(written.Count);
-            }
-        }
-        catch
-        {
-            foreach (var recordId in written)
-                try { repo.DeleteRecord(recordId); } catch { /* уборка — best-effort */ }
+            WriteRow(repo, shape, row.Name, row.Designation, row.Fio, StampFor(shape.DateFieldType, now),
+                row.Project, row.Accounting, row.FirstUse, row.Summary);
 
-            throw;
+            written++;
+            progress?.Report(written);
         }
 
-        return written.Count;
+        return written;
     }
 
     /// <summary>
@@ -185,14 +195,21 @@ public static class DocRegistrar
 
         var repo = new ConstructorRepository(ctx);
 
-        // Не закоммитили — транзакция откатится сама на Dispose. Уборку записанных строк это не
-        // отменяет: RegisterAll работает и на общем репозитории, где своей транзакции нет.
-        using var transaction = ctx.Database.BeginTransaction();
+        // RegisterAll захватывает коллекцию до проверки уже занятых обозначений и коммитит
+        // весь файл вместе. Отдельная внешняя транзакция здесь помешала бы этому порядку.
+        return RegisterAll(repo, shape, rows, now, new IsolatedProgress(ctx, progress), ct);
+    }
 
-        var written = RegisterAll(repo, shape, rows, now, progress, ct);
-        transaction.Commit();
-
-        return written;
+    private sealed class IsolatedProgress(AppDbContext context, IProgress<int>? progress) : IProgress<int>
+    {
+        public void Report(int value)
+        {
+            progress?.Report(value);
+            // Только наше отдельное подключение: строки уже сохранены в общей транзакции.
+            // Ограничиваем трекер одной строкой, иначе вложенные savepoint-снимки и аудит
+            // обходили бы растущий список всех прежних документов на каждом поле.
+            context.ChangeTracker.Clear();
+        }
     }
 
     /// <summary>
@@ -202,8 +219,7 @@ public static class DocRegistrar
     /// afterRecordId = 0 — записи с таким id не бывает, и репозиторий по контракту ставит такую
     /// запись в конец (одним индексным MAX, без загрузки коллекции в память).
     ///
-    /// Ошибка после создания записи убирает эту запись: полузаполненная строка в журнале хуже,
-    /// чем отсутствие строки, — по ней выдали бы номер повторно.
+    /// Ошибка откатывается внешним scope вместе со всеми полями и журналом изменений.
     /// </summary>
     private static int WriteRow(ConstructorRepository repo, RegistryShape shape,
                                 string title, string designation, string fio, string stamp,
@@ -217,23 +233,33 @@ public static class DocRegistrar
 
         var recordId = record.Id!.Value;
 
-        try
+        Set(repo, recordId, shape.DesignationFieldId, designation);
+        Set(repo, recordId, shape.FioFieldId,         fio);
+        Set(repo, recordId, shape.DateFieldId,        stamp);
+        Set(repo, recordId, shape.ProjectFieldId,     project);
+        Set(repo, recordId, shape.AccountingFieldId,  accounting);
+        Set(repo, recordId, shape.FirstUseFieldId,    firstUse);
+        Set(repo, recordId, shape.SummaryFieldId,     summary);
+
+        var stored = repo.GetFieldValues(recordId);
+        foreach (var (field, value) in new[]
         {
-            Set(repo, recordId, shape.DesignationFieldId, designation);
-            Set(repo, recordId, shape.FioFieldId,         fio);
-            Set(repo, recordId, shape.DateFieldId,        stamp);
-            Set(repo, recordId, shape.ProjectFieldId,     project);
-            Set(repo, recordId, shape.AccountingFieldId,  accounting);
-            Set(repo, recordId, shape.FirstUseFieldId,    firstUse);
-            Set(repo, recordId, shape.SummaryFieldId,     summary);
-        }
-        catch
-        {
-            try { repo.DeleteRecord(recordId); } catch { /* уборка — best-effort */ }
-            throw;
-        }
+            (shape.DesignationFieldId, designation), (shape.FioFieldId, fio),
+            (shape.DateFieldId, stamp), (shape.ProjectFieldId, project),
+            (shape.AccountingFieldId, accounting), (shape.FirstUseFieldId, firstUse),
+            (shape.SummaryFieldId, summary),
+        })
+            if (!string.IsNullOrWhiteSpace(value) && !stored.ContainsKey(field))
+                throw new DocRegistryException("Структура журнала изменилась, строка не зарегистрирована.");
 
         return recordId;
+    }
+
+    private static void VerifyShape(ConstructorRepository repo, RegistryShape shape)
+    {
+        var check = RegistrySchema.Check(repo, shape.CollectionId, shape.CollectionName);
+        if (check.Shape != shape)
+            throw new DocRegistryException("Структура журнала изменилась. Проверьте выбранную коллекцию.");
     }
 
     /// <summary>

@@ -385,6 +385,7 @@ jobs:
           dotnet build Tests/MultiProcess --configuration Release
           dotnet build Tests/DocReader    --configuration Release
           dotnet build Tests/BackupUi     --configuration Release
+          dotnet build Tests/ConcurrentUi --configuration Release
           dotnet build Tests/RecordPage --framework net10.0 --configuration Release
 
       # Живая Avalonia без экрана: разметка панели, подсветка, переходы по совпадениям, страницы
@@ -395,6 +396,17 @@ jobs:
 
       - name: Настройки резервных копий и фоновые работы
         run: dotnet run --project Tests/BackupUi --configuration Release --no-build
+
+      - name: Фоновые задачи и уведомления под нагрузкой
+        run: dotnet run --project Tests/ConcurrentUi --configuration Release --no-build -- --out "$RUNNER_TEMP/concurrent-ui"
+
+      - name: Отчет фонового UI
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: concurrent-ui
+          path: ${{ runner.temp }}/concurrent-ui
+          if-no-files-found: ignore
 
       # Эти режимы сами создают базы стенда. Явные out/ref не пишут в домашний каталог.
       - name: Свойства страницы записи

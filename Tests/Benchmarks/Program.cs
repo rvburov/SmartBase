@@ -9,6 +9,7 @@ if (args.Length == 0)
     Console.WriteLine("  import  [--rows N] [--dir PATH]                — замер импорта CSV");
     Console.WriteLine("  export  [--rows N] [--dir PATH]                — замер экспорта во все форматы");
     Console.WriteLine("  pgload  [клиентов] [секунд] [--db ИМЯ]         — нагрузка PostgreSQL (стенд sb-pg)");
+    Console.WriteLine("  multiuser --provider sqlite|postgres [опции]  — до 1000 сессий через API приложения, отчет и сверка данных");
     Console.WriteLine("  pgperf  [--rows N] [--db ИМЯ]                  — производительность PostgreSQL: заливка/страницы/фильтры (стенд sb-pg)");
     Console.WriteLine("  csvlog  [--rows N] [--dir PATH]                — выгрузка журнала и диагностики в CSV");
     Console.WriteLine("  dbsize  --db PATH [--top N] [--fast]           — из чего состоит файл SQLite (только чтение)");
@@ -32,6 +33,7 @@ return args[0] switch
     "import"  => ImportBench.Run(rest),
     "export"  => ExportBench.Run(rest),
     "pgload"  => PgLoadBench.Run(rest),
+    "multiuser" => MultiUserBench.Run(rest),
     "pgperf"  => PgPerfBench.Run(rest),
     "csvlog"  => LogExportBench.Run(rest),
     "dbsize"  => DbSizeBench.Run(rest),
@@ -50,6 +52,6 @@ return args[0] switch
 static int Unknown(string cmd)
 {
     Console.WriteLine($"Неизвестная команда: {cmd}. Доступно: sidebar | import | export | pgload | pgperf | " +
-                      "fileauto | csvlog | dbsize | bloat | delete | pgdelete | wide | docread | docfeed | backup | pgmove | dup.");
+                      "multiuser | fileauto | csvlog | dbsize | bloat | delete | pgdelete | wide | docread | docfeed | backup | pgmove | dup.");
     return 1;
 }

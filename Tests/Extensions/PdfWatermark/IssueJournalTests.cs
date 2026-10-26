@@ -164,7 +164,7 @@ public sealed class IssueJournalTests
     // --- Ведомость номеров: то, ради чего пачка в 20 000 документов вообще выполнима ----------
 
     [Fact]
-    public void Ledger_hands_out_numbers_without_going_back_to_the_journal()
+    public void Ledger_keeps_already_issued_numbers_after_an_external_delete()
     {
         using var db = new TempDatabase("wm-journal");
         var shape = Stand(db, out _);
@@ -172,9 +172,9 @@ public sealed class IssueJournalTests
 
         var ledger = NumberLedger.Load(db.Constructor, shape, [Doc]);
 
-        // Журнал вычищается ПОСЛЕ загрузки ведомости. Если бы подбор номера лез в базу, он
-        // увидел бы пустую коллекцию и выдал 1 повторно — а он выдает 2, потому что читает
-        // память. Ровно это и снимает квадратичный рост на больших пачках.
+        // Номер уже выдавался в этом прогоне: очистка журнала не должна позволить той же
+        // ведомости повторить его. Свежие занятые номера добавляются к памяти, а освободить
+        // свой неиспользованный резерв можно явно через Release + Free.
         foreach (var (id, _) in db.Constructor.GetRecordTitlesOrdered(shape.CollectionId))
             db.Constructor.DeleteRecord(id);
 

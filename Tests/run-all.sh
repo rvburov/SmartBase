@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Прогон автотестов SmartBase.
 #   ./Tests/run-all.sh                   — Unit (быстрый гейт) + Integration (SQLite + PG, если поднят sb-pg)
-#                                          + стенды панели чтения и настроек копий (DocReader, BackupUi)
+#                                          + стенды чтения, настроек копий и фонового UI
 #   ./Tests/run-all.sh --with-extensions — плюс тесты расширений (Tests/Extensions/*)
 #   ./Tests/run-all.sh --with-bench      — плюс быстрый прогон бенчмарков (маленькие объемы, смоук)
 #
@@ -27,6 +27,10 @@ dotnet run --project Tests/DocReader -f net10.0
 echo
 echo "== Резервные копии: настройки и фоновые работы без экрана =="
 dotnet run --project Tests/BackupUi -f net10.0
+
+echo
+echo "== Фоновые задачи и уведомления: 1000 событий при работающем UI =="
+dotnet run --project Tests/ConcurrentUi -f net10.0
 
 if [[ "${1:-}" == "--with-extensions" ]]; then
   echo

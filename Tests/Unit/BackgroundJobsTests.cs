@@ -48,6 +48,15 @@ public sealed class BackgroundJobsTests : IDisposable
         Assert.Equal(0.5, BackgroundJobs.Progress()!.Value, 3);
     }
 
+    [Fact]
+    public void Progress_handles_totals_larger_than_int_max_without_losing_the_ratio()
+    {
+        BackgroundJobs.Report(A, "Первая большая работа", "", int.MaxValue, int.MaxValue);
+        BackgroundJobs.Report(B, "Вторая большая работа", "", 0, int.MaxValue);
+
+        Assert.Equal(0.5, BackgroundJobs.Progress()!.Value, 12);
+    }
+
     // Работа без известного объема не должна обнулять полосу у остальных: иначе одна такая
     // делала бы кольцо пустым при почти доделанной второй.
     [Fact]

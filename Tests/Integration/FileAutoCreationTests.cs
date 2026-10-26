@@ -232,8 +232,12 @@ public sealed class FileAutoCreationTests
         f.Configure(new FileAutoRule(foreign.ToString(), f.Folder, "pdf"));
         using var pending = background ? new Pending(f) : null;
 
-        // Старое некорректное правило не должно читать несогласованную пару field/record.
-        f.Repo.SetFieldValue(record, foreign, "Отчет");
+        // Несогласованная пара не должна появиться в БД даже через публичную запись ячейки.
+        Assert.Throws<InvalidOperationException>(() => f.Repo.SetFieldValue(record, foreign, "Отчет"));
+        Assert.False(f.Database.Context.DbFieldValues.Any(value => value.RecordId == record && value.FieldId == foreign));
+
+        // При обычной правке старое некорректное правило тоже не должно читать чужое поле.
+        f.Repo.SetRecordTitle(record, "Смета");
 
         Assert.Equal("", f.Value(record));
         if (pending is not null) Assert.Empty(pending.Work);

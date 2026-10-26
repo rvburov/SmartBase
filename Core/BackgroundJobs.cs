@@ -63,8 +63,8 @@ public static class BackgroundJobs
     {
         lock (Lock)
         {
-            var done = 0;
-            var all  = 0;
+            long done = 0;
+            long all  = 0;
             foreach (var j in Jobs.Values)
             {
                 if (j.Total <= 0) continue;

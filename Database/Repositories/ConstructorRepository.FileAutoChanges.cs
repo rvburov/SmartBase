@@ -20,7 +20,8 @@ public partial class ConstructorRepository
     {
         if (FileAutoWorkRequested is null) return false;
         if (FileAutoWorkSupported is { } supported
-            && !supported.GetInvocationList().Cast<Func<string, bool>>().Any(accepts => accepts(DbPath))) return false;
+            && !supported.GetInvocationList().Cast<Func<string, bool>>()
+                .Any(accepts => InvokePublicWriteCallback(() => accepts(DbPath)))) return false;
         var work = new FileAutoWork(DbPath, fieldId, recordId, AutoFilePermissions);
         if (db.Database.CurrentTransaction is not null)
         {
@@ -48,6 +49,7 @@ public partial class ConstructorRepository
 
     internal static void FileAutoTransactionCommitted(AppDbContext context)
     {
+        SqliteGate.ReleaseConnectionAdmission(context.Database.GetDbConnection());
         if (!PendingFiles.TryGetValue(context, out var pending)) return;
         var work = pending.Fields.Values.SelectMany(rows => rows.Values).ToArray();
         pending.Fields.Clear();

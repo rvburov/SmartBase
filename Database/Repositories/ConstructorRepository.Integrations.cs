@@ -51,10 +51,9 @@ public partial class ConstructorRepository
         var reader = ColumnReader(binding, schema);
         var fields = FieldsOfBinding(binding);
 
-        // Ключ строится ОДНИМ чтением одной колонки, а не запросом на каждую строку: строк
-        // ответа тысячи, и тысяча запросов к большой коллекции заняла бы больше, чем сам обмен.
-        // Плата — память под одну колонку коллекции; для обмена это приемлемо, а сопоставление
-        // с коллекцией в миллионы записей — отдельная задача, которой пока нет.
+        // Начальный снимок сохраняет контракт исчезнувшей строки: существовавшая запись,
+        // удаленная соседом до чтения входа, пропускается, а не создается заново. Решение о
+        // новом ключе ниже принимается уже на свежих данных внутри транзакции строки.
         var (index, duplicates) = binding.Matches ? BuildKeyIndex(binding) : ([], []);
 
         var created = 0;
@@ -65,61 +64,88 @@ public partial class ConstructorRepository
         var done    = 0;
 
         var position = NextPosition(binding.CollectionId);
+        long? importLogId = null;
 
         foreach (var row in rows)
         {
             ct.ThrowIfCancellationRequested();
-
-            if (!binding.Matches)
+            var key = binding.Matches ? reader(row, binding.MatchColumn).Trim() : "";
+            var committed = InCollectionWriteTransaction(binding.CollectionId, () =>
             {
-                Create(binding, reader, fields, row, ref position);
-                created++;
-            }
-            else
-            {
-                var key = reader(row, binding.MatchColumn).Trim();
-
-                if (key.Length == 0)
+                ct.ThrowIfCancellationRequested();
+                ExchangeRowResult outcome;
+                if (!binding.Matches)
                 {
-                    // Пустой ключ — сопоставлять не по чему. Завести такую запись значило бы
-                    // плодить дубли при каждом следующем запуске.
-                    empty++;
+                    outcome = new(ExchangeRowChange.Created, Create(binding, reader, fields, row, position));
                 }
+                else if (key.Length == 0) outcome = new(ExchangeRowChange.Empty);
                 else if (duplicates.Contains(key))
                 {
-                    unclear++;
+                    outcome = new(ExchangeRowChange.Ambiguous);
                 }
-                else if (index.TryGetValue(key, out var recordId))
+                else if (index.TryGetValue(key, out var original) && !Exists(original))
                 {
-                    // Запись могла ИСЧЕЗНУТЬ, пока шла укладка: база лежит в общей папке, ключи
-                    // собираются одним чтением в начале, а выгрузка идет минуты. Обновлять
-                    // удаленную запись не во что, и считать это обновлением нельзя — квитанция
-                    // сказала бы «обновлено», не обновив ничего.
-                    if (!Exists(recordId))
-                    {
-                        index.Remove(key);
-                        skipped++;
-                    }
-                    else if (binding.UpdateExisting)
-                    {
-                        Update(binding, reader, fields, row, recordId);
-                        updated++;
-                    }
-                    else
-                    {
-                        skipped++;
-                    }
-                }
-                else if (binding.CreateMissing)
-                {
-                    var id = Create(binding, reader, fields, row, ref position);
-                    index[key] = id;   // в одном ответе ключ может встретиться дважды
-                    created++;
+                    outcome = new(ExchangeRowChange.Skipped);
                 }
                 else
                 {
-                    skipped++;
+                    var matches = FindExchangeKey(binding.CollectionId, binding.MatchFieldId, key);
+                    if (matches.Count > 1) outcome = new(ExchangeRowChange.Ambiguous);
+                    else if (matches.Count == 1)
+                    {
+                        if (binding.UpdateExisting)
+                        {
+                            Update(binding, reader, fields, row, matches[0]);
+                            outcome = new(ExchangeRowChange.Updated, matches[0]);
+                        }
+                        else outcome = new(ExchangeRowChange.Skipped);
+                    }
+                    // Ключ ранее существовал, но теперь относится к другому значению:
+                    // не перезаписываем чужую правку и не создаем дубль прежней записи.
+                    else if (index.ContainsKey(key)) outcome = new(ExchangeRowChange.Skipped);
+                    else if (binding.CreateMissing)
+                        outcome = new(ExchangeRowChange.Created, Create(binding, reader, fields, row, position));
+                    else outcome = new(ExchangeRowChange.Skipped);
                 }
+
+                if (outcome.Change is ExchangeRowChange.Created or ExchangeRowChange.Updated)
+                    ValidateExchangeFields(binding.CollectionId, fields.Select(field => field.FieldId));
+
+                // Единственная строка импорта обновляется вместе с очередной входной
+                // строкой. Финального SaveChanges после подтвержденных данных больше нет:
+                // его поздний отказ раньше превращал сохраненную строку в ошибку вызова.
+                var changed = outcome.Change is ExchangeRowChange.Created or ExchangeRowChange.Updated;
+                var logId = importLogId;
+                if (changed || logId is null)
+                {
+                    if (logId is long previous)
+                        db.ChangeLog.Where(log => log.Id == previous).ExecuteDelete();
+                    var log = Log("import", "collection", CollectionNameOf(binding.CollectionId) ?? "",
+                        count: created + updated + (changed ? 1 : 0));
+                    db.SaveChanges();
+                    logId = log.Id;
+                }
+                return (Outcome: outcome, LogId: logId);
+            });
+
+            importLogId = committed.LogId;
+            switch (committed.Outcome.Change)
+            {
+                case ExchangeRowChange.Created:
+                    position += 1000;
+                    created++;
+                    if (binding.Matches) index[key] = committed.Outcome.RecordId!.Value;
+                    break;
+                case ExchangeRowChange.Updated:
+                    updated++;
+                    index[key] = committed.Outcome.RecordId!.Value;
+                    break;
+                case ExchangeRowChange.Ambiguous: unclear++; break;
+                case ExchangeRowChange.Empty: empty++; break;
+                default:
+                    skipped++;
+                    if (binding.Matches) index.Remove(key);
+                    break;
             }
 
             // Запись уже сохранена — держать ее в трекере EF нечем и незачем. Тот же прием, что
@@ -140,11 +166,13 @@ public partial class ConstructorRepository
             progress?.Report(++done);
         }
 
-        var result = new BindingResult(created, updated, skipped, unclear, empty);
-
-        LogNow("import", "collection", CollectionNameOf(binding.CollectionId) ?? "", count: created + updated);
-
-        return result;
+        if (importLogId is null)
+            InCollectionWriteTransaction(binding.CollectionId, () =>
+            {
+                LogNow("import", "collection", CollectionNameOf(binding.CollectionId) ?? "", count: 0);
+                return 0;
+            });
+        return new BindingResult(created, updated, skipped, unclear, empty);
     }
 
     /// <summary>
@@ -303,6 +331,49 @@ public partial class ConstructorRepository
         return (index, duplicates);
     }
 
+    private enum ExchangeRowChange { Created, Updated, Skipped, Ambiguous, Empty }
+    private sealed record ExchangeRowResult(ExchangeRowChange Change, int? RecordId = null);
+
+    /// <summary>
+    /// Свежий поиск ключа внутри транзакции строки. Снимок всей колонки не годится для
+    /// конкурентного upsert: сосед мог создать такой ключ после начала выгрузки. SQL
+    /// ограничивает кандидатов, итоговое сравнение сохраняет OrdinalIgnoreCase контракта.
+    /// Двух совпадений достаточно для однозначного отказа без выбора произвольной записи.
+    /// </summary>
+    private List<int> FindExchangeKey(int collectionId, int? fieldId, string key)
+    {
+        var values = fieldId is int id
+            ? db.DbFieldValues.AsNoTracking()
+                .Where(value => value.FieldId == id && value.Record.CollectionId == collectionId)
+                .Select(value => new { RecordId = value.RecordId, Key = value.Value })
+            : db.DbRecords.AsNoTracking().Where(record => record.CollectionId == collectionId)
+                .Select(record => new { RecordId = record.Id, Key = record.Title });
+        if (db.IsPostgres)
+        {
+            var literal = key.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_");
+            var pattern = "%" + literal + "%";
+            values = values.Where(value => EF.Functions.ILike(value.Key, pattern, "\\"));
+        }
+        else
+        {
+            values = values.Where(value => SqlText.ContainsIgnoreCase(value.Key, key));
+        }
+        return values.AsEnumerable()
+            .Where(value => string.Equals(value.Key.Trim(), key, StringComparison.OrdinalIgnoreCase))
+            .Select(value => value.RecordId).Distinct().Take(2).ToList();
+    }
+
+    private void ValidateExchangeFields(int collectionId, IEnumerable<int> fieldIds)
+    {
+        var expected = fieldIds.ToHashSet();
+        var current = db.DbFields.AsNoTracking()
+            .Where(field => field.CollectionId == collectionId && expected.Contains(field.Id))
+            .Select(field => new { field.Id, field.FieldType }).ToList();
+        if (current.Count != expected.Count
+            || current.Any(field => FieldTypeInfo.IsComputed(field.FieldType) || FieldTypeInfo.IsRelation(field.FieldType)))
+            throw new ImportException("Свойства коллекции изменились во время записи — проверьте привязку.");
+    }
+
     // ── Запись ────────────────────────────────────────────────────────────────
 
     private int Create(
@@ -310,7 +381,7 @@ public partial class ConstructorRepository
         Func<ImportRow, string, string> reader,
         List<(string Column, int FieldId)> fields,
         ImportRow row,
-        ref int position)
+        int position)
     {
         var titleColumn = binding.Columns.FirstOrDefault(c => c.FieldId is null)?.Column;
 
@@ -320,8 +391,6 @@ public partial class ConstructorRepository
             Title        = titleColumn is null ? "" : reader(row, titleColumn),
             Position     = position,
         });
-
-        position += 1000;
 
         foreach (var (column, fieldId) in fields)
             SetFieldValue(record.Id!.Value, fieldId, reader(row, column));

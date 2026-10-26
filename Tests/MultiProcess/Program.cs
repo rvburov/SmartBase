@@ -35,11 +35,78 @@ string Pragma(string db, string pragma)
 
 switch (args.FirstOrDefault())
 {
+    case "--pg-backup-worker":
+    {
+        var info = new PgConnectionInfo("127.0.0.1", 5455, args[1], "postgres", "postgres",
+            PgConnectionInfo.DefaultSslMode);
+        var error = SmartBase.Database.Backup.PgDump.RunAsync(info, "Снимок PG", args[2]).GetAwaiter().GetResult();
+        Console.WriteLine(error is null ? "SUCCESS" : "ERROR: " + error);
+        return error is null ? 0 : 1;
+    }
+
+    // Настоящая незавершенная клиентская транзакция. Родитель либо завершает процесс,
+    // либо разрешает commit; аргументы PG содержат только имя собственной тестовой базы.
+    case "--transaction-crash-worker":
+    {
+        var profile = args[1];
+        var target = args[2];
+        var collection = int.Parse(args[3]);
+        var text = int.Parse(args[4]);
+        var date = int.Parse(args[5]);
+        var edited = int.Parse(args[6]);
+        var deleted = int.Parse(args[7]);
+        var ready = args[8];
+        var release = args[9];
+        var connection = profile == "postgres"
+            ? new Npgsql.NpgsqlConnectionStringBuilder
+            {
+                Host = "127.0.0.1", Port = 5455, Database = target,
+                Username = "postgres", Password = "postgres", Pooling = false,
+                Timeout = 5, CommandTimeout = 20,
+            }.ConnectionString
+            : target;
+        if (profile == "sqlite-shared") NetworkPath.ForceNetwork(connection);
+        using var context = new AppDbContext(connection);
+        context.ApplyPerformancePragmas();
+        var repository = new ConstructorRepository(context);
+        using var transaction = context.Database.BeginTransaction();
+        repository.SetFieldValue(edited, text, "child-value");
+        repository.SetFieldValue(edited, date, "2026-10-26");
+        var created = repository.AddRecord(new DbRecord
+        {
+            CollectionId = collection, Title = "child-created", Position = 3000,
+        }).Id!.Value;
+        repository.SetFieldValue(created, text, "child-created-value");
+        repository.SetFieldValue(created, date, "2026-10-27");
+        repository.DeleteRecord(deleted);
+        File.WriteAllText(ready + ".tmp", JsonSerializer.Serialize(new
+        {
+            NewRecordId = created,
+            EditedValue = repository.GetFieldValues(edited)[text],
+            EditedDate = repository.GetFieldValues(edited)[date],
+            DeletedVisible = repository.GetRecord(deleted, refresh: true) is not null,
+            CreatedValue = repository.GetFieldValues(created)[text],
+        }));
+        File.Move(ready + ".tmp", ready);
+        var waiting = Stopwatch.StartNew();
+        while (!File.Exists(release))
+        {
+            if (waiting.Elapsed > TimeSpan.FromSeconds(90))
+                throw new TimeoutException("Родитель не разрешил завершение клиентской транзакции");
+            Thread.Sleep(5);
+        }
+        transaction.Commit();
+        Console.WriteLine("COMMITTED");
+        return 0;
+    }
+
     // Аварийный стенд бэкапа: родитель может завершить настоящий процесс до публикации
     // копии или удалить его .part. Барьер перед проверкой не меняет сам алгоритм записи.
+    case "--backup-live-worker":
     case "--backup-worker":
     {
         var (source, app, ready, release) = (args[1], args[2], args[3], args[4]);
+        if (args.Length > 5 && args[5] == "sqlite-shared") NetworkPath.ForceNetwork(source);
         using var registry = DatabaseRegistry.Open(source, app);
         SmartBase.Utils.AppSettings.AttachStore(registry);
         using var service = new SmartBase.Database.Backup.BackupService(registry);
@@ -237,6 +304,12 @@ switch (args.FirstOrDefault())
     {
         var o = LoadOptions.Parse(args);
         if (o.Db is null) { Console.WriteLine("нужен путь к НОВОМУ .db"); return 1; }
+        if (o.Writers < 0 || o.Readers < 0 || (long)o.Writers + o.Readers == 0 || o.Seconds <= 0 || o.Records <= 0
+            || !double.IsFinite(o.Rate) || o.Rate < 0 || !double.IsFinite(o.ReadRate) || o.ReadRate < 0)
+        {
+            Console.WriteLine("Нужен хотя бы один участник, положительные длительность и число записей, неотрицательные числа участников и частоты.");
+            return 1;
+        }
         if (File.Exists(o.Db))
         {
             Console.WriteLine($"файл уже есть: {o.Db} — укажите путь к новому файлу (рабочую базу стенд не трогает)");
@@ -313,7 +386,16 @@ switch (args.FirstOrDefault())
                 Console.WriteLine($"  процесс {role} упал (код {p.ExitCode}): {text.Trim()}");
                 continue;
             }
-            reports.Add(JsonSerializer.Deserialize<LoadReport>(line)!);
+            LoadReport? report = null;
+            try { report = JsonSerializer.Deserialize<LoadReport>(line); }
+            catch (JsonException) { /* ниже отмечаем отсутствующий корректный отчет */ }
+            if (report is null || report.Role != role || report.Lat is null || report.PollLat is null || report.TreeLat is null)
+            {
+                crashed++;
+                Console.WriteLine($"  процесс {role} не прислал корректный отчет");
+                continue;
+            }
+            reports.Add(report);
         }
 
         // Сводка: одна строка на вид операции, задержки по всем процессам этой роли вместе.
@@ -336,12 +418,23 @@ switch (args.FirstOrDefault())
             Console.WriteLine($"  первая ошибка {r.Role}: {r.FirstError}");
         Console.WriteLine();
 
-        Check("все процессы завершились без падений", crashed == 0);
-        Check("у писателей нет ошибок, кроме BUSY", reports.Where(r => r.Role == "writer").Sum(r => r.Errors) == 0);
-        Check("у читателей нет ошибок, кроме BUSY", reports.Where(r => r.Role == "reader").Sum(r => r.Errors) == 0);
-        var writes = reports.Where(r => r.Role == "writer").Sum(r => r.Ops);
-        Check($"правки доехали ({writes} операций записи)", writes > 0);
+        var writers = reports.Where(r => r.Role == "writer").ToList();
+        var readers = reports.Where(r => r.Role == "reader").ToList();
+        var allReported = crashed == 0 && writers.Count == o.Writers && readers.Count == o.Readers;
+        var allWorked = reports.All(r => r.Ops > 0);
+        var busy = reports.Sum(r => r.Busy);
+        var errors = reports.Sum(r => r.Errors);
+        Console.WriteLine("Обслуживание запрошенных участников:");
+        Check($"корректные отчеты всех процессов: {reports.Count} из {(long)o.Writers + o.Readers}", allReported);
+        Check("каждый участник выполнил хотя бы одну запись или чтение страницы по своей роли", allReported && allWorked);
+        Check($"нет отказов BUSY ({busy})", busy == 0);
+        Check($"нет остальных ошибок ({errors})", errors == 0);
+        if (!allReported || !allWorked || busy != 0 || errors != 0)
+            Console.WriteLine("Заявленная нагрузка не обслужена полностью; сохранность данных проверяется отдельно ниже.");
+        var writes = writers.Sum(r => (long)r.Ops);
+        if (o.Writers > 0) Check($"правки доехали ({writes} операций записи)", writes > 0);
 
+        Console.WriteLine("Сохранность данных:");
         using (var conn = new SqliteConnection($"Data Source={o.Db};Pooling=False"))
         {
             conn.Open();
@@ -352,7 +445,8 @@ switch (args.FirstOrDefault())
             var cnt = long.Parse(One("SELECT COUNT(*) FROM db_field_values;"));
             Check($"значения ячеек целые ({cnt} ячеек, чужих/битых {bad})", bad == 0 && (writes == 0 || cnt > 0));
             var logCount = long.Parse(One("SELECT COUNT(*) FROM change_log WHERE Action='update';"));
-            Check($"журнал изменений пополнялся ({logCount} строк update)", writes == 0 || logCount > 0);
+            if (o.Writers > 0)
+                Check($"журнал изменений пополнялся ({logCount} строк update)", writes == 0 || logCount > 0);
         }
         Console.WriteLine($"файл стенда оставлен: {o.Db}");
         return Done();

@@ -88,6 +88,7 @@ public partial class ConstructorRepository
 
     internal static void RelationTransactionCommitted(AppDbContext context)
     {
+        SqliteGate.ReleaseConnectionAdmission(context.Database.GetDbConnection());
         if (!PendingRelationChanges.TryGetValue(context, out var pending) || pending.Changes.Count == 0) return;
         var entries = pending.Changes.Values.ToArray();
         pending.Changes.Clear();

@@ -10,6 +10,8 @@
 - [extension-tests.md](extension-tests.md) — тесты расширений: отдельное дерево
   `Tests/Extensions/*`, по проекту на расширение, изолированы от тестов ядра.
 - [benchmarks.md](benchmarks.md) — замеры производительности (`Tests/Benchmarks`).
+- [concurrency.md](concurrency.md) — многопользовательские регрессии SQLite/PostgreSQL и нагрузка до 1000 сессий через API приложения.
+- [concurrency-coverage.md](concurrency-coverage.md) — карта всех разделов, результаты конкурентных прогонов и непроверенные границы.
 - [multi-process.md](multi-process.md) — многопроцессные/интерактивные проверки (`Tests/MultiProcess`).
 - [test-database.md](test-database.md) — генератор большого стенда (`Tests/DbGenerator`).
 - Ручные QA-чеклисты фич — в [../checklists/](../qa-checklists/).
@@ -22,9 +24,10 @@
 | **Unit** | xUnit (быстрый гейт) | Чистая логика ядра без БД/IO: даты, валидаторы, планировщики, права | `dotnet test Tests/Unit` |
 | **Integration** | xUnit (медленнее) | Репозитории на temp SQLite + PostgreSQL: CRUD, keyset, календарь, cross-move, импорт/экспорт, гонки | `dotnet test Tests/Integration` |
 | **Extensions/&lt;Имя&gt;** | xUnit (по проекту на расширение) | Логика и сквозные прогоны расширений; отдельные сборки, от тестов ядра не зависят | `./Tests/run-extensions.sh` |
-| **Benchmarks** | консоль (замеры) | Производительность: сайдбар, импорт/экспорт больших объемов, нагрузка PG | `dotnet run -c Release --project Tests/Benchmarks -- <команда>` |
+| **Benchmarks** | консоль (замеры) | Производительность: сайдбар, импорт/экспорт больших объемов, нагрузка PG; `multiuser` — составные операции SQLite/PG до 1000 сессий со сверкой данных | `dotnet run -c Release --project Tests/Benchmarks -- <команда>` |
 | **DbGenerator** | консоль (инструмент) | Генерация большого стенда: календарного (по умолчанию 20 млн записей) и широкого (`--profile wide`: все типы свойств, тысячи колонок, варианты настроек) | `dotnet run -c Release --project Tests/DbGenerator` |
 | **MultiProcess** | консоль (многопроцесс) | Ручные многопроцессные сценарии (два процесса, сетевые прагмы, живая синхронизация) | `dotnet run -c Release --project Tests/MultiProcess -- <режим>` |
+| **ConcurrentUi** | Avalonia.Headless | Один UI-наблюдатель: 1000 фоновых обновлений, снимок 1000 работ и 1000 уведомлений; функциональные проверки и измерение задержек | `dotnet run -c Release --project Tests/ConcurrentUi` |
 
 ## Быстрый старт
 
@@ -32,7 +35,8 @@
 dotnet test Tests/Unit                 # быстрый гейт (мс), без внешних зависимостей
 dotnet test Tests/Integration          # SQLite + PostgreSQL (если поднят стенд sb-pg)
 dotnet test SmartBase.sln              # оба набора ядра
-./Tests/run-all.sh                     # оба набора ядра и стенд панели чтения
+./Tests/run-all.sh                     # ядро, DocReader, BackupUi и ConcurrentUi
+./Tests/run-concurrency.sh             # отдельная малая матрица; --clients 1000 для нагрузки
 ./Tests/run-extensions.sh              # все наборы расширений
 ./Tests/run-extensions.sh PdfRename    # один набор расширения
 ./Tests/run-all.sh --with-extensions   # ядро + расширения

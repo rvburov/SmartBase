@@ -284,6 +284,9 @@ dotnet run -c Release --project Tests/MultiProcess -- <режим>    # мног
 ```
 
 Обзор и принципы разделения тестов — [docs/developer/testing/overview.md](docs/developer/testing/overview.md).
+Проверка одновременного создания, правок, дублирования, переноса и удаления на SQLite и
+PostgreSQL (до 1000 сессий), критерии успеха и ограничения стенда —
+[concurrency.md](docs/developer/testing/concurrency.md).
 
 ### Сборка готового бинарника для раздачи
 

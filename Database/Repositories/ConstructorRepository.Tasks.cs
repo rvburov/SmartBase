@@ -667,7 +667,11 @@ public partial class ConstructorRepository
     /// null — как в календаре, авто-коллекция «Без названия».
     /// </summary>
     public TaskRecord AddTaskRecord(int? collection, string title, string executor,
-                                    string assigner, string status, DateValue? due)
+                                    string assigner, string status, DateValue? due) =>
+        ExecuteAtomicWrite(() => AddTaskRecordCore(collection, title, executor, assigner, status, due));
+
+    private TaskRecord AddTaskRecordCore(int? collection, string title, string executor,
+                                       string assigner, string status, DateValue? due)
     {
         Demand(PermAction.CreateRecord, collection);
 
@@ -728,6 +732,27 @@ public partial class ConstructorRepository
     /// Исполнитель/назначил/статус — обычные SetFieldValue (сами ведут журнал и индекс).
     /// </summary>
     public void UpdateTaskRecord(TaskRecord t)
+    {
+        if (t.Id is not int id) return;
+        var original = (t.Id, t.CollectionId, t.ExecFieldId, t.DueFieldId);
+        try
+        {
+            ExecuteAtomicWrite(() =>
+            {
+                (t.Id, t.CollectionId, t.ExecFieldId, t.DueFieldId) = original;
+                LockRecordsForWrite([id]);
+                if (db.DbRecords.AsNoTracking().Any(record => record.Id == id)) UpdateTaskRecordCore(t);
+                return 0;
+            });
+        }
+        catch
+        {
+            (t.Id, t.CollectionId, t.ExecFieldId, t.DueFieldId) = original;
+            throw;
+        }
+    }
+
+    private void UpdateTaskRecordCore(TaskRecord t)
     {
         if (t.Id is not int recordId) return;
 

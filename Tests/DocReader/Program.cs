@@ -958,6 +958,7 @@ void PanelSubscriptions()
     SmartBase.Database.DocIndex.DocIndexService.Attach(service);
     var library = new LibraryControllerView();
     var bar = new SmartBase.Controls.Components.ActivityBar();
+    var barSubscriptions = new HashSet<Delegate>();
     var sidebar = new SmartBase.Controls.Components.SidebarTree();
     var host = new StackPanel { Children = { library, bar, sidebar } };
     var root = new Grid();
@@ -977,7 +978,13 @@ void PanelSubscriptions()
                   "сайдбар не слушает настройки библиотеки ровно один раз");
             Check(Subscriptions(service.GetType(), "Progress", library, service) == 1,
                   "показанная библиотека не слушает прогресс ровно один раз");
-            Check(Subscriptions(typeof(SmartBase.Core.BackgroundJobs), "Changed", bar) == 1,
+            // Объединение обновлений подписывает closure конкретного attach, а не метод
+            // с Target == bar. Сохраняем сами delegate: после detach поле уже обнулено,
+            // но прежний обработчик в invocation list все равно должен быть обнаружен.
+            var barSubscription = Get(bar, "_backgroundJobsChanged") as Delegate;
+            if (barSubscription is not null) barSubscriptions.Add(barSubscription);
+            Check(barSubscription is not null &&
+                  DelegateSubscriptions(typeof(SmartBase.Core.BackgroundJobs), "Changed", bar, barSubscriptions) == 1,
                   "показанная панель разделов не слушает фоновые работы ровно один раз");
             root.Children.Remove(host);
             Pump();
@@ -987,7 +994,7 @@ void PanelSubscriptions()
             Check(Subscriptions(service.GetType(), "Progress", library, service) == 0 &&
                   Subscriptions(service.GetType(), "Finished", library, service) == 0,
                   "снятая библиотека удерживается очередью чтения");
-            Check(Subscriptions(typeof(SmartBase.Core.BackgroundJobs), "Changed", bar) == 0,
+            Check(DelegateSubscriptions(typeof(SmartBase.Core.BackgroundJobs), "Changed", bar, barSubscriptions) == 0,
                   "снятая панель разделов удерживается реестром работ");
             Check(Subscriptions(typeof(SmartBase.Utils.LibrarySettings), "Changed", sidebar) == 0,
                   "снятый сайдбар удерживается настройками библиотеки");
@@ -1162,6 +1169,14 @@ void SortedPages()
 static int Subscriptions(Type type, string name, object target, object? owner = null) =>
     (type.GetField(name, BindingFlags.Static | BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(owner) as Delegate)?
     .GetInvocationList().Count(d => ReferenceEquals(d.Target, target)) ?? 0;
+
+static int DelegateSubscriptions(Type type, string name, object target, IReadOnlySet<Delegate> handlers) =>
+    (type.GetField(name, BindingFlags.Static | BindingFlags.NonPublic)?.GetValue(null) as Delegate)?
+    .GetInvocationList().Count(handler => handlers.Contains(handler) || ReferenceEquals(handler.Target, target)
+        || handler.Target is { } closure
+        && System.Attribute.IsDefined(closure.GetType(), typeof(System.Runtime.CompilerServices.CompilerGeneratedAttribute))
+        && closure.GetType().GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+            .Any(field => ReferenceEquals(field.GetValue(closure), target))) ?? 0;
 
 void WriteBigBook(string path, int sheets, int rows, int cols)
 {

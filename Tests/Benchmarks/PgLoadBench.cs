@@ -24,6 +24,12 @@ internal static class PgLoadBench
         var db      = BenchUtil.ArgStr(args, "--db") ?? "smartbase";
         var connString = $"Host=localhost;Port=5455;Username=postgres;Password=postgres;Database={db};Timeout=5";
 
+        if (clients <= 0 || seconds <= 0)
+        {
+            Console.WriteLine("Число клиентов и длительность должны быть больше нуля.");
+            return 1;
+        }
+
         Console.WriteLine($"Нагрузка: {clients} клиентов × {seconds} с (база {db})");
         try
         {
@@ -63,7 +69,7 @@ internal static class PgLoadBench
         }
 
         var single = connString + ";Pooling=false";
-        long connected = 0, denied = 0, connectTimeouts = 0, unexpected = 0, inserts = 0, updates = 0;
+        long connected = 0, worked = 0, denied = 0, connectTimeouts = 0, unexpected = 0, inserts = 0, updates = 0;
         var errors = new ConcurrentDictionary<string, int>();
         var gate = new ManualResetEventSlim(false);
         var deadlineHolder = new long[1];   // тики UTC-дедлайна; выставляется после старта всех потоков
@@ -100,6 +106,7 @@ internal static class PgLoadBench
                     pid.Value = Random.Shared.Next(1, 101);
                     upd.ExecuteNonQuery();
                     Interlocked.Increment(ref updates);
+                    if (n == 1) Interlocked.Increment(ref worked);
                 }
             }
             catch (PostgresException pe) when (pe.SqlState == "53300")
@@ -131,7 +138,8 @@ internal static class PgLoadBench
         sw.Stop();
 
         var ops = Interlocked.Read(ref inserts) + Interlocked.Read(ref updates);
-        Console.WriteLine($"подключилось: {connected}, отклонено сервером (53300): {denied}, " +
+        Console.WriteLine($"запрошено: {clients}, подключилось: {connected}, выполнили вставку и инкремент: {worked}, " +
+                          $"отклонено сервером (53300): {denied}, " +
                           $"таймаут подключения: {connectTimeouts}");
         Console.WriteLine($"операций: {ops} ({inserts} вставок + {updates} инкрементов), " +
                           $"{ops / Math.Max(sw.Elapsed.TotalSeconds, 0.001):F0} оп/с суммарно");
@@ -153,7 +161,11 @@ internal static class PgLoadBench
             cmd.ExecuteNonQuery();
         }
 
-        var pass = intact && unexpected == 0 && connected > 0;
+        var served = connected == clients && worked == clients && denied == 0 && connectTimeouts == 0 && unexpected == 0;
+        Console.WriteLine(served
+            ? "Обслужены все запрошенные клиенты."
+            : "Заявленная нагрузка не обслужена полностью: отказ, ошибка или клиент без завершенной пары операций.");
+        var pass = intact && served;
         Console.WriteLine(pass ? "НАГРУЗКА ПРОЙДЕНА" : "НАГРУЗКА ПРОВАЛЕНА");
         return pass ? 0 : 1;
     }

@@ -10,6 +10,8 @@ public partial class ActivityBar : UserControl
 {
     public event EventHandler<bool>? SidebarToggled;
     public event EventHandler<string>? ModuleChanged;
+    private Action? _backgroundJobsChanged;
+    private int _backgroundAttachment;
 
     public ActivityBar()
     {
@@ -44,17 +46,28 @@ public partial class ActivityBar : UserControl
     protected override void OnAttachedToVisualTree(Avalonia.VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
-        BackgroundJobs.Changed += OnBackgroundJobsChanged;
+        var attachment = ++_backgroundAttachment;
+        var queued = 0;
+        _backgroundJobsChanged = () =>
+        {
+            if (Interlocked.Exchange(ref queued, 1) != 0) return;
+            Dispatcher.UIThread.Post(() =>
+            {
+                Interlocked.Exchange(ref queued, 0);
+                if (attachment == _backgroundAttachment) UpdateWorkButton();
+            }, DispatcherPriority.Background);
+        };
+        BackgroundJobs.Changed += _backgroundJobsChanged;
         UpdateWorkButton();
     }
 
     protected override void OnDetachedFromVisualTree(Avalonia.VisualTreeAttachmentEventArgs e)
     {
-        BackgroundJobs.Changed -= OnBackgroundJobsChanged;
+        ++_backgroundAttachment;
+        BackgroundJobs.Changed -= _backgroundJobsChanged;
+        _backgroundJobsChanged = null;
         base.OnDetachedFromVisualTree(e);
     }
-
-    private void OnBackgroundJobsChanged() => Dispatcher.UIThread.Post(UpdateWorkButton);
 
     /// <summary>
     /// Показать или спрятать значок и перерисовать кольцо. Дуга рисуется штриховкой круга:

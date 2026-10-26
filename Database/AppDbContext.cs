@@ -59,7 +59,13 @@ public class AppDbContext : DbContext
         // EF там просто не сработал бы. У контекста ровно одно соединение на весь его срок
         // жизни, поэтому одной подписки достаточно.
         if (!IsPostgres)
+        {
+            // Даже одна EF-команда метаданных должна входить в общую очередь писателей.
+            // WhenNeeded пропускает BEGIN для одиночного INSERT/UPDATE: такие автокоммиты
+            // обгоняли ожидающие транзакции и вытесняли переименование/удаление коллекций.
+            Database.AutoTransactionBehavior = AutoTransactionBehavior.Always;
             Database.GetDbConnection().StateChange += OnConnectionStateChange;
+        }
 
         // Шина своих изменений: что затронуто, собирается по событиям трекера (без лишнего
         // DetectChanges), выпускается после SaveChanges или на коммите транзакции.
@@ -163,8 +169,23 @@ public class AppDbContext : DbContext
 
     internal void OnTransactionStarted() => _pendingCommit?.Clear();
 
+    // Savepoint откатывает только вложенную команду: уже накопленные внешней транзакцией
+    // уведомления должны сохраниться, а сообщения неудачной команды — исчезнуть.
+    internal Action CaptureTransactionChanges()
+    {
+        var dirty = _dirty.ToArray();
+        var pending = _pendingCommit?.ToArray();
+        return () =>
+        {
+            _dirty.Clear();
+            _dirty.UnionWith(dirty);
+            _pendingCommit = pending is null ? null : new HashSet<ChangeBus.Change>(pending);
+        };
+    }
+
     internal void OnTransactionCommitted()
     {
+        SqliteGate.ReleaseConnectionAdmission(Database.GetDbConnection());
         if (_pendingCommit is not { Count: > 0 } pending) return;
         var changes = pending.ToList();
         pending.Clear();

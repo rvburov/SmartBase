@@ -10,28 +10,73 @@ public sealed record IssueInput(string Document, string Holder, DateTime Date);
 public sealed record Issue(int RecordId, int Number);
 
 /// <summary>
-/// Занятые номера за прогон — в памяти.
+/// Занятые номера за прогон — в памяти; окончательный резерв подтверждает база.
 ///
 /// Без нее подбор номера перечитывал бы журнал ЦЕЛИКОМ на каждый файл: одна пачка из 20 000
 /// документов дала бы 20 000 полных чтений коллекции, которая по ходу прогона сама растет до
-/// 20 000 строк. Квадрат. С ведомостью журнал читается ОДИН раз на прогон, а дальше номера
-/// раздаются из памяти.
-///
-/// Плата за это названа честно: между чтением и концом прогона другой выдающий может занять
-/// номер, и мы этого не увидим. Защиты от такой гонки не было и раньше — перечитывание помогало
-/// лишь сузить окно, а настоящая защита требует уникального индекса в базе, которого у коллекций
-/// нет (см. «Сознательно не покрыто» в testing/extension-tests.md).
+/// 20 000 строк. Квадрат. На закрепленном подключении SQLite data_version меняется только
+/// после записи другого подключения: собственные выдачи дополняют память, а соседние изменения
+/// требуют свежего чтения под блокировкой коллекции. Отдельно загруженная ведомость либо PG
+/// перед резервом проверяют занятые номера документа заново.
 /// </summary>
 public sealed class NumberLedger
 {
     private readonly Dictionary<string, SortedSet<int>> _taken;
+    private readonly HashSet<string> _documents;
+    private long? _externalVersion;
 
-    private NumberLedger(Dictionary<string, SortedSet<int>> taken) => _taken = taken;
+    private NumberLedger(Dictionary<string, SortedSet<int>> taken, long? externalVersion = null)
+    {
+        _taken = taken;
+        _documents = taken.Keys.ToHashSet(StringComparer.Ordinal);
+        _externalVersion = externalVersion;
+    }
+
+    internal static NumberLedger Empty() => new(new Dictionary<string, SortedSet<int>>(StringComparer.Ordinal));
 
     /// <summary>Прочитать занятые номера всех документов пачки — два запроса на весь набор.</summary>
     public static NumberLedger Load(ConstructorRepository repo, JournalShape shape,
                                     IReadOnlyCollection<string> documents) =>
         new(IssueJournal.Taken(repo, shape, documents));
+
+    /// <summary>Только для движка, который держит то же подключение открытым до конца пачки.
+    /// Счетчик SQLite принадлежит физическому подключению, его нельзя переносить между ними.</summary>
+    internal static NumberLedger LoadPinned(ConstructorRepository repo, JournalShape shape,
+                                             IReadOnlyCollection<string> documents) =>
+        repo.InCollectionWriteTransaction(shape.CollectionId, () =>
+        {
+            IssueJournal.VerifyShape(repo, shape);
+            return new NumberLedger(IssueJournal.Taken(repo, shape, documents), repo.ReadExternalWriteVersion());
+        });
+
+    /// <summary>Вызывать после захвата коллекции, до выбора номера. Кеш не может разрешить
+    /// выдачу номера, занятого соседним подключением после начальной загрузки.</summary>
+    internal void Refresh(ConstructorRepository repo, JournalShape shape, string document)
+    {
+        var key = JournalSchema.Fold(document);
+        var newDocument = !_documents.Contains(key);
+        var version = repo.ReadExternalWriteVersion();
+        if (_externalVersion is { } previous && version == previous && !newDocument) return;
+        IssueJournal.VerifyShape(repo, shape);
+
+        if (_externalVersion is not null && version is not null)
+        {
+            // Чужое изменение инвалидирует снимок всей пачки. До следующей чужой записи
+            // собственные коммиты этого подключения не вынуждают перечитывать журнал.
+            var wanted = newDocument ? _documents.Append(key).ToArray() : _documents.ToArray();
+            foreach (var (name, numbers) in IssueJournal.Taken(repo, shape, wanted))
+                Taken(name).UnionWith(numbers);
+            _externalVersion = version;
+        }
+        else
+        {
+            // У переносимой ведомости нет надежного счетчика внешних изменений; снимок
+            // из другого контекста и счетчик PG нельзя считать разрешением на выдачу.
+            Taken(document).UnionWith(IssueJournal.TakenFor(repo, shape, document));
+            _externalVersion = null;
+        }
+        _documents.Add(key);
+    }
 
     /// <summary>Ведомость на один документ. Для одиночной выдачи, где пачки нет.</summary>
     public static NumberLedger For(ConstructorRepository repo, JournalShape shape, string document) =>
@@ -112,15 +157,13 @@ public static class IssueJournal
     /// <summary>
     /// Завести строку журнала и вернуть выданный номер.
     ///
-    /// Номер берется из <paramref name="ledger"/> — ведомости прогона; она же сразу помечается
-    /// занятой, поэтому следующий файл того же документа получит следующий номер, не заглядывая
-    /// в базу. Ведомости нет — читаем занятые номера этого документа сами (одиночная выдача).
+    /// Номер проверяется под блокировкой коллекции и резервируется вместе со всей строкой.
+    /// Ведомость прогона ускоряет чтение; устаревший снимок не позволяет обойти свежую проверку.
     ///
     /// Номер всегда первый свободный: задать его руками нельзя. Поправить выданный номер человек
     /// может прямо в коллекции журнала — там это обычная ячейка.
     ///
-    /// Любая ошибка после создания записи убирает эту запись: полузаполненная строка хуже, чем
-    /// отсутствие строки, — по ней номер выдали бы повторно.
+    /// Любая ошибка откатывает всю строку: неполный резерв не становится подтвержденной выдачей.
     /// </summary>
     /// <exception cref="PdfWatermarkException">Пустое имя или получатель, исчерпанный
     /// диапазон номеров.</exception>
@@ -133,45 +176,47 @@ public static class IssueJournal
         if (document.Length == 0) throw new PdfWatermarkException("не удалось определить имя документа");
         if (holder.Length   == 0) throw new PdfWatermarkException("не заполнено, кому выдан документ");
 
-        var book  = ledger ?? NumberLedger.For(repo, shape, document);
-        var taken = book.Taken(document);
-
-        var number = CopyNumber.FirstFree(taken)
-            ?? throw new PdfWatermarkException(
-                $"у документа «{document}» заняты все номера " +
-                $"{CopyNumber.MinNumber}–{CopyNumber.MaxNumber}");
-
-        // Запись дописывается в конец: журнал ведется по порядку выдачи. afterRecordId = 0 —
-        // записи с таким id не бывает, и репозиторий по контракту ставит такую запись в конец
-        // (одним индексным MAX, без загрузки коллекции в память).
-        var record = repo.AddRecordAfter(new DbRecord
+        var book = ledger ?? NumberLedger.Empty();
+        var issue = repo.InCollectionWriteTransaction(shape.CollectionId, () =>
         {
-            CollectionId = shape.CollectionId,
-            Title        = document,
-        }, afterRecordId: 0);
+            book.Refresh(repo, shape, document);
+            var number = CopyNumber.FirstFree(book.Taken(document))
+                ?? throw new PdfWatermarkException(
+                    $"у документа «{document}» заняты все номера " +
+                    $"{CopyNumber.MinNumber}–{CopyNumber.MaxNumber}");
 
-        var recordId = record.Id!.Value;
+            // MAX позиции и номер читаются после блокировки коллекции. Заголовок и все
+            // три поля публикуются одним коммитом: сосед не увидит половину резерва.
+            var record = repo.AddRecordAfter(new DbRecord
+            {
+                CollectionId = shape.CollectionId,
+                Title = document,
+            }, afterRecordId: 0);
+            var recordId = record.Id!.Value;
 
-        // Номер занят с этой секунды: строка уже есть в базе, и следующий файл того же документа
-        // обязан получить следующий номер, даже если значения еще не разложены.
-        book.Occupy(document, number);
-
-        try
-        {
-            // «Экземпляр» пишется ПЕРВЫМ: именно он делает строку резервом номера, и окно между
-            // вставкой и этим значением надо держать как можно короче.
             repo.SetFieldValue(recordId, shape.CopyFieldId,   number.ToString());
             repo.SetFieldValue(recordId, shape.HolderFieldId, holder);
             repo.SetFieldValue(recordId, shape.DateFieldId,   StampFor(input.Date));
-        }
-        catch
-        {
-            Release(repo, recordId);
-            book.Free(document, number);
-            throw;
-        }
 
-        return new Issue(recordId, number);
+            var stored = repo.GetFieldValues(recordId);
+            if (!stored.TryGetValue(shape.CopyFieldId, out var copy) || CopyNumber.NumberIn(copy) != number
+                || !stored.TryGetValue(shape.HolderFieldId, out var issuedTo) || issuedTo != holder
+                || !stored.TryGetValue(shape.DateFieldId, out var date) || date != StampFor(input.Date))
+                throw new PdfWatermarkException("структура журнала изменилась, номер не выдан");
+            return new Issue(recordId, number);
+        });
+
+        // Только после успешного коммита scope: повтор откаченной попытки не должен
+        // пропускать номер из-за преждевременного изменения памяти ведомости.
+        book.Occupy(document, issue.Number);
+        return issue;
+    }
+
+    internal static void VerifyShape(ConstructorRepository repo, JournalShape shape)
+    {
+        var check = JournalSchema.Check(repo, shape.CollectionId, shape.CollectionName);
+        if (check.Shape != shape)
+            throw new PdfWatermarkException("структура журнала изменилась, проверьте выбранную коллекцию");
     }
 
     /// <summary>Убрать резерв — знак не наложился. <c>false</c> — убрать не удалось, и об этом

@@ -163,6 +163,16 @@ public partial class ConstructorRepository
     /// </summary>
     public void SetLinks(int fieldId, int fromRecordId, IReadOnlyList<int> toRecordIds)
     {
+        Demand(PermAction.EditRecord, CollectionOfRecord(fromRecordId));
+        ExecuteAtomicWrite(() =>
+        {
+            SetLinksCore(fieldId, fromRecordId, toRecordIds);
+            return 0;
+        });
+    }
+
+    private void SetLinksCore(int fieldId, int fromRecordId, IReadOnlyList<int> toRecordIds)
+    {
         var cfg = RelationConfig.FromConfig(db.DbFields.AsNoTracking().Where(f => f.Id == fieldId)
             .Select(f => f.ConfigJson).FirstOrDefault());
         if (cfg is null) return;
@@ -176,9 +186,26 @@ public partial class ConstructorRepository
 
     private void SetLinkEdgesCore(int fieldId, int fromRecordId, IReadOnlyList<RelationTarget> targets, bool allowUnresolved)
     {
-        var source = db.DbRecords.Find(fromRecordId);
+        Demand(PermAction.EditRecord, CollectionOfRecord(fromRecordId));
+        ExecuteAtomicWrite(() =>
+        {
+            ApplyLinkEdges(fieldId, fromRecordId, targets, allowUnresolved);
+            return 0;
+        });
+    }
+
+    private void ApplyLinkEdges(int fieldId, int fromRecordId, IReadOnlyList<RelationTarget> targets, bool allowUnresolved)
+    {
+        // ToRecordId не имеет FK: межбазовые цели живут в другом файле/сервере.
+        // Локальные цели защищаем теми же parent locks, что удаление записи. Между
+        // проверкой существования и сохранением сосед больше не удалит такую цель.
+        var localDatabases = RelationTargetsOfThisBase().ToHashSet();
+        LockRecordsForWrite(targets.Where(t => localDatabases.Contains(t.DbId))
+            .Select(t => t.RecordId).Append(fromRecordId));
+        var source = db.DbRecords.FirstOrDefault(r => r.Id == fromRecordId);
         Demand(PermAction.EditRecord, source?.CollectionId);
         if (source is null) return;
+        if (db.Entry(source).State == EntityState.Unchanged) db.Entry(source).Reload();
         var field = db.DbFields.AsNoTracking().FirstOrDefault(f => f.Id == fieldId);
         if (field is null || field.FieldType != "relation") return;
         if (field.CollectionId != source.CollectionId)
@@ -187,6 +214,12 @@ public partial class ConstructorRepository
         if (cfg is null) return;
         if (cfg.Auto is not null)
             throw new InvalidOperationException("Автоматическая связь изменяется по правилу сопоставления.");
+        // Последний сохраненный порядок мог изменить сосед, пока карточка была открыта.
+        // Только эта полностью заменяемая ячейка перечитывается; чужие pending правки
+        // внешней транзакции остаются в трекере.
+        foreach (var entry in db.ChangeTracker.Entries<DbRecordLinkEntity>()
+            .Where(e => e.Entity.FieldId == fieldId && e.Entity.FromRecordId == fromRecordId).ToList())
+            entry.State = EntityState.Detached;
         var existing = db.DbRecordLinks.Where(l => l.FieldId == fieldId && l.FromRecordId == fromRecordId).ToList();
         var previous = existing.OrderBy(l => l.Position).ThenBy(l => l.Id)
             .Select(l => new RelationTarget(l.TargetDbId, l.ToRecordId)).ToList();

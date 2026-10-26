@@ -1,5 +1,10 @@
 using System.Collections.Concurrent;
+using System.Data;
+using System.Data.Common;
+using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 
 namespace SmartBase.Database;
 
@@ -33,6 +38,36 @@ namespace SmartBase.Database;
 /// </summary>
 public static class SqliteGate
 {
+    private static readonly ConditionalWeakTable<DbTransaction, IDisposable> TransactionAdmissions = new();
+    // В EF 9 Dispose транзакции имеет diagnostic event, но не interceptor override.
+    // Подписка не хранит контексты/подключения; ключи lease слабы и освобождаются идемпотентно.
+    private static readonly IDisposable TransactionEvents = DiagnosticListener.AllListeners.Subscribe(new TransactionListeners());
+
+    internal static void PrepareWriteTransaction(DbConnection connection, int timeoutSeconds, CancellationToken ct = default)
+    {
+        if (connection is GatedConnection gated) gated.PrepareWrite(timeoutSeconds, ct);
+    }
+
+    internal static void ClearPreparedWriteTransaction(DbConnection connection)
+    {
+        if (connection is GatedConnection gated) gated.ClearPreparedWrite();
+    }
+
+    internal static void ReleaseTransactionAdmission(DbTransaction? transaction)
+    {
+        if (transaction is not null && TransactionAdmissions.TryGetValue(transaction, out var lease)) lease.Dispose();
+    }
+
+    internal static void ReleaseCompletedTransactionAdmission(DbTransaction? transaction)
+    {
+        if (transaction is SqliteTransaction { Connection: null }) ReleaseTransactionAdmission(transaction);
+    }
+
+    // Используется в начале commit callbacks: они могут синхронно открыть другой контекст.
+    internal static void ReleaseConnectionAdmission(DbConnection connection)
+    {
+        if (connection is GatedConnection gated) gated.ReleaseAdmission();
+    }
     // Замок на строку подключения; null — у подключения без пула.
     private static readonly ConcurrentDictionary<string, object?> Gates = new(StringComparer.Ordinal);
 
@@ -89,6 +124,69 @@ public static class SqliteGate
     /// <summary>Подключение, чье открытие идет под замком своего пула.</summary>
     public sealed class GatedConnection(string connectionString) : SqliteConnection(connectionString)
     {
+        private PreparedWrite? _preparedWrite;
+        private IDisposable? _activeAdmission;
+
+        internal void PrepareWrite(int seconds, CancellationToken ct) =>
+            _preparedWrite = new PreparedWrite(seconds == 0 ? Timeout.InfiniteTimeSpan : TimeSpan.FromSeconds(seconds), ct);
+        internal void ClearPreparedWrite() => _preparedWrite = null;
+        internal void ReleaseAdmission() => Interlocked.Exchange(ref _activeAdmission, null)?.Dispose();
+
+        private WriteAdmission Admission()
+        {
+            var source = new SqliteConnectionStringBuilder(ConnectionString).DataSource;
+            var key = "sqlite:" + Path.GetFullPath(source.Length == 0 ? DataSource : source);
+            return WriteAdmission.ForDatabase(key, 1);
+        }
+
+        protected override DbTransaction BeginDbTransaction(IsolationLevel isolationLevel)
+        {
+            var prepared = Interlocked.Exchange(ref _preparedWrite, null);
+            // Только EF поставил marker. Прямые native/deferred read snapshots не попадают
+            // в очередь писателей и сохраняют прежнюю семантику SQLite.
+            if (prepared is null) return base.BeginDbTransaction(isolationLevel);
+            var lease = Admission().Enter(prepared.Timeout, prepared.Cancellation);
+            try
+            {
+                prepared.Cancellation.ThrowIfCancellationRequested();
+                return RegisterAdmission(base.BeginDbTransaction(isolationLevel), lease);
+            }
+            catch { lease.Dispose(); throw; }
+        }
+
+        protected override async ValueTask<DbTransaction> BeginDbTransactionAsync(IsolationLevel isolationLevel,
+            CancellationToken cancellationToken)
+        {
+            var prepared = Interlocked.Exchange(ref _preparedWrite, null);
+            if (prepared is null) return await base.BeginDbTransactionAsync(isolationLevel, cancellationToken).ConfigureAwait(false);
+            var lease = await Admission().EnterAsync(prepared.Timeout, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                // Microsoft.Data.Sqlite выполняет сам BEGIN синхронно. Очередь до него
+                // асинхронна и отменяема, командный deadline провайдера не меняется.
+                return RegisterAdmission(base.BeginDbTransaction(isolationLevel), lease);
+            }
+            catch { lease.Dispose(); throw; }
+        }
+
+        private DbTransaction RegisterAdmission(DbTransaction transaction, IDisposable lease)
+        {
+            var registration = new NativeLease(this, lease);
+            try
+            {
+                TransactionAdmissions.Add(transaction, registration);
+                _activeAdmission = registration;
+                return transaction;
+            }
+            catch
+            {
+                try { transaction.Dispose(); }
+                finally { registration.Dispose(); }
+                throw;
+            }
+        }
+
         // OpenAsync библиотека не переопределяет: базовый DbConnection.OpenAsync зовет этот Open.
         public override void Open()
         {
@@ -97,5 +195,55 @@ public static class SqliteGate
             else
                 base.Open();
         }
+
+        public override void Close()
+        {
+            try { base.Close(); }
+            finally { ClearPreparedWrite(); ReleaseAdmission(); }
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            try { base.Dispose(disposing); }
+            finally { if (disposing) { ClearPreparedWrite(); ReleaseAdmission(); } }
+        }
+
+        private sealed record PreparedWrite(TimeSpan Timeout, CancellationToken Cancellation);
+
+        private sealed class NativeLease(GatedConnection owner, IDisposable lease) : IDisposable
+        {
+            private GatedConnection? _owner = owner;
+            private IDisposable? _lease = lease;
+            public void Dispose()
+            {
+                var currentOwner = Interlocked.Exchange(ref _owner, null);
+                var currentLease = Interlocked.Exchange(ref _lease, null);
+                if (currentOwner is not null) Interlocked.CompareExchange(ref currentOwner._activeAdmission, null, this);
+                currentLease?.Dispose();
+            }
+        }
+    }
+
+    private sealed class TransactionListeners : IObserver<DiagnosticListener>
+    {
+        public void OnNext(DiagnosticListener listener)
+        {
+            if (listener.Name == "Microsoft.EntityFrameworkCore") listener.Subscribe(new TransactionObserver(),
+                name => name is "Microsoft.EntityFrameworkCore.Database.Transaction.TransactionDisposed"
+                    or "Microsoft.EntityFrameworkCore.Database.Transaction.TransactionCommitted"
+                    or "Microsoft.EntityFrameworkCore.Database.Transaction.TransactionRolledBack");
+        }
+        public void OnCompleted() { }
+        public void OnError(Exception error) { }
+    }
+
+    private sealed class TransactionObserver : IObserver<KeyValuePair<string, object?>>
+    {
+        public void OnNext(KeyValuePair<string, object?> item)
+        {
+            if (item.Value is TransactionEventData data) ReleaseTransactionAdmission(data.Transaction);
+        }
+        public void OnCompleted() { }
+        public void OnError(Exception error) { }
     }
 }

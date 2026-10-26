@@ -11,6 +11,7 @@ dotnet run -c Release --project Tests/Benchmarks -- sidebar [--db PATH] [--targe
 dotnet run -c Release --project Tests/Benchmarks -- import  [--rows N] [--dir PATH]
 dotnet run -c Release --project Tests/Benchmarks -- export  [--rows N] [--dir PATH]
 dotnet run -c Release --project Tests/Benchmarks -- pgload  [клиентов] [секунд] [--db ИМЯ]
+dotnet run -c Release --project Tests/Benchmarks -- multiuser --provider sqlite|postgres [--clients 1000] [--scenario lifecycle|hotcell|rollback]
 dotnet run -c Release --project Tests/Benchmarks -- pgperf  [--rows N] [--db ИМЯ]
 dotnet run -c Release --project Tests/Benchmarks -- csvlog  [--rows N] [--dir PATH]
 dotnet run -c Release --project Tests/Benchmarks -- dbsize  --db PATH [--top N] [--fast]
@@ -35,7 +36,8 @@ dotnet run -c Release --project Tests/WideGui -- --db PATH
 | **sidebar** | операции сайдбара на большом стенде (чтения дерева, календарь, дубль/перенос/удаление коллекций и групп) | заранее сгенерированный стенд — см. [test-database.md](test-database.md) |
 | **import** | импорт большого CSV (Analyze + чтение/запись, строк/с) | — |
 | **export** | экспорт коллекции во все форматы (CSV/JSON/XLSX/XLSM) | — |
-| **pgload** | нагрузка PostgreSQL: N клиентов со своими подключениями, сверка целостности | стенд `sb-pg` (порт 5455) — см. [../guides/postgresql-setup.md](../guides/postgresql-setup.md) |
+| **pgload** | нагрузка PostgreSQL прямым SQL: N клиентов со своими подключениями, сверка вставок и инкрементов. Успех требует подключения и полезной работы каждого клиента, без отказов и таймаутов | стенд `sb-pg` (порт 5455) — см. [../guides/postgresql-setup.md](../guides/postgresql-setup.md) |
+| **multiuser** | до 1000 независимых сессий через API приложения: создание, правка, чтение, дубль, перенос и удаление; общая ячейка или rollback. Общий старт, точная сверка данных, p50/p95/p99/max и JSON. Параметры, критерии и ограничения — [concurrency.md](concurrency.md) | новая SQLite-база (WAL или эмуляция DELETE+FULL) либо собственная новая база локального PostgreSQL на 5455; результаты сохраняются |
 | **pgperf** | производительность PostgreSQL путями приложения (репозиторий, не голый SQL): массовая заливка `BulkAddRecords`, одиночные вставки, keyset-страницы (первая против самой глубокой), offset для контраста, значения пакета, фильтр колонки, точечные правки, дубль/удаление пакета. Сбрасывает схему `public`, в конце подчищает | стенд `sb-pg` (порт 5455) |
 | **csvlog** | выгрузка в CSV журнала изменений и диагностики (строк/с, размер файла, живая куча) | — (сеет свои temp-базы) |
 | **dbsize** | из чего состоит файл SQLite: живые данные / свободные страницы / накладные B-деревьев, объем каждой таблицы и индекса, разрез по коллекциям (байт на запись) и полям (средняя/максимальная длина, доля длинных > 120 байт, уникальных — потенциал словаря). Открывает файл **только для чтения** — можно запускать на настоящей базе в сетевой папке во время работы людей; `--fast` пропускает `COUNT(DISTINCT)` по полям | любой файл `.db` |

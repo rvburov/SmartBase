@@ -3148,6 +3148,12 @@ public partial class ConstructorRepository(AppDbContext db)
     private DbField AddField(DbField field, bool copy)
     {
         Demand(PermAction.CreateField, field.CollectionId);
+        return InCollectionWriteTransaction(field.CollectionId, () => AddFieldCore(field, copy));
+    }
+
+    private DbField AddFieldCore(DbField field, bool copy)
+    {
+        Demand(PermAction.CreateField, field.CollectionId);
         // Правило, которое не готово к подбору (потеряно, новее, повреждено), сохраняется как есть,
         // без подбора: связей у нового поля еще нет.
         if (!copy && field.FieldType == "relation" && RelationConfig.FromConfig(field.ConfigJson)?.Auto is { IsReady: true }
@@ -3793,6 +3799,7 @@ public partial class ConstructorRepository(AppDbContext db)
         try
         {
             using var cmd = conn.CreateCommand();
+            cmd.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
             cmd.CommandText = "SELECT Id, Title FROM db_records WHERE CollectionId = @c ORDER BY Position, Id";
             AddParam(cmd, "@c").Value = collectionId;
             using var rdr = cmd.ExecuteReader();
@@ -4099,14 +4106,33 @@ public partial class ConstructorRepository(AppDbContext db)
     public IReadOnlyList<(int FieldId, string Value)> SetRecordTitle(int recordId, string title)
     {
         Demand(PermAction.EditRecord, CollectionOfRecord(recordId));
-        var rec = db.DbRecords.Find(recordId);
-        if (rec is null) return [];
-        var changed = rec.Title != title;
+        return ExecuteAtomicWrite(() => SetRecordTitleCore(recordId, title));
+    }
+
+    private IReadOnlyList<(int FieldId, string Value)> SetRecordTitleCore(int recordId, string title)
+    {
+        LockRecordsForWrite([recordId]);
+        var fresh = db.DbRecords.AsNoTracking().FirstOrDefault(record => record.Id == recordId);
+        if (fresh is null)
+        {
+            if (db.DbRecords.Local.FirstOrDefault(record => record.Id == recordId) is { } gone)
+                db.Entry(gone).State = EntityState.Detached;
+            return [];
+        }
+        Demand(PermAction.EditRecord, fresh.CollectionId);
+        var rec = db.DbRecords.Local.FirstOrDefault(record => record.Id == recordId);
+        if (rec is null) { rec = fresh; db.DbRecords.Attach(rec); }
+        else if (db.Entry(rec).State == EntityState.Unchanged)
+        {
+            db.Entry(rec).CurrentValues.SetValues(fresh);
+            db.Entry(rec).OriginalValues.SetValues(fresh);
+        }
+        var changed = fresh.Title != title;
         if (changed)
         {
             // Побуквенное сохранение панели записи — сливаем в одну строку журнала.
             var key = (Kind: "title", RecordId: recordId, SubId: 0);
-            var old = BeginEditMerge(key, rec.Title);
+            var old = BeginEditMerge(key, fresh.Title);
             if (old != title)
                 EndEditMerge(key, Log("update", "record", title, CollectionNameOf(rec.CollectionId),
                                       detail: ChangeDetail.Rename(old, title)), old);
@@ -4171,6 +4197,21 @@ public partial class ConstructorRepository(AppDbContext db)
     }
 
     public DbRecord AddRecord(DbRecord record)
+    {
+        Demand(PermAction.CreateRecord, record.CollectionId);
+        var originalId = record.Id;
+        try
+        {
+            return ExecuteAtomicWrite(() =>
+            {
+                record.Id = originalId;
+                return AddRecordCore(record);
+            });
+        }
+        catch { record.Id = originalId; throw; }
+    }
+
+    private DbRecord AddRecordCore(DbRecord record)
     {
         Demand(PermAction.CreateRecord, record.CollectionId);
         var createdAt = record.CreatedAt ?? DateTime.Now.ToString("o");
@@ -4335,8 +4376,28 @@ public partial class ConstructorRepository(AppDbContext db)
     {
         Demand(PermAction.EditRecord, record.CollectionId);
         if (record.Id is null) return;
-        var entity = db.DbRecords.Find(record.Id.Value);
-        if (entity is null) return;
+        ExecuteAtomicWrite(() => { UpdateRecordCore(record); return 0; });
+    }
+
+    private void UpdateRecordCore(DbRecord record)
+    {
+        LockRecordsForWrite([record.Id!.Value]);
+        var fresh = db.DbRecords.AsNoTracking().FirstOrDefault(row => row.Id == record.Id.Value);
+        if (fresh is null)
+        {
+            if (db.DbRecords.Local.FirstOrDefault(row => row.Id == record.Id.Value) is { } gone)
+                db.Entry(gone).State = EntityState.Detached;
+            return;
+        }
+        Demand(PermAction.EditRecord, fresh.CollectionId);
+        var entity = db.DbRecords.Local.FirstOrDefault(row => row.Id == record.Id.Value);
+        if (entity is null) { entity = fresh; db.DbRecords.Attach(entity); }
+        else
+        {
+            db.Entry(entity).CurrentValues.SetValues(fresh);
+            db.Entry(entity).OriginalValues.SetValues(fresh);
+            db.Entry(entity).State = EntityState.Unchanged;
+        }
 
         var titleChanged = entity.Title != record.Title;
 
@@ -4414,10 +4475,24 @@ public partial class ConstructorRepository(AppDbContext db)
     public void DeleteRecord(int recordId, IReadOnlyCollection<int>? deletedTogether = null)
     {
         Demand(PermAction.DeleteRecord, CollectionOfRecord(recordId));
+        ExecuteAtomicWrite(() =>
+        {
+            DeleteRecordCore(recordId, deletedTogether);
+            return 0;
+        });
+    }
+
+    private void DeleteRecordCore(int recordId, IReadOnlyCollection<int>? deletedTogether)
+    {
+        LockRecordsForWrite([recordId]);
+        Demand(PermAction.DeleteRecord, CollectionOfRecord(recordId));
         EnsureDeleteAllowed([recordId], deletedTogether);
-        var entity = db.DbRecords.Find(recordId);
+        // Запрос идет в базу даже при прежнем заголовке в трекере: удаленный соседом
+        // источник не должен воскреснуть при следующем SaveChanges.
+        var entity = db.DbRecords.FirstOrDefault(r => r.Id == recordId);
         if (entity is not null)
         {
+            db.Entry(entity).Reload();
             Log("delete", "record", entity.Title, CollectionNameOf(entity.CollectionId));
             // Входящие связи в этой же БД (цель = удаляемая запись): FK на ToRecordId снят (цель
             // может быть межбазовой), чистим прикладно. Исходящие уходят каскадом FromRecordId.
@@ -4432,7 +4507,16 @@ public partial class ConstructorRepository(AppDbContext db)
     public DbRecord DuplicateRecord(int recordId)
     {
         Demand(PermAction.DuplicateRecord, CollectionOfRecord(recordId));
-        var src = db.DbRecords.Find(recordId);
+        return ExecuteAtomicWrite(() => DuplicateRecordCore(recordId));
+    }
+
+    private DbRecord DuplicateRecordCore(int recordId)
+    {
+        LockRecordsForWrite([recordId]);
+        Demand(PermAction.DuplicateRecord, CollectionOfRecord(recordId));
+        // Find вернул бы старую сущность открытого редактора после удаления соседом.
+        // Заголовок, значения, ребра и проекция читаются и сохраняются одним снимком.
+        var src = db.DbRecords.AsNoTracking().FirstOrDefault(r => r.Id == recordId);
         if (src is null) throw new InvalidOperationException($"Record {recordId} not found");
         // Связи на записи вне условия выбора копия не получает (иначе дубль стал бы обходом условия).
         // Решается до сохранения копии: сбой базы цели не оставит копию без связей.
@@ -4454,7 +4538,7 @@ public partial class ConstructorRepository(AppDbContext db)
         Log("duplicate", "record", src.Title, CollectionNameOf(src.CollectionId));
         db.SaveChanges();
 
-        var fieldValues = db.DbFieldValues.Where(fv => fv.RecordId == recordId).ToList();
+        var fieldValues = db.DbFieldValues.AsNoTracking().Where(fv => fv.RecordId == recordId).ToList();
         foreach (var fv in fieldValues)
             db.DbFieldValues.Add(new DbFieldValueEntity { RecordId = copy.Id, FieldId = fv.FieldId, Value = fv.Value });
         db.SaveChanges();
@@ -4543,9 +4627,18 @@ public partial class ConstructorRepository(AppDbContext db)
     /// тем же rowid. Пакеты — ради гранулярности прогресса.</summary>
     public void DeleteRecordsData(IReadOnlyList<int> recordIds, IProgress<int>? progress = null, int batchSize = 10000,
                                   bool log = true, bool enforceRestrict = true)
+        => ExecuteAtomicWrite(() =>
+        {
+            DeleteRecordsDataCore(recordIds, progress, batchSize, log, enforceRestrict);
+            return 0;
+        });
+
+    private void DeleteRecordsDataCore(IReadOnlyList<int> recordIds, IProgress<int>? progress,
+        int batchSize, bool log, bool enforceRestrict)
     {
         if (recordIds.Count == 0) return;
         var ids = recordIds.Distinct().ToList();
+        LockRecordsForWrite(ids);
         if (enforceRestrict) EnsureDeleteAllowed(ids);
         var affectedCollections = db.DbRecords.AsNoTracking().Where(r => ids.Contains(r.Id))
             .Select(r => r.CollectionId).Distinct().ToList();
@@ -4554,7 +4647,7 @@ public partial class ConstructorRepository(AppDbContext db)
         // таблицы всегда в одной коллекции).
         var colName = log ? CollectionNameOf(CollectionOfRecord(ids[0])) : null;
 
-        using var tx = db.Database.BeginTransaction();
+        using var tx = BeginWrite();
         var done = 0;
         for (var i = 0; i < ids.Count; i += batchSize)
         {
@@ -4938,6 +5031,7 @@ public partial class ConstructorRepository(AppDbContext db)
         bool createMissingFields, int sourceDbId, int targetDbId, IProgress<int>? progress = null)
     {
         if (recordIds.Count == 0) return [];
+        var distinctIds = recordIds.Distinct().ToList();
         // this — ЦЕЛЕВАЯ база: создание записей в целевой коллекции. Право удаления в
         // источнике проверяет UI по репозиторию источника (перенос в одной базе покрыт:
         // this и есть источник — проверяем и удаление).
@@ -4956,8 +5050,7 @@ public partial class ConstructorRepository(AppDbContext db)
 
         // Перенос — копия и удаление оригинала: связь с запретом удаления держит и перенос, в том
         // числе ссылки между переносимыми записями (копии их не сохраняют). Проверка — до копии.
-        sourceRepo.EnsureDeleteAllowed(recordIds, move: true);
-        try { return targetRepo.MoveRecordsCore(sourceRepo, sourceCollectionId, recordIds, targetCollectionId, createMissingFields, sourceDbId, targetDbId, progress); }
+        try { return targetRepo.MoveRecordsCore(sourceRepo, sourceCollectionId, distinctIds, targetCollectionId, createMissingFields, sourceDbId, targetDbId, progress); }
         finally { sourceCtx?.Dispose(); }
     }
 
@@ -5037,6 +5130,78 @@ public partial class ConstructorRepository(AppDbContext db)
         IReadOnlyList<int> recordIds, int targetCollectionId, bool createMissingFields,
         int sourceDbId, int targetDbId, IProgress<int>? progress)
     {
+        var sameDatabase = ReferenceEquals(db, source.RelationLifecycleContext)
+            || string.Equals(DbPath, source.DbPath, StringComparison.Ordinal);
+        var ownTargetTransaction = db.Database.CurrentTransaction is null;
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                if (sameDatabase)
+                    return InCollectionWriteTransaction(targetCollectionId, () =>
+                    {
+                        var available = source.RelationLifecycleContext.DbRecords.AsNoTracking()
+                            .Where(r => r.CollectionId == sourceCollectionId && recordIds.Contains(r.Id))
+                            .Select(r => r.Id).ToHashSet();
+                        var selected = recordIds.Where(available.Contains).ToList();
+                        LockRecordsForWrite(selected);
+                        source.EnsureDeleteAllowed(selected, move: true);
+                        return MoveRecordsCoreTransaction(source, sourceCollectionId, selected, targetCollectionId,
+                            createMissingFields, sourceDbId, targetDbId, progress);
+                    });
+
+                // Между разными БД по-прежнему сначала подтверждается копия, затем удаление:
+                // распределенной транзакции у этого API нет. Но живой источник захвачен до
+                // копирования, поэтому два клиента не могут одновременно перенести его.
+                // Два встречных переноса берут базы в одном порядке. Иначе каждый
+                // удерживал бы свой writer lock и ждал освобождения второй базы.
+                var sourceFirst = string.CompareOrdinal(MoveDatabaseOrderKey(source), MoveDatabaseOrderKey(this)) <= 0;
+                using var sourceBeforeTarget = sourceFirst ? source.BeginWrite() : null;
+                using var targetWrite = BeginWrite();
+                using var sourceAfterTarget = sourceFirst ? null : source.BeginWrite();
+                var live = source.RelationLifecycleContext.DbRecords.AsNoTracking()
+                    .Where(r => r.CollectionId == sourceCollectionId && recordIds.Contains(r.Id))
+                    .Select(r => r.Id).ToHashSet();
+                var claimed = recordIds.Where(live.Contains).ToList();
+                source.LockRecordsForWrite(claimed);
+                source.EnsureDeleteAllowed(claimed, move: true);
+                var moved = InCollectionWriteTransaction(targetCollectionId, () => MoveRecordsCoreTransaction(source,
+                    sourceCollectionId, claimed, targetCollectionId, createMissingFields, sourceDbId, targetDbId, progress));
+                targetWrite.Commit();
+                (sourceBeforeTarget ?? sourceAfterTarget)!.Commit();
+                return moved;
+            }
+            catch (Exception error) when (ownTargetTransaction && createMissingFields
+                && attempt < 3 && IsMovedFieldCreationConflict(error))
+            {
+                // PG может сообщить unique conflict вместо 40001: сосед уже создал поле
+                // после нашего чтения схемы. Вся целевая попытка уже откатилась; новый
+                // снимок перечитает готовое поле и сопоставит его без второго создания.
+            }
+        }
+    }
+
+    private static bool IsMovedFieldCreationConflict(Exception error) =>
+        error is Npgsql.PostgresException { SqlState: "23505", ConstraintName: { } name }
+            && string.Equals(name, "IX_db_fields_CollectionId_Name", StringComparison.OrdinalIgnoreCase)
+        || error.InnerException is { } inner && IsMovedFieldCreationConflict(inner);
+
+    private static string MoveDatabaseOrderKey(ConstructorRepository repository)
+    {
+        if (repository.IsPostgres)
+        {
+            var settings = new Npgsql.NpgsqlConnectionStringBuilder(repository.DbPath);
+            return $"pg:{settings.Host.ToUpperInvariant()}:{settings.Port}/{settings.Database}";
+        }
+        var path = Path.GetFullPath(repository.DbPath);
+        return "sqlite:" + (OperatingSystem.IsWindows() ? path.ToUpperInvariant() : path);
+    }
+
+    private List<int> MoveRecordsCoreTransaction(ConstructorRepository source, int sourceCollectionId,
+        IReadOnlyList<int> recordIds, int targetCollectionId, bool createMissingFields,
+        int sourceDbId, int targetDbId, IProgress<int>? progress)
+    {
+        if (recordIds.Count == 0) return [];
         // Переинтерпретация целевой БД связи под целевую базу переноса. «Абсолютная» БД цели: 0 в
         // конфиге/ребре означает БД ИСТОЧНИКА (sourceDbId). В целевой базе она снова 0, если совпала
         // с назначением (стала внутрибазовой), иначе — межбазовая на ту же абсолютную БД. Одна формула
@@ -5056,8 +5221,7 @@ public partial class ConstructorRepository(AppDbContext db)
             return (sc with { TargetDbId = RelTargetDb(sc.TargetDbId) }).ToConfigJson();
         }
 
-        // 1) План: srcFieldId → (целевое поле, типы). Недостающие свойства создаем ОДИН раз (при флаге),
-        //    до транзакции копирования (AddField коммитит сам).
+        // 1) План и недостающие свойства входят в ту же транзакцию, что перенос записей.
         var srcFields    = source.GetFields(sourceCollectionId);
         var targetByName = new Dictionary<string, DbField>(StringComparer.OrdinalIgnoreCase);
         foreach (var tf in GetFields(targetCollectionId)) targetByName.TryAdd(tf.Name, tf);
@@ -5154,12 +5318,16 @@ public partial class ConstructorRepository(AppDbContext db)
         var copiedSources = new List<int>(recordIds.Count);
         var done = 0;
 
-        using (var tx = db.Database.BeginTransaction())
+        using (var tx = BeginWrite())
         {
             foreach (var srcId in recordIds)
             {
                 var header = source.GetRecord(srcId);
-                if (header is null) { progress?.Report(++done); continue; }
+                if (header is null || header.CollectionId != sourceCollectionId)
+                {
+                    progress?.Report(++done);
+                    continue;
+                }
 
                 posBase += 1000;
                 // Аудит переносим ЦЕЛИКОМ (четыре поля): «Расположение» перекладывает запись,
@@ -6112,14 +6280,61 @@ public partial class ConstructorRepository(AppDbContext db)
     /// чтобы файл-ячейка обновилась мгновенно. Обычно пусто.</summary>
     public IReadOnlyList<(int FieldId, string Value)> SetFieldValue(int recordId, int fieldId, string value)
     {
-        var collectionId = CollectionOfRecord(recordId);
+        Demand(PermAction.EditRecord, CollectionOfRecord(recordId));
+        return ExecuteAtomicWrite(() => SetFieldValueCore(recordId, fieldId, value));
+    }
+
+    private IReadOnlyList<(int FieldId, string Value)> SetFieldValueCore(int recordId, int fieldId, string value)
+    {
+        LockRecordsForWrite([recordId]);
+        if (db.IsPostgres)
+        {
+            using var fieldLock = db.Database.GetDbConnection().CreateCommand();
+            fieldLock.Transaction = db.Database.CurrentTransaction!.GetDbTransaction();
+            fieldLock.CommandTimeout = db.Database.GetCommandTimeout() ?? 30;
+            fieldLock.CommandText = "SELECT id FROM db_fields WHERE id = @id FOR SHARE";
+            AddParam(fieldLock, "@id").Value = fieldId;
+            fieldLock.ExecuteScalar();
+        }
+        // Find/Local могут держать удаленную соседом запись или прежнее значение ячейки.
+        // Проверка и все записи идут под одной настоящей write transaction, а журнал
+        // создается только после свежей проверки обоих родителей.
+        var record = db.DbRecords.AsNoTracking().FirstOrDefault(r => r.Id == recordId);
+        var field = db.DbFields.AsNoTracking().FirstOrDefault(f => f.Id == fieldId);
+        if (record is null || field is null)
+        {
+            foreach (var entry in db.ChangeTracker.Entries<DbFieldValueEntity>()
+                         .Where(e => e.Entity.RecordId == recordId && e.Entity.FieldId == fieldId).ToList())
+                entry.State = EntityState.Detached;
+            if (record is null && db.DbRecords.Local.FirstOrDefault(r => r.Id == recordId) is { } goneRecord)
+                db.Entry(goneRecord).State = EntityState.Detached;
+            if (field is null && db.DbFields.Local.FirstOrDefault(f => f.Id == fieldId) is { } goneField)
+                db.Entry(goneField).State = EntityState.Detached;
+            return [];
+        }
+        int? collectionId = record.CollectionId;
         Demand(PermAction.EditRecord, collectionId);
+        if (field.CollectionId != record.CollectionId)
+            throw new InvalidOperationException("Свойство не принадлежит коллекции записи.");
 
         // Число: приводим десятичный разделитель к выбранному в свойстве (канон хранения).
         // Нечисловое значение и не-числовые поля остаются как есть.
-        value = NormalizeNumberValueForField(fieldId, value);
+        if (field.FieldType == "number")
+            value = NumberFormatValue.NormalizeStorage(value, NumberFormatValue.FromConfig(field.ConfigJson).DecimalSeparator);
 
-        var fv = db.DbFieldValues.FirstOrDefault(x => x.RecordId == recordId && x.FieldId == fieldId);
+        var fv = db.DbFieldValues.AsNoTracking().FirstOrDefault(x => x.RecordId == recordId && x.FieldId == fieldId);
+        var trackedValue = db.DbFieldValues.Local.FirstOrDefault(x => x.RecordId == recordId && x.FieldId == fieldId);
+        if (trackedValue is not null)
+        {
+            if (fv is null) db.Entry(trackedValue).State = EntityState.Detached;
+            else
+            {
+                var entry = db.Entry(trackedValue);
+                entry.CurrentValues.SetValues(fv);
+                entry.OriginalValues.SetValues(fv);
+                entry.State = EntityState.Unchanged;
+            }
+        }
 
         // Реальное изменение значения (правка ячейки — ручное действие, но сохранение записи
         // прогоняет ВСЕ поля через этот метод): им гейтим и журнал, и аудит «последней правки».
@@ -6128,18 +6343,12 @@ public partial class ConstructorRepository(AppDbContext db)
         // Журнал — только при реальном изменении значения.
         if (changed)
         {
-            var rec = db.DbRecords.AsNoTracking()
-                .Where(r => r.Id == recordId)
-                .Select(r => new { r.Title, r.CollectionId })
-                .FirstOrDefault();
+            var rec = record;
             if (rec is not null)
             {
                 // Метаданные поля нужны и журналу (имя, тип), и событиям задач (роли) —
                 // читаем ОДНИМ запросом, тем же, что был здесь и раньше.
-                var f = db.DbFields.AsNoTracking()
-                    .Where(x => x.Id == fieldId)
-                    .Select(x => new EditedFieldMeta(x.Name, x.FieldType, x.IsTaskExec, x.IsTaskStatus))
-                    .FirstOrDefault();
+                var f = new EditedFieldMeta(field.Name, field.FieldType, field.IsTaskExec, field.IsTaskStatus);
 
                 // «до → после»: имя свойства + компактный дифф значения (старое уже в fv).
                 // Побуквенное сохранение панели записи — сливаем в одну строку журнала.
@@ -6164,52 +6373,32 @@ public partial class ConstructorRepository(AppDbContext db)
             }
         }
 
-        // Многопользовательский режим: между нашей проверкой и записью ту же ячейку мог
-        // изменить другой пользователь (другой процесс). Политика — «последний побеждает»:
-        //  • гонка на ПЕРВОЕ значение (оба увидели «строки нет», оба INSERT) — проигравший
-        //    ловит PK-конфликт (SQLITE_CONSTRAINT=19 / PG unique_violation 23505)
-        //    и превращает вставку в UPDATE;
-        //  • строку/запись успели удалить — UPDATE попадает в 0 строк
-        //    (DbUpdateConcurrencyException): значение не воскрешаем, синхронизация вскоре
-        //    уберет запись и из нашего UI.
-        // Оба случая воспроизведены стендом Tests/MultiUserHarness (--contend).
-        if (fv is null)
+        // UPSERT не переводит PG-транзакцию в ошибочное состояние при гонке первой
+        // вставки. Пустое значение хранится отсутствием строки. Родители уже проверены
+        // и защищены до коммита; нельзя превратить FK исчезнувшего объекта в "успех".
+        if (changed)
         {
-            var added = new DbFieldValueEntity { RecordId = recordId, FieldId = fieldId, Value = value };
-            db.DbFieldValues.Add(added);
-            try { db.SaveChanges(); }
-            catch (DbUpdateException ex) when (ex.InnerException
-                is SqliteException { SqliteErrorCode: 19 }
-                or Npgsql.PostgresException { SqlState: "23505" })
-            {
-                db.Entry(added).State = EntityState.Detached;
-                // Идентификаторы в кавычках нижним регистром: SQLite матчит их без учета
-                // регистра, PG-модель и так lowercase — одна строка на оба провайдера.
+            if (value.Length == 0)
                 db.Database.ExecuteSqlRaw(
-                    "UPDATE \"db_field_values\" SET \"value\" = {0} WHERE \"recordid\" = {1} AND \"fieldid\" = {2}",
-                    value, recordId, fieldId);
-                db.SaveChanges();   // дожать строку журнала, не сохраненную упавшим SaveChanges
-            }
-        }
-        else if (value.Length == 0)
-        {
-            // Очистка ячейки: строку удаляем, а не оставляем с пустым значением — инвариант
-            // «нет строки = пусто» (так читают страницы, счетчики фильтра, экспорт), и таблица
-            // значений с ее индексом не копят пустые строки. Чужое удаление той же строки
-            // (0 затронутых) гасит SaveReconcilingPhantomDeletes — это тот же исход.
-            db.DbFieldValues.Remove(fv);
-            db.SaveChanges();
-        }
-        else
-        {
-            fv.Value = value;
-            try { db.SaveChanges(); }
-            catch (DbUpdateConcurrencyException)
+                    "DELETE FROM \"db_field_values\" WHERE \"recordid\" = {0} AND \"fieldid\" = {1}", recordId, fieldId);
+            else
+                db.Database.ExecuteSqlRaw(
+                    "INSERT INTO \"db_field_values\" (\"recordid\", \"fieldid\", \"value\") VALUES ({0}, {1}, {2}) " +
+                    "ON CONFLICT (\"recordid\", \"fieldid\") DO UPDATE SET \"value\" = EXCLUDED.\"value\"",
+                    recordId, fieldId, value);
+            if (trackedValue is not null && fv is not null)
             {
-                db.Entry(fv).State = EntityState.Detached;
-                db.SaveChanges();   // дожать строку журнала
+                var entry = db.Entry(trackedValue);
+                if (value.Length == 0) entry.State = EntityState.Detached;
+                else
+                {
+                    entry.Property(x => x.Value).CurrentValue = value;
+                    entry.Property(x => x.Value).OriginalValue = value;
+                    entry.State = EntityState.Unchanged;
+                }
             }
         }
+        db.SaveChanges();
 
         // Аудит «последней правки» записи (для типов «Дата/Изменение …») — только при реальном
         // изменении значения. Правим db_records сырым SQL (кавычки-lowercase матчатся обоими
@@ -6227,6 +6416,11 @@ public partial class ConstructorRepository(AppDbContext db)
             {
                 trackedRec.UpdatedAt = now;
                 trackedRec.UpdatedBy = author;
+                var entry = db.Entry(trackedRec);
+                entry.Property(x => x.UpdatedAt).OriginalValue = now;
+                entry.Property(x => x.UpdatedAt).IsModified = false;
+                entry.Property(x => x.UpdatedBy).OriginalValue = author;
+                entry.Property(x => x.UpdatedBy).IsModified = false;
             }
         }
 
@@ -6697,13 +6891,22 @@ public partial class ConstructorRepository(AppDbContext db)
     {
         if (recordIds.Count == 0 || changes.Count == 0) return default;
         Demand(PermAction.EditRecord, collectionId);
+        return InCollectionWriteTransaction(collectionId, () => SetRowStyleCore(collectionId, recordIds, changes));
+    }
+
+    private StyleStamps SetRowStyleCore(int collectionId, IReadOnlyList<int> recordIds,
+        IReadOnlyList<(StyleAspect Aspect, string? Value)> changes)
+    {
         var stored = StoredChanges(changes);
 
         // Сброс отмечается, только если аспект задает хоть одна колонка — иначе перебивать нечего.
         var columnAspects = ColumnStyledAspects(collectionId);
         var applied       = Stamps(stored, StyleStamps.Next(), columnAspects.Contains);
 
-        using var tx = db.Database.BeginTransaction();
+        foreach (var entry in db.ChangeTracker.Entries<RecordDisplayEntity>()
+            .Where(entry => entry.State == EntityState.Unchanged && entry.Entity.CollectionId == collectionId
+                && recordIds.Contains(entry.Entity.RecordId)).ToList())
+            entry.Reload();
         var existing = db.RecordDisplay
             .Where(d => d.CollectionId == collectionId && recordIds.Contains(d.RecordId))
             .ToDictionary(d => d.RecordId);
@@ -6722,7 +6925,6 @@ public partial class ConstructorRepository(AppDbContext db)
 
         ClearCellAspects(db.CellStyles.Where(c => c.CollectionId == collectionId && recordIds.Contains(c.RecordId)),
                          stored.Select(c => c.Aspect));
-        tx.Commit();
         return applied;
     }
 
@@ -6973,9 +7175,26 @@ public partial class ConstructorRepository(AppDbContext db)
     {
         if (cells.Count == 0 || changes.Count == 0) return;
         Demand(PermAction.EditRecord, collectionId);
+        // Один SaveChanges может идти без EF-транзакции. Явный общий scope не дает
+        // одиночной записи обойти очередь SQLite и теснить уже ожидающих писателей.
+        InCollectionWriteTransaction(collectionId, () =>
+        {
+            SetCellStyleCore(collectionId, cells, changes);
+            return 0;
+        });
+    }
+
+    private void SetCellStyleCore(int collectionId, IReadOnlyList<(int RecordId, string Key)> cells,
+        IReadOnlyList<(StyleAspect Aspect, string? Value)> changes)
+    {
         var stored    = StoredChanges(changes);
         var recordIds = cells.Select(c => c.RecordId).Distinct().ToList();
 
+        var selected = cells.ToHashSet();
+        foreach (var entry in db.ChangeTracker.Entries<CellStyleEntity>()
+            .Where(entry => entry.State == EntityState.Unchanged && entry.Entity.CollectionId == collectionId
+                && selected.Contains((entry.Entity.RecordId, entry.Entity.Key))).ToList())
+            entry.Reload();
         var existing = db.CellStyles
             .Where(c => c.CollectionId == collectionId && recordIds.Contains(c.RecordId))
             .ToList()
@@ -7011,6 +7230,12 @@ public partial class ConstructorRepository(AppDbContext db)
     {
         if (keys.Count == 0 || changes.Count == 0) return default;
         Demand(PermAction.EditField, collectionId);
+        return InCollectionWriteTransaction(collectionId, () => SetColumnStyleCore(collectionId, keys, changes));
+    }
+
+    private StyleStamps SetColumnStyleCore(int collectionId, IReadOnlyList<string> keys,
+        IReadOnlyList<(StyleAspect Aspect, string? Value)> changes)
+    {
         var stored = StoredChanges(changes);
 
         // Сброс отмечается, только если аспект задан хоть у одной строки — иначе перебивать нечего.
@@ -7019,7 +7244,10 @@ public partial class ConstructorRepository(AppDbContext db)
                                .Where(a => RowsStyle(collectionId, a)).ToHashSet();
         var applied    = Stamps(stored, StyleStamps.Next(), rowAspects.Contains);
 
-        using var tx = db.Database.BeginTransaction();
+        foreach (var entry in db.ChangeTracker.Entries<ColumnMetaEntity>()
+            .Where(entry => entry.State == EntityState.Unchanged && entry.Entity.CollectionId == collectionId
+                && keys.Contains(entry.Entity.Key)).ToList())
+            entry.Reload();
         var existing = db.ColumnMeta
             .Where(m => m.CollectionId == collectionId && keys.Contains(m.Key))
             .ToDictionary(m => m.Key);
@@ -7038,7 +7266,6 @@ public partial class ConstructorRepository(AppDbContext db)
 
         ClearCellAspects(db.CellStyles.Where(c => c.CollectionId == collectionId && keys.Contains(c.Key)),
                          stored.Select(c => c.Aspect));
-        tx.Commit();
         return applied;
     }
 
@@ -7260,11 +7487,40 @@ public partial class ConstructorRepository(AppDbContext db)
 
     public void UpdateCalendarRecord(CalendarRecord r)
     {
+        if (r.Id is not int id) return;
+        var original = (r.Id, r.CollectionId, r.FieldId);
+        try
+        {
+            ExecuteAtomicWrite(() =>
+            {
+                (r.Id, r.CollectionId, r.FieldId) = original;
+                LockRecordsForWrite([id]);
+                UpdateCalendarRecordCore(r);
+                return 0;
+            });
+        }
+        catch
+        {
+            (r.Id, r.CollectionId, r.FieldId) = original;
+            throw;
+        }
+    }
+
+    private void UpdateCalendarRecordCore(CalendarRecord r)
+    {
         if (r.Id is null) return;
         Demand(PermAction.EditRecord, CollectionOfRecord(r.Id.Value));
 
-        var rec = db.DbRecords.Find(r.Id.Value);
+        var rec = db.DbRecords.AsNoTracking().FirstOrDefault(record => record.Id == r.Id.Value);
         if (rec is null) return;
+        if (db.DbRecords.Local.FirstOrDefault(record => record.Id == r.Id.Value) is { } tracked)
+        {
+            db.Entry(tracked).CurrentValues.SetValues(rec);
+            db.Entry(tracked).OriginalValues.SetValues(rec);
+            db.Entry(tracked).State = EntityState.Unchanged;
+            rec = tracked;
+        }
+        else db.DbRecords.Attach(rec);
 
         var oldColId = rec.CollectionId;
         var newColId = r.CollectionId ?? oldColId;
@@ -8246,14 +8502,6 @@ public partial class ConstructorRepository(AppDbContext db)
         DateTime rangeStart, DateTime rangeEnd, ISet<int>? activeIds, int perDayCap, int? allDayCap = null,
         int? multiDayPerDay = null, int? allDayPerDay = null)
     {
-        // Per-collection запросы — нужны явные id: null — все коллекции БД, ПУСТОЙ набор —
-        // ни одной (циклы не выполняются). Коллекции, у которых ВСЕ поля-даты скрыты,
-        // пропускаются целиком; частично скрытые поля отсекает residual-фильтр чтения.
-        var fields = ReadCalendarFields(withCollections: activeIds is null);
-        var colIds = fields.Readable(activeIds);
-        var hidden = fields.HiddenClause("ci.");
-        var desc   = fields.Description;
-
         string Iso(DateTime dt) => DateTime.SpecifyKind(dt, DateTimeKind.Unspecified).ToString("o");
         var startIso = Iso(rangeStart);
         var endIso   = Iso(rangeEnd);
@@ -8264,6 +8512,21 @@ public partial class ConstructorRepository(AppDbContext db)
         if (opened) conn.Open();
         try
         {
+            // Все дни и метаданные читаются из одного снимка. Иначе сосед может перенести
+            // событие вперед между SELECT старого и нового дня: ответ содержит обе версии.
+            // SQLite DEFERRED начинает чтение без захвата блокировки писателя; PG использует
+            // RepeatableRead. Внешней транзакцией продолжает владеть вызывающий код.
+            using var snapshot = db.Database.CurrentTransaction is not null ? null
+                : db.IsPostgres ? conn.BeginTransaction(System.Data.IsolationLevel.RepeatableRead)
+                : ((Microsoft.Data.Sqlite.SqliteConnection)conn).BeginTransaction(deferred: true);
+
+            // null — все коллекции, пустой набор — ни одной. Полностью скрытые коллекции
+            // пропускаются, отдельные скрытые даты отсекает residual-фильтр чтения.
+            var fields = ReadCalendarFields(withCollections: activeIds is null);
+            var colIds = fields.Readable(activeIds);
+            var hidden = fields.HiddenClause("ci.");
+            var desc = fields.Description;
+
             // Дни окна отличаются только значениями параметров: команда каждой коллекции и прохода
             // готовится один раз, а не на каждый день (у «Месяца» 42 дня × коллекции × 2 прохода).
             using var rows = new CalendarRowReader(conn);
@@ -8384,6 +8647,7 @@ public partial class ConstructorRepository(AppDbContext db)
                 }
                 foreach (var r in allDay) if (seen.Add(Key(r))) result.Add(r);
             }
+            snapshot?.Commit();
         }
         finally { if (opened) conn.Close(); }
 
@@ -8842,10 +9106,12 @@ public partial class ConstructorRepository(AppDbContext db)
             var conn = db.Database.GetDbConnection();
             var wasOpen = conn.State == System.Data.ConnectionState.Open;
             if (!wasOpen) conn.Open();
-            using (var tx = conn.BeginTransaction())
+            using (var tx = db.Database.CurrentTransaction is null ? conn.BeginTransaction() : null)
             using (var ins = conn.CreateCommand())
             {
-                ins.Transaction = tx;
+                // Дубль/перенос сохраняют значения, аудит и проекцию одним коммитом.
+                // Сырой batch должен присоединиться к нему, а не начать вложенную транзакцию.
+                ins.Transaction = db.Database.CurrentTransaction?.GetDbTransaction() ?? tx;
                 // ON CONFLICT DO UPDATE вместо INSERT OR REPLACE: работает на обоих провайдерах
                 // (SQLite ≥3.24 и PG) и не пересоздает строку (REPLACE = DELETE+INSERT с каскадами).
                 ins.CommandText = @"INSERT INTO calendar_index
@@ -8870,7 +9136,7 @@ public partial class ConstructorRepository(AppDbContext db)
                     pS.Value = s; pE.Value = e; pA.Value = dv.AllDay ? 1 : 0;
                     ins.ExecuteNonQuery();
                 }
-                tx.Commit();
+                tx?.Commit();
             }
             if (!wasOpen) conn.Close();
 
