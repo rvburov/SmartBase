@@ -1,0 +1,28 @@
+Private Sub Workbook_Open()
+    InstallProductGroupingMenu
+    InstallProductFormattingMenu
+End Sub
+
+Private Sub Workbook_Activate()
+    InstallProductGroupingMenu
+    InstallProductFormattingMenu
+End Sub
+
+Private Sub Workbook_SheetBeforeRightClick( _
+    ByVal Sh As Object, _
+    ByVal Target As Range, _
+    Cancel As Boolean)
+
+    InstallProductGroupingMenu
+    InstallProductFormattingMenu
+End Sub
+
+Private Sub Workbook_Deactivate()
+    RemoveProductGroupingMenu
+    RemoveProductFormattingMenu
+End Sub
+
+Private Sub Workbook_BeforeClose(Cancel As Boolean)
+    RemoveProductGroupingMenu
+    RemoveProductFormattingMenu
+End Sub

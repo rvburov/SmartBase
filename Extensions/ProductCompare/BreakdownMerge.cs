@@ -7,84 +7,63 @@ internal sealed record MergedList(IReadOnlyList<SourceRow?[]> Rows, int Products
 /// <summary>
 /// Сведение расшифровок всех дат в один список строк.
 ///
-/// **Изделия — по индексу** (столбец B): «2» встает напротив «2», «1.1» напротив «1.1». Так решил
-/// пользователь: по номеру видно, что на этом месте стало другое изделие или нумерация
-/// сдвинулась (макрос пересчитывает индексы при вставке изделия). Индекс сравнивается в
-/// нормальном виде: «1.» и «1» — одно, «1,2» — то же, что «1.2» (как <c>RepearData</c> в
-/// макросе), «01» — то же, что «1». Повтор одного индекса в файле (ошибка в расшифровке) не
-/// склеивается — идет отдельной строкой, первый к первому, второй ко второму.
+/// Изделия сопоставляются по децимальному номеру КД внутри соответствующего родительского
+/// узла; без КД — по наименованию. Повторы одного ключа среди входящих изделий одного узла
+/// сопоставляются по порядку: первый к первому, второй ко второму. Ключи и номер повтора на
+/// каждом уровне задают путь входимости, поэтому одинаковые КД разных узлов не смешиваются.
+/// Если нет ни КД, ни наименования, строка остается отдельной для каждого файла.
 ///
-/// Порядок изделий — по индексу как по номерам: «Изделие», 1, 1.1, 1.2, 1.10, 2… Так за каждым
-/// изделием идут его входящие, как в самой расшифровке.
+/// Сначала идут все строки последней даты в ее исходном порядке: изделие, его операции и
+/// входящие изделия. Затем — исторические строки, которых на последнюю дату нет. Так пустые
+/// клетки последнего блока не разрывают дерево, по которому работает макрос группировки.
+/// Исходные индексы, уровни и остальные ячейки каждого файла переносятся без исправлений.
 ///
-/// **Операции — внутри своего изделия (того же индекса) по названию и номеру повтора**: две
+/// Операции — внутри своего изделия по названию и номеру повтора: две
 /// «Подготовки» — первая к первой, вторая ко второй. Вид работ в ключ не входит — если он
-/// сменился, обе даты встанут в одну строку, и разница видна рядом. Порядок операций — по
-/// последней дате; операция, которой в ней уже нет, остается после той, за которой стояла
-/// раньше. Операции до первого изделия (без индекса в начале листа) идут первыми.
+/// сменился, обе даты встанут в одну строку, и разница видна рядом. Операции до первого изделия
+/// остаются перед изделиями своей части списка: актуальной или исторической.
 /// </summary>
 internal static class BreakdownMerge
 {
-    private sealed class Product(IndexKey index, int occurrence, int files)
+    private sealed class Node(int files)
     {
-        public IndexKey     Index      { get; } = index;
-        public int          Occurrence { get; } = occurrence;
         public SourceRow?[] Rows       { get; } = new SourceRow?[files];
         public List<string> OperationOrder { get; set; } = [];
         public Dictionary<string, SourceRow?[]> Operations { get; } = new(StringComparer.Ordinal);
+        public List<string> ChildOrder { get; set; } = [];
+        public Dictionary<string, Node> Children { get; } = new(StringComparer.Ordinal);
     }
 
     public static MergedList Merge(IReadOnlyList<BreakdownNode> roots)
     {
-        var files    = roots.Count;
-        var prelude  = new Product(IndexKey.Parse(""), 0, files);   // операции до первого изделия
-        var products = new Dictionary<string, Product>(StringComparer.Ordinal);
+        var files = roots.Count;
+        if (files == 0) return new MergedList([], 0, 0);
 
-        for (var file = 0; file < files; file++)
+        var root = new Node(files);
+        for (var file = 0; file < files; file++) Absorb(root, roots[file], file, files);
+
+        var current = new List<SourceRow?[]>();
+        var historical = new List<SourceRow?[]>();
+        int products = 0, operations = 0;
+        Emit(root, withRow: false);
+        current.AddRange(historical);
+        return new MergedList(current, products, operations);
+
+        void Add(SourceRow?[] cells) =>
+            (cells[^1] is not null ? current : historical).Add(cells);
+
+        void Emit(Node node, bool withRow)
         {
-            AbsorbOperations(prelude, roots[file], file, files);
-
-            var seen = new Dictionary<string, int>(StringComparer.Ordinal);
-            foreach (var node in Flatten(roots[file]))
-            {
-                var index = IndexKey.Parse(node.Index);
-                var occurrence = seen.TryGetValue(index.Text, out var n) ? n + 1 : 0;
-                seen[index.Text] = occurrence;
-
-                var id = Id(index.Text, occurrence);
-                if (!products.TryGetValue(id, out var product))
-                    products[id] = product = new Product(index, occurrence, files);
-                product.Rows[file] = node.Row;
-                AbsorbOperations(product, node, file, files);
-            }
-        }
-
-        var rows = new List<SourceRow?[]>();
-        var operations = 0;
-        Emit(prelude, withRow: false);
-        foreach (var product in products.Values.OrderBy(p => p.Index).ThenBy(p => p.Occurrence))
-            Emit(product, withRow: true);
-        return new MergedList(rows, products.Count, operations);
-
-        void Emit(Product product, bool withRow)
-        {
-            if (withRow) rows.Add(product.Rows);
-            foreach (var id in product.OperationOrder) { rows.Add(product.Operations[id]); operations++; }
+            if (withRow) { Add(node.Rows); products++; }
+            foreach (var id in node.OperationOrder) { Add(node.Operations[id]); operations++; }
+            foreach (var id in node.ChildOrder) Emit(node.Children[id], withRow: true);
         }
     }
 
-    // Все изделия файла в порядке листа (дерево разворачивается так же, как оно было прочитано).
-    private static IEnumerable<BreakdownNode> Flatten(BreakdownNode root)
+    private static void Absorb(Node target, BreakdownNode source, int file, int files)
     {
-        foreach (var child in root.Children)
-        {
-            yield return child;
-            foreach (var nested in Flatten(child)) yield return nested;
-        }
-    }
+        target.Rows[file] = source.Row;
 
-    private static void AbsorbOperations(Product target, BreakdownNode source, int file, int files)
-    {
         var ids = new List<string>(source.Operations.Count);
         foreach (var (key, occurrence, row) in source.Operations)
         {
@@ -95,6 +74,22 @@ internal static class BreakdownMerge
             cells[file] = row;
         }
         target.OperationOrder = MergeOrder(target.OperationOrder, ids);
+
+        var childIds = new List<string>(source.Children.Count);
+        var seen = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var child in source.Children)
+        {
+            var occurrence = seen.GetValueOrDefault(child.Key);
+            seen[child.Key] = occurrence + 1;
+            var id = Id(child.Key, occurrence);
+            // Без обоих идентификаторов нельзя утверждать, что это одна и та же позиция.
+            if (child.Key is "" or "Имя:") id += $"\u0001{file}";
+            childIds.Add(id);
+            if (!target.Children.TryGetValue(id, out var node))
+                target.Children[id] = node = new Node(files);
+            Absorb(node, child, file, files);
+        }
+        target.ChildOrder = MergeOrder(target.ChildOrder, childIds);
     }
 
     private static string Id(string key, int occurrence) => $"{key}\u0001{occurrence}";

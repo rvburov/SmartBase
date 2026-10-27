@@ -17,6 +17,8 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.LogicalTree;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
+using Microsoft.EntityFrameworkCore;
 using SmartBase.Controls.Components;
 using SmartBase.Core.Models;
 using SmartBase.Database;
@@ -291,62 +293,240 @@ static class OpsStand
         Expect(p.Rows!.Source is PlainRowSource, "сортировка снята");
 
         // ── По цвету ───────────────────────────────────────────────────────────
-        // Две ячейки текста красные: «Фильтр по цвету» оставляет их, «Сортировка по цвету» ставит
-        // наверх, остальные — в порядке таблицы.
+        // Подменю справа, несколько цветов одного аспекта — ИЛИ, фон и текст — И.
+        // Галочки копятся до «Готово» и не меняют обычную сортировку таблицы.
         Console.WriteLine("По цвету:");
         {
-            var head3 = Head(3).Select(r => r.RecordId).ToList();
+            var coloredRows = Head(3);
+            var head3 = coloredRows.Select(r => r.RecordId).ToList();
+            var firstText = coloredRows[0][K(fText)];
             const string red = "#FF3B30";
+            const string green = "#34C759";
+            const string indigo = "#5E5CE6";
+            var bgRed = ColorQuery.Token(StyleAspect.Background, red);
+            var bgGreen = ColorQuery.Token(StyleAspect.Background, green);
+            var fgIndigo = ColorQuery.Token(StyleAspect.Text, indigo);
+            var bgNone = ColorQuery.Token(StyleAspect.Background, null);
+            var fgNone = ColorQuery.Token(StyleAspect.Text, null);
             repo.SetCellStyle(cid, [(head3[0], K(fText)), (head3[2], K(fText))], StyleAspect.Background, red);
+            repo.SetCellStyle(cid, [(head3[1], K(fText))], StyleAspect.Background, green);
+            repo.SetCellStyle(cid, [(head3[0], K(fText)), (head3[1], K(fText))], StyleAspect.Text, indigo);
             table.ReloadRows(); Settled();
 
-            // Пункт цвета в своей секции окна: секция — заголовок-переключатель и список под ним.
-            Button? ColorItem(Flyout fl, string section, string name)
-            {
-                var header = Find<Button>(fl).FirstOrDefault(b => b.Content is Control c
-                    && c.GetSelfAndLogicalDescendants().OfType<TextBlock>().Any(t => t.Text == section));
-                return (header?.Parent as StackPanel)?.GetLogicalDescendants().OfType<Button>()
-                    .FirstOrDefault(b => !ReferenceEquals(b, header) && b.Content is Control c
-                        && c.GetSelfAndLogicalDescendants().OfType<TextBlock>().Any(t => t.Text == name));
-            }
             bool SectionShown(Flyout fl, string section) =>
                 Find<Button>(fl).FirstOrDefault(b => b.Content is Control c
                     && c.GetSelfAndLogicalDescendants().OfType<TextBlock>().Any(t => t.Text == section))?.Parent is StackPanel { IsVisible: true };
+            CheckBox ColorItem(Flyout colors, string token) =>
+                Find<CheckBox>(colors).First(c => c.Tag as string == token);
+            void SetColor(Flyout colors, string token, bool value)
+            {
+                ColorItem(colors, token).IsChecked = value;
+                Pump();
+            }
+            Flyout OpenColors(Flyout fl)
+            {
+                WaitUntil(() => SectionShown(fl, "Фильтр по цвету"), TimeSpan.FromSeconds(10));
+                Press(ButtonWith(fl, "Фильтр по цвету"));
+                var submenu = table.LastOpenedColorFilter!;
+                // Пункт доступен сразу, а сами цвета приходят отдельным запросом.
+                // Не принимаем уже видимую кнопку за готовый список цветов.
+                WaitUntil(() => !Find<TextBlock>(submenu).Any(t => t.Text is "Загрузка…" or "Загрузка...")
+                                && Find<CheckBox>(submenu).Any(c => c.Tag is string token
+                                    && ColorQuery.TryParseToken(token, out _, out _)),
+                          TimeSpan.FromSeconds(10));
+                w.UpdateLayout(); Pump();
+                return submenu;
+            }
+            Rect PopupBounds(Flyout fl)
+            {
+                Control plate = Content(fl).GetVisualAncestors().OfType<FlyoutPresenter>().FirstOrDefault()
+                                ?? Content(fl);
+                return new Rect(plate.TranslatePoint(new Point(0, 0), w) ?? default, plate.Bounds.Size);
+            }
 
             var flNum = OpenFilter(K(fNum))!;
-            WaitUntil(() => false, TimeSpan.FromMilliseconds(300));
-            Expect(!SectionShown(flNum, "Фильтр по цвету") && !SectionShown(flNum, "Сортировка по цвету"),
-                   "у колонки без цветов секций «по цвету» нет");
+            Expect(SectionShown(flNum, "Фильтр по цвету") && !SectionShown(flNum, "Сортировка по цвету"),
+                   "пункт «Фильтр по цвету» доступен и у колонки без цветового оформления; сортировки по цвету нет");
+            w.UpdateLayout(); Pump();
+            var numberMainHeight = Content(flNum).Bounds.Height;
+            var numberColors = OpenColors(flNum);
+            Expect(numberColors.IsOpen && flNum.IsOpen
+                   && Find<CheckBox>(numberColors).Count() == 2
+                   && ColorItem(numberColors, bgNone).IsChecked == false
+                   && ColorItem(numberColors, fgNone).IsChecked == false,
+                   "у неокрашенной колонки подменю показывает «Без заливки» и «Стандартный» с отдельными галочками");
+            Expect(new[] { bgNone, fgNone }.All(token => ColorItem(numberColors, token).Parent is Grid row
+                       && row.GetLogicalDescendants().OfType<TextBlock>().Any(t => t.Text == total.ToString("N0"))),
+                   "счетчики обоих стандартных цветов равны числу записей");
+            Expect(SectionShown(flNum, "Фильтр по цвету")
+                   && Math.Abs(Content(flNum).Bounds.Height - numberMainHeight) < 0.5,
+                   "после загрузки стандартных цветов пункт остается на месте, высота основной карточки не меняется");
             flNum.Hide(); Pump();
+            Expect(!numberColors.IsOpen, "закрытие основного окна закрывает подменю неокрашенной колонки");
+
+            // Настоящий сбой отдельного запроса цветов на одноразовой копии базы стенда.
+            // Значения числа читаются из другой таблицы и должны оставаться доступны.
+            Flyout? retryFilter = null;
+            Flyout? retryColors = null;
+            var styleTableRenamed = false;
+            try
+            {
+                using (var faultDb = new AppDbContext(tmp))
+                    faultDb.Database.ExecuteSqlRaw("ALTER TABLE cell_style RENAME TO cell_style_filter_fault");
+                styleTableRenamed = true;
+
+                retryFilter = OpenFilter(K(fNum))!;
+                Expect(SectionShown(retryFilter, "Фильтр по цвету") && Values(retryFilter).Count > 0,
+                       "сбой чтения цветов не прячет пункт и не мешает списку значений колонки");
+                Press(ButtonWith(retryFilter, "Фильтр по цвету"));
+                retryColors = table.LastOpenedColorFilter!;
+                Expect(WaitUntil(() => Find<TextBlock>(retryColors).Any(t => t.Text == "Не удалось загрузить цвета"),
+                                 TimeSpan.FromSeconds(10))
+                       && ButtonWith(retryColors, "Повторить").IsVisible
+                       && retryFilter.IsOpen && retryColors.IsOpen && DataRows() == total,
+                       "при настоящей ошибке запроса показаны причина и «Повторить»; окна и строки остаются на месте");
+            }
+            finally
+            {
+                if (styleTableRenamed)
+                    using (var faultDb = new AppDbContext(tmp))
+                        faultDb.Database.ExecuteSqlRaw("ALTER TABLE cell_style_filter_fault RENAME TO cell_style");
+            }
+
+            Press(ButtonWith(retryColors!, "Повторить"));
+            Expect(WaitUntil(() => !Find<TextBlock>(retryColors!).Any(t => t.Text is "Загрузка…" or "Не удалось загрузить цвета")
+                                   && Find<CheckBox>(retryColors!).Count() == 2,
+                             TimeSpan.FromSeconds(10))
+                   && ColorItem(retryColors!, bgNone).IsChecked == false
+                   && ColorItem(retryColors!, fgNone).IsChecked == false
+                   && !ButtonWith(retryColors!, "Повторить").IsVisible,
+                   "после восстановления базы «Повторить» загружает стандартные цвета в том же подменю");
+            Expect(ReferenceEquals(table.LastOpenedColorFilter, retryColors) && retryFilter!.IsOpen && retryColors!.IsOpen
+                   && Find<CheckBox>(retryColors!).Select(c => c.Tag as string).Distinct().Count() == 2
+                   && Find<Button>(retryFilter!).Count(b => b.Content is Control c
+                       && c.GetSelfAndLogicalDescendants().OfType<TextBlock>().Any(t => t.Text == "Фильтр по цвету")) == 1,
+                   "повторная загрузка не создает второй пункт меню, подменю или дубли галочек");
+            retryFilter!.Hide(); Pump();
+            Expect(!retryColors!.IsOpen, "после восстановления закрытие основного фильтра закрывает подменю");
 
             var fl = OpenFilter(K(fText))!;
-            Expect(WaitUntil(() => SectionShown(fl, "Фильтр по цвету"), TimeSpan.FromSeconds(10)) && SectionShown(fl, "Сортировка по цвету"),
-                   "у колонки с цветом — секции «Сортировка по цвету» и «Фильтр по цвету»");
-            Press(ButtonWith(fl, "Фильтр по цвету"));
-            var redItem = ColorItem(fl, "Фильтр по цвету", "Красный");
-            Expect(redItem?.Content is Control rc && rc.GetSelfAndLogicalDescendants().OfType<TextBlock>().Any(t => t.Text == "2"),
-                   "в списке — «Красный» с числом записей 2");
-            Press(redItem!);
-            Press(ButtonWith(fl, "Готово"));
+            Expect(WaitUntil(() => SectionShown(fl, "Фильтр по цвету"), TimeSpan.FromSeconds(10))
+                   && !Find<Button>(fl).Any(b => b.Content is Control c
+                       && c.GetSelfAndLogicalDescendants().OfType<TextBlock>().Any(t => t.Text == "Сортировка по цвету")),
+                   "у колонки с цветом — один пункт «Фильтр по цвету», без сортировки по цвету");
+            w.UpdateLayout(); Pump();
+            var mainHeight = Content(fl).Bounds.Height;
+            var colors = OpenColors(fl);
+            Expect(colors is { IsOpen: true, Placement: PlacementMode.RightEdgeAlignedTop } && fl.IsOpen,
+                   "список цветов открыт отдельным подменю справа, основное окно остается открытым");
+            var mainBounds = PopupBounds(fl);
+            var colorsBounds = PopupBounds(colors);
+            Expect(colorsBounds.Width > 0 && colorsBounds.X >= mainBounds.Right - 0.5,
+                   $"подменю находится справа от основной карточки, зазор {colorsBounds.X - mainBounds.Right:N1} px");
+            Expect(Math.Abs(Content(fl).Bounds.Height - mainHeight) < 0.5,
+                   "подменю цветов не увеличивает высоту основного списка значений");
+            w.CaptureRenderedFrame()?.Save(Path.Combine(outDir, "color-filter-submenu.png"));
+
+            var redItem = ColorItem(colors, bgRed);
+            Expect(redItem.Parent is Grid rc && rc.GetLogicalDescendants().OfType<TextBlock>().Any(t => t.Text == "2"),
+                   "красный фон показан с чекбоксом и числом записей 2");
+            Expect(ColorItem(colors, bgNone).Content is Control nc
+                   && nc.GetSelfAndLogicalDescendants().OfType<TextBlock>().Any(t => t.Text == "Без заливки")
+                   && ColorItem(colors, fgNone).Content is Control fc
+                   && fc.GetSelfAndLogicalDescendants().OfType<TextBlock>().Any(t => t.Text == "Стандартный"),
+                   "можно выбрать отсутствие заливки и стандартный цвет текста");
+
+            // Хотя бы одну галочку меняем настоящей мышью: она не должна закрывать панели.
+            w.UpdateLayout(); Pump();
+            var checkPoint = redItem.TranslatePoint(new Point(10, redItem.Bounds.Height / 2), w);
+            if (checkPoint is { } colorPoint) Click(colorPoint);
+            Expect(checkPoint is not null && redItem.IsChecked == true && colors.IsOpen && fl.IsOpen,
+                   "щелчок мышью по чекбоксу отмечает цвет и оставляет обе панели открытыми");
+            SetColor(colors, bgGreen, true);
+            Expect(ColorItem(colors, bgRed).IsChecked == true && ColorItem(colors, bgGreen).IsChecked == true
+                   && colors.IsOpen && fl.IsOpen && DataRows() == total,
+                   "несколько цветов отмечаются вместе; до «Готово» строки не меняются");
+            var done = ButtonWith(fl, "Готово");
+            var donePoint = done.TranslatePoint(new Point(done.Bounds.Width / 2, done.Bounds.Height / 2), w);
+            if (donePoint is { } applyPoint) Click(applyPoint);
             Settled();
-            Expect(DataRows() == 2 && Head(2).Select(r => r.RecordId).SequenceEqual([head3[0], head3[2]]) && s.IsColumnFiltered(K(fText)),
-                   $"фильтр по цвету — только красные, воронка горит ({DataRows()} строк)");
+            Expect(donePoint is not null && !fl.IsOpen && !colors.IsOpen,
+                   "один настоящий щелчок по «Готово» применяет выбор при открытом подменю");
+            Expect(DataRows() == 3 && Head(3).Select(r => r.RecordId).SequenceEqual(head3) && s.IsColumnFiltered(K(fText)),
+                   $"красный ИЛИ зеленый — три записи в исходном порядке, воронка горит ({DataRows()} строк)");
+            Expect(!fl.IsOpen && !colors.IsOpen, "«Готово» закрывает основной фильтр и подменю цветов");
 
             fl = OpenFilter(K(fText))!;
-            WaitUntil(() => SectionShown(fl, "Фильтр по цвету"), TimeSpan.FromSeconds(10));
-            Press(ColorItem(fl, "Фильтр по цвету", "Красный")!);   // повторный щелчок снимает выбор
-            Press(ButtonWith(fl, "Сортировка по цвету"));
-            Press(ColorItem(fl, "Сортировка по цвету", "Красный")!);
+            colors = OpenColors(fl);
+            Expect(ColorItem(colors, bgRed).IsChecked == true && ColorItem(colors, bgGreen).IsChecked == true
+                   && ColorItem(colors, fgIndigo).IsChecked == false,
+                   "повторное открытие сохраняет несколько выбранных цветов");
+            SetColor(colors, fgIndigo, true);
             Press(ButtonWith(fl, "Готово"));
             Settled();
-            var sorted = Head(4).Select(r => r.RecordId).ToList();
-            Expect(DataRows() == total && sorted.Take(2).SequenceEqual([head3[0], head3[2]]) && sorted[2] == head3[1]
-                   && p.Rows!.Source is IdListRowSource && s.IsColumnFiltered(K(fText)),
-                   "сортировка по цвету — красные сверху, дальше порядок таблицы; отбор по цвету снят");
+            Expect(DataRows() == 2 && Head(2).Select(r => r.RecordId).SequenceEqual([head3[0], head3[1]]),
+                   "(красный ИЛИ зеленый фон) И текст индиго — две подходящие записи");
 
-            Sort(K(fText), "Снять сортировку");
-            Expect(p.Rows!.Source is PlainRowSource && !s.IsColumnFiltered(K(fText)), "«Снять сортировку» снимает и сортировку по цвету");
-            repo.SetCellStyle(cid, [(head3[0], K(fText)), (head3[2], K(fText))], StyleAspect.Background, null);
+            fl = OpenFilter(K(fText))!;
+            colors = OpenColors(fl);
+            SetColor(colors, bgRed, false);
+            ColorItem(colors, bgGreen).Focus();
+            w.KeyPressQwerty(PhysicalKey.Escape, RawInputModifiers.None);
+            w.KeyReleaseQwerty(PhysicalKey.Escape, RawInputModifiers.None);
+            Pump();
+            Expect(!colors.IsOpen && fl.IsOpen && DataRows() == 2,
+                   "Esc закрывает только подменю цветов, не применяя pending-выбор");
+            colors = OpenColors(fl);
+            Expect(ColorItem(colors, bgRed).IsChecked == false,
+                   "повторный показ подменю до «Готово» сохраняет pending-галочки");
+            fl.Hide(); Pump();
+            Expect(!colors.IsOpen && DataRows() == 2, "закрытие без «Готово» отменяет pending-выбор и закрывает подменю");
+            fl = OpenFilter(K(fText))!;
+            colors = OpenColors(fl);
+            Expect(ColorItem(colors, bgRed).IsChecked == true && ColorItem(colors, bgGreen).IsChecked == true
+                   && ColorItem(colors, fgIndigo).IsChecked == true,
+                   "после отмены восстановлены все примененные галочки фона и текста");
+            Press(ButtonWith(colors, "Снять фильтр по цвету"));
+            Expect(!Find<CheckBox>(colors).Any(c => c.IsChecked == true) && DataRows() == 2,
+                   "сброс снимает все цветовые галочки, но ждет «Готово»");
+            SetColor(colors, bgNone, true);
+            SetColor(colors, fgNone, true);
+            Press(ButtonWith(fl, "Готово"));
+            Settled();
+            Expect(DataRows() == total - 3 && Head(15).All(r => !head3.Contains(r.RecordId)),
+                   "«Без заливки» И «Стандартный» отбирают строки без цветового оформления");
+
+            fl = OpenFilter(K(fText))!;
+            colors = OpenColors(fl);
+            Press(ButtonWith(colors, "Снять фильтр по цвету"));
+            Press(ButtonWith(fl, "Готово"));
+            Settled();
+            Expect(DataRows() == total && p.Rows!.Source is PlainRowSource && !s.IsColumnFiltered(K(fText)),
+                   "пустой набор цветов снимает цветовой фильтр и возвращает исходный порядок");
+
+            // Фильтр значения той же колонки и сортировка соседней не должны пропадать при сбросе цвета.
+            Keep(K(fText), firstText);
+            Sort(K(fNum), "По убыванию");
+            var valueRows = DataRows();
+            var valueHead = Head(15).Select(r => r.RecordId).ToList();
+            fl = OpenFilter(K(fText))!;
+            colors = OpenColors(fl);
+            SetColor(colors, bgRed, true);
+            Press(ButtonWith(fl, "Готово"));
+            Settled();
+            fl = OpenFilter(K(fText))!;
+            colors = OpenColors(fl);
+            Press(ButtonWith(colors, "Снять фильтр по цвету"));
+            Press(ButtonWith(fl, "Готово"));
+            Settled();
+            Expect(DataRows() == valueRows && Head(15).Select(r => r.RecordId).SequenceEqual(valueHead)
+                   && s.IsColumnFiltered(K(fText)) && p.Rows!.Source is IdListRowSource,
+                   "сброс только цвета сохраняет отбор значений и сортировку соседней колонки");
+
+            ClearFilter(K(fText));
+            ClearFilter(K(fNum));
+            repo.SetCellStyle(cid, head3.Select(id => (id, K(fText))).ToList(), StyleAspect.Background, null);
+            repo.SetCellStyle(cid, [(head3[0], K(fText)), (head3[1], K(fText))], StyleAspect.Text, null);
             table.ReloadRows(); Settled();
         }
 

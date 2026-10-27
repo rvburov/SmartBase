@@ -219,7 +219,90 @@ public sealed class TimeCollectionWriterTests
         Assert.Equal(path,         values[shell.FileFieldId]);
     }
 
-    /// <summary>Нечисловая трудоемкость идет в ячейку как есть — ровно как в Excel-своде
+    [Theory]
+    [InlineData("   ")]
+    [InlineData("\t\u00A0\r\n")]
+    public void Collection_trims_text_edges_but_preserves_inner_whitespace_and_source_rows(string edge)
+    {
+        using var db = new TempDatabase();
+        var shell = TimeCollectionWriter.CreateShell(db.Constructor, "Трудоемкость");
+        const string name = "Фланец  переходной";
+        const string deno = "АБВ  123";
+        const string efio = "Иванов\tИ. И.";
+        const string proj = "Проект\u00A0\u00A07";
+        const string norm = "по  факту";
+        // Путь не является названием: писатель переносит его буквально.
+        var path = edge + @"C:\расчеты\Проект  7\расчет.xlsm" + edge;
+        var source = Row(edge + name + edge, edge + deno + edge, null, Day1,
+                         edge + efio + edge, edge + proj + edge, path, edge + norm + edge);
+        List<TimeRow> rows = [source];
+
+        TimeCollectionWriter.FillRecords(db.Path, shell, rows,
+            TimeCollectorEngine.PlanColors(rows), null, None);
+
+        var record = Assert.Single(db.Constructor.GetRecords(shell.CollectionId));
+        var values = db.Constructor.GetFieldValues(record.Id!.Value);
+        Assert.Equal(name, record.Title);
+        Assert.Equal(deno, values[shell.DenoFieldId]);
+        Assert.Equal(efio, values[shell.EfioFieldId]);
+        Assert.Equal(proj, values[shell.ProjFieldId]);
+        Assert.Equal(norm, values[shell.NormFieldId]);
+        Assert.Equal("2026-03-10", values[shell.DateFieldId]);
+        Assert.Equal(path, values[shell.FileFieldId]);
+
+        // Общий свод после записи в коллекцию остается пригодным для выгрузки в файл.
+        Assert.Same(source, Assert.Single(rows));
+        Assert.Equal(edge + name + edge, source.Name);
+        Assert.Equal(edge + deno + edge, source.Deno);
+        Assert.Equal(edge + efio + edge, source.Efio);
+        Assert.Equal(edge + proj + edge, source.Proj);
+        Assert.Equal(edge + norm + edge, source.NormText);
+    }
+
+    [Fact]
+    public void Whitespace_only_text_becomes_empty_without_affecting_numeric_values()
+    {
+        using var db = new TempDatabase();
+        var shell = TimeCollectionWriter.CreateShell(db.Constructor, "Трудоемкость");
+        const string blank = " \t\u00A0\r\n ";
+        List<TimeRow> rows =
+        [
+            Row(blank, blank, null, Day1, blank, blank, normText: blank),
+            Row("Число", "АБВ.2", 12.5, Day1, normText: blank + "не число" + blank),
+        ];
+
+        TimeCollectionWriter.FillRecords(db.Path, shell, rows,
+            TimeCollectorEngine.PlanColors(rows), null, None);
+
+        var records = db.Constructor.GetRecords(shell.CollectionId);
+        Assert.Equal(2, records.Count);
+        Assert.Equal("", records[0].Title);
+        var emptyValues = db.Constructor.GetFieldValues(records[0].Id!.Value);
+        foreach (var field in new[] { shell.DenoFieldId, shell.EfioFieldId, shell.ProjFieldId, shell.NormFieldId })
+            Assert.False(emptyValues.ContainsKey(field));
+        Assert.Equal("12,5", db.Constructor.GetFieldValues(records[1].Id!.Value)[shell.NormFieldId]);
+    }
+
+    [Fact]
+    public async Task Titles_with_different_edge_spaces_share_one_filter_value()
+    {
+        using var db = new TempDatabase();
+        var shell = TimeCollectionWriter.CreateShell(db.Constructor, "Трудоемкость");
+
+        Fill(db, shell,
+        [
+            Row("   Фланец", "АБВ.1", 1, Day1),
+            Row("Фланец\u00A0\t", "АБВ.2", 2, Day1),
+        ]);
+
+        Assert.Equal(2, db.Constructor.CountRecords(shell.CollectionId));
+        var counts = await db.Constructor.GetColumnCountsAsync(shell.CollectionId, "__title__");
+        var value = Assert.Single(counts);
+        Assert.Equal("Фланец", value.Value);
+        Assert.Equal(2, value.Count);
+    }
+
+    /// <summary>Нечисловая трудоемкость остается текстом
     /// (макрос такую строку терял молча, мы ее показываем).</summary>
     [Fact]
     public void Non_numeric_norm_is_written_as_text()

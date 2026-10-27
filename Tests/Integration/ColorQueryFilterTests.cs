@@ -77,6 +77,114 @@ public sealed class ColorQueryFilterTests
         Assert.Equal([r[3]], await Ids(repo, col, new() { [ColorQuery.FilterKey(a)] = ["fg:" + Red] }));
     }
 
+    [Fact]
+    public async Task Multiple_backgrounds_take_any_selected_color_without_reordering()
+    {
+        using var db = new TempDatabase();
+        var (repo, col, a, _, r) = Seed(db);
+
+        var ids = await Ids(repo, col, new()
+        {
+            [ColorQuery.FilterKey(a)] = ["bg:" + Green, "bg:" + Red],
+        });
+
+        Assert.Equal([r[0], r[1]], ids);
+    }
+
+    [Fact]
+    public async Task No_fill_is_an_alternative_to_a_selected_background()
+    {
+        using var db = new TempDatabase();
+        var (repo, col, a, _, r) = Seed(db);
+
+        var ids = await Ids(repo, col, new()
+        {
+            [ColorQuery.FilterKey(a)] = ["bg:", "bg:" + Red],
+        });
+
+        Assert.Equal([r[0], r[2], r[3], r[4]], ids);
+    }
+
+    [Fact]
+    public async Task Background_choices_and_text_choices_must_both_match()
+    {
+        using var db = new TempDatabase();
+        var (repo, col, a, _, r) = Seed(db);
+        repo.SetCellStyle(col, [(r[0], a)], StyleAspect.Text, Red);
+        repo.SetCellStyle(col, [(r[3], a)], StyleAspect.Background, Green);
+
+        var ids = await Ids(repo, col, new()
+        {
+            [ColorQuery.FilterKey(a)] = ["bg:" + Red, "bg:" + Green, "fg:" + Red],
+        });
+
+        // Зеленая R2 с обычным текстом не подходит, хотя ее фон отмечен.
+        Assert.Equal([r[0], r[3]], ids);
+    }
+
+    [Fact]
+    public async Task Default_text_excludes_colored_text_when_common_background_matches()
+    {
+        using var db = new TempDatabase();
+        var (repo, col, a, _, r) = Seed(db);
+
+        var ids = await Ids(repo, col, new()
+        {
+            [ColorQuery.FilterKey(a)] = ["bg:", "bg:" + Red, "fg:"],
+        });
+
+        // Большинство ячеек без своего оформления подходит; R4 с красным текстом выпадает.
+        Assert.Equal([r[0], r[2], r[4]], ids);
+    }
+
+    [Fact]
+    public async Task Common_column_background_does_not_bypass_the_text_condition()
+    {
+        using var db = new TempDatabase();
+        var (repo, col, a, _, r) = Seed(db);
+        repo.SetColumnStyle(col, [a], StyleAspect.Background, Green);
+
+        var ids = await Ids(repo, col, new()
+        {
+            [ColorQuery.FilterKey(a)] = ["bg:" + Green, "fg:" + Red],
+        });
+
+        Assert.Equal([r[3]], ids);
+    }
+
+    [Fact]
+    public async Task Empty_color_selection_keeps_other_filters_and_sorting()
+    {
+        using var db = new TempDatabase();
+        var (repo, col, a, b, r) = Seed(db);
+        repo.SetCellsBulk(col, [new(r[2], int.Parse(b), "x"), new(r[4], int.Parse(b), "x")]);
+
+        var ids = await Ids(repo, col, new()
+        {
+            [ColorQuery.FilterKey(a)] = [],
+            [b] = ["x"],
+        }, "__title__", asc: false);
+
+        Assert.Equal([r[4], r[2]], ids);
+    }
+
+    [Fact]
+    public async Task Multiple_color_choices_keep_value_filters_and_existing_sort()
+    {
+        using var db = new TempDatabase();
+        var (repo, col, a, b, r) = Seed(db);
+        repo.SetCellsBulk(col, [new(r[0], int.Parse(b), "x"), new(r[1], int.Parse(b), "x"),
+                                new(r[3], int.Parse(b), "x")]);
+
+        var ids = await Ids(repo, col, new()
+        {
+            [ColorQuery.FilterKey(a)] = ["bg:" + Red, "bg:" + Green],
+            [b] = ["x"],
+        }, "__title__", asc: false);
+
+        Assert.Equal([r[1], r[0]], ids);
+    }
+
     /// <summary>Цвет колонки — у всех записей без своего: отбор по нему берет их, а не только
     /// окрашенные ячейки.</summary>
     [Fact]

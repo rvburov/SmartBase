@@ -47,7 +47,7 @@ public partial class ConstructorRepository
     private (HashSet<int> Ids, bool Complement) ColorMatches(int collectionId, string columnKey, IReadOnlyCollection<string> tokens)
     {
         var (special, common) = ColumnColorLevels(collectionId, columnKey);
-        bool Match(RowStyle style) => tokens.Any(t => ColorQuery.Matches(style, t));
+        bool Match(RowStyle style) => ColorQuery.MatchesFilter(style, tokens);
         var commonMatches = Match(common);
         var ids = special.Where(kv => Match(kv.Value) != commonMatches).Select(kv => kv.Key).ToHashSet();
         return (ids, commonMatches);
@@ -57,6 +57,7 @@ public partial class ConstructorRepository
     private IQueryable<DbRecordEntity> ColorFilter(IQueryable<DbRecordEntity> q, int collectionId, string columnKey,
                                                    IReadOnlyCollection<string> tokens)
     {
+        if (tokens.Count == 0) return q;
         var (ids, complement) = ColorMatches(collectionId, columnKey, tokens);
         return complement ? q.Where(r => !ids.Contains(r.Id)) : q.Where(r => ids.Contains(r.Id));
     }
@@ -74,8 +75,8 @@ public partial class ConstructorRepository
     }
 
     /// <summary>
-    /// Цвета колонки с числом записей — для пунктов «Фильтр по цвету» и «Сортировка по цвету» окна
-    /// фильтра. Считаются, как и значения, по записям, прошедшим отбор ОСТАЛЬНЫХ колонок (свой отбор
+    /// Цвета колонки с числом записей — для пункта «Фильтр по цвету» окна фильтра.
+    /// Считаются, как и значения, по записям, прошедшим отбор ОСТАЛЬНЫХ колонок (свой отбор
     /// колонки — и по значениям, и по цвету — список не режет). Порядок — по убыванию числа записей.
     /// </summary>
     public Task<List<(string Token, int Count)>> GetColumnColorsAsync(int collectionId, string columnKey,

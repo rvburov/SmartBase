@@ -34,8 +34,8 @@ internal sealed class SourceRow(SourceCell[] cells, double? height)
 internal sealed class BreakdownNode
 {
     public string     Key        { get; init; } = "";
-    /// <summary>Индекс из столбца B как он записан («Изделие», «1», «1.2.»). По нему строки
-    /// изделий разных дат встают друг напротив друга (<see cref="BreakdownMerge"/>).</summary>
+    /// <summary>Индекс из столбца B как он записан («Изделие», «1», «1.2.»): задает глубину
+    /// входимости, а в результат переносится без изменений.</summary>
     public string     Index      { get; init; } = "";
     public int        Level      { get; init; } = -1;
     public SourceRow? Row        { get; init; }
@@ -70,8 +70,9 @@ internal sealed class BreakdownSheet(BreakdownFile file, BreakdownNode root, Sty
 /// ТД, F — кол-во, G — Т (1 шт.), H — Т всего, L — комментарий.
 ///
 /// Строка с индексом — изделие, без индекса — операция ближайшего изделия выше. Индекс узла
-/// (<see cref="BreakdownNode.Index"/>) сводит строки разных дат; ключ (обозначение КД, без него
-/// наименование) нужен проверке «все файлы — одно изделие» по верхнему изделию.
+/// (<see cref="BreakdownNode.Index"/>) задает глубину входимости; ключ (обозначение КД, без него
+/// наименование) сопоставляет изделия разных дат внутри своего узла и проверяет, что верхнее
+/// изделие у всех файлов одно.
 /// </summary>
 internal static partial class BreakdownReader
 {
@@ -169,12 +170,12 @@ internal static partial class BreakdownReader
     }
 
     /// <summary>Уровень по индексу — как <c>Calculation.GetLevel</c>: «Изделие» — 0, иначе число
-    /// частей через точку («1» и «1.» — 1, «1.2» — 2).</summary>
+    /// частей индекса («1» и «1.» — 1, «1.2» и «1,2» — 2). Нормализация нужна только
+    /// построению дерева и не переписывает исходную ячейку.</summary>
     public static int Level(string index)
     {
-        if (index == "Изделие") return 0;
-        var dots = index.Count(ch => ch == '.');
-        return index.EndsWith('.') ? dots : dots + 1;
+        var key = IndexKey.Parse(index);
+        return key.Text == IndexKey.Top ? 0 : key.Parts.Length;
     }
 
     private static string Normalize(string text) => Spaces().Replace(text, " ").Trim();

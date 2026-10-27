@@ -1,24 +1,23 @@
 namespace SmartBase.Core.Models;
 
 /// <summary>
-/// Отбор и сортировка таблицы по цвету — как «Фильтр по цвету» и «Сортировка по цвету» табличных
-/// редакторов. Цвет — тот, что ВИДЕН в ячейке колонки: свой цвет ячейки, иначе цвет строки или
+/// Отбор таблицы по цвету. Цвет — тот, что ВИДЕН в ячейке колонки: свой цвет ячейки, иначе цвет строки или
 /// колонки, выставленный позже (<see cref="RowStyle.Resolve"/>). Фон и цвет текста — отдельные
 /// условия.
 ///
-/// Условие живет в тех же местах, что отбор по значениям и сортировка, — особыми ключами, а не
+/// Условие живет там же, где отбор по значениям, — особым ключом, а не
 /// отдельным полем: так его без правок подхватывают запоминание отбора за коллекцией, снятие отбора
 /// по удаленной колонке и подсветка воронки в шапке.
 ///
 /// <list type="bullet">
 /// <item>отбор — ключ <c>color:&lt;колонка&gt;</c> в словаре отбора, значения — метки цвета;</item>
-/// <item>сортировка — ключ <c>color:&lt;колонка&gt;|&lt;метка&gt;</c> вместо ключа колонки;
-///       «по возрастанию» — записи этого цвета сверху, «по убыванию» — снизу; остальные записи
-///       сохраняют порядок таблицы.</item>
+/// <item>прежняя сортировка — ключ <c>color:&lt;колонка&gt;|&lt;метка&gt;</c> вместо ключа колонки;
+///       при восстановлении раскладки переводится в отбор через <see cref="MigrateSortToFilter"/>.</item>
 /// </list>
 ///
 /// Метка цвета — <c>bg:#RRGGBB</c> (фон), <c>fg:#RRGGBB</c> (текст); <c>bg:</c> — без заливки,
-/// <c>fg:</c> — стандартный цвет текста.
+/// <c>fg:</c> — стандартный цвет текста. Несколько цветов одного аспекта объединяются через ИЛИ,
+/// отбор фона и текста — через И. Пустой набор не ограничивает записи.
 /// </summary>
 public static class ColorQuery
 {
@@ -59,6 +58,22 @@ public static class ColorQuery
         return true;
     }
 
+    /// <summary>Прежнюю сортировку по цвету из памяти переводим в отбор по этому цвету.
+    /// Уже сохраненный отбор колонки важнее старой сортировки и не перезаписывается.</summary>
+    public static bool MigrateSortToFilter(Dictionary<string, HashSet<string>> filters, ref string? sortKey, ref bool sortAsc)
+    {
+        if (!TryParseSortKey(sortKey, out var columnKey, out var token)) return false;
+        var key = FilterKey(columnKey);
+        if (!filters.ContainsKey(key))
+        {
+            TryParseToken(token, out var aspect, out var hex);
+            filters[key] = [Token(aspect, hex)];
+        }
+        sortKey = null;
+        sortAsc = true;
+        return true;
+    }
+
     /// <summary>Метка цвета: аспект и hex; пустой hex — «без заливки» или «стандартный цвет текста».</summary>
     public static string Token(StyleAspect aspect, string? hex) =>
         (aspect == StyleAspect.Text ? FgMark : BgMark) + (AppPalette.IsHex(hex) ? hex!.ToUpperInvariant() : "");
@@ -85,6 +100,26 @@ public static class ColorQuery
         if (!TryParseToken(token, out var aspect, out var hex)) return false;
         var value = aspect == StyleAspect.Text ? effective.Fg : effective.Bg;
         return hex is null ? value is null : string.Equals(value, hex, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Видимый цвет проходит отбор: любой отмеченный фон И любой отмеченный цвет текста.
+    /// Аспект без отметок не ограничивает записи. Нечитаемые метки не снимают действующий отбор.</summary>
+    public static bool MatchesFilter(RowStyle effective, IReadOnlyCollection<string> tokens)
+    {
+        if (tokens.Count == 0) return true;
+        var hasBg = false;
+        var hasFg = false;
+        var bgMatches = false;
+        var fgMatches = false;
+        foreach (var token in tokens)
+        {
+            if (!TryParseToken(token, out var aspect, out var hex)) continue;
+            var value = aspect == StyleAspect.Text ? effective.Fg : effective.Bg;
+            var match = hex is null ? value is null : string.Equals(value, hex, StringComparison.OrdinalIgnoreCase);
+            if (aspect == StyleAspect.Text) { hasFg = true; fgMatches |= match; }
+            else                            { hasBg = true; bgMatches |= match; }
+        }
+        return (hasBg || hasFg) && (!hasBg || bgMatches) && (!hasFg || fgMatches);
     }
 
     /// <summary>Метки обоих аспектов видимого цвета ячейки — для списка цветов колонки.</summary>

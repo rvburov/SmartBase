@@ -1,123 +1,153 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.VisualTree;
+using SmartBase.Controls.Behaviors;
 using SmartBase.Controls.Components;
 using SmartBase.Core.Models;
 
 namespace SmartBase.Views.ConstructorDb;
 
 /// <summary>
-/// «Сортировка по цвету» и «Фильтр по цвету» в окне фильтра колонки — как в табличных редакторах
-/// (условия и их ключи — <see cref="ColorQuery"/>). Обе секции раскрываются по щелчку и показывают
-/// цвета, которые есть в колонке, — отдельно цвет ячейки и цвет текста, с числом записей. Выбор,
-/// как и сортировка, копится до «Готово». У колонки без цветов секций нет вовсе.
+/// Отбор по видимому цвету ячейки: подменю справа, несколько галочек фона и текста.
+/// Выбор копится до «Готово», как отбор значений; цвета не меняют порядок записей.
 /// </summary>
 public partial class TableView
 {
-    /// <summary>Выбранное в окне фильтра по цвету — до «Готово».</summary>
-    private sealed class ColorPick
-    {
-        /// <summary>Цвет, записи которого встают сверху; null — сортировки по цвету нет.</summary>
-        public string? Sort;
+    // Для стенда: последнее открытое подменю цветов, отдельно от основного окна фильтра.
+    internal Flyout? LastOpenedColorFilter { get; private set; }
 
-        /// <summary>Цвет отбора; null — отбора по цвету нет.</summary>
-        public string? Filter;
-    }
-
-    /// <summary>Секция окна: заголовок-переключатель и список цветов под ним.</summary>
-    private sealed class ColorSection(StackPanel root, Action<IReadOnlyList<(string Token, int Count)>> fill, Action render)
+    private sealed class ColorSection(StackPanel root, Action<IReadOnlyList<(string Token, int Count)>> fill,
+                                      Action loading, Action failed, Action close)
     {
         public StackPanel Root { get; } = root;
-
-        /// <summary>Цвета колонки пришли из фона.</summary>
         public void Fill(IReadOnlyList<(string Token, int Count)> colors) => fill(colors);
-
-        /// <summary>Выбор сменился — перерисовать отметку.</summary>
-        public void Render() => render();
+        public void Loading() => loading();
+        public void Failed() => failed();
+        public void Close() => close();
     }
 
-    /// <param name="title">«Сортировка по цвету» или «Фильтр по цвету».</param>
-    /// <param name="current">Выбранный сейчас цвет секции.</param>
-    /// <param name="choose">Щелчок по цвету: выбранный — снимает выбор (null).</param>
-    private ColorSection BuildColorSection(string title, Func<string?> current, Action<string?> choose)
+    private ColorSection BuildColorSection(HashSet<string> chosen, Action retry)
     {
-        var root = new StackPanel { Spacing = 2, IsVisible = current() is not null };
-        var body = new StackPanel { Spacing = 0, IsVisible = current() is not null };
+        // Пункт не исчезает ни до загрузки, ни у колонки без заданных цветов.
+        var root = new StackPanel();
+        var body = new StackPanel { Spacing = 2 };
         IReadOnlyList<(string Token, int Count)> colors = [];
+        var loaded = false;
+        var failed = false;
+        var retryButton = MakeFlatItem("Повторить", retry);
 
-        var chevron = new ContentControl();
-        var header  = MakeFlatItem(title, () =>
-        {
-            body.IsVisible = !body.IsVisible;
-            UpdateChevron();
-        }, Icon("IconPalette"));
-        if (header.Content is Grid row)
-        {
-            Grid.SetColumn(chevron, 2);
-            row.Children.Add(chevron);
-        }
-        void UpdateChevron() =>
-            chevron.Content = MakeStrokeIcon(Icon(body.IsVisible ? "IconChevronDown" : "IconChevronRight"),
-                                             (IBrush)this.FindResource("BrushSecondaryText")!);
-        UpdateChevron();
-
-        root.Children.Add(header);
-        root.Children.Add(body);
+        var flyout = PopupPlate.Filter();
+        flyout.Placement = PlacementMode.RightEdgeAlignedTop;
+        flyout.HorizontalOffset = 6;
+        // Нажатие «Готово» в родительском окне сразу применяет выбор, даже если подменю открыто.
+        flyout.OverlayDismissEventPassThrough = true;
 
         void Render()
         {
             body.Children.Clear();
-            var chosen = current();
+            retryButton.IsVisible = failed;
+            if (!loaded || (colors.Count == 0 && chosen.Count == 0))
+                body.Children.Add(new TextBlock
+                {
+                    Text = failed ? "Не удалось загрузить цвета" : loaded ? "Список пуст" : "Загрузка…",
+                    Foreground = (IBrush)this.FindResource("BrushSecondaryText")!,
+                    Margin = new Thickness(8, 4),
+                    TextWrapping = TextWrapping.Wrap,
+                });
             foreach (var aspect in new[] { StyleAspect.Background, StyleAspect.Text })
             {
                 var ofAspect = colors.Where(c => ColorQuery.TryParseToken(c.Token, out var a, out _) && a == aspect).ToList();
-                // Выбранный цвет мог уйти из колонки (его перекрасили) — он остается в списке,
-                // чтобы выбор было видно и можно было снять.
-                if (chosen is not null && ColorQuery.TryParseToken(chosen, out var ca, out _) && ca == aspect
-                    && ofAspect.All(c => c.Token != chosen))
-                    ofAspect.Add((chosen, 0));
+                // Исчезнувший цвет остается с нулевым счетчиком: его галочку можно снять.
+                foreach (var token in chosen)
+                    if (ColorQuery.TryParseToken(token, out var a, out _) && a == aspect
+                        && ofAspect.All(c => c.Token != token))
+                        ofAspect.Add((token, 0));
                 if (ofAspect.Count == 0) continue;
 
                 body.Children.Add(new TextBlock
                 {
                     Text       = aspect == StyleAspect.Text ? "Цвет текста" : "Цвет ячейки",
                     Foreground = (IBrush)this.FindResource("BrushSecondaryText")!,
-                    Margin     = new Thickness(32, 4, 0, 2),
+                    Margin     = new Thickness(8, 4, 0, 2),
                 });
                 foreach (var (token, count) in ofAspect)
-                    body.Children.Add(MakeColorItem(token, count, token == chosen, () => choose(token == current() ? null : token)));
+                    body.Children.Add(MakeColorItem(token, loaded ? count : null, chosen));
             }
         }
+
+        var content = new StackPanel
+        {
+            Width   = (double)this.FindResource("PopupContentWidth")!,
+            Margin  = new Thickness(12),
+            Spacing = 2,
+            Children =
+            {
+                new ScrollViewer
+                {
+                    Content = body,
+                    MaxHeight = (double)this.FindResource("PopupListHeight")!,
+                    HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                    VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                },
+                retryButton,
+                MakeSeparator(),
+                MakeFlatItem("Снять фильтр по цвету", () => { chosen.Clear(); Render(); }, Icon("IconClose")),
+            },
+        };
+        flyout.Content = WindowZoom.WrapPopupContent(content);
+
+        Button? header = null;
+        header = MakeFlatItem("Фильтр по цвету", () =>
+        {
+            if (flyout.IsOpen) { flyout.Hide(); return; }
+            LastOpenedColorFilter?.Hide();
+            LastOpenedColorFilter = flyout;
+            var anchor = header!;
+            // Якорь внутри полей основной карточки. Выносим подменю за ее край,
+            // учитывая фактическую ширину и зум, а не фиксированный отступ полей.
+            if (anchor.GetVisualAncestors().OfType<FlyoutPresenter>().FirstOrDefault() is { } plate
+                && anchor.TranslatePoint(new Point(anchor.Bounds.Width, 0), plate) is { } right)
+                flyout.HorizontalOffset = 6 + Math.Max(0, plate.Bounds.Width - right.X);
+            TransientPopups.Track(flyout);
+            flyout.ShowAt(anchor);
+        }, Icon("IconPalette"));
+        if (header.Content is Grid row)
+        {
+            var chevron = MakeStrokeIcon(Icon("IconChevronRight"), (IBrush)this.FindResource("BrushSecondaryText")!);
+            Grid.SetColumn(chevron, 2);
+            row.Children.Add(chevron);
+        }
+        root.Children.Add(header);
 
         void Fill(IReadOnlyList<(string Token, int Count)> list)
         {
             colors = list;
-            // Секция нужна, только если в колонке есть хоть один цвет — или по цвету уже отобрано.
-            root.IsVisible = current() is not null
-                          || list.Any(c => ColorQuery.TryParseToken(c.Token, out _, out var hex) && hex is not null);
+            loaded = true;
+            failed = false;
             Render();
         }
 
-        return new ColorSection(root, Fill, Render);
+        Render();
+        return new ColorSection(root, Fill,
+            () => { loaded = false; failed = false; Render(); },
+            () => { loaded = false; failed = true; Render(); }, flyout.Hide);
     }
 
-    // Пункт цвета: образец, имя цвета и число записей справа; выбранный — акцентом и галкой.
-    private Button MakeColorItem(string token, int count, bool active, Action onClick)
+    private Grid MakeColorItem(string token, int? count, HashSet<string> chosen)
     {
-        var fg = (IBrush)this.FindResource(active ? "BrushAccent" : "BrushPrimaryText")!;
         ColorQuery.TryParseToken(token, out var aspect, out var hex);
-
-        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,Auto") };
+        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*") };
         Control sample = aspect == StyleAspect.Text ? ColorMenu.TextSample(hex) : ColorMenu.Swatch(hex);
-        sample.Margin = new Thickness(24, 0, 0, 0);
         row.Children.Add(sample);
 
         var name = new TextBlock
         {
             Text              = ColorQuery.Name(token),
-            Foreground        = fg,
+            Foreground        = (IBrush)this.FindResource("BrushPrimaryText")!,
             Margin            = new Thickness(8, 0, 0, 0),
             VerticalAlignment = VerticalAlignment.Center,
         };
@@ -126,35 +156,32 @@ public partial class TableView
 
         var cnt = new TextBlock
         {
-            Text              = count.ToString("N0"),
+            Text              = count?.ToString("N0") ?? "…",
             Foreground        = (IBrush)this.FindResource("BrushSecondaryText")!,
             Margin            = new Thickness(8, 0, 0, 0),
             VerticalAlignment = VerticalAlignment.Center,
         };
-        Grid.SetColumn(cnt, 2);
-        row.Children.Add(cnt);
-
-        if (active)
-        {
-            var check = MakeStrokeIcon(CheckIcon, fg);
-            check.Margin = new Thickness(6, 0, 0, 0);
-            Grid.SetColumn(check, 3);
-            row.Children.Add(check);
-        }
-
-        var btn = new Button
+        var check = new CheckBox
         {
             Content                    = row,
-            Background                 = Brushes.Transparent,
-            BorderThickness            = new Thickness(0),
-            Padding                    = new Thickness(8, 4),
+            Tag                        = token,
+            IsChecked                  = chosen.Contains(token),
             FontSize                   = (double)this.FindResource("FontSizeBase")!,
-            CornerRadius               = (CornerRadius)this.FindResource("RadiusBase")!,
             HorizontalAlignment        = HorizontalAlignment.Stretch,
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
             Cursor                     = new Cursor(StandardCursorType.Hand),
         };
-        btn.Click += (_, _) => onClick();
-        return btn;
+        check.IsCheckedChanged += (_, _) =>
+        {
+            if (check.IsChecked == true) chosen.Add(token);
+            else chosen.Remove(token);
+        };
+        // Счетчик вне Content чекбокса: тема измеряет его по тексту, а числа должны
+        // стоять у правого края карточки независимо от длины названия цвета.
+        var result = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+        result.Children.Add(check);
+        Grid.SetColumn(cnt, 1);
+        result.Children.Add(cnt);
+        return result;
     }
 }

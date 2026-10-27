@@ -534,8 +534,12 @@ public partial class TableView : UserControl
 
             LoadColumnState();
             _colDefs = BuildColDefs();
+            // Прежний выбор «цвет сверху» становится отбором по цвету. Уже заданные
+            // цветовые галочки сохраняем; обычной сортировки перенос не касается.
+            var migratedColorSort = ColorQuery.MigrateSortToFilter(_filters, ref _sortKey, ref _sortAsc);
             // Запомненный отбор по колонке, которой больше нет, снимается — и в памяти тоже.
-            if (PruneFilters() && ConstructorSettings.RememberFilters)
+            var pruned = PruneFilters();
+            if ((pruned || migratedColorSort) && ConstructorSettings.RememberFilters)
                 ConstructorFilterMemory.Save(repository.DbPath, collectionId, _filters, _sortKey, _sortAsc);
             ColumnsBuilt?.Invoke(this, _colDefs);
 
@@ -2002,15 +2006,9 @@ public partial class TableView : UserControl
         };
         bool? pendingSort = _sortKey == def.Key ? _sortAsc : null;
 
-        // По цвету (ColorQuery) — тоже до «Готово». Сортировка по цвету и по значениям исключают
-        // друг друга: у таблицы одна сортировка.
-        var colorPick = new ColorPick
-        {
-            Sort   = ColorQuery.TryParseSortKey(_sortKey, out var sortColumn, out var sortToken) && sortColumn == def.Key
-                     ? sortToken : null,
-            Filter = _filters.TryGetValue(ColorQuery.FilterKey(def.Key), out var colorFilter) ? colorFilter.FirstOrDefault() : null,
-        };
-        Action renderColorSort = () => { };
+        // Все галочки цвета копятся до «Готово» и не меняют обычную сортировку.
+        var colorPick = _filters.TryGetValue(ColorQuery.FilterKey(def.Key), out var colorFilter)
+            ? new HashSet<string>(colorFilter) : [];
 
         var sortSection = new StackPanel { Spacing = 2 };
         panel.Children.Add(sortSection);
@@ -2032,36 +2030,22 @@ public partial class TableView : UserControl
         {
             sortSection.Children.Clear();
             sortSection.Children.Add(MakeFlatItem(ascLabel,
-                () => { pendingSort = true;  colorPick.Sort = null; RenderSort(); ReloadCounts(); rebuildListRef(); },
+                () => { pendingSort = true;  RenderSort(); ReloadCounts(); rebuildListRef(); },
                 SortAzIcon, active: pendingSort == true));
             sortSection.Children.Add(MakeFlatItem(descLabel,
-                () => { pendingSort = false; colorPick.Sort = null; RenderSort(); ReloadCounts(); rebuildListRef(); },
+                () => { pendingSort = false; RenderSort(); ReloadCounts(); rebuildListRef(); },
                 SortZaIcon, active: pendingSort == false));
             sortSection.Children.Add(MakeFlatItem("Снять сортировку",
-                () => { pendingSort = null;  colorPick.Sort = null; RenderSort(); ReloadCounts(); rebuildListRef(); },
+                () => { pendingSort = null;  RenderSort(); ReloadCounts(); rebuildListRef(); },
                 XIcon));
-            renderColorSort();
         }
         RenderSort();
 
-        var colorSort = BuildColorSection("Сортировка по цвету", () => colorPick.Sort, token =>
-        {
-            colorPick.Sort = token;
-            if (token is not null) pendingSort = null;
-            RenderSort(); ReloadCounts(); rebuildListRef();
-        });
-        renderColorSort = colorSort.Render;
-        panel.Children.Add(colorSort.Root);
-
         panel.Children.Add(MakeSeparator());
 
-        ColorSection? colorFilterSection = null;
-        colorFilterSection = BuildColorSection("Фильтр по цвету", () => colorPick.Filter, token =>
-        {
-            colorPick.Filter = token;
-            colorFilterSection!.Render();
-        });
-        panel.Children.Add(colorFilterSection!.Root);
+        ColorSection colorFilterSection = null!;
+        colorFilterSection = BuildColorSection(colorPick, LoadColors);
+        panel.Children.Add(colorFilterSection.Root);
 
         // ── Поиск по значениям ──
         var search = new TextBox
@@ -2404,12 +2388,11 @@ public partial class TableView : UserControl
         // Сортировка и отбор по цвету — их выбор не зависит от загрузки значений.
         void ApplySortAndColor()
         {
-            if (colorPick.Sort is { } token) { _sortKey = ColorQuery.SortKey(def.Key, token); _sortAsc = true; }
-            else if (pendingSort is bool asc) { _sortKey = def.Key; _sortAsc = asc; }
+            if (pendingSort is bool asc) { _sortKey = def.Key; _sortAsc = asc; }
             else if (_sortKey is { } current && ColorQuery.ColumnOf(current) == def.Key) _sortKey = null;
 
             var colorKey = ColorQuery.FilterKey(def.Key);
-            if (colorPick.Filter is { } filterToken) _filters[colorKey] = [filterToken];
+            if (colorPick.Count > 0) _filters[colorKey] = new HashSet<string>(colorPick);
             else _filters.Remove(colorKey);
         }
 
@@ -2447,27 +2430,45 @@ public partial class TableView : UserControl
         // (на UI-потоке) наполняем список. Если окно успели закрыть — операции над уже
         // отсоединенными контролами безвредны. Фильтры других колонок и скрытые записи
         // уходят в запрос (каскад); свой фильтр колонки репозиторий отбрасывает сам.
-        // Цвета колонки для секций «по цвету» — отдельным фоновым запросом: список значений их не ждет.
-        _repository!.GetColumnColorsAsync(_collectionId, def.Key, _filters, excludeHidden: AnyHiddenRecords).ContinueWith(t =>
+        // Цвета колонки для подменю — отдельным фоновым запросом: список значений их не ждет.
+        void LoadColors()
         {
-            if (!t.IsCompletedSuccessfully)
+            if (windowWork.IsCancellationRequested) return;
+            colorFilterSection.Loading();
+            var repository = _repository!;
+            var collectionId = _collectionId;
+            Task<List<(string Token, int Count)>> load;
+            try
             {
-                if (t.Exception?.GetBaseException() is { } ex)
-                    Serilog.Log.Warning(ex, "Цвета колонки для фильтра не посчитаны: {Db:l}, коллекция {Collection}, колонка {Column:l}",
-                                        DbErrors.Display(_repository.DbPath), _collectionId, def.Header);
-                return;
+                load = repository.GetColumnColorsAsync(collectionId, def.Key, _filters,
+                    excludeHidden: AnyHiddenRecords, ct: windowWork.Token);
             }
-            var colors = t.Result;
-            Dispatcher.UIThread.Post(() =>
+            catch (Exception ex) { load = Task.FromException<List<(string Token, int Count)>>(ex); }
+            load.ContinueWith(t =>
             {
-                colorSort.Fill(colors);
-                colorFilterSection!.Fill(colors);
+                // Наблюдаем отказ и после закрытия окна; отмена не должна оставлять
+                // необработанную ошибку фоновой задачи или показывать сообщение в старой панели.
+                var error = t.Exception?.GetBaseException();
+                if (t.IsCanceled || windowWork.IsCancellationRequested) return;
+                if (error is { } ex)
+                {
+                    if (ex is OperationCanceledException) return;
+                    Serilog.Log.Warning(ex, "Цвета колонки для фильтра не посчитаны: {Db:l}, коллекция {Collection}, колонка {Column:l}",
+                        DbErrors.Display(repository.DbPath), collectionId, def.Header);
+                }
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (windowWork.IsCancellationRequested) return;
+                    if (t.IsCompletedSuccessfully) colorFilterSection.Fill(t.Result);
+                    else colorFilterSection.Failed();
+                });
             });
-        });
+        }
+        LoadColors();
 
         var countsSlow = Diag.Measure("список значений фильтра", Diag.UiQuery,
                                       $"{DbErrors.Display(_repository!.DbPath)}, коллекция {_collectionId}, колонка {def.Header}");
-        panel.DetachedFromVisualTree += (_, _) => windowWork.Cancel();
+        panel.DetachedFromVisualTree += (_, _) => { windowWork.Cancel(); colorFilterSection.Close(); };
         _repository!.GetColumnValueListAsync(_collectionId, def.Key, _filters,
                                              excludeHidden: AnyHiddenRecords, ct: windowWork.Token).ContinueWith(t =>
         {

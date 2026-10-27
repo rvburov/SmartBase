@@ -260,7 +260,9 @@ public static class TimeCollectionWriter
     /// а не вторая копия свода на 600 тыс. строк. Порядок значений — тот же, что у списка полей
     /// в <see cref="FillRecords"/>. Пустые значения BulkAddRecords пропускает сам, поэтому
     /// условия «писать, только если не пусто» здесь не нужны — кроме даты, которая непуста
-    /// всегда и потому есть у каждой записи (как и раньше). Операции, которой у изделия нет,
+    /// всегда и потому есть у каждой записи (как и раньше). У текста обрезаем пробельные
+    /// края, сохраняя пробелы внутри; путь расчета передаем точно как на диске.
+    /// Операции, которой у изделия нет,
     /// остаются <c>null</c> — ячейка не создается.
     /// </summary>
     private static IEnumerable<BulkRecordRow> Stream(IReadOnlyList<TimeRow> rows, OperationLayout? operations)
@@ -271,18 +273,18 @@ public static class TimeCollectionWriter
         {
             var row    = rows[i];
             var values = new string?[width];
-            values[0] = row.Deno;
+            values[0] = row.Deno.Trim();
             values[1] = NormValue(row);
             values[2] = DateStorage(row.Date);
-            values[3] = row.Efio;
-            values[4] = row.Proj;
+            values[3] = row.Efio.Trim();
+            values[4] = row.Proj.Trim();
             values[5] = row.SourcePath;
 
             if (operations is not null)
                 foreach (var cell in operations.Cells[i])
                     values[SummaryValues + cell.Column] = NumberStorage(cell.Value);
 
-            yield return new BulkRecordRow(row.Name, values);
+            yield return new BulkRecordRow(row.Name.Trim(), values);
         }
     }
 
@@ -294,13 +296,13 @@ public static class TimeCollectionWriter
         public void Report(T value) => onReport(value);
     }
 
-    /// <summary>Трудоемкость для ячейки в каноне хранения поля «Число», нечисловой текст — как
-    /// есть, как и в Excel-своде. Разделитель приводим здесь сами: массовая заливка не читает
+    /// <summary>Трудоемкость для ячейки в каноне хранения поля «Число», у нечислового текста
+    /// обрезаем только пробельные края. Разделитель приводим здесь сами: массовая заливка не читает
     /// настройки поля (в отличие от <c>SetFieldValue</c>, который делал это запросом на КАЖДОЕ
     /// значение), а формат поля известен — его задает <see cref="NormFormat"/>, и разделитель
     /// в нем десятичная запятая.</summary>
     private static string NormValue(TimeRow row) =>
-        row.Norm is { } value ? NumberStorage(value) : row.NormText;
+        row.Norm is { } value ? NumberStorage(value) : row.NormText.Trim();
 
     // Число в каноне хранения полей «Тр-ть» и операций — у них один формат.
     private static string NumberStorage(double value) =>
