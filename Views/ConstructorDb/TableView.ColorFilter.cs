@@ -139,20 +139,13 @@ public partial class TableView
 
     private Grid MakeColorItem(string token, int? count, HashSet<string> chosen)
     {
-        ColorQuery.TryParseToken(token, out var aspect, out var hex);
-        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*") };
-        Control sample = aspect == StyleAspect.Text ? ColorMenu.TextSample(hex) : ColorMenu.Swatch(hex);
-        row.Children.Add(sample);
-
+        ColorQuery.TryParseToken(token, out _, out var hex);
         var name = new TextBlock
         {
             Text              = ColorQuery.Name(token),
             Foreground        = (IBrush)this.FindResource("BrushPrimaryText")!,
-            Margin            = new Thickness(8, 0, 0, 0),
             VerticalAlignment = VerticalAlignment.Center,
         };
-        Grid.SetColumn(name, 1);
-        row.Children.Add(name);
 
         var cnt = new TextBlock
         {
@@ -161,16 +154,12 @@ public partial class TableView
             Margin            = new Thickness(8, 0, 0, 0),
             VerticalAlignment = VerticalAlignment.Center,
         };
-        var check = new CheckBox
-        {
-            Content                    = row,
-            Tag                        = token,
-            IsChecked                  = chosen.Contains(token),
-            FontSize                   = (double)this.FindResource("FontSizeBase")!,
-            HorizontalAlignment        = HorizontalAlignment.Stretch,
-            HorizontalContentAlignment = HorizontalAlignment.Stretch,
-            Cursor                     = new Cursor(StandardCursorType.Hand),
-        };
+        var check = ColorMenu.CreateCheckBox(hex, name, chosen.Contains(token));
+        check.Tag = token;
+        check.FontSize = (double)this.FindResource("FontSizeBase")!;
+        check.HorizontalAlignment = HorizontalAlignment.Stretch;
+        check.HorizontalContentAlignment = HorizontalAlignment.Stretch;
+        check.Cursor = new Cursor(StandardCursorType.Hand);
         check.IsCheckedChanged += (_, _) =>
         {
             if (check.IsChecked == true) chosen.Add(token);

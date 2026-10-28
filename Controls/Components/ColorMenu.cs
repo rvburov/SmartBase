@@ -1,6 +1,5 @@
-using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Media;
+using Avalonia.Layout;
 using SmartBase.Core.Models;
 using SmartBase.Utils;
 
@@ -14,11 +13,8 @@ namespace SmartBase.Controls.Components;
 /// </summary>
 public static class ColorMenu
 {
-    private const double SwatchSize = 14;
-    private static readonly CornerRadius SwatchRadius = new(3);
-
     /// Пункт-подменю с иконкой палитры и заданным текстом.
-    /// <paramref name="current"/> обводится рамкой; <c>onPick(null)</c> — «Без цвета».
+    /// <paramref name="current"/> отмечен цветным чекбоксом; <c>onPick(null)</c> — «Без цвета».
     public static MenuItem Build(string text, string? current, Action<string?> onPick) =>
         Build(MenuIcons.PaletteHeader(text), current, onPick);
 
@@ -31,7 +27,7 @@ public static class ColorMenu
         var none = new MenuItem
         {
             Header = "Без цвета",
-            Icon   = Swatch(null, isCurrent: !AppPalette.IsHex(current)),
+            Icon   = MenuCheckBox(null, !AppPalette.IsHex(current)),
         };
         none.Click += (_, _) => onPick(null);
         item.Items.Add(none);
@@ -42,7 +38,7 @@ public static class ColorMenu
             var sub = new MenuItem
             {
                 Header = name,
-                Icon   = Swatch(hex, isCurrent: string.Equals(hex, current, StringComparison.OrdinalIgnoreCase)),
+                Icon   = MenuCheckBox(hex, string.Equals(hex, current, StringComparison.OrdinalIgnoreCase)),
             };
             sub.Click += (_, _) => onPick(hex);
             item.Items.Add(sub);
@@ -50,40 +46,32 @@ public static class ColorMenu
         return item;
     }
 
-    /// Квадратик цвета в слоте иконки пункта. «Без цвета» — пустой квадрат с серой
-    /// обводкой (как чекбокс коллекции в сайдбаре); текущий выбор — темная рамка. Им же
-    /// показан цвет фона в подменю «Фильтр по цвету» окна фильтра.
-    public static Border Swatch(string? hex, bool isCurrent = false)
+    /// Цветной чекбокс по стандарту сайдбара календаря и задач. Без выбора — цветная
+    /// рамка, с выбором — заливка тем же цветом и белая галочка. «Без цвета» — серый.
+    /// Шаблон, размеры и галочка — общие с обычным CheckBox (AppCheckBox.axaml).
+    public static CheckBox CreateCheckBox(string? hex, object? content = null, bool isChecked = false)
     {
-        var ring = isCurrent
-            ? Brush("BrushPrimaryText", "#1C1C1E")
-            : hex is null ? Brush("BrushSecondaryText", EventColors.Grey) : null;
-
-        return new Border
+        var color = ColorTools.Solid(hex) ?? ColorTools.Solid(EventColors.Grey)!;
+        var check = new CheckBox
         {
-            Width           = SwatchSize,
-            Height          = SwatchSize,
-            CornerRadius    = SwatchRadius,
-            Background      = ColorTools.Solid(hex) ?? Brushes.Transparent,
-            BorderBrush     = ring,
-            BorderThickness = new Thickness(ring is null ? 0 : 1.5),
+            Content     = content,
+            IsChecked   = isChecked,
+            Background  = color,
+            BorderBrush = color,
         };
+        check.Classes.Add("colorChoice");
+        return check;
     }
 
-    /// Образец цвета текста — буква «А» этим цветом, как текст в ячейке (ColorTools.Text);
-    /// стандартный цвет — обычным цветом текста.
-    public static TextBlock TextSample(string? hex) => new()
+    // Нажатия и клавиатуру обрабатывает сам MenuItem: чекбокс в слоте иконки только
+    // показывает текущий цвет, не перехватывает фокус и не создает второй выбор.
+    private static CheckBox MenuCheckBox(string? hex, bool isChecked)
     {
-        Text                = "А",
-        Width               = SwatchSize,
-        TextAlignment       = TextAlignment.Center,
-        FontWeight          = FontWeight.SemiBold,
-        VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Center,
-        Foreground          = ColorTools.Text(hex) ?? Brush("BrushPrimaryText", "#1C1C1E"),
-    };
-
-    private static IBrush Brush(string key, string fallbackHex) =>
-        Application.Current!.TryFindResource(key, out var res) && res is IBrush b
-            ? b
-            : new SolidColorBrush(Color.Parse(fallbackHex));
+        var check = CreateCheckBox(hex, isChecked: isChecked);
+        check.Padding = new Avalonia.Thickness(0);
+        check.HorizontalAlignment = HorizontalAlignment.Center;
+        check.IsHitTestVisible = false;
+        check.Focusable = false;
+        return check;
+    }
 }

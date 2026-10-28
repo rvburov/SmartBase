@@ -16,6 +16,7 @@ using Avalonia.Headless;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.LogicalTree;
+using Avalonia.Media;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Microsoft.EntityFrameworkCore;
@@ -154,6 +155,43 @@ static class OpsStand
                             .First(b => b.Content as string == text
                                         || b.Content is Control c && c.GetSelfAndLogicalDescendants().OfType<TextBlock>().Any(t => t.Text == text));
         void Press(Button b) { b.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, b)); Pump(); }
+        bool ClickControl(Control control)
+        {
+            w.UpdateLayout(); Pump();
+            if (!control.IsEffectivelyVisible || control.Bounds.Width <= 0 || control.Bounds.Height <= 0
+                || control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), w) is not { } point)
+                return false;
+            Click(point);
+            return true;
+        }
+        void CaptureMenu(string name)
+        {
+            // Захват не должен брать кадр до последнего изменения галочки.
+            for (var i = 0; i < 3; i++)
+            {
+                w.UpdateLayout(); Pump();
+                AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+            }
+            using var frame = w.CaptureRenderedFrame();
+            frame?.Save(Path.Combine(outDir, name));
+        }
+        bool HasColor(IBrush? brush, string hex) =>
+            brush is ISolidColorBrush solid && solid.Color == Color.Parse(hex);
+        bool ColorCheckShown(CheckBox check, string hex, bool selected)
+        {
+            w.UpdateLayout(); Pump();
+            var square = check.GetVisualDescendants().OfType<Border>().FirstOrDefault(b => b.Name == "NormalRectangle");
+            var glyph = check.GetVisualDescendants().OfType<Avalonia.Controls.Shapes.Path>().FirstOrDefault(b => b.Name == "CheckGlyph");
+            var size = (double)check.FindResource("CheckBoxSize")!;
+            return check.IsEffectivelyVisible && check.IsChecked == selected
+                && square is { IsEffectivelyVisible: true } && glyph is not null
+                && Math.Abs(square.Bounds.Width - size) < 0.1 && Math.Abs(square.Bounds.Height - size) < 0.1
+                && HasColor(square.BorderBrush, hex)
+                && (selected ? HasColor(square.Background, hex)
+                             : square.Background is ISolidColorBrush transparent && transparent.Color.A == 0)
+                && glyph.IsEffectivelyVisible == selected
+                && HasColor(glyph.Stroke, "#FFFFFF");
+        }
         void Enter(TextBox box)
         {
             box.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Avalonia.Input.Key.Enter, Source = box });
@@ -315,7 +353,8 @@ static class OpsStand
 
             bool SectionShown(Flyout fl, string section) =>
                 Find<Button>(fl).FirstOrDefault(b => b.Content is Control c
-                    && c.GetSelfAndLogicalDescendants().OfType<TextBlock>().Any(t => t.Text == section))?.Parent is StackPanel { IsVisible: true };
+                    && c.GetSelfAndLogicalDescendants().OfType<TextBlock>().Any(t => t.Text == section))
+                    is { IsEffectivelyVisible: true, Bounds.Width: > 0, Bounds.Height: > 0 };
             CheckBox ColorItem(Flyout colors, string token) =>
                 Find<CheckBox>(colors).First(c => c.Tag as string == token);
             void SetColor(Flyout colors, string token, bool value)
@@ -326,7 +365,8 @@ static class OpsStand
             Flyout OpenColors(Flyout fl)
             {
                 WaitUntil(() => SectionShown(fl, "Фильтр по цвету"), TimeSpan.FromSeconds(10));
-                Press(ButtonWith(fl, "Фильтр по цвету"));
+                if (!ClickControl(ButtonWith(fl, "Фильтр по цвету")))
+                    throw new InvalidOperationException("Пункт фильтра цвета не виден для нажатия мышью");
                 var submenu = table.LastOpenedColorFilter!;
                 // Пункт доступен сразу, а сами цвета приходят отдельным запросом.
                 // Не принимаем уже видимую кнопку за готовый список цветов.
@@ -347,6 +387,9 @@ static class OpsStand
             var flNum = OpenFilter(K(fNum))!;
             Expect(SectionShown(flNum, "Фильтр по цвету") && !SectionShown(flNum, "Сортировка по цвету"),
                    "пункт «Фильтр по цвету» доступен и у колонки без цветового оформления; сортировки по цвету нет");
+            var accent = (ISolidColorBrush)table.FindResource("BrushAccent")!;
+            Expect(ColorCheckShown(SelectAll(flNum), accent.Color.ToString(), true),
+                   "обычный чекбокс «Выделить все» сохраняет акцентный цвет и общий размер");
             w.UpdateLayout(); Pump();
             var numberMainHeight = Content(flNum).Bounds.Height;
             var numberColors = OpenColors(flNum);
@@ -358,6 +401,14 @@ static class OpsStand
             Expect(new[] { bgNone, fgNone }.All(token => ColorItem(numberColors, token).Parent is Grid row
                        && row.GetLogicalDescendants().OfType<TextBlock>().Any(t => t.Text == total.ToString("N0"))),
                    "счетчики обоих стандартных цветов равны числу записей");
+            Expect(new[] { bgNone, fgNone }.All(token => ColorCheckShown(ColorItem(numberColors, token), EventColors.Grey, false)),
+                   "снятые «Без заливки» и «Стандартный» имеют нейтральную рамку и прозрачный квадрат общего размера");
+            SetColor(numberColors, bgNone, true);
+            SetColor(numberColors, fgNone, true);
+            Expect(new[] { bgNone, fgNone }.All(token => ColorCheckShown(ColorItem(numberColors, token), EventColors.Grey, true)),
+                   "отмеченные стандартные цвета показывают нейтральную заливку с белой галочкой");
+            SetColor(numberColors, bgNone, false);
+            SetColor(numberColors, fgNone, false);
             Expect(SectionShown(flNum, "Фильтр по цвету")
                    && Math.Abs(Content(flNum).Bounds.Height - numberMainHeight) < 0.5,
                    "после загрузки стандартных цветов пункт остается на месте, высота основной карточки не меняется");
@@ -425,9 +476,16 @@ static class OpsStand
                    $"подменю находится справа от основной карточки, зазор {colorsBounds.X - mainBounds.Right:N1} px");
             Expect(Math.Abs(Content(fl).Bounds.Height - mainHeight) < 0.5,
                    "подменю цветов не увеличивает высоту основного списка значений");
-            w.CaptureRenderedFrame()?.Save(Path.Combine(outDir, "color-filter-submenu.png"));
+            CaptureMenu("color-filter-submenu.png");
 
             var redItem = ColorItem(colors, bgRed);
+            Expect(new[] { (bgRed, red), (bgGreen, green), (fgIndigo, indigo) }
+                       .All(t => ColorCheckShown(ColorItem(colors, t.Item1), t.Item2, false)),
+                   "снятые чекбоксы фона и текста показывают именно свой цвет рамкой, без акцентной подмены");
+            Expect(Find<CheckBox>(colors).All(check => check.Content is TextBlock label
+                       && ColorQuery.TryParseToken(check.Tag as string, out _, out _)
+                       && label.Text == ColorQuery.Name((string)check.Tag!)),
+                   "у цвета только один индикатор — сам чекбокс; содержимое содержит название без образца и буквы А");
             Expect(redItem.Parent is Grid rc && rc.GetLogicalDescendants().OfType<TextBlock>().Any(t => t.Text == "2"),
                    "красный фон показан с чекбоксом и числом записей 2");
             Expect(ColorItem(colors, bgNone).Content is Control nc
@@ -442,10 +500,21 @@ static class OpsStand
             if (checkPoint is { } colorPoint) Click(colorPoint);
             Expect(checkPoint is not null && redItem.IsChecked == true && colors.IsOpen && fl.IsOpen,
                    "щелчок мышью по чекбоксу отмечает цвет и оставляет обе панели открытыми");
+            Expect(ColorCheckShown(redItem, red, true),
+                   "после щелчка квадрат красный с белой галочкой, а не синий");
+            SetColor(colors, fgIndigo, true);
+            Expect(ColorCheckShown(ColorItem(colors, fgIndigo), indigo, true),
+                   "цвет текста тоже показывается заливкой чекбокса и белой галочкой");
+            SetColor(colors, fgIndigo, false);
+            Expect(ColorCheckShown(ColorItem(colors, fgIndigo), indigo, false),
+                   "снятие цветовой галочки убирает заливку, но сохраняет рамку цвета");
             SetColor(colors, bgGreen, true);
             Expect(ColorItem(colors, bgRed).IsChecked == true && ColorItem(colors, bgGreen).IsChecked == true
                    && colors.IsOpen && fl.IsOpen && DataRows() == total,
                    "несколько цветов отмечаются вместе; до «Готово» строки не меняются");
+            Expect(ColorCheckShown(ColorItem(colors, bgGreen), green, true),
+                   "несколько отмеченных цветов сохраняют каждый свою заливку");
+            CaptureMenu("color-filter-selected.png");
             var done = ButtonWith(fl, "Готово");
             var donePoint = done.TranslatePoint(new Point(done.Bounds.Width / 2, done.Bounds.Height / 2), w);
             if (donePoint is { } applyPoint) Click(applyPoint);
@@ -528,6 +597,50 @@ static class OpsStand
             repo.SetCellStyle(cid, head3.Select(id => (id, K(fText))).ToList(), StyleAspect.Background, null);
             repo.SetCellStyle(cid, [(head3[0], K(fText)), (head3[1], K(fText))], StyleAspect.Text, null);
             table.ReloadRows(); Settled();
+        }
+
+        // Общее меню назначения цвета: его используют сайдбар, ячейка, строка и колонка.
+        // Индикатор не перехватывает ввод — нажатие по самому квадрату выбирает один цвет.
+        Console.WriteLine("Общая палитра:");
+        {
+            var picked = new List<string?>();
+            (ContextMenu Menu, MenuItem Host) OpenPalette(string? current)
+            {
+                var host = ColorMenu.Build("Цвет", current, picked.Add);
+                var menu = new ContextMenu { Items = { host } };
+                menu.Open(s); Pump();
+                host.IsSubMenuOpen = true;
+                w.UpdateLayout(); Pump();
+                return (menu, host);
+            }
+            CheckBox Indicator(MenuItem item) => (CheckBox)item.Icon!;
+            var (menu, host) = OpenPalette("#34C759");
+            var choices = host.Items.OfType<MenuItem>().ToList();
+            Expect(choices.Count == AppPalette.Colors.Count + 1
+                   && choices.All(i => i.Icon is CheckBox { IsHitTestVisible: false, Focusable: false })
+                   && choices.Count(i => Indicator(i).IsChecked == true) == 1,
+                   "единая палитра содержит по одному цветному чекбоксу на пункт и только один текущий выбор");
+            Expect(ColorCheckShown(Indicator(choices[0]), EventColors.Grey, false)
+                   && AppPalette.Colors.All(c => ColorCheckShown(Indicator(choices.Single(i => i.Header as string == c.Name)),
+                       c.Hex, c.Hex == "#34C759")),
+                   "в раскрытой палитре все рамки и выбранная зеленая заливка соответствуют цветам приложения");
+            CaptureMenu("color-assignment-menu.png");
+            var redChoice = choices.Single(i => i.Header as string == "Красный");
+            var clicked = ClickControl(Indicator(redChoice));
+            Expect(clicked && picked.SequenceEqual(["#FF3B30"]) && !menu.IsOpen,
+                   "нажатие непосредственно по квадрату в меню выбирает цвет ровно один раз и закрывает меню");
+            menu.Close(); Pump();
+
+            (menu, host) = OpenPalette(picked.LastOrDefault());
+            choices = host.Items.OfType<MenuItem>().ToList();
+            Expect(choices.Count(i => Indicator(i).IsChecked == true) == 1
+                   && ColorCheckShown(Indicator(choices.Single(i => i.Header as string == "Красный")), "#FF3B30", true)
+                   && ColorCheckShown(Indicator(choices.Single(i => i.Header as string == "Зеленый")), "#34C759", false),
+                   "повторное открытие назначения цвета отмечает только новый текущий цвет");
+            clicked = ClickControl(Indicator(choices[0]));
+            Expect(clicked && picked.Count == 2 && picked[^1] is null && !menu.IsOpen,
+                   "нажатие по нейтральному чекбоксу вызывает «Без цвета» один раз");
+            menu.Close(); Pump();
         }
 
         // ── Память отбора ──────────────────────────────────────────────────────

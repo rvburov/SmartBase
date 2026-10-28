@@ -17,7 +17,8 @@
          Отличие только в цвете:
            • обычный CheckBox — черная рамка (BrushPrimaryText),
                                 заливка акцентом в отмеченном состоянии;
-           • Sidebar          — цветной (цвет коллекции, задается в шаблоне).
+           • Sidebar          — цветной (цвет коллекции, задается в шаблоне);
+           • colorChoice      — тот же цветной квадрат в палитре и фильтре.
          ════════════════════════════════════════════════════════════════ -->
     <Styles.Resources>
         <!-- Геометрия чекбокса (единая везде; используется и в Sidebar) -->
@@ -101,6 +102,19 @@
             <Style Selector="^:indeterminate /template/ Border#NormalRectangle">
                 <Setter Property="Background"  Value="{StaticResource BrushAccent}" />
                 <Setter Property="BorderBrush" Value="{StaticResource BrushAccent}" />
+            </Style>
+
+            <!-- Цветной чекбокс: рамка видна и без выбора; отмеченный квадрат залит
+                 выбранным цветом, как у коллекции в календаре и задачах.
+                 Кисти задает ColorMenu.CreateCheckBox, геометрия остается общей. -->
+            <Style Selector="^.colorChoice /template/ Border#NormalRectangle">
+                <Setter Property="BorderBrush" Value="{Binding $parent[CheckBox].BorderBrush}" />
+            </Style>
+            <Style Selector="^.colorChoice:checked /template/ Border#NormalRectangle">
+                <Setter Property="Background" Value="{Binding $parent[CheckBox].Background}" />
+            </Style>
+            <Style Selector="^.colorChoice:indeterminate /template/ Border#NormalRectangle">
+                <Setter Property="Background" Value="{Binding $parent[CheckBox].Background}" />
             </Style>
 
             <!-- Недоступно -->

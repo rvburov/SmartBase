@@ -10,9 +10,10 @@ Public Sub GroupProductHistory()
     Dim headers As Variant, data As Variant, title As String
     Dim indexCol As Long, lastCol As Long, lastRow As Long
     Dim levels() As Long, n As Long, c As Long, h As Long
-    Dim i As Long, j As Long, z As Long, rowNumber As Long
-    Dim index As String, rawLevel As Long, previousLevel As Long
-    Dim hasDetails As Boolean, indexedRows As Long
+    Dim ancestors() As String, top As Long
+    Dim i As Long, j As Long, rowNumber As Long
+    Dim index As String, key As String
+    Dim indexedRows As Long
     Dim oldScreen As Boolean, oldEvents As Boolean
     Dim oldCalc As XlCalculation, oldCancel As XlEnableCancelKey
     Dim savedState As Boolean, errorText As String
@@ -64,12 +65,19 @@ Public Sub GroupProductHistory()
         SearchDirection:=xlPrevious, MatchCase:=False, SearchFormat:=False)
     If found Is Nothing Then LB_Stop "Под заголовками нет данных."
     lastRow = found.Row
+
     n = lastRow - HEADER_ROWS
     ReDim levels(1 To n)
+    ReDim ancestors(1 To n)
 
-    ' Считываем только индекс и данные последнего блока. Столбец уровня не нужен.
-    data = ws.Range(ws.Cells(HEADER_ROWS + 1, indexCol), _
-                    ws.Cells(lastRow, indexCol + AFTER_INDEX)).Value2
+    ' Границы групп задают только номера в индексе последнего блока.
+    Set area = ws.Range(ws.Cells(HEADER_ROWS + 1, indexCol), ws.Cells(lastRow, indexCol))
+    If n = 1 Then
+        ReDim data(1 To 1, 1 To 1)
+        data(1, 1) = area.Value2
+    Else
+        data = area.Value2
+    End If
 
     ' Полностью проверяем и рассчитываем уровни до изменения группировки.
     For i = 1 To n
@@ -80,41 +88,25 @@ Public Sub GroupProductHistory()
         index = LB_Text(data(i, 1))
 
         If Len(index) > 0 Then
-            indexedRows = indexedRows + 1
-            rawLevel = LB_IndexLevel(index, rowNumber)
-
-            previousLevel = rawLevel
-            If rawLevel = 0 Then
+            key = LB_IndexKey(index, rowNumber)
+            If Len(key) = 0 Then
+                ' Изделие и нулевой индекс не создают группу.
+                top = 0
                 levels(i) = 1
-            ElseIf rawLevel > 8 Then
-                levels(i) = 8
             Else
-                levels(i) = rawLevel
+                ' Закрываем только узлы, для которых следующий номер не потомок.
+                Do While top > 0
+                    If LB_IsDescendant(key, ancestors(top)) Then Exit Do
+                    top = top - 1
+                Loop
+                levels(i) = LB_OutlineLevel(top + 1)
+                top = top + 1
+                ancestors(top) = key
+                indexedRows = indexedRows + 1
             End If
         Else
-            ' Без индекса: операция только при наличии данных в C-I последнего блока.
-            hasDetails = False
-            For z = 2 To UBound(data, 2)
-                If IsError(data(i, z)) Then
-                    hasDetails = True
-                    Exit For
-                End If
-                If Len(LB_Text(data(i, z))) > 0 Then
-                    hasDetails = True
-                    Exit For
-                End If
-            Next z
-
-            If hasDetails And previousLevel > 0 Then
-                If previousLevel >= 8 Then
-                    levels(i) = 8
-                Else
-                    levels(i) = previousLevel + 1
-                End If
-            Else
-                levels(i) = 1
-                If Not hasDetails Then previousLevel = 0
-            End If
+            ' Операции и пустоты до следующего номера или конца отчета входят в узел.
+            levels(i) = LB_OutlineLevel(top + 1)
         End If
     Next i
     If indexedRows = 0 Then LB_Stop "В последнем блоке нет строк с индексом."
@@ -163,7 +155,7 @@ Finish:
     If Len(errorText) > 0 Then
         MsgBox "Макрос остановлен: " & errorText, vbExclamation
     Else
-        MsgBox "Группировка по последнему блоку готова.", vbInformation
+        MsgBox "Группировка по номерам индексов готова.", vbInformation
     End If
 End Sub
 
@@ -177,23 +169,39 @@ Private Function LB_Text(ByVal value As Variant) As String
     End If
 End Function
 
-Private Function LB_IndexLevel(ByVal index As String, ByVal rowNumber As Long) As Long
-    Dim parts As Variant, part As Variant
+Private Function LB_IndexKey(ByVal index As String, ByVal rowNumber As Long) As String
+    Dim parts As Variant, part As String, p As Long
     If StrComp(index, "Изделие", vbTextCompare) = 0 Then Exit Function
     index = Replace$(index, ",", ".")
     If Right$(index, 1) = "." Then index = Left$(index, Len(index) - 1)
     If Len(index) = 0 Then LB_Stop "Некорректный индекс в строке " & rowNumber & "."
     parts = Split(index, ".")
-    For Each part In parts
-        part = Trim$(CStr(part))
+    For p = LBound(parts) To UBound(parts)
+        part = Trim$(CStr(parts(p)))
         If Len(part) = 0 Or part Like "*[!0-9]*" Then
             LB_Stop "Некорректный индекс в строке " & rowNumber & "."
         End If
-    Next part
+        ' Номер может быть длиннее Long: нормализуем строку без числового преобразования.
+        Do While Len(part) > 1
+            If Left$(part, 1) <> "0" Then Exit Do
+            part = Mid$(part, 2)
+        Loop
+        parts(p) = part
+    Next p
     If UBound(parts) = 0 Then
-        If Len(Replace$(Trim$(CStr(parts(0))), "0", "")) = 0 Then Exit Function
+        If CStr(parts(0)) = "0" Then Exit Function
     End If
-    LB_IndexLevel = UBound(parts) + 1
+    LB_IndexKey = Join(parts, ".")
+End Function
+
+Private Function LB_IsDescendant(ByVal child As String, ByVal parent As String) As Boolean
+    If Len(child) <= Len(parent) Then Exit Function
+    LB_IsDescendant = (Left$(child, Len(parent) + 1) = parent & ".")
+End Function
+
+Private Function LB_OutlineLevel(ByVal level As Long) As Long
+    If level > 8 Then level = 8
+    LB_OutlineLevel = level
 End Function
 
 Private Sub LB_Stop(ByVal message As String)
