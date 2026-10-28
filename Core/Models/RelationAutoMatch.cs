@@ -10,7 +10,7 @@ public static class RelationAutoMatch
     /// <summary>Совместимые семейства. Список сопоставляется с текстом, набор — только с набором.</summary>
     public static string Category(string? fieldType) => fieldType switch
     {
-        "number" => "number",
+        "number" or "date_period" => "number",
         "date" or "created_at" or "updated_at" => "date",
         "checkbox" => "checkbox",
         "multiselect" => "multiselect",

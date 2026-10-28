@@ -41,6 +41,9 @@ public sealed class BackupService : IDisposable
     private readonly DatabaseRegistry _registry;
     private readonly SemaphoreSlim    _gate = new(1, 1);   // копии строго по одной
     private readonly Dictionary<int, DateTime> _lastAttempt = [];   // бэкоф ретраев, на процесс
+    private readonly object _runsGate = new();
+    private readonly Dictionary<long, BackupAttempt> _runs = [];
+    private long _runSequence;
     private DispatcherTimer? _timer;
     private bool _ticking;   // тики не накладываются; все входы — с UI-потока
     private bool _recovered;
@@ -49,9 +52,21 @@ public sealed class BackupService : IDisposable
     private const string JobTitle = "Резервное копирование";
     private const string JobIcon = "IconArchive";
     internal const string InterruptedMessage = "Копирование прервано. Результат не подтвержден";
+    internal const string CanceledMessage = "Копирование отменено. Новая копия не создана.";
     internal string BackgroundJobId(int dbId) => _jobPrefix + dbId;
 
     public BackupService(DatabaseRegistry registry) => _registry = registry;
+
+    /// <summary>Отменить все выполняемые и ожидающие своей очереди копии этой базы.
+    /// В фоновой панели Stop отдельной строки отменяет только эту попытку.</summary>
+    public bool Cancel(int dbId)
+    {
+        CancellationTokenSource[] cancellations;
+        lock (_runsGate)
+            cancellations = _runs.Values.Where(r => r.DatabaseId == dbId).Select(r => r.Cancellation).ToArray();
+        foreach (var cancellation in cancellations) Cancel(cancellation);
+        return cancellations.Length > 0;
+    }
 
     /// <summary>Запуск из UI-потока (MainWindow.Opened). Идемпотентен: Opened приходит
     /// снова при каждом возврате окна из трея (см. NotificationService.Start), повторный
@@ -77,6 +92,9 @@ public sealed class BackupService : IDisposable
         _disposed = true;
         _timer?.Stop();
         _timer = null;
+        CancellationTokenSource[] cancellations;
+        lock (_runsGate) cancellations = _runs.Values.Select(r => r.Cancellation).ToArray();
+        foreach (var cancellation in cancellations) Cancel(cancellation);
         foreach (var job in BackgroundJobs.All.Where(j => j.Id.StartsWith(_jobPrefix, StringComparison.Ordinal)))
             BackgroundJobs.Finish(job.Id);
         Log.Information("Резервное копирование: служба остановлена");
@@ -105,12 +123,13 @@ public sealed class BackupService : IDisposable
     /// <summary>Снять копию немедленно (кнопка «Копировать сейчас»). Ждет своей очереди,
     /// если сейчас идет другая копия; бэкоф ретраев не действует — человек попросил явно.
     /// Успешная ручная копия двигает lastRun: плановая в тот же день не дублируется.</summary>
-    public async Task RunNowAsync(int dbId)
+    public async Task RunNowAsync(int dbId, CancellationToken cancellationToken = default)
     {
+        if (_disposed) return;
         RecoverInterrupted();
         var entry = _registry.GetAll().FirstOrDefault(d => d.Id == dbId);
         if (entry is null) return;
-        await RunOneAsync(entry, manual: true);
+        await RunOneAsync(entry, manual: true, cancellationToken);
     }
 
     /// <summary>Один плановый проход (для тестов — без ожидания таймера).</summary>
@@ -118,6 +137,7 @@ public sealed class BackupService : IDisposable
 
     private async Task TickAsync()
     {
+        if (_disposed) return;
         RecoverInterrupted();
         if (_ticking) return;
         _ticking = true;
@@ -152,11 +172,27 @@ public sealed class BackupService : IDisposable
     }
 
     // Одна копия от начала до конца: очередь, файл, ротация, отметка, журнал, события.
-    private async Task RunOneAsync(DatabaseRefEntity entry, bool manual)
+    private async Task RunOneAsync(DatabaseRefEntity entry, bool manual, CancellationToken cancellationToken = default)
     {
-        await _gate.WaitAsync();
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        long runId;
+        string jobId;
+        BackupAttempt attempt;
+        lock (_runsGate)
+        {
+            if (_disposed) return;
+            runId = ++_runSequence;
+            // Повторный ручной запуск обязан снять новый снимок после своей очереди.
+            // Его Stop не должен отменить идущую копию с тем же dbId.
+            jobId = _runs.Values.Any(r => r.DatabaseId == entry.Id)
+                ? BackgroundJobId(entry.Id) + ".run." + runId
+                : BackgroundJobId(entry.Id);
+            attempt = new BackupAttempt(entry.Id, cancellation);
+            _runs.Add(runId, attempt);
+        }
+        var token = cancellation.Token;
+        var acquired = false;
         var startedAt = DateTime.Now;
-        _lastAttempt[entry.Id] = startedAt;
         var progressGate = new object();
         var acceptingProgress = true;
         void ReportProgress(string message, double? fraction)
@@ -164,13 +200,13 @@ public sealed class BackupService : IDisposable
             lock (progressGate)
             {
                 if (!acceptingProgress || _disposed) return;
-                BackgroundJobs.Report(BackgroundJobId(entry.Id), JobTitle,
+                BackgroundJobs.Report(jobId, JobTitle,
                     $"{entry.Name}: {message.Replace('\n', ' ')}",
                     fraction is { } f ? (int)(Math.Clamp(f, 0, 1) * 1000) : 0,
-                    fraction.HasValue ? 1000 : 0, icon: JobIcon);
+                    fraction.HasValue ? 1000 : 0, stop: () => Cancel(cancellation), icon: JobIcon);
                 if (_disposed)
                 {
-                    BackgroundJobs.Finish(BackgroundJobId(entry.Id));
+                    BackgroundJobs.Finish(jobId);
                     return;
                 }
                 BackupProgress?.Invoke(entry.Id, message, fraction);
@@ -178,6 +214,14 @@ public sealed class BackupService : IDisposable
         }
         try
         {
+            ReportProgress("Ожидаю очереди…", null);
+            await _gate.WaitAsync(token);
+            acquired = true;
+            lock (_runsGate) attempt.Started = true;
+            token.ThrowIfCancellationRequested();
+            if (_disposed) return;
+            startedAt = DateTime.Now;
+            _lastAttempt[entry.Id] = startedAt;
             var state = AppSettings.LoadBackupRunState(entry.Id);
             AppSettings.SaveBackupRunState(entry.Id, state with
             {
@@ -193,7 +237,7 @@ public sealed class BackupService : IDisposable
             var ext    = BackupRotation.Extension(entry.IsPostgres);
             var target = Path.Combine(folder, BackupRotation.CopyFileName(entry.Name, startedAt, ext));
 
-            var error = await Task.Run(() => ExecuteAsync(entry, folder, target, keep, ReportProgress));
+            var error = await Task.Run(() => ExecuteAsync(entry, folder, target, keep, ReportProgress, token));
             lock (progressGate) acceptingProgress = false;
             if (_disposed) return;
 
@@ -205,37 +249,59 @@ public sealed class BackupService : IDisposable
                     LastSuccess = DateTime.Now, Outcome = BackupRunOutcome.Succeeded, Error = null,
                 });
                 _lastAttempt.Remove(entry.Id);
-                BackgroundJobs.Finish(BackgroundJobId(entry.Id));
+                BackgroundJobs.Finish(jobId);
                 BackupFinished?.Invoke(entry.Id, true, "");
             }
             else
             {
-                ReportFailure(entry, manual, error, null);
+                ReportFailure(entry, manual, error, null, jobId);
+            }
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            lock (progressGate) acceptingProgress = false;
+            if (!_disposed)
+            {
+                _lastAttempt[entry.Id] = DateTime.Now;
+                bool anotherRunning;
+                lock (_runsGate)
+                    anotherRunning = _runs.Values.Any(r => r != attempt && r.DatabaseId == entry.Id && r.Started);
+                // Отмена второго запроса в очереди не затирает Running первого.
+                if (!anotherRunning) AppSettings.SaveBackupRunState(entry.Id, AppSettings.LoadBackupRunState(entry.Id) with
+                {
+                    Outcome = BackupRunOutcome.Canceled, Error = CanceledMessage,
+                });
+                BackgroundJobs.Finish(jobId);
+                Log.Information("Резервное копирование базы «{Name:l}» отменено", entry.Name);
+                BackupFinished?.Invoke(entry.Id, false, CanceledMessage);
             }
         }
         catch (Exception ex)
         {
             lock (progressGate) acceptingProgress = false;
-            if (!_disposed) ReportFailure(entry, manual, ex.Message, ex);
+            if (!_disposed) ReportFailure(entry, manual, ex.Message, ex, jobId);
         }
         finally
         {
             lock (progressGate) acceptingProgress = false;
-            _gate.Release();
+            lock (_runsGate) _runs.Remove(runId);
+            if (acquired) _gate.Release();
         }
     }
 
     // Фоновая часть: сама копия и ротация. Возвращает текст ошибки или null.
     private async Task<string?> ExecuteAsync(DatabaseRefEntity entry, string folder, string target, int keep,
-                                            Action<string, double?> progress)
+                                            Action<string, double?> progress, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         Directory.CreateDirectory(folder);
 
         if (entry.IsPostgres)
         {
             if (entry.ToPgInfo() is not { } info)
                 return "Запись подключения повреждена — переподключите базу заново.";
-            var error = await PgDump.RunAsync(info, entry.Name, target);
+            progress($"Сохраняю PostgreSQL «{entry.Name}»…", null);
+            var error = await PgDump.RunAsync(info, entry.Name, target, cancellationToken);
             if (error is not null) return error;
         }
         else
@@ -243,11 +309,25 @@ public sealed class BackupService : IDisposable
             if (!File.Exists(entry.Path))
                 return $"Файл базы не найден: {entry.Path}";
             // BackupTo сам проверяет целостность копии и пишет строку успеха в журнал.
-            DatabaseManager.BackupTo(entry.Path, entry.Name, target, progress);
+            DatabaseManager.BackupTo(entry.Path, entry.Name, target, progress, cancellationToken);
         }
 
         Rotate(entry, folder, keep);
         return null;
+    }
+
+    private static void Cancel(CancellationTokenSource cancellation)
+    {
+        // Ссылка Stop могла остаться у уже открытой строки интерфейса после завершения.
+        try { cancellation.Cancel(); }
+        catch (ObjectDisposedException) { }
+    }
+
+    private sealed class BackupAttempt(int databaseId, CancellationTokenSource cancellation)
+    {
+        public int DatabaseId { get; } = databaseId;
+        public CancellationTokenSource Cancellation { get; } = cancellation;
+        public bool Started { get; set; }
     }
 
     // Уборка старых копий ЭТОЙ базы сверх лимита. Сбой уборки не валит бэкап: копия
@@ -279,13 +359,13 @@ public sealed class BackupService : IDisposable
         }
     }
 
-    private void ReportFailure(DatabaseRefEntity entry, bool manual, string message, Exception? ex)
+    private void ReportFailure(DatabaseRefEntity entry, bool manual, string message, Exception? ex, string jobId)
     {
         AppSettings.SaveBackupRunState(entry.Id, AppSettings.LoadBackupRunState(entry.Id) with
         {
             Outcome = BackupRunOutcome.Failed, Error = message,
         });
-        BackgroundJobs.Fail(BackgroundJobId(entry.Id), JobTitle, $"{entry.Name}: {message}", JobIcon);
+        BackgroundJobs.Fail(jobId, JobTitle, $"{entry.Name}: {message}", JobIcon);
         // Ручной запуск — след всегда (разовое действие человека); плановый — не чаще
         // раза в период: до починки каждый ретрай падал бы той же записью.
         if (manual || Diag.Throttle($"backup:{entry.Id}", TimeSpan.FromMinutes(10)))

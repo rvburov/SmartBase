@@ -1072,7 +1072,7 @@ public partial class ConstructorRepository(AppDbContext db)
                     // Пустая ячейка строки в db_field_values не заводится (как в BulkAddRecords):
                     // отсутствие строки читается как пусто, а на импорте с редкими колонками
                     // пустые ячейки — десятки процентов таблицы значений и ее индекса.
-                    if (schema.PortableSchema?.Fields[f].FieldType is "relation" or "lookup" or "rollup") continue;
+                    if (schema.PortableSchema?.Fields[f].FieldType is "relation" or "lookup" or "rollup" or "date_period") continue;
                     var value = f < row.FieldValues.Count ? row.FieldValues[f] : null;
                     if (string.IsNullOrEmpty(value)) continue;
                     vFid.Value = fieldIds[f];
@@ -1084,6 +1084,9 @@ public partial class ConstructorRepository(AppDbContext db)
             net?.Flush();
 
             onBatch?.Invoke(batch, newIds);
+            if (schema.PortableSchema?.Fields.Any(f => f.FieldType == "date_period"
+                && DatePeriodConfig.FromConfig(f.ConfigJson) is { Automatic: false }) == true)
+                NoteDatePeriodCreation(newIds.Select(id => checked((int)id)));
             tx?.Commit();
             written += batch.Count;
             rowsWritten?.Report(written);
@@ -1117,6 +1120,11 @@ public partial class ConstructorRepository(AppDbContext db)
         IProgress<long>? rowsWritten = null, int batchSize = 10_000)
     {
         Demand(PermAction.CreateRecord, collectionId);
+
+        var computedFields = db.DbFields.AsNoTracking().Where(f => f.CollectionId == collectionId
+            && f.FieldType == "date_period").Select(f => new { f.Id, f.ConfigJson }).ToList();
+        var computedFieldIds = computedFields.Select(f => f.Id).ToHashSet();
+        var hasFixedPeriods = computedFields.Any(f => DatePeriodConfig.FromConfig(f.ConfigJson) is { Automatic: false });
 
         // Шаг Position — как у импорта: 1000 оставляет место для вставки строк между
         // залитыми, но на многомиллионных объемах (idx+1)*1000 переполняет int.
@@ -1162,8 +1170,8 @@ public partial class ConstructorRepository(AppDbContext db)
                 batch.Add(e.Current);
             if (batch.Count == 0) break;
 
-            using var tx = db.Database.BeginTransaction();
-            var dbTx = tx.GetDbTransaction();
+            using var tx = db.Database.CurrentTransaction is null ? db.Database.BeginTransaction() : null;
+            var dbTx = db.Database.CurrentTransaction!.GetDbTransaction();
             var useBatch = conn.CanCreateBatch;   // PostgreSQL: пакет команд = один сетевой ход
             insRec.Transaction = dbTx;
             insVal.Transaction = dbTx;
@@ -1203,6 +1211,7 @@ public partial class ConstructorRepository(AppDbContext db)
                 vRid.Value = ids[first + i];
                 for (var f = 0; f < fieldIds.Count && f < values.Count; f++)
                 {
+                    if (computedFieldIds.Contains(fieldIds[f])) continue;
                     // Пустая ячейка строки в db_field_values не заводится: на своде это
                     // десятки процентов строк таблицы значений, а читается пустое и так пустым.
                     var value = values[f];
@@ -1215,7 +1224,8 @@ public partial class ConstructorRepository(AppDbContext db)
             }
             net?.Flush();
 
-            tx.Commit();
+            if (hasFixedPeriods) NoteDatePeriodCreation(ids.Skip(first));
+            tx?.Commit();
             written += batch.Count;
             rowsWritten?.Report(written);
         }
@@ -3167,6 +3177,7 @@ public partial class ConstructorRepository(AppDbContext db)
         {
             ValidateRelationComputedField(field);
             ValidateRelationCondition(field);
+            ValidateDatePeriodField(field);
         }
         if (db.DbFields.Any(f => f.CollectionId == field.CollectionId && f.Name == field.Name))
             throw new InvalidOperationException("Поле с таким именем уже существует.");
@@ -3217,9 +3228,10 @@ public partial class ConstructorRepository(AppDbContext db)
         }
         ValidateRelationComputedField(field);
         ValidateRelationCondition(field);
+        ValidateDatePeriodField(field);
         var oldType = db.DbFields.AsNoTracking().Where(f => f.Id == field.Id).Select(f => f.FieldType).FirstOrDefault();
         using var transaction = db.Database.CurrentTransaction is null &&
-            (oldType == "relation" || field.FieldType == "relation") ? db.Database.BeginTransaction() : null;
+            (oldType is "relation" or "date_period" || field.FieldType is "relation" or "date_period") ? db.Database.BeginTransaction() : null;
         try
         {
             UpdateFieldCore(field);
@@ -3252,6 +3264,8 @@ public partial class ConstructorRepository(AppDbContext db)
         // здесь тоже пересобирала проекцию (минуты фриза на больших коллекциях).
         var oldType            = entity.FieldType;
         var calRelevantChanged = entity.FieldType != field.FieldType;
+        var resetPeriodSnapshot = field.FieldType == "date_period" && (oldType != "date_period"
+            || DatePeriodConfig.FromConfig(entity.ConfigJson)?.Automatic != DatePeriodConfig.FromConfig(field.ConfigJson)?.Automatic);
 
         // Число с выбранным десятичным разделителем: если поле стало числом или сменился разделитель —
         // приведем уже сохраненные значения к нему (канон хранения). Считаем ДО перезаписи ConfigJson.
@@ -3286,6 +3300,14 @@ public partial class ConstructorRepository(AppDbContext db)
         // видит пользователь; окно свойства предупреждает об этом ДО сохранения.
         ClearRolesIncompatibleWithType(entity, field.FieldType);
         db.SaveChanges();
+        if (resetPeriodSnapshot)
+        {
+            // Метаданные записаны раньше значений: блокировка типа не инвертирует порядок
+            // с пересчетом. Прежнее ручное значение не является зафиксированным результатом.
+            db.DbFieldValues.Where(v => v.FieldId == field.Id).ExecuteDelete();
+            foreach (var value in db.DbFieldValues.Local.Where(v => v.FieldId == field.Id).ToList())
+                db.Entry(value).State = EntityState.Detached;
+        }
 
         // Тип пересек границу «дата» → приводим уже сохраненные значения к новому виду
         // (текст↔дата без потери данных). Делаем ДО пересборки calendar_index, чтобы
@@ -4054,6 +4076,7 @@ public partial class ConstructorRepository(AppDbContext db)
             .GroupBy(fv => fv.RecordId)
             .ToDictionary(g => g.Key, g => g.ToDictionary(fv => fv.FieldId, fv => fv.Value));
         FillRelationComputedValues(recordIds, values);
+        FillDatePeriodValues(recordIds, values);
         return values;
     }
 
@@ -4238,9 +4261,12 @@ public partial class ConstructorRepository(AppDbContext db)
 
         // Поля типа «пользователь»: новая запись по умолчанию получает текущего
         // пользователя (диалог записи может тут же перезаписать значение выбором).
-        var userFields = db.DbFields
-            .Where(f => f.CollectionId == record.CollectionId && f.FieldType == "user")
-            .Select(f => f.Id).ToList();
+        var initialFields = db.DbFields.AsNoTracking()
+            .Where(f => f.CollectionId == record.CollectionId && (f.FieldType == "user" || f.FieldType == "date_period"))
+            .Select(f => new { f.Id, f.FieldType, f.ConfigJson }).ToList();
+        var userFields = initialFields.Where(f => f.FieldType == "user").Select(f => f.Id).ToList();
+        if (!initialFields.Any(f => f.FieldType == "date_period"
+            && DatePeriodConfig.FromConfig(f.ConfigJson) is { Automatic: false })) ForgetDatePeriodCreation(entity);
         if (userFields.Count > 0)
         {
             foreach (var fid in userFields)
@@ -4976,50 +5002,84 @@ public partial class ConstructorRepository(AppDbContext db)
         int targetRecordId, int targetCollectionId,
         bool createMissingFields, int excludeTargetFieldId = 0)
     {
+        ExecuteAtomicWrite(() =>
+        {
+            CopyFieldValuesByNameCore(source, sourceRecordId, sourceCollectionId, targetRecordId, targetCollectionId,
+                createMissingFields, excludeTargetFieldId);
+            return 0;
+        });
+    }
+
+    private void CopyFieldValuesByNameCore(ConstructorRepository source, int sourceRecordId, int sourceCollectionId,
+        int targetRecordId, int targetCollectionId, bool createMissingFields, int excludeTargetFieldId)
+    {
         var srcFields = source.GetFields(sourceCollectionId).ToDictionary(f => f.Id!.Value);
         var srcValues = source.GetFieldValues(sourceRecordId);
         if (srcValues.Count == 0) return;
+        LockRecordsForWrite([targetRecordId]);
+        if (CollectionOfRecord(targetRecordId) != targetCollectionId)
+            throw new InvalidOperationException("Целевая запись не принадлежит указанной коллекции.");
+        Demand(PermAction.EditRecord, targetCollectionId);
+        source.Demand(PermAction.ViewCollection, sourceCollectionId);
 
-        // Перенос — не назначение: значения переезжают в ДРУГУЮ запись, исполнитель и стадия
-        // у задачи не менялись. Без этого каждый перенос записи слал бы исполнителю ложное
-        // «вам назначена задача».
+        // Перенос не назначает задачу заново. Схема и значения откатываются одним целым,
+        // если для периода не удалось сопоставить свойства-источники.
         using var quiet = SuppressTaskEvents();
-
         var targetByName = new Dictionary<string, DbField>(StringComparer.OrdinalIgnoreCase);
-        foreach (var tf in GetFields(targetCollectionId))
-            targetByName.TryAdd(tf.Name, tf);
-
-        // Позиция для создаваемых недостающих свойств — в конец схемы цели.
-        var nextPos = (db.DbFields.Where(f => f.CollectionId == targetCollectionId)
-                                  .Select(f => (int?)f.Position).Max() ?? 0) + 1000;
-
-        foreach (var (srcFieldId, value) in srcValues)
+        foreach (var target in GetFields(targetCollectionId)) targetByName.TryAdd(target.Name, target);
+        var periodSources = srcFields.Values.Where(f => f.FieldType == "date_period"
+            && (targetByName.TryGetValue(f.Name, out var target) ? target.FieldType == "date_period" : createMissingFields))
+            .ToList();
+        var dependencies = new HashSet<int>();
+        foreach (var period in periodSources)
         {
-            if (value.Length == 0 || !srcFields.TryGetValue(srcFieldId, out var meta)) continue;
-
+            var config = DatePeriodConfig.FromConfig(period.ConfigJson)
+                ?? throw MoveDatePeriodError(period.Name, "настройка периода повреждена");
+            dependencies.Add(config.StartFieldId);
+            if (config.EndFieldId is int end) dependencies.Add(end);
+        }
+        var periodIds = periodSources.Select(f => f.Id!.Value).ToHashSet();
+        var nextPos = (db.DbFields.Where(f => f.CollectionId == targetCollectionId)
+            .Select(f => (int?)f.Position).Max() ?? 0) + 1000;
+        var plan = new Dictionary<int, (int FieldId, string From, string To)>();
+        var createdFields = new HashSet<int>();
+        // Источники создаются раньше зависимых свойств, даже если период стоит первым в таблице.
+        foreach (var meta in srcFields.Values.OrderBy(f => f.FieldType == "date_period"))
+        {
+            var sourceId = meta.Id!.Value;
+            if (!dependencies.Contains(sourceId) && !periodIds.Contains(sourceId)
+                && string.IsNullOrEmpty(srcValues.GetValueOrDefault(sourceId))) continue;
             if (!targetByName.TryGetValue(meta.Name, out var target))
             {
                 if (!createMissingFields) continue;
-                // Флаги разделов не копируем — ни задачные (см. MoveRecordsCore), ни календарный:
-                // перенос ОДНОЙ записи не должен молча включать коллекцию-приемник в «Задачи» или
-                // в календарь. Столбец приезжает пустой ролью, а показывать его в разделе — решение
-                // владельца коллекции-приемника (тумблер в свойствах). Копию/перенос КОЛЛЕКЦИИ это
-                // не касается: там коллекция остается собой и флаги едут следом.
                 target = AddField(new DbField
                 {
                     CollectionId = targetCollectionId, Name = meta.Name,
-                    FieldType    = meta.FieldType,      ConfigJson = meta.ConfigJson,
-                    Position     = nextPos,             IsCalStart = false,
-                    IsCalEnd     = meta.IsCalEnd,       IsRequired = meta.IsRequired,
-                });
+                    FieldType = meta.FieldType, ConfigJson = meta.ConfigJson,
+                    Position = nextPos, IsCalStart = false,
+                    IsCalEnd = meta.IsCalEnd, IsRequired = meta.IsRequired,
+                }, copy: meta.FieldType == "date_period");
                 nextPos += 1000;
                 targetByName[meta.Name] = target;
+                createdFields.Add(target.Id!.Value);
             }
-
-            if (target.Id == excludeTargetFieldId) continue;
-            if (FieldTypeInfo.IsRelationComputed(meta.FieldType) || FieldTypeInfo.IsRelationComputed(target.FieldType)) continue;
-            SetFieldValue(targetRecordId, target.Id!.Value, ConvertValueForType(value, meta.FieldType, target.FieldType));
+            plan[sourceId] = (target.Id!.Value, meta.FieldType, target.FieldType);
         }
+        var preservedPeriods = PrepareMovedDatePeriods(srcFields.Values.ToList(), targetCollectionId, plan, createdFields);
+        foreach (var (sourceId, mapped) in plan)
+        {
+            if (mapped.FieldId == excludeTargetFieldId) continue;
+            var value = srcValues.GetValueOrDefault(sourceId, "");
+            if (mapped.To == "date_period")
+            {
+                if (mapped.From == "date_period" && preservedPeriods.Contains(sourceId))
+                    CopyFixedDatePeriodSnapshot(targetRecordId, mapped.FieldId, value);
+                continue;
+            }
+            if (value.Length == 0 || FieldTypeInfo.IsRelationComputed(mapped.From) || FieldTypeInfo.IsRelationComputed(mapped.To)) continue;
+            SetFieldValue(targetRecordId, mapped.FieldId, ConvertValueForType(value, mapped.From, mapped.To));
+        }
+        if (preservedPeriods.Count > 0) NotifyRelationDataChanged(targetCollectionId);
     }
 
     /// <summary>Пакетный перенос записей из коллекции <paramref name="sourceCollectionId"/> в целевую
@@ -5191,7 +5251,8 @@ public partial class ConstructorRepository(AppDbContext db)
         if (repository.IsPostgres)
         {
             var settings = new Npgsql.NpgsqlConnectionStringBuilder(repository.DbPath);
-            return $"pg:{settings.Host.ToUpperInvariant()}:{settings.Port}/{settings.Database}";
+            var host = settings.Host ?? throw new InvalidOperationException("Не указан адрес сервера PostgreSQL.");
+            return $"pg:{host.ToUpperInvariant()}:{settings.Port}/{settings.Database}";
         }
         var path = Path.GetFullPath(repository.DbPath);
         return "sqlite:" + (OperatingSystem.IsWindows() ? path.ToUpperInvariant() : path);
@@ -5279,6 +5340,7 @@ public partial class ConstructorRepository(AppDbContext db)
         if (createdFields.Count > 0)
             RemapCopiedRelationConfigs(new Dictionary<int, int>(), plan.ToDictionary(p => p.Key, p => p.Value.FieldId),
                 0, 0, onlyNewFieldIds: createdFields);
+        var preservedPeriods = PrepareMovedDatePeriods(srcFields, targetCollectionId, plan, createdFields);
         schemaTx?.Commit();
 
         // Связи (relation): переносим там, где исходное И целевое поле — «Связь», а конфиг цели указывает
@@ -5353,8 +5415,14 @@ public partial class ConstructorRepository(AppDbContext db)
                 var rows   = new List<DbFieldValueEntity>(values.Count);
                 foreach (var (srcFieldId, value) in values)
                 {
-                    if (value.Length == 0 || !plan.TryGetValue(srcFieldId, out var t)) continue;
-                    if (FieldTypeInfo.IsRelationComputed(t.From) || FieldTypeInfo.IsRelationComputed(t.To)) continue;
+                    if (!plan.TryGetValue(srcFieldId, out var t)) continue;
+                    if (t.To == "date_period")
+                    {
+                        if (t.From == "date_period" && preservedPeriods.Contains(srcFieldId))
+                            rows.Add(new DbFieldValueEntity { RecordId = rec.Id, FieldId = t.FieldId, Value = value });
+                        continue;
+                    }
+                    if (value.Length == 0 || FieldTypeInfo.IsRelationComputed(t.From) || FieldTypeInfo.IsRelationComputed(t.To)) continue;
                     rows.Add(new DbFieldValueEntity
                     {
                         RecordId = rec.Id, FieldId = t.FieldId,
@@ -5431,17 +5499,22 @@ public partial class ConstructorRepository(AppDbContext db)
           .ToDictionary(fv => fv.FieldId, fv => fv.Value);
         var batch = new Dictionary<int, Dictionary<int, string>> { [recordId] = values };
         FillRelationComputedValues([recordId], batch);
+        FillDatePeriodValues([recordId], batch);
         return batch[recordId];
     }
 
     /// <summary>Все значения полей коллекции одним запросом (для фильтрации/сортировки).</summary>
-    public Dictionary<int, Dictionary<int, string>> GetFieldValuesByCollection(int collectionId) =>
-        db.DbFieldValues
+    public Dictionary<int, Dictionary<int, string>> GetFieldValuesByCollection(int collectionId)
+    {
+        var values = db.DbFieldValues
           .Where(fv => fv.Record.CollectionId == collectionId)
           .Select(fv => new { fv.RecordId, fv.FieldId, fv.Value })
           .ToList()
           .GroupBy(x => x.RecordId)
           .ToDictionary(g => g.Key, g => g.ToDictionary(x => x.FieldId, x => x.Value));
+        FillDatePeriodValues(Records(collectionId).Select(r => r.Id).ToArray(), values);
+        return values;
+    }
 
     // ── Фильтр/сортировка в SQL (для виртуализации отфильтрованного представления) ──
     //
@@ -5492,7 +5565,7 @@ public partial class ConstructorRepository(AppDbContext db)
             .Where(f => f.CollectionId == collectionId && f.FieldType == "file")
             .Select(f => f.Id).ToHashSet();
         var relatedComputed = db.DbFields.AsNoTracking()
-            .Where(f => f.CollectionId == collectionId && (f.FieldType == "lookup" || f.FieldType == "rollup"))
+            .Where(f => f.CollectionId == collectionId && (f.FieldType == "lookup" || f.FieldType == "rollup" || f.FieldType == "date_period"))
             .ToDictionary(f => f.Id, ToDbField);
 
         // ФОРМА УСЛОВИЯ ВАЖНА: набор значений уходит в SQL как `IN (json_each(@p))`, и SQLite
@@ -5609,6 +5682,13 @@ public partial class ConstructorRepository(AppDbContext db)
         var selected = excluded ? FilterExclusion.Values(allowed).ToHashSet() : allowed;
         bool Keep(string value) => selected.Contains(value) != excluded;
         var ct = ComputedToken(default);
+        if (field.FieldType == "date_period")
+        {
+            var records = q.OrderBy(r => r.Position).ThenBy(r => r.Id).Select(r => r.Id).ToList();
+            var values = DatePeriodColumnValues(field, records, ct);
+            var matches = records.Where(id => Keep(values.GetValueOrDefault(id, ""))).ToList();
+            return q.Where(r => matches.Contains(r.Id));
+        }
         using var phase = ComputedRun?.Phase($"Столбец «{field.Name}»: чтение записей");
         ct.ThrowIfCancellationRequested();
         var scope = q.OrderBy(r => r.Position).ThenBy(r => r.Id).Select(r => r.Id).Take(SubsetLimit + 1).ToList();
@@ -5671,6 +5751,8 @@ public partial class ConstructorRepository(AppDbContext db)
         if (int.TryParse(key, out var fid))
         {
             var field = db.DbFields.AsNoTracking().FirstOrDefault(f => f.Id == fid);
+            if (field?.FieldType == "date_period")
+                return DatePeriodColumnValues(ToDbField(field), Records(collectionId).Select(r => r.Id).ToList());
             if (field is not null && FieldTypeInfo.IsRelationComputed(field.FieldType))
                 return GetRelationComputedColumnValues(collectionId, ToDbField(field));
             if (field?.FieldType == "relation")
@@ -5756,6 +5838,7 @@ public partial class ConstructorRepository(AppDbContext db)
     private List<(string Value, int Count)> FieldValueCountsWhole(int collectionId, int fieldId)
     {
         if (IsFileField(fieldId)) return FileColumnCounts(fieldId, Records(collectionId));
+        if (DatePeriodField(fieldId) is { } period) return DatePeriodCounts(period, Records(collectionId));
         if (RelatedComputedField(fieldId) is not null)
             return RelatedComputedCounts(fieldId, Records(collectionId));
         var counts = db.DbFieldValues.AsNoTracking().Where(v => v.FieldId == fieldId && v.Value != "")
@@ -5784,6 +5867,7 @@ public partial class ConstructorRepository(AppDbContext db)
     private List<(string Value, int Count)> FieldValueCounts(int fieldId, IQueryable<DbRecordEntity> scope)
     {
         if (IsFileField(fieldId)) return FileColumnCounts(fieldId, scope);
+        if (DatePeriodField(fieldId) is { } period) return DatePeriodCounts(period, scope);
         if (RelatedComputedField(fieldId) is not null) return RelatedComputedCounts(fieldId, scope);
         // JOIN со срезом записей: группировка идет по индексу (FieldId, Value), срез отсекает
         // записи чужой коллекции и не прошедшие фильтры других колонок.
@@ -6031,12 +6115,13 @@ public partial class ConstructorRepository(AppDbContext db)
         var others     = OtherFilters(filters, key);
         var crossPaths = CrossDbPathsForKeys(collectionId, others.Keys.Append(key));
         var run        = RelationColumnRun.Capture(ct);
+        var periodNow  = DatePeriodClock();
         return Task.Run(() =>
         {
             using var _ = run;
             using var ctx = new AppDbContext(db.DbPath);
             ctx.ApplyPerformancePragmas();
-            var repo = new ConstructorRepository(ctx) { Permissions = Permissions, ComputedRun = run };
+            var repo = new ConstructorRepository(ctx) { Permissions = Permissions, ComputedRun = run, DatePeriodClock = () => periodNow };
             return repo.ColumnValues(collectionId, key, others, excludeHidden, ForeignResolver(crossPaths), search, ct, reuse);
         }, ct);
     }
@@ -6055,6 +6140,19 @@ public partial class ConstructorRepository(AppDbContext db)
         }
         if (fid is int fileId && IsFileField(fileId))
             return FileColumnValues(fileId, Scope(), search, ct);
+        if (fid is int periodId && DatePeriodField(periodId) is { } period)
+        {
+            var snapshot = DatePeriodSnapshot(collectionId, key, period, others, excludeHidden, Scope(), ct, reuse);
+            var counts = snapshot.Counts;
+            if (!string.IsNullOrWhiteSpace(search))
+                counts = counts.Where(v => DatePeriodValue.Format(v.Value).Contains(search.Trim(), StringComparison.OrdinalIgnoreCase)).ToList();
+            var compare = ColumnSort.BuildComparer("date_period", true);
+            var total = counts.Count(v => v.Value.Length > 0);
+            var periodPage = counts.Where(v => v.Value.Length > 0).OrderBy(v => v.Value,
+                Comparer<string>.Create((a, b) => compare(a, b))).Take(FilterValueCap).ToList();
+            if (total <= FilterValueCap) periodPage.AddRange(counts.Where(v => v.Value.Length == 0));
+            return new(periodPage, total > FilterValueCap, total, total > FilterValueCap, snapshot);
+        }
         if (fid is int computedId && RelatedComputedField(computedId) is { } computedField)
         {
             var snapshot = ComputedSnapshot(collectionId, key, computedId, others, excludeHidden, resolveForeign, ct, reuse);
@@ -6181,18 +6279,24 @@ public partial class ConstructorRepository(AppDbContext db)
         var others     = OtherFilters(filters, key);
         var crossPaths = CrossDbPathsForKeys(collectionId, others.Keys.Append(key));
         var run        = RelationColumnRun.Capture(ct);
+        var periodNow  = DatePeriodClock();
         return Task.Run(() =>
         {
             using var _ = run;
             using var ctx = new AppDbContext(db.DbPath);
             ctx.ApplyPerformancePragmas();
-            var repo  = new ConstructorRepository(ctx) { Permissions = Permissions, ComputedRun = run };
+            var repo  = new ConstructorRepository(ctx) { Permissions = Permissions, ComputedRun = run, DatePeriodClock = () => periodNow };
             var resolver = ForeignResolver(crossPaths);
             using var foreignScope = (resolver?.Target as ForeignPropertyReader)?.OpenScope();
             var scope = repo.FilteredRecords(collectionId, others, excludeHidden, resolver);
             if (int.TryParse(key, out var fid))
             {
                 if (repo.IsFileField(fid)) return repo.FileColumnValueTotals(fid, scope, ct);
+                if (repo.DatePeriodField(fid) is { } period)
+                {
+                    var counts = repo.DatePeriodSnapshot(collectionId, key, period, others, excludeHidden, scope, ct, reuse).Counts;
+                    return ((long)counts.Count(v => v.Value.Length > 0), counts.Where(v => v.Value.Length == 0).Sum(v => v.Count));
+                }
                 if (repo.RelatedComputedField(fid) is not null)
                 {
                     var counts = repo.ComputedSnapshot(collectionId, key, fid, others, excludeHidden, resolver, ct, reuse, scope).Counts;
@@ -6239,13 +6343,14 @@ public partial class ConstructorRepository(AppDbContext db)
         // выполнялся из фона. Путь не снят на UI → dbId нет в карте → null → «(база недоступна)».
         var crossPaths = CrossDbPathsForKeys(collectionId, others.Keys.Append(key));
         var run        = RelationColumnRun.Capture(CancellationToken.None);
+        var periodNow  = DatePeriodClock();
 
         return Task.Run(() =>
         {
             using var _ = run;
             using var ctx = new AppDbContext(db.DbPath);
             ctx.ApplyPerformancePragmas();
-            var repo = new ConstructorRepository(ctx) { Permissions = Permissions, ComputedRun = run };
+            var repo = new ConstructorRepository(ctx) { Permissions = Permissions, ComputedRun = run, DatePeriodClock = () => periodNow };
             return repo.GetColumnCounts(collectionId, key, others, excludeHidden, ForeignResolver(crossPaths));
         });
     }
@@ -6316,6 +6421,8 @@ public partial class ConstructorRepository(AppDbContext db)
         Demand(PermAction.EditRecord, collectionId);
         if (field.CollectionId != record.CollectionId)
             throw new InvalidOperationException("Свойство не принадлежит коллекции записи.");
+        if (field.FieldType == "date_period")
+            throw new InvalidOperationException("Период времени вычисляется автоматически. Для фиксированного значения используйте «Пересчитать».");
 
         // Число: приводим десятичный разделитель к выбранному в свойстве (канон хранения).
         // Нечисловое значение и не-числовые поля остаются как есть.
@@ -6431,6 +6538,7 @@ public partial class ConstructorRepository(AppDbContext db)
         // поля — пересчитать файл для этой записи. Возвращаем побочные изменения (fieldId → новое
         // значение файла), чтобы UI мгновенно обновил именно файл-ячейку этой строки.
         var derived = changed ? ReactToSourceEditForAutoFile(recordId, fieldId) : [];
+        if (changed && field.FieldType == "date") derived.AddRange(DatePeriodSourceChanges(recordId, fieldId));
         if (changed && collectionId is int changedCollection)
         {
             NotifyRelationDataChanged(changedCollection, fieldId, recordId);

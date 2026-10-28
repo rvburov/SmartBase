@@ -83,6 +83,9 @@ public sealed class JsonTableWriter : ITableWriter
                 case "number" when raw.Length > 0 && WriterHelpers.TryNumber(raw, out var num):
                     _w.WriteNumber(_keys[i], num);
                     break;
+                case "date_period":
+                    _w.WriteString(_keys[i], DatePeriodValue.Format(raw));
+                    break;
                 case "multiselect":
                     _w.WriteStartArray(_keys[i]);
                     foreach (var s in MultiSelectValue.Parse(raw)) _w.WriteStringValue(s);

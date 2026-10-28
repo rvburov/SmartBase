@@ -76,6 +76,9 @@ public sealed partial class ConstructorRepository
     {
         Demand(PermAction.EditRecord, collectionId);
         titles ??= [];
+        var periodFields = db.DbFields.AsNoTracking().Where(f => f.CollectionId == collectionId && f.FieldType == "date_period")
+            .Select(f => f.Id).ToHashSet();
+        cells = cells.Where(c => !periodFields.Contains(c.FieldId)).ToArray();
         if (cells.Count == 0 && titles.Count == 0) return CellBulkResult.Nothing;
 
         // Одна транзакция на все, открытая ДО чтения: текущие значения, отсев удаленных записей и
@@ -148,6 +151,7 @@ public sealed partial class ConstructorRepository
         SyncLocalCache(inserts, updates, deletes, titleChanges);
 
         var autoFiles = ReactToBulkSourceEdits(collectionId, changes);
+        autoFiles.AddRange(DatePeriodBulkSourceChanges(collectionId, changes));
         NotifyRelationDataChanged(collectionId);
 
         return changes.Count > UndoChangesLimit

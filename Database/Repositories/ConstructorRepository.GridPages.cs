@@ -197,6 +197,7 @@ public sealed partial class ConstructorRepository
         }
         finally { if (opened) conn.Close(); }
         FillRelationComputedValues(recordIds, result, allFields ? null : fieldIds);
+        FillDatePeriodValues(recordIds, result, allFields ? null : fieldIds);
         return result;
     }
 
@@ -514,6 +515,7 @@ public sealed partial class ConstructorRepository
         var crossPaths  = CrossDbPathsForKeys(collectionId, filtersCopy.Keys.Append(sortKey ?? ""));
         var dbPath      = db.DbPath;
         var run         = RelationColumnRun.Capture(ct);
+        var periodNow   = DatePeriodClock();
 
         return Task.Run(async () =>
         {
@@ -523,7 +525,7 @@ public sealed partial class ConstructorRepository
                                           (sortKey is null ? "" : $", сортировка по {sortKey}"));
             await using var ctx = new AppDbContext(dbPath);
             ctx.ApplyPerformancePragmas();
-            var repo = new ConstructorRepository(ctx) { Permissions = Permissions, ComputedRun = run };
+            var repo = new ConstructorRepository(ctx) { Permissions = Permissions, ComputedRun = run, DatePeriodClock = () => periodNow };
             var ids  = await repo.FilteredIdsSortedAsync(collectionId, filtersCopy, excludeHidden, sortKey, sortAsc,
                                                          sortFieldType, ForeignResolver(crossPaths), ct);
             slow.Context += $", отобрано {ids.Count:N0}";
@@ -568,6 +570,17 @@ public sealed partial class ConstructorRepository
 
         if (!int.TryParse(sortKey, out var fid))
             return await q.OrderBy(r => r.Position).ThenBy(r => r.Id).Select(r => r.Id).ToListAsync(ct);
+
+        if (fieldType == "date_period")
+        {
+            var field = DatePeriodField(fid);
+            var ordered = await q.OrderBy(r => r.Position).ThenBy(r => r.Id).Select(r => r.Id).ToListAsync(ct);
+            if (field is null) return ordered;
+            var values = DatePeriodColumnValues(field, ordered, ct);
+            var compare = ColumnSort.BuildComparer("date_period", sortAsc);
+            return ordered.OrderBy(id => values.GetValueOrDefault(id, ""),
+                Comparer<string>.Create((a, b) => compare(a, b))).ToList();
+        }
 
         if (FieldTypeInfo.IsRelationComputed(fieldType))
         {

@@ -673,7 +673,7 @@
                                         VerticalAlignment="Center" Margin="0,0,32,0">
                                 <TextBlock Classes="title" Text="Только коллекции с датами в календаре" />
                                 <TextBlock Classes="desc"
-                                           Text="Боковая панель показывает только коллекции, у которых включено хотя бы одно свойство-дата. Выключено — видны все коллекции." />
+                                           Text="Боковая панель показывает только коллекции, у которых включено хотя бы одно свойство-дата. Базы без таких коллекций скрыты. Выключено — видны все базы и коллекции." />
                             </StackPanel>
                             <ToggleSwitch Grid.Column="1" x:Name="CalendarSidebarOnlyToggle"
                                           OnContent="" OffContent=""
@@ -835,7 +835,7 @@
                                         VerticalAlignment="Center" Margin="0,0,32,0">
                                 <TextBlock Classes="title" Text="Только коллекции с исполнителем" />
                                 <TextBlock Classes="desc"
-                                           Text="Боковая панель показывает только коллекции, у которых выбрано свойство-исполнитель. Выключено — видны все коллекции." />
+                                           Text="Боковая панель показывает только коллекции, у которых выбрано свойство-исполнитель. Базы без таких коллекций скрыты. Выключено — видны все базы и коллекции." />
                             </StackPanel>
                             <ToggleSwitch Grid.Column="1" x:Name="TasksSidebarOnlyToggle"
                                           OnContent="" OffContent=""
@@ -1009,7 +1009,7 @@
                                         VerticalAlignment="Center" Margin="0,0,32,0">
                                 <TextBlock Classes="title" Text="Только подключенные коллекции" />
                                 <TextBlock Classes="desc"
-                                           Text="Боковая панель показывает только коллекции, у которых включено свойство типа «Файл». Выключено — видны все коллекции." />
+                                           Text="Боковая панель показывает только коллекции, у которых включено свойство типа «Файл». Базы без таких коллекций скрыты. Выключено — видны все базы и коллекции." />
                             </StackPanel>
                             <ToggleSwitch Grid.Column="1" x:Name="LibrarySidebarOnlyToggle"
                                           OnContent="" OffContent=""
@@ -1647,6 +1647,25 @@
                             <TextBlock Classes="title" Text="Система" />
                             <TextBlock x:Name="SystemInfoText" Classes="desc" Text="—" />
                         </StackPanel>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <Border Classes="settingRow">
+                        <Expander x:Name="ComponentLicensesExpander" HorizontalAlignment="Stretch"
+                                  HorizontalContentAlignment="Stretch"
+                                  Expanded="OnComponentLicensesExpanded">
+                            <Expander.Header>
+                                <TextBlock Classes="title" Text="Лицензии компонентов" />
+                            </Expander.Header>
+                            <StackPanel Spacing="8" Margin="0,12,0,0">
+                                <TextBox x:Name="ComponentLicensesText" Classes="multiline"
+                                         IsReadOnly="True" AcceptsReturn="True"
+                                         TextWrapping="Wrap" Height="320" />
+                                <Button x:Name="CopyComponentLicensesButton" Classes="dialog" Content="Копировать"
+                                        HorizontalAlignment="Left"
+                                        Click="OnCopyComponentLicenses" />
+                            </StackPanel>
+                        </Expander>
                     </Border>
                     <Border Classes="separator h" />
 

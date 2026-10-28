@@ -2,7 +2,7 @@ namespace SmartBase.Core.Models;
 
 /// <summary>
 /// Классификация кодов типов свойств (FieldType) — доменная логика без привязки к UI.
-/// «Вычисляемые» типы (created_at/updated_at/created_by/updated_by) не хранят значение в
+/// Аудит-типы (created_at/updated_at/created_by/updated_by) не хранят значение в
 /// db_field_values: их ячейка read-only и заполняется из аудит-метаданных записи
 /// (CreatedAt/UpdatedAt/CreatedBy/UpdatedBy). Единый источник правды для таблицы, панели
 /// записи и диалога свойства.
@@ -10,7 +10,10 @@ namespace SmartBase.Core.Models;
 public static class FieldTypeInfo
 {
     /// <summary>true — значение вычисляется; ручная запись ячейки запрещена.</summary>
-    public static bool IsComputed(string? fieldType) => IsAuditComputed(fieldType) || IsRelationComputed(fieldType);
+    public static bool IsComputed(string? fieldType) => IsAuditComputed(fieldType) || IsRelationComputed(fieldType) || IsDatePeriod(fieldType);
+
+    /// <summary>true — длительность по выбранным датам и рабочим часам.</summary>
+    public static bool IsDatePeriod(string? fieldType) => fieldType == "date_period";
 
     /// <summary>true — значение из аудит-метаданных записи.</summary>
     public static bool IsAuditComputed(string? fieldType) => fieldType is
@@ -56,6 +59,7 @@ public static class FieldTypeInfo
         "updated_at" => "Дата изменения",
         "created_by" => "Создание пользователем",
         "updated_by" => "Изменение пользователем",
+        "date_period"=> "Дата период времени",
         _            => "Текст",
     };
 
@@ -72,11 +76,13 @@ public static class FieldTypeInfo
 
     /// <summary>Отображение «вычисляемого» значения: даты (ISO "o", с долями секунды/смещением —
     /// DateValue его не парсит) форматируем round-trip как «дд.MM.гггг чч:мм»; имя пользователя —
-    /// как есть; пусто → пусто. Общий формат для таблицы и панели записи.</summary>
+    /// как есть; длительность — в днях, часах и минутах; пусто → пусто.
+    /// Общий формат для таблицы и панели записи.</summary>
     public static string FormatComputedDisplay(string? raw, string? fieldType)
     {
         var s = raw ?? "";
         if (string.IsNullOrEmpty(s)) return "";
+        if (IsDatePeriod(fieldType)) return DatePeriodValue.Format(s);
         // Итог по связи — число или (самая ранняя / поздняя) дата в ISO-каноне.
         if (fieldType == "rollup")
             return DateValue.TryParseStorage(s, out var date) ? date.ToDisplay() : NumberFormatValue.Format(s, NumberFormat.Default);

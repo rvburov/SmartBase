@@ -8,7 +8,7 @@ namespace SmartBase.Core.Models;
 ///
 /// Живет в Core, а не в таблице, чтобы круг «скопировал → вставил» проверялся тестом на тех же
 /// функциях, что работают в программе: показ — здесь, разбор — <see cref="TablePastePlanner.Convert"/>.
-/// Вычисляемые столбцы и связи сюда не входят: их текст берется не из значения ячейки.
+/// Аудит-столбцы и связи сюда не входят: их текст берется не из значения ячейки.
 /// </summary>
 public static class CellDisplayText
 {
@@ -25,6 +25,7 @@ public static class CellDisplayText
             "date"        => DateValue.TryParse(value, out var date) ? date.ToDisplay() : value,
             "multiselect" => MultiSelectValue.Display(value, separator),
             "number"      => NumberFormatValue.Format(value, numberFormat),
+            "date_period" => DatePeriodValue.Format(value),
             "file"        => FileValue.DisplayName(value),
             _             => value,
         };

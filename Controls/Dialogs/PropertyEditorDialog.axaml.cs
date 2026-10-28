@@ -27,6 +27,8 @@ public sealed class FieldTypeItem
     /// <summary>Первый элемент группы — над ним рисуется разделительная черта в выпадающем
     /// списке (группы идут без подписей, только чертой; состав — см. FieldTypes).</summary>
     public bool StartsGroup { get; init; }
+    public bool IsEnabled { get; init; } = true;
+    public string? Hint { get; init; }
 }
 
 /// <summary>
@@ -67,6 +69,7 @@ public partial class PropertyEditorDialog : Window
         new() { Type = "updated_at", Label = "Дата изменения",         Icon = Components.FieldTypeIcons.ForType("updated_at")! },
         new() { Type = "created_by", Label = "Создание пользователем",  Icon = Components.FieldTypeIcons.ForType("created_by")! },
         new() { Type = "updated_by", Label = "Изменение пользователем", Icon = Components.FieldTypeIcons.ForType("updated_by")! },
+        new() { Type = "date_period", Label = "Дата период времени", Icon = Components.FieldTypeIcons.ForType("date_period")! },
     ];
 
     // Список типов окна: FieldTypes, а у столбца данных без своей связи — еще и его тип.
@@ -162,11 +165,14 @@ public partial class PropertyEditorDialog : Window
         InitializeRelationCondition();
         InitializeRelationAuto();
         InitializeRelationData();
+        InitializeDatePeriod();
 
         // Новое свойство открывается с типом из «Настройки → Конструктор базы данных»;
         // у существующего тип берется из самого поля (ниже), настройка его не трогает.
         if (!editFieldId.HasValue)
             _selectedType = Utils.ConstructorSettings.NewFieldType;
+        if (!editFieldId.HasValue && _selectedType == "date_period" && _datePeriodSources.Count == 0)
+            _selectedType = "text";
 
         if (editFieldId.HasValue)
         {
@@ -195,6 +201,8 @@ public partial class PropertyEditorDialog : Window
                 // «Файл» — восстановить правило авто-привязки (столбец/папка/формат), если есть.
                 if (field.FieldType == "file")
                     RestoreFileAutoRule(field.ConfigJson);
+                if (field.FieldType == "date_period")
+                    RestoreDatePeriodConfig(field.ConfigJson);
                 // «Связь» — восстановить целевую коллекцию + кардинальность.
                 if (field.FieldType == "relation")
                 {
@@ -206,7 +214,7 @@ public partial class PropertyEditorDialog : Window
                 {
                     // Столбец без своей связи: тип в списке есть только у него, чтобы окно не
                     // показало «Текст» и не сменило тип при сохранении.
-                    _types = [.. FieldTypes, new FieldTypeItem { Type = field.FieldType, Label = FieldTypeInfo.Label(field.FieldType),
+                    _types = [.. _types, new FieldTypeItem { Type = field.FieldType, Label = FieldTypeInfo.Label(field.FieldType),
                         Icon = Components.FieldTypeIcons.ForType(field.FieldType)! }];
                     TypeCombo.ItemsSource = _types;
                     RestoreRelationComputedConfig(field.ConfigJson);
@@ -364,6 +372,8 @@ public partial class PropertyEditorDialog : Window
         // Настройка связи — только для типа «Связь».
         RelationSection.IsVisible = _selectedType == "relation";
         RelationComputedSection.IsVisible = _selectedType is "lookup" or "rollup";
+        DatePeriodSection.IsVisible = _selectedType == "date_period";
+        UpdateDatePeriodVisibility();
         UpdateRelationComputedVisibility();
         // Библиотека документов — только для типа «Файл».
         LibrarySection.IsVisible = _selectedType == "file";
@@ -1180,6 +1190,13 @@ public partial class PropertyEditorDialog : Window
             if (cfg is null) return;
             computedConfig = cfg;
         }
+        var datePeriodConfig = "{}";
+        if (_selectedType == "date_period")
+        {
+            var cfg = BuildDatePeriodConfigJson();
+            if (cfg is null) return;
+            datePeriodConfig = cfg;
+        }
 
         // Смена типа уносит привязку к разделу — предупреждаем ровно так же, как при удалении
         // столбца: для раздела это одно и то же (данные ему станут недоступны), а раньше тип
@@ -1215,6 +1232,7 @@ public partial class PropertyEditorDialog : Window
                 else if (_selectedType == "file")             field.ConfigJson = fileConfig;
                 else if (_selectedType == "relation")         field.ConfigJson = relationConfig;
                 else if (_selectedType is "lookup" or "rollup") field.ConfigJson = computedConfig;
+                else if (_selectedType == "date_period")      field.ConfigJson = datePeriodConfig;
                 // Правило более новой версии сохраняется как есть, без подбора (UpdateField).
                 if (field.FieldType == "relation" && RelationConfig.FromConfig(field.ConfigJson)?.Auto is { IsReady: true })
                 {
@@ -1244,6 +1262,7 @@ public partial class PropertyEditorDialog : Window
                                  : _selectedType == "file"                   ? fileConfig
                                  : _selectedType == "relation"               ? relationConfig
                                  : _selectedType is "lookup" or "rollup"     ? computedConfig
+                                 : _selectedType == "date_period"            ? datePeriodConfig
                                  : "{}",
                 };
                 if (_selectedType == "relation" && RelationConfig.FromConfig(relationConfig)?.Auto is { IsReady: true })

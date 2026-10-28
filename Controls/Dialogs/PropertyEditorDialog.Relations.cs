@@ -38,6 +38,10 @@ public partial class PropertyEditorDialog
         repo is null ? [] : repo.GetRelationPropertyOptions(collectionId)
             .Select(p => new RelationPropertyItem(p.Key, p.Name, p.FieldType, p.ConfigJson)).ToList();
 
+    private List<RelationPropertyItem> AutoRelationProperties(ConstructorRepository? repo, int collectionId) =>
+        repo is null ? [] : repo.GetAutoRelationPropertyOptions(collectionId)
+            .Select(p => new RelationPropertyItem(p.Key, p.Name, p.FieldType, p.ConfigJson)).ToList();
+
     private void PopulateRelationProperties()
     {
         if (_systemMode || _repository is null) return;
@@ -49,8 +53,8 @@ public partial class PropertyEditorDialog
         var properties = target is null ? [] : RelationProperties(RepoForDb(dbId), target.Id);
         SetRelationProperties(RelationDisplayCombo, properties, keepSelection);
         SetRelationProperties(RelationSearchCombo, properties, keepSelection);
-        SetRelationProperties(RelationAutoTargetCombo, properties, keepSelection);
-        var sources = RelationProperties(_repository, _collectionId)
+        SetRelationProperties(RelationAutoTargetCombo, target is null ? [] : AutoRelationProperties(RepoForDb(dbId), target.Id), keepSelection);
+        var sources = AutoRelationProperties(_repository, _collectionId)
             .Where(p => p.Key != _editFieldId?.ToString()).ToList();
         SetRelationProperties(RelationAutoSourceCombo, sources);
         RefreshRelationKeyRows();

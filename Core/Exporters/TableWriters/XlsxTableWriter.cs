@@ -112,6 +112,9 @@ public sealed class XlsxTableWriter : ITableWriter
                 case "date":
                     WriteDateCell(i, raw);
                     break;
+                case "date_period":
+                    WriteStringCell(i, DatePeriodValue.Format(raw));
+                    break;
                 case "multiselect":
                     WriteStringCell(i, MultiSelectValue.Display(raw, MultiSelectValue.SeparatorFromConfig(cols[i].ConfigJson)));
                     break;

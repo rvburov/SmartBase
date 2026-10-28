@@ -25,6 +25,14 @@ echo "== Стенд панели чтения библиотеки =="
 dotnet run --project Tests/DocReader -f net10.0
 
 echo
+echo "== Фильтр баз в календаре, задачах и библиотеке =="
+dotnet run --project Tests/Sections -f net10.0 -- --only sidebarfilter
+
+echo
+echo "== Свойство «Дата период времени»: окно и открытые виды =="
+dotnet run --project Tests/RecordPage -f net10.0 -- --only dateperiod
+
+echo
 echo "== Резервные копии: настройки и фоновые работы без экрана =="
 dotnet run --project Tests/BackupUi -f net10.0
 

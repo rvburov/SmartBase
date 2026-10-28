@@ -348,12 +348,13 @@ public sealed class NotificationService : IDisposable
 
     /// <summary>Результат ручной или плановой копии. UI-поток; выключенный тумблер
     /// подавляет баннер и счетчик, но не скрывает ошибку в фоновых работах.</summary>
-    public void NotifyBackupResult(int dbId, string name, bool ok, string message)
+    public void NotifyBackupResult(int dbId, string name, bool ok, string message, bool canceled = false)
     {
         if (!_backupOn) return;
         var tag = $"backup:{dbId}:{Guid.NewGuid():N}";
         Remember(tag, new BackupTarget(dbId));
-        SafeShow(ok ? "Резервная копия создана" : "Ошибка резервного копирования",
+        SafeShow(canceled ? "Резервное копирование отменено"
+                : ok ? "Резервная копия создана" : "Ошибка резервного копирования",
             ok ? $"База «{name}»: копирование завершено" : $"База «{name}»: {message}", tag);
         _unseen++;
         SafeBadge(_unseen);

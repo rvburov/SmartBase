@@ -202,7 +202,7 @@
          выбрасыванием последнего потока /Contents. Docnet.Core, а не PDFtoImage: тот требует
          SkiaSharp 4.x, а Avalonia.Skia 11.2.3 жестко держит 2.88.9 — приложение бы не собралось.
          У Docnet.Core транзитивных зависимостей нет вовсе, внутри тот же PDFium. -->
-    <PackageReference Include="Docnet.Core"                      Version="2.6.0" />
+    <PackageReference Include="Docnet.Core"                      Version="2.6.0" GeneratePathProperty="true" />
     <!-- Рисование знака по пикселям страницы. Пакет и так приезжает транзитивно с
          Avalonia.Skia; пин явный, т.к. используем его напрямую, и версия обязана совпадать
          с той, под которую собрана Avalonia. -->
@@ -277,6 +277,28 @@
     <EmbeddedResource Include="Extensions\**\*.gz" />
   </ItemGroup>
 
+  <!-- NuGet считает LICENSE нативным ассетом и кладет его рядом с программой при
+       публикации с RID. Текст уже вшит выше: исключаем только корневой LICENSE,
+       до сборки single-file и распределения файлов по правилам копирования. -->
+  <Target Name="ExcludeStandaloneComponentLicense" AfterTargets="ComputeResolvedFilesToPublishList">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)"
+                             Condition="'%(ResolvedFileToPublish.RelativePath)' == 'LICENSE'" />
+    </ItemGroup>
+  </Target>
+
+  <!-- Повторная публикация в ту же папку не удаляет старые ассеты сама. Исходную
+       лицензию не трогаем даже при намеренной публикации прямо в корень проекта. -->
+  <Target Name="RemoveStaleStandaloneComponentLicense" AfterTargets="Publish"
+          Condition="'$(PublishDir)' != '' and '$(IsCrossTargetingBuild)' != 'true'">
+    <PropertyGroup>
+      <_StandaloneComponentLicense>$([MSBuild]::NormalizePath('$(PublishDir)', 'LICENSE'))</_StandaloneComponentLicense>
+      <_SourceApplicationLicense>$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', 'LICENSE'))</_SourceApplicationLicense>
+    </PropertyGroup>
+    <Delete Files="$(_StandaloneComponentLicense)"
+            Condition="'$(_StandaloneComponentLicense)' != '$(_SourceApplicationLicense)'" />
+  </Target>
+
   <!-- Tests/ — отдельный проект-генератор стенда (Tests/DbGenerator), в приложение не входит -->
   <ItemGroup>
     <Compile    Remove="Tests\**" />
@@ -295,6 +317,19 @@
     <AvaloniaResource Remove="packages\**" />
     <None       Remove="packages\**" />
     <EmbeddedResource Remove="packages\**" />
+  </ItemGroup>
+
+  <!-- Тексты лицензий доступны в «О программе», в том числе без соседних файлов.
+       Нативный PDF-компонент поставляет два варианта уведомлений: общий и для macOS.
+       Пути дает NuGet: при смене версии пакета тексты обновляются вместе с библиотекой.
+       Явные ресурсы пакета добавляются ПОСЛЕ исключения общего кеша packages выше. -->
+  <ItemGroup>
+    <EmbeddedResource Include="LICENSE" LogicalName="SmartBase.Licenses.Application" />
+    <EmbeddedResource Include="THIRD-PARTY-NOTICES.txt" LogicalName="SmartBase.Licenses.ThirdParty" />
+    <EmbeddedResource Include="$(PkgDocnet_Core)\runtimes\win-x64\native\LICENSE"
+                      LogicalName="SmartBase.Licenses.Pdfium.Common" />
+    <EmbeddedResource Include="$(PkgDocnet_Core)\runtimes\osx-x64\native\LICENSE"
+                      LogicalName="SmartBase.Licenses.Pdfium.MacOS" />
   </ItemGroup>
 
   <!-- Внутренние типы (виртуальный список строк таблицы, разбиение страниц) видны тестам и стендам. -->

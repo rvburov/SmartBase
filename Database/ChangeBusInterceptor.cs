@@ -46,6 +46,7 @@ public sealed class ChangeBusInterceptor : DbTransactionInterceptor
         (eventData.Context as AppDbContext)?.OnTransactionStarted();
         if (eventData.Context is AppDbContext context) Repositories.ConstructorRepository.RelationTransactionStarted(context);
         if (eventData.Context is AppDbContext fileContext) Repositories.ConstructorRepository.FileAutoTransactionStarted(fileContext);
+        if (eventData.Context is AppDbContext periodContext) Repositories.ConstructorRepository.DatePeriodTransactionStarted(periodContext);
         return result;
     }
 
@@ -58,6 +59,22 @@ public sealed class ChangeBusInterceptor : DbTransactionInterceptor
         (eventData.Context as AppDbContext)?.OnTransactionStarted();
         if (eventData.Context is AppDbContext context) Repositories.ConstructorRepository.RelationTransactionStarted(context);
         if (eventData.Context is AppDbContext fileContext) Repositories.ConstructorRepository.FileAutoTransactionStarted(fileContext);
+        if (eventData.Context is AppDbContext periodContext) Repositories.ConstructorRepository.DatePeriodTransactionStarted(periodContext);
+        return ValueTask.FromResult(result);
+    }
+
+    public override InterceptionResult TransactionCommitting(DbTransaction transaction,
+        TransactionEventData eventData, InterceptionResult result)
+    {
+        if (eventData.Context is AppDbContext context) Repositories.ConstructorRepository.DatePeriodTransactionCommitting(context);
+        return result;
+    }
+
+    public override ValueTask<InterceptionResult> TransactionCommittingAsync(DbTransaction transaction,
+        TransactionEventData eventData, InterceptionResult result, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (eventData.Context is AppDbContext context) Repositories.ConstructorRepository.DatePeriodTransactionCommitting(context);
         return ValueTask.FromResult(result);
     }
 
@@ -67,6 +84,7 @@ public sealed class ChangeBusInterceptor : DbTransactionInterceptor
         (eventData.Context as AppDbContext)?.OnTransactionCommitted();
         if (eventData.Context is AppDbContext context) Repositories.ConstructorRepository.RelationTransactionCommitted(context);
         if (eventData.Context is AppDbContext fileContext) Repositories.ConstructorRepository.FileAutoTransactionCommitted(fileContext);
+        if (eventData.Context is AppDbContext periodContext) Repositories.ConstructorRepository.DatePeriodTransactionEnded(periodContext);
     }
 
     public override Task TransactionCommittedAsync(DbTransaction transaction, TransactionEndEventData eventData,
@@ -76,6 +94,7 @@ public sealed class ChangeBusInterceptor : DbTransactionInterceptor
         (eventData.Context as AppDbContext)?.OnTransactionCommitted();
         if (eventData.Context is AppDbContext context) Repositories.ConstructorRepository.RelationTransactionCommitted(context);
         if (eventData.Context is AppDbContext fileContext) Repositories.ConstructorRepository.FileAutoTransactionCommitted(fileContext);
+        if (eventData.Context is AppDbContext periodContext) Repositories.ConstructorRepository.DatePeriodTransactionEnded(periodContext);
         return Task.CompletedTask;
     }
 
@@ -85,6 +104,7 @@ public sealed class ChangeBusInterceptor : DbTransactionInterceptor
         (eventData.Context as AppDbContext)?.OnTransactionRolledBack();
         if (eventData.Context is AppDbContext context) Repositories.ConstructorRepository.RelationTransactionRolledBack(context);
         if (eventData.Context is AppDbContext fileContext) Repositories.ConstructorRepository.FileAutoTransactionStarted(fileContext);
+        if (eventData.Context is AppDbContext periodContext) Repositories.ConstructorRepository.DatePeriodTransactionEnded(periodContext);
     }
 
     public override Task TransactionRolledBackAsync(DbTransaction transaction, TransactionEndEventData eventData,
@@ -94,6 +114,7 @@ public sealed class ChangeBusInterceptor : DbTransactionInterceptor
         (eventData.Context as AppDbContext)?.OnTransactionRolledBack();
         if (eventData.Context is AppDbContext context) Repositories.ConstructorRepository.RelationTransactionRolledBack(context);
         if (eventData.Context is AppDbContext fileContext) Repositories.ConstructorRepository.FileAutoTransactionStarted(fileContext);
+        if (eventData.Context is AppDbContext periodContext) Repositories.ConstructorRepository.DatePeriodTransactionEnded(periodContext);
         return Task.CompletedTask;
     }
 

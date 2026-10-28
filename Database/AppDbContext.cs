@@ -124,6 +124,8 @@ public class AppDbContext : DbContext
     private void NoteDirty(object entity, EntityState state)
     {
         if (state is not (EntityState.Added or EntityState.Modified or EntityState.Deleted)) return;
+        if (entity is DbRecordEntity newRecord && state == EntityState.Added)
+            Repositories.ConstructorRepository.NoteDatePeriodCreation(this, newRecord);
 
         if (entity is ChangeLogEntity log)
         {

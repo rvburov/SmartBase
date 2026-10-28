@@ -148,6 +148,16 @@ public partial class ConstructorRepository
                     ? RemapRelationFieldKey(config.TargetField, fieldMap) : config.TargetField,
             }).ToConfigJson();
         }
+        foreach (var field in fields.Where(f => f.FieldType == "date_period"))
+        {
+            if (onlyNewFieldIds is not null && !onlyNewFieldIds.Contains(field.Id)) continue;
+            if (DatePeriodConfig.FromConfig(field.ConfigJson) is not { } config) continue;
+            field.ConfigJson = (config with
+            {
+                StartFieldId = fieldMap.GetValueOrDefault(config.StartFieldId, crossDatabase ? 0 : config.StartFieldId),
+                EndFieldId = config.EndFieldId is int end ? fieldMap.GetValueOrDefault(end, crossDatabase ? 0 : end) : null,
+            }).ToConfigJson(field.ConfigJson);
+        }
         db.SaveChanges();
     }
 

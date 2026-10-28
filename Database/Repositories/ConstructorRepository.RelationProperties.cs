@@ -74,6 +74,8 @@ public partial class ConstructorRepository
         var rawValues = db.DbFieldValues.AsNoTracking()
             .Where(v => v.FieldId == field.Id && recordIds.Contains(v.RecordId))
             .ToDictionary(v => v.RecordId, v => v.Value);
+        if (field.FieldType == "date_period")
+            rawValues = DatePeriodColumnValues(ToDbField(field), recordIds);
         Dictionary<int, string>? relationDisplay = null;
         Dictionary<int, string>? relationRaw = null;
         if (field.FieldType is "lookup" or "rollup")

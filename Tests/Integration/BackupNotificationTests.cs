@@ -4,6 +4,26 @@ namespace SmartBase.Tests.Integration;
 
 public sealed class BackupNotificationTests
 {
+    [Fact]
+    public void User_cancellation_has_its_own_result_and_obeys_the_backup_toggle()
+    {
+        var notifier = new Notifier();
+        var badge = new Badge();
+        using var service = new NotificationService(notifier, badge, (_, _) => [], _ => { });
+        service.NotifyBackupResult(42, "Основная", false, "Новая копия не создана", canceled: true);
+        Assert.Empty(notifier.Shown);
+        service.SetBackupEnabled(true);
+        service.NotifyBackupResult(42, "Основная", false, "Новая копия не создана", canceled: true);
+        var banner = Assert.Single(notifier.Shown);
+        Assert.Equal("Резервное копирование отменено", banner.Title);
+        Assert.Contains("Новая копия не создана", banner.Body);
+        Assert.Equal(1, badge.Count);
+        int? activated = null;
+        service.BackupActivated += id => activated = id;
+        notifier.Click(banner.Tag);
+        Assert.Equal(42, activated);
+    }
+
     private sealed class Notifier : INativeNotifier
     {
         public List<(string Title, string Body, string Tag)> Shown { get; } = [];

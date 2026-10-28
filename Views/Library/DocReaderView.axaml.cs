@@ -168,6 +168,8 @@ public partial class DocReaderView : UserControl
     /// </summary>
     private int _scanGen;
 
+    private int _pageHitRequest;
+
     /// <summary>
     /// Обход страниц по текущему запросу дошел до конца. До этого «нет» в счетчике было бы
     /// неправдой: совпадение может стоять на странице, до которой обход еще не добрался.
@@ -1515,12 +1517,28 @@ public partial class DocReaderView : UserControl
     {
         if (_current < 0 || _current >= _pageHits.Count) return;
 
-        PagesList.ScrollIntoView(_pageHits[_current].Page);
+        var request = ++_pageHitRequest;
+        var gen = _gen;
+        var scan = _scanGen;
+        var current = _current;
+        bool StillCurrent() => request == _pageHitRequest && gen == _gen && scan == _scanGen
+            && current == _current && _current >= 0 && _current < _pageHits.Count
+            && _mode == ReadMode.Document && !ShowsSheet && PagesList.IsEffectivelyVisible;
 
-        // Следом за раскладкой, а не прямо сейчас: контейнер страницы в эту минуту только что
-        // подъехал, его размеров еще нет, и считать по ним было бы нечего. Тот же порядок, что
-        // у листа книги (ShowSheetHit).
-        Dispatcher.UIThread.Post(ShowPageHitNow, DispatcherPriority.Background);
+        // Смена режима и ширины сначала должна закончить обычную раскладку. ScrollIntoView
+        // сам запускает layout: не вызываем его между измерением и размещением страниц.
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (!StillCurrent()) return;
+            PagesList.ScrollIntoView(_pageHits[_current].Page);
+
+            // Слово доводим после раскладки подъехавшего контейнера. Старый переход не должен
+            // вмешиваться в новый запрос, документ или режим, пока оба задания ждут очереди.
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (StillCurrent()) ShowPageHitNow();
+            }, DispatcherPriority.Background);
+        }, DispatcherPriority.Background);
     }
 
     private void ShowPageHitNow()
@@ -2318,7 +2336,7 @@ public partial class DocReaderView : UserControl
 
         private void Repaint()
         {
-            InvalidateMeasure();
+            // Размер страницы неизменен: картинка и подсветка влияют только на отрисовку.
             InvalidateVisual();
         }
     }

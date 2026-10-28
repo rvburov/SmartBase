@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Serilog;
 using SmartBase.Logging;
 using SmartBase.Utils;
+using Npgsql;
 
 namespace SmartBase.Database.Backup;
 
@@ -35,16 +36,32 @@ public static class PgDump
     /// Снять дамп базы в <paramref name="targetPath"/>. null — успех (строка об успехе уже
     /// в журнале), иначе русский текст ошибки; недописанный файл-цель убирается.
     /// </summary>
-    public static async Task<string?> RunAsync(PgConnectionInfo info, string name, string targetPath)
+    public static async Task<string?> RunAsync(PgConnectionInfo info, string name, string targetPath,
+                                              CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var binary = FindBinary();
         if (binary is null)
             return "Клиент PostgreSQL (pg_dump) не найден — установите инструменты сервера " +
                    "или добавьте pg_dump в PATH.";
 
         var watch = Stopwatch.StartNew();
+        var part = targetPath + DatabaseManager.BackupPartSuffix;
+        var applicationName = "SmartBase.backup." + Guid.NewGuid().ToString("N");
         try
         {
+            // Оценка консервативная: pg_dump не переносит индексы и сжимает данные.
+            // Точный размер custom-архива заранее неизвестен, свободное место не резервируется.
+            await using (var connection = new NpgsqlConnection(info.ToConnectionString()))
+            {
+                await connection.OpenAsync(cancellationToken);
+                await using var command = connection.CreateCommand();
+                command.CommandText = "SELECT pg_database_size(current_database());";
+                var estimatedBytes = Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken));
+                BackupSpace.RequireAvailable(Path.GetDirectoryName(Path.GetFullPath(targetPath))!, estimatedBytes);
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            TryDeletePartial(part);
             var psi = new ProcessStartInfo(binary)
             {
                 RedirectStandardError = true,
@@ -57,25 +74,48 @@ public static class PgDump
                 "--port", info.Port.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 "--username", info.User,
                 "--dbname", info.Database,
-                "--file", targetPath,
+                "--file", part,
             })
                 psi.ArgumentList.Add(a);
             // Секреты и режим SSL — через окружение: PGPASSWORD в аргументы не попадает.
             psi.Environment["PGPASSWORD"] = info.Password;
             psi.Environment["PGSSLMODE"]  = info.SslMode.ToLowerInvariant();
+            psi.Environment["PGAPPNAME"] = applicationName;
 
             using var process = Process.Start(psi);
             if (process is null) return "pg_dump не запустился.";
 
-            var stderr = await process.StandardError.ReadToEndAsync();
+            var errorRead = process.StandardError.ReadToEndAsync();
+            using var cancellation = cancellationToken.Register(() =>
+            {
+                try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
+                catch (InvalidOperationException) { /* процесс уже завершился */ }
+                catch (System.ComponentModel.Win32Exception ex)
+                { Log.Warning(ex, "Резервное копирование: не удалось остановить pg_dump"); }
+            });
+            // Даже при отмене дожидаемся закрытия файлов процессом до удаления .part.
             await process.WaitForExitAsync();
+            var stderr = await errorRead;
+            if (cancellationToken.IsCancellationRequested)
+                await CancelOwnServerQueryAsync(info, applicationName);
+            cancellationToken.ThrowIfCancellationRequested();
 
             if (process.ExitCode != 0)
             {
-                TryDeletePartial(targetPath);
                 var reason = stderr.Trim();
                 return reason.Length > 0 ? reason : $"pg_dump завершился с кодом {process.ExitCode}.";
             }
+
+            // Закрытый архив публикуется одним переименованием, как SQLite-копия.
+            using (var file = new FileStream(part, FileMode.Open, FileAccess.ReadWrite, FileShare.Read))
+            {
+                Span<byte> magic = stackalloc byte[5];
+                if (file.Read(magic) != 5 || !magic.SequenceEqual("PGDMP"u8))
+                    return "pg_dump не создал корректный архив PostgreSQL.";
+                file.Flush(flushToDisk: true);
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            File.Move(part, targetPath, overwrite: true);
 
             // Зеркало строки успеха SQLite-копии (DatabaseManager.BackupTo) — чтобы в
             // «Диагностике» оба провайдера читались одинаково.
@@ -84,10 +124,43 @@ public static class PgDump
                             watch.Elapsed.TotalMilliseconds);
             return null;
         }
+        catch (Exception) when (cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(cancellationToken);
+        }
         catch (Exception ex)
         {
-            TryDeletePartial(targetPath);
             return ex.Message;
+        }
+        finally { TryDeletePartial(part); }
+    }
+
+    private static async Task CancelOwnServerQueryAsync(PgConnectionInfo info, string applicationName)
+    {
+        // Сервер с client_connection_check_interval=0 не замечает закрытый клиентский
+        // сокет, пока запрос ждет блокировку. Убитый pg_dump оставлял этот запрос жить
+        // до снятия чужого lock. Отменяем только собственную уникальную сессию, тем же
+        // пользователем; права администратора для pg_cancel_backend своего запроса не нужны.
+        try
+        {
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            var builder = new NpgsqlConnectionStringBuilder(info.ToConnectionString())
+            {
+                Pooling = false, Timeout = 3, CommandTimeout = 3,
+            };
+            await using var connection = new NpgsqlConnection(builder.ConnectionString);
+            await connection.OpenAsync(deadline.Token);
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT pg_cancel_backend(pid) FROM pg_stat_activity " +
+                "WHERE application_name=$1 AND usename=current_user AND datname=current_database() AND pid<>pg_backend_pid();";
+            command.Parameters.AddWithValue(applicationName);
+            await command.ExecuteNonQueryAsync(deadline.Token);
+        }
+        catch (Exception ex)
+        {
+            // Клиентский процесс уже остановлен; сервер может быть недоступен. Это
+            // отдельный диагностический след, но отмену не выдаем за успешную копию.
+            Log.Warning(ex, "Резервное копирование: не удалось отменить собственный запрос pg_dump на сервере");
         }
     }
 

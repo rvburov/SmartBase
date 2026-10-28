@@ -1323,7 +1323,7 @@ public sealed class GridSurface : Control, IEditorSurface
             return;
         }
 
-        if (FieldTypeInfo.IsRelationComputed(def.FieldType))
+        if (FieldTypeInfo.IsRelationComputed(def.FieldType) || def.FieldType == "date_period")
         {
             DrawText(ctx, FieldTypeInfo.FormatComputedDisplay(row[def.Key], def.FieldType), inner,
                      fg ?? _s.Secondary, fg is null ? "s" : fgId, align, FitLines(inner.Height), _s.LineHeight,

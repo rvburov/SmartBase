@@ -384,6 +384,7 @@ jobs:
           dotnet build Tests/DbGenerator  --configuration Release
           dotnet build Tests/MultiProcess --configuration Release
           dotnet build Tests/DocReader    --configuration Release
+          dotnet build Tests/Sections     --configuration Release
           dotnet build Tests/BackupUi     --configuration Release
           dotnet build Tests/ConcurrentUi --configuration Release
           dotnet build Tests/RecordPage --framework net10.0 --configuration Release
@@ -393,6 +394,9 @@ jobs:
       # в конце вывода шага.
       - name: Стенд панели чтения
         run: dotnet run --project Tests/DocReader --configuration Release --no-build
+
+      - name: Фильтр баз в разделах
+        run: dotnet run --project Tests/Sections --configuration Release --no-build -- --only sidebarfilter
 
       - name: Настройки резервных копий и фоновые работы
         run: dotnet run --project Tests/BackupUi --configuration Release --no-build
@@ -413,6 +417,7 @@ jobs:
         run: |
           dotnet run --project Tests/RecordPage --framework net10.0 --configuration Release --no-build -- --only relations --out "$RUNNER_TEMP/relation-ui" --ref "$RUNNER_TEMP/ui-reference"
           dotnet run --project Tests/RecordPage --framework net10.0 --configuration Release --no-build -- --only relationcomputed --out "$RUNNER_TEMP/relation-ui" --ref "$RUNNER_TEMP/ui-reference"
+          dotnet run --project Tests/RecordPage --framework net10.0 --configuration Release --no-build -- --only dateperiod --out "$RUNNER_TEMP/date-period-ui" --ref "$RUNNER_TEMP/ui-reference"
           dotnet run --project Tests/RecordPage --framework net10.0 --configuration Release --no-build -- --only relationintegrity --out "$RUNNER_TEMP/relation-ui" --ref "$RUNNER_TEMP/ui-reference"
           dotnet run --project Tests/RecordPage --framework net10.0 --configuration Release --no-build -- --only backlinks --out "$RUNNER_TEMP/relation-ui" --ref "$RUNNER_TEMP/ui-reference"
           dotnet run --project Tests/RecordPage --framework net10.0 --configuration Release --no-build -- --only fileauto --out "$RUNNER_TEMP/file-ui" --ref "$RUNNER_TEMP/ui-reference"

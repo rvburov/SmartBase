@@ -262,6 +262,7 @@ public partial class ConstructorRepository
                         ? collection.Cast<object>().ToArray() : null,
                     navigation.Metadata.TargetEntityType.ClrType, navigation.IsLoaded)).ToArray())).ToArray();
             var restoreChanges = context.CaptureTransactionChanges();
+            var restoreDatePeriods = CaptureDatePeriodCreations(context);
             var fileWork = PendingFiles.TryGetValue(context, out var files)
                 ? files.Fields.ToDictionary(f => f.Key, f => f.Value.ToDictionary(r => r.Key, r => r.Value)) : null;
             var relationWork = PendingRelationChanges.TryGetValue(context, out var relations)
@@ -316,6 +317,7 @@ public partial class ConstructorRepository
                 if (relationWork is not null)
                     foreach (var item in relationWork) PendingRelationChanges.GetValue(context, _ => new()).Changes[item.Key] = item.Value;
                 restoreChanges();
+                restoreDatePeriods();
             };
         }
 

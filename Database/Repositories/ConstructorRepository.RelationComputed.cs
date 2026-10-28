@@ -249,7 +249,7 @@ public partial class ConstructorRepository
                     if (targetField is null || targetField.CollectionId != relationCfg.TargetCollectionId)
                         throw new InvalidOperationException("Выбранное свойство отсутствует в целевой коллекции.");
                     if (current.FieldType == "rollup" && RelationComputedConfig.IsNumberAggregate(cfg.Aggregate)
-                        && targetField.FieldType is not ("number" or "rollup"))
+                        && targetField.FieldType is not ("number" or "rollup" or "date_period"))
                         throw new InvalidOperationException("Для числового итога выберите числовое свойство.");
                     if (RelationComputedConfig.IsDateAggregate(cfg.Aggregate) && !FieldTypeInfo.IsDateLike(targetField.FieldType))
                         throw new InvalidOperationException("Для самой ранней или поздней даты выберите свойство-дату.");

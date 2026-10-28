@@ -256,15 +256,25 @@ public partial class ConstructorRepository
             return AutoFailure(RelationAutoStatus.InvalidRule, field, "Коллекция для подбора связей не найдена.");
         var sourceOptions = GetRelationPropertyOptions(field.CollectionId);
         var targetOptions = target.GetRelationPropertyOptions(cfg.TargetCollectionId);
+        var timeDependencies = new AutoRelationTimeDependencies();
+        timeDependencies.Seed(this, field.CollectionId, sourceOptions);
+        timeDependencies.Seed(target, cfg.TargetCollectionId, targetOptions);
         for (var i = 0; i < pairs.Count; i++)
         {
             var sourceOption = sourceOptions.FirstOrDefault(p => p.Key == pairs[i].SourceField);
             var targetOption = targetOptions.FirstOrDefault(p => p.Key == pairs[i].TargetField);
             if (sourceOption is null || targetOption is null)
                 return AutoFailure(RelationAutoStatus.InvalidRule, field, Pair(i, "Свойство для сопоставления не найдено."));
+            var timeProblem = timeDependencies.Problem(this, field.CollectionId, pairs[i].SourceField)
+                ?? timeDependencies.Problem(target, cfg.TargetCollectionId, pairs[i].TargetField);
+            if (timeProblem is not null)
+                return AutoFailure(RelationAutoStatus.InvalidRule, field, Pair(i, timeProblem));
             if (!RelationAutoMatch.Compatible(sourceOption.FieldType, sourceOption.ConfigJson, targetOption.FieldType, targetOption.ConfigJson))
                 return AutoFailure(RelationAutoStatus.InvalidRule, field, Pair(i, "Для сопоставления выбраны несовместимые типы свойств."));
         }
+        foreach (var condition in cfg.Where ?? [])
+            if (timeDependencies.Problem(target, cfg.TargetCollectionId, condition.Field) is { } timeProblem)
+                return AutoFailure(RelationAutoStatus.InvalidRule, field, timeProblem);
         if (HasAutoDependencyCycle(field))
             return AutoFailure(RelationAutoStatus.InvalidRule, field, "Правило образует циклическую зависимость между свойствами.");
 

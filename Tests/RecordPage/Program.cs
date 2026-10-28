@@ -10,7 +10,7 @@
 // Карточки — индексы рисованного списка (PropertyList): их прямоугольники считает поверхность,
 // редактор над карточкой появляется под указателем.
 //
-//   dotnet run -c Release --project Tests/RecordPage -- [--db PATH] [--wide PATH] [--out DIR] [--ref DIR] [--only frames|behave|perf|empty|fileauto|fileprobe|fileload|relations|relationcomputed|relationintegrity|backlinks] [--gate]
+//   dotnet run -c Release --project Tests/RecordPage -- [--db PATH] [--wide PATH] [--out DIR] [--ref DIR] [--only frames|behave|perf|empty|fileauto|fileprobe|fileload|relations|relationcomputed|relationintegrity|backlinks|dateperiod] [--gate]
 
 using System.Diagnostics;
 using System.Reflection;
@@ -40,7 +40,7 @@ var gate    = args.Contains("--gate");
 Directory.CreateDirectory(outDir);
 Directory.CreateDirectory(refDir);
 Console.OutputEncoding = System.Text.Encoding.UTF8;
-if (only is not ("empty" or "fileauto" or "fileprobe" or "fileload" or "relationcomputed" or "relations" or "relationintegrity" or "backlinks") && !File.Exists(dbPath)) { Console.WriteLine($"Нет базы стенда: {dbPath}"); return 1; }
+if (only is not ("empty" or "fileauto" or "fileprobe" or "fileload" or "relationcomputed" or "relations" or "relationintegrity" or "backlinks" or "dateperiod") && !File.Exists(dbPath)) { Console.WriteLine($"Нет базы стенда: {dbPath}"); return 1; }
 
 // Порядок важен: UseSkia ДО UseHeadless (как в Tests/GridProto).
 AppBuilder.Configure<SmartBase.App>()
@@ -75,6 +75,7 @@ if (only == "relationcomputed") return RelationComputedChecks.Run(outDir);
 if (only == "relations") return RelationChecks.Run(outDir);
 if (only == "relationintegrity") return RelationIntegrityChecks.Run(outDir);
 if (only == "backlinks") return BacklinkChecks.Run(outDir);
+if (only == "dateperiod") return DatePeriodUiChecks.Run(outDir);
 
 // Копия базы: стенд пишет значения свойств.
 var copy = Path.Combine(outDir, "page-" + Path.GetFileName(dbPath));

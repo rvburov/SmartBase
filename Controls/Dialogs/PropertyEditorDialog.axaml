@@ -88,6 +88,14 @@
                   Margin="0,0,0,12"
                   Background="{StaticResource BrushSecondaryBg}"
                   CornerRadius="{StaticResource RadiusBase}">
+            <!-- Каталог типов короткий и фиксированный. Все контейнеры нужны сразу,
+                 чтобы группы разной высоты и недоступный последний тип не терялись
+                 из-за оценки длины виртуальной ленты; прокрутка попапа остается обычной. -->
+            <ComboBox.ItemsPanel>
+                <ItemsPanelTemplate>
+                    <StackPanel />
+                </ItemsPanelTemplate>
+            </ComboBox.ItemsPanel>
             <ComboBox.ItemTemplate>
                 <DataTemplate>
                     <StackPanel Orientation="Horizontal" Spacing="10">
@@ -140,6 +148,59 @@
              Текст собирается по флагам поля в code-behind; роли нет — блока нет.
              Общий баннер (иконка + красная рамка), как у ошибок и пояснения SystemNote. -->
         <w:NoticeBanner x:Name="RoleNote" Margin="0,0,0,12" />
+
+        <StackPanel x:Name="DatePeriodSection" IsVisible="False" Spacing="8" Margin="0,0,0,12">
+            <TextBlock Text="Считать время от свойства"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+            <ComboBox x:Name="DatePeriodStartCombo" HorizontalAlignment="Stretch" Height="34" />
+
+            <TextBlock Text="До" FontWeight="{StaticResource FontWeightBold}"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+            <ComboBox x:Name="DatePeriodEndModeCombo" HorizontalAlignment="Stretch" Height="34">
+                <ComboBoxItem Content="Текущего времени" />
+                <ComboBoxItem Content="Другого свойства с датой" />
+            </ComboBox>
+            <ComboBox x:Name="DatePeriodEndCombo" IsVisible="False"
+                      HorizontalAlignment="Stretch" Height="34" />
+
+            <TextBlock Text="Дни недели" FontWeight="{StaticResource FontWeightBold}"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+            <WrapPanel x:Name="DatePeriodWeekdays" Orientation="Horizontal">
+                <CheckBox Content="Пн" IsChecked="True" Margin="0,0,8,0" />
+                <CheckBox Content="Вт" IsChecked="True" Margin="0,0,8,0" />
+                <CheckBox Content="Ср" IsChecked="True" Margin="0,0,8,0" />
+                <CheckBox Content="Чт" IsChecked="True" Margin="0,0,8,0" />
+                <CheckBox Content="Пт" IsChecked="True" Margin="0,0,8,0" />
+                <CheckBox Content="Сб" IsChecked="True" Margin="0,0,8,0" />
+                <CheckBox Content="Вс" IsChecked="True" />
+            </WrapPanel>
+
+            <TextBlock Text="Учитывать время в течение дня"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+            <Grid ColumnDefinitions="*,Auto,*">
+                <TextBox x:Name="DatePeriodDayStart" Grid.Column="0" Text="00:00"
+                         Watermark="чч:мм" Height="34" VerticalContentAlignment="Center" />
+                <TextBlock Grid.Column="1" Text="—" Margin="10,0" VerticalAlignment="Center" />
+                <TextBox x:Name="DatePeriodDayEnd" Grid.Column="2" Text="24:00"
+                         Watermark="чч:мм" Height="34" VerticalContentAlignment="Center" />
+            </Grid>
+            <TextBlock Text="Например, 09:00–18:00. Для всего дня: 00:00–24:00."
+                       TextWrapping="Wrap" FontSize="{DynamicResource FontSizeSmall}"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+
+            <StackPanel Orientation="Horizontal" Spacing="10">
+                <ToggleSwitch x:Name="DatePeriodAutomaticToggle" IsChecked="True"
+                              OnContent="" OffContent="" VerticalAlignment="Center" />
+                <TextBlock Text="Автоматический расчет" VerticalAlignment="Center"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+            </StackPanel>
+            <TextBlock x:Name="DatePeriodModeHint" TextWrapping="Wrap"
+                       FontSize="{DynamicResource FontSizeSmall}"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+        </StackPanel>
 
         <!-- Отображать в календаре: виден только для типа «Дата». Если включено — значения
              этого поля показываются в календаре как события. Несколько полей-дат коллекции

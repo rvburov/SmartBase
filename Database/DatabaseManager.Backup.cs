@@ -3,6 +3,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
 using SmartBase.Logging;
+using SmartBase.Database.Backup;
 
 namespace SmartBase.Database;
 
@@ -44,8 +45,24 @@ public sealed partial class DatabaseManager
     /// последовательным копированием. Не хватает места на своем диске — копия идет прежним путем,
     /// прямо в папку копий.
     /// </summary>
-    public static void BackupTo(string path, string name, string targetPath, Action<string, double?>? stage)
+    public static void BackupTo(string path, string name, string targetPath, Action<string, double?>? stage,
+                                CancellationToken cancellationToken = default)
     {
+        try { BackupToCore(path, name, targetPath, stage, cancellationToken); }
+        catch (Exception) when (cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(cancellationToken);
+        }
+    }
+
+    private static void BackupToCore(string path, string name, string targetPath, Action<string, double?>? stage,
+                                    CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!File.Exists(path)) throw new FileNotFoundException("Файл базы не найден.", path);
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        if (System.IO.Path.GetFullPath(path).Equals(System.IO.Path.GetFullPath(targetPath), comparison))
+            throw new ArgumentException("Путь резервной копии совпадает с исходной базой.", nameof(targetPath));
         var watch = Stopwatch.StartNew();
         var part  = targetPath + BackupPartSuffix;
         DeleteQuietly(part);
@@ -54,15 +71,26 @@ public sealed partial class DatabaseManager
         using (var probe = new AppDbContext(path))
         {
             probe.ApplyPerformancePragmas();
-            fileBytes = new FileInfo(path).Length;
+            probe.Database.OpenConnection();
+            using var command = probe.Database.GetDbConnection().CreateCommand();
+            using var interruption = new BackupCancellation((SqliteConnection)command.Connection!, cancellationToken);
+            command.CommandText = "SELECT page_count * page_size FROM pragma_page_count, pragma_page_size;";
+            // page_count включает страницы WAL, которых еще может не быть в основном файле.
+            fileBytes = Convert.ToInt64(command.ExecuteScalar());
             liveBytes = Math.Max(1, fileBytes - SqliteMaintenance.ReadFreeSpace(probe).FreeBytes);
         }
         AppDbContext.ResetPool(path);
+        cancellationToken.ThrowIfCancellationRequested();
+        BackupSpace.RequireAvailable(System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(targetPath))!, liveBytes);
 
         var snapshotNeeded = NetworkPath.IsNetwork(path);
         var remoteTarget   = NetworkPath.IsNetwork(targetPath);
         var scratchDir     = snapshotNeeded || remoteTarget
-            ? BackupScratchDir((snapshotNeeded ? fileBytes : 0) + (remoteTarget ? liveBytes : 0))
+            // Папка копий и временная папка могут делить диск (включая bind mounts
+            // и общие контейнеры APFS). Резервируем также место под конечный .part.
+            // На разных дисках оценка консервативна: при нехватке временного места
+            // отключается только промежуточная сборка, остается прямая копия.
+            ? BackupScratchDir((snapshotNeeded ? fileBytes : 0) + (remoteTarget ? liveBytes : 0) + liveBytes)
             : null;
 
         string? snapshot = snapshotNeeded && scratchDir is not null ? ScratchFile(scratchDir) : null;
@@ -72,26 +100,30 @@ public sealed partial class DatabaseManager
             if (snapshot is not null)
             {
                 using (FileGrowth(snapshot, fileBytes, $"Читаю «{name}»", stage))
-                    SnapshotTo(path, snapshot);
+                    SnapshotTo(path, snapshot, cancellationToken);
                 using (FileGrowth(work, liveBytes, $"Копирую «{name}»", stage))
-                    VacuumIntoFrom(snapshot, work);
+                    VacuumIntoFrom(snapshot, work, cancellationToken);
                 DeleteQuietly(snapshot);
             }
             else
             {
-                using var db = new AppDbContext(path);
-                db.ApplyPerformancePragmas();
-                // Путь — параметром: VACUUM INTO принимает выражение, апострофы в имени файла не ломают SQL.
                 using (FileGrowth(work, liveBytes, $"Копирую «{name}»", stage))
-                    db.Database.ExecuteSqlRaw("VACUUM INTO {0};", work);
+                    VacuumIntoFrom(path, work, cancellationToken);
             }
             AppDbContext.ResetPool(path);
 
+            cancellationToken.ThrowIfCancellationRequested();
             stage?.Invoke($"Проверяю копию «{name}»…", null);
-            if (VerifyCopy(work, name, stage) is { } problem)
+            if (VerifyCopy(work, name, stage, cancellationToken) is { } problem)
                 throw new InvalidOperationException($"Копия не прошла проверку целостности: {problem}");
 
-            if (work != part) CopyWithProgress(work, part, name, stage);
+            if (work != part)
+            {
+                BackupSpace.RequireAvailable(System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(part))!, new FileInfo(work).Length);
+                CopyWithProgress(work, part, name, stage, cancellationToken);
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            // После атомарной публикации отмена уже не превращает готовую копию в неуспех.
             File.Move(part, targetPath, overwrite: true);
         }
         finally
@@ -107,12 +139,25 @@ public sealed partial class DatabaseManager
 
     /// <summary>Полная проверка копии параллельными частями (см. <see cref="BackupTo"/>).
     /// Возвращает первое найденное нарушение или null, если копия цела.</summary>
-    internal static string? VerifyCopy(string file, string name, Action<string, double?>? stage)
+    internal static string? VerifyCopy(string file, string name, Action<string, double?>? stage,
+                                       CancellationToken cancellationToken = default)
     {
+        try { return VerifyCopyCore(file, name, stage, cancellationToken); }
+        catch (Exception) when (cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(cancellationToken);
+        }
+    }
+
+    private static string? VerifyCopyCore(string file, string name, Action<string, double?>? stage,
+                                         CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
         List<string> tables = [];
         using (var conn = OpenCopy(file))
         using (var cmd = conn.CreateCommand())
         {
+            using var interruption = new BackupCancellation(conn, cancellationToken);
             cmd.CommandText = "SELECT name FROM sqlite_schema WHERE type = 'table'";
             using var rdr = cmd.ExecuteReader();
             while (rdr.Read()) tables.Add(rdr.GetString(0));
@@ -127,11 +172,12 @@ public sealed partial class DatabaseManager
         // По одной части на поток (NoBuffering): иначе ForEach раздает части пачками, и две самые
         // большие таблицы проверялись одним потоком подряд — параллельности не было вовсе.
         Parallel.ForEach(System.Collections.Concurrent.Partitioner.Create(checks, System.Collections.Concurrent.EnumerablePartitionerOptions.NoBuffering),
-            new ParallelOptions { MaxDegreeOfParallelism = Math.Clamp(Environment.ProcessorCount / 2, 1, 4) },
+            new ParallelOptions { MaxDegreeOfParallelism = Math.Clamp(Environment.ProcessorCount / 2, 1, 4), CancellationToken = cancellationToken },
             (sql, loop) =>
             {
                 if (Volatile.Read(ref problem) is not null) { loop.Stop(); return; }
                 using var conn = OpenCopy(file);
+                using var interruption = new BackupCancellation(conn, cancellationToken);
                 using var cmd  = conn.CreateCommand();
                 cmd.CommandText    = sql;
                 cmd.CommandTimeout = 24 * 3600;
@@ -147,6 +193,7 @@ public sealed partial class DatabaseManager
                 var n = Interlocked.Increment(ref done);
                 stage?.Invoke($"Проверяю копию «{name}»…", Math.Min(0.99, n / (double)checks.Count));
             });
+        cancellationToken.ThrowIfCancellationRequested();
         return problem;
     }
 
@@ -176,17 +223,49 @@ public sealed partial class DatabaseManager
 
     // Снимок сетевой базы подряд, страница за страницей (Online Backup API), — согласованный: на
     // время чтения база держит общий замок, как и прежний VACUUM INTO, только недолго.
-    private static void SnapshotTo(string path, string snapshot)
+    private static void SnapshotTo(string path, string snapshot, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         using var src = new AppDbContext(path);
         var srcConn = (SqliteConnection)src.Database.GetDbConnection();
         src.Database.OpenConnection();
         try
         {
+            using var interruption = new BackupCancellation(srcConn, cancellationToken);
+            using var readTransaction = srcConn.BeginTransaction(deferred: true);
+            using (var pin = srcConn.CreateCommand())
+            {
+                pin.Transaction = readTransaction;
+                // BEGIN DEFERRED сам еще не фиксирует снимок: нужно настоящее чтение
+                // btree. Без него внешние записи перезапускали бы backup между шагами.
+                pin.CommandText = "SELECT name FROM sqlite_schema LIMIT 1;";
+                pin.ExecuteScalar();
+            }
             var cs = new SqliteConnectionStringBuilder { DataSource = snapshot, Pooling = false }.ToString();
             using var dst = SqliteGate.NewConnection(cs);
             dst.Open();
-            srcConn.BackupDatabase(dst);
+            var backup = SQLitePCL.raw.sqlite3_backup_init(dst.Handle!, "main", srcConn.Handle!, "main");
+            if (backup is null) throw new InvalidOperationException("Не удалось начать согласованный снимок базы.");
+            try
+            {
+                var waiting = Stopwatch.StartNew();
+                while (true)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var result = SQLitePCL.raw.sqlite3_backup_step(backup, 256);
+                    if (result == SQLitePCL.raw.SQLITE_DONE) break;
+                    if (result == SQLitePCL.raw.SQLITE_OK) { waiting.Restart(); continue; }
+                    if (result is SQLitePCL.raw.SQLITE_BUSY or SQLitePCL.raw.SQLITE_LOCKED)
+                    {
+                        if (waiting.Elapsed > TimeSpan.FromSeconds(60))
+                            throw new IOException("База занята: согласованный снимок не удалось получить за минуту.");
+                        if (cancellationToken.WaitHandle.WaitOne(50)) cancellationToken.ThrowIfCancellationRequested();
+                        continue;
+                    }
+                    throw new SqliteException("Не удалось снять согласованный снимок базы.", result);
+                }
+            }
+            finally { SQLitePCL.raw.sqlite3_backup_finish(backup); }
         }
         finally
         {
@@ -194,20 +273,24 @@ public sealed partial class DatabaseManager
         }
     }
 
-    private static void VacuumIntoFrom(string source, string target)
+    private static void VacuumIntoFrom(string source, string target, CancellationToken cancellationToken)
     {
-        var cs = new SqliteConnectionStringBuilder { DataSource = source, Pooling = false }.ToString();
+        var cs = new SqliteConnectionStringBuilder { DataSource = source, Pooling = false, Mode = SqliteOpenMode.ReadOnly }.ToString();
         using var conn = SqliteGate.NewConnection(cs);
         conn.Open();
+        using var interruption = new BackupCancellation(conn, cancellationToken);
         using var cmd = conn.CreateCommand();
-        cmd.CommandText    = "PRAGMA cache_size=-65536; PRAGMA mmap_size=268435456; VACUUM INTO $target;";
+        cmd.CommandText    = "PRAGMA cache_size=-65536; "
+                           + (NetworkPath.IsNetwork(source) ? "" : "PRAGMA mmap_size=268435456; ")
+                           + "VACUUM INTO $target;";
         cmd.CommandTimeout = 24 * 3600;
         cmd.Parameters.AddWithValue("$target", target);
         cmd.ExecuteNonQuery();
     }
 
     // Готовая проверенная копия — в папку копий на сетевом диске одним последовательным потоком.
-    private static void CopyWithProgress(string from, string to, string name, Action<string, double?>? stage)
+    private static void CopyWithProgress(string from, string to, string name, Action<string, double?>? stage,
+                                          CancellationToken cancellationToken)
     {
         var total = Math.Max(1, new FileInfo(from).Length);
         using var src = new FileStream(from, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 20);
@@ -218,6 +301,7 @@ public sealed partial class DatabaseManager
         int n;
         while ((n = src.Read(buffer, 0, buffer.Length)) > 0)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             dst.Write(buffer, 0, n);
             copied += n;
             if (stage is null || copied - reportedAt < 32 << 20) continue;
@@ -226,16 +310,50 @@ public sealed partial class DatabaseManager
                   Math.Min(0.99, copied / (double)total));
         }
         dst.Flush(flushToDisk: true);
+        cancellationToken.ThrowIfCancellationRequested();
     }
 
     // Ход этапа по росту файла: раз в полсекунды «N из ≈ M МБ».
     private static IDisposable? FileGrowth(string file, long expected, string phase, Action<string, double?>? stage) =>
-        stage is null ? null : new System.Threading.Timer(_ =>
+        stage is null ? null : new FileGrowthReporter(file, expected, phase, stage);
+
+    private sealed class FileGrowthReporter : IDisposable
+    {
+        private System.Threading.Timer? _timer;
+        private System.Runtime.ExceptionServices.ExceptionDispatchInfo? _failure;
+
+        public FileGrowthReporter(string file, long expected, string phase, Action<string, double?> stage)
         {
-            var done = File.Exists(file) ? new FileInfo(file).Length : 0;
-            stage($"{phase}\n{done / 1048576.0:N0} из ≈ {expected / 1048576.0:N0} МБ",
-                  Math.Min(0.99, done / (double)Math.Max(1, expected)));
-        }, null, 0, 500);
+            void Report()
+            {
+                long done = 0;
+                try { if (File.Exists(file)) done = new FileInfo(file).Length; }
+                catch (IOException) { /* файл мог исчезнуть между Exists и Length */ }
+                stage($"{phase}\n{done / 1048576.0:N0} из ≈ {expected / 1048576.0:N0} МБ",
+                      Math.Min(0.99, done / (double)Math.Max(1, expected)));
+            }
+            Report();
+            _timer = new System.Threading.Timer(_ =>
+            {
+                try { Report(); }
+                catch (Exception ex)
+                {
+                    Interlocked.CompareExchange(ref _failure,
+                        System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex), null);
+                }
+            }, null, 500, 500);
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _timer, null) is not { } timer) return;
+            // Dispose без ожидания оставлял старый отчет после начала следующего этапа
+            // и даже после успеха. После этого барьера callbacks этапа уже не работают.
+            using var drained = new ManualResetEvent(false);
+            if (timer.Dispose(drained)) drained.WaitOne();
+            _failure?.Throw();
+        }
+    }
 
     /// <summary>Папка для промежуточных файлов копии на своем диске — или null, если там не
     /// хватает места (с запасом в 1 ГБ: временная папка общая с системой). Брошенное
@@ -249,7 +367,7 @@ public sealed partial class DatabaseManager
             foreach (var stale in Directory.EnumerateFiles(dir))
                 if (DateTime.UtcNow - File.GetLastWriteTimeUtc(stale) > TimeSpan.FromDays(1))
                     DeleteQuietly(stale);
-            return FreeBytes(dir) >= needBytes + (1L << 30) ? dir : null;
+            return BackupSpace.AvailableBytes(dir) >= needBytes + (1L << 30) ? dir : null;
         }
         catch (Exception ex)
         {
@@ -258,14 +376,25 @@ public sealed partial class DatabaseManager
         }
     }
 
-    // Свободно на томе папки: том с самым длинным корнем, который является началом ее пути.
-    private static long FreeBytes(string dir)
+    // Свой непуловый дескриптор: отмена не прерывает команды другой работы. Progress
+    // handler закрывает гонку «token отменен перед запуском SQL, interrupt уже прошел».
+    private sealed class BackupCancellation : IDisposable
     {
-        var full = System.IO.Path.GetFullPath(dir);
-        var drive = DriveInfo.GetDrives()
-            .Where(d => d.IsReady && full.StartsWith(d.RootDirectory.FullName, StringComparison.OrdinalIgnoreCase))
-            .MaxBy(d => d.RootDirectory.FullName.Length);
-        return drive?.AvailableFreeSpace ?? 0;
+        private readonly SQLitePCL.sqlite3 _handle;
+        private readonly CancellationTokenRegistration _registration;
+        public BackupCancellation(SqliteConnection connection, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            _handle = connection.Handle!;
+            SQLitePCL.raw.sqlite3_progress_handler(_handle, 10_000,
+                _ => cancellationToken.IsCancellationRequested ? 1 : 0, null);
+            _registration = cancellationToken.Register(() => SQLitePCL.raw.sqlite3_interrupt(_handle));
+        }
+        public void Dispose()
+        {
+            _registration.Dispose();
+            SQLitePCL.raw.sqlite3_progress_handler(_handle, 0, null!, null);
+        }
     }
 
     private static string ScratchFile(string dir) =>
@@ -275,6 +404,9 @@ public sealed partial class DatabaseManager
     {
         try { if (File.Exists(file)) File.Delete(file); }
         catch { /* best-effort: уберет следующая копия (старше суток) */ }
-        try { if (File.Exists(file + "-journal")) File.Delete(file + "-journal"); } catch { /* так же */ }
+        // Только собственные временные файлы: readonly открытие WAL-снимка может
+        // оставить пустые -wal/-shm, даже когда все подключения уже закрыты.
+        foreach (var suffix in new[] { "-journal", "-wal", "-shm" })
+            try { if (File.Exists(file + suffix)) File.Delete(file + suffix); } catch { /* так же */ }
     }
 }

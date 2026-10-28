@@ -32,6 +32,7 @@ public static class FieldTypeIcons
         // Вычисляемые типы: значение авто из метаданных записи. Иконку переиспользуем
         // (дата — календарь, пользователь — человек), различаются подписью.
         "created_at" or "updated_at" => Icon("IconCalendarDate"),
+        "date_period" => Icon("IconClock"),
         "created_by" or "updated_by" => Icon("IconUser"),
         _          => null,
     };

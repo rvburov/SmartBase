@@ -159,7 +159,7 @@ public partial class PropertyEditorDialog
     {
         var type = (row.Property.SelectedItem as RelationPropertyItem)?.FieldType ?? "text";
         var kinds = new List<RelationDataKind> { new("lookup", "Значения"), new("count", "Количество") };
-        if (type is "number" or "rollup")
+        if (type is "number" or "rollup" or "date_period")
             kinds.AddRange(new[] { "sum", "avg", "min", "max" }.Select(a => new RelationDataKind(a, RelationComputedConfig.AggregateLabel(a))));
         if (FieldTypeInfo.IsDateLike(type))
             kinds.AddRange(new[] { "earliest", "latest" }.Select(a => new RelationDataKind(a, RelationComputedConfig.AggregateLabel(a))));

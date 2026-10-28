@@ -4,6 +4,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Headless;
+using Avalonia.Input;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using SmartBase.Controls.Components;
@@ -41,15 +42,33 @@ window.Show();
 const string jobId = "backup-ui-test";
 try
 {
-    BackgroundJobs.Report(jobId, "Резервное копирование", "Основная: Проверяю копию", 3, 10, icon: "IconArchive");
+    var stopCount = 0;
+    BackgroundJobs.Report(jobId, "Резервное копирование", "Основная: Проверяю копию", 3, 10,
+        stop: () => stopCount++, icon: "IconArchive");
     BackgroundJobsPanel.Show(window, anchor);
     Dispatcher.UIThread.RunJobs();
     var host = (StackPanel)typeof(BackgroundJobsPanel).GetField("_host", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
     var text = host.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text).ToList();
     Check(text.Contains("Резервное копирование") && text.Contains("Основная: Проверяю копию"), "Панель показывает базу и этап");
+    var percent = host.GetVisualDescendants().OfType<TextBlock>().Single(t => t.Text == "30 %");
+    Check(percent.IsVisible, "Рядом с полосой явно показаны 30 процентов текущего этапа");
+    var stop = host.GetVisualDescendants().OfType<TextBlock>().Single(t => t.Text == "Остановить");
+    var pointer = new Avalonia.Input.Pointer(Avalonia.Input.Pointer.GetNextFreeId(), PointerType.Mouse, true);
+    var released = new PointerEventArgs(InputElement.PointerReleasedEvent, stop, pointer, stop,
+        new Point(1, 1), 0, PointerPointProperties.None, KeyModifiers.None);
+    stop.RaiseEvent(new TappedEventArgs(InputElement.TappedEvent, released));
+    Check(stopCount == 1, "Команда Остановить вызывает отмену работы");
     Application.Current!.TryFindResource("IconArchive", out var archive);
     Check(archive is not null && host.GetVisualDescendants().OfType<Avalonia.Controls.Shapes.Path>()
         .Any(p => ReferenceEquals(p.Data, archive)), "В панели нарисована собственная иконка архива");
+
+    BackgroundJobs.Report(jobId, "Резервное копирование", "Основная: Завершаю запись", int.MaxValue, 10, icon: "IconArchive");
+    Dispatcher.UIThread.RunJobs();
+    Check(percent.IsVisible && percent.Text == "100 %", "Некорректный счетчик не выводит процент выше ста");
+    BackgroundJobs.Report(jobId, "Резервное копирование", "Основная: Создаю дамп PostgreSQL", icon: "IconArchive");
+    Dispatcher.UIThread.RunJobs();
+    Check(!percent.IsVisible && !stop.IsVisible,
+        "Неизвестный объем не выдается за процент, а отсутствующая отмена не остается от прошлого отчета");
 
     BackgroundJobs.Fail(jobId, "Резервное копирование", "Основная: временный файл не найден", "IconArchive");
     Dispatcher.UIThread.RunJobs();

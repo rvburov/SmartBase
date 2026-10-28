@@ -15,8 +15,8 @@
         <!-- Ошибка (нет прав и т.п.) — тот же баннер, что в диалогах -->
         <w:NoticeBanner Grid.Row="1" x:Name="NoticeBanner" Margin="0,0,16,8" />
 
-        <!-- Строка быстрого добавления: название + Enter, срок, исполнитель, коллекция,
-             «Добавить». Коллекция выбирается явно: раньше задача молча уезжала в первую
+        <!-- Быстрое добавление: название + Enter на всю ширину сверху, срок, исполнитель,
+             коллекция и «Добавить» ниже. Коллекция выбирается явно: раньше задача молча уезжала в первую
              отмеченную, и попасть в нужную можно было только через окно задачи. -->
         <Border Grid.Row="2"
                 Background="{StaticResource BrushBg}"
@@ -25,10 +25,9 @@
                 CornerRadius="{StaticResource RadiusMedium}"
                 Padding="12,8"
                 Margin="0,0,16,12">
-            <Grid ColumnDefinitions="*,12,Auto,6,Auto,6,Auto,12,Auto,6,Auto,12,Auto,6,Auto,12,Auto"
-                  VerticalAlignment="Center">
+            <Grid RowDefinitions="Auto,8,Auto">
 
-                <TextBox Grid.Column="0" x:Name="QuickTitle"
+                <TextBox Grid.Row="0" x:Name="QuickTitle"
                          Watermark="Новая задача — название и Enter"
                          BorderThickness="0"
                          Background="Transparent"
@@ -36,37 +35,43 @@
                          MinHeight="34"
                          ScrollViewer.VerticalScrollBarVisibility="Disabled" />
 
-                <TextBlock Grid.Column="2" Text="Срок"
-                           VerticalAlignment="Center"
-                           Foreground="{StaticResource BrushSecondaryText}" />
+                <!-- При широком сайдбаре параметры переносятся целыми группами:
+                     подпись остается рядом со своим редактором, кнопка доступна в узком разделе. -->
+                <WrapPanel Grid.Row="2" Orientation="Horizontal">
+                    <Grid ColumnDefinitions="Auto,6,Auto,6,Auto" Margin="0,0,12,8">
+                        <TextBlock Grid.Column="0" Text="Срок"
+                                   VerticalAlignment="Center"
+                                   Foreground="{StaticResource BrushSecondaryText}" />
+                        <w:DateField Grid.Column="2" x:Name="QuickDateField" Width="130" />
+                        <w:TimeField Grid.Column="4" x:Name="QuickTimeField" Width="90" />
+                    </Grid>
 
-                <w:DateField Grid.Column="4" x:Name="QuickDateField" Width="130" />
+                    <Grid ColumnDefinitions="Auto,6,Auto" Margin="0,0,12,8">
+                        <TextBlock Grid.Column="0" Text="Исполнитель"
+                                   VerticalAlignment="Center"
+                                   Foreground="{StaticResource BrushSecondaryText}" />
+                        <ComboBox Grid.Column="2" x:Name="QuickExecutor"
+                                  Width="150" Height="34"
+                                  Background="{StaticResource BrushSecondaryBg}"
+                                  CornerRadius="{StaticResource RadiusBase}" />
+                    </Grid>
 
-                <w:TimeField Grid.Column="6" x:Name="QuickTimeField" Width="90" />
+                    <Grid ColumnDefinitions="Auto,6,Auto" Margin="0,0,12,8">
+                        <TextBlock Grid.Column="0" Text="Коллекция"
+                                   VerticalAlignment="Center"
+                                   Foreground="{StaticResource BrushSecondaryText}" />
+                        <ComboBox Grid.Column="2" x:Name="QuickCollection"
+                                  Width="150" Height="34"
+                                  Background="{StaticResource BrushSecondaryBg}"
+                                  CornerRadius="{StaticResource RadiusBase}" />
+                    </Grid>
 
-                <TextBlock Grid.Column="8" Text="Исполнитель"
-                           VerticalAlignment="Center"
-                           Foreground="{StaticResource BrushSecondaryText}" />
-
-                <ComboBox Grid.Column="10" x:Name="QuickExecutor"
-                          Width="150" Height="34"
-                          Background="{StaticResource BrushSecondaryBg}"
-                          CornerRadius="{StaticResource RadiusBase}" />
-
-                <TextBlock Grid.Column="12" Text="Коллекция"
-                           VerticalAlignment="Center"
-                           Foreground="{StaticResource BrushSecondaryText}" />
-
-                <ComboBox Grid.Column="14" x:Name="QuickCollection"
-                          Width="150" Height="34"
-                          Background="{StaticResource BrushSecondaryBg}"
-                          CornerRadius="{StaticResource RadiusBase}" />
-
-                <Button Grid.Column="16" x:Name="QuickAddBtn" Classes="accent"
-                        Content="Добавить" Height="34"
-                        Padding="14,0"
-                        VerticalContentAlignment="Center"
-                        CornerRadius="{StaticResource RadiusPill}" />
+                    <Button x:Name="QuickAddBtn" Classes="accent"
+                            Content="Добавить" Height="34"
+                            Padding="14,0" Margin="0,0,0,8"
+                            VerticalContentAlignment="Center"
+                            CornerRadius="{StaticResource RadiusPill}" />
+                </WrapPanel>
             </Grid>
         </Border>
 

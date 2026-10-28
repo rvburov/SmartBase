@@ -157,6 +157,7 @@ public partial class TableView : UserControl
         // Delete по выделенным колонкам и записям, Enter и Tab в правке. Tunnel — раньше редактора.
         AddHandler(KeyDownEvent, OnTableKeyDown, RoutingStrategies.Tunnel);
         InitGridInput();   // нажатия, протягивание, правка — TableView.GridInput.cs
+        InitializeDatePeriodRuntime();
     }
 
     /// <summary>Пользователь сейчас редактирует ячейку (открыт накладной редактор).</summary>
@@ -256,6 +257,7 @@ public partial class TableView : UserControl
         if (_repository is not null && _renderedFontDelta != FontScale.Delta) Reload();
         ConstructorSettings.Changed += OnConstructorSettingsChanged;
         OnConstructorSettingsChanged();
+        _datePeriodTimer.Start();
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
@@ -265,6 +267,8 @@ public partial class TableView : UserControl
         _keyHookTopLevel = null;
         FontScale.Changed -= OnFontScaleChanged;
         ConstructorSettings.Changed -= OnConstructorSettingsChanged;
+        _datePeriodTimer.Stop();
+        _datePeriodRefreshCancellation?.Cancel();
         base.OnDetachedFromVisualTree(e);
     }
 
@@ -696,6 +700,7 @@ public partial class TableView : UserControl
     // оформление и ширины). Одна точка чтения на все пути пересборки колонок.
     private void LoadColumnState()
     {
+        _datePeriodRefreshCancellation?.Cancel();
         if (_repository is null) return;
 
         // Снимок открытия (прочитан в фоне) — вместо обращений к базе с UI-потока.
@@ -910,6 +915,7 @@ public partial class TableView : UserControl
     // и заполняем строку на месте, без пересборки таблицы.
     public void RefreshRecordRow(int recordId)
     {
+        _datePeriodRefreshCancellation?.Cancel();
         // Снимаем правку ячейки — только если правится ЭТА ЖЕ запись. Редакторы даты/выбора задают
         // значение императивно (Storage/SelectedItem ставятся один раз) — открытый редактор показывал
         // бы устаревшее значение, а при коммите еще и затер бы свежее из панели. Правка ДРУГОЙ
@@ -1353,6 +1359,7 @@ public partial class TableView : UserControl
         AddRecordMoveItems(menu, row);
         AddHeightModeItems(menu);
         AddActionItems(menu);
+        AddDatePeriodRecalculation(menu, row);
 
         menu.Items.Add(new Separator());
 
@@ -2786,7 +2793,7 @@ public partial class TableView : UserControl
         if (raw == "") return "(Пусто)";
         if (fieldType == "multiselect") return OneLine(MultiSelectValue.Display(raw, separator));
         if (fieldType == "number") return NumberFormatValue.Format(raw, numberFormat ?? NumberFormat.Default);
-        if (fieldType == "rollup") return FieldTypeInfo.FormatComputedDisplay(raw, fieldType);
+        if (fieldType is "rollup" or "date_period") return FieldTypeInfo.FormatComputedDisplay(raw, fieldType);
         if (fieldType == "file") return FileValue.DisplayName(raw);   // имя файла, а не абсолютный путь
         return OneLine(raw);
     }

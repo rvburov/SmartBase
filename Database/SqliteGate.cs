@@ -131,6 +131,8 @@ public static class SqliteGate
             _preparedWrite = new PreparedWrite(seconds == 0 ? Timeout.InfiniteTimeSpan : TimeSpan.FromSeconds(seconds), ct);
         internal void ClearPreparedWrite() => _preparedWrite = null;
         internal void ReleaseAdmission() => Interlocked.Exchange(ref _activeAdmission, null)?.Dispose();
+        private void ClearAdmission(IDisposable expected) =>
+            Interlocked.CompareExchange(ref _activeAdmission, null, expected);
 
         private WriteAdmission Admission()
         {
@@ -218,7 +220,7 @@ public static class SqliteGate
             {
                 var currentOwner = Interlocked.Exchange(ref _owner, null);
                 var currentLease = Interlocked.Exchange(ref _lease, null);
-                if (currentOwner is not null) Interlocked.CompareExchange(ref currentOwner._activeAdmission, null, this);
+                currentOwner?.ClearAdmission(this);
                 currentLease?.Dispose();
             }
         }

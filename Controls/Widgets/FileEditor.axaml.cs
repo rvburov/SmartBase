@@ -439,7 +439,7 @@ public partial class FileEditor : UserControl
         {
             Name = "AllFilesList",
             Height = 320,
-            ItemsPanel = new FuncTemplate<Panel>(() => new VirtualizingStackPanel()),
+            ItemsPanel = new FuncTemplate<Panel?>(() => new VirtualizingStackPanel()),
             ItemTemplate = new FuncDataTemplate<string>((path, _) =>
             {
                 var row = new StackPanel { Spacing = 2 };

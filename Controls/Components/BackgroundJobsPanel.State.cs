@@ -112,6 +112,11 @@ public static partial class BackgroundJobsPanel
         internal Border Container { get; }
         private readonly TextBlock _name = new() { TextTrimming = TextTrimming.CharacterEllipsis };
         private readonly TextBlock _detail = new();
+        private readonly TextBlock _percent = new()
+        {
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Right,
+        };
         private readonly TextBlock _link = new()
         {
             Cursor = LinkCursor, VerticalAlignment = VerticalAlignment.Center,
@@ -154,7 +159,11 @@ public static partial class BackgroundJobsPanel
             var rows = new StackPanel { Spacing = 2 };
             rows.Children.Add(top);
             rows.Children.Add(_detail);
-            rows.Children.Add(_bar);
+            var progress = new Grid { ColumnDefinitions = new ColumnDefinitions("*,8,Auto") };
+            progress.Children.Add(_bar);
+            Grid.SetColumn(_percent, 2);
+            progress.Children.Add(_percent);
+            rows.Children.Add(progress);
             Container = new Border { Padding = new Thickness(12, 10), Child = rows };
         }
 
@@ -190,9 +199,13 @@ public static partial class BackgroundJobsPanel
             _detail.TextTrimming = job.Failed ? TextTrimming.None : TextTrimming.CharacterEllipsis;
             _detail.TextWrapping = job.Failed ? TextWrapping.Wrap : TextWrapping.NoWrap;
             _bar.IsVisible = job.Total > 0;
+            _percent.IsVisible = job.Total > 0;
+            _percent.Foreground = style.Secondary;
+            _percent.FontSize = style.Small;
             if (job.Total > 0)
             {
                 var done = Math.Clamp(job.Done, 0, job.Total);
+                _percent.Text = $"{done * 100.0 / job.Total:0} %";
                 _bar.ColumnDefinitions[0].Width = new GridLength(done, GridUnitType.Star);
                 _bar.ColumnDefinitions[1].Width = new GridLength(job.Total - done, GridUnitType.Star);
             }

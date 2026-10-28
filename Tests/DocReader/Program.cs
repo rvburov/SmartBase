@@ -103,11 +103,19 @@ void Run()
     var window = new Window { Width = 520, Height = 700, Content = host };
     window.Show();
 
+    if (args.Contains("--only-page-layout", StringComparer.Ordinal))
+    {
+        window.Close();
+        Section("переходы страниц при смене раскладки", () => PageLayoutNavigationChecks.Run(dir, Check));
+        return;
+    }
+
     Section("текстовый файл",            () => TextFile(reader));
     Section("текст без текстового слоя", () => TextScan(reader));
     Section("подсказки кнопки режима",   () => ModeHints(reader));
     Section("скан PDF в двух режимах",   () => ScanModes(reader));
     Section("как в документе",           () => Pages(reader, window));
+    Section("переходы страниц при смене раскладки", () => PageLayoutNavigationChecks.Run(dir, Check));
     Section("текст дочитывается позже",  () => LateText(reader));
     Section("лист книги таблицей",       () => Sheets(reader));
     Section("закрепленные области",      () => FrozenPanes(reader));

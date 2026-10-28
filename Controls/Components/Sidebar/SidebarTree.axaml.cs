@@ -453,6 +453,10 @@ public partial class SidebarTree : UserControl
                 if (!db.Locked)
                     foreach (var child in BuildDbChildren(db))
                         rootNode.Children.Add(child);
+                // При отборе коллекций раздела корень без подходящих коллекций тоже лишний.
+                // Пустые группы не доказывают, что коллекции есть; ошибку чтения и отсутствие
+                // допуска, напротив, нельзя принимать за пустую базу и скрывать ее статус.
+                if (OnlyInSection && !db.Locked && db.Readable && !ShownCollections(db).Any()) continue;
                 roots.Add(rootNode);
             }
 

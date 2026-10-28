@@ -265,6 +265,7 @@ public partial class RecordPageView : UserControl
         HeaderBar.CollectionPanelToggled += (_, open) => CollectionPanelToggled?.Invoke(this, open);
 
         FooterBar.ActionsRequested += (_, anchor) => ShowActionsMenu(anchor);
+        InitializeDatePeriodRuntime();
     }
 
     /// <summary>Синхронизирует визуальное состояние кнопки с фактической видимостью блока коллекции.</summary>
@@ -273,6 +274,7 @@ public partial class RecordPageView : UserControl
     /// <param name="dbId">База показываемой записи: 0 — активная, &gt;0 — открыта межбазовым переходом.</param>
     public void Show(ConstructorRepository repository, int recordId, int collectionId, int dbId = 0)
     {
+        _datePeriodRefreshCancellation?.Cancel();
         // Порог медленности: список свойств рисованный, и открытие не зависит от числа свойств;
         // сюда уходит только чтение записи и полей.
         using var slow = Logging.Diag.Measure("открытие страницы записи", Logging.Diag.UiOpen,
@@ -342,6 +344,7 @@ public partial class RecordPageView : UserControl
 
     public void Clear()
     {
+        _datePeriodRefreshCancellation?.Cancel();
         ResetBacklinks();
         _reloadAfterList = false;
         _vm = null;
@@ -1181,6 +1184,14 @@ public partial class RecordPageView : UserControl
                     () => PropertyAutoFileRefreshRequested?.Invoke(this, fieldId));
             menu.Items.Add(miRefresh);
         }
+        if (row.Field.FieldType == "date_period"
+            && DatePeriodConfig.FromConfig(row.Field.ConfigJson) is { Automatic: false })
+        {
+            var recalculate = new MenuItem { Header = "Пересчитать" };
+            Guarded(recalculate, PermAction.EditRecord,
+                () => _ = RecalculateDatePeriodsAsync(TargetFieldIds(fieldId)));
+            menu.Items.Add(recalculate);
+        }
 
         AddMoveItems(menu,
             up => CanMovePropertyProvider?.Invoke(fieldId, up) ?? false,
@@ -1471,6 +1482,7 @@ public partial class RecordPageView : UserControl
         "user"     => "IconUser",
         // Вычисляемые типы: та же иконка, что и у дат/пользователя (различаются подписью).
         "created_at" or "updated_at" => "IconCalendarDate",
+        "date_period" => "IconClock",
         "created_by" or "updated_by" => "IconUser",
         _          => "IconFieldText",
     };

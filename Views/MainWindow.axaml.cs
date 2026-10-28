@@ -227,7 +227,8 @@ public partial class MainWindow : Window
         {
             _settingsView?.OnBackupFinished(dbId);
             var name = _workspace.Registry.GetAll().FirstOrDefault(d => d.Id == dbId)?.Name ?? "База данных";
-            _notifications.NotifyBackupResult(dbId, name, ok, msg);
+            _notifications.NotifyBackupResult(dbId, name, ok, msg,
+                canceled: msg == BackupService.CanceledMessage);
         };
         _notifications.BackupActivated += _ => Dispatcher.UIThread.Post(() =>
         {
