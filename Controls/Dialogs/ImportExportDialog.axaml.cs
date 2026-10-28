@@ -493,13 +493,6 @@ public partial class ImportExportDialog : Window
     }
 
     // Держим позицию окна при пересчете высоты (SizeToContent), чтобы оно не «прыгало».
-    private void KeepWindowPosition(PixelPoint pos)
-    {
-        void Restore(object? _, EventArgs __)
-        {
-            LayoutUpdated -= Restore;
-            if (Position != pos) Position = pos;
-        }
-        LayoutUpdated += Restore;
-    }
+    private void KeepWindowPosition(PixelPoint pos) =>
+        SmartBase.Controls.Behaviors.WindowPlacement.KeepPositionAfterLayout(this, pos);
 }

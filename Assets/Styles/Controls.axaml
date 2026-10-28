@@ -156,6 +156,9 @@
              зум приложения: контент — LayoutTransform, габариты — ×зум. MainWindow
              исключен внутри WindowZoom (у него собственный ScaleHost). -->
         <Setter Property="(b:WindowZoom.Enabled)" Value="True" />
+        <!-- Геометрия всех дополнительных окон привязана к главному окну, даже если
+             модальный владелец — другой диалог. После ручного перемещения не мешаем. -->
+        <Setter Property="(b:WindowPlacement.CenterOnMainWindow)" Value="True" />
     </Style>
     <!-- Минимальный размер только у главного окна, не у диалогов -->
     <Style Selector="Window.main">

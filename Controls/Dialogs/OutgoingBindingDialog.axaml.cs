@@ -369,13 +369,6 @@ public partial class OutgoingBindingDialog : Window
             ? brush
             : new SolidColorBrush(Color.Parse(fallbackHex));
 
-    private void KeepWindowPosition(PixelPoint pos)
-    {
-        void Restore(object? _, EventArgs __)
-        {
-            LayoutUpdated -= Restore;
-            if (Position != pos) Position = pos;
-        }
-        LayoutUpdated += Restore;
-    }
+    private void KeepWindowPosition(PixelPoint pos) =>
+        SmartBase.Controls.Behaviors.WindowPlacement.KeepPositionAfterLayout(this, pos);
 }

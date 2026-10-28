@@ -184,13 +184,6 @@ public partial class PasswordDialog : Window
     }
 
     // SizeToContent=Height: показ/скрытие баннера меняет высоту, окно не должно «прыгать».
-    private void KeepWindowPosition(PixelPoint pos)
-    {
-        void Restore(object? _, EventArgs __)
-        {
-            LayoutUpdated -= Restore;
-            if (Position != pos) Position = pos;
-        }
-        LayoutUpdated += Restore;
-    }
+    private void KeepWindowPosition(PixelPoint pos) =>
+        SmartBase.Controls.Behaviors.WindowPlacement.KeepPositionAfterLayout(this, pos);
 }

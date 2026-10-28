@@ -12,7 +12,8 @@ namespace SmartBase.Controls.Behaviors;
 /// габариты умножаются (<see cref="WindowZoom"/>): 800 → 1000 при 125%, 1200 при 150%.
 /// На ноутбучном экране такое окно уходит нижним краем за предел, а уменьшить его
 /// пользователь не может — ресайз запрещен. Здесь окно ужимается до рабочей области
-/// (без панели задач) и возвращается в ее центр; содержимое добирает внутренний скролл.
+/// (без панели задач) и центрируется относительно главного окна; содержимое добирает
+/// внутренний скролл.
 ///
 /// Ставится атрибутом в разметке окна: b:DialogFit.LimitToScreen="True".
 /// Окна с авто-высотой (SizeToContent) в этом не нуждаются — их высота и так идет за
@@ -42,7 +43,8 @@ public static class DialogFit
 
     private static void Apply(Window w)
     {
-        var screen = w.Screens.ScreenFromWindow(w) ?? w.Screens.Primary;
+        var main = WindowPlacement.FindMainWindow(w) ?? w;
+        var screen = w.Screens.ScreenFromWindow(main) ?? w.Screens.ScreenFromPoint(main.Position) ?? w.Screens.Primary;
         if (screen is null) return;
 
         // WorkingArea — в физических пикселях, габариты окна — в логических.
@@ -55,9 +57,10 @@ public static class DialogFit
                    | Clamp(w, Layoutable.WidthProperty, Layoutable.MinWidthProperty,
                            Layoutable.MaxWidthProperty, maxDip.Width);
 
-        // Окно уже спозиционировано по центру владельца от ПРЕЖНЕГО размера — после
-        // сжатия центрируем его по рабочей области, иначе оно останется смещенным.
+        // Окончательный размер попадет в отложенную коррекцию WindowPlacement. Сразу
+        // после сжатия тоже используем главный центр, а не центр другого монитора.
         if (!shrunk) return;
+        if (WindowPlacement.Center(w)) return;
         var size = new PixelSize((int)(w.Width * scale), (int)(w.Height * scale));
         w.Position = new PixelPoint(area.X + (area.Width  - size.Width)  / 2,
                                     area.Y + (area.Height - size.Height) / 2);

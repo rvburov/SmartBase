@@ -466,15 +466,8 @@ public partial class RecordDialog : Window
 
     // Восстанавливает позицию окна после пересчета высоты (SizeToContent),
     // чтобы левый-верхний угол не сдвигался при переключении «Весь день».
-    private void KeepWindowPosition(PixelPoint pos)
-    {
-        void Restore(object? _, EventArgs __)
-        {
-            LayoutUpdated -= Restore;
-            if (Position != pos) Position = pos;
-        }
-        LayoutUpdated += Restore;
-    }
+    private void KeepWindowPosition(PixelPoint pos) =>
+        SmartBase.Controls.Behaviors.WindowPlacement.KeepPositionAfterLayout(this, pos);
 
     // Запоминаем последнее осмысленное время: при «Весь день» поля времени скрыты,
     // и при возврате переключателя их надо восстановить.

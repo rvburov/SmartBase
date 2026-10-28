@@ -121,13 +121,6 @@ public partial class MasterHashDialog : Window
 
     // SizeToContent=Height: появление баннера и блока ответа меняет высоту, окно не должно
     // «прыгать» — то же, что в PasswordDialog.
-    private void KeepWindowPosition(PixelPoint pos)
-    {
-        void Restore(object? _, EventArgs __)
-        {
-            LayoutUpdated -= Restore;
-            if (Position != pos) Position = pos;
-        }
-        LayoutUpdated += Restore;
-    }
+    private void KeepWindowPosition(PixelPoint pos) =>
+        SmartBase.Controls.Behaviors.WindowPlacement.KeepPositionAfterLayout(this, pos);
 }

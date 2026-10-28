@@ -16,6 +16,7 @@
 | `MarkupLayout` | раскладка markdown под настоящим шрифтом | `dotnet run --project Tests/MarkupLayout -f net10.0` |
 | `EditGeometry` | текст не смещается при переходе в правку: поля даты и времени, заголовки, ячейка таблицы (по пикселям, масштаб 2) — и с расположением текста в высокой строке (девять сочетаний, заливка под редактором), плоский режим редакторов | `dotnet run --project Tests/EditGeometry -f net10.0` |
 | `PopupGeometry` | зазор и выравнивание краев выпадающих панелей | `dotnet run --project Tests/PopupGeometry -f net10.0` |
+| `WindowPlacement` | размещение дополнительных окон относительно главного, вложенные владельцы, размеры и повторный показ без каскадного сдвига | `dotnet run --project Tests/WindowPlacement -f net10.0` |
 | `BackupUi` | настройки уведомлений о копиях и общая панель фоновых работ: тумблер, иконка, этап и ошибка без экрана | `dotnet run -c Release --project Tests/BackupUi` |
 | `ConcurrentUi` | один настоящий UI-поток: 1000 сообщений о работах, снимок панели из 1000 работ и 1000 результатов копий через fake notifier/badge; heartbeat и задержки UI отдельно от функционального исхода | `dotnet run -c Release --project Tests/ConcurrentUi -- --mode all --out /tmp/sb-concurrent-ui-new` |
 | `DocReader` | панель чтения документа: загрузка разметки, строки, подсветка | `dotnet run --project Tests/DocReader -f net10.0` |
@@ -74,6 +75,18 @@ dotnet run -c Release --project Tests/ConcurrentUi -- --mode all --out /tmp/sb-c
 гарантией приемлемой задержки.
 
 ## Стенды интерфейса
+
+`WindowPlacement` — отдельный стенд размещения окон без экрана. Команда:
+
+```bash
+dotnet run --project Tests/WindowPlacement -f net10.0
+```
+
+Запускать после правок `WindowPlacement`, `DialogFit`, `WindowZoom` и общего стиля `Window`.
+Правило размещения и взаимодействие с модальными владельцами описаны в
+[dialogs.md](../docs/developer/ui/dialogs.md#положение-дополнительных-окон).
+Геометрия безголовой среды не заменяет проверку нативных рамок и нескольких мониторов на
+Windows, macOS и Linux.
 
 `MarkupLayout` стоит отдельно от `Unit`, потому что ему нужен `Avalonia.Headless`, а `Unit`
 объявлен без внешних зависимостей. Проверяет то, чего не видно без раскладки: что абзац не теряет
