@@ -30,8 +30,8 @@ public sealed record InboxFile(string Path, string Name);
 ///   не трогали <see cref="Settle"/> и его удается открыть монопольно.</item>
 ///   <item><b>Две копии программы на одну папку.</b> База открыта на нескольких машинах — файл
 ///   увидят все. Захват идет переименованием: <c>заказы.json</c> → <c>заказы.json.занял-ПК17</c>.
-///   Кто успел, тот и обрабатывает; остальные получают отказ файловой системы и идут дальше. На
-///   сетевой шаре это надежнее любых блокировок.</item>
+///   Перед переименованием исходник открывается с запретом второго захвата; кто успел, тот и
+///   обрабатывает, остальные получают отказ файловой системы и идут дальше.</item>
 ///   <item><b>Повторы.</b> Отправитель при обрыве пришлет файл дважды, и это норма. Память о
 ///   принятых сообщениях — сами квитанции: есть <c>Квитанции/&lt;id&gt;.json</c> — сообщение уже
 ///   приходило. Память намеренно лежит в папке обмена, а не в <c>app.db</c>: папку видят все
@@ -243,9 +243,9 @@ public static class InboxFolder
     /// Забрать файл себе переименованием. Возвращает путь захваченного файла либо <c>null</c>,
     /// если его уже забрал сосед.
     ///
-    /// Проигравший узнает об этом отказом файловой системы — источника больше нет. Именно
-    /// поэтому захват и делается переименованием, а не блокировкой: на сетевой шаре блокировки
-    /// врут, а переименование либо случилось, либо нет.
+    /// Исходник остается открытым с запретом второго захвата до конца переименования и отметки
+    /// времени. Одного переименования мало: на Windows два MoveFileEx могут заранее открыть
+    /// один исходник, затем оба переименовать его через свои дескрипторы в разные имена.
     ///
     /// <b>Время записи переставляется на момент захвата</b>, потому что именно от него считается
     /// брошенность (<see cref="ReclaimStale"/>). Переименование время не трогает, и без этой
@@ -262,22 +262,23 @@ public static class InboxFolder
 
         try
         {
+            using var ownership = OpenForClaim(file.Path);
             File.Move(file.Path, claimed);
+
+            // Отметка не вышла — захват все равно состоялся. Отдавать файл обратно из-за
+            // неудавшейся отметки хуже, чем рискнуть лишним возвратом через четыре часа.
+            try { File.SetLastWriteTimeUtc(claimed, now.UtcDateTime); }
+            catch (Exception failure) when (failure is IOException or UnauthorizedAccessException)
+            {
+                // Права на шаре бывают такие, что переименовать можно, а тронуть время нельзя.
+            }
+
+            return claimed;
         }
         catch (Exception failure) when (failure is IOException or UnauthorizedAccessException)
         {
             return null;
         }
-
-        // Отметка не вышла — захват все равно состоялся. Отдавать файл обратно из-за
-        // неудавшейся отметки хуже, чем рискнуть лишним возвратом через четыре часа.
-        try { File.SetLastWriteTimeUtc(claimed, now.UtcDateTime); }
-        catch (Exception failure) when (failure is IOException or UnauthorizedAccessException)
-        {
-            // Права на шаре бывают такие, что переименовать можно, а тронуть время нельзя.
-        }
-
-        return claimed;
     }
 
     /// <summary>
@@ -379,6 +380,10 @@ public static class InboxFolder
 
             try
             {
+                // Не отбираем переименованный файл, пока владелец переставляет старое
+                // время записи на момент захвата. Проверяем возраст уже ПОД защитой:
+                // до открытия сосед еще мог успеть обновить отметку.
+                using var ownership = OpenForClaim(path);
                 var info = new FileInfo(path);
                 if (!info.Exists) continue;
                 if (now - new DateTimeOffset(info.LastWriteTimeUtc, TimeSpan.Zero) < StaleClaim) continue;
@@ -514,6 +519,14 @@ public static class InboxFolder
     }
 
     // ── Мелочи ────────────────────────────────────────────────────────────────
+
+    /// <summary>Один участник меняет имя и отметку времени; остальные не входят.</summary>
+    private static FileStream OpenForClaim(string path) =>
+        // Windows: запрещаем соседу открыть исходник для чтения, но разрешаем своему
+        // File.Move открыть его для DELETE/rename. Unix: FileShare.Delete дает общий
+        // flock, поэтому нужен FileShare.None; переименованию на Unix он не мешает.
+        new(path, FileMode.Open, FileAccess.Read,
+            OperatingSystem.IsWindows() ? FileShare.Delete : FileShare.None);
 
     private static IEnumerable<string> Enumerate(string folder)
     {

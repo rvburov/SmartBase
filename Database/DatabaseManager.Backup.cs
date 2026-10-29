@@ -212,13 +212,23 @@ public sealed partial class DatabaseManager
             DataSource = file, Mode = SqliteOpenMode.ReadOnly, Pooling = false,
         }.ToString();
         var conn = SqliteGate.NewConnection(cs);
-        conn.Open();
-        using var cmd = conn.CreateCommand();
-        // Проверка читает файл целиком: кеш побольше обычного и mmap (копия на своем диске).
-        cmd.CommandText = "PRAGMA cache_size=-65536;"
-                        + (NetworkPath.IsNetwork(file) ? "" : "PRAGMA mmap_size=268435456;");
-        cmd.ExecuteNonQuery();
-        return conn;
+        try
+        {
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            // Проверка читает файл целиком: кеш побольше обычного и mmap (копия на своем диске).
+            cmd.CommandText = "PRAGMA cache_size=-65536;"
+                            + (NetworkPath.IsNetwork(file) ? "" : "PRAGMA mmap_size=268435456;");
+            cmd.ExecuteNonQuery();
+            return conn;
+        }
+        catch
+        {
+            // При отказе Open/PRAGMA вызывающий using еще не получил подключение.
+            // Без закрытия Windows не даст удалить поврежденный .part до сборки мусора.
+            conn.Dispose();
+            throw;
+        }
     }
 
     // Снимок сетевой базы подряд, страница за страницей (Online Backup API), — согласованный: на

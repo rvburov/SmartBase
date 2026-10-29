@@ -189,6 +189,47 @@ public sealed class InboxFolderTests : IDisposable
         Assert.Contains("ПК17", first, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Ready — снимок: между ним и TryClaim сосед уже мог открыть исходник для захвата.
+    /// Его дескриптор допускает rename, иначе переименовать не смог бы и он сам. Поэтому
+    /// отказ должен дать новое открытие исходника, а не надежда на единственного победителя
+    /// File.Move. Без ownership-дескриптора TryClaim здесь успешно уносит чужой файл.
+    /// </summary>
+    [Fact]
+    public void A_source_held_for_claim_cannot_be_claimed_by_a_second_receiver()
+    {
+        var layout = Layout();
+        const string text = """{"Название":"Единственная доставка"}""";
+        var file = Put(layout, "заказы.json", text);
+        Assert.Single(InboxFolder.Ready(layout, Now));
+        var written = File.GetLastWriteTimeUtc(file.Path);
+        var loserPath = file.Path + InboxFolder.ClaimMark + "ПК18";
+
+        using (var ownership = new FileStream(file.Path, FileMode.Open, FileAccess.Read,
+            OperatingSystem.IsWindows() ? FileShare.Delete : FileShare.None))
+        {
+            // Настоящая блокировка допускает native rename на обеих ОС. Это делает
+            // регрессию детерминированной: старый File.Move-only код здесь НЕ откажет.
+            var probe = file.Path + ".rename-probe";
+            File.Move(file.Path, probe);
+            File.Move(probe, file.Path);
+
+            Assert.Null(InboxFolder.TryClaim(file, "ПК18", Now));
+            Assert.True(File.Exists(file.Path));
+            Assert.False(File.Exists(loserPath));
+            Assert.Equal(written, File.GetLastWriteTimeUtc(file.Path));
+        }
+
+        Assert.Equal(text, File.ReadAllText(file.Path));
+        var claimed = InboxFolder.TryClaim(file, "ПК17", Now);
+        Assert.NotNull(claimed);
+        Assert.False(File.Exists(file.Path));
+        Assert.Equal(text, File.ReadAllText(claimed!));
+        Assert.Equal(Now.UtcDateTime, File.GetLastWriteTimeUtc(claimed!));
+        Assert.Null(InboxFolder.TryClaim(file, "ПК18", Now));
+        Assert.Equal([claimed], Directory.EnumerateFiles(layout.Incoming));
+    }
+
     [Fact]
     public void Released_claim_comes_back_under_its_old_name()
     {
@@ -223,6 +264,40 @@ public sealed class InboxFolderTests : IDisposable
 
         Assert.Equal(1, InboxFolder.ReclaimStale(layout, Now));
         Assert.True(File.Exists(file.Path));
+    }
+
+    /// <summary>
+    /// Между rename и обновлением времени старый ночной файл выглядит брошенным.
+    /// Уборка обязана уважать открытый дескриптор захвата, а после его освобождения
+    /// заново прочитать уже свежую отметку. Файл с действительно старой отметкой вернется.
+    /// </summary>
+    [Fact]
+    public void Reclaim_does_not_take_a_claim_while_its_timestamp_is_being_refreshed()
+    {
+        var layout = Layout();
+        const string text = """{"Название":"Ночная доставка"}""";
+        var file = Put(layout, "заказы.json", text, age: TimeSpan.FromDays(1));
+        var claimed = file.Path + InboxFolder.ClaimMark + "ПК17";
+
+        using (var ownership = new FileStream(file.Path, FileMode.Open, FileAccess.Read,
+            OperatingSystem.IsWindows() ? FileShare.Delete : FileShare.None))
+        {
+            File.Move(file.Path, claimed);
+            Assert.Equal(0, InboxFolder.ReclaimStale(layout, Now));
+            Assert.True(File.Exists(claimed));
+            Assert.False(File.Exists(file.Path));
+            File.SetLastWriteTimeUtc(claimed, Now.UtcDateTime);
+        }
+
+        Assert.Equal(0, InboxFolder.ReclaimStale(layout, Now));
+        Assert.True(File.Exists(claimed));
+        Assert.False(File.Exists(file.Path));
+        Assert.Equal(text, File.ReadAllText(claimed));
+
+        File.SetLastWriteTimeUtc(claimed, (Now - TimeSpan.FromDays(1)).UtcDateTime);
+        Assert.Equal(1, InboxFolder.ReclaimStale(layout, Now));
+        Assert.False(File.Exists(claimed));
+        Assert.Equal(text, File.ReadAllText(file.Path));
     }
 
     /// <summary>

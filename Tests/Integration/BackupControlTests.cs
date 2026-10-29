@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using SmartBase.Core;
 using SmartBase.Database;
@@ -12,6 +13,27 @@ namespace SmartBase.Tests.Integration;
 public sealed class BackupControlTests
 {
     private static readonly DateTime PreviousSuccess = new(2026, 1, 1, 3, 0, 0);
+
+    [Fact]
+    public void Corrupt_copy_verification_releases_the_file_before_returning_to_the_caller()
+    {
+        using var dir = new TempDir();
+        var file = dir.File("corrupt.db");
+        const string damaged = "поврежденная копия";
+        File.WriteAllText(file, damaged);
+
+        var error = Assert.Throws<SqliteException>(() => DatabaseManager.VerifyCopy(file, "copy", null));
+        Assert.Equal(26, error.SqliteErrorCode); // SQLITE_NOTADB
+
+        // Тот же процесс еще жив, GC не вызывается: на Windows утекший native handle
+        // запретит перенос и удаление. Ошибка проверки не должна ждать финализатора.
+        var moved = dir.File("released.db");
+        File.Move(file, moved);
+        Assert.Equal(damaged, File.ReadAllText(moved));
+        File.Delete(moved);
+        Assert.False(File.Exists(file));
+        Assert.False(File.Exists(moved));
+    }
 
     [Fact]
     public async Task Canceling_sqlite_while_the_part_is_being_written_cleans_up_without_damaging_the_source()
