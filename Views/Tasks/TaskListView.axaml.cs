@@ -10,6 +10,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.TextFormatting;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using CommunityToolkit.Mvvm.ComponentModel;
 using SmartBase.Core.Models;
 using SmartBase.Database.Repositories;
@@ -26,14 +27,16 @@ public sealed record QuickCollectionOption(int DbId, int? ColId, string Label)
 }
 
 /// <param name="Target">Выбранная коллекция; null — цель определяет контроллер сам.</param>
-public record QuickAddRequest(string Title, DateValue? Due, string Executor, QuickCollectionOption? Target);
+/// <param name="Assigner">Кто назначил задачу; null сохраняет прежнее умолчание для старых вызовов.</param>
+public record QuickAddRequest(string Title, DateValue? Due, string Executor, QuickCollectionOption? Target,
+                              string? Assigner = null);
 
 public partial class TaskListView : UserControl
 {
     public event EventHandler<TaskRecord>?      TaskActivated;
     public event EventHandler<QuickAddRequest>? QuickAddRequested;
     /// <summary>Сменилась коллекция-цель быстрого добавления: у нее может быть своя база,
-    /// а значит и свой список пользователей для «Исполнителя».</summary>
+    /// а значит и свой список пользователей для «Исполнителя» и «Назначил».</summary>
     public event EventHandler<QuickCollectionOption>? QuickTargetChanged;
     /// <summary>Удалить выделенные задачи (меню или Delete) — подтверждение спрашивает контроллер.</summary>
     public event EventHandler<IReadOnlyList<TaskRecord>>? TasksDeleteRequested;
@@ -329,6 +332,12 @@ public partial class TaskListView : UserControl
     // Клик мимо карточек (в т.ч. по заголовку группы и вне списка) снимает выделение.
     private void OnGlobalPointerPressed(object? sender, PointerPressedEventArgs e)
     {
+        // Пустое место и заголовки не забирают фокус сами. Снимаем только ввод новой
+        // задачи: следующий контрол сам получит фокус обычным путем, событие не гасим.
+        if (IsEffectivelyVisible && QuickTitle.IsFocused && e.Source is Visual source
+            && !ReferenceEquals(source, QuickTitle) && !QuickTitle.IsVisualAncestorOf(source))
+            TopLevel.GetTopLevel(this)?.FocusManager?.ClearFocus();
+
         // Правый клик не сбрасывает: иначе меню открылось бы над снятым выделением.
         if (e.GetCurrentPoint(this).Properties.IsRightButtonPressed) return;
         // Shift+клик — аддитивное выделение, его собирает сама карточка.
@@ -371,8 +380,8 @@ public partial class TaskListView : UserControl
     /// <summary>Коллекция, выбранная в строке быстрого добавления (null — список пуст).</summary>
     public QuickCollectionOption? SelectedCollection => QuickCollection.SelectedItem as QuickCollectionOption;
 
-    // Опции исполнителя строки быстрого добавления (пользователи целевой БД).
-    /// <summary>Первый пункт списка исполнителей строки добавления: задача заводится
+    // Опции пользователей строки быстрого добавления (пользователи целевой БД).
+    /// <summary>Первый пункт списков пользователей строки добавления: задача заводится
     /// нераспределенной — раздел показывает такие прочерком, и именно их предстоит раздать.</summary>
     public const string UnassignedLabel = "Не назначен";
 
@@ -384,26 +393,40 @@ public partial class TaskListView : UserControl
         var opts = new List<string> { UnassignedLabel };
         opts.AddRange(options.Count > 0 ? options : [CurrentUser.DisplayName]);
         if (selected.Length > 0 && !opts.Contains(selected)) opts.Add(selected);
-        var keep = QuickExecutor.SelectedItem as string;
-        QuickExecutor.ItemsSource = opts;
-        var idx = keep is not null ? opts.IndexOf(keep) : -1;
-        if (idx < 0) idx = selected.Length > 0 ? opts.IndexOf(selected) : 0;
-        QuickExecutor.SelectedIndex = idx >= 0 ? idx : 0;
+        if (!opts.Contains(CurrentUser.DisplayName)) opts.Add(CurrentUser.DisplayName);
+        SetOptions(QuickExecutor, selected);
+        SetOptions(QuickAssigner, CurrentUser.DisplayName);
+
+        void SetOptions(ComboBox combo, string fallback)
+        {
+            var keep = combo.SelectedItem as string;
+            combo.ItemsSource = opts;
+            var idx = keep is not null ? opts.IndexOf(keep) : -1;
+            if (idx < 0) idx = fallback.Length > 0 ? opts.IndexOf(fallback) : 0;
+            combo.SelectedIndex = idx >= 0 ? idx : 0;
+        }
     }
 
     /// <summary>
     /// Переставить поля строки добавления по настройкам раздела: дата — по «Срок в быстром
-    /// добавлении», исполнитель — по «Исполнитель в быстром добавлении». Зовется при открытии
+    /// добавлении», исполнитель — по «Исполнитель в быстром добавлении», назначивший —
+    /// текущий пользователь. Зовется при открытии
     /// раздела, при смене настроек и после каждого добавления.
     /// </summary>
     public void ApplyQuickDefaults()
     {
         QuickDateField.Date = TaskSettings.QuickDueDate(DateTime.Today);
 
-        if (QuickExecutor.ItemsSource is not IList<string> opts || opts.Count == 0) return;
         var wanted = TaskSettings.QuickExecutorMe ? CurrentUser.DisplayName : UnassignedLabel;
-        var idx    = opts.IndexOf(wanted);
-        QuickExecutor.SelectedIndex = idx >= 0 ? idx : 0;
+        SelectUser(QuickExecutor, wanted);
+        SelectUser(QuickAssigner, CurrentUser.DisplayName);
+
+        static void SelectUser(ComboBox combo, string wanted)
+        {
+            if (combo.ItemsSource is not IList<string> opts || opts.Count == 0) return;
+            var idx = opts.IndexOf(wanted);
+            combo.SelectedIndex = idx >= 0 ? idx : 0;
+        }
     }
 
     /// <summary>Текущее положение прокрутки — снимается ПЕРЕД тихим обновлением.</summary>
@@ -441,9 +464,11 @@ public partial class TaskListView : UserControl
         // «Не назначен» уходит пустым исполнителем — задача заводится нераспределенной.
         var executor = QuickExecutor.SelectedItem as string ?? "";
         if (executor == UnassignedLabel) executor = "";
-        QuickAddRequested?.Invoke(this, new QuickAddRequest(title, due, executor, SelectedCollection));
+        var assigner = QuickAssigner.SelectedItem as string ?? CurrentUser.DisplayName;
+        if (assigner == UnassignedLabel) assigner = "";
+        QuickAddRequested?.Invoke(this, new QuickAddRequest(title, due, executor, SelectedCollection, assigner));
         QuickTitle.Text = "";
-        // Дата — снова по настройке; исполнитель остается: несколько задач подряд одному человеку.
+        // Дата — снова по настройке; пользователи остаются для следующих задач.
         QuickDateField.Date = TaskSettings.QuickDueDate(DateTime.Today);
     }
 

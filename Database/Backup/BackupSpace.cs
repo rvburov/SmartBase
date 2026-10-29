@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using SmartBase.Logging;
 
 namespace SmartBase.Database.Backup;
 
@@ -16,13 +17,14 @@ internal static class BackupSpace
 
     internal static void RequireAvailable(string folder, long estimatedBytes)
     {
-        var available = AvailableBytes(folder);
+        var full = Path.GetFullPath(folder);
+        var available = AvailableBytes(full);
         if (available is null)
-            throw new IOException($"Не удалось проверить свободное место в папке резервных копий: {folder}");
+            throw new IOException($"Не удалось проверить свободное место в папке резервных копий: {full}");
         var required = RequiredBytes(estimatedBytes);
         if (available.Value < required)
-            throw new IOException($"Недостаточно свободного места в папке резервных копий. " +
-                $"Нужно примерно {required / 1048576.0:N0} МБ с запасом, свободно {available.Value / 1048576.0:N0} МБ.");
+            throw new IOException($"Недостаточно свободного места в папке резервных копий «{full}». " +
+                $"Нужно {Diag.Size(required)} с запасом, свободно {Diag.Size(available.Value)}.");
     }
 
     internal static long? AvailableBytes(string folder)

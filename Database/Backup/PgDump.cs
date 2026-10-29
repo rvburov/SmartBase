@@ -37,7 +37,8 @@ public static class PgDump
     /// в журнале), иначе русский текст ошибки; недописанный файл-цель убирается.
     /// </summary>
     public static async Task<string?> RunAsync(PgConnectionInfo info, string name, string targetPath,
-                                              CancellationToken cancellationToken = default)
+                                              CancellationToken cancellationToken = default,
+                                              Action<string, double?>? stage = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var binary = FindBinary();
@@ -48,8 +49,10 @@ public static class PgDump
         var watch = Stopwatch.StartNew();
         var part = targetPath + DatabaseManager.BackupPartSuffix;
         var applicationName = "SmartBase.backup." + Guid.NewGuid().ToString("N");
+        var writingStarted = false;
         try
         {
+            stage?.Invoke($"Проверяю свободное место для PostgreSQL «{name}»…", null);
             // Оценка консервативная: pg_dump не переносит индексы и сжимает данные.
             // Точный размер custom-архива заранее неизвестен, свободное место не резервируется.
             await using (var connection = new NpgsqlConnection(info.ToConnectionString()))
@@ -61,6 +64,9 @@ public static class PgDump
                 BackupSpace.RequireAvailable(Path.GetDirectoryName(Path.GetFullPath(targetPath))!, estimatedBytes);
             }
             cancellationToken.ThrowIfCancellationRequested();
+            stage?.Invoke($"Сохраняю PostgreSQL «{name}»…", null);
+            cancellationToken.ThrowIfCancellationRequested();
+            writingStarted = true;
             TryDeletePartial(part);
             var psi = new ProcessStartInfo(binary)
             {
@@ -132,7 +138,10 @@ public static class PgDump
         {
             return ex.Message;
         }
-        finally { TryDeletePartial(part); }
+        finally
+        {
+            if (writingStarted) TryDeletePartial(part);
+        }
     }
 
     private static async Task CancelOwnServerQueryAsync(PgConnectionInfo info, string applicationName)

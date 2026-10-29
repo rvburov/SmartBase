@@ -33,6 +33,10 @@ echo "== Свойство «Дата период времени»: окно и 
 dotnet run --project Tests/RecordPage -f net10.0 -- --only dateperiod
 
 echo
+echo "== Быстрое добавление задач: фокус и назначивший =="
+dotnet run --project Tests/TasksQuickAdd -f net10.0
+
+echo
 echo "== Резервные копии: настройки и фоновые работы без экрана =="
 dotnet run --project Tests/BackupUi -f net10.0
 

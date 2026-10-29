@@ -65,23 +65,34 @@ public sealed partial class DatabaseManager
             throw new ArgumentException("Путь резервной копии совпадает с исходной базой.", nameof(targetPath));
         var watch = Stopwatch.StartNew();
         var part  = targetPath + BackupPartSuffix;
-        DeleteQuietly(part);
+        var folder = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(targetPath))!;
+
+        // Первая проверка дешевая и не открывает исходник: файл 27 ГБ при 15 ГБ
+        // свободных в назначении должен остановиться еще до чтения заголовков SQLite.
+        // Свободные страницы внутри базы не уменьшают обязательную оценку места.
+        stage?.Invoke("Проверяю свободное место…", null);
+        var sourceBytes = new FileInfo(path).Length;
+        BackupSpace.RequireAvailable(folder, sourceBytes);
 
         long fileBytes, liveBytes;
-        using (var probe = new AppDbContext(path))
+        using (var probe = OpenCopy(path))
+        using (var read = probe.BeginTransaction(deferred: true))
         {
-            probe.ApplyPerformancePragmas();
-            probe.Database.OpenConnection();
-            using var command = probe.Database.GetDbConnection().CreateCommand();
-            using var interruption = new BackupCancellation((SqliteConnection)command.Connection!, cancellationToken);
-            command.CommandText = "SELECT page_count * page_size FROM pragma_page_count, pragma_page_size;";
+            using var command = probe.CreateCommand();
+            command.Transaction = read;
+            using var interruption = new BackupCancellation(probe, cancellationToken);
+            command.CommandText = "SELECT page_count * page_size, (page_count - freelist_count) * page_size " +
+                "FROM pragma_page_count, pragma_page_size, pragma_freelist_count;";
+            using var sizes = command.ExecuteReader();
+            if (!sizes.Read()) throw new IOException("Не удалось определить размер исходной базы для резервной копии.");
             // page_count включает страницы WAL, которых еще может не быть в основном файле.
-            fileBytes = Convert.ToInt64(command.ExecuteScalar());
-            liveBytes = Math.Max(1, fileBytes - SqliteMaintenance.ReadFreeSpace(probe).FreeBytes);
+            fileBytes = Math.Max(sizes.GetInt64(0), Math.Max(sourceBytes, new FileInfo(path).Length));
+            liveBytes = Math.Max(1, sizes.GetInt64(1));
         }
-        AppDbContext.ResetPool(path);
         cancellationToken.ThrowIfCancellationRequested();
-        BackupSpace.RequireAvailable(System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(targetPath))!, liveBytes);
+        // Уплотненный результат может быть меньше, но до начала записи требуем место
+        // под полный снимок, включая еще не перенесенные из WAL страницы.
+        BackupSpace.RequireAvailable(folder, fileBytes);
 
         var snapshotNeeded = NetworkPath.IsNetwork(path);
         var remoteTarget   = NetworkPath.IsNetwork(targetPath);
@@ -93,6 +104,8 @@ public sealed partial class DatabaseManager
             ? BackupScratchDir((snapshotNeeded ? fileBytes : 0) + (remoteTarget ? liveBytes : 0) + liveBytes)
             : null;
 
+        // Старые временные файлы не трогаем, если предварительные проверки отказали.
+        DeleteQuietly(part);
         string? snapshot = snapshotNeeded && scratchDir is not null ? ScratchFile(scratchDir) : null;
         var     work     = remoteTarget && scratchDir is not null ? ScratchFile(scratchDir) : part;
         try
@@ -203,8 +216,8 @@ public sealed partial class DatabaseManager
         return i >= 0 ? i : HeavyTables.Length;
     }
 
-    // Подключение к копии только на чтение, мимо пула: копию никто, кроме проверки, не открывает,
-    // и пул держал бы файл, который сразу после проверки переименовывается и удаляется.
+    // Только чтение, мимо пула: измерение исходника не меняет журнал, а проверенная
+    // копия должна освободить дескриптор до переименования или удаления.
     private static SqliteConnection OpenCopy(string file)
     {
         var cs = new SqliteConnectionStringBuilder

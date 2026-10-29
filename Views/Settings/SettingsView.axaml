@@ -1650,25 +1650,6 @@
                     </Border>
                     <Border Classes="separator h" />
 
-                    <Border Classes="settingRow">
-                        <Expander x:Name="ComponentLicensesExpander" HorizontalAlignment="Stretch"
-                                  HorizontalContentAlignment="Stretch"
-                                  Expanded="OnComponentLicensesExpanded">
-                            <Expander.Header>
-                                <TextBlock Classes="title" Text="Лицензии компонентов" />
-                            </Expander.Header>
-                            <StackPanel Spacing="8" Margin="0,12,0,0">
-                                <TextBox x:Name="ComponentLicensesText" Classes="multiline"
-                                         IsReadOnly="True" AcceptsReturn="True"
-                                         TextWrapping="Wrap" Height="320" />
-                                <Button x:Name="CopyComponentLicensesButton" Classes="dialog" Content="Копировать"
-                                        HorizontalAlignment="Left"
-                                        Click="OnCopyComponentLicenses" />
-                            </StackPanel>
-                        </Expander>
-                    </Border>
-                    <Border Classes="separator h" />
-
                     </StackPanel>
                 </Grid>
             </ScrollViewer>

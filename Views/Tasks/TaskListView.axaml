@@ -5,6 +5,21 @@
              x:Class="SmartBase.Views.Tasks.TaskListView"
              Background="{StaticResource BrushBg}">
 
+    <UserControl.Styles>
+        <Style Selector="TextBox.quickTaskTitle /template/ Border#PART_BorderElement">
+            <Setter Property="BorderBrush" Value="{DynamicResource BrushAccent}" />
+            <Setter Property="BorderThickness" Value="{DynamicResource BorderLine}" />
+        </Style>
+        <Style Selector="TextBox.quickTaskTitle:pointerover /template/ Border#PART_BorderElement">
+            <Setter Property="BorderBrush" Value="{DynamicResource BrushAccent}" />
+            <Setter Property="BorderThickness" Value="{DynamicResource BorderLine}" />
+        </Style>
+        <Style Selector="TextBox.quickTaskTitle:focus /template/ Border#PART_BorderElement">
+            <Setter Property="BorderBrush" Value="{DynamicResource BrushAccent}" />
+            <Setter Property="BorderThickness" Value="{DynamicResource BorderLineFocus}" />
+        </Style>
+    </UserControl.Styles>
+
     <!-- Правого отступа у Grid нет: он вернулся отдельным Margin строкам 1-2 и содержимому
          списка, чтобы полоса прокрутки прилегала к краю панели, а не висела в 16px от него.
          Колонка 1 — полоса прокрутки на всю высоту панели (см. ScrollBar ниже).
@@ -16,7 +31,8 @@
         <w:NoticeBanner Grid.Row="1" x:Name="NoticeBanner" Margin="0,0,16,8" />
 
         <!-- Быстрое добавление: название + Enter на всю ширину сверху, срок, исполнитель,
-             коллекция и «Добавить» ниже. Коллекция выбирается явно: раньше задача молча уезжала в первую
+             назначивший и коллекция слева ниже, «Добавить» — у правого края.
+             Коллекция выбирается явно: раньше задача молча уезжала в первую
              отмеченную, и попасть в нужную можно было только через окно задачи. -->
         <Border Grid.Row="2"
                 Background="{StaticResource BrushBg}"
@@ -27,9 +43,10 @@
                 Margin="0,0,16,12">
             <Grid RowDefinitions="Auto,8,Auto">
 
-                <TextBox Grid.Row="0" x:Name="QuickTitle"
+                <TextBox Grid.Row="0" x:Name="QuickTitle" Classes="quickTaskTitle"
                          Watermark="Новая задача — название и Enter"
-                         BorderThickness="0"
+                         BorderBrush="{DynamicResource BrushAccent}"
+                         BorderThickness="{DynamicResource BorderLine}"
                          Background="Transparent"
                          VerticalContentAlignment="Center"
                          MinHeight="34"
@@ -37,41 +54,54 @@
 
                 <!-- При широком сайдбаре параметры переносятся целыми группами:
                      подпись остается рядом со своим редактором, кнопка доступна в узком разделе. -->
-                <WrapPanel Grid.Row="2" Orientation="Horizontal">
-                    <Grid ColumnDefinitions="Auto,6,Auto,6,Auto" Margin="0,0,12,8">
-                        <TextBlock Grid.Column="0" Text="Срок"
-                                   VerticalAlignment="Center"
-                                   Foreground="{StaticResource BrushSecondaryText}" />
-                        <w:DateField Grid.Column="2" x:Name="QuickDateField" Width="130" />
-                        <w:TimeField Grid.Column="4" x:Name="QuickTimeField" Width="90" />
-                    </Grid>
+                <Grid Grid.Row="2" ColumnDefinitions="*,12,Auto">
+                    <WrapPanel Grid.Column="0" Orientation="Horizontal">
+                        <Grid ColumnDefinitions="Auto,6,Auto,6,Auto" Margin="0,0,12,8">
+                            <TextBlock Grid.Column="0" Text="Срок"
+                                       VerticalAlignment="Center"
+                                       Foreground="{StaticResource BrushSecondaryText}" />
+                            <w:DateField Grid.Column="2" x:Name="QuickDateField" Width="130" />
+                            <w:TimeField Grid.Column="4" x:Name="QuickTimeField" Width="90" />
+                        </Grid>
 
-                    <Grid ColumnDefinitions="Auto,6,Auto" Margin="0,0,12,8">
-                        <TextBlock Grid.Column="0" Text="Исполнитель"
-                                   VerticalAlignment="Center"
-                                   Foreground="{StaticResource BrushSecondaryText}" />
-                        <ComboBox Grid.Column="2" x:Name="QuickExecutor"
-                                  Width="150" Height="34"
-                                  Background="{StaticResource BrushSecondaryBg}"
-                                  CornerRadius="{StaticResource RadiusBase}" />
-                    </Grid>
+                        <Grid ColumnDefinitions="Auto,6,Auto" Margin="0,0,12,8">
+                            <TextBlock Grid.Column="0" Text="Исполнитель"
+                                       VerticalAlignment="Center"
+                                       Foreground="{StaticResource BrushSecondaryText}" />
+                            <ComboBox Grid.Column="2" x:Name="QuickExecutor"
+                                      Width="150" Height="34"
+                                      Background="{StaticResource BrushSecondaryBg}"
+                                      CornerRadius="{StaticResource RadiusBase}" />
+                        </Grid>
 
-                    <Grid ColumnDefinitions="Auto,6,Auto" Margin="0,0,12,8">
-                        <TextBlock Grid.Column="0" Text="Коллекция"
-                                   VerticalAlignment="Center"
-                                   Foreground="{StaticResource BrushSecondaryText}" />
-                        <ComboBox Grid.Column="2" x:Name="QuickCollection"
-                                  Width="150" Height="34"
-                                  Background="{StaticResource BrushSecondaryBg}"
-                                  CornerRadius="{StaticResource RadiusBase}" />
-                    </Grid>
+                        <Grid ColumnDefinitions="Auto,6,Auto" Margin="0,0,12,8">
+                            <TextBlock Grid.Column="0" Text="Назначил"
+                                       VerticalAlignment="Center"
+                                       Foreground="{StaticResource BrushSecondaryText}" />
+                            <ComboBox Grid.Column="2" x:Name="QuickAssigner"
+                                      Width="150" Height="34"
+                                      Background="{StaticResource BrushSecondaryBg}"
+                                      CornerRadius="{StaticResource RadiusBase}" />
+                        </Grid>
 
-                    <Button x:Name="QuickAddBtn" Classes="accent"
+                        <Grid ColumnDefinitions="Auto,6,Auto" Margin="0,0,12,8">
+                            <TextBlock Grid.Column="0" Text="Коллекция"
+                                       VerticalAlignment="Center"
+                                       Foreground="{StaticResource BrushSecondaryText}" />
+                            <ComboBox Grid.Column="2" x:Name="QuickCollection"
+                                      Width="150" Height="34"
+                                      Background="{StaticResource BrushSecondaryBg}"
+                                      CornerRadius="{StaticResource RadiusBase}" />
+                        </Grid>
+                    </WrapPanel>
+
+                    <Button Grid.Column="2" x:Name="QuickAddBtn" Classes="accent"
                             Content="Добавить" Height="34"
                             Padding="14,0" Margin="0,0,0,8"
+                            HorizontalAlignment="Right" VerticalAlignment="Bottom"
                             VerticalContentAlignment="Center"
                             CornerRadius="{StaticResource RadiusPill}" />
-                </WrapPanel>
+                </Grid>
             </Grid>
         </Border>
 

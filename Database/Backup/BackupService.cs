@@ -227,7 +227,7 @@ public sealed class BackupService : IDisposable
             {
                 StartedAt = startedAt, Outcome = BackupRunOutcome.Running, Error = null,
             });
-            ReportProgress("Копирую…", null);
+            ReportProgress("Подготовка…", null);
             Log.Information("Резервное копирование базы «{Name:l}» начато ({Kind:l})",
                             entry.Name, manual ? "вручную" : "по расписанию");
             BackupStarted?.Invoke(entry.Id);
@@ -300,8 +300,7 @@ public sealed class BackupService : IDisposable
         {
             if (entry.ToPgInfo() is not { } info)
                 return "Запись подключения повреждена — переподключите базу заново.";
-            progress($"Сохраняю PostgreSQL «{entry.Name}»…", null);
-            var error = await PgDump.RunAsync(info, entry.Name, target, cancellationToken);
+            var error = await PgDump.RunAsync(info, entry.Name, target, cancellationToken, progress);
             if (error is not null) return error;
         }
         else

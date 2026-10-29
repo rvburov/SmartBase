@@ -387,6 +387,7 @@ jobs:
           dotnet build Tests/Sections     --configuration Release
           dotnet build Tests/BackupUi     --configuration Release
           dotnet build Tests/ConcurrentUi --configuration Release
+          dotnet build Tests/TasksQuickAdd --configuration Release
           dotnet build Tests/RecordPage --framework net10.0 --configuration Release
 
       # Живая Avalonia без экрана: разметка панели, подсветка, переходы по совпадениям, страницы
@@ -400,6 +401,9 @@ jobs:
 
       - name: Настройки резервных копий и фоновые работы
         run: dotnet run --project Tests/BackupUi --configuration Release --no-build
+
+      - name: Быстрое добавление задач
+        run: dotnet run --project Tests/TasksQuickAdd --configuration Release --no-build -- --out "$RUNNER_TEMP/tasks-quickadd"
 
       - name: Фоновые задачи и уведомления под нагрузкой
         run: dotnet run --project Tests/ConcurrentUi --configuration Release --no-build -- --out "$RUNNER_TEMP/concurrent-ui"
