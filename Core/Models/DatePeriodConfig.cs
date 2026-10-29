@@ -9,8 +9,14 @@ namespace SmartBase.Core.Models;
 public sealed record DatePeriodConfig(int StartFieldId, int? EndFieldId = null, bool Automatic = true,
                                      int Weekdays = 127, string DayStart = "00:00", string DayEnd = "24:00")
 {
-    public bool IsValid => StartFieldId > 0 && (EndFieldId is null or > 0)
-        && Weekdays is > 0 and <= 127 && TryGetDayMinutes(out _, out _);
+    public bool IsValid => TryValidate(out _, out _);
+
+    internal bool TryValidate(out int start, out int end)
+    {
+        start = end = 0;
+        return StartFieldId > 0 && (EndFieldId is null or > 0)
+            && Weekdays is > 0 and <= 127 && TryGetDayMinutes(out start, out end);
+    }
 
     public bool TryGetDayMinutes(out int start, out int end)
     {

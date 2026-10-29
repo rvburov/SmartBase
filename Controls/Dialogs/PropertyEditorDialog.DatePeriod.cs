@@ -35,7 +35,7 @@ public partial class PropertyEditorDialog
         DatePeriodStartCombo.ItemsSource = _datePeriodSources;
         DatePeriodEndCombo.ItemsSource = _datePeriodSources;
         DatePeriodStartCombo.SelectedIndex = _datePeriodSources.Count == 1 ? 0 : -1;
-        DatePeriodEndModeCombo.SelectedIndex = 0;
+        DatePeriodEndModeCombo.SelectedIndex = 1;
         DatePeriodEndModeCombo.SelectionChanged += (_, _) => { UpdateDatePeriodVisibility(); HideError(); };
         DatePeriodAutomaticToggle.IsCheckedChanged += (_, _) => { UpdateDatePeriodVisibility(); HideError(); };
         DatePeriodStartCombo.SelectionChanged += (_, _) => HideError();
@@ -89,6 +89,11 @@ public partial class PropertyEditorDialog
             return null;
         }
         int? endId = null;
+        if (DatePeriodEndModeCombo.SelectedIndex is not (0 or 1))
+        {
+            ShowError("Выберите, до какой даты считать время.");
+            return null;
+        }
         if (DatePeriodEndModeCombo.SelectedIndex == 1)
         {
             if (DatePeriodEndCombo.SelectedItem is not DatePeriodFieldItem { Missing: false } end)

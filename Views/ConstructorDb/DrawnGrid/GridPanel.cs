@@ -477,20 +477,30 @@ public sealed class GridPanel : Avalonia.Controls.Grid
         return StartQuery(keepY: false);
     }
 
+    /// <summary>Повторить текущий отбор без перечитывания оформления и сброса прокрутки.
+    /// Фоновый результат подождет окончания ввода или жеста перед заменой строк.</summary>
+    internal Task RefreshQuery(Func<bool> canReplaceRows, CancellationToken cancellationToken) =>
+        _repo is null || _snapshot is null ? Task.CompletedTask
+            : StartQuery(keepY: true, canReplaceRows, cancellationToken);
+
+    internal bool IsLayoutInteractionActive => _resizeKey is not null || _resizeRow >= 0;
+
     // Список строк еще считается в фоне: _query жив до подключения результата (или отмены новым запросом).
     private bool QueryPending => _query is not null;
 
-    private Task StartQuery(bool keepY)
+    private Task StartQuery(bool keepY, Func<bool>? canReplaceRows = null, CancellationToken cancellationToken = default)
     {
         Surface.RefreshSelectionVisuals();   // воронка в шапке
         _query?.Cancel();
         var cts = _query = new CancellationTokenSource();
-        return QueryTask = ApplyQueryAsync(_filters, _sortKey, _sortAsc, keepY, cts);
+        return QueryTask = ApplyQueryAsync(_filters, _sortKey, _sortAsc, keepY, cts, canReplaceRows, cancellationToken);
     }
 
     private async Task ApplyQueryAsync(IReadOnlyDictionary<string, HashSet<string>> filters, string? sortKey, bool sortAsc,
-                                       bool keepY, CancellationTokenSource cts)
+                                       bool keepY, CancellationTokenSource cts, Func<bool>? canReplaceRows,
+                                       CancellationToken cancellationToken)
     {
+        using var cancellation = cancellationToken.CanBeCanceled ? cancellationToken.Register(cts.Cancel) : default;
         var ct   = cts.Token;
         var repo = _repo!;
         RowSource source;
@@ -499,7 +509,11 @@ public sealed class GridPanel : Avalonia.Controls.Grid
             source = await RowSourcePlanner.BuildAsync(repo, _collectionId, _snapshot!.Fields, filters, sortKey, sortAsc,
                                                        _hiddenRecords, ct);
         }
-        catch (OperationCanceledException) { return; }
+        catch (OperationCanceledException)
+        {
+            Dispatcher.UIThread.Post(() => { if (ReferenceEquals(_query, cts)) _query = null; });
+            return;
+        }
         catch (Exception ex)
         {
             // База пропала или занята: строки остаются прежними, причина — в журнале и окне ошибки чтения.
@@ -513,6 +527,32 @@ public sealed class GridPanel : Avalonia.Controls.Grid
             if (ct.IsCancellationRequested) return;
             if (ReferenceEquals(_query, cts)) _query = null;
             AttachSource(source, keepX: true, keepY);
+        }
+        if (canReplaceRows is not null)
+        {
+            try
+            {
+                while (!ct.IsCancellationRequested)
+                {
+                    var attached = false;
+                    await Dispatcher.UIThread.InvokeAsync(() =>
+                    {
+                        if (!ct.IsCancellationRequested && canReplaceRows())
+                        {
+                            Attach();
+                            attached = true;
+                        }
+                    });
+                    if (attached) return;
+                    await Task.Delay(100, ct);
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+            finally
+            {
+                await Dispatcher.UIThread.InvokeAsync(() => { if (ReferenceEquals(_query, cts)) _query = null; });
+            }
+            return;
         }
         // Продолжение после фона — на UI-поток явно (стенды без контекста синхронизации).
         if (Dispatcher.UIThread.CheckAccess()) Attach();

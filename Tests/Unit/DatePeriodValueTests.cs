@@ -60,6 +60,51 @@ public sealed class DatePeriodValueTests
     }
 
     [Fact]
+    public void Missing_end_property_does_not_silently_change_the_mode_to_current_time()
+    {
+        var start = Parse("2026-10-28");
+        var config = new DatePeriodConfig(1, 2);
+        Assert.Equal("", DatePeriodValue.Calculate(start, null, new DateTime(2026, 10, 29), config));
+        Assert.Equal("", DatePeriodValue.Prepare(config).Calculate(start, null, new DateTime(2026, 10, 29)));
+        Assert.Equal("86400", DatePeriodValue.Prepare(config).Calculate(start, Parse("2026-10-29"), DateTime.MinValue));
+    }
+
+    [Fact]
+    public void Current_time_mode_ignores_an_old_end_property_value()
+    {
+        var start = Parse("2026-10-28");
+        var now = new DateTime(2026, 10, 29, 12, 0, 0);
+        var calculator = DatePeriodValue.Prepare(new DatePeriodConfig(1));
+        Assert.Equal("129600", calculator.Calculate(start, Parse("2026-10-30"), now));
+        Assert.Equal("129600", calculator.Calculate(start, Parse("2026-10-27"), now));
+        Assert.Equal("129600", calculator.Calculate(start, Parse("2026-10-30/2026-10-27"), now));
+        Assert.Equal("129600", calculator.Calculate(start, null, now));
+    }
+
+    [Fact]
+    public void All_day_values_normalize_both_boundaries_to_the_start_of_the_day()
+    {
+        var start = new DateValue(new(2026, 10, 28, 12, 0, 0), new(2026, 10, 28, 23, 59, 0), true);
+        var end = new DateValue(new(2026, 10, 29, 18, 0, 0), new(2026, 10, 29, 23, 59, 0), true);
+        Assert.Equal("86400", DatePeriodValue.Calculate(start, end, DateTime.MinValue, new DatePeriodConfig(1, 2)));
+        Assert.Equal("86400", DatePeriodValue.Calculate(Parse("2026-10-28"), Parse("2026-10-29"),
+            DateTime.MaxValue, new DatePeriodConfig(1, 2)));
+    }
+
+    [Fact]
+    public void Prepared_schedule_can_be_reused_without_carrying_the_previous_record_time()
+    {
+        var calculator = DatePeriodValue.Prepare(new DatePeriodConfig(1, 2, Weekdays: 31,
+            DayStart: "09:15", DayEnd: "17:45"));
+        Assert.Equal("30600", calculator.Calculate(Parse("2026-10-28"), Parse("2026-10-29"), DateTime.MinValue));
+        Assert.Equal("0", calculator.Calculate(Parse("2026-10-31"), Parse("2026-11-02"), DateTime.MinValue));
+        Assert.Equal("1800", calculator.Calculate(Parse("2026-10-28T09:00"), Parse("2026-10-28T09:45"), DateTime.MinValue));
+        Assert.Equal("", calculator.Calculate(Parse("2026-10-29"), Parse("2026-10-28"), DateTime.MinValue));
+        Assert.Equal("30600", calculator.Calculate(Parse("2026-10-28"), Parse("2026-10-29"), DateTime.MinValue));
+        Assert.Equal("", default(DatePeriodValue.Calculator).Calculate(Parse("2026-10-28"), Parse("2026-10-29"), DateTime.MinValue));
+    }
+
+    [Fact]
     public void Floating_calendar_time_does_not_depend_on_the_machine_time_zone()
     {
         var config = new DatePeriodConfig(1);
@@ -111,8 +156,33 @@ public sealed class DatePeriodValueTests
                 if (to > end) to = end;
                 if (to > from) expectedTicks += to.Ticks - from.Ticks;
             }
-            Assert.Equal((expectedTicks / TimeSpan.TicksPerSecond).ToString(CultureInfo.InvariantCulture),
-                DatePeriodValue.Calculate(new(start, start, false), new(end, end, false), DateTime.MinValue, config));
+            var expected = (expectedTicks / TimeSpan.TicksPerSecond).ToString(CultureInfo.InvariantCulture);
+            Assert.Equal(expected, DatePeriodValue.Calculate(new(start, start, false), new(end, end, false), DateTime.MinValue, config));
+            Assert.Equal(expected, DatePeriodValue.Prepare(config).Calculate(new(start, start, false), new(end, end, false), DateTime.MinValue));
+        }
+    }
+
+    [Theory]
+    [InlineData("00:00", "24:00")]
+    [InlineData("09:15", "17:45")]
+    [InlineData("23:59", "24:00")]
+    public void Every_weekday_mask_counts_only_its_selected_minutes(string from, string to)
+    {
+        var minuteStart = TimeOnly.ParseExact(from, "HH:mm", CultureInfo.InvariantCulture).ToTimeSpan();
+        var minuteEnd = to == "24:00" ? TimeSpan.FromDays(1)
+            : TimeOnly.ParseExact(to, "HH:mm", CultureInfo.InvariantCulture).ToTimeSpan();
+        // Семь отдельных односуточных диапазонов задают независимый эталон для всех масок.
+        for (var mask = 1; mask <= 127; mask++)
+        {
+            var calculator = DatePeriodValue.Prepare(new DatePeriodConfig(1, 2, Weekdays: mask, DayStart: from, DayEnd: to));
+            for (var weekday = 0; weekday < 7; weekday++)
+            {
+                var date = new DateTime(2026, 10, 26).AddDays(weekday); // Понедельник.
+                var start = new DateValue(date, date.Add(DateValue.EndOfDay), true);
+                var end = new DateValue(date.AddDays(1), date.AddDays(1).Add(DateValue.EndOfDay), true);
+                var expected = (mask & (1 << weekday)) == 0 ? 0 : (long)(minuteEnd - minuteStart).TotalSeconds;
+                Assert.Equal(expected.ToString(CultureInfo.InvariantCulture), calculator.Calculate(start, end, DateTime.MinValue));
+            }
         }
     }
 
@@ -143,6 +213,7 @@ public sealed class DatePeriodValueTests
         var config = new DatePeriodConfig(fieldId, 2, Weekdays: weekdays, DayStart: from, DayEnd: to);
         Assert.False(config.IsValid);
         Assert.Equal("", DatePeriodValue.Calculate(Parse("2026-01-01"), Parse("2026-01-02"), DateTime.MinValue, config));
+        Assert.Equal("", DatePeriodValue.Prepare(config).Calculate(Parse("2026-01-01"), Parse("2026-01-02"), DateTime.MinValue));
     }
 
     [Fact]

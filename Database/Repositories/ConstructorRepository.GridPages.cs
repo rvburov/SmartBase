@@ -108,12 +108,13 @@ public sealed partial class ConstructorRepository
         var keys = fieldIds ?? GetFields(collectionId).Where(f => f.Id.HasValue).Select(f => f.Id!.Value).ToList();
         var crossPaths = CrossDbPathsForKeys(collectionId, keys.Select(id => id.ToString())
             .Concat((relationFieldIds ?? []).Select(id => id.ToString())));
+        var periodNow = DatePeriodClock();
         return Task.Run(() =>
         {
             var t0 = GridTimings.Start();
             using var ctx = new AppDbContext(db.DbPath);
             ctx.ApplyPerformancePragmas();
-            var repo = new ConstructorRepository(ctx) { Permissions = Permissions };
+            var repo = new ConstructorRepository(ctx) { Permissions = Permissions, DatePeriodClock = () => periodNow };
             using var foreignScope = (ForeignResolver(crossPaths)?.Target as ForeignPropertyReader)?.OpenScope();
             GridTimings.Stop(t0, "страница (фон): подключение");
 
@@ -147,11 +148,12 @@ public sealed partial class ConstructorRepository
             .Select(f => f.CollectionId).Distinct().ToList();
         foreach (var collection in collections)
             foreach (var (id, path) in CrossDbPathsForKeys(collection, keys) ?? []) paths[id] = path;
+        var periodNow = DatePeriodClock();
         return Task.Run(() =>
         {
             using var ctx = new AppDbContext(db.DbPath);
             ctx.ApplyPerformancePragmas();
-            var repo = new ConstructorRepository(ctx) { Permissions = Permissions };
+            var repo = new ConstructorRepository(ctx) { Permissions = Permissions, DatePeriodClock = () => periodNow };
             using var foreignScope = (ForeignResolver(paths)?.Target as ForeignPropertyReader)?.OpenScope();
             return new TopUpData(repo.GetFieldValuesBatch(recordIds, fieldIds), repo.ReadPageLinks(recordIds, relationFieldIds));
         });
@@ -197,7 +199,7 @@ public sealed partial class ConstructorRepository
         }
         finally { if (opened) conn.Close(); }
         FillRelationComputedValues(recordIds, result, allFields ? null : fieldIds);
-        FillDatePeriodValues(recordIds, result, allFields ? null : fieldIds);
+        FillDatePeriodValues(recordIds, result, fieldIds, allValuesLoaded: allFields);
         return result;
     }
 
@@ -574,12 +576,36 @@ public sealed partial class ConstructorRepository
         if (fieldType == "date_period")
         {
             var field = DatePeriodField(fid);
-            var ordered = await q.OrderBy(r => r.Position).ThenBy(r => r.Id).Select(r => r.Id).ToListAsync(ct);
-            if (field is null) return ordered;
-            var values = DatePeriodColumnValues(field, ordered, ct);
-            var compare = ColumnSort.BuildComparer("date_period", sortAsc);
-            return ordered.OrderBy(id => values.GetValueOrDefault(id, ""),
-                Comparer<string>.Create((a, b) => compare(a, b))).ToList();
+            if (field is null)
+                return await q.OrderBy(r => r.Position).ThenBy(r => r.Id).Select(r => r.Id).ToListAsync(ct);
+            if (DatePeriodConfig.FromConfig(field.ConfigJson) is { Automatic: false }
+                && Permissions?.Can(PermAction.ViewCollection, collectionId) != false)
+                return await NumberSortedIdsAsync(collectionId, q, fid, sortAsc, filters.Count == 0, excludeHidden, ct);
+            // Храним только id и числовой ключ, без строк и словарей всех ячеек.
+            // Порядок чтения — порядок таблицы; порядковый номер сохраняет устойчивость.
+            var values = new List<(int Id, double Key, bool Empty, int Order)>();
+            foreach (var (id, value) in StreamDatePeriodColumn(field, q, ct))
+                values.Add((id, ColumnSort.NumberKey(value), value.Length == 0, values.Count));
+            ct.ThrowIfCancellationRequested();
+            var comparisons = 0;
+            try
+            {
+                values.Sort((a, b) =>
+                {
+                    if ((++comparisons & 4095) == 0) ct.ThrowIfCancellationRequested();
+                    if (a.Empty != b.Empty) return a.Empty ? 1 : -1;
+                    var difference = a.Key.CompareTo(b.Key);
+                    if (difference != 0) return sortAsc ? difference : -difference;
+                    return a.Order.CompareTo(b.Order);
+                });
+            }
+            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException
+                && ct.IsCancellationRequested && ex.InnerException is OperationCanceledException)
+            {
+                throw new OperationCanceledException(ct);
+            }
+            ct.ThrowIfCancellationRequested();
+            return values.Select(value => value.Id).ToList();
         }
 
         if (FieldTypeInfo.IsRelationComputed(fieldType))

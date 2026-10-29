@@ -2185,13 +2185,16 @@ public partial class ConstructorRepository(AppDbContext db)
         IReadOnlyList<ExportColumn> columns, bool excludeHidden, CancellationToken ct,
         IProgress<long>? rowsRead = null, int pageSize = 2000, bool portableRelations = false)
     {
+        var periodNow = DatePeriodClock();
         using var ctx = new AppDbContext(db.DbPath);
         ctx.ApplyBulkPerformancePragmas();
-        var repo = new ConstructorRepository(ctx) { Permissions = Permissions };
+        var repo = new ConstructorRepository(ctx) { Permissions = Permissions, DatePeriodClock = () => periodNow };
         // ExportColumn — снимок из UI: поле могло сменить тип или исчезнуть до старта.
         // Метаданные читаются только по живому audit-полю ИМЕННО этой коллекции.
         var liveTypes = ctx.DbFields.AsNoTracking().Where(f => f.CollectionId == collectionId)
             .ToDictionary(f => f.Id, f => f.FieldType);
+        var fieldIds = columns.Where(column => column.FieldId.HasValue)
+            .Select(column => column.FieldId!.Value).Distinct().ToArray();
 
         long total = 0;
         int? afterPos = null, afterId = null;
@@ -2202,7 +2205,7 @@ public partial class ConstructorRepository(AppDbContext db)
             if (page.Count == 0) yield break;
 
             var pageIds = page.Where(r => r.Id.HasValue).Select(r => r.Id!.Value).ToList();
-            var values = repo.GetFieldValuesBatch(pageIds);
+            var values = repo.GetFieldValuesBatch(pageIds, fieldIds);
             var relationLinks = columns.Where(c => c.FieldType == "relation" && c.FieldId is int fid
                     && liveTypes.GetValueOrDefault(fid) == "relation")
                 .ToDictionary(c => c.FieldId!.Value,
@@ -5696,12 +5699,7 @@ public partial class ConstructorRepository(AppDbContext db)
         bool Keep(string value) => selected.Contains(value) != excluded;
         var ct = ComputedToken(default);
         if (field.FieldType == "date_period")
-        {
-            var records = q.OrderBy(r => r.Position).ThenBy(r => r.Id).Select(r => r.Id).ToList();
-            var values = DatePeriodColumnValues(field, records, ct);
-            var matches = records.Where(id => Keep(values.GetValueOrDefault(id, ""))).ToList();
-            return q.Where(r => matches.Contains(r.Id));
-        }
+            return DatePeriodFilter(q, field, selected, excluded, ct);
         using var phase = ComputedRun?.Phase($"Столбец «{field.Name}»: чтение записей");
         ct.ThrowIfCancellationRequested();
         var scope = q.OrderBy(r => r.Position).ThenBy(r => r.Id).Select(r => r.Id).Take(SubsetLimit + 1).ToList();
@@ -5772,7 +5770,8 @@ public partial class ConstructorRepository(AppDbContext db)
                     .ToDictionary(v => v.RecordId, v => v.Value);
             }
             if (field?.FieldType == "date_period")
-                return DatePeriodColumnValues(ToDbField(field), Records(collectionId).Select(r => r.Id).ToList());
+                return StreamDatePeriodColumn(ToDbField(field), Records(collectionId))
+                    .ToDictionary(row => row.Id, row => row.Value);
             if (field is not null && FieldTypeInfo.IsRelationComputed(field.FieldType))
                 return GetRelationComputedColumnValues(collectionId, ToDbField(field));
             if (field?.FieldType == "relation")

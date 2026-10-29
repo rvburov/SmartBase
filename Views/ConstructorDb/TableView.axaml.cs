@@ -673,14 +673,17 @@ public partial class TableView : UserControl
     }
 
     /// <summary>Пересобрать колонки, СОХРАНЯЯ строки: сдвиг, «Отображение», создание, удаление,
-    /// дубль, смена типа, переименование «Названия». Состояние колонок читается один раз и отдается
+    /// дубль, смена типа, переименование «Названия». При изменении расчета периода страницы
+    /// перечитываются: прежние значения уже не соответствуют настройкам. Состояние колонок читается один раз и отдается
     /// сетке — строки и прокрутка остаются, ширины живут по ключам, выделение ячеек и колонок едет
     /// за своими ключами, отбор по удаленной колонке снимается.</summary>
     public void ReloadColumns()
     {
         if (_repository is null) return;
         ForgetCellEditing();   // колонка редактора могла скрыться или уехать
+        var before = _fields;
         LoadColumnState();
+        var periodsChanged = DatePeriodCalculationsChanged(before, _fields);
         _colDefs = BuildColDefs();
         ColumnsBuilt?.Invoke(this, _colDefs);
         RecordsGrid.ReloadColumns(_colDefs, _fields, _hiddenColumns, _columnStyles, _colWidths);
@@ -694,6 +697,31 @@ public partial class TableView : UserControl
         ApplyColumnSelection();
         // Отбор по удаленной колонке снимается, строки пересчитываются без него.
         if (PruneFilters()) ApplyFilters();
+        // SetFields меняет только метаданные и оставляет значения загруженных страниц.
+        // Новое правило периода требует свежих страниц; обычное переименование и раскладка
+        // сохраняют теплый кеш. ReloadRows читает видимое окно, а не все записи коллекции.
+        else if (periodsChanged) ReloadRows();
+    }
+
+    private static bool DatePeriodCalculationsChanged(IReadOnlyList<DbField> before, IReadOnlyList<DbField> after)
+    {
+        var previous = States(before);
+        var current = States(after);
+        return previous.Count != current.Count
+            || previous.Any(pair => !current.TryGetValue(pair.Key, out var state) || pair.Value != state);
+
+        static Dictionary<int, (DatePeriodConfig? Config, string? StartType, string? EndType)> States(IReadOnlyList<DbField> fields)
+        {
+            var types = fields.Where(field => field.Id is not null)
+                .ToDictionary(field => field.Id!.Value, field => field.FieldType);
+            return fields.Where(field => field.FieldType == "date_period" && field.Id is not null)
+                .ToDictionary(field => field.Id!.Value, field =>
+                {
+                    var config = DatePeriodConfig.FromConfig(field.ConfigJson);
+                    return (config, config is null ? null : types.GetValueOrDefault(config.StartFieldId),
+                        config?.EndFieldId is int end ? types.GetValueOrDefault(end) : null);
+                });
+        }
     }
 
     // Состояние, нужное для построения КОЛОНОК (поля, подписи системных, порядок, скрытые,
@@ -721,7 +749,7 @@ public partial class TableView : UserControl
 
     // ── Точечные изменения набора колонок ─────────────────────────────────────
     // Все сходятся в ReloadColumns: у рисованной сетки пересборка колонок — это новая раскладка
-    // и перерисовка, строки при этом не трогаются, поэтому отдельных точечных путей не нужно.
+    // и перерисовка. При смене формулы периода там же обновляются страницы строк.
 
     /// <summary>Создание/«создать после»/дубль свойства: порядок в БД уже выставлен контроллером
     /// (AddField/MoveColumnAfter), здесь — новая раскладка с колонкой на ее месте.</summary>

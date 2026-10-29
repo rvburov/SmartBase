@@ -109,7 +109,9 @@ public partial class ConstructorRepository
 
     /// <summary>Только расчетные значения периода. Зависимости читаются и за пределами окна колонок.</summary>
     private Dictionary<int, Dictionary<int, string>> ReadDatePeriods(IReadOnlyCollection<int> recordIds,
-        IReadOnlyCollection<int>? fieldIds = null, bool force = false, CancellationToken ct = default)
+        IReadOnlyCollection<int>? fieldIds = null, bool force = false, CancellationToken ct = default,
+        IReadOnlyDictionary<int, Dictionary<int, string>>? loaded = null,
+        IReadOnlyCollection<int>? loadedFieldIds = null)
     {
         var result = new Dictionary<int, Dictionary<int, string>>();
         if (recordIds.Count == 0 || fieldIds is { Count: 0 }) return result;
@@ -123,40 +125,55 @@ public partial class ConstructorRepository
         var fields = query.ToList().Select(ToDbField).ToList();
         if (fields.Count == 0) return result;
         var configs = fields.ToDictionary(f => f.Id!.Value, f => DatePeriodConfig.FromConfig(f.ConfigJson));
-        var dependencies = configs.Values.Where(c => c is not null).SelectMany(c =>
+        var calculated = configs.Values.Where(c => c is not null && (c.Automatic || force)).ToArray();
+        var dependencies = calculated.SelectMany(c =>
             c!.EndFieldId is int end ? new[] { c.StartFieldId, end } : [c.StartFieldId]).Distinct().ToArray();
-        var sources = db.DbFields.AsNoTracking().Where(f => Enumerable.Contains(dependencies, f.Id) && f.FieldType == "date")
+        var sources = dependencies.Length == 0 ? new Dictionary<int, int>() : db.DbFields.AsNoTracking()
+            .Where(f => Enumerable.Contains(dependencies, f.Id) && f.FieldType == "date")
             .Select(f => new { f.Id, f.CollectionId }).ToList().ToDictionary(f => f.Id, f => f.CollectionId);
-        var selected = dependencies.Concat(fields.Select(f => f.Id!.Value)).Distinct().ToArray();
-        var now = DatePeriodClock();
+        var calculators = configs.Where(pair => pair.Value is not null && (pair.Value.Automatic || force))
+            .ToDictionary(pair => pair.Key, pair => DatePeriodValue.Prepare(pair.Value!));
+        // Страница уже прочитала свои ячейки. Дочитываем только даты за пределами окна,
+        // а сохраненный фиксированный результат не требует ни дат, ни текущего времени.
+        var selected = dependencies.Concat(configs.Where(pair => pair.Value is { Automatic: false } && !force)
+            .Select(pair => pair.Key)).Distinct()
+            .Where(id => loaded is null || loadedFieldIds is not null && !loadedFieldIds.Contains(id)).ToArray();
+        var now = calculated.Length > 0 ? DatePeriodClock() : default;
         // Автоматическое «сейчас» обновляется по минутам, как его показ и окно фильтра.
         // Иначе выбранные в фильтре 7200 секунд уже через секунду не совпали бы с ячейкой.
         var minuteNow = new DateTime(now.Ticks - now.Ticks % TimeSpan.TicksPerMinute, now.Kind);
+        var byCollection = fields.GroupBy(field => field.CollectionId).ToDictionary(group => group.Key, group => group.ToArray());
+        var visible = byCollection.Keys.ToDictionary(id => id, id => Permissions?.Can(PermAction.ViewCollection, id) != false);
         foreach (var chunk in recordIds.Distinct().Chunk(200))
         {
             ct.ThrowIfCancellationRequested();
             var records = db.DbRecords.AsNoTracking().Where(r => Enumerable.Contains(chunk, r.Id))
                 .Select(r => new { r.Id, r.CollectionId }).ToList();
-            var values = db.DbFieldValues.AsNoTracking().Where(v => Enumerable.Contains(chunk, v.RecordId) && Enumerable.Contains(selected, v.FieldId))
+            var values = selected.Length == 0 ? new Dictionary<(int, int), string>() : db.DbFieldValues.AsNoTracking()
+                .Where(v => Enumerable.Contains(chunk, v.RecordId) && Enumerable.Contains(selected, v.FieldId))
                 .Select(v => new { v.RecordId, v.FieldId, v.Value }).ToList()
                 .ToDictionary(v => (v.RecordId, v.FieldId), v => v.Value);
+            string? SourceValue(int record, int field) => loaded is not null
+                && (loadedFieldIds is null || loadedFieldIds.Contains(field))
+                    ? loaded.GetValueOrDefault(record)?.GetValueOrDefault(field)
+                    : values.GetValueOrDefault((record, field));
             foreach (var record in records)
-            foreach (var field in fields.Where(f => f.CollectionId == record.CollectionId))
+            foreach (var field in byCollection.GetValueOrDefault(record.CollectionId) ?? [])
             {
                 var id = field.Id!.Value;
                 var value = "";
                 var config = configs[id];
-                if (Permissions?.Can(PermAction.ViewCollection, record.CollectionId) != false && config is not null)
+                if (visible[record.CollectionId] && config is not null)
                 {
-                    if (!config.Automatic && !force) value = values.GetValueOrDefault((record.Id, id), "");
+                    if (!config.Automatic && !force) value = SourceValue(record.Id, id) ?? "";
                     else if (sources.GetValueOrDefault(config.StartFieldId) == record.CollectionId
                         && (config.EndFieldId is null || sources.GetValueOrDefault(config.EndFieldId.Value) == record.CollectionId)
-                        && DateValue.TryParse(values.GetValueOrDefault((record.Id, config.StartFieldId)), out var start))
+                        && DateValue.TryParse(SourceValue(record.Id, config.StartFieldId), out var start))
                     {
                         if (config.EndFieldId is null)
-                            value = DatePeriodValue.Calculate(start, null, config.Automatic ? minuteNow : now, config);
-                        else if (DateValue.TryParse(values.GetValueOrDefault((record.Id, config.EndFieldId.Value)), out var end))
-                            value = DatePeriodValue.Calculate(start, end, now, config);
+                            value = calculators[id].Calculate(start, null, config.Automatic ? minuteNow : now);
+                        else if (DateValue.TryParse(SourceValue(record.Id, config.EndFieldId.Value), out var end))
+                            value = calculators[id].Calculate(start, end, now);
                     }
                 }
                 if (!result.TryGetValue(record.Id, out var byField)) result[record.Id] = byField = [];
@@ -167,9 +184,11 @@ public partial class ConstructorRepository
     }
 
     private void FillDatePeriodValues(IReadOnlyCollection<int> recordIds,
-        Dictionary<int, Dictionary<int, string>> values, IReadOnlyCollection<int>? fieldIds = null)
+        Dictionary<int, Dictionary<int, string>> values, IReadOnlyCollection<int>? fieldIds = null,
+        bool allValuesLoaded = false)
     {
-        foreach (var (recordId, periods) in ReadDatePeriods(recordIds, fieldIds))
+        foreach (var (recordId, periods) in ReadDatePeriods(recordIds, fieldIds, loaded: values,
+                     loadedFieldIds: allValuesLoaded ? null : fieldIds))
         {
             if (!values.TryGetValue(recordId, out var byField)) values[recordId] = byField = [];
             foreach (var (fieldId, value) in periods) byField[fieldId] = value;
@@ -308,12 +327,42 @@ public partial class ConstructorRepository
         .ToDictionary(r => r.Key, r => r.Value.GetValueOrDefault(field.Id.Value, ""));
 
     private List<(string Value, int Count)> DatePeriodCounts(DbField field, IQueryable<DbRecordEntity> scope,
-        CancellationToken ct = default)
+        CancellationToken ct = default) => DatePeriodCountsStream(field, scope, ct);
+
+    private IQueryable<DbRecordEntity> DatePeriodFilter(IQueryable<DbRecordEntity> scope, DbField field,
+        HashSet<string> selected, bool excluded, CancellationToken ct)
     {
-        var ids = scope.OrderBy(r => r.Position).ThenBy(r => r.Id).Select(r => r.Id).ToList();
-        var values = DatePeriodColumnValues(field, ids, ct);
-        return ids.Select(id => values.GetValueOrDefault(id, "")).GroupBy(v => v)
-            .OrderBy(g => g.Key.Length == 0).Select(g => (g.Key, g.Count())).ToList();
+        ct.ThrowIfCancellationRequested();
+        if (selected.Count == 0) return excluded ? scope : scope.Where(_ => false);
+        var config = DatePeriodConfig.FromConfig(field.ConfigJson);
+        if (config is null || Permissions?.Can(PermAction.ViewCollection, field.CollectionId) == false)
+            return selected.Contains("") != excluded ? scope : scope.Where(_ => false);
+        if (!config.Automatic)
+        {
+            // Фиксированный период — уже сохраненное число: отбор целиком на сервере,
+            // включая отсутствующий снимок и отбор «кроме», без чтения исходных дат.
+            var fieldId = field.Id!.Value;
+            var values = selected.ToList();
+            var empty = selected.Contains("");
+            var matching = db.DbFieldValues.Where(v => v.FieldId == fieldId && values.Contains(v.Value))
+                .Select(v => v.RecordId);
+            return excluded
+                ? scope.Where(r => !matching.Contains(r.Id) && (!empty || db.DbFieldValues.Any(v =>
+                    v.RecordId == r.Id && v.FieldId == fieldId && v.Value != "")))
+                : scope.Where(r => matching.Contains(r.Id) || (empty && !db.DbFieldValues.Any(v =>
+                    v.RecordId == r.Id && v.FieldId == fieldId && v.Value != "")));
+        }
+        var hits = new List<int>();
+        var misses = new List<int>();
+        foreach (var (id, value) in StreamDatePeriodColumn(field, scope, ct))
+            (selected.Contains(value) != excluded ? hits : misses).Add(id);
+        ct.ThrowIfCancellationRequested();
+        // Возвращаем меньшую сторону: одинаковый период у миллионов строк не должен
+        // превращаться в параметр со всеми их id, когда подошли все или почти все.
+        if (misses.Count == 0) return scope;
+        if (hits.Count == 0) return scope.Where(_ => false);
+        return hits.Count <= misses.Count ? scope.Where(r => hits.Contains(r.Id))
+                                         : scope.Where(r => !misses.Contains(r.Id));
     }
 
     private ColumnValueSnapshot DatePeriodSnapshot(int collectionId, string key, DbField field,
