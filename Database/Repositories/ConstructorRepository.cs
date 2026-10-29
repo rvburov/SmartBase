@@ -2188,6 +2188,10 @@ public partial class ConstructorRepository(AppDbContext db)
         using var ctx = new AppDbContext(db.DbPath);
         ctx.ApplyBulkPerformancePragmas();
         var repo = new ConstructorRepository(ctx) { Permissions = Permissions };
+        // ExportColumn — снимок из UI: поле могло сменить тип или исчезнуть до старта.
+        // Метаданные читаются только по живому audit-полю ИМЕННО этой коллекции.
+        var liveTypes = ctx.DbFields.AsNoTracking().Where(f => f.CollectionId == collectionId)
+            .ToDictionary(f => f.Id, f => f.FieldType);
 
         long total = 0;
         int? afterPos = null, afterId = null;
@@ -2199,7 +2203,8 @@ public partial class ConstructorRepository(AppDbContext db)
 
             var pageIds = page.Where(r => r.Id.HasValue).Select(r => r.Id!.Value).ToList();
             var values = repo.GetFieldValuesBatch(pageIds);
-            var relationLinks = columns.Where(c => c.FieldType == "relation" && c.FieldId.HasValue)
+            var relationLinks = columns.Where(c => c.FieldType == "relation" && c.FieldId is int fid
+                    && liveTypes.GetValueOrDefault(fid) == "relation")
                 .ToDictionary(c => c.FieldId!.Value,
                     c => repo.GetRelationLinksBatch(c.FieldId!.Value, pageIds));
             var relationFieldIds = relationLinks.Keys.ToList();
@@ -2217,16 +2222,22 @@ public partial class ConstructorRepository(AppDbContext db)
                 for (var i = 0; i < columns.Count; i++)
                 {
                     var c = columns[i];
-                    row[i] = c.FieldType == "relation" && c.FieldId is int relationId
-                           ? string.Join(RelationConfig.FromConfig(c.ConfigJson)?.SeparatorString ?? ", ",
-                               relationLinks[relationId].GetValueOrDefault(r.Id!.Value)?.Select(l => l.Display) ?? [])
-                           : c.Key == TitleKey ? r.Title
-                           : c.FieldId is int fid && vals is not null ? vals.GetValueOrDefault(fid, "") : "";
+                    row[i] = c.Key == TitleKey ? r.Title
+                           : c.FieldId is not int fid || !liveTypes.TryGetValue(fid, out var liveType) ? ""
+                           : FieldTypeInfo.IsAuditComputed(liveType) ? FieldTypeInfo.ComputedValue(r, liveType)
+                           : liveType == "relation" && relationLinks.TryGetValue(fid, out var links)
+                               ? string.Join(RelationConfig.FromConfig(c.ConfigJson)?.SeparatorString ?? ", ",
+                                   links.GetValueOrDefault(r.Id!.Value)?.Select(l => l.Display) ?? [])
+                           : vals?.GetValueOrDefault(fid, "") ?? "";
                 }
                 if (portableRelations)
                 {
-                    var portableValues = columns.Where(c => c.FieldId.HasValue && c.FieldType is not ("relation" or "lookup" or "rollup"))
-                        .ToDictionary(c => c.FieldId!.Value, c => vals?.GetValueOrDefault(c.FieldId!.Value, "") ?? "");
+                    // JSON SmartBase пишет этот payload вместо строкового показа: аудит
+                    // должен получить те же значения, что только что собранные колонки.
+                    var portableValues = columns.Select((column, index) => (Column: column, Index: index))
+                        .Where(c => c.Column.FieldId is int fid && liveTypes.TryGetValue(fid, out var type)
+                            && type is not ("relation" or "lookup" or "rollup"))
+                        .ToDictionary(c => c.Column.FieldId!.Value, c => row[c.Index]);
                     var portableLinks = relationLinks.ToDictionary(p => p.Key,
                         p => portableEdges?.GetValueOrDefault((r.Id!.Value, p.Key)) ?? []);
                     row[^1] = System.Text.Json.JsonSerializer.Serialize(new RelationPortableRow(r.Id!.Value,
@@ -4267,15 +4278,7 @@ public partial class ConstructorRepository(AppDbContext db)
         var userFields = initialFields.Where(f => f.FieldType == "user").Select(f => f.Id).ToList();
         if (!initialFields.Any(f => f.FieldType == "date_period"
             && DatePeriodConfig.FromConfig(f.ConfigJson) is { Automatic: false })) ForgetDatePeriodCreation(entity);
-        if (userFields.Count > 0)
-        {
-            foreach (var fid in userFields)
-                db.DbFieldValues.Add(new DbFieldValueEntity
-                {
-                    RecordId = entity.Id, FieldId = fid, Value = CurrentUser.DisplayName,
-                });
-            db.SaveChanges();
-        }
+        InitializeNewRecordUserValues(entity.Id, userFields);
 
         ResolveAutoFileForRecord(record.CollectionId, entity.Id);
         NotifyRelationDataChanged(record.CollectionId, recordId: entity.Id);
@@ -5567,6 +5570,10 @@ public partial class ConstructorRepository(AppDbContext db)
         var relatedComputed = db.DbFields.AsNoTracking()
             .Where(f => f.CollectionId == collectionId && (f.FieldType == "lookup" || f.FieldType == "rollup" || f.FieldType == "date_period"))
             .ToDictionary(f => f.Id, ToDbField);
+        var auditTypes = db.DbFields.AsNoTracking().Where(f => f.CollectionId == collectionId &&
+            (f.FieldType == "created_at" || f.FieldType == "updated_at"
+             || f.FieldType == "created_by" || f.FieldType == "updated_by"))
+            .ToDictionary(f => f.Id, f => f.FieldType);
 
         // ФОРМА УСЛОВИЯ ВАЖНА: набор значений уходит в SQL как `IN (json_each(@p))`, и SQLite
         // перебирает его заново на каждую строку, если он стоит внутри КОРРЕЛИРОВАННОГО EXISTS
@@ -5582,6 +5589,12 @@ public partial class ConstructorRepository(AppDbContext db)
             if (ColorQuery.IsColorKey(key))
             {
                 q = ColorFilter(q, collectionId, ColorQuery.ColumnOf(key), allowed);
+                continue;
+            }
+            if (int.TryParse(key, out var auditId) && auditTypes.TryGetValue(auditId, out var auditType))
+            {
+                Demand(PermAction.ViewCollection, collectionId);
+                q = AuditFilter(q, auditType, allowed);
                 continue;
             }
             if (int.TryParse(key, out var computedId) && relatedComputed.TryGetValue(computedId, out var computedField))
@@ -5750,7 +5763,14 @@ public partial class ConstructorRepository(AppDbContext db)
                      .ToDictionary(x => x.Id, x => x.Title ?? "");
         if (int.TryParse(key, out var fid))
         {
-            var field = db.DbFields.AsNoTracking().FirstOrDefault(f => f.Id == fid);
+            var field = db.DbFields.AsNoTracking().FirstOrDefault(f => f.Id == fid && f.CollectionId == collectionId);
+            if (field is null) return [];
+            if (field is not null && FieldTypeInfo.IsAuditComputed(field.FieldType))
+            {
+                Demand(PermAction.ViewCollection, collectionId);
+                return AuditValues(Records(collectionId), field.FieldType).ToList()
+                    .ToDictionary(v => v.RecordId, v => v.Value);
+            }
             if (field?.FieldType == "date_period")
                 return DatePeriodColumnValues(ToDbField(field), Records(collectionId).Select(r => r.Id).ToList());
             if (field is not null && FieldTypeInfo.IsRelationComputed(field.FieldType))
@@ -5837,6 +5857,12 @@ public partial class ConstructorRepository(AppDbContext db)
     /// </summary>
     private List<(string Value, int Count)> FieldValueCountsWhole(int collectionId, int fieldId)
     {
+        if (AuditField(fieldId) is { } audit)
+        {
+            if (audit.CollectionId != collectionId) return [];
+            Demand(PermAction.ViewCollection, collectionId);
+            return AuditCounts(Records(collectionId), audit.Type);
+        }
         if (IsFileField(fieldId)) return FileColumnCounts(fieldId, Records(collectionId));
         if (DatePeriodField(fieldId) is { } period) return DatePeriodCounts(period, Records(collectionId));
         if (RelatedComputedField(fieldId) is not null)
@@ -5864,8 +5890,14 @@ public partial class ConstructorRepository(AppDbContext db)
         return result;
     }
 
-    private List<(string Value, int Count)> FieldValueCounts(int fieldId, IQueryable<DbRecordEntity> scope)
+    private List<(string Value, int Count)> FieldValueCounts(int collectionId, int fieldId, IQueryable<DbRecordEntity> scope)
     {
+        if (AuditField(fieldId) is { } audit)
+        {
+            if (audit.CollectionId != collectionId) return [];
+            Demand(PermAction.ViewCollection, collectionId);
+            return AuditCounts(scope, audit.Type);
+        }
         if (IsFileField(fieldId)) return FileColumnCounts(fieldId, scope);
         if (DatePeriodField(fieldId) is { } period) return DatePeriodCounts(period, scope);
         if (RelatedComputedField(fieldId) is not null) return RelatedComputedCounts(fieldId, scope);
@@ -6039,7 +6071,7 @@ public partial class ConstructorRepository(AppDbContext db)
                    : IsFileField(fid) ? FileColumnCounts(fid, scope)
                    : IsCheckboxField(fid) ? CheckboxCounts(fid, scope, whole: others.Count == 0 && !excludeHidden)
                    : others.Count == 0 && !excludeHidden ? FieldValueCountsWhole(collectionId, fid)
-                   : FieldValueCounts(fid, scope))
+                   : FieldValueCounts(collectionId, fid, scope))
                 : [];
     }
 
@@ -6137,6 +6169,12 @@ public partial class ConstructorRepository(AppDbContext db)
         {
             using var foreignScope = (resolveForeign?.Target as ForeignPropertyReader)?.OpenScope();
             return FilteredRecords(collectionId, others, excludeHidden, resolveForeign);
+        }
+        if (fid is int auditId && AuditField(auditId) is { } audit)
+        {
+            if (audit.CollectionId != collectionId) return new([], false, 0, false);
+            Demand(PermAction.ViewCollection, collectionId);
+            return AuditColumnValues(Scope(), audit.Type, search, ct);
         }
         if (fid is int fileId && IsFileField(fileId))
             return FileColumnValues(fileId, Scope(), search, ct);
@@ -6291,6 +6329,15 @@ public partial class ConstructorRepository(AppDbContext db)
             var scope = repo.FilteredRecords(collectionId, others, excludeHidden, resolver);
             if (int.TryParse(key, out var fid))
             {
+                if (repo.AuditField(fid) is { } audit)
+                {
+                    if (audit.CollectionId != collectionId) return (0L, 0);
+                    repo.Demand(PermAction.ViewCollection, collectionId);
+                    var auditValues = AuditValues(scope, audit.Type);
+                    var auditDistinct = auditValues.Where(v => v.Value != "").Select(v => v.Value).Distinct().LongCount();
+                    ct.ThrowIfCancellationRequested();
+                    return (auditDistinct, auditValues.Count(v => v.Value == ""));
+                }
                 if (repo.IsFileField(fid)) return repo.FileColumnValueTotals(fid, scope, ct);
                 if (repo.DatePeriodField(fid) is { } period)
                 {
@@ -7553,9 +7600,9 @@ public partial class ConstructorRepository(AppDbContext db)
     // ─── CalendarRecord API (для календарных представлений) ───────────────────
     // ══════════════════════════════════════════════════════════════════════════
 
-    public CalendarRecord AddCalendarRecord(CalendarRecord r) => AddCalendarRecordCore(r, resolveAutoFiles: true);
+    public CalendarRecord AddCalendarRecord(CalendarRecord r) => AddCalendarRecordWithUserDefaults(r, initializeUserValues: true);
 
-    private CalendarRecord AddCalendarRecordCore(CalendarRecord r, bool resolveAutoFiles)
+    private CalendarRecord AddCalendarRecordCore(CalendarRecord r, bool resolveAutoFiles, bool initializeUserValues)
     {
         Demand(PermAction.CreateRecord, r.CollectionId);
         var colId = r.CollectionId ?? GetOrCreateDefaultCollection();
@@ -7575,6 +7622,11 @@ public partial class ConstructorRepository(AppDbContext db)
         db.DbRecords.Add(rec);
         Log("create", "record", r.Title, CollectionNameOf(colId));
         db.SaveChanges();
+
+        if (initializeUserValues)
+            InitializeNewRecordUserValues(rec.Id, db.DbFields.AsNoTracking()
+                .Where(field => field.CollectionId == colId && field.FieldType == "user")
+                .Select(field => field.Id).ToList());
 
         SetCalendarDateValue(rec.Id, dateFieldId, r);
         // Календарь — один из двух путей, которые заводят поле «Описание» (второй — задачи):
@@ -7670,7 +7722,7 @@ public partial class ConstructorRepository(AppDbContext db)
                 r.Id = null;
                 // Перенос сначала копирует все значения. Иначе старый файловый путь
                 // затрет результат начального подбора, а источник-текст еще не заполнен.
-                AddCalendarRecordCore(r, resolveAutoFiles: false);
+                AddCalendarRecordCore(r, resolveAutoFiles: false, initializeUserValues: false);
                 CopyFieldValuesByName(this, oldId, oldColId, r.Id!.Value, newColId,
                                       createMissingFields: false, excludeTargetFieldId: r.FieldId);
                 CopyRelationLinksByName(this, oldId, oldColId, r.Id!.Value, newColId);

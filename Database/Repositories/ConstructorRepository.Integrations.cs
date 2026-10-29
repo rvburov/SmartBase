@@ -605,6 +605,12 @@ public partial class ConstructorRepository
                        .ToList();
 
         var values = GetFieldValuesBatch([.. chosen.Select(r => r.Id)]);
+        // Тип мог измениться после сохранения исходящей привязки. Как и в полном
+        // экспорте, аудит читается из записи только по живому полю этой коллекции.
+        var auditTypes = db.DbFields.AsNoTracking().Where(f => f.CollectionId == collectionId &&
+            (f.FieldType == "created_at" || f.FieldType == "updated_at"
+             || f.FieldType == "created_by" || f.FieldType == "updated_by"))
+            .ToDictionary(f => f.Id, f => f.FieldType);
 
         var rows = new List<string[]>(chosen.Count);
 
@@ -616,8 +622,14 @@ public partial class ConstructorRepository
             for (var i = 0; i < columns.Count; i++)
                 row[i] = columns[i].Key == TitleKey
                     ? record.Title
-                    : columns[i].FieldId is int field && mine is not null
-                        ? mine.GetValueOrDefault(field, "")
+                    : columns[i].FieldId is int field
+                        ? auditTypes.TryGetValue(field, out var auditType)
+                            ? auditType switch
+                            {
+                                "created_at" => record.CreatedAt ?? "", "updated_at" => record.UpdatedAt ?? "",
+                                "created_by" => record.CreatedBy ?? "", _ => record.UpdatedBy ?? "",
+                            }
+                            : mine?.GetValueOrDefault(field, "") ?? ""
                         : "";
 
             if (!Fits(tests, row)) continue;

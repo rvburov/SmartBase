@@ -287,9 +287,7 @@ public sealed class UserValueTests
         Assert.Equal("Иванов Иван", forCell[^1]);
     }
 
-    [Fact(Skip = "дефект продукта: вычисляемые колонки (created_by/updated_by/created_at/updated_at) " +
-                 "не поддержаны в GetColumnValues/GetFieldValueCounts/GetFilteredRecordIds/" +
-                 "ReadExportRowsIsolated — сортировка, фильтр и экспорт видят их пустыми")]
+    [Fact]
     public async Task Author_column_is_filterable_sortable_and_exported()
     {
         using var db = new TempDatabase();
@@ -305,13 +303,8 @@ public sealed class UserValueTests
 
         var key = author.ToString();
 
-        // КРАСНЫЙ ТЕСТ. Значения вычисляемых типов (created_by/updated_by/created_at/updated_at)
-        // хранятся в аудите записи (db_records), а сортировка (GetColumnValues), счетчики фильтра
-        // (ColumnCounts → GetFieldValueCounts), фильтр (GetFilteredRecordIds) и экспорт
-        // (ReadExportRowsIsolated) читают db_field_values, где строк у таких полей нет вовсе.
-        // Для пользователя это выглядит так: колонка «Создал» в таблице заполнена, но сортировка
-        // по ней ничего не делает, окно фильтра предлагает одно «(Пусто)» на все записи, а в
-        // выгрузке столбец пустой. Правку делать ОБЩЕЙ для всех вычисляемых типов, тест — на created_by.
+        // Все четыре пути обязаны читать аудит записи, а не отсутствующие EAV-строки.
+        // Все типы, ограничения списка и оба провайдера покрыты AuditColumnQueryTests.
 
         // 1. Сортировка колонки.
         var vals = repo.GetColumnValues(col, key);

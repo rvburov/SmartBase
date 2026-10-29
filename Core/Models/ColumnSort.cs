@@ -27,13 +27,15 @@ public static class ColumnSort
             "number" or "date_period" => NumberKey(a).CompareTo(NumberKey(b)),
             "rollup" => RollupKey(a).CompareTo(RollupKey(b)),
             "date"   => DateKey(a).CompareTo(DateKey(b)),
+            "created_at" or "updated_at" => AuditDateKey(a).CompareTo(AuditDateKey(b)),
             _        => string.Compare(a, b, StringComparison.CurrentCultureIgnoreCase),
         };
 
         return (a, b) =>
         {
-            var aEmpty = string.IsNullOrEmpty(a);
-            var bEmpty = string.IsNullOrEmpty(b);
+            var auditDate = fieldType is "created_at" or "updated_at";
+            var aEmpty = string.IsNullOrEmpty(a) || auditDate && AuditDateKey(a) == long.MaxValue;
+            var bEmpty = string.IsNullOrEmpty(b) || auditDate && AuditDateKey(b) == long.MaxValue;
             if (aEmpty || bEmpty) return aEmpty == bEmpty ? 0 : (aEmpty ? 1 : -1);
             var r = Core(a, b);
             return asc ? r : -r;
@@ -54,4 +56,12 @@ public static class ColumnSort
     /// <summary>Ключ даты: начало значения; нечитаемое — максимум (в конец списка).</summary>
     public static DateTime DateKey(string s) =>
         DateValue.TryParse(s, out var dv) ? dv.Start : DateTime.MaxValue;
+
+    /// <summary>Момент аудита ISO "o": смещение и все доли секунды учитываются.
+    /// Дата без смещения считается UTC, как в FormatComputedDisplay; нечитаемое — в конец.
+    /// RoundtripKind у DateTimeOffset недопустим: используется явный AssumeUniversal.</summary>
+    public static long AuditDateKey(string s) =>
+        DateTimeOffset.TryParse(s, CultureInfo.InvariantCulture,
+            DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.AssumeUniversal, out var value)
+            ? value.UtcTicks : long.MaxValue;
 }

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using SmartBase.Core.Importers;
@@ -252,7 +253,7 @@ public sealed record InboxMessage(
 
         try
         {
-            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            using var stream = OpenFileAfterShortSharingConflict(path);
 
             if (stream.Length == 0)
             {
@@ -268,6 +269,32 @@ public sealed record InboxMessage(
             return null;
         }
     }
+
+    // Ready соседней копии кратко открывает исходный файл с FileShare.None. На Unix
+    // переименование не снимает блокировку inode: захват уже наш, но сосед еще закрывает
+    // свой проверочный дескриптор. Ждем только открытия, не повторяем разбор JSON и
+    // не ослабляем FileShare. Постоянный отказ вернется прежним ответом через полсекунды.
+    private static FileStream OpenFileAfterShortSharingConflict(string path)
+    {
+        var started = Stopwatch.GetTimestamp();
+        while (true)
+        {
+            try { return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read); }
+            catch (IOException failure) when (IsSharingConflict(failure)
+                && Stopwatch.GetElapsedTime(started).TotalMilliseconds < 500)
+            {
+                Thread.Sleep(10);
+            }
+        }
+    }
+
+    // Windows возвращает HRESULT_FROM_WIN32(ERROR_SHARING_VIOLATION). Unix .NET
+    // оставляет в HResult исходный errno EWOULDBLOCK: 11 на Linux, 35 на macOS.
+    // Другие IO-ошибки (нет файла, отказ доступа, ошибка диска) здесь не повторяются.
+    private static bool IsSharingConflict(IOException failure) =>
+        OperatingSystem.IsWindows() && failure.HResult == unchecked((int)0x80070020)
+        || OperatingSystem.IsLinux() && failure.HResult == 11
+        || OperatingSystem.IsMacOS() && failure.HResult == 35;
 
     /// <summary>
     /// Общий разбор конверта — по одному токену, без чтения потока целиком.

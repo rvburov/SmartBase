@@ -1041,7 +1041,7 @@ public partial class CalendarControllerView : UserControl
                     // Запрет удаления держит и перенос: проверяем до копии, иначе запись осталась бы
                     // в обеих базах.
                     sourceRepo.EnsureRecordsMovable([r.Id!.Value]);
-                    targetRepo.AddCalendarRecord(rec);
+                    targetRepo.AddCalendarRecordForTransfer(rec);
                     targetRepo.CopyFieldValuesByName(sourceRepo, r.Id!.Value, r.CollectionId ?? 0,
                                                      rec.Id!.Value, rec.CollectionId ?? 0,
                                                      createMissingFields: false, excludeTargetFieldId: rec.FieldId);

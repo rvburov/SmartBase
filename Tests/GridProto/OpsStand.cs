@@ -8,6 +8,7 @@
 //   точному счету из фона, стандартная ширина столбцов из настроек.
 
 using System.Diagnostics;
+using System.Globalization;
 using System.Reflection;
 using Avalonia;
 using Avalonia.Controls;
@@ -329,6 +330,77 @@ static class OpsStand
         ClearFilter(K(fSel));
         ClearFilter(K(fNum));
         Expect(p.Rows!.Source is PlainRowSource, "сортировка снята");
+
+        // Дата аудита — плоский список со временем, а не дерево обычного поля-даты.
+        // Показ и поиск проверяем через настоящий фильтр; ISO со смещением и долями секунды
+        // отличает локальную подпись от сырого значения и от его простого обрезания.
+        Console.WriteLine("Дата аудита в фильтре:");
+        {
+            var audit = repo.GetFields(cid).FirstOrDefault(f => f.FieldType == "created_at");
+            var addedAudit = audit is null;
+            audit ??= repo.AddField(new DbField
+            {
+                CollectionId = cid, Name = "Создано (стенд)", FieldType = "created_at", Position = 900000,
+            });
+            var auditKey = K(audit);
+            var auditRecord = Head(1).Single().RecordId;
+            var originalCreated = mgr.Context.DbRecords.AsNoTracking()
+                .Where(r => r.Id == auditRecord).Select(r => r.CreatedAt).Single();
+            const string auditRaw = "2001-02-03T04:05:06.1234567+03:00";
+            var expectedDisplay = DateTimeOffset.Parse(auditRaw, CultureInfo.InvariantCulture)
+                .LocalDateTime.ToString("dd.MM.yyyy HH:mm", CultureInfo.InvariantCulture);
+            var originalOffset = (s.OffsetX, s.OffsetY);
+            try
+            {
+                mgr.Context.Database.ExecuteSqlRaw("UPDATE db_records SET CreatedAt = {0} WHERE Id = {1}",
+                    auditRaw, auditRecord);
+                repo.SaveColumnDisplay(cid, repo.GetFields(cid).Select(f =>
+                    (K(f), shownIds.Contains(f.Id!.Value) || f.Id == audit.Id, 1)));
+                table.Load(repo, cid, repo.ReadOpenSnapshot(cid, deferCount: true));
+                Settled();
+
+                var auditFilter = OpenFilter(auditKey);
+                Expect(auditFilter is { IsOpen: true }, "кнопка заголовка открыла фильтр даты создания");
+                if (auditFilter is not null)
+                {
+                    var value = Values(auditFilter).SingleOrDefault(v => Raw(v) == auditRaw);
+                    var display = value?.GetType().GetProperty("Display")?.GetValue(value) as string;
+                    Expect(display == expectedDisplay && display != auditRaw,
+                        $"дата создания показана локально с точностью до минуты: «{display}», ждем «{expectedDisplay}»");
+                    CaptureMenu("audit-date-filter.png");
+                    Expect(Content(auditFilter).GetVisualDescendants().OfType<TextBlock>()
+                        .Any(t => t.IsEffectivelyVisible && t.Text == expectedDisplay),
+                        "видимая строка окна фильтра содержит локальную дату и время");
+
+                    var auditSearch = Search(auditFilter);
+                    auditSearch.Text = expectedDisplay;
+                    Pump();
+                    Expect(WaitUntil(() => Values(auditFilter).Count == 1
+                        && Raw(Values(auditFilter)[0]) == auditRaw, TimeSpan.FromSeconds(10)),
+                        "поиск по видимой дате и времени находит исходное ISO-значение");
+                    Enter(auditSearch);
+                    Settled();
+                    Expect(DataRows() == 1 && Head(1).Single().RecordId == auditRecord,
+                        "Enter применил найденную дату аудита к нужной записи");
+                    ClearFilter(auditKey);
+                }
+            }
+            finally
+            {
+                table.LastOpenedFilter?.Hide();
+                mgr.Context.Database.ExecuteSqlRaw("UPDATE db_records SET CreatedAt = {0} WHERE Id = {1}",
+                    originalCreated, auditRecord);
+                if (addedAudit) repo.DeleteField(audit.Id!.Value);
+                repo.SaveColumnDisplay(cid, repo.GetFields(cid).Select(f =>
+                    (K(f), shownIds.Contains(f.Id!.Value), 1)));
+                table.Load(repo, cid, repo.ReadOpenSnapshot(cid, deferCount: true));
+                Settled();
+                (s.OffsetX, s.OffsetY) = originalOffset;
+                Pump();
+            }
+            Expect(DataRows() == total && L().IndexOf(auditKey) < 0,
+                "после проверки возвращены все записи и пять видимых свойств");
+        }
 
         // ── По цвету ───────────────────────────────────────────────────────────
         // Подменю справа, несколько цветов одного аспекта — ИЛИ, фон и текст — И.

@@ -556,20 +556,20 @@ public sealed partial class ConstructorRepository
         if (sortKey == TitleKey)
             return await OrderedIds(q, r => r.Title, sortAsc).ToListAsync(ct);
 
-        var fieldType = sortFieldType ?? "text";
-        if (FieldTypeInfo.IsAuditComputed(fieldType))
-        {
-            return fieldType switch
-            {
-                "created_at" => await OrderedIds(q, r => r.CreatedAt, sortAsc).ToListAsync(ct),
-                "updated_at" => await OrderedIds(q, r => r.UpdatedAt, sortAsc).ToListAsync(ct),
-                "created_by" => await OrderedIds(q, r => r.CreatedBy, sortAsc).ToListAsync(ct),
-                _            => await OrderedIds(q, r => r.UpdatedBy, sortAsc).ToListAsync(ct),
-            };
-        }
-
         if (!int.TryParse(sortKey, out var fid))
             return await q.OrderBy(r => r.Position).ThenBy(r => r.Id).Select(r => r.Id).ToListAsync(ct);
+
+        // Поле могло сменить тип, пока запрос ждал фона: живая схема важнее снимка UI.
+        var storedType = db.DbFields.AsNoTracking().Where(f => f.Id == fid && f.CollectionId == collectionId)
+            .Select(f => f.FieldType).FirstOrDefault();
+        if (storedType is null)
+            return await q.OrderBy(r => r.Position).ThenBy(r => r.Id).Select(r => r.Id).ToListAsync(ct);
+        var fieldType = storedType;
+        if (FieldTypeInfo.IsAuditComputed(fieldType))
+        {
+            Demand(PermAction.ViewCollection, collectionId);
+            return await AuditSortedIdsAsync(q, fieldType, sortAsc, ct);
+        }
 
         if (fieldType == "date_period")
         {

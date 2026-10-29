@@ -47,4 +47,27 @@ public sealed class ColumnSortTests
         Assert.Equal(0, asc("Москва", "москва"));
         Assert.True(asc("абрикос", "Яблоко") < 0);
     }
+
+    [Theory]
+    [InlineData("created_at")]
+    [InlineData("updated_at")]
+    public void Audit_dates_sort_by_instant_with_precision_and_keep_legacy_empty_last(string type)
+    {
+        var earlier = "2026-10-28T08:00:00.0000001+02:00";
+        var same = "2026-10-28T06:00:00.0000001Z";
+        var nextTick = "2026-10-28T06:00:00.0000002Z";
+        var later = "2026-10-28T06:30:00.0000000Z";
+        foreach (var ascending in new[] { true, false })
+        {
+            var compare = ColumnSort.BuildComparer(type, ascending);
+            Assert.Equal(0, compare(earlier, same));
+            Assert.Equal(ascending ? -1 : 1, Math.Sign(compare(earlier, nextTick)));
+            Assert.Equal(ascending ? -1 : 1, Math.Sign(compare(earlier, later)));
+            Assert.True(compare("", earlier) > 0);
+            Assert.True(compare("не дата", earlier) > 0);
+            Assert.Equal(0, compare("", "не дата"));
+        }
+        Assert.Equal(ColumnSort.AuditDateKey(same), ColumnSort.AuditDateKey("2026-10-28T06:00:00.0000001"));
+        Assert.Equal(1, ColumnSort.AuditDateKey(nextTick) - ColumnSort.AuditDateKey(same));
+    }
 }

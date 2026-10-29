@@ -240,8 +240,10 @@ public sealed class TaskEventWriteTests
         Assert.Empty(Events(db));
     }
 
-    [Fact]
-    public void Quick_add_notifies_the_executor_once_and_says_nothing_about_the_initial_status()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Quick_add_notifies_the_executor_once_and_says_nothing_about_the_initial_status(bool withDue)
     {
         using var db = new TempDatabase();
         JoinUser(db.Path, "petrov@pc2", Neighbour);
@@ -252,11 +254,14 @@ public sealed class TaskEventWriteTests
 
         // Путь быстрого добавления раздела «Задачи»: исполнитель — сосед, назначил — я.
         repo.AddTaskRecord(col, "Проверить стенд", Neighbour, CurrentUser.DisplayName,
-                           ConstructorRepository.TaskStatusPlanned, due: null);
+                           ConstructorRepository.TaskStatusPlanned, due: withDue
+                               ? new DateValue(new DateTime(2026, 10, 28), new DateTime(2026, 10, 28), true) : null);
 
         var e = Assert.Single(Events(db));
         Assert.Equal(TaskEventKinds.Assigned, e.Kind);
         Assert.Equal("petrov@pc2", e.RecipientKey);
+        Assert.Equal(CurrentUser.DisplayName, e.OldValue);
+        Assert.Equal(Neighbour, e.NewValue);
     }
 
     [Fact]

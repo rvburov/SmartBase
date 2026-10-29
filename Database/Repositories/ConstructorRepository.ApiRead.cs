@@ -147,6 +147,7 @@ public partial class ConstructorRepository
 
         var names  = new List<string>(fieldKeys.Count);
         var fields = new List<int?>(fieldKeys.Count);
+        var auditTypes = new Dictionary<int, string>();
 
         foreach (var key in fieldKeys)
         {
@@ -169,6 +170,8 @@ public partial class ConstructorRepository
 
             names.Add(column.Header);
             fields.Add(column.FieldId);
+            if (column.FieldId is int auditId && FieldTypeInfo.IsAuditComputed(column.FieldType))
+                auditTypes[auditId] = column.FieldType;
         }
 
         // Страница — ключевым курсором, как таблица: OFFSET на большой коллекции читает и
@@ -199,11 +202,17 @@ public partial class ConstructorRepository
 
             for (var i = 0; i < fields.Count; i++)
                 row[i] = fields[i] is int field
-                    ? mine?.GetValueOrDefault(field, "") ?? ""
+                    ? auditTypes.TryGetValue(field, out var auditType)
+                        ? auditType switch
+                        {
+                            "created_at" => record.CreatedAt ?? "", "updated_at" => record.UpdatedAt ?? "",
+                            "created_by" => record.CreatedBy ?? "", _ => record.UpdatedBy ?? "",
+                        }
+                        : mine?.GetValueOrDefault(field, "") ?? ""
                     : record.Title;
 
             rows.Add((record.Id,
-                      record.UpdatedAt.Length > 0 ? record.UpdatedAt : record.CreatedAt,
+                      string.IsNullOrEmpty(record.UpdatedAt) ? record.CreatedAt ?? "" : record.UpdatedAt,
                       row));
         }
 

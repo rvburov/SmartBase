@@ -466,23 +466,20 @@ public sealed class TaskRecordsTests
         Assert.Equal(2, repo.GetTaskRecords().Count);
     }
 
-    [Fact(Skip = "дефект продукта: AddCalendarRecord (ConstructorRepository.cs:4999) не проставляет " +
-                 "текущего пользователя в user-поля новой записи, а AddRecord — проставляет")]
+    [Fact]
     public void Task_creation_fills_other_user_fields_the_same_with_and_without_due()
     {
-        // КРАСНЫЙ ТЕСТ. Дефект: Tasks.cs:311-355 — задача БЕЗ срока создается через AddRecord
-        // (заполняет ВСЕ user-поля текущим пользователем), СО сроком — через AddCalendarRecord
-        // (не заполняет ничего). Одинаковое действие пользователя дает разные записи: у одной
-        // «Согласующий» заполнен, у другой пуст. Тест фиксирует симметрию путей, не выбирая,
-        // какой из них правильный.
+        // Срок не меняет правило новой записи: все user-поля получают текущего
+        // пользователя, а явно выбранные роли задачи записываются поверх начальных значений.
         using var db = new TempDatabase();
         var repo = db.Constructor;
         var col = SampleData.AddCollection(repo, "Заявки").Id!.Value;
 
         var (t1, t2, _, _, _, approverId, Value) = TwoTasksWithAndWithoutDue(repo, col);
 
-        // Поле, к задачам отношения не имеющее, обязано быть заполнено одинаково.
-        Assert.Equal(Value(t1, approverId), Value(t2, approverId));
+        // Проверяем значение, а не только равенство: две пустые ячейки тоже были бы равны.
+        Assert.Equal(CurrentUser.DisplayName, Value(t1, approverId));
+        Assert.Equal(CurrentUser.DisplayName, Value(t2, approverId));
     }
 
     // ── Права на правку схемы задач ───────────────────────────────────────────
