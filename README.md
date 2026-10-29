@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.3.2-blue" alt="Версия">
+  <img src="https://img.shields.io/badge/version-2.0.0-blue" alt="Версия">
   <img src="https://img.shields.io/badge/.NET-10.0+-512BD4?logo=dotnet&logoColor=white" alt=".NET">
   <img src="https://img.shields.io/badge/C%23-14-239120?logo=csharp&logoColor=white" alt="C#">
   <img src="https://img.shields.io/badge/Avalonia_UI-11.2-8B44AC" alt="Avalonia">
