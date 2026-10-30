@@ -28,6 +28,8 @@
   <ItemGroup>
     <Using Include="Xunit" />
     <Using Include="SmartBase.Tests.Extensions.Shared" />
+    <!-- Самостоятельный UI-стенд запускается отдельно, а не внутри xUnit. -->
+    <Compile Remove="Ui/**/*.cs" />
   </ItemGroup>
 
   <!-- Приложение (оттуда же встроенный справочник ЕСКД — он лежит в ресурсах SmartBase.dll)

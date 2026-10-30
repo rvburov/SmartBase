@@ -23,10 +23,8 @@ namespace SmartBase.Extensions.DocRegistry;
 /// то же действие работает с любой программой, которая умеет прислать текст и назвать того, кто
 /// его написал.
 ///
-/// <b>Регистрирует только тот, кто в списке.</b> Список ведется в настройках расширения, и
-/// сверяется с ним ОТПРАВИТЕЛЬ — идентификатор, который назвала та программа, — а не строка «ФИО»
-/// сообщения: ее можно написать любую. Пустой список — не «можно всем», а «никому»:
-/// регистрацию по переписке включают осознанно.
+/// Отправитель и источник связывают ответ Да/Нет с ожидающей заявкой. Список получателей
+/// инструкции не ограничивает регистрацию; ФИО сообщения остается общим автором документов.
 ///
 /// <b>Два вида отказа.</b> Причину в самом сообщении отправитель исправит сам, и отказ обращен к
 /// нему (<see cref="ActionResult.Refused"/>). Причина в настройке — журнал не тот, подключения
@@ -54,7 +52,7 @@ public sealed class RegisterMessageAction : IExtensionAction
     public string Name        => "Зарегистрировать по сообщению";
     public string Description =>
         "Обрабатывает действия Регистрация, Просмотр, Удаление и Изменение. При регистрации "
-      + "выдает номер или исполнение по ГОСТ 2.201-80. Первый документ новой серии, удаление и "
+      + "выдает один или несколько номеров или исполнений по ГОСТ 2.201-80. Первый документ новой серии, удаление и "
       + "изменение выполняет после ответа Да, ответ Нет отменяет операцию.";
 
     public ExtensionActionKind Kind => ExtensionActionKind.Operation;
@@ -95,9 +93,15 @@ public sealed class RegisterMessageAction : IExtensionAction
         if (DocumentMessages.Run(context, text, sender) is { } documentResult)
             return documentResult;
 
-        var (request, problems) = MessageRegistration.Read(text, orgs);
+        // Запятая относится только к значению «Номер»: запятые в наименовании или проекте
+        // не превращают обычную регистрацию в список.
+        var isBatch = MessageRegistration.Value(MessageRegistration.Lines(text), MessageRegistration.NumberKey).Contains(',');
+        var batch = isBatch ? MessageRegistration.ReadBatch(text, orgs) : null;
+        var (request, problems) = isBatch
+            ? (null, (IReadOnlyList<string>)Array.Empty<string>())
+            : MessageRegistration.Read(text, orgs);
 
-        if (request is null)
+        if (!isBatch && request is null)
         {
             var plain = string.Join("\n", problems);
 
@@ -126,7 +130,9 @@ public sealed class RegisterMessageAction : IExtensionAction
             return ActionResult.Failed(
                 $"коллекция «{collection.Name}» не подходит под журнал регистрации: {check.Problem}");
 
-        return DocumentMessages.Register(context, request, sender, shape);
+        return batch is not null
+            ? DocumentMessages.RegisterBatch(context, batch, sender, shape)
+            : DocumentMessages.Register(context, request!, sender, shape);
     }
 
     /// <summary>

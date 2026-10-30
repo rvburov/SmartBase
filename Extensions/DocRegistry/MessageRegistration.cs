@@ -20,6 +20,24 @@ public sealed record RegistrationRequest(string Org, string Eskd, int? Number,
     public bool NewExecution => Number is not null && !Exact;
 }
 
+/// <summary>Один номер списка с исходным текстом, местом в заявке и собственными ошибками.</summary>
+public sealed record BatchRegistrationItem(int Position, string Raw, RegistrationRequest? Request,
+                                           IReadOnlyList<string> Problems);
+
+/// <summary>
+/// Результат разбора списка. Даже годные элементы нельзя записывать, пока <see cref="Ok"/>
+/// ложно: ошибка одного номера или общего поля отклоняет всю заявку.
+/// </summary>
+public sealed record BatchRegistrationRead(IReadOnlyList<BatchRegistrationItem> Items,
+                                           IReadOnlyList<string> Problems, int? Total = null)
+{
+    /// <summary>Число введенных элементов, включая заявку, превышающую лимит обработки.</summary>
+    public int Count => Total ?? Items.Count;
+    /// <summary>Все номера и общие поля проверены; пустая заявка регистрации не допускается.</summary>
+    public bool Ok => Problems.Count == 0 && Items.Count > 0
+                      && Items.All(item => item.Request is not null && item.Problems.Count == 0);
+}
+
 /// <summary>
 /// Разбор и проверка сообщения о регистрации — того вида, в котором его набирает человек в
 /// переписке:
@@ -86,6 +104,9 @@ public static class MessageRegistration
     /// папки: вставленная по ошибке простыня не должна превращаться в сто ключей.
     /// </summary>
     public const int MaxLines = 100;
+
+    /// <summary>Предельное число номеров в одном сообщении, чтобы ответ оставался читаемым.</summary>
+    public const int MaxBatch = 100;
 
     /// <summary>
     /// Латинские буквы, неотличимые на экране от русских, и их русские пары. Только заглавные:
@@ -157,6 +178,77 @@ public static class MessageRegistration
         var org = Listed(done.Org, orgCodes) ?? done.Org;
 
         return (new RegistrationRequest(org, done.Eskd, done.Number, name, project, fio, exact), []);
+    }
+
+    /// <summary>
+    /// Номера через запятую в одной строке «Номер», общие наименование, проект и ФИО.
+    /// Порядок, повторы и пустые элементы сохраняются: одинаковые маски означают несколько
+    /// документов, а случайная двойная запятая — ошибку, не сокращение заявки.
+    /// </summary>
+    public static BatchRegistrationRead ReadBatch(string? text, IReadOnlyList<string> orgCodes)
+    {
+        var values = Lines(text);
+        var common = new List<string>();
+        var action = Value(values, ActionKey);
+        if (action.Length == 0)
+            common.Add($"{ActionKey}: не указано действие (Пример: {RegisterWord})");
+        else if (!RegistrySchema.SameName(action, RegisterWord))
+            common.Add($"{ActionKey}: неизвестное действие (Пример: {RegisterWord})");
+
+        var name = Value(values, NameKey);
+        if (name.Length == 0) common.Add($"{NameKey}: не указано наименование");
+        var project = Value(values, ProjectKey);
+        if (project.Length == 0) common.Add($"{ProjectKey}: не указан проект");
+        var fio = Collapse(Value(values, FioKey));
+        if (fio.Length == 0)
+            common.Add($"{FioKey}: не указано ФИО (Пример: {FioExample})");
+        else if (!RegistryImport.IsFullName(fio))
+            common.Add($"{FioKey}: не полное ФИО (Пример: {FioExample})");
+
+        var numberText = Value(values, NumberKey);
+        // Разделяем с ограничением: громадный список не создает громадный массив и ответ.
+        var numbers = numberText.Split([','], MaxBatch + 1, StringSplitOptions.None);
+        if (numbers.Length > MaxBatch)
+        {
+            common.Add($"{NumberKey}: в одной заявке допускается не больше {MaxBatch} номеров");
+            return new BatchRegistrationRead([], common, numberText.Count(c => c == ',') + 1);
+        }
+
+        var items = new List<BatchRegistrationItem>(numbers.Length);
+        for (var index = 0; index < numbers.Length; index++)
+        {
+            var raw = numbers[index].Trim();
+            var problems = new List<string>();
+            var parsed = raw.Length == 0 ? null : Number(raw);
+            var exact = false;
+            if (parsed is null && DocumentMessages.ExactNumber(raw) is { } full && !full.Contains('-'))
+            {
+                var parts = full.Split('.');
+                parsed = (parts[0], parts[1], int.Parse(parts[2], System.Globalization.CultureInfo.InvariantCulture));
+                exact = true;
+            }
+
+            if (raw.Length == 0)
+                problems.Add($"{NumberKey}: не указан номер (Пример: {NumberExample})");
+            else if (parsed is null)
+            {
+                var parts = string.Concat(raw.Where(c => !char.IsWhiteSpace(c))).Split('.');
+                var detail = parts.Length == 3 && !EskdCatalog.IsFullCode(parts[1])
+                    ? "; код классификации в середине должен содержать ровно шесть цифр" : "";
+                problems.Add($"{NumberKey}: неправильный номер{detail} (Пример: {NumberExample})");
+            }
+            else if (Listed(parsed.Value.Org, orgCodes) is null)
+                problems.Add($"{NumberKey}: неизвестный код организации {parsed.Value.Org} "
+                             + $"(Можно: {string.Join(", ", orgCodes)})");
+
+            RegistrationRequest? request = null;
+            if (problems.Count == 0 && parsed is { } done)
+                request = new RegistrationRequest(Listed(done.Org, orgCodes) ?? done.Org, done.Eskd,
+                    done.Number, name, project, fio, exact);
+            items.Add(new BatchRegistrationItem(index + 1, raw, request, problems));
+        }
+
+        return new BatchRegistrationRead(items, common);
     }
 
     /// <summary>

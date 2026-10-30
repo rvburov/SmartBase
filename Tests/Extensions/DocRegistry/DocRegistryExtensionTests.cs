@@ -26,9 +26,9 @@ public sealed class DocRegistryExtensionTests
     }
 
     /// <summary>
-    /// Пять настроек, и порядок значим — так они и лягут полями на экране: сперва то, что
+    /// Порядок настроек значим — так они и лягут полями на экране: сперва то, что
     /// вводят руками (коды организации, ФИО), затем то, что ведет само окно (база, коллекция),
-    /// последней — список тех, кто регистрирует по сообщениям: окно ее не читает.
+    /// затем — список адресатов и сообщение. Окно ручной регистрации их не читает.
     /// </summary>
     [Fact]
     public void Settings_are_codes_fio_and_the_target()
@@ -41,6 +41,7 @@ public sealed class DocRegistryExtensionTests
             DocRegistryExtension.DatabaseKey,
             DocRegistryExtension.CollectionKey,
             DocRegistryExtension.SendersKey,
+            ParticipantBroadcastEditor.DraftKey,
         ], keys);
     }
 

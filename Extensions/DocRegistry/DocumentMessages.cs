@@ -12,7 +12,7 @@ namespace SmartBase.Extensions.DocRegistry;
 /// Ответы — разметкой (<see cref="ReplyMarkup"/>): отказы пишутся простым текстом и
 /// оформляются по строке, карточка и запросы подтверждения собираются уже оформленными.
 /// </summary>
-internal static class DocumentMessages
+internal static partial class DocumentMessages
 {
     private const string View = "Просмотр", Delete = "Удаление", Edit = "Изменение";
     private const string Choices = "Регистрация, Просмотр, Удаление, Изменение";
@@ -52,7 +52,8 @@ internal static class DocumentMessages
 
     private sealed record Pending(string Action, Card Before, RegistryShape Shape,
                                   IReadOnlyDictionary<string, string> Changes, DateTimeOffset Expires,
-                                  RegistrationInput? Registration = null, string[]? Series = null);
+                                  RegistrationInput? Registration = null, string[]? Series = null,
+                                  BatchPlan? Batch = null);
 
     /// <summary>Null — обычная регистрация: ее продолжает существующее действие.</summary>
     public static ActionResult? Run(ActionContext context, string text, string sender)
@@ -239,6 +240,8 @@ internal static class DocumentMessages
     {
         try
         {
+            if (pending.Batch is { } batch)
+                return ConfirmBatch(context, repo, pending.Shape, batch);
             return repo.InWriteTransaction(() =>
             {
                 var check = Shape(repo, context.CollectionId);
@@ -271,7 +274,12 @@ internal static class DocumentMessages
                 return Reply($"{ReplyMarkup.Bold("Изменено")}\n{Apply(current, pending.Changes).Text([.. pending.Changes.Keys])}", 1);
             });
         }
-        catch (DocRegistryException error) { return ReplyMarkup.Refused($"Номер: {error.Message}"); }
+        catch (DocRegistryException error)
+        {
+            return pending.Batch is { } batch
+                ? RefuseBatch(batch.Rows.Length, [$"Номер: {error.Message}", "Отправьте весь список заново."])
+                : ReplyMarkup.Refused($"Номер: {error.Message}");
+        }
     }
 
     private static SchemaCheck Shape(ConstructorRepository repo, int collectionId)

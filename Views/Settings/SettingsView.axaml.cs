@@ -388,8 +388,23 @@ public partial class SettingsView : UserControl
             var rows = new StackPanel { Spacing = 10 };
             rows.Children.Add(new TextBlock { Classes = { "title" }, Text = extension.Name });
 
+            // Составной редактор видит и не сохраненные пока строки соседних полей.
+            // Например, изменение списка адресатов должно сработать уже при открытии выбора,
+            // даже если поле еще не успело потерять фокус.
+            var fields = new Dictionary<string, TextBox>(StringComparer.Ordinal);
+            var context = new ExtensionSettingEditorContext(
+                key => fields.TryGetValue(key, out var field) ? field.Text ?? ""
+                    : AppSettings.LoadExtensionSetting(extension.Id, key),
+                (key, value) =>
+                {
+                    if (fields.TryGetValue(key, out var field) && field.Text != value) field.Text = value;
+                    AppSettings.SaveExtensionSetting(extension.Id, key, value);
+                },
+                () => VisualRoot as Window,
+                () => _registry is { } registry ? new ActionReplies(registry.Integrations) : null);
+
             foreach (var setting in extension.Settings)
-                rows.Children.Add(BuildSettingField(extension, setting));
+                rows.Children.Add(BuildSettingField(extension, setting, context, fields));
 
             ExtensionsSettingsList.Children.Add(new Border { Classes = { "settingRow" }, Child = rows });
             ExtensionsSettingsList.Children.Add(new Border { Classes = { "separator", "h" } });
@@ -427,24 +442,45 @@ public partial class SettingsView : UserControl
 
     // Поле одной настройки: подпись, под ней строка ввода. Значение сохраняется при потере
     // фокуса — тот же прием, что у пути обновления.
-    private StackPanel BuildSettingField(IExtension extension, ExtensionSetting setting)
+    private StackPanel BuildSettingField(IExtension extension, ExtensionSetting setting,
+                                          ExtensionSettingEditorContext context, Dictionary<string, TextBox> fields)
     {
         var block = new StackPanel { Spacing = 6 };
         block.Children.Add(new TextBlock { Classes = { "desc" }, Text = setting.Label });
 
+        if (setting.Editor is { } editor)
+        {
+            block.Children.Add(editor(context));
+            return block;
+        }
+
         var box = new TextBox
         {
             Classes   = { "extSetting" },
+            Tag       = setting.Key,
             Watermark = setting.Watermark,
             Text      = AppSettings.LoadExtensionSetting(extension.Id, setting.Key),
         };
         box.LostFocus += (_, _) =>
             AppSettings.SaveExtensionSetting(extension.Id, setting.Key, box.Text ?? "");
+        fields[setting.Key] = box;
 
-        block.Children.Add(box);
-
-        if (setting.Button is { } button)
-            block.Children.Add(BuildSettingButton(extension, setting, button, box));
+        if (setting.Button is { Inline: true } inline)
+        {
+            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,10,Auto") };
+            row.Children.Add(box);
+            var button = BuildSettingButton(extension, setting, inline, box);
+            button.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center;
+            Grid.SetColumn(button, 2);
+            row.Children.Add(button);
+            block.Children.Add(row);
+        }
+        else
+        {
+            block.Children.Add(box);
+            if (setting.Button is { } button)
+                block.Children.Add(BuildSettingButton(extension, setting, button, box));
+        }
 
         return block;
     }

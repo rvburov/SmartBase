@@ -67,15 +67,16 @@ public sealed class SenderGreetingTests
                           SenderGreeting.Text, StringComparison.Ordinal);
     }
 
-    /// <summary>Кнопка стоит под списком регистрирующих, и больше нигде.</summary>
+    /// <summary>Кнопка стоит справа от списка участников на одной линии с ним.</summary>
     [Fact]
-    public void The_button_is_under_the_senders_list()
+    public void The_instruction_button_is_inline_with_the_senders_list()
     {
         var settings = new DocRegistryExtension().Settings;
 
         var withButton = Assert.Single(settings, s => s.Button is not null);
         Assert.Equal(DocRegistryExtension.SendersKey, withButton.Key);
         Assert.Equal("Отправить инструкцию", withButton.Button!.Text);
+        Assert.True(withButton.Button.Inline);
     }
 
     [Fact]

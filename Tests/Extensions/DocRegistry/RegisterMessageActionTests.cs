@@ -471,6 +471,30 @@ public sealed class MessageScenarioTests : IDisposable
             "Зарегистрировано АБВГ.301121.001 Машина Иванов Иван Иванович", StringComparison.Ordinal));
     }
 
+    /// <summary>Список остается одним действием сценария: общий ответ не теряется из-за Rows > 1.</summary>
+    [Fact]
+    public async Task A_batch_event_keeps_its_collective_confirmation_and_full_reply()
+    {
+        var journal = JournalStand.Create(_db.Constructor);
+        var scenario = Scenario(journal);
+        var message = Message.Replace("Номер: АБВГ.301121.ХХХ",
+            "Номер: АБВГ.301121.ХХХ, АБВГ.806121.ХХХ", StringComparison.Ordinal);
+
+        var preview = await Run(scenario, Event(message));
+        Assert.True(preview.Ok, preview.Problem);
+        Assert.Contains("Заявка на регистрацию: 2", ReplyMarkup.Text(preview.Reply), StringComparison.Ordinal);
+        Assert.Empty(_db.Constructor.GetRecords(journal));
+
+        var done = await Run(scenario, Event("Да"));
+        Assert.True(done.Ok, done.Problem);
+        var reply = ReplyMarkup.Text(done.Reply);
+        Assert.Contains("Зарегистрировано: 2 из 2.", reply, StringComparison.Ordinal);
+        Assert.Contains("АБВГ.301121.001", reply, StringComparison.Ordinal);
+        Assert.Contains("АБВГ.806121.001", reply, StringComparison.Ordinal);
+        Assert.Equal(2, _db.Constructor.GetRecords(journal).Count);
+        Assert.False((await Run(scenario, Event("Да"))).Ok);
+    }
+
     /// <summary>Каждое сообщение проходит новый сценарий; ожидание ответа между ними живет.</summary>
     [Theory]
     [InlineData("Удаление")]

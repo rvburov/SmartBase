@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Отдельный стенд расширения: настоящий интерфейс без экрана и без отправки в сеть. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>SmartBase.Tests.Extensions.DocRegistry.Ui</RootNamespace>
+    <AssemblyName>SmartBase.Tests.Extensions.DocRegistry.Ui</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Headless" Version="11.2.3" />
+    <ProjectReference Include="../../../../SmartBase.csproj" />
+  </ItemGroup>
+</Project>
