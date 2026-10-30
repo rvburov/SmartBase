@@ -208,6 +208,8 @@ public sealed record EgressPlan(
 /// <param name="Headers">Заголовки ответа.</param>
 /// <param name="SafeAddress">Куда ходили — без секрета.</param>
 /// <param name="Attempts">Сколько попыток понадобилось.</param>
+/// <param name="Content">Готовый двоичный ответ загрузки. У текстового запроса, ошибки либо
+/// обрезанного ответа пусто: неполный файл нельзя передавать на обработку.</param>
 public sealed record EgressResponse(
     bool                             Sent,
     string                           Explanation,
@@ -218,7 +220,8 @@ public sealed record EgressResponse(
     TimeSpan                         Elapsed,
     IReadOnlyList<IntegrationHeader> Headers,
     string                           SafeAddress,
-    int                              Attempts)
+    int                              Attempts,
+    byte[]?                          Content = null)
 {
     /// <summary>Ответ получен и он успешный.</summary>
     public bool Ok => Sent && StatusCode is >= 200 and < 300;

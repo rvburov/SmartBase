@@ -216,6 +216,7 @@ public partial class ScenarioDialog : Window
         EnabledSwitch.IsCheckedChanged  += (_, _) => ShowHint();
 
         AddRequestBtn.Click += (_, _) => AddStep(ScenarioStep.OfRequest(0));
+        AddDownloadBtn.Click += async (_, _) => await AddDownloadAsync();
         AddNoticeBtn.Click  += (_, _) => AddStep(ScenarioStep.OfNotice(""));
         AddIntakeBtn.Click  += (_, _) => AddStep(ScenarioStep.OfIntake(""));
         AddActionBtn.Click  += async (_, _) => await AddActionAsync();
@@ -227,6 +228,7 @@ public partial class ScenarioDialog : Window
         // Ссылаться не на что — запросы заводят на соседней вкладке, и сказать об этом надо
         // раньше, чем человек нажмет и получит пустой список.
         AddRequestBtn.IsEnabled = _requests.Count > 0;
+        AddDownloadBtn.IsEnabled = _requests.Count > 0;
         AddActionBtn.IsEnabled  = _actions.Count > 0 && _places.Count > 0;
         AddRecordBtn.IsEnabled  = _places.Count > 0;
         AddExportBtn.IsEnabled  = _places.Count > 0;
@@ -243,6 +245,7 @@ public partial class ScenarioDialog : Window
         var row = step.Kind switch
         {
             ScenarioStepKind.Request      => RequestRow(step),
+            ScenarioStepKind.Download     => DownloadRow(step),
             ScenarioStepKind.Action       => ActionRow(step),
             ScenarioStepKind.Intake       => IntakeRow(step),
             ScenarioStepKind.Filter       => FilterRow(step),
@@ -284,6 +287,41 @@ public partial class ScenarioDialog : Window
 
         return new StepRow { Kind = ScenarioStepKind.Request, Requests = combo };
     }
+
+    /// <summary>У получения файла свои настройки; привязка запроса к коллекции не нужна.</summary>
+    private async Task AddDownloadAsync()
+    {
+        var made = await new ScenarioDownloadDialog(ScenarioStep.OfDownload(0, ""), _requests)
+            .ShowDialog<ScenarioStep?>(this);
+
+        if (made is not null) AddStep(made);
+    }
+
+    private StepRow DownloadRow(ScenarioStep step)
+    {
+        var card = new Button
+        {
+            Height                     = 30,
+            Padding                    = new Thickness(10, 0),
+            HorizontalAlignment        = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Left,
+            VerticalContentAlignment   = VerticalAlignment.Center,
+        };
+        var row = new StepRow { Kind = ScenarioStepKind.Download, Card = card, Action = step };
+        card.Content = DownloadText(step);
+        card.Click += async (_, _) =>
+        {
+            var made = await new ScenarioDownloadDialog(row.Action, _requests).ShowDialog<ScenarioStep?>(this);
+            if (made is null) return;
+
+            row.Action = made;
+            card.Content = DownloadText(made);
+        };
+        return row;
+    }
+
+    private string DownloadText(ScenarioStep step) =>
+        step.Describe(_requests.FirstOrDefault(r => r.Id == step.RequestId).Name ?? "");
 
     /// <summary>Строка шага-действия: настроенное словами, нажатие открывает окно настройки.</summary>
     private StepRow ActionRow(ScenarioStep step)
@@ -705,6 +743,7 @@ public partial class ScenarioDialog : Window
             steps.Add(row.Kind switch
             {
                 ScenarioStepKind.Request      => ScenarioStep.OfRequest(SelectedRequest(row)),
+                ScenarioStepKind.Download     => row.Action,
                 ScenarioStepKind.Action       => row.Action,
                 ScenarioStepKind.Filter       => row.Action,
                 ScenarioStepKind.CreateRecord => row.Action,

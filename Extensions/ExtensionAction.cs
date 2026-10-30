@@ -45,11 +45,14 @@ public enum ExtensionActionKind
 /// <param name="Label">Подпись для человека.</param>
 /// <param name="Required">Без него действие не выполняется.</param>
 /// <param name="Watermark">Пример значения.</param>
+/// <param name="MissingIsEmpty">Отсутствующая колонка события означает пустое значение.
+/// Для необязательных частей события: текст может отсутствовать у вложения, а вложение у текста.</param>
 public sealed record ExtensionActionField(
     string Key,
     string Label,
     bool   Required  = true,
-    string Watermark = "");
+    string Watermark = "",
+    bool   MissingIsEmpty = false);
 
 /// <summary>
 /// Куда действие пишет и когда оно выполняется. Репозиторий дает ОБОЛОЧКА, и это не мелочь:
@@ -73,6 +76,7 @@ public sealed record ExtensionActionField(
 /// после закрытия базы на него нельзя полагаться. Null — прямой вызов без оболочки.</param>
 /// <param name="Channel">Область сообщений сценария и его источника. Подтверждение из другого
 /// сценария или потока не должно подтверждать ожидающую операцию.</param>
+/// <param name="CancellationToken">Отмена запуска, включая разбор и запись полученного файла.</param>
 public sealed record ActionContext(
     ConstructorRepository?               Repo,
     int                                  DbId,
@@ -80,7 +84,8 @@ public sealed record ActionContext(
     DateTimeOffset                       Now,
     IReadOnlyDictionary<string, string>? Settings = null,
     object?                              Session  = null,
-    string                               Channel  = "")
+    string                               Channel  = "",
+    CancellationToken                    CancellationToken = default)
 {
     /// <summary>Значение настройки расширения; не задано — пустая строка.</summary>
     public string Setting(string key) =>
@@ -101,11 +106,13 @@ public sealed record ActionContext(
 /// <param name="Bytes">Исходный файл — для преобразователя двоичного формата.</param>
 /// <param name="Rows">Строки предыдущего шага — для автоматизации. Колонки ищутся без учета
 /// регистра: имена приходят из чужой выгрузки.</param>
+/// <param name="FileName">Имя входного файла без пути; только вместе с Bytes.</param>
 public sealed record ActionInput(
     IReadOnlyDictionary<string, string>                 Values,
     string                                              Text  = "",
     byte[]?                                             Bytes = null,
-    IReadOnlyList<IReadOnlyDictionary<string, string>>? Rows  = null)
+    IReadOnlyList<IReadOnlyDictionary<string, string>>? Rows  = null,
+    string                                              FileName = "")
 {
     /// <summary>Значение поля; чего нет — пустая строка. Крайние пробелы снимаются.</summary>
     public string Value(string key) =>
@@ -201,6 +208,10 @@ public sealed record ActionResult(
 /// </summary>
 public interface IExtensionAction
 {
+    /// <summary>Принимает файл предыдущего шага вместе со значениями записи.
+    /// Остальные действия не получают двоичные данные молча.</summary>
+    bool AcceptsFile => false;
+
     /// <summary>Стабильный ключ действия внутри расширения.</summary>
     string Key { get; }
 

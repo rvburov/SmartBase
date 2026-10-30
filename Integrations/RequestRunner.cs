@@ -41,7 +41,7 @@ public sealed record RunPreview(
         new(false, explanation, RequestMethod.Get, "", [], "", outward);
 }
 
-public static class RequestRunner
+public static partial class RequestRunner
 {
     /// <summary>Техническая защита от бесконечной разбивки сторонней программы на страницы.</summary>
     public const int MaxPages = 200;

@@ -1,0 +1,57 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:b="clr-namespace:SmartBase.Controls.Behaviors"
+        xmlns:w="clr-namespace:SmartBase.Controls.Widgets"
+        x:Class="SmartBase.Controls.Dialogs.ScenarioDownloadDialog"
+        Title="Получить файл"
+        Width="{StaticResource DialogWidthBase}"
+        MinWidth="{StaticResource DialogWidthBase}"
+        MaxWidth="{StaticResource DialogWidthBase}"
+        MinHeight="0"
+        SizeToContent="Height"
+        b:DialogFit.LimitToScreen="True"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="{StaticResource BrushBg}">
+
+    <StackPanel Spacing="0" Margin="{StaticResource DialogPadding}">
+        <TextBlock Text="Запрос GET"
+                   Margin="0,0,0,6"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+        <ComboBox x:Name="RequestCombo"
+                  Height="{StaticResource ControlHeightStandard}"
+                  Margin="0,0,0,12"
+                  HorizontalAlignment="Stretch"
+                  VerticalContentAlignment="Center"
+                  Background="{StaticResource BrushSecondaryBg}"
+                  CornerRadius="{StaticResource RadiusBase}" />
+
+        <TextBlock Text="Имя файла"
+                   Margin="0,0,0,6"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+        <TextBox x:Name="NameBox"
+                 Height="{StaticResource ControlHeightStandard}"
+                 Margin="0,0,0,8"
+                 VerticalContentAlignment="Center"
+                 Watermark="Имя из события или название файла"
+                 CornerRadius="{StaticResource RadiusBase}" />
+
+        <TextBlock Text="Выберите настроенный запрос GET. Имя файла можно взять из колонки события: {{Имя файла}}. Если колонка отсутствует или значение пустое, скачивание пропускается — обычные сообщения продолжают идти дальше."
+                   Margin="0,0,0,8"
+                   TextWrapping="Wrap"
+                   FontSize="{DynamicResource FontSizeSmall}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+        <TextBlock Text="Путь и параметры запроса могут использовать значения события. Полученный файл передается следующему действию; привязка запроса к коллекции не нужна."
+                   Margin="0,0,0,12"
+                   TextWrapping="Wrap"
+                   FontSize="{DynamicResource FontSizeSmall}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <w:NoticeBanner x:Name="NoticeBanner" Margin="0,0,0,12" />
+
+        <Grid ColumnDefinitions="*,Auto,8,Auto" Margin="0,4,0,0">
+            <Button Grid.Column="1" x:Name="CancelBtn" Classes="dialog" Content="Отмена" />
+            <Button Grid.Column="3" x:Name="SaveBtn" Classes="dialog" Content="Готово" />
+        </Grid>
+    </StackPanel>
+</Window>

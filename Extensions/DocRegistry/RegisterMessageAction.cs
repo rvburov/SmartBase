@@ -45,6 +45,9 @@ public sealed class RegisterMessageAction : IExtensionAction
     /// <summary>Поле: идентификатор отправителя — как его называет программа, приславшая текст.</summary>
     public const string SenderField = "sender";
 
+    /// <summary>Стабильный идентификатор сообщения с вложением — для защиты от повторной доставки.</summary>
+    public const string MessageIdField = "message-id";
+
     /// <summary>Первая строка ответа об удаче.</summary>
     public const string RegisteredWord = "Зарегистрировано";
 
@@ -52,17 +55,20 @@ public sealed class RegisterMessageAction : IExtensionAction
     public string Name        => "Зарегистрировать по сообщению";
     public string Description =>
         "Обрабатывает действия Регистрация, Просмотр, Удаление и Изменение. При регистрации "
-      + "выдает один или несколько номеров или исполнений по ГОСТ 2.201-80. Первый документ новой серии, удаление и "
+      + "принимает текст или файл .xlsx/.xlsm и выдает один или несколько номеров или исполнений по ГОСТ 2.201-80. Первый документ новой серии, удаление и "
       + "изменение выполняет после ответа Да, ответ Нет отменяет операцию.";
 
     public ExtensionActionKind Kind => ExtensionActionKind.Operation;
+    public bool AcceptsFile => true;
 
     public IReadOnlyList<ExtensionActionField> Fields =>
     [
         // Текст необязателен намеренно: на пустое сообщение отправитель должен получить перечень
         // того, чего в нем не хватает, а не молчание.
-        new(TextField,   "Текст сообщения", Required: false, Watermark: "{{колонка с текстом}}"),
+        new(TextField,   "Текст сообщения", Required: false, Watermark: "{{колонка с текстом}}", MissingIsEmpty: true),
         new(SenderField, "Отправитель",     Watermark: "{{колонка с идентификатором отправителя}}"),
+        new(MessageIdField, "Идентификатор сообщения с файлом", Required: false,
+            Watermark: "{{колонка с устойчивым идентификатором сообщения}}", MissingIsEmpty: true),
     ];
 
     public ActionResult Run(ActionContext context, ActionInput input)
@@ -73,6 +79,10 @@ public sealed class RegisterMessageAction : IExtensionAction
             return ActionResult.Failed(
                 "отправитель не назван: в шаге не заполнено поле «Отправитель» либо в событии "
                 + "нет такой колонки");
+
+        if (input.Bytes is not null)
+            return DocumentMessages.RegisterFile(context, input.Bytes, input.FileName, sender,
+                input.Value(MessageIdField));
 
         // Поле не заполнено В ШАГЕ — это настройка, а не сообщение: отправитель написал все как
         // надо, а текст до действия не доехал. Перечень «не указано…» в ответ на правильное

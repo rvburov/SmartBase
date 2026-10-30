@@ -60,7 +60,7 @@ public static class ScenarioTransfer
 
         foreach (var step in scenarios.SelectMany(s => s.Steps))
         {
-            if (step.Kind != ScenarioStepKind.Request) continue;
+            if (step.Kind is not (ScenarioStepKind.Request or ScenarioStepKind.Download)) continue;
             if (requests.Any(r => r.Id == step.RequestId)) continue;
             if (registry.FindRequest(step.RequestId) is { } request) requests.Add(request);
         }
@@ -93,7 +93,7 @@ public static class ScenarioTransfer
         var packed = streams.Select(s => Pack(s, connections)).ToList();
 
         return new ScenarioBundle(
-            ScenarioBundle.VersionFor(packed),
+            ScenarioBundle.VersionFor(packed, scenarios),
             now.ToString("o", System.Globalization.CultureInfo.InvariantCulture),
             machine,
             [.. connections.Select(Pack)],
@@ -417,7 +417,7 @@ public static class ScenarioTransfer
 
         var requestId = 0;
 
-        if (kind == ScenarioStepKind.Request)
+        if (kind is ScenarioStepKind.Request or ScenarioStepKind.Download)
         {
             if (!requests.TryGetValue((step.Request ?? "").Trim(), out requestId))
             {
@@ -591,6 +591,7 @@ public static class ScenarioTransfer
     private static ScenarioStepKind ParseStepKind(string? text) => (text ?? "").Trim().ToLowerInvariant() switch
     {
         "request"      => ScenarioStepKind.Request,
+        "download"     => ScenarioStepKind.Download,
         "action"       => ScenarioStepKind.Action,
         "intake"       => ScenarioStepKind.Intake,
         "filter"       => ScenarioStepKind.Filter,

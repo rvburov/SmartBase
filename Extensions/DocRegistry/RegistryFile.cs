@@ -24,7 +24,10 @@ public static class RegistryFile
     /// </summary>
     /// <exception cref="DocRegistryException">Файла нет, формат не тот, книга не открылась,
     /// лист пуст или столбцы не сошлись с эталоном. Текст годится для показа как есть.</exception>
-    public static IReadOnlyList<ImportRow> Read(string path)
+    public static IReadOnlyList<ImportRow> Read(string path) => Read(path, int.MaxValue);
+
+    /// <summary>Ограниченный разбор вложения. Ручной импорт сохраняет прежний предел.</summary>
+    internal static IReadOnlyList<ImportRow> Read(string path, int maxRows, CancellationToken ct = default)
     {
         if (!File.Exists(path))
             throw new DocRegistryException($"Файл не найден: {path}");
@@ -55,11 +58,16 @@ public static class RegistryFile
 
         var rows = new List<ImportRow>();
 
-        foreach (var row in used.Rows().Skip(1))
+        var sourceRows = maxRows == int.MaxValue ? used.Rows() : used.RowsUsed(XLCellsUsedOptions.Contents);
+        foreach (var row in sourceRows.Skip(1))
         {
+            ct.ThrowIfCancellationRequested();
             // Пустая строка — не ошибка, а пробел между блоками: их в файлах ставят для
             // читаемости, и разбирать там нечего.
-            if (row.Cells().All(c => c.IsEmpty())) continue;
+            if (maxRows == int.MaxValue ? row.Cells().All(c => c.IsEmpty())
+                : !row.CellsUsed(XLCellsUsedOptions.Contents).Any()) continue;
+            if (rows.Count >= maxRows)
+                throw new DocRegistryException($"В одном файле допускается не больше {maxRows} строк с документами.");
 
             // «Дата регистрации» (at[3]) намеренно НЕ читается: дата регистрации это момент,
             // когда строка попала в журнал, и ставится он при записи. В файле столбец быть

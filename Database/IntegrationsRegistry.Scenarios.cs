@@ -40,7 +40,8 @@ public sealed partial class IntegrationsRegistry
     /// </summary>
     public IReadOnlyList<Scenario> ScenariosUsing(int requestId) =>
         [.. Scenarios().Where(s =>
-            s.Steps.Any(step => step.Kind == ScenarioStepKind.Request && step.RequestId == requestId)
+            s.Steps.Any(step => (step.Kind is ScenarioStepKind.Request or ScenarioStepKind.Download)
+                               && step.RequestId == requestId)
             // Карточка ответа на событие — такая же ссылка, как шаг: без нее сценарий примет
             // событие и промолчит, а отправитель будет ждать ответа, которого не будет.
             || (s.Trigger.Replies && s.Trigger.RequestId == requestId))];
@@ -67,7 +68,7 @@ public sealed partial class IntegrationsRegistry
             throw new InvalidOperationException("Сценарий не сохранен: " + string.Join("; ", problems));
 
         foreach (var step in scenario.Steps)
-            if (step.Kind == ScenarioStepKind.Request
+            if (step.Kind is ScenarioStepKind.Request or ScenarioStepKind.Download
                 && !db.IntegrationRequests.Any(r => r.Id == step.RequestId))
                 throw new InvalidOperationException("Сценарий не сохранен: запрос шага не найден");
 

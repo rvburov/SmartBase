@@ -53,7 +53,7 @@ internal static partial class DocumentMessages
     private sealed record Pending(string Action, Card Before, RegistryShape Shape,
                                   IReadOnlyDictionary<string, string> Changes, DateTimeOffset Expires,
                                   RegistrationInput? Registration = null, string[]? Series = null,
-                                  BatchPlan? Batch = null);
+                                  BatchPlan? Batch = null, FileRegistrationPlan? File = null);
 
     /// <summary>Null — обычная регистрация: ее продолжает существующее действие.</summary>
     public static ActionResult? Run(ActionContext context, string text, string sender)
@@ -240,6 +240,8 @@ internal static partial class DocumentMessages
     {
         try
         {
+            if (pending.File is { } file)
+                return ConfirmFile(context, repo, pending.Shape, file);
             if (pending.Batch is { } batch)
                 return ConfirmBatch(context, repo, pending.Shape, batch);
             return repo.InWriteTransaction(() =>
@@ -276,6 +278,8 @@ internal static partial class DocumentMessages
         }
         catch (DocRegistryException error)
         {
+            if (pending.File is { } file)
+                return RefuseFile(file.Rows.Length, [error.Message, "Отправьте весь файл заново."]);
             return pending.Batch is { } batch
                 ? RefuseBatch(batch.Rows.Length, [$"Номер: {error.Message}", "Отправьте весь список заново."])
                 : ReplyMarkup.Refused($"Номер: {error.Message}");

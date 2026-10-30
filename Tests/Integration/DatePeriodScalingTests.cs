@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Data.Common;
 using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -48,6 +49,26 @@ public sealed class DatePeriodScalingTests
         // не должно превращаться в повторный расчет по этим датам.
         f.Db.Manager.Context.Database.ExecuteSqlInterpolated($@"UPDATE db_field_values
             SET value = 'не дата' WHERE fieldid = {f.Start} OR fieldid = {f.End}");
+        using var commands = new Commands(f.Db.Path);
+        var values = f.Repo.GetFieldValuesBatch(ids, [f.Fixed]);
+        Assert.Equal(ids.Order(), values.Keys.Order());
+        foreach (var id in ids)
+            Assert.Equal(f.PositionOf(id) % 2 == 0 ? "1800" : "", values[id][f.Fixed]);
+        commands.AssertNoAdditionalValueReads();
+    }
+
+    [SkippableTheory]
+    [InlineData("sqlite")]
+    [InlineData("postgres")]
+    public void A_failed_command_cannot_silence_the_next_period_read(string profile)
+    {
+        using var f = new Fixture(profile, count: 9);
+        var ids = new[] { f.RecordIds[0], f.RecordIds[1] };
+        // У ошибки нет события CommandExecuted. Подписка на начало команды не дает EF
+        // подавить диагностику следующих запросов до истечения его кеша логирования.
+        Assert.ThrowsAny<DbException>(() => f.Db.Manager.Context.Database.ExecuteSqlRaw(
+            "SELECT * FROM sb_missing_date_period_diagnostics"));
+
         using var commands = new Commands(f.Db.Path);
         var values = f.Repo.GetFieldValuesBatch(ids, [f.Fixed]);
         Assert.Equal(ids.Order(), values.Keys.Order());
@@ -383,7 +404,8 @@ public sealed class DatePeriodScalingTests
         {
             if (listener.Name != "Microsoft.EntityFrameworkCore") return;
             lock (_subscriptions) _subscriptions.Add(listener.Subscribe(this,
-                name => name == "Microsoft.EntityFrameworkCore.Database.Command.CommandExecuted"));
+                name => name is "Microsoft.EntityFrameworkCore.Database.Command.CommandExecuting"
+                             or "Microsoft.EntityFrameworkCore.Database.Command.CommandExecuted"));
         }
 
         public void OnNext(KeyValuePair<string, object?> value)

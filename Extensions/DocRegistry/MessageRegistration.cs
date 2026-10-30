@@ -128,9 +128,12 @@ public static class MessageRegistration
     /// отказывать в регистрации из-за незаполненной настройки нечестно по отношению к отправителю:
     /// код все равно проверяется по форме).</param>
     public static (RegistrationRequest? Request, IReadOnlyList<string> Problems) Read(
-        string? text, IReadOnlyList<string> orgCodes)
+        string? text, IReadOnlyList<string> orgCodes) => ReadValues(Lines(text), orgCodes);
+
+    /// <summary>Те же правила для колонок книги: перенос внутри ячейки не становится новой строкой сообщения.</summary>
+    internal static (RegistrationRequest? Request, IReadOnlyList<string> Problems) ReadValues(
+        List<(string Key, string Value)> values, IReadOnlyList<string> orgCodes)
     {
-        var values   = Lines(text);
         var problems = new List<string>();
 
         var action = Value(values, ActionKey);

@@ -487,6 +487,12 @@ public enum ScenarioStepKind
     /// циклов, и запрещать ему нечего (<see cref="Formula"/>).
     /// </summary>
     Compute,
+
+    /// <summary>
+    /// Получить двоичный файл сохраненным запросом GET и передать следующему действию.
+    /// Имя файла задается выражением над строкой события; пустое значение пропускает шаг.
+    /// </summary>
+    Download,
 }
 
 /// <summary>
@@ -509,8 +515,10 @@ public enum ScenarioStepKind
 /// поэтому такой шаг можно выполнить без открытой базы данных.
 /// </summary>
 /// <param name="Kind">Вид шага.</param>
-/// <param name="RequestId">Запрос (только <see cref="ScenarioStepKind.Request"/>).</param>
-/// <param name="Text">Текст сообщения (только <see cref="ScenarioStepKind.Notify"/>).</param>
+/// <param name="RequestId">Запрос (<see cref="ScenarioStepKind.Request"/> или
+/// <see cref="ScenarioStepKind.Download"/>).</param>
+/// <param name="Text">Текст сообщения (<see cref="ScenarioStepKind.Notify"/>) либо выражение
+/// имени получаемого файла (<see cref="ScenarioStepKind.Download"/>).</param>
 /// <param name="Extension">Ключ расширения (только <see cref="ScenarioStepKind.Action"/>).</param>
 /// <param name="Action">Ключ действия внутри расширения.</param>
 /// <param name="DbId">База, в которой лежит коллекция шага.</param>
@@ -585,6 +593,10 @@ public sealed record ScenarioStep(
     public static ScenarioStep OfRequest(int requestId) =>
         new(ScenarioStepKind.Request, requestId, "");
 
+    /// <summary>Получить файл без записи ответа в коллекцию.</summary>
+    public static ScenarioStep OfDownload(int requestId, string fileName) =>
+        new(ScenarioStepKind.Download, requestId, fileName);
+
     public static ScenarioStep OfNotice(string text) =>
         new(ScenarioStepKind.Notify, 0, text);
 
@@ -622,8 +634,16 @@ public sealed record ScenarioStep(
     {
         var problems = new List<string>();
 
-        if (Kind == ScenarioStepKind.Request && RequestId <= 0)
+        if ((Kind is ScenarioStepKind.Request or ScenarioStepKind.Download) && RequestId <= 0)
             problems.Add("В шаге не выбран запрос");
+
+        if (Kind == ScenarioStepKind.Download)
+        {
+            if (string.IsNullOrWhiteSpace(Text))
+                problems.Add("В шаге не заполнено имя файла");
+            else if (Text.Length > MaxTextLength)
+                problems.Add($"Выражение имени файла длиннее {MaxTextLength} знаков");
+        }
 
         if (Kind == ScenarioStepKind.Notify)
         {
@@ -736,6 +756,10 @@ public sealed record ScenarioStep(
     {
         ScenarioStepKind.Request => "Запрос в коллекцию: "
             + (name.Length > 0 ? name : $"№{RequestId}"),
+
+        ScenarioStepKind.Download => "Получить файл: "
+            + (name.Length > 0 ? name : $"№{RequestId}")
+            + (Text.Length > 0 ? " → " + Text : " — имя не задано"),
 
         ScenarioStepKind.Notify => "Сообщение: " + Text,
 

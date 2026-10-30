@@ -262,7 +262,7 @@ public sealed class ReplyMarkupTests
         var instruction = Instruction();
         var blocks = Regex.Matches(instruction, "<(blockquote|ul)>.*?</\\1>", RegexOptions.Singleline);
 
-        Assert.Equal(18, blocks.Count);
+        Assert.Equal(19, blocks.Count);
         Assert.All(blocks, block => Assert.DoesNotContain('\n', block.Value));
         Assert.DoesNotContain("\n<blockquote>", instruction, StringComparison.Ordinal);
         Assert.DoesNotContain("\n<ul>", instruction, StringComparison.Ordinal);
@@ -371,6 +371,9 @@ public sealed class ReplyMarkupTests
 
         В одной заявке не больше 100 номеров. Наименование, проект и ФИО общие для всего списка. Повтор маски запрашивает еще один свободный номер.
         Если в одном номере ошибка, не регистрируется весь список. Если требуется подтверждение, один ответ Да или Нет относится ко всему списку.
+        При настроенном приеме вложений можно отправить книгу .xlsx или .xlsm по шаблону журнала:
+        Первый лист, восемь колонок журнала, до 1000 строк и 10 МБ. Наименование, проект и ФИО указываются в каждой строке.
+        Ошибка отклоняет весь файл; ответ Да или Нет подтверждает либо отменяет весь список. В ответ придут номера текстом, исходная книга не изменяется.
         Для регистрации следующего исполнения уже выданного документа:
 
         Действие: Регистрация

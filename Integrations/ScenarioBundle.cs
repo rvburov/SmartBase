@@ -115,7 +115,10 @@ public sealed record ScenarioBundle(
     /// Версия формата, которую понимает эта сборка. Файл с большим номером — от более новой
     /// программы: разбирать его наугад нельзя, смысл полей мог смениться.
     /// </summary>
-    public const int SupportedVersion = 2;
+    public const int SupportedVersion = 3;
+
+    /// <summary>Набор с потоками событий без шага получения двоичного файла.</summary>
+    public const int StreamVersion = 2;
 
     /// <summary>
     /// Версия файла без потоков событий. Такой файл пишется ею и дальше: его поймет и выпуск
@@ -124,12 +127,15 @@ public sealed record ScenarioBundle(
     public const int PlainVersion = 1;
 
     /// <summary>
-    /// Версия, которой пишется набор. Вторая ставится, только когда в наборе есть потоки:
-    /// прежний выпуск программы прочитал бы такой файл, молча превратив сценарий потока в
-    /// ручной, — а отказ «версия новее поддерживаемой» говорит правду.
+    /// Версия набора зависит от использованных возможностей. Получение файла требует третью:
+    /// прежний выпуск превратил бы незнакомый шаг в уведомление. Наборы без него сохраняют
+    /// прежние версии, чтобы переносить их в выпуски, которые понимают их целиком.
     /// </summary>
-    public static int VersionFor(IReadOnlyList<BundleStream> streams) =>
-        streams.Count > 0 ? SupportedVersion : PlainVersion;
+    public static int VersionFor(IReadOnlyList<BundleStream> streams,
+                                 IReadOnlyList<Scenario>? scenarios = null) =>
+        scenarios?.Any(scenario => scenario.Steps.Any(step => step.Kind == ScenarioStepKind.Download)) == true
+            ? SupportedVersion
+            : streams.Count > 0 ? StreamVersion : PlainVersion;
 
     /// <summary>Потоки набора; в файле прежней версии их нет.</summary>
     [JsonIgnore]

@@ -34,6 +34,8 @@ public static partial class ScenarioRunner
     private static async Task<StepOutcome> AutomationStepAsync(ScenarioStep      step,
                                                                IExtensionAction  action,
                                                                StepTable?        incoming,
+                                                               byte[]?           file,
+                                                               string            fileName,
                                                                string            scenario,
                                                                DateTimeOffset    now,
                                                                CancellationToken ct)
@@ -57,8 +59,8 @@ public static partial class ScenarioRunner
         try
         {
             result = await Task.Run(
-                () => action.Run(new ActionContext(null, 0, 0, now),
-                                 new ActionInput(values, Rows: table.Rows)), ct);
+                () => action.Run(new ActionContext(null, 0, 0, now, CancellationToken: ct),
+                                 new ActionInput(values, Bytes: file, Rows: table.Rows, FileName: fileName)), ct);
         }
         catch (OperationCanceledException)
         {

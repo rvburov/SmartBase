@@ -205,7 +205,7 @@ public sealed class StreamsRegistryTests : IDisposable
             bundle = ScenarioTransfer.Export(cards, [scenario], [], "машина-а", Now);
         }
 
-        Assert.Equal(ScenarioBundle.SupportedVersion, bundle.Version);
+        Assert.Equal(ScenarioBundle.StreamVersion, bundle.Version);
         Assert.Single(bundle.StreamList);
         Assert.Single(bundle.Requests);
         Assert.Single(bundle.Connections);

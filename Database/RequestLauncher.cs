@@ -3,7 +3,7 @@ using SmartBase.Integrations;
 namespace SmartBase.Database;
 
 /// <summary>Запуск запроса и запись его результата в рабочий журнал обмена.</summary>
-public static class RequestLauncher
+public static partial class RequestLauncher
 {
     /// <summary>Отправить запрос. Сбой рабочего журнала не останавливает обмен.</summary>
     public static async Task<RunOutcome> SendAsync(

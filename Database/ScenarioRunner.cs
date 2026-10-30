@@ -101,7 +101,9 @@ public sealed record StepOutcome(bool       Ok,
                                  StepTable? Table = null,
                                  string     Text  = "",
                                  StepFlow   Flow  = StepFlow.Continue,
-                                 string     Reply = "")
+                                 string     Reply = "",
+                                 byte[]?    File = null,
+                                 string     FileName = "")
 {
     public static StepOutcome Bad(string reason) => new(false, reason);
 
@@ -207,6 +209,7 @@ public static partial class ScenarioRunner
         // САМ — наступившие события, как будто их принес нулевой шаг.
         // Триггер потока — так же: каждая запись события приходит первому шагу строкой.
         var text = false;
+        var file = false;
         var rows = scenario.Trigger.WatchesCalendar || scenario.Trigger.WatchesStream
                 || initial is { Rows.Count: > 0 };
 
@@ -215,6 +218,13 @@ public static partial class ScenarioRunner
 
         foreach (var step in scenario.Steps)
         {
+            if (step.Kind == ScenarioStepKind.Download)
+            {
+                if (DownloadTrouble(step, registry) is { } download) return download;
+                file = true;
+                continue;
+            }
+
             if (step.Kind == ScenarioStepKind.Filter)
             {
                 if (!rows) return NoRows();
@@ -268,7 +278,8 @@ public static partial class ScenarioRunner
 
                 if (action.Kind == ExtensionActionKind.Transformer)
                 {
-                    if (!text) return NoInput(action);
+                    if (!text && !(file && action.AcceptsFile)) return NoInput(action);
+                    file = false;
                     rows = true;
                     continue;
                 }
@@ -288,6 +299,7 @@ public static partial class ScenarioRunner
                     if (Unfilled(step, action) is { } missing) return missing;
 
                     // Строк не прибавляет и не убавляет — только меняет их состав.
+                    file = false;
                     continue;
                 }
 
@@ -299,6 +311,7 @@ public static partial class ScenarioRunner
 
                 if (Unfilled(step, action) is { } unfilled) return unfilled;
 
+                file = false;
                 continue;
             }
 
@@ -376,7 +389,8 @@ public static partial class ScenarioRunner
         var carry = scenario.Steps.Any(
             s => s.Kind is ScenarioStepKind.Action
                         or ScenarioStepKind.Filter
-                        or ScenarioStepKind.Compute);
+                        or ScenarioStepKind.Compute
+                        or ScenarioStepKind.Download);
 
         var lines   = new List<string>();
         var rows    = 0;
@@ -387,6 +401,8 @@ public static partial class ScenarioRunner
         StepTable? table = initial;
         var        text  = "";
         var        reply = "";
+        byte[]?    file  = null;
+        var        fileName = "";
         Intake?    taken = null;
 
         try
@@ -402,12 +418,20 @@ public static partial class ScenarioRunner
                 // один и тот же запрос, не различить вовсе.
                 var mark = StepMark(number, scenario.Steps.Count, step.Kind);
 
+                if (step.Kind == ScenarioStepKind.Download)
+                {
+                    file = null;
+                    fileName = "";
+                }
+
                 var outcome = step.Kind switch
                 {
+                    ScenarioStepKind.Download => await DownloadStepAsync(step, registry, table,
+                                                                         scenario.Name, mark, now, ct),
                     ScenarioStepKind.Request => await RequestStepAsync(step, registry, databases,
                                                                        carry, scenario.Name, mark, now, ct),
                     ScenarioStepKind.Action  => await ActionStepAsync(step, databases, extensions,
-                                                                      table, text, scenario.Name,
+                                                                      table, text, file, fileName, scenario.Name,
                                                                       $"{scenario.Id}:{scenario.Trigger.StreamId}", now, ct),
                     ScenarioStepKind.Intake  => IntakeStep(step, scenario.Name, mark, now, ref taken),
                     ScenarioStepKind.Filter  => FilterStep(step, table),
@@ -436,6 +460,18 @@ public static partial class ScenarioRunner
                 if (outcome.Table is not null)  table = outcome.Table;
                 if (outcome.Text.Length  > 0)   text  = outcome.Text;
                 if (outcome.Reply.Length > 0)   reply = outcome.Reply;
+                if (outcome.File is not null)
+                {
+                    file = outcome.File;
+                    fileName = outcome.FileName;
+                }
+                // Вложение принадлежит одному действию. Следующий шаг не должен случайно
+                // зарегистрировать ту же книгу еще раз либо получить прежнее вложение.
+                if (step.Kind == ScenarioStepKind.Action)
+                {
+                    file = null;
+                    fileName = "";
+                }
 
                 // Первый неудавшийся шаг останавливает цепочку: следующий работал бы с данными,
                 // которых не пришло.
@@ -461,10 +497,10 @@ public static partial class ScenarioRunner
 
         // Ответ отправителю и уборка его файла — последним делом и по итогу ВСЕГО сценария:
         // единица работы здесь не шаг, а сообщение целиком.
-        if (taken is { } file)
+        if (taken is { } claimedFile)
         {
             var answer = ok ? string.Join("; ", lines) : problem;
-            if (Close(file, ok, rows, answer, now) is { } trouble && problem.Length == 0)
+            if (Close(claimedFile, ok, rows, answer, now) is { } trouble && problem.Length == 0)
             {
                 problem = trouble;
                 ok      = false;
@@ -626,6 +662,8 @@ public static partial class ScenarioRunner
                                                            IReadOnlyList<IExtension>      extensions,
                                                            StepTable?                     incoming,
                                                            string                         text,
+                                                           byte[]?                        file,
+                                                           string                         fileName,
                                                            string                         scenario,
                                                            string                         channel,
                                                            DateTimeOffset                 now,
@@ -639,11 +677,16 @@ public static partial class ScenarioRunner
         // уронило бы его.
         var settings = SettingsOf(step, extensions);
 
+        if (file is not null && (incoming ?? StepTable.Empty).Rows.Count != 1)
+            return StepOutcome.Bad("Действие с файлом требует ровно одну строку события");
+        if (file is not null && !action.AcceptsFile)
+            return StepOutcome.Bad($"действие «{action.Name}» не принимает файлы");
+
         if (action.Kind == ExtensionActionKind.Transformer)
-            return await TransformStepAsync(action, text, now, settings, ct);
+            return await TransformStepAsync(action, text, file, fileName, now, settings, ct);
 
         if (action.Kind == ExtensionActionKind.Rows)
-            return await AutomationStepAsync(step, action, incoming, scenario, now, ct);
+            return await AutomationStepAsync(step, action, incoming, file, fileName, scenario, now, ct);
 
         if (step.CollectionId <= 0)
             return StepOutcome.Bad($"у действия «{action.Name}» не выбрана коллекция");
@@ -665,7 +708,7 @@ public static partial class ScenarioRunner
             if (Input(step, action, row, table, out var problem) is not { } input)
                 return StepOutcome.Bad($"действие «{action.Name}»: {problem}");
 
-            inputs.Add(input);
+            inputs.Add(input with { Bytes = file, FileName = fileName });
         }
 
         var ran     = 0;
@@ -678,7 +721,8 @@ public static partial class ScenarioRunner
         {
             await Task.Run(() => target.Constructor.UseIsolated(step.CollectionId, repo =>
             {
-                var context = new ActionContext(repo, step.DbId, step.CollectionId, now, settings, target.Constructor, channel);
+                var context = new ActionContext(repo, step.DbId, step.CollectionId, now, settings,
+                    target.Constructor, channel, CancellationToken: ct);
 
                 foreach (var input in inputs)
                 {
@@ -746,19 +790,21 @@ public static partial class ScenarioRunner
     /// </summary>
     private static async Task<StepOutcome> TransformStepAsync(IExtensionAction  action,
                                                               string            text,
+                                                              byte[]?           file,
+                                                              string            fileName,
                                                               DateTimeOffset    now,
                                                               IReadOnlyDictionary<string, string> settings,
                                                               CancellationToken ct)
     {
-        if (text.Length == 0)
+        if (text.Length == 0 && file is null)
             return StepOutcome.Bad(NoInput(action));
 
         ActionResult result;
         try
         {
             result = await Task.Run(
-                () => action.Run(new ActionContext(null, 0, 0, now, settings),
-                                 new ActionInput(NoValues, text)), ct);
+                () => action.Run(new ActionContext(null, 0, 0, now, settings, CancellationToken: ct),
+                                 new ActionInput(NoValues, text, Bytes: file, FileName: fileName)), ct);
         }
         catch (OperationCanceledException)
         {
@@ -819,6 +865,12 @@ public static partial class ScenarioRunner
 
             if (unknown.Count > 0)
             {
+                if (action.Fields.FirstOrDefault(field => field.Key == key)
+                    is { Required: false, MissingIsEmpty: true })
+                {
+                    values[key] = "";
+                    continue;
+                }
                 var known = table.Columns.Count > 0
                     ? "; в строке есть: " + string.Join(", ", table.Columns)
                     : "; предыдущий шаг строк не передал";
@@ -1178,6 +1230,7 @@ public static partial class ScenarioRunner
         $"шаг {number} из {total} · " + kind switch
         {
             ScenarioStepKind.Request      => "запрос",
+            ScenarioStepKind.Download     => "получение файла",
             ScenarioStepKind.Notify       => "уведомление",
             ScenarioStepKind.Action       => "действие",
             ScenarioStepKind.Intake       => "файл из папки",

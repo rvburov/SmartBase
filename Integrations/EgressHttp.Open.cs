@@ -60,8 +60,26 @@ public static class EgressHttp
     /// <paramref name="maxResponseBytes"/> потолок только ОПУСКАЕТ: поднять его вызывающим
     /// кодом нельзя, иначе смысл потолка терялся бы вместе с первым же удобным случаем.
     /// </summary>
-    public static async Task<EgressResponse> SendAsync(
+    public static Task<EgressResponse> SendAsync(
+        EgressPlan plan, CancellationToken ct = default, long maxResponseBytes = MaxResponseBytes) =>
+        SendCoreAsync(plan, binary: false, ct, maxResponseBytes);
+
+    /// <summary>
+    /// Получить файл без преобразования его байтов в текст. Использует тот же транспорт,
+    /// что и обычный запрос: лимит ответа, отмена, повторы GET и перенаправления общие.
+    /// Тело запроса здесь не нужно: скачивание не должно выполнять изменяющую операцию.
+    /// </summary>
+    public static Task<EgressResponse> DownloadAsync(
         EgressPlan plan, CancellationToken ct = default, long maxResponseBytes = MaxResponseBytes)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(maxResponseBytes);
+        return plan.Method != RequestMethod.Get || plan.Body.Length > 0
+            ? Task.FromResult(EgressResponse.Failed("для получения файла нужен GET без тела", plan.SafeAddress))
+            : SendCoreAsync(plan, binary: true, ct, maxResponseBytes);
+    }
+
+    private static async Task<EgressResponse> SendCoreAsync(
+        EgressPlan plan, bool binary, CancellationToken ct, long maxResponseBytes)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(maxResponseBytes);
         var ceiling = Math.Min(maxResponseBytes, MaxResponseBytes);
@@ -87,7 +105,7 @@ public static class EgressHttp
             {
                 using var waiting = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 waiting.CancelAfter(TimeSpan.FromSeconds(plan.TimeoutSeconds));
-                return await OnceAsync(plan, attempt, watch, ceiling, waiting.Token);
+                return await OnceAsync(plan, attempt, watch, ceiling, binary, waiting.Token);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -306,7 +324,7 @@ public static class EgressHttp
     private const int MaxRedirects = 3;
 
     private static async Task<EgressResponse> OnceAsync(
-        EgressPlan plan, int attempt, Stopwatch watch, long ceiling, CancellationToken ct)
+        EgressPlan plan, int attempt, Stopwatch watch, long ceiling, bool binary, CancellationToken ct)
     {
         var address = plan.Address;
         var hops    = 0;
@@ -331,7 +349,8 @@ public static class EgressHttp
                 continue;
             }
 
-            var (body, bytes, truncated) = await ReadAsync(response, ceiling, ct);
+            var (content, truncated) = await ReadAsync(response, ceiling, ct);
+            var body = binary ? "" : EncodingOf(response).GetString(content);
 
             var headers = response.Headers
                 .Concat(response.Content.Headers)
@@ -343,12 +362,13 @@ public static class EgressHttp
                 Explanation: Note(plan, response, hops),
                 StatusCode:  (int)response.StatusCode,
                 Body:        body,
-                Bytes:       bytes,
+                Bytes:       content.LongLength,
                 Truncated:   truncated,
                 Elapsed:     watch.Elapsed,
                 Headers:     headers,
                 SafeAddress: plan.SafeAddress,
-                Attempts:    attempt);
+                Attempts:    attempt,
+                Content:     binary && response.IsSuccessStatusCode && !truncated ? content : null);
         }
     }
 
@@ -463,13 +483,13 @@ public static class EgressHttp
     /// Прочитать ответ, но не больше потолка. Читается поток, а не строка целиком: длину из
     /// заголовка сторонняя программа может и соврать.
     /// </summary>
-    private static async Task<(string Body, long Bytes, bool Truncated)> ReadAsync(
+    private static async Task<(byte[] Content, bool Truncated)> ReadAsync(
         HttpResponseMessage response, long ceiling, CancellationToken ct)
     {
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
 
         var buffer    = new byte[81920];
-        var collected = new MemoryStream();
+        using var collected = new MemoryStream();
         var truncated = false;
 
         while (true)
@@ -488,8 +508,7 @@ public static class EgressHttp
             collected.Write(buffer, 0, read);
         }
 
-        var encoding = EncodingOf(response);
-        return (encoding.GetString(collected.ToArray()), collected.Length, truncated);
+        return (collected.ToArray(), truncated);
     }
 
     /// <summary>Кодировка из заголовка; незнакомая или отсутствующая — UTF-8.</summary>

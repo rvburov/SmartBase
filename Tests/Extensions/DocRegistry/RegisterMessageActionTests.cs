@@ -323,12 +323,14 @@ public sealed class RegisterMessageActionTests
                                    a => a.Key == RegisterMessageAction.ActionKey);
 
         Assert.Equal(ExtensionActionKind.Operation, action.Kind);
-        Assert.Equal([RegisterMessageAction.TextField, RegisterMessageAction.SenderField],
+        Assert.Equal([RegisterMessageAction.TextField, RegisterMessageAction.SenderField, RegisterMessageAction.MessageIdField],
                      action.Fields.Select(f => f.Key));
 
         // Отправитель обязателен, текст — нет: на пустое сообщение отвечают перечнем ошибок.
         Assert.False(action.Fields[0].Required);
         Assert.True(action.Fields[1].Required);
+        Assert.False(action.Fields[2].Required);
+        Assert.True(action.AcceptsFile);
     }
 }
 

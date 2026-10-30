@@ -18,6 +18,7 @@
 | `PopupGeometry` | зазор и выравнивание краев выпадающих панелей | `dotnet run --project Tests/PopupGeometry -f net10.0` |
 | `WindowPlacement` | размещение дополнительных окон относительно главного, вложенные владельцы, размеры и повторный показ без каскадного сдвига | `dotnet run --project Tests/WindowPlacement -f net10.0` |
 | `TasksQuickAdd` | настоящие клики по строке создания задачи и вне нее: снятие фокуса без потери черновика, Enter и кнопка, расположение параметров; автоматическое заполнение «Назначил» через контроллер в выбранной тестовой SQLite-базе | `dotnet run --project Tests/TasksQuickAdd -f net10.0 -- --out /tmp/sb-tasks-quickadd` |
+| `Sections --only integrationdownload` | шаг «Получить файл»: создание, выбор запроса и имени, сохранение и повторное редактирование сценария; проверка разметки диалога без экрана | `dotnet run --project Tests/Sections -f net10.0 -- --only integrationdownload --out /tmp/sb-integration-download-ui` |
 | `BackupUi` | настройки уведомлений о копиях и общая панель фоновых работ: тумблер, иконка, этап и ошибка без экрана | `dotnet run -c Release --project Tests/BackupUi` |
 | `ConcurrentUi` | один настоящий UI-поток: 1000 сообщений о работах, снимок панели из 1000 работ и 1000 результатов копий через fake notifier/badge; heartbeat и задержки UI отдельно от функционального исхода | `dotnet run -c Release --project Tests/ConcurrentUi -- --mode all --out /tmp/sb-concurrent-ui-new` |
 | `DocReader` | панель чтения документа: загрузка разметки, строки, подсветка | `dotnet run --project Tests/DocReader -f net10.0` |
