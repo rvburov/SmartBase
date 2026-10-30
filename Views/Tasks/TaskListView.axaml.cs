@@ -36,7 +36,7 @@ public partial class TaskListView : UserControl
     public event EventHandler<TaskRecord>?      TaskActivated;
     public event EventHandler<QuickAddRequest>? QuickAddRequested;
     /// <summary>Сменилась коллекция-цель быстрого добавления: у нее может быть своя база,
-    /// а значит и свой список пользователей для «Исполнителя» и «Назначил».</summary>
+    /// а значит и свой список пользователей для «Исполнителя».</summary>
     public event EventHandler<QuickCollectionOption>? QuickTargetChanged;
     /// <summary>Удалить выделенные задачи (меню или Delete) — подтверждение спрашивает контроллер.</summary>
     public event EventHandler<IReadOnlyList<TaskRecord>>? TasksDeleteRequested;
@@ -395,7 +395,6 @@ public partial class TaskListView : UserControl
         if (selected.Length > 0 && !opts.Contains(selected)) opts.Add(selected);
         if (!opts.Contains(CurrentUser.DisplayName)) opts.Add(CurrentUser.DisplayName);
         SetOptions(QuickExecutor, selected);
-        SetOptions(QuickAssigner, CurrentUser.DisplayName);
 
         void SetOptions(ComboBox combo, string fallback)
         {
@@ -409,8 +408,7 @@ public partial class TaskListView : UserControl
 
     /// <summary>
     /// Переставить поля строки добавления по настройкам раздела: дата — по «Срок в быстром
-    /// добавлении», исполнитель — по «Исполнитель в быстром добавлении», назначивший —
-    /// текущий пользователь. Зовется при открытии
+    /// добавлении», исполнитель — по «Исполнитель в быстром добавлении». Зовется при открытии
     /// раздела, при смене настроек и после каждого добавления.
     /// </summary>
     public void ApplyQuickDefaults()
@@ -419,7 +417,6 @@ public partial class TaskListView : UserControl
 
         var wanted = TaskSettings.QuickExecutorMe ? CurrentUser.DisplayName : UnassignedLabel;
         SelectUser(QuickExecutor, wanted);
-        SelectUser(QuickAssigner, CurrentUser.DisplayName);
 
         static void SelectUser(ComboBox combo, string wanted)
         {
@@ -464,9 +461,8 @@ public partial class TaskListView : UserControl
         // «Не назначен» уходит пустым исполнителем — задача заводится нераспределенной.
         var executor = QuickExecutor.SelectedItem as string ?? "";
         if (executor == UnassignedLabel) executor = "";
-        var assigner = QuickAssigner.SelectedItem as string ?? CurrentUser.DisplayName;
-        if (assigner == UnassignedLabel) assigner = "";
-        QuickAddRequested?.Invoke(this, new QuickAddRequest(title, due, executor, SelectedCollection, assigner));
+        // Назначившего автоматически подставляет контроллер из текущего профиля.
+        QuickAddRequested?.Invoke(this, new QuickAddRequest(title, due, executor, SelectedCollection));
         QuickTitle.Text = "";
         // Дата — снова по настройке; пользователи остаются для следующих задач.
         QuickDateField.Date = TaskSettings.QuickDueDate(DateTime.Today);

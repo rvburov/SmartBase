@@ -13,7 +13,7 @@ using SmartBase.Views.Tasks;
 
 namespace SmartBase.Tests.TasksQuickAdd;
 
-/// <summary>Выбор назначившего проходит через форму и контроллер до сохраненной роли задачи.</summary>
+/// <summary>Форма автоматически сохраняет текущего пользователя в роли назначившего задачи.</summary>
 internal static class AssignerChecks
 {
     // Avalonia уже поднята общим Program. Свою маленькую базу и профиль заводим только на этот прогон.
@@ -34,8 +34,8 @@ internal static class AssignerChecks
             TaskSettings.Init();
             SQLitePCL.Batteries_V2.Init();
 
-            var first = Open(7201, "Первая", "Первый назначивший");
-            var second = Open(7202, "Вторая", "Второй назначивший");
+            var first = Open(7201, "Первая", "Первый исполнитель");
+            var second = Open(7202, "Вторая", "Второй исполнитель");
             var firstCollection = Prepare(first, "Задачи первой базы");
             var secondCollection = Prepare(second, "Задачи второй базы");
             var firstTarget = new QuickCollectionOption(first.DbId, firstCollection, "Первая");
@@ -50,48 +50,45 @@ internal static class AssignerChecks
             Call(controller, "UpdateQuickUserOptions", first.DbId);
             var title = list.FindControl<TextBox>("QuickTitle")!;
             var executor = list.FindControl<ComboBox>("QuickExecutor")!;
-            var assigner = list.FindControl<ComboBox>("QuickAssigner")!;
             var collection = list.FindControl<ComboBox>("QuickCollection")!;
             var add = list.FindControl<Button>("QuickAddBtn")!;
             list.FindControl<DateField>("QuickDateField")!.Date = null;
 
-            Expect(assigner.SelectedItem as string == CurrentUser.DisplayName,
-                "назначивший по умолчанию — текущий пользователь");
-            executor.SelectedItem = CurrentUser.DisplayName;
-            assigner.SelectedItem = "Первый назначивший";
-            Submit("Выбран другой назначивший");
-            var chosen = Saved(first, firstCollection, "Выбран другой назначивший");
-            Expect(chosen.Assigner == "Первый назначивший" && chosen.Executor == CurrentUser.DisplayName,
-                "выбор назначившего сохранен независимо от исполнителя через событие формы");
+            executor.SelectedItem = "Первый исполнитель";
+            Submit("Задача другому исполнителю");
+            var chosen = Saved(first, firstCollection, "Задача другому исполнителю");
+            Expect(chosen.Assigner == CurrentUser.DisplayName && chosen.Executor == "Первый исполнитель",
+                "назначивший заполняется текущим пользователем независимо от исполнителя");
 
-            assigner.SelectedItem = TaskListView.UnassignedLabel;
-            Submit("Без назначившего");
-            var unassigned = Saved(first, firstCollection, "Без назначившего");
-            Expect(unassigned.Assigner == "" && unassigned.Executor == CurrentUser.DisplayName,
-                "явный «Не назначен» не заменен текущим пользователем при сохранении");
+            executor.SelectedItem = TaskListView.UnassignedLabel;
+            Submit("Без исполнителя");
+            var unassigned = Saved(first, firstCollection, "Без исполнителя");
+            Expect(unassigned.Assigner == CurrentUser.DisplayName && unassigned.Executor == "",
+                "нераспределенная задача также сохраняет текущего пользователя в Назначил");
 
-            // Старый вызывающий код без нового optional-аргумента сохраняет прежнее умолчание.
+            // Программный запрос без назначившего использует то же умолчание, что и форма.
             var legacy = new QuickAddRequest("Старый запрос", null, CurrentUser.DisplayName, firstTarget);
             var pending = (Task)Call(controller, "QuickAdd", legacy)!;
             Wait(pending);
             Expect(Saved(first, firstCollection, "Старый запрос").Assigner == CurrentUser.DisplayName,
                 "старый запрос без назначившего сохраняет текущего пользователя");
 
-            assigner.SelectedItem = "Первый назначивший";
+            var explicitRequest = new QuickAddRequest("Явный назначивший", null, "", firstTarget, "Другой участник");
+            Wait((Task)Call(controller, "QuickAdd", explicitRequest)!);
+            Expect(Saved(first, firstCollection, "Явный назначивший").Assigner == "Другой участник",
+                "программный запрос сохраняет явно заданного назначившего");
+
             collection.SelectedItem = secondTarget;
-            var names = ((IEnumerable)assigner.ItemsSource!).Cast<string>().ToArray();
-            Expect(names.Contains("Второй назначивший") && !names.Contains("Первый назначивший"),
-                "смена целевой базы обновила список назначивших и убрала чужого пользователя");
-            Expect(((IEnumerable)executor.ItemsSource!).Cast<string>().Contains("Второй назначивший"),
-                "список исполнителей сменился вместе со списком назначивших");
-            executor.SelectedItem = "Второй назначивший";
-            assigner.SelectedItem = "Второй назначивший";
+            var names = ((IEnumerable)executor.ItemsSource!).Cast<string>().ToArray();
+            Expect(names.Contains("Второй исполнитель") && !names.Contains("Первый исполнитель"),
+                "смена целевой базы обновила список исполнителей и убрала чужого пользователя");
+            executor.SelectedItem = "Второй исполнитель";
             Submit("Задача второй базы");
             var movedTarget = Saved(second, secondCollection, "Задача второй базы");
-            Expect(movedTarget.Assigner == "Второй назначивший" && movedTarget.Executor == "Второй назначивший"
+            Expect(movedTarget.Assigner == CurrentUser.DisplayName && movedTarget.Executor == "Второй исполнитель"
                 && !first.Context.DbRecords.Any(record => record.Title == "Задача второй базы"),
-                "задача и выбранные пользователи записаны только в выбранную базу");
-            Expect(first.Context.DbRecords.Count() == 3 && second.Context.DbRecords.Count() == 1,
+                "смена базы сохраняет автоматического назначившего и выбранного исполнителя");
+            Expect(first.Context.DbRecords.Count() == 4 && second.Context.DbRecords.Count() == 1,
                 "каждое добавление создало ровно одну запись");
 
             void Submit(string value)

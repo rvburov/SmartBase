@@ -32,13 +32,24 @@ internal static class FocusChecks
             root.Children.Add(header);
             Grid.SetRow(view, 1);
             root.Children.Add(view);
-            window = new Window { Width = 1200, Height = 700, Content = root };
+            window = new Window { Width = 1040, Height = 700, Content = root };
             window.Show();
             Pump();
             var title = view.FindControl<TextBox>("QuickTitle")!;
             var executor = view.FindControl<ComboBox>("QuickExecutor")!;
-            var assigner = view.FindControl<ComboBox>("QuickAssigner")!;
+            var collection = view.FindControl<ComboBox>("QuickCollection")!;
             var add = view.FindControl<Button>("QuickAddBtn")!;
+            var date = view.FindControl<Control>("QuickDateField")!;
+            var datePoint = date.TranslatePoint(default, window)!.Value;
+            var executorPoint = executor.TranslatePoint(default, window)!.Value;
+            var collectionPoint = collection.TranslatePoint(default, window)!.Value;
+            var addPoint = add.TranslatePoint(default, window)!.Value;
+            Expect(Math.Abs(datePoint.Y - executorPoint.Y) < 1
+                && Math.Abs(datePoint.Y - collectionPoint.Y) < 1,
+                "срок, исполнитель и коллекция помещаются в одну строку при ширине 1040");
+            Expect(addPoint.X > collectionPoint.X + collection.Bounds.Width
+                && Math.Abs(addPoint.X + add.Bounds.Width - (window.ClientSize.Width - 28)) < 2,
+                "кнопка Добавить остается у правого края после параметров");
             title.Text = "Черновик задачи";
             var lost = 0;
             title.LostFocus += (_, _) => lost++;
@@ -71,10 +82,10 @@ internal static class FocusChecks
             executor.IsDropDownOpen = false;
             Pump();
             Click(title);
-            Click(assigner);
-            Expect(!title.IsFocused && assigner.IsDropDownOpen,
-                "клик по назначившему открывает его список");
-            assigner.IsDropDownOpen = false;
+            Click(collection);
+            Expect(!title.IsFocused && collection.IsDropDownOpen,
+                "клик по коллекции завершает ввод и открывает список");
+            collection.IsDropDownOpen = false;
             Pump();
 
             var requests = new List<QuickAddRequest>();

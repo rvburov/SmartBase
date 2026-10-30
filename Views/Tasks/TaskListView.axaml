@@ -30,8 +30,8 @@
         <!-- Ошибка (нет прав и т.п.) — тот же баннер, что в диалогах -->
         <w:NoticeBanner Grid.Row="1" x:Name="NoticeBanner" Margin="0,0,16,8" />
 
-        <!-- Быстрое добавление: название + Enter на всю ширину сверху, срок, исполнитель,
-             назначивший и коллекция слева ниже, «Добавить» — у правого края.
+        <!-- Быстрое добавление: название + Enter на всю ширину сверху, срок, исполнитель
+             и коллекция слева ниже, «Добавить» — у правого края.
              Коллекция выбирается явно: раньше задача молча уезжала в первую
              отмеченную, и попасть в нужную можно было только через окно задачи. -->
         <Border Grid.Row="2"
@@ -69,16 +69,6 @@
                                        VerticalAlignment="Center"
                                        Foreground="{StaticResource BrushSecondaryText}" />
                             <ComboBox Grid.Column="2" x:Name="QuickExecutor"
-                                      Width="150" Height="34"
-                                      Background="{StaticResource BrushSecondaryBg}"
-                                      CornerRadius="{StaticResource RadiusBase}" />
-                        </Grid>
-
-                        <Grid ColumnDefinitions="Auto,6,Auto" Margin="0,0,12,8">
-                            <TextBlock Grid.Column="0" Text="Назначил"
-                                       VerticalAlignment="Center"
-                                       Foreground="{StaticResource BrushSecondaryText}" />
-                            <ComboBox Grid.Column="2" x:Name="QuickAssigner"
                                       Width="150" Height="34"
                                       Background="{StaticResource BrushSecondaryBg}"
                                       CornerRadius="{StaticResource RadiusBase}" />

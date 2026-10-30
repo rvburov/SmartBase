@@ -404,8 +404,8 @@ public partial class TasksControllerView : UserControl
         UpdateQuickUserOptions(TaskList.SelectedCollection?.DbId ?? targetDbId);
     }
 
-    // «Исполнитель» и «Назначил» — пользователи базы, в которой заведется задача.
-    // Умолчание исполнителя задает настройка (я / не назначен), назначивший — текущий пользователь.
+    // «Исполнитель» — пользователи базы, в которой заведется задача.
+    // Умолчание задает настройка (я / не назначен).
     private void UpdateQuickUserOptions(int dbId) =>
         TaskList.SetUserOptions(RepoFor(dbId)?.GetUserOptions() ?? [],
                                 TaskSettings.QuickExecutorMe ? CurrentUser.DisplayName : "");
@@ -658,9 +658,9 @@ public partial class TasksControllerView : UserControl
         }
 
         // Исполнитель — ровно как выбран в строке: пустой значит «не назначен», задача заводится
-        // нераспределенной (раздел такие показывает прочерком). Назначивший тоже выбран явно:
-        // пустая строка сохраняется пустой; старый запрос без этого поля оставляет текущего
-        // пользователя, как до появления списка. Стадия — из настроек раздела.
+        // нераспределенной (раздел такие показывает прочерком). Назначивший в форме не выбирается:
+        // подставляется текущий пользователь. Явное значение программного запроса сохраняется
+        // для совместимости, включая пустую строку. Стадия — из настроек раздела.
         var executor = req.Executor;
         var assigner = req.Assigner ?? CurrentUser.DisplayName;
         var status   = DefaultStageFor(repo, colId);
