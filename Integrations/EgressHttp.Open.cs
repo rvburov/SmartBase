@@ -9,40 +9,10 @@ using System.Text;
 namespace SmartBase.Integrations;
 
 /// <summary>
-/// Единственная дверь наружу: только здесь программа обращается к сторонним программам по сети.
-/// Правило сторожит сборка — <c>Tests/Unit/OneDoorOutwardTests.cs</c> роняет тесты, если
-/// сетевой тип встретился вне <c>Integrations/</c>.
-///
-/// В сборке для закрытого контура (<c>-p:ClosedLoop=true</c>) этот файл в компиляцию НЕ
-/// попадает: вместо него берется <c>EgressHttp.Closed.cs</c>, и сетевого клиента в дистрибутиве
-/// нет вовсе. Подмена сделана в SmartBase.csproj файлом, а не через <c>#if</c>: условная
-/// компиляция живет ровно в одном месте — в шлюзе, — и расползаться ей нельзя.
-///
-/// Слой намеренно тонкий и скучный. Все, что можно перепутать, решено до него в
-/// <see cref="EgressPlan"/> и проверено тестами без сети; здесь — соединиться с проверенным
-/// адресом и вернуть ответ.
-///
-/// Что этот слой делает всегда, независимо от настроек человека:
-/// <list type="bullet">
-/// <item>спрашивает <see cref="EgressGate"/> дважды — по имени и по фактическому адресу;</item>
-/// <item>соединяется РОВНО с проверенным адресом, а не с тем, что даст DNS во второй раз;</item>
-/// <item>за перенаправлением идет ТОЛЬКО у GET и только проверив новый адрес с самого начала —
-///       иначе тело ушло бы туда, куда его не посылали;</item>
-/// <item>пользуется прокси ТОЛЬКО тем, который назвала политика организации, и проверяет его
-///       адрес как всякий другой;</item>
-/// <item>не хранит cookie: чужое состояние между запусками нам не нужно;</item>
-/// <item>проверяет сертификат — всегда, отключить это нечем;</item>
-/// <item>обрезает ответ по потолку: сторонняя программа не должна уметь занять всю память;</item>
-/// <item>повторяет только то, что можно повторить безопасно.</item>
-/// </list>
+/// Сетевой транспорт запросов и потоков событий: таймауты, отмена, ограничение ответа,
+/// повторы идемпотентных запросов и проверка сертификата средствами HTTP-клиента.
 /// </summary>
-//
-// Запрет сетевых типов снят НА ВЕСЬ ФАЙЛ, и это не поблажка, а определение двери: файл и есть
-// то единственное место, где им позволено быть (BannedSymbols.txt, правило RS0030). Снятие
-// пофразно — по строке на каждый вызов — говорило бы, что дверей много и каждая маленькая.
-// Мест с этой строкой в репозитории три: обе двери (эта и IngressHttp.Open.cs) и проба порта
-// PostgreSQL; четвертое роняет тест
-// OneDoorOutwardTests.Suppressions_live_only_at_the_two_doors_and_the_postgres_probe.
+// Сетевые обращения собраны здесь; сборка запрещает сетевые типы вне транспорта.
 #pragma warning disable RS0030
 public static class EgressHttp
 {
@@ -67,7 +37,7 @@ public static class EgressHttp
         var plan = EgressPlan.Build(connection, request, secret, out var error);
 
         return plan is null
-            ? Task.FromResult(EgressResponse.Denied(EgressDenyReason.BadAddress, error))
+            ? Task.FromResult(EgressResponse.Failed(error))
             : SendAsync(plan, ct);
     }
 
@@ -80,7 +50,7 @@ public static class EgressHttp
         var plan = EgressPlan.Probe(connection, secret, out var error);
 
         return plan is null
-            ? Task.FromResult(EgressResponse.Denied(EgressDenyReason.BadAddress, error))
+            ? Task.FromResult(EgressResponse.Failed(error))
             : SendAsync(plan, ct);
     }
 
@@ -93,27 +63,17 @@ public static class EgressHttp
     public static async Task<EgressResponse> SendAsync(
         EgressPlan plan, CancellationToken ct = default, long maxResponseBytes = MaxResponseBytes)
     {
+        ArgumentOutOfRangeException.ThrowIfNegative(maxResponseBytes);
         var ceiling = Math.Min(maxResponseBytes, MaxResponseBytes);
 
-        // Первая проверка — по имени. До нее не делается вообще ничего, даже разрешения имени:
-        // сам факт запроса к DNS уже говорит наружу, что программа этим адресом интересуется.
-        var byName = EgressGate.Check(plan.Address);
-        if (!byName.Allowed)
-            return EgressResponse.Denied(byName.Reason, byName.Explanation, plan.SafeAddress);
-
-        // Прокси организации: если он назван политикой, соединяемся МЫ с ним, а не с чужой
-        // программой, — значит и проверять адресом надо его. Имя цели при этом проверено выше и
-        // остается обязательным: прокси не разрешение ходить куда угодно, а способ дойти.
-        var viaProxy = EgressGate.CheckProxy(out var proxy);
-        if (!viaProxy.Allowed)
-            return EgressResponse.Denied(viaProxy.Reason, viaProxy.Explanation, plan.SafeAddress);
+        if (!plan.Address.IsAbsoluteUri || plan.Address.Scheme is not ("http" or "https"))
+            return EgressResponse.Failed("для запроса нужен абсолютный адрес http или https",
+                                         plan.SafeAddress);
+        if (Encoding.UTF8.GetByteCount(plan.Body) > MaxResponseBytes)
+            return EgressResponse.Failed("тело запроса больше технического ограничения 32 МБ; "
+                                         + "сузьте отбор отправляемых данных", plan.SafeAddress);
 
         var watch = Stopwatch.StartNew();
-
-        var target = proxy ?? plan.Address;
-        var pinned = await ResolveAndCheckAsync(target, ct);
-        if (pinned.Address is null)
-            return EgressResponse.Denied(pinned.Reason, pinned.Explanation, plan.SafeAddress);
 
         // Повтор — только для того, что можно повторить безопасно. Обрыв связи не значит, что
         // запрос не дошел: он мог выполниться, а ответ потеряться, и повтор POST зарегистрирует
@@ -125,7 +85,9 @@ public static class EgressHttp
         {
             try
             {
-                return await OnceAsync(plan, pinned.Address, target.Port, proxy, attempt, watch, ceiling, ct);
+                using var waiting = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                waiting.CancelAfter(TimeSpan.FromSeconds(plan.TimeoutSeconds));
+                return await OnceAsync(plan, attempt, watch, ceiling, waiting.Token);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -163,18 +125,8 @@ public static class EgressHttp
     private static readonly TimeSpan KeepAlive = TimeSpan.FromSeconds(20);
 
     /// <summary>
-    /// Слушать поток событий сторонней программы по WebSocket.
-    ///
-    /// Дверь та же, что у запросов, и обещания те же: адрес проверяется дважды — по имени и по
-    /// фактическому адресу, — соединение идет ровно с проверенным, прокси только тот, что
-    /// назвала политика. Наружу по потоку уходят лишь кадры <paramref name="greeting"/> —
-    /// представиться и подписаться; данных базы в них нет, и подтверждать там нечего. Все, что
-    /// уносит данные, уходит отдельной отправкой через замок исходящих направлений.
-    ///
-    /// Возвращается, когда поток кончился: та сторона закрыла его, связь пропала, человек
-    /// остановил или <paramref name="received"/> сказал «хватит». <see cref="EgressResponse.Sent"/>
-    /// означает, что соединение состоялось. Переподключается вызывающий — он знает, как часто
-    /// это уместно.
+    /// Слушать поток событий сторонней программы по WebSocket до отключения или отмены.
+    /// Переподключением управляет вызывающая служба.
     /// </summary>
     /// <param name="path">Путь потока относительно адреса соединения.</param>
     /// <param name="greeting">Текстовые кадры, отправляемые сразу после соединения.</param>
@@ -194,34 +146,19 @@ public static class EgressHttp
                                     IntegrationRequest.New() with { Name = "Поток событий", Path = path },
                                     secret, out var error);
 
-        if (plan is null) return EgressResponse.Denied(EgressDenyReason.BadAddress, error);
+        if (plan is null) return EgressResponse.Failed(error);
 
-        // Обе проверки — ДО сокета, как у запроса: сначала имя, потом фактический адрес.
-        var byName = EgressGate.Check(plan.Address);
-        if (!byName.Allowed)
-            return EgressResponse.Denied(byName.Reason, byName.Explanation, plan.SafeAddress);
-
-        var viaProxy = EgressGate.CheckProxy(out var proxy);
-        if (!viaProxy.Allowed)
-            return EgressResponse.Denied(viaProxy.Reason, viaProxy.Explanation, plan.SafeAddress);
-
-        var target = proxy ?? plan.Address;
-        var pinned = await ResolveAndCheckAsync(target, ct);
-        if (pinned.Address is null)
-            return EgressResponse.Denied(pinned.Reason, pinned.Explanation, plan.SafeAddress);
-
-        return await StreamAsync(plan, pinned.Address, target.Port, proxy, greeting,
-                                 opened, received, ct);
+        return await StreamAsync(plan, greeting, opened, received, ct);
     }
 
     private static async Task<EgressResponse> StreamAsync(
-        EgressPlan plan, IPAddress pinned, int port, Uri? proxy, IReadOnlyList<string> greeting,
+        EgressPlan plan, IReadOnlyList<string> greeting,
         Action opened, Func<string, bool> received, CancellationToken ct)
     {
         var watch = Stopwatch.StartNew();
         var bytes = 0L;
 
-        using var handler = HandlerFor(plan, pinned, port, proxy);
+        using var handler = HandlerFor(plan);
         using var invoker = new HttpMessageInvoker(handler, disposeHandler: false);
         using var socket  = new ClientWebSocket();
 
@@ -295,7 +232,6 @@ public static class EgressHttp
 
         return new EgressResponse(
             Sent:        true,
-            Reason:      EgressDenyReason.None,
             Explanation: ending,
             StatusCode:  (int)HttpStatusCode.SwitchingProtocols,
             Body:        "",
@@ -360,58 +296,6 @@ public static class EgressHttp
         _                  => Explain(error, timeoutSeconds),
     };
 
-    // ── Разрешение имени и вторая проверка ────────────────────────────────────
-
-    /// <summary>
-    /// Разрешить имя и спросить шлюз о фактическом адресе. Вторая проверка обязательна: между
-    /// сверкой имени и соединением запись DNS может смениться, и белый список по именам сам по
-    /// себе не значит ничего (docs/ROADMAP-API.md, 10.5).
-    ///
-    /// Адрес запоминается и дальше используется именно он — иначе защита была бы показной:
-    /// проверили одно, соединились с тем, что DNS отдаст в следующий раз.
-    ///
-    /// <paramref name="target"/> — то, с чем мы СОЕДИНЯЕМСЯ, а это не всегда адрес чужой
-    /// программы: при прокси организации соединение идет с прокси, и проверять надо его адрес.
-    /// </summary>
-    private static async Task<(IPAddress? Address, EgressDenyReason Reason, string Explanation)>
-        ResolveAndCheckAsync(Uri target, CancellationToken ct)
-    {
-        IPAddress[] candidates;
-
-        if (IPAddress.TryParse(target.Host.Trim('[', ']'), out var literal))
-        {
-            candidates = [literal];
-        }
-        else
-        {
-            try
-            {
-                candidates = await Dns.GetHostAddressesAsync(target.Host, ct);
-            }
-            catch (Exception error) when (error is SocketException or ArgumentException)
-            {
-                return (null, EgressDenyReason.BadAddress,
-                        $"имя «{target.Host}» не разрешилось: {error.Message}");
-            }
-        }
-
-        if (candidates.Length == 0)
-            return (null, EgressDenyReason.BadAddress, $"имя «{target.Host}» не разрешилось");
-
-        // Берется первый РАЗРЕШЕННЫЙ, а не первый попавшийся: у имени может быть и адрес IPv6,
-        // и адрес IPv4, а в политике перечислена одна из сетей. Отказ по такому поводу выглядел
-        // бы как поломка, хотя разрешенный путь есть.
-        var decision = EgressDecision.Deny(EgressDenyReason.AddressNotAllowed, "адрес не разрешен");
-
-        foreach (var candidate in candidates)
-        {
-            decision = EgressGate.CheckResolved(candidate);
-            if (decision.Allowed) return (candidate, EgressDenyReason.None, "");
-        }
-
-        return (null, decision.Reason, decision.Explanation);
-    }
-
     // ── Одна попытка ──────────────────────────────────────────────────────────
 
     /// <summary>
@@ -422,15 +306,14 @@ public static class EgressHttp
     private const int MaxRedirects = 3;
 
     private static async Task<EgressResponse> OnceAsync(
-        EgressPlan plan, IPAddress pinned, int port, Uri? proxy,
-        int attempt, Stopwatch watch, long ceiling, CancellationToken ct)
+        EgressPlan plan, int attempt, Stopwatch watch, long ceiling, CancellationToken ct)
     {
         var address = plan.Address;
         var hops    = 0;
 
         while (true)
         {
-            using var handler = HandlerFor(plan, pinned, port, proxy);
+            using var handler = HandlerFor(plan);
             using var client  = new HttpClient(handler, disposeHandler: false)
             {
                 Timeout = TimeSpan.FromSeconds(plan.TimeoutSeconds),
@@ -443,28 +326,6 @@ public static class EgressHttp
                 && Redirect(plan, response, address) is { } next
                 && hops < MaxRedirects)
             {
-                // Новый адрес — это НОВОЕ обращение наружу, и проверяется он с самого начала:
-                // имя по белому списку, потом фактический адрес. Ради этого редиректы и не
-                // отданы HttpClient: его автоматический переход прошел бы мимо шлюза.
-                var byName = EgressGate.Check(next);
-                if (!byName.Allowed)
-                    return EgressResponse.Denied(byName.Reason,
-                        $"перенаправление на «{next.Host}»: " + byName.Explanation,
-                        plan.SafeAddress);
-
-                if (proxy is null)
-                {
-                    var again = await ResolveAndCheckAsync(next, ct);
-
-                    if (again.Address is null)
-                        return EgressResponse.Denied(again.Reason,
-                            $"перенаправление на «{next.Host}»: " + again.Explanation,
-                            plan.SafeAddress);
-
-                    pinned = again.Address;
-                    port   = next.Port;
-                }
-
                 address = next;
                 hops++;
                 continue;
@@ -479,7 +340,6 @@ public static class EgressHttp
 
             return new EgressResponse(
                 Sent:        true,
-                Reason:      EgressDenyReason.None,
                 Explanation: Note(plan, response, hops),
                 StatusCode:  (int)response.StatusCode,
                 Body:        body,
@@ -508,7 +368,8 @@ public static class EgressHttp
 
         if (response.Headers.Location is not { } location) return null;
 
-        return Uri.TryCreate(from, location, out var next) ? next : null;
+        return Uri.TryCreate(from, location, out var next)
+            && next.Scheme is "http" or "https" ? next : null;
     }
 
     /// <summary>
@@ -540,56 +401,15 @@ public static class EgressHttp
         return hops == 0 ? "" : $"пройдено перенаправлений: {hops}";
     }
 
-    /// <summary>
-    /// Клиент, соединяющийся ровно с проверенным адресом. Свой на каждый вызов: пул соединений
-    /// пережил бы смену закрепленного адреса и однажды отправил бы запрос по старому.
-    ///
-    /// <paramref name="pinned"/> и <paramref name="port"/> — это то, куда идет ТСР-соединение: сама
-    /// сторонняя программа либо прокси организации. При прокси имя цели остается в самом запросе, и
-    /// разрешает его прокси, а не мы, — потому и проверять адресом мы можем только прокси.
-    /// </summary>
-    private static SocketsHttpHandler HandlerFor(EgressPlan plan, IPAddress pinned, int port, Uri? proxy)
+    /// <summary>Отдельный клиент вызова с управляемыми перенаправлениями и временем ожидания.</summary>
+    private static SocketsHttpHandler HandlerFor(EgressPlan plan) => new()
     {
-        return new SocketsHttpHandler
-        {
-            // Перенаправление — это новый адрес, а его шлюз не проверял.
-            AllowAutoRedirect = false,
-
-            // Прокси — только тот, который назвала политика организации. Своего у пользователя
-            // нет и быть не может: через прокси проходит содержимое запроса целиком.
-            UseProxy = proxy is not null,
-            Proxy    = proxy is null ? null : new WebProxy(proxy) { BypassProxyOnLocal = false },
-
-            // Чужое состояние между запусками нам не нужно.
-            UseCookies = false,
-
-            AutomaticDecompression   = DecompressionMethods.All,
-            ConnectTimeout           = TimeSpan.FromSeconds(Math.Min(ConnectSeconds, plan.TimeoutSeconds)),
-            PooledConnectionLifetime = TimeSpan.FromSeconds(plan.TimeoutSeconds),
-
-            // Вот здесь и живет закрепление адреса: имя из запроса игнорируется, соединение
-            // идет с тем адресом, который прошел проверку. Проверка сертификата при этом
-            // остается по имени из адреса — ее делает сам HttpClient поверх этого потока.
-            ConnectCallback = async (_, token) =>
-            {
-                var socket = new Socket(pinned.AddressFamily, SocketType.Stream, ProtocolType.Tcp)
-                {
-                    NoDelay = true,
-                };
-
-                try
-                {
-                    await socket.ConnectAsync(new IPEndPoint(pinned, port), token);
-                    return new NetworkStream(socket, ownsSocket: true);
-                }
-                catch
-                {
-                    socket.Dispose();
-                    throw;
-                }
-            },
-        };
-    }
+        AllowAutoRedirect        = false,
+        UseCookies               = false,
+        AutomaticDecompression   = DecompressionMethods.All,
+        ConnectTimeout           = TimeSpan.FromSeconds(Math.Min(ConnectSeconds, plan.TimeoutSeconds)),
+        PooledConnectionLifetime = TimeSpan.FromSeconds(plan.TimeoutSeconds),
+    };
 
     private static HttpRequestMessage MessageFor(EgressPlan plan, Uri address)
     {
@@ -612,8 +432,14 @@ public static class EgressHttp
             message.Content = content;
         }
 
+        var sameOrigin = address.Scheme == plan.Address.Scheme
+                      && address.Host.Equals(plan.Address.Host, StringComparison.OrdinalIgnoreCase)
+                      && address.Port == plan.Address.Port;
+
         foreach (var header in plan.Headers)
         {
+            if (!sameOrigin) continue;
+
             // Content-Type уже применен к телу, а класть его в заголовки запроса нельзя.
             if (header.Name.Equals("Content-Type", StringComparison.OrdinalIgnoreCase)) continue;
 

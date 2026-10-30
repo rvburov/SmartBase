@@ -91,7 +91,7 @@ public partial class ConstructorRepository
         {
             using var ctx = new AppDbContext(db.DbPath);
             ctx.ApplyPerformancePragmas();
-            var repo     = new ConstructorRepository(ctx) { Permissions = Permissions };
+            var repo     = new ConstructorRepository(ctx);
             var resolver = ForeignResolver(crossPaths);
             using var foreignScope = (resolver?.Target as ForeignPropertyReader)?.OpenScope();
             var scope = repo.FilteredRecords(collectionId, others, excludeHidden, resolver);

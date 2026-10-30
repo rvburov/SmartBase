@@ -207,25 +207,10 @@ public sealed class RegistrationConfirmationTests : IDisposable
     }
 
     [Fact]
-    public void Revoked_sender_access_and_org_setting_prevent_writes()
+    public void Changed_organization_setting_prevents_writes()
     {
         Assert.True(Call(Request()).Ok);
-        Assert.False(Call("Да", senders: "1002").Ok);
         Assert.False(Call("Да", orgs: "ГМБВ").Ok);
-        Assert.Empty(_db.Constructor.GetRecords(_journal));
-    }
-
-    [Fact]
-    public void Revoked_write_permission_is_checked_again_at_confirmation()
-    {
-        Assert.True(Call(Request()).Ok);
-        var userId = _db.Permissions.CurrentUserId;
-        _db.Permissions.SetMask(userId, null, (int)PermAction.ViewCollection);
-        var me = _db.Context.DbUsers.Single(u => u.Id == userId);
-        me.IsAdmin = false;
-        _db.Context.SaveChanges();
-        _db.Permissions.Reload(notify: false);
-        Assert.False(Call("Да").Ok);
         Assert.Empty(_db.Constructor.GetRecords(_journal));
     }
 

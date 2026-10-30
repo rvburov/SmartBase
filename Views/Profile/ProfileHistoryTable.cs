@@ -17,7 +17,7 @@ namespace SmartBase.Views.Profile;
 /// «История изменений» — таблица журнала выбранной базы в стиле таблицы конструктора: та же
 /// рисованная сетка (<see cref="ServiceGrid"/>: те же линии и шапка) и то же окно фильтра и
 /// сортировки в заголовке колонки (<see cref="ColumnFilterPanel"/>: каскад фильтров, автоотметка
-/// найденного, Enter). Выбор базы — в навбаре (NavbarProfile), только среди баз с допуском. Строки
+/// найденного, Enter). Выбор базы — в навбаре (NavbarProfile), среди открытых баз. Строки
 /// подгружаются keyset-страницами по 200 при прокрутке к концу (GetChangeLogPageAsync, отдельное
 /// подключение) — миллионы строк не фризят UI. Фильтры и сортировка считаются в SQL.
 /// </summary>
@@ -57,9 +57,9 @@ public partial class ProfileView
 
     private void RebuildHistoryPanel()
     {
-        _historyDbs = GrantedHistoryDbs();
+        _historyDbs = OpenedHistoryDbs();
 
-        // Список баз — в навбаре; выбор сохраняется, если база еще смонтирована и доступна.
+        // Список баз — в навбаре; выбор сохраняется, если база еще смонтирована.
         var keepDbId = _historyDb?.DbId;
         var names = _historyDbs.Select(DbChoice).ToList();
         var idx = keepDbId is int id ? _historyDbs.FindIndex(d => d.DbId == id) : -1;
@@ -75,21 +75,12 @@ public partial class ProfileView
         OnHistoryDbChanged();
     }
 
-    // Базы, чью историю можно смотреть, — только те, к содержимому которых есть допуск. Историю
-    // базы, откуда человека убрали или где у него отозвали допуск, он не видит так же, как ее
-    // данные; вернули допуск — снова видны все строки, и свои, и чужие.
-    private List<DatabaseManager> GrantedHistoryDbs() =>
-        _workspace?.Mounted.Where(m => m.Permissions.AccessGranted).ToList() ?? [];
+    private List<DatabaseManager> OpenedHistoryDbs() => _workspace?.Mounted.ToList() ?? [];
 
-    /// <summary>
-    /// Доступ к базам поменялся на ходу (допуск отозвали или вернули, базу подключили или
-    /// отключили): открытая история следует за ним сразу, а не при следующем заходе в раздел.
-    /// Набор баз прежний — таблицу под руками не перечитываем.
-    /// </summary>
-    private void RefreshHistoryAccess()
+    private void RefreshHistoryDatabases()
     {
         if (!HistoryPanel.IsVisible) return;
-        if (GrantedHistoryDbs().SequenceEqual(_historyDbs)) return;
+        if (OpenedHistoryDbs().SequenceEqual(_historyDbs)) return;
         RebuildHistoryPanel();
     }
 
@@ -105,6 +96,7 @@ public partial class ProfileView
             _historySortKey = null;
         }
         _historyDb = db;
+        RefreshRetentionRow();
         HistoryGrid.RefreshHeader();
         ReloadHistoryRows();
     }
@@ -169,10 +161,10 @@ public partial class ProfileView
         }
     }
 
-    // Пустая таблица объясняет себя: нет доступных баз, фильтры ничего не пропустили или журнал пуст.
+    // Пустая таблица объясняет себя: нет открытых баз, фильтры ничего не пропустили или журнал пуст.
     private void ShowHistoryEmptyText()
     {
-        HistoryEmptyText.Text = _historyDb is null        ? "Нет баз данных, к которым у вас есть доступ."
+        HistoryEmptyText.Text = _historyDb is null        ? "Нет открытых баз данных."
                               : _historyFilters.Count > 0 ? "Нет записей, подходящих под фильтры."
                               : "Записей в журнале пока нет.";
         HistoryEmptyText.IsVisible = _historyRows.Count == 0;

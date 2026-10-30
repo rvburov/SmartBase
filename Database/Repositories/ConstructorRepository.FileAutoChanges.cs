@@ -3,8 +3,8 @@ using Microsoft.EntityFrameworkCore;
 
 namespace SmartBase.Database.Repositories;
 
-/// <summary>Сохраненный запрос: только адрес, id и потокобезопасный кеш прав; общего DbContext нет.</summary>
-public sealed record FileAutoWork(string DbPath, int FieldId, int? RecordId, PermissionService? Permissions);
+/// <summary>Сохраненный запрос: только адрес и id; общего DbContext нет.</summary>
+public sealed record FileAutoWork(string DbPath, int FieldId, int? RecordId);
 
 public partial class ConstructorRepository
 {
@@ -22,7 +22,7 @@ public partial class ConstructorRepository
         if (FileAutoWorkSupported is { } supported
             && !supported.GetInvocationList().Cast<Func<string, bool>>()
                 .Any(accepts => InvokePublicWriteCallback(() => accepts(DbPath)))) return false;
-        var work = new FileAutoWork(DbPath, fieldId, recordId, AutoFilePermissions);
+        var work = new FileAutoWork(DbPath, fieldId, recordId);
         if (db.Database.CurrentTransaction is not null)
         {
             var pending = PendingFiles.GetValue(db, _ => new());
@@ -63,7 +63,7 @@ public partial class ConstructorRepository
         {
             ct.ThrowIfCancellationRequested();
             using var context = NewIntegrityContext(work.DbPath, writable: true);
-            return new ConstructorRepository(context) { Permissions = work.Permissions }
+            return new ConstructorRepository(context)
                 .ResolveAutoFileFieldCore(work.FieldId, null, ct, refresh: false, recordId: work.RecordId);
         }
         catch (OperationCanceledException) { return FileAutoResolveResult.Cancelled; }

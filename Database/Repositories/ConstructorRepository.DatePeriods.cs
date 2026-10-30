@@ -8,9 +8,6 @@ namespace SmartBase.Database.Repositories;
 
 public partial class ConstructorRepository
 {
-    // Снимок времени общий для пакета: соседние строки не получают разные границы расчета.
-    internal Func<DateTime> DatePeriodClock { get; set; } = () => DateTime.Now;
-
     private sealed class DatePeriodCreations
     {
         internal readonly HashSet<DbRecordEntity> Records = [];
@@ -73,12 +70,10 @@ public partial class ConstructorRepository
     {
         if (field.FieldType != "date_period") return;
         var config = DatePeriodConfig.FromConfig(field.ConfigJson)
-            ?? throw new InvalidOperationException("Настройте свойства-источники, дни недели и часы периода.");
-        var wanted = config.EndFieldId is int end ? new[] { config.StartFieldId, end } : [config.StartFieldId];
-        var valid = db.DbFields.AsNoTracking().Where(f => f.CollectionId == field.CollectionId
-            && f.FieldType == "date" && Enumerable.Contains(wanted, f.Id)).Select(f => f.Id).ToHashSet();
-        if (wanted.Any(id => !valid.Contains(id)))
-            throw new InvalidOperationException("Выберите свойства типа «Дата» из этой коллекции.");
+            ?? throw new InvalidOperationException("Настройте даты для расчета, дни недели и часы периода.");
+        if (!db.DbFields.AsNoTracking().Any(f => f.Id == config.DateFieldId
+                && f.CollectionId == field.CollectionId && f.FieldType == "date"))
+            throw new InvalidOperationException("Выберите свойство типа «Дата» из этой коллекции.");
         // Вычисляемое число не становится источником календаря, задач или библиотеки.
         field.IsCalStart = field.IsCalEnd = field.IsTaskExec = field.IsTaskAssigner = field.IsTaskStatus
             = field.IsDocFile = field.IsDocType = field.IsDescription = false;
@@ -105,7 +100,7 @@ public partial class ConstructorRepository
 
     private void LockDatePeriodSources(IEnumerable<DbField> fields) => LockDatePeriodMetadata(fields
         .Select(f => DatePeriodConfig.FromConfig(f.ConfigJson)).Where(c => c is not null)
-        .SelectMany(c => c!.EndFieldId is int end ? new[] { c.StartFieldId, end } : [c.StartFieldId]));
+        .Select(c => c!.DateFieldId));
 
     /// <summary>Только расчетные значения периода. Зависимости читаются и за пределами окна колонок.</summary>
     private Dictionary<int, Dictionary<int, string>> ReadDatePeriods(IReadOnlyCollection<int> recordIds,
@@ -126,24 +121,18 @@ public partial class ConstructorRepository
         if (fields.Count == 0) return result;
         var configs = fields.ToDictionary(f => f.Id!.Value, f => DatePeriodConfig.FromConfig(f.ConfigJson));
         var calculated = configs.Values.Where(c => c is not null && (c.Automatic || force)).ToArray();
-        var dependencies = calculated.SelectMany(c =>
-            c!.EndFieldId is int end ? new[] { c.StartFieldId, end } : [c.StartFieldId]).Distinct().ToArray();
+        var dependencies = calculated.Select(c => c!.DateFieldId).Distinct().ToArray();
         var sources = dependencies.Length == 0 ? new Dictionary<int, int>() : db.DbFields.AsNoTracking()
             .Where(f => Enumerable.Contains(dependencies, f.Id) && f.FieldType == "date")
             .Select(f => new { f.Id, f.CollectionId }).ToList().ToDictionary(f => f.Id, f => f.CollectionId);
         var calculators = configs.Where(pair => pair.Value is not null && (pair.Value.Automatic || force))
             .ToDictionary(pair => pair.Key, pair => DatePeriodValue.Prepare(pair.Value!));
         // Страница уже прочитала свои ячейки. Дочитываем только даты за пределами окна,
-        // а сохраненный фиксированный результат не требует ни дат, ни текущего времени.
+        // а сохраненный фиксированный результат не требует чтения дат.
         var selected = dependencies.Concat(configs.Where(pair => pair.Value is { Automatic: false } && !force)
             .Select(pair => pair.Key)).Distinct()
             .Where(id => loaded is null || loadedFieldIds is not null && !loadedFieldIds.Contains(id)).ToArray();
-        var now = calculated.Length > 0 ? DatePeriodClock() : default;
-        // Автоматическое «сейчас» обновляется по минутам, как его показ и окно фильтра.
-        // Иначе выбранные в фильтре 7200 секунд уже через секунду не совпали бы с ячейкой.
-        var minuteNow = new DateTime(now.Ticks - now.Ticks % TimeSpan.TicksPerMinute, now.Kind);
         var byCollection = fields.GroupBy(field => field.CollectionId).ToDictionary(group => group.Key, group => group.ToArray());
-        var visible = byCollection.Keys.ToDictionary(id => id, id => Permissions?.Can(PermAction.ViewCollection, id) != false);
         foreach (var chunk in recordIds.Distinct().Chunk(200))
         {
             ct.ThrowIfCancellationRequested();
@@ -163,18 +152,12 @@ public partial class ConstructorRepository
                 var id = field.Id!.Value;
                 var value = "";
                 var config = configs[id];
-                if (visible[record.CollectionId] && config is not null)
+                if (config is not null)
                 {
                     if (!config.Automatic && !force) value = SourceValue(record.Id, id) ?? "";
-                    else if (sources.GetValueOrDefault(config.StartFieldId) == record.CollectionId
-                        && (config.EndFieldId is null || sources.GetValueOrDefault(config.EndFieldId.Value) == record.CollectionId)
-                        && DateValue.TryParse(SourceValue(record.Id, config.StartFieldId), out var start))
-                    {
-                        if (config.EndFieldId is null)
-                            value = calculators[id].Calculate(start, null, config.Automatic ? minuteNow : now);
-                        else if (DateValue.TryParse(SourceValue(record.Id, config.EndFieldId.Value), out var end))
-                            value = calculators[id].Calculate(start, end, now);
-                    }
+                    else if (sources.GetValueOrDefault(config.DateFieldId) == record.CollectionId
+                        && DateValue.TryParse(SourceValue(record.Id, config.DateFieldId), out var range))
+                        value = calculators[id].Calculate(range);
                 }
                 if (!result.TryGetValue(record.Id, out var byField)) result[record.Id] = byField = [];
                 byField[id] = value;
@@ -199,15 +182,13 @@ public partial class ConstructorRepository
         IReadOnlyList<int>? fieldIds = null, CancellationToken ct = default)
     {
         var path = DbPath;
-        var permissions = Permissions;
-        var now = DatePeriodClock();
         var ids = recordIds.ToArray();
         var selected = fieldIds?.ToArray();
         return Task.Run(() =>
         {
             using var context = new AppDbContext(path);
             context.ApplyPerformancePragmas();
-            return new ConstructorRepository(context) { Permissions = permissions, DatePeriodClock = () => now }
+            return new ConstructorRepository(context)
                 .ReadDatePeriods(ids, selected, ct: ct);
         }, ct);
     }
@@ -252,11 +233,7 @@ public partial class ConstructorRepository
             ct.ThrowIfCancellationRequested();
             LockRecordsForWrite(recordIds);
             var records = db.DbRecords.Where(r => recordIds.Contains(r.Id)).ToList();
-            foreach (var collection in records.Select(r => r.CollectionId).Distinct())
-            {
-                Demand(PermAction.ViewCollection, collection);
-                Demand(PermAction.EditRecord, collection);
-            }
+
             var collectionIds = records.Select(r => r.CollectionId).Distinct().ToList();
             var fieldQuery = db.DbFields.AsNoTracking().Where(f => f.FieldType == "date_period"
                 && collectionIds.Contains(f.CollectionId));
@@ -308,8 +285,6 @@ public partial class ConstructorRepository
         CancellationToken ct = default)
     {
         var path = DbPath;
-        var permissions = Permissions;
-        var now = DatePeriodClock();
         var ids = recordIds.ToArray();
         var selected = fieldIds?.ToArray();
         return Task.Run(() =>
@@ -317,7 +292,7 @@ public partial class ConstructorRepository
             ct.ThrowIfCancellationRequested();
             using var context = new AppDbContext(path);
             context.ApplyPerformancePragmas();
-            new ConstructorRepository(context) { Permissions = permissions, DatePeriodClock = () => now }
+            new ConstructorRepository(context)
                 .RecalculateDatePeriods(ids, selected, ct);
         }, ct);
     }
@@ -335,7 +310,7 @@ public partial class ConstructorRepository
         ct.ThrowIfCancellationRequested();
         if (selected.Count == 0) return excluded ? scope : scope.Where(_ => false);
         var config = DatePeriodConfig.FromConfig(field.ConfigJson);
-        if (config is null || Permissions?.Can(PermAction.ViewCollection, field.CollectionId) == false)
+        if (config is null)
             return selected.Contains("") != excluded ? scope : scope.Where(_ => false);
         if (!config.Automatic)
         {
@@ -370,9 +345,6 @@ public partial class ConstructorRepository
         CancellationToken ct, ColumnValueSnapshot? reuse)
     {
         var scopeKey = SnapshotScope(collectionId, key, others, excludeHidden);
-        if (DatePeriodConfig.FromConfig(field.ConfigJson) is { Automatic: true, EndFieldId: null })
-            scopeKey += "\u0001minute=" + (DatePeriodClock().Ticks / TimeSpan.TicksPerMinute)
-                .ToString(System.Globalization.CultureInfo.InvariantCulture);
         return reuse?.Scope == scopeKey ? reuse : new ColumnValueSnapshot(scopeKey, DatePeriodCounts(field, scope, ct));
     }
 
@@ -382,7 +354,7 @@ public partial class ConstructorRepository
         var fields = db.DbFields.AsNoTracking().Where(f => f.CollectionId == collection && f.FieldType == "date_period")
             .Select(f => new { f.Id, f.ConfigJson }).ToList()
             .Where(f => DatePeriodConfig.FromConfig(f.ConfigJson) is { Automatic: true } cfg
-                && (cfg.StartFieldId == editedFieldId || cfg.EndFieldId == editedFieldId)).Select(f => f.Id).ToArray();
+                && cfg.DateFieldId == editedFieldId).Select(f => f.Id).ToArray();
         if (fields.Length == 0) return [];
         return ReadDatePeriods([recordId], fields).GetValueOrDefault(recordId, [])
             .Select(v => (v.Key, v.Value)).ToList();
@@ -404,8 +376,7 @@ public partial class ConstructorRepository
         foreach (var (field, value) in values)
         {
             var config = fields[field];
-            if (byRecord[record].Contains(config.StartFieldId)
-                || config.EndFieldId is int end && byRecord[record].Contains(end)) result.Add((record, field, value));
+            if (byRecord[record].Contains(config.DateFieldId)) result.Add((record, field, value));
         }
         return result;
     }

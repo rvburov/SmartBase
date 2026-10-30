@@ -58,6 +58,8 @@
 Локальную подпись и поиск по ней в настоящем фильтре таблицы проверяет `GridProto --ops`
 (сценарий «Дата аудита в фильтре»).
 
+Вычисляемая длительность по диапазону даты описана отдельно: [«Дата период времени»](date-period.md).
+
 ## Связанные документы
 
 [overview](overview.md) · [features/constructor/table](../../features/constructor/table.md) · [features/constructor/record-page](../../features/constructor/record-page.md)

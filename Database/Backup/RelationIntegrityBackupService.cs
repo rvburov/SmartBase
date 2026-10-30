@@ -17,8 +17,6 @@ public static class RelationIntegrityBackupService
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(request);
         ct.ThrowIfCancellationRequested();
-        if (!source.Permissions.IsAdmin)
-            throw new InvalidOperationException("Для резервной копии перед исправлением нужны права администратора базы.");
         var provider = source.Provider == "postgres" ? "postgres" : "sqlite";
         if (request.SourceDbId != source.DbId || request.Provider != provider
             || request.SourceDatabaseIdentity != source.Constructor.RelationDatabaseIdentity

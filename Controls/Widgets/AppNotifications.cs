@@ -18,7 +18,7 @@ namespace SmartBase.Controls.Widgets;
 /// нижнем углу: каждая — отдельный Flyout на одном якоре, стопки нет, два сообщения подряд
 /// ложились друг на друга и резались по краю окна.
 ///
-/// Кто пользуется: ошибки записи в базу (<see cref="Utils.DbErrors"/>), допуск администратора,
+/// Кто пользуется: ошибки записи в базу (<see cref="Utils.DbErrors"/>),
 /// переходы по чипам связи, непредвиденные ошибки UI-потока (хук диспетчера в App). Статус
 /// доступности базы сюда НЕ идет — он живет надписью под именем базы в сайдбаре и в
 /// «Управление базой данных».
@@ -70,7 +70,7 @@ public static class AppNotifications
     /// <summary>Красная карточка: ошибка, несохраненное изменение, отказ.</summary>
     public static void Error(string message) => Post(NoticeBanner.BannerKind.Error, message);
 
-    /// <summary>Синяя карточка: сведение, которое нужно заметить (допуск выдан и т.п.).</summary>
+    /// <summary>Синяя карточка: сведения о результате операции.</summary>
     public static void Info(string message) => Post(NoticeBanner.BannerKind.Info, message);
 
     private static void Post(NoticeBanner.BannerKind kind, string message)

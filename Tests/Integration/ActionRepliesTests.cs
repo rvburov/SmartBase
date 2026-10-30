@@ -22,37 +22,22 @@ public sealed class ActionRepliesTests : IDisposable
     private readonly string           _dir;
     private readonly DatabaseRegistry _registry;
     private readonly RunJournal       _journal;
-    private readonly SecurityJournal  _security;
 
     public ActionRepliesTests()
     {
         _dir      = Directory.CreateTempSubdirectory("sbreplies_").FullName;
         _registry = DatabaseRegistry.Open(Path.Combine(_dir, "database.db"), Path.Combine(_dir, "app.db"));
         _journal  = new RunJournal(Path.Combine(_dir, "integrations.db"));
-        _security = new SecurityJournal(Path.Combine(_dir, "security.db"));
 
         RunJournal.Attach(_journal);
-        SecurityJournal.Attach(_security);
 
-        EgressGate.AttachPolicy(EgressPolicySet.Of(new EgressPolicy(
-            EgressMode.Internal,
-            Hosts:           ["127.0.0.1"],
-            Networks:        ["127.0.0.0/8"],
-            Folders:         [],
-            MaxRowsPerRun:   1000,
-            MaxBytesPerDay:  1024 * 1024,
-            MaxRunsPerHour:  100,
-            ValidUntil:      null,
-            UserMayAddHosts: false,
-            Source:          "тест",
-            MasterHash:      MasterPassword.Hash(Master))));
     }
 
     public void Dispose()
     {
-        EgressGate.Close();
+
         RunJournal.Attach(null);
-        SecurityJournal.Attach(null);
+
         _registry.Dispose();
         _db.Dispose();
         try { SqliteGate.ClearAllPools(); } catch { /* best-effort */ }
@@ -111,13 +96,6 @@ public sealed class ActionRepliesTests : IDisposable
             Body         = """{"to": {{поле.author}}, "message": "{{ответ.текст}}"}""",
         });
 
-        if (confirm)
-        {
-            Cards.ConfirmDirection(reply, Master, "Петров П. П.", days: 90, DateTimeOffset.Now,
-                                   out var trouble);
-            Assert.Equal("", trouble);
-        }
-
         return (stream, reply);
     }
 
@@ -165,28 +143,9 @@ public sealed class ActionRepliesTests : IDisposable
         Assert.Equal("/reply", sent.Path);
         Assert.Equal("""{"to": 1002, "message": "Привет<br>вторая строка"}""", sent.Body);
 
-        Assert.Contains(_security.Page(new SecurityFilter(Event: SecurityEvent.Send)),
-                        row => row.Allowed && row.Scenario == "Заявки по событию");
-
         var run = Assert.Single(_journal.Page(new RunFilter(Channel: RunChannel.Request)));
         Assert.True(run.Ok);
         Assert.Equal(ActionReplies.Mark, run.Step);
-    }
-
-    /// <summary>Неподтвержденное направление закрыто и для сообщения без события: путь тот же,
-    /// замок тот же, и до стенда не доходит ничего.</summary>
-    [Fact]
-    public async Task An_unconfirmed_direction_stops_the_message()
-    {
-        using var stand = new StreamStand();
-        var (stream, reply) = Cabling(stand, confirm: false);
-        Save(stream, reply);
-
-        var result = await Replies.SendAsync(StandId, Action, "sender", "1002", "Привет");
-
-        Assert.False(result.Ok);
-        Assert.NotEqual("", result.Explanation);
-        Assert.Empty(stand.Requests);
     }
 
     // ── Путь ──────────────────────────────────────────────────────────────────

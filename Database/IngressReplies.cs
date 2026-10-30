@@ -43,17 +43,17 @@ public sealed class IngressReplies
         using var connection = Open();
         using var command    = connection.CreateCommand();
 
-        // Ключ составной: один и тот же идентификатор сообщения у разных токенов означает
-        // разных отправителей, и считать их повторами друг друга нельзя.
+        // Отдельная таблица не смешивает новые ключи баз со старыми ключами токенов.
+        // Прежняя таблица остается в файле и новой логикой не читается.
         command.CommandText = """
-            CREATE TABLE IF NOT EXISTS ingress_replies (
-                TokenId   INTEGER NOT NULL,
+            CREATE TABLE IF NOT EXISTS ingress_database_replies (
+                DatabaseId   INTEGER NOT NULL,
                 MessageId TEXT    NOT NULL,
                 At        TEXT    NOT NULL,
                 Reply     TEXT    NOT NULL,
-                PRIMARY KEY (TokenId, MessageId)
+                PRIMARY KEY (DatabaseId, MessageId)
             );
-            CREATE INDEX IF NOT EXISTS ingress_replies_at ON ingress_replies (At);
+            CREATE INDEX IF NOT EXISTS ingress_database_replies_at ON ingress_database_replies (At);
             """;
 
         command.ExecuteNonQuery();
@@ -76,7 +76,7 @@ public sealed class IngressReplies
     /// идентификатора повтором не бывает: защищаться нечем, и отправителю об этом сказано
     /// отказом еще на проверке формата.
     /// </summary>
-    public InboxReceipt? Past(int tokenId, string? messageId)
+    public InboxReceipt? Past(int databaseId, string? messageId)
     {
         if (string.IsNullOrWhiteSpace(messageId)) return null;
 
@@ -88,8 +88,8 @@ public sealed class IngressReplies
                 using var command    = connection.CreateCommand();
 
                 command.CommandText =
-                    "SELECT Reply FROM ingress_replies WHERE TokenId = $token AND MessageId = $id;";
-                command.Parameters.AddWithValue("$token", tokenId);
+                    "SELECT Reply FROM ingress_database_replies WHERE DatabaseId = $database AND MessageId = $id;";
+                command.Parameters.AddWithValue("$database", databaseId);
                 command.Parameters.AddWithValue("$id",    messageId);
 
                 return InboxReceipt.TryParse(command.ExecuteScalar() as string);
@@ -110,7 +110,7 @@ public sealed class IngressReplies
     /// Запомнить ответ. <c>false</c> — не записалось: вызывающий обязан знать об этом, потому что
     /// повтор тогда обработается второй раз.
     /// </summary>
-    public bool Remember(int tokenId, string messageId, InboxReceipt reply, DateTimeOffset now)
+    public bool Remember(int databaseId, string messageId, InboxReceipt reply, DateTimeOffset now)
     {
         if (string.IsNullOrWhiteSpace(messageId)) return true;   // защищать нечего
 
@@ -122,11 +122,11 @@ public sealed class IngressReplies
                 using var command    = connection.CreateCommand();
 
                 command.CommandText = """
-                    INSERT OR REPLACE INTO ingress_replies (TokenId, MessageId, At, Reply)
-                    VALUES ($token, $id, $at, $reply);
+                    INSERT OR REPLACE INTO ingress_database_replies (DatabaseId, MessageId, At, Reply)
+                    VALUES ($database, $id, $at, $reply);
                     """;
 
-                command.Parameters.AddWithValue("$token", tokenId);
+                command.Parameters.AddWithValue("$database", databaseId);
                 command.Parameters.AddWithValue("$id",    messageId);
                 command.Parameters.AddWithValue("$at",
                     now.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture));
@@ -153,7 +153,7 @@ public sealed class IngressReplies
                 using var connection = Open();
                 using var command    = connection.CreateCommand();
 
-                command.CommandText = "DELETE FROM ingress_replies WHERE At < $edge;";
+                command.CommandText = "DELETE FROM ingress_database_replies WHERE At < $edge;";
                 command.Parameters.AddWithValue("$edge",
                     now.AddDays(-KeepDays).ToUniversalTime()
                        .ToString("o", CultureInfo.InvariantCulture));
@@ -177,7 +177,7 @@ public sealed class IngressReplies
                 using var connection = Open();
                 using var command    = connection.CreateCommand();
 
-                command.CommandText = "SELECT COUNT(*) FROM ingress_replies;";
+                command.CommandText = "SELECT COUNT(*) FROM ingress_database_replies;";
                 return Convert.ToInt64(command.ExecuteScalar(), CultureInfo.InvariantCulture);
             }
         }

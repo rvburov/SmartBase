@@ -29,7 +29,7 @@ public sealed class TaskEventWriteTests
         return (exec.Id!.Value, roles.AssignerId!.Value, roles.StatusId!.Value);
     }
 
-    // Регистрация соседа в базе — как PermissionService при монтировании на его машине.
+    // Регистрация соседа в базе — как UserDirectory при монтировании на его машине.
     private static void JoinUser(string path, string key, string name, bool approved = true)
     {
         using var neighbour = new AppDbContext(path);
@@ -329,31 +329,4 @@ public sealed class TaskEventWriteTests
         Assert.Equal(before, Events(db).Count);
     }
 
-    [Fact]
-    public void Denied_edit_leaves_neither_event_nor_journal_row()
-    {
-        using var db = new TempDatabase();
-        JoinUser(db.Path, "petrov@pc2", Neighbour);
-        var repo = db.Constructor;
-
-        var col = SampleData.AddCollection(repo, "Заявки").Id!.Value;
-        var (execId, _, _) = EnableTasks(repo, col);
-        var rec = SampleData.AddRecord(repo, col, "Задача").Id!.Value;
-
-        // Понижаем себя до допущенного пользователя без прав. Маску ставим, ПОКА еще
-        // администратор: раздавать права может только он.
-        var me = db.Context.DbUsers.First(u => u.UserKey == CurrentUser.Key);
-        db.Permissions.SetMask(me.Id, null, 0);
-        me.IsAdmin    = false;
-        me.IsApproved = true;
-        db.Context.SaveChanges();
-        db.Permissions.Reload(notify: false);
-
-        var journalBefore = db.Context.ChangeLog.Count();
-
-        Assert.ThrowsAny<Exception>(() => repo.SetFieldValue(rec, execId, Neighbour));
-
-        Assert.Empty(Events(db));
-        Assert.Equal(journalBefore, db.Context.ChangeLog.Count());
-    }
 }

@@ -10,36 +10,32 @@ public static class DatePeriodValue
     /// <summary>Готовит расписание один раз на свойство для расчета всех строк пакета.</summary>
     public static Calculator Prepare(DatePeriodConfig config) => new(config);
 
-    public static string Calculate(DateValue start, DateValue? end, DateTime now, DatePeriodConfig config) =>
-        Prepare(config).Calculate(start, end, now);
+    public static string Calculate(DateValue source, DatePeriodConfig config) =>
+        Prepare(config).Calculate(source);
 
     /// <summary>Не хранит состояние строки: часы разбираются один раз, недели считаются целиком.
-    /// Начало и конец берутся из Start исходных дат; у дат без времени это начало дня.</summary>
+    /// Начало и конец берутся из одного диапазона; у дат без времени это начало каждого дня.</summary>
     public readonly struct Calculator
     {
-        private readonly bool _valid, _untilNow;
+        private readonly bool _valid;
         private readonly int _weekdays, _daysPerWeek;
         private readonly long _dayStart, _dayEnd;
 
         internal Calculator(DatePeriodConfig config)
         {
             _valid = config.TryValidate(out var dayStart, out var dayEnd);
-            _untilNow = config.EndFieldId is null;
             _weekdays = config.Weekdays;
             _daysPerWeek = BitOperations.PopCount((uint)config.Weekdays);
             _dayStart = dayStart * TimeSpan.TicksPerMinute;
             _dayEnd = dayEnd * TimeSpan.TicksPerMinute;
         }
 
-        public string Calculate(DateValue start, DateValue? end, DateTime now)
+        public string Calculate(DateValue source)
         {
-            // Отсутствие конечной даты в режиме другого свойства не означает «сейчас».
-            // В режиме текущего времени переданное значение другого свойства не участвует.
-            var boundary = end.GetValueOrDefault();
-            if (!_valid || start.End < start.Start || !_untilNow
-                && (end is null || boundary.End < boundary.Start)) return "";
-            var from = start.AllDay ? start.Start.Date.Ticks : start.Start.Ticks;
-            var to = _untilNow ? now.Ticks : boundary.AllDay ? boundary.Start.Date.Ticks : boundary.Start.Ticks;
+            if (!_valid || source.End < source.Start) return "";
+            // Для дат без времени конец исключается целиком: 28–29 октября — одни сутки.
+            var from = source.AllDay ? source.Start.Date.Ticks : source.Start.Ticks;
+            var to = source.AllDay ? source.End.Date.Ticks : source.End.Ticks;
             if (to < from) return "";
             if (to == from) return "0";
             if (_weekdays == 127 && _dayStart == 0 && _dayEnd == TimeSpan.TicksPerDay)

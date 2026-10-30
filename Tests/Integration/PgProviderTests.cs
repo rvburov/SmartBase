@@ -63,7 +63,7 @@ public sealed class PgProviderTests
         using var m = DatabaseManager.Open(101, "pg-test", cs, provider: "postgres");
         Assert.True(m.Context.IsPostgres);
         Assert.True(m.IsShared);
-        Assert.True(m.Permissions.IsAdmin);
+
         Assert.NotEmpty(m.Categories.GetAll());
 
         var repo = m.Constructor;

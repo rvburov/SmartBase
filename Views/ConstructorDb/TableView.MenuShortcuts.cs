@@ -12,7 +12,7 @@ namespace SmartBase.Views.ConstructorDb;
 /// <summary>
 /// Пункты контекстных меню таблицы с клавиатуры. Каждый пункт, который можно вызвать клавишей,
 /// показывает свое сочетание подсказкой (<see cref="MenuGestures"/>) и зовет ровно тот же код,
-/// что клик по нему, — с теми же правами и подтверждениями.
+/// что клик по нему, — с теми же проверками и подтверждениями удаления.
 ///
 /// Цель действия берется из выделения, а не из строки под курсором: у клавиатуры курсора нет.
 /// Запись — выделенные строки, иначе запись активной ячейки; свойство — выделенные столбцы,
@@ -26,8 +26,7 @@ public partial class TableView
         // ── Записи ────────────────────────────────────────────────────────────
         if (ShortcutSettings.Matches("table.createRecord", e))
         {
-            PermissionNotice.Run(this, Can(PermAction.CreateRecord), PermAction.CreateRecord,
-                () => RecordCreateRequested?.Invoke(this, (ConstructorSettings.OpenNewRecord, TargetRecordId())));
+            RecordCreateRequested?.Invoke(this, (ConstructorSettings.OpenNewRecord, TargetRecordId()));
             return true;
         }
 
@@ -41,17 +40,14 @@ public partial class TableView
         if (ShortcutSettings.Matches("table.duplicateRecord", e))
         {
             if (TargetRecordIds() is not { Count: > 0 } ids) return false;
-            PermissionNotice.Run(this, Can(PermAction.DuplicateRecord), PermAction.DuplicateRecord,
-                () => RecordDuplicateRequested?.Invoke(this, ids));
+            RecordDuplicateRequested?.Invoke(this, ids);
             return true;
         }
 
         if (ShortcutSettings.Matches("table.relocateRecords", e))
         {
             if (TargetRecordIds() is not { Count: > 0 } ids) return false;
-            // Перенос = изъятие записи из коллекции: право как у удаления (так же в меню).
-            PermissionNotice.Run(this, Can(PermAction.DeleteRecord), PermAction.DeleteRecord,
-                () => RecordRelocateRequested?.Invoke(this, ids));
+            RecordRelocateRequested?.Invoke(this, ids);
             return true;
         }
 
@@ -73,28 +69,25 @@ public partial class TableView
         // ── Свойства (столбцы) ────────────────────────────────────────────────
         if (ShortcutSettings.Matches("table.createProperty", e))
         {
-            PermissionNotice.Run(this, Can(PermAction.CreateField), PermAction.CreateField,
-                () => PropertyCreateRequested?.Invoke(this, EventArgs.Empty));
+            PropertyCreateRequested?.Invoke(this, EventArgs.Empty);
             return true;
         }
 
         if (ShortcutSettings.Matches("table.editProperty", e))
         {
             if (TargetColumnKey() is not { } key) return false;
-            PermissionNotice.Run(this, Can(PermAction.EditField), PermAction.EditField, () =>
             {
                 // Системная колонка («Название») правится переименованием, у нее нет id поля.
                 if (int.TryParse(key, out var fieldId)) PropertyEditRequested?.Invoke(this, fieldId);
                 else                                    SystemFieldRenameRequested?.Invoke(this, key);
-            });
+            }
             return true;
         }
 
         if (ShortcutSettings.Matches("table.duplicateProperty", e))
         {
             if (TargetFieldIds() is not { Count: > 0 } ids) return false;
-            PermissionNotice.Run(this, Can(PermAction.DuplicateField), PermAction.DuplicateField,
-                () => PropertyDuplicateRequested?.Invoke(this, ids));
+            PropertyDuplicateRequested?.Invoke(this, ids);
             return true;
         }
 
@@ -203,7 +196,7 @@ public partial class TableView
     }
 
     // Меню заголовка нужного столбца — собирается той же фабрикой, что и при правом щелчке
-    // по заголовку (состав зависит от типа поля и прав).
+    // по заголовку (состав зависит от типа поля).
     private ContextMenu? ColumnMenuFor(string key) =>
         _colDefs.FirstOrDefault(d => d.Key == key) is { BuildHeaderMenu: { } factory } def
             ? factory(def)

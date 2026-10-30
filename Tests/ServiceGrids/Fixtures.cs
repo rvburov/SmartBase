@@ -10,33 +10,28 @@ namespace SmartBase.Tests.ServiceGrids;
 /// <summary>
 /// Данные стенда — воспроизводимые: те же строки, те же метки времени при каждом прогоне, иначе
 /// кадры не сравнить. Журнал диагностики пишется сырым SQLite в схеме приемника Serilog; журнал
-/// изменений — настоящими операциями репозитория (метки времени потом выставляются по порядку);
-/// пользователи — строками db_users со всеми состояниями допуска и ролей; журнал безопасности —
-/// настоящим <see cref="SecurityJournal"/> с заданными моментами.
+/// изменений — настоящими операциями репозитория (метки времени потом выставляются по порядку).
 /// </summary>
 sealed class Fixtures : IDisposable
 {
     /// <summary>Три страницы по 200: подгрузка при прокрутке проверяется на второй и третьей.</summary>
     public const int LogRows        = 450;
     public const int HistoryRecords = 230;
-    public const int SecurityRows   = 250;
 
     public string           LogsPath     { get; }
     public DatabaseRegistry Registry     { get; }
     public DatabaseManager  Db           { get; }
     public Workspace        Workspace    { get; }
-    public SecurityJournal  Journal      { get; }
     public int              CollectionId { get; }
     public long             HistoryRows  { get; }
 
     private Fixtures(string logsPath, DatabaseRegistry registry, DatabaseManager db, Workspace ws,
-                     SecurityJournal journal, int collectionId, long historyRows)
+                     int collectionId, long historyRows)
     {
         LogsPath     = logsPath;
         Registry     = registry;
         Db           = db;
         Workspace    = ws;
-        Journal      = journal;
         CollectionId = collectionId;
         HistoryRows  = historyRows;
     }
@@ -60,7 +55,7 @@ sealed class Fixtures : IDisposable
     public static Fixtures Build(string dir)
     {
         Directory.CreateDirectory(dir);
-        foreach (var name in new[] { "logs.db", "app.db", "stand.db", "security.db" })
+        foreach (var name in new[] { "logs.db", "app.db", "stand.db" })
             foreach (var suffix in new[] { "", "-wal", "-shm", "-journal" })
             {
                 var f = Path.Combine(dir, name + suffix);
@@ -82,14 +77,9 @@ sealed class Fixtures : IDisposable
         var ws    = Workspace.Attach(registry, db);
 
         var cid = FillHistory(db);
-        FillUsers(db);
         var historyRows = FixTimestamps(defPath);
 
-        var journal = new SecurityJournal(Path.Combine(dir, "security.db"));
-        SecurityJournal.Attach(journal);
-        FillSecurity(journal, db.DbId);
-
-        return new Fixtures(logsPath, registry, db, ws, journal, cid, historyRows);
+        return new Fixtures(logsPath, registry, db, ws, cid, historyRows);
     }
 
     // Схема — как у Serilog.Sinks.SQLite (Logging/LogReader читает id, Timestamp, Level,
@@ -153,38 +143,7 @@ sealed class Fixtures : IDisposable
         return cid;
     }
 
-    // Все состояния таблицы «Пользователи»: второй администратор, обычный пользователь с частью прав,
-    // ожидающий допуска, с отозванным допуском, робот и еще один пользователь.
-    private static void FillUsers(DatabaseManager db)
-    {
-        var ctx = db.Context;
-        DbUserEntity U(string key, string name, bool admin, bool approved, bool decided, int day, int seenDay) => new()
-        {
-            UserKey = key, DisplayName = name, IsAdmin = admin, IsApproved = approved, AccessDecided = decided,
-            CreatedAt  = new DateTime(2026, 9, day,     7, 12, 0, DateTimeKind.Utc).ToString("o"),
-            LastSeenAt = new DateTime(2026, 9, seenDay, 15, 40, 0, DateTimeKind.Utc).ToString("o"),
-        };
-        ctx.DbUsers.AddRange(
-            U("anna.ivanova@pc-01",    Users[0], admin: true,  approved: true,  decided: true,  day: 1,  seenDay: 24),
-            U("petr.sidorov@pc-02",    Users[1], admin: false, approved: true,  decided: true,  day: 3,  seenDay: 23),
-            U("olga.kuznetsova@pc-03", Users[2], admin: false, approved: false, decided: false, day: 22, seenDay: 22),
-            U("ivan.zaytsev@pc-04",    Users[3], admin: false, approved: false, decided: true,  day: 5,  seenDay: 19),
-            U("robot.exchange",        Users[4], admin: false, approved: true,  decided: true,  day: 10, seenDay: 24),
-            U("maria.orlova@pc-06",    Users[5], admin: false, approved: true,  decided: true,  day: 12, seenDay: 21));
-        ctx.SaveChanges();
 
-        var petr  = ctx.DbUsers.First(u => u.UserKey == "petr.sidorov@pc-02");
-        var maria = ctx.DbUsers.First(u => u.UserKey == "maria.orlova@pc-06");
-        db.Permissions.SetMask(petr.Id,  null, (int)(PermAction.ViewCollection | PermAction.CreateRecord | PermAction.EditRecord));
-        db.Permissions.SetMask(maria.Id, null, (int)(PermAction.ViewCollection | PermAction.EditCollection | PermAction.CreateField | PermAction.DeleteRecord));
-    }
-
-    /// <summary>Маска прав пользователя — для проверки клика по галочке.</summary>
-    public int MaskOf(string displayName)
-    {
-        var user = Db.Context.DbUsers.AsNoTracking().First(u => u.DisplayName == displayName);
-        return Db.Permissions.GetMask(user.Id, null);
-    }
 
     // Метки времени журнала и текущего пользователя — по порядку и фиксированные: настоящие
     // операции проставили «сейчас», а кадр обязан совпадать с эталоном день за днем.
@@ -227,34 +186,12 @@ sealed class Fixtures : IDisposable
         return ids.Count;
     }
 
-    private static void FillSecurity(SecurityJournal journal, int dbId)
-    {
-        var t0 = new DateTimeOffset(2026, 9, 21, 8, 0, 0, TimeSpan.Zero);
-        for (var i = 0; i < SecurityRows; i++)
-        {
-            var kind    = (i % 9) switch { 3 => SecurityEvent.Confirm, 6 => SecurityEvent.Revoke, _ => SecurityEvent.Send };
-            var send    = kind == SecurityEvent.Send;
-            var allowed = i % 5 != 2;
-            var noDb    = i % 6 == 5;
-            journal.Write(SecurityEntry.New(
-                kind, allowed, Users[i % 3],
-                scenario:    i % 4 == 0 ? "" : $"Сценарий {i % 4}",
-                address:     send ? $"https://api.example.local/v1/orders/{i}" : "",
-                fields:      send ? "Номер, Сумма, Телефон" : "",
-                rows:        send ? 10 + i : 0,
-                bytes:       send ? 2048 + i * 17 : 0,
-                bodyHash:    send ? $"{i:x8}{i * 7919:x8}{i * 104729:x8}" : "",
-                explanation: allowed ? "" : "Направление не подтверждено мастер-паролем",
-                dbId:        noDb ? 0 : dbId,
-                at:          t0.AddMinutes(i * 11),
-                confirmed:   kind == SecurityEvent.Confirm ? Users[0] : "",
-                collection:  noDb ? "" : "Договоры"));
-        }
-    }
+
 
     public void Dispose()
     {
-        SecurityJournal.Attach(null);
+
+
         Workspace.Dispose();
         Registry.Dispose();
     }

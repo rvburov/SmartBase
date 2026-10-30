@@ -40,7 +40,7 @@ public sealed class ScenarioRunTests : IDisposable
 
     public void Dispose()
     {
-        EgressGate.Close();
+
         RunJournal.Attach(null);
         _registry.Dispose();
         _db.Dispose();    // сбрасывает пул подключений — после него отпущен и app.db в папке
@@ -50,36 +50,6 @@ public sealed class ScenarioRunTests : IDisposable
     private IntegrationsRegistry Cards => _registry.Integrations;
 
     private int DbId => _db.Manager.DbId;
-
-    // ── Обвязка ───────────────────────────────────────────────────────────────
-
-    /// <summary>Политика, пускающая запрос на петлевой адрес стенда.</summary>
-    private static void AllowLoopback() =>
-        EgressGate.AttachPolicy(EgressPolicySet.Of(new EgressPolicy(
-            EgressMode.Internal,
-            Hosts:           ["127.0.0.1"],
-            Networks:        ["127.0.0.0/8"],
-            Folders:         [],
-            MaxRowsPerRun:   1000,
-            MaxBytesPerDay:  8 * 1024 * 1024,
-            MaxRunsPerHour:  100,
-            ValidUntil:      null,
-            UserMayAddHosts: false,
-            Source:          "тест")));
-
-    /// <summary>Политика, разрешающая ровно этот корень обмена: шаг спрашивает ее сам.</summary>
-    private void AllowRoot() =>
-        EgressGate.AttachPolicy(EgressPolicySet.Of(new EgressPolicy(
-            EgressMode.Internal,
-            Hosts:           [],
-            Networks:        [],
-            Folders:         [_root],
-            MaxRowsPerRun:   1000,
-            MaxBytesPerDay:  1024 * 1024,
-            MaxRunsPerHour:  100,
-            ValidUntil:      null,
-            UserMayAddHosts: false,
-            Source:          "тест")));
 
     /// <summary>Соединение на стенд, запрос к нему и привязка ответа к коллекции.</summary>
     private int NewRequest(HttpStand server, int collectionId)
@@ -146,7 +116,7 @@ public sealed class ScenarioRunTests : IDisposable
     [Fact]
     public async Task A_real_registration_runs_as_a_scenario_step()
     {
-        AllowLoopback();
+
         using var server = new HttpStand("""[{"Название":"Втулка","Проект":"Молоток"}]""");
 
         var orders    = _db.Constructor.AddCollection(new DbCollection { Name = "Заявки" }).Id!.Value;
@@ -189,7 +159,7 @@ public sealed class ScenarioRunTests : IDisposable
     [Fact]
     public async Task A_message_in_a_folder_becomes_a_registered_document()
     {
-        AllowRoot();
+
         Put("kd-100.txt", Message);
 
         var journalId = JournalStand.Create(_db.Constructor);

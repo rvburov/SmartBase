@@ -238,7 +238,7 @@ internal static class MultiUserWorkload
                 EXCEPT SELECT collectionid, substr(startiso, 1, 10), fieldid, COUNT(*) FROM calendar_index GROUP BY 1, 2, 3
             ) extra") == 0
             && Scalar("SELECT COUNT(*) FROM calendar_day_counts WHERE events < 0") == 0));
-        if (f.Options.Scenario is not ("rollback" or "access"))
+        if (f.Options.Scenario is not ("rollback" or "people"))
         {
             checks.Add(new("Подтвержденные записи отражены в журнале", context.ChangeLog.LongCount() > f.InitialLogCount));
             var actualUsers = context.ChangeLog.Where(l => l.UserKey.StartsWith("client-"))

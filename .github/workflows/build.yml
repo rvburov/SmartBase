@@ -227,66 +227,24 @@ jobs:
           reports=("$RUNNER_TEMP/matrix-results/"*.trx "$RUNNER_TEMP/extensions-results/"*.trx)
           python Scripts/ci/report-failures.py "${reports[@]}"
 
-  # ── Сборка для закрытого контура ────────────────────────────────────────────
-  # Второй дистрибутив программы: в нем отправляющего слоя нет физически — файл
-  # Integrations/EgressHttp.Open.cs исключается из компиляции, а вместо него собирается
-  # заглушка EgressHttp.Closed.cs (docs/ROADMAP-API.md, 10.16.1).
-  #
-  # Зачем отдельный job. Обычная матрица собирает ТОЛЬКО открытую конфигурацию, и заглушка в
-  # ней не компилируется вовсе: смени сигнатуру в отправляющем слое — и закрытая сборка
-  # ломается молча, а выяснится это при выпуске релиза для закрытого контура, то есть в самый
-  # неподходящий момент. Здесь она собирается на каждом прогоне.
-  #
-  # Устройство подмены стерегут тесты (Tests/Unit/OneDoorOutwardTests.cs): заглушка не должна
-  # обзавестись сетевым кодом, строки подмены — пропасть из csproj, а #if CLOSED_LOOP —
-  # расползтись за пределы шлюза. Они текстовые и идут в общем наборе, здесь их повторять
-  # незачем.
-  #
-  # Разбора манифеста тут намеренно НЕТ. Отсутствие сетевого кода обеспечено не проверкой
-  # собранного, а тем, что исходный файл в компиляцию не попадает, — и решение это записано
-  # (ROADMAP-API.md, 10.16.1: «сверка манифеста для этого не нужна»). Проверять следствие там,
-  # где проверена причина, значит завести второй рубеж, который однажды разойдется с первым.
-  #
-  # Один Linux-раннер: подмена файла от операционной системы не зависит, а нативные части
-  # закрытая сборка задевает ровно так же, как открытая, — их уже проверила матрица.
-  closed-loop:
-    name: Закрытый контур
+  # Проверяем отдельный вариант упаковки без входящего HTTP-слушателя.
+  no-listener:
+    name: Без HTTP-слушателя
     needs: scope
     if: needs.scope.outputs.full == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      # Тот же SHA, что у остальных проверок.
       - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.ref || github.sha }}
-
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
-
-      - name: Сборка закрытого контура
-        run: dotnet build SmartBase.csproj --configuration Release -p:ClosedLoop=true
-
-      # Второй флаг того же рода: сборка без слушателя. Вопросы разные — «куда программа ходит»
-      # и «кого она к себе пускает», — и сочетают их по обстоятельствам, поэтому собираются обе
-      # конфигурации по отдельности и одна вместе.
       - name: Сборка без слушателя
         run: dotnet build SmartBase.csproj --configuration Release -p:NoListener=true
-
-      - name: Сборка закрытого контура без слушателя
-        run: dotnet build SmartBase.csproj --configuration Release -p:ClosedLoop=true -p:NoListener=true
-
-      # Встречная проверка: в ОБЫЧНОЙ сборке отправляющий слой на месте. Без нее job остался бы
-      # зеленым и в том случае, когда Open-файл потеряли совсем, — закрытая сборка собралась бы
-      # как ни в чем не бывало, а вместе с ней исчез бы весь исходящий обмен.
-      - name: Оба слоя на месте в обычной сборке
-        run: |
-          test -f Integrations/EgressHttp.Open.cs \
-            || { echo "::error::Integrations/EgressHttp.Open.cs пропал — в обычной сборке не осталось отправляющего слоя"; exit 1; }
-          test -f Integrations/IngressHttp.Open.cs \
-            || { echo "::error::Integrations/IngressHttp.Open.cs пропал — в обычной сборке не осталось слушателя"; exit 1; }
-          dotnet build SmartBase.csproj --configuration Release
+      - name: Обычная сборка с HTTP-слоем
+        run: dotnet build SmartBase.csproj --configuration Release
 
   # ── Тесты провайдера PostgreSQL на живой базе ───────────────────────────────
   # Единственное место, где тесты провайдера и создания баз вообще выполняются: локально
@@ -417,6 +375,9 @@ jobs:
           if-no-files-found: ignore
 
       # Эти режимы сами создают базы стенда. Явные out/ref не пишут в домашний каталог.
+      - name: Профиль и история без экранов доступа
+        run: dotnet run --project Tests/RecordPage --framework net10.0 --configuration Release --no-build -- --only profile --out "$RUNNER_TEMP/profile-ui"
+
       - name: Свойства страницы записи
         run: |
           dotnet run --project Tests/RecordPage --framework net10.0 --configuration Release --no-build -- --only relations --out "$RUNNER_TEMP/relation-ui" --ref "$RUNNER_TEMP/ui-reference"
@@ -431,7 +392,7 @@ jobs:
   # Нельзя получить зеленый workflow, потеряв обязательный job из-за условия/needs.
   checks:
     name: Итог проверок
-    needs: [scope, agent-tests, test, closed-loop, postgres, tools]
+    needs: [scope, agent-tests, test, no-listener, postgres, tools]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -446,7 +407,7 @@ jobs:
           CI_SCOPE_RESULT: ${{ needs.scope.result }}
           CI_QUICK_RESULT: ${{ needs.agent-tests.result }}
           CI_MATRIX_RESULT: ${{ needs.test.result }}
-          CI_CLOSED_RESULT: ${{ needs.closed-loop.result }}
+          CI_LISTENER_RESULT: ${{ needs.no-listener.result }}
           CI_POSTGRES_RESULT: ${{ needs.postgres.result }}
           CI_TOOLS_RESULT: ${{ needs.tools.result }}
         run: bash Scripts/ci/check-results.sh

@@ -74,7 +74,6 @@ public sealed partial class ConstructorRepository
                                        IReadOnlyList<TitleWrite>? titles = null,
                                        string operation = "Правка")
     {
-        Demand(PermAction.EditRecord, collectionId);
         titles ??= [];
         var periodFields = db.DbFields.AsNoTracking().Where(f => f.CollectionId == collectionId && f.FieldType == "date_period")
             .Select(f => f.Id).ToHashSet();

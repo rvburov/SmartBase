@@ -89,6 +89,10 @@ public class TableRowVm : INotifyPropertyChanged
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
+    /// <summary>Поле последней успешной правки индексатора; null — название записи.
+    /// Позволяет зависимому отбору отличить правку даты от текста без чтения базы.</summary>
+    internal int? LastEditedFieldId { get; private set; }
+
     /// <summary>Пользователь отредактировал ячейку этой строки прямо в таблице (имя/описание/значение
     /// уже записаны в БД). Аргумент — RecordId. Поднимается ТОЛЬКО из сеттера индексатора (правка из
     /// таблицы), но НЕ из Fill (это загрузка данных страницы). Нужно для живой синхронизации открытой
@@ -269,6 +273,7 @@ public class TableRowVm : INotifyPropertyChanged
                 ApplyAutoFileChanges(autoTitle);   // «Название» — источник авто-file: файл-ячейка обновится
                 BumpUpdatedLocal();
                 NotifyAllCells();
+                LastEditedFieldId = null;
                 Edited?.Invoke(this, RecordId);
                 return;
             }
@@ -285,6 +290,7 @@ public class TableRowVm : INotifyPropertyChanged
             ApplyAutoFileChanges(autoChanges, skipFieldId: id);
             BumpUpdatedLocal();
             NotifyAllCells();
+            LastEditedFieldId = id;
             Edited?.Invoke(this, RecordId);
         }
     }

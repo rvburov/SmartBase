@@ -146,12 +146,6 @@ public partial class DocsCollectionWindow : Window
             SetStatus("Отменено — созданная коллекция удалена", "BrushSecondaryText");
             HideCurrentFile();
         }
-        catch (PermissionDeniedException ex)
-        {
-            Rollback(repo, shell);
-            SetStatus(ex.Message, "BrushRed");
-            HideCurrentFile();
-        }
         catch (DocsCollectionException ex)
         {
             Rollback(repo, shell);

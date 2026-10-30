@@ -21,7 +21,7 @@ namespace SmartBase.Database;
 /// </summary>
 public static class ApiDescription
 {
-    // Адреса и заголовок токена берутся у двери (IngressApi): описание обязано обещать ровно
+    // Адреса и параметр выбора базы берутся у двери: описание обязано обещать ровно
     // то, что слушатель принимает.
 
     private static readonly JsonSerializerOptions Format = new()
@@ -37,12 +37,14 @@ public static class ApiDescription
     /// второе мнение о том, где программа слушает.
     /// </summary>
     /// <param name="address">Адрес слушателя; пусто — прием выключен, и это сказано прямо.</param>
-    /// <param name="database">Имя базы, в которую пишет токен.</param>
+    /// <param name="database">Имя базы.</param>
     /// <param name="collections">Схема коллекций.</param>
     public static string Text(string address, string database,
-                              IReadOnlyList<ApiCollection> collections)
+                              IReadOnlyList<ApiCollection> collections, int? databaseId = null)
     {
         var text = new StringBuilder();
+        var selector = $"{IngressApi.DatabaseParameter}=" + (databaseId is > 0
+            ? databaseId.Value.ToString(System.Globalization.CultureInfo.InvariantCulture) : "<ключ базы>");
 
         text.AppendLine($"Прием данных в базу «{database}»");
         text.AppendLine();
@@ -56,22 +58,16 @@ public static class ApiDescription
         else
         {
             text.AppendLine($"Адрес:      {address}");
-            text.AppendLine($"Проверка:   GET  {address}{IngressApi.PingPath}");
-            text.AppendLine($"Схема:      GET  {address}{IngressApi.SchemaPath}");
-            text.AppendLine($"Сообщение:  POST {address}{IngressApi.InboxPath}");
-            text.AppendLine($"Чтение:     GET  {address}{IngressApi.RecordsPath}?collection=<имя>");
-            text.AppendLine($"Изменения:  GET  {address}{IngressApi.ChangesPath}?collection=<имя>");
+            text.AppendLine($"Проверка:   GET  {address}{IngressApi.PingPath}?{selector}");
+            text.AppendLine($"Схема:      GET  {address}{IngressApi.SchemaPath}?{selector}");
+            text.AppendLine($"Сообщение:  POST {address}{IngressApi.InboxPath}?{selector}");
+            text.AppendLine($"Чтение:     GET  {address}{IngressApi.RecordsPath}?{selector}&collection=<имя>");
+            text.AppendLine($"Изменения:  GET  {address}{IngressApi.ChangesPath}?{selector}&collection=<имя>");
             text.AppendLine();
         }
 
-        text.AppendLine($"Токен едет заголовком «{IngressApi.TokenHeader}» либо «Authorization: Bearer …».");
-        text.AppendLine("Токен выдается один раз и больше нигде не показывается.");
-
-        // Сказано и здесь: описание пересылают той стороне, и там принимают решение, по какой
-        // сети ходить. Молчание об открытом тексте в документе, который читает именно тот, кто
-        // будет слать токен, — худшее место для умолчания (6.2).
-        text.AppendLine("По обычному HTTP токен идет по сети ОТКРЫТЫМ ТЕКСТОМ: в заводской сети "
-                      + "это обычно приемлемо, но через недоверенную сеть слать его нельзя.");
+        text.AppendLine("API работает без входа и токенов. Параметр «database» выбирает открытую базу "
+                      + "по ключу из реестра приложения. Если открыта ровно одна база, параметр можно не указывать.");
         text.AppendLine();
 
         text.AppendLine("Тело сообщения — такое же, как у файла в папке обмена:");
@@ -88,15 +84,13 @@ public static class ApiDescription
         text.AppendLine();
         text.AppendLine("«mode»: «add» — добавить, «update» — найти по ключу и обновить "
                       + "(ненайденную запись заведет),");
-        text.AppendLine("«delete» — найти по ключу и удалить (нужно право «Удаление записи» у "
-                      + "робота; читается только колонка ключа),");
-        text.AppendLine("«ensure-collection» — создать коллекцию и добрать недостающие поля "
-                      + "(права «Создание коллекции» и «Создание свойства»); вместо «rows» — "
+        text.AppendLine("«delete» — найти по ключу и удалить (читается только колонка ключа),");
+        text.AppendLine("«ensure-collection» — создать коллекцию и добрать недостающие поля; вместо «rows» — "
                       + "«fields»: [{ \"name\": \"Номер\", \"type\": \"text\" }], типы: "
                       + string.Join(", ", InboxField.KnownTypes) + ". Существующие поля не "
                       + "трогаются, несовпадение типов — отказ.");
         text.AppendLine("«id» обязателен у «add»: без него повторная доставка заведет записи "
-                      + "второй раз. Повтор с тем же «id» возвращает ТОТ ЖЕ ответ.");
+                      + "второй раз. Идентификатор должен быть уникальным в пределах базы. Повтор с тем же «id» возвращает ТОТ ЖЕ ответ.");
         text.AppendLine();
 
         // Потолок тела называется отправителю ЗДЕСЬ, а не выясняется им по отказу: у сети он
@@ -122,31 +116,41 @@ public static class ApiDescription
 
         foreach (var collection in collections)
         {
-            text.AppendLine($"  «{collection.Name}»");
+            text.AppendLine($"  «{collection.Name}»" + (collection.Id is int collectionKey ? $" · collectionId={collectionKey}" : ""));
             text.AppendLine($"      {collection.Title} — название записи");
 
             foreach (var field in collection.Fields)
-                text.AppendLine($"      {field.Name} — {field.Type}");
+                text.AppendLine($"      {field.Name} — {field.Type}" + (field.Id is int fieldKey ? $" · ключ {fieldKey}" : ""));
 
             text.AppendLine();
         }
 
-        text.AppendLine("Колонки сводятся со свойствами ПО ИМЕНАМ; то, чему места не нашлось, "
-                      + "перечислено в квитанции.");
+        text.AppendLine("Колонки сообщения сводятся со свойствами ПО ИМЕНАМ; то, чему места не нашлось, "
+                      + "перечислено в квитанции. Для приема имя коллекции должно быть уникальным в базе: "
+                      + "при совпадениях сообщение отклоняется, записи не меняются.");
+        text.AppendLine("Параметр «collectionId» поддерживается только при чтении. "
+                      + $"POST {IngressApi.InboxPath} с этим параметром возвращает 400: коллекцию задают в JSON.");
         text.AppendLine();
 
         text.AppendLine("Чтение");
         text.AppendLine();
-        text.AppendLine("Чтение закрыто ВЫДАЧЕЙ: ее подтверждает ответственный за интеграции на "
-                      + "компьютере-приемнике — на одну коллекцию, поименованные поля и срок. Без "
-                      + "выдачи любой GET отвечает отказом с причиной.");
+        text.AppendLine("Для чтения коллекцию выбирают именем «collection» либо ключом «collectionId» "
+                      + "из описания схемы. Числовое имя остается именем. При одноименных коллекциях нужен ключ.");
+        text.AppendLine("Историю одноименных коллекций разделить нельзя: старые строки хранят только имя. "
+                      + "Запрос такой истории возвращает 409 и не смешивает события разных коллекций.");
+        text.AppendLine("Чтение возвращает название записи и все свойства коллекции. Параметром «fields» "
+                      + "можно выбрать состав: «t» — название, далее ключи или имена свойств через запятую. "
+                      + "Свойство с именем «t» или числовым именем выбирайте по его ключу.");
+        text.AppendLine("В «columns» указаны key, name и fieldKey выбранных колонок. При уникальных именах «values» "
+                      + "содержит значения под именами. Если имена повторяются, все ключи «values» — «t» "
+                      + "и численные ключи свойств; «columns» однозначно описывает каждое значение.");
         text.AppendLine();
-        text.AppendLine($"    GET {IngressApi.RecordsPath}?collection=<имя>&since=<момент>&after=<ключ>&limit=<число>");
+        text.AppendLine($"    GET {IngressApi.RecordsPath}?{selector}&collection=<имя>&since=<момент>&after=<ключ>&limit=<число>");
         text.AppendLine("      «since» — только записи, правленные с момента (ISO-8601); «after» — "
                       + "ключ записи из поля «next» прошлого ответа; страница до "
-                      + "500 записей. В ответе: id, updated и values с полями выдачи.");
+                      + "500 записей. В ответе: id, updated и values с выбранными полями.");
         text.AppendLine();
-        text.AppendLine($"    GET {IngressApi.ChangesPath}?collection=<имя>&after=<номер>&limit=<число>");
+        text.AppendLine($"    GET {IngressApi.ChangesPath}?{selector}&collection=<имя>&after=<номер>&limit=<число>");
         text.AppendLine("      Хвост журнала изменений коллекции — отвечает и про УДАЛЕНИЯ, о "
                       + "которых чтение записей молчит. В журнале имена записей, а не ключи: он "
                       + "ведется для человека. «after» — номер из поля «next» прошлого ответа.");
@@ -155,15 +159,18 @@ public static class ApiDescription
     }
 
     /// <summary>Описание для машины — ответ <c>GET /v1/schema</c>.</summary>
-    public static string Json(string database, IReadOnlyList<ApiCollection> collections) =>
+    public static string Json(string database, IReadOnlyList<ApiCollection> collections, int? databaseId = null) =>
         JsonSerializer.Serialize(new
         {
             database,
+            databaseId,
+            databaseParameter = IngressApi.DatabaseParameter,
+            authentication = "none",
             inbox   = IngressApi.InboxPath,
             ping    = IngressApi.PingPath,
             schema  = IngressApi.SchemaPath,
-            records = IngressApi.RecordsPath + "?collection=<имя>&since=<момент>&after=<ключ>",
-            changes = IngressApi.ChangesPath + "?collection=<имя>&after=<номер>",
+            records = IngressApi.RecordsPath + "?database=<ключ базы>&collection=<имя>&since=<момент>&after=<ключ>",
+            changes = IngressApi.ChangesPath + "?database=<ключ базы>&collection=<имя>&after=<номер>",
             message = new
             {
                 collection = "<имя коллекции>",
@@ -176,9 +183,10 @@ public static class ApiDescription
             },
             collections = collections.Select(c => new
             {
+                id = c.Id,
                 name   = c.Name,
                 title  = c.Title,
-                fields = c.Fields.Select(f => new { name = f.Name, type = f.Type }),
+                fields = c.Fields.Select(f => new { id = f.Id, name = f.Name, type = f.Type }),
             }),
         }, Format);
 

@@ -187,8 +187,8 @@ public static partial class ScenarioRunner
     /// бездействие в ответ на нажатие хуже любого отказа.
     ///
     /// Диска этот метод не касается: его спрашивают на каждую перерисовку списка сценариев, а
-    /// папка обмена лежит на сетевом диске, который бывает выключен. Проверяется разрешение
-    /// политики — оно считается по строкам, — а существование папки выяснит сам шаг.
+    /// папка обмена лежит на сетевом диске, который бывает выключен. Здесь проверяется форма
+    /// настройки, а существование папки выяснит сам шаг.
     /// </summary>
     /// <param name="initial">Строки, которые принесли сценарию ИЗВНЕ — их кладет календарный
     /// триггер, и ими же запускают сценарий вручную с готовой таблицей. Шаг, которому нужны
@@ -249,10 +249,7 @@ public static partial class ScenarioRunner
                 if (databases.All(d => d.DbId != step.DbId))
                     return "база данных для выгрузки сейчас не открыта";
 
-                // Папка — та же дверь, что сетевой адрес: автоматическая выгрузка работает
-                // только внутри корней, разрешенных политикой (10.11).
-                var folder = EgressGate.CheckFolder(step.Folder);
-                if (!folder.Allowed) return "папка выгрузки: " + folder.Explanation;
+                if (string.IsNullOrWhiteSpace(step.Folder)) return "в шаге не выбрана папка выгрузки";
 
                 continue;
             }
@@ -260,9 +257,6 @@ public static partial class ScenarioRunner
             if (step.Kind == ScenarioStepKind.Intake)
             {
                 if (string.IsNullOrWhiteSpace(step.Folder)) return "в шаге не выбрана папка обмена";
-
-                var decision = EgressGate.CheckFolder(step.Folder);
-                if (!decision.Allowed) return "папка обмена: " + decision.Explanation;
 
                 text = true;
                 continue;
@@ -283,15 +277,12 @@ public static partial class ScenarioRunner
                 {
                     if (!rows) return NoTable(action);
 
-                    // Файл наружу — та же дверь, что сетевой адрес: папка спрашивается при
-                    // настройке шага и проверяется политикой ДО запуска (10.11).
+                    // Файловому действию нужна выбранная папка назначения.
                     if (action.MakesFile)
                     {
                         if (string.IsNullOrWhiteSpace(step.Folder))
                             return $"у действия «{action.Name}» не выбрана папка для файла";
 
-                        var place = EgressGate.CheckFolder(step.Folder);
-                        if (!place.Allowed) return "папка файла: " + place.Explanation;
                     }
 
                     if (Unfilled(step, action) is { } missing) return missing;
@@ -502,9 +493,8 @@ public static partial class ScenarioRunner
     /// поля видно только по пустой коллекции через неделю.
     /// </summary>
     /// <param name="carry">Дальше по сценарию есть шаг, которому нужны эти строки.</param>
-    /// <param name="scenario">Имя сценария — для журнала безопасности: отправку, ушедшую ночью
-    /// сама собой, проверяющий должен уметь привязать к тому, кто ее завел.</param>
-    /// <param name="now">Момент запуска — тот же, которым меряется срок направления.</param>
+    /// <param name="scenario">Имя сценария для рабочего журнала.</param>
+    /// <param name="now">Момент запуска.</param>
     private static async Task<StepOutcome> RequestStepAsync(ScenarioStep                   step,
                                                             IntegrationsRegistry           registry,
                                                             IReadOnlyList<DatabaseManager> databases,
@@ -532,8 +522,7 @@ public static partial class ScenarioRunner
         // изменившиеся в сторонней программе, пока шел обмен, иначе оказались бы позади границы.
         var startedAt = DateTimeOffset.UtcNow;
 
-        // Тело из коллекции — до замка: и в журнал безопасности, и в сокет обязано уйти одно и
-        // то же тело, а собирается оно один раз на запуск.
+        // Тело из коллекции собирается один раз на запуск.
         var (payload, cannot) = OutgoingSource.Build(registry, request, databases, ct: ct);
 
         if (cannot is { Length: > 0 })
@@ -546,11 +535,9 @@ public static partial class ScenarioRunner
             return StepOutcome.Halt($"в коллекции «{payload.Collection}» нет записей — "
                                   + $"запросу «{request.Name}» нечего отправлять");
 
-        // Замок, отправка, строка журнала и отметка о простое — одной цепочкой на всех, кто
-        // запускает запросы (RequestLauncher): повторенная здесь, она однажды повторилась бы не
-        // целиком, и ночной обмен перестал бы считаться, продолжая работать.
+        // Отправка и рабочий журнал общие у сценариев и ручного запуска.
         var outcome = await RequestLauncher.SendAsync(
-            registry, connection, request, payload, binding.DbId, startedAt, now,
+            registry, connection, request, payload, binding.DbId, startedAt,
             scenario, mark, ct);
 
         if (!outcome.Ok)
@@ -633,8 +620,7 @@ public static partial class ScenarioRunner
     /// расширения — не транзакция обмена, и откатывать чужую работу оболочка не берется. Сколько
     /// прошло и на чем встали, говорит строка отчета.
     /// </summary>
-    /// <param name="scenario">Имя сценария — для следа в журнале безопасности: файл, собранный
-    /// автоматизацией ночью, проверяющий должен уметь привязать к тому, кто ее завел.</param>
+    /// <param name="scenario">Имя сценария для рабочего журнала.</param>
     private static async Task<StepOutcome> ActionStepAsync(ScenarioStep                   step,
                                                            IReadOnlyList<DatabaseManager> databases,
                                                            IReadOnlyList<IExtension>      extensions,
@@ -717,7 +703,7 @@ public static partial class ScenarioRunner
                 }
 
                 return true;
-            }, checkInside: action.ChecksPermissions), ct);
+            }), ct);
         }
         catch (OperationCanceledException)
         {
@@ -1098,10 +1084,7 @@ public static partial class ScenarioRunner
     /// <summary>
     /// Что не так с потоком и карточкой ответа у сценария потока; <c>null</c> — все на месте.
     ///
-    /// Ответ — это ОТПРАВКА: текст уходит той стороне, то есть наружу. Поэтому карточка ответа
-    /// обязана быть исходящей (не <c>GET</c>): только такой запрос проходит замок направлений,
-    /// подтверждение и журнал безопасности. Читающий запрос на этом месте означал бы ответы,
-    /// ушедшие мимо замка.
+    /// Ответ передается телом запроса, поэтому для него нужен метод, отличный от GET.
     /// </summary>
     public static string? StreamTrouble(Scenario scenario, IntegrationsRegistry registry)
     {
@@ -1218,8 +1201,7 @@ public static partial class ScenarioRunner
                                 TimeSpan elapsed, int dbId, DateTimeOffset now, string file) =>
         RunJournal.Add(RunEntry.New(RunChannel.Scenario, scenario.Name, file, ok, explanation,
                                     rows, 0, elapsed, dbId, now, counts: false,
-                                    // Итоговая строка сценария направления не несет: в расход
-                                    // она не идет, а объем уже посчитан строками его шагов.
+                                    // Итоговая строка не связана с отдельным запросом.
                                     direction: 0,
                                     // Имя сценария дублируется полем намеренно: отбор по
                                     // сценарию должен доставать и итог, и все его шаги разом.

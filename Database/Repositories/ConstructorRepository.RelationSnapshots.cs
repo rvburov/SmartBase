@@ -38,7 +38,6 @@ public partial class ConstructorRepository
                     && !(IsRelationSourceDatabase(config.TargetDbId, snap.SourceDbId) && collections.Contains(config.TargetCollectionId)))
                 {
                     var target = SnapshotExternalDatabase(snap, config.TargetDbId);
-                    target.Demand(PermAction.ViewCollection, config.TargetCollectionId);
                     if (!target.RelationLifecycleContext.DbCollections.AsNoTracking().Any(c => c.Id == config.TargetCollectionId))
                         throw new InvalidOperationException("Целевая коллекция связи из снимка не найдена.");
                 }
@@ -51,7 +50,6 @@ public partial class ConstructorRepository
                 var target = SnapshotExternalDatabase(snap, edge.Target.DbId);
                 if (target.CollectionOfRecord(edge.Target.RecordId) is not int targetCollection)
                     throw new InvalidOperationException("Целевая запись связи из снимка не найдена.");
-                target.Demand(PermAction.ViewCollection, targetCollection);
             }
             foreach (var config in snap.Fields.Where(f => f.FieldType == "relation")
                          .Select(f => (f.Id, Config: RelationConfig.FromConfig(f.ConfigJson))).Where(f => f.Config is { Single: true }))

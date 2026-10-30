@@ -162,26 +162,4 @@ public sealed class SectionCollectionsTests
         Assert.Contains(fields, f => f.IsTaskStatus && f.Name == "Статус");
     }
 
-    [Fact]
-    public void Connecting_without_field_rights_is_refused_and_leaves_the_collection_as_is()
-    {
-        using var db = new TempDatabase();
-        var repo = db.Constructor;
-        var col  = SampleData.AddCollection(repo, "Новая").Id!.Value;
-
-        db.Permissions.SetMask(db.Permissions.CurrentUserId, null,
-                               (int)(PermAction.All & ~PermAction.CreateField & ~PermAction.EditField));
-        var me = db.Context.DbUsers.First(u => u.UserKey == CurrentUser.Key);
-        me.IsAdmin    = false;
-        me.IsApproved = true;
-        db.Context.SaveChanges();
-        db.Permissions.Reload(notify: false);
-
-        // Боковая панель ловит отказ и оставляет коллекцию созданной, но не подключенной.
-        Assert.Throws<PermissionDeniedException>(() => repo.EnsureCalendarCollection(col));
-        Assert.Throws<PermissionDeniedException>(() => repo.EnsureTaskCollection(col));
-        Assert.Empty(repo.GetFields(col));
-        Assert.DoesNotContain(col, repo.GetCalendarCollectionIds());
-        Assert.DoesNotContain(col, repo.GetTaskCollectionIds());
-    }
 }

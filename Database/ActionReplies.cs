@@ -6,7 +6,7 @@ namespace SmartBase.Database;
 /// <summary>
 /// Сообщение без события (<see cref="IActionReplies"/>) на реестре интеграций: путь ответа
 /// сценария, который выполняет действие расширения, — тот же запрос, тот же перенос строки и та
-/// же цепочка отправки (<see cref="RequestLauncher"/>: замок направления, оба журнала, зеркало),
+/// же цепочка отправки и рабочий журнал (<see cref="RequestLauncher"/>),
 /// что у ответа на событие.
 ///
 /// Путь ищется при каждой отправке, а не запоминается: сценарий могли выключить или поменять
@@ -42,7 +42,7 @@ public sealed class ActionReplies(IntegrationsRegistry registry) : IActionReplie
         };
 
         var sent = await RequestLauncher.SendAsync(
-            registry, way.Connection, way.Request, payload: null, db, now, now,
+            registry, way.Connection, way.Request, payload: null, db, now,
             way.Scenario.Name, Mark, ct, row, way.Scenario.Trigger.WithBreaks(text));
 
         return new ReplyResult(sent.Ok, sent.Explanation);

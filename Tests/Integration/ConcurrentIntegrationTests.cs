@@ -136,9 +136,7 @@ public sealed class ConcurrentIntegrationTests
         var now = new DateTimeOffset(2026, 10, 26, 10, 0, 0, TimeSpan.Zero);
         try
         {
-            EgressGate.AttachPolicy(EgressPolicySet.Of(new EgressPolicy(
-                EgressMode.Internal, [], [], [root], 1000, 1024 * 1024, 100,
-                null, false, "конкурентный стенд")));
+
             var layout = InboxFolder.Open(root, out var explanation);
             Assert.NotNull(layout);
             Assert.Equal("", explanation);
@@ -191,7 +189,7 @@ public sealed class ConcurrentIntegrationTests
         }
         finally
         {
-            EgressGate.Close();
+
             try { Directory.Delete(root, recursive: true); } catch { /* только своя временная папка */ }
         }
     }

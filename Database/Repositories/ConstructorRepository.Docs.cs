@@ -46,7 +46,6 @@ public partial class ConstructorRepository
     /// </summary>
     public bool SetFileFieldInLibrary(int fieldId, bool enabled, bool adoptByName = true)
     {
-        Demand(PermAction.EditField, CollectionOfField(fieldId));
         var field = db.DbFields.Find(fieldId);
         if (field is null || field.FieldType != "file" || field.IsDocFile == enabled) return false;
 
@@ -59,10 +58,7 @@ public partial class ConstructorRepository
                 $"Свойство «{field.Name}» — это роль типа документа, источником документов оно быть не может. " +
                 "Заведите для документа отдельное свойство типа «Файл».");
 
-        // Авто-поля потребуют права создания — проверяем ДО записи флага, чтобы отказ не
-        // оставил коллекцию наполовину включенной.
-        if (enabled && DocRolesIncomplete(field.CollectionId, fieldId))
-            Demand(PermAction.CreateField, field.CollectionId);
+
 
         field.IsDocFile = enabled;
         Log("update", "field", field.Name, CollectionNameOf(field.CollectionId));
@@ -134,9 +130,7 @@ public partial class ConstructorRepository
             : null;
         if (candidate is not null)
         {
-            Demand(PermAction.EditField, collectionId);
-            if (DocRolesIncomplete(collectionId, candidate.Id))
-                Demand(PermAction.CreateField, collectionId);
+
             candidate.IsDocFile = true;
             Log("update", "field", candidate.Name, CollectionNameOf(collectionId));
             db.SaveChanges();
@@ -226,9 +220,8 @@ public partial class ConstructorRepository
     /// В отличие от задач, дефекта «несколько носителей» здесь нет: файловых полей у коллекции
     /// может быть сколько угодно, это штатный режим.
     ///
-    /// Возвращает число вылеченных коллекций. Монтирование не срывает: у пользователя без прав
-    /// на схему починка не доходит до конца (доведет следующий, у кого права есть), а отказ
-    /// остается в журнале диагностики (<see cref="LogRepairNotDone"/>).
+    /// Возвращает число вылеченных коллекций. Сбой записи остается в журнале диагностики
+    /// (<see cref="LogRepairNotDone"/>) и не срывает монтирование.
     /// </summary>
     public int RepairDocFieldRoles()
     {
@@ -280,12 +273,12 @@ public partial class ConstructorRepository
                 }
                 db.SaveChanges();
 
-                // Освободившийся «Тип документа» заводится заново — обычным путем, со своими
-                // правами и транзакцией; только там, где остался источник документов.
+                // Освободившийся «Тип документа» заводится заново в транзакции,
+                // только там, где остался источник документов.
                 if (anyFile) EnsureDocRoles(collectionId, keepId, adoptByName: true);
                 healed++;
             }
-            catch (Exception ex) when (ex is PermissionDeniedException or DbUpdateException)
+            catch (Exception ex) when (ex is DbUpdateException)
             {
                 db.ChangeTracker.Clear();   // несохраненные флаги не должны утечь в следующие чтения
                 LogRepairNotDone("Библиотека документов", collectionId, name, ex);

@@ -26,12 +26,10 @@ public static partial class ScenarioRunner
     /// Отличие от преобразователя — во входе: тому нужен текст файла, этой — строки.
     ///
     /// В базу автоматизация не пишет и подключения не получает: <see cref="ActionContext.Repo"/>
-    /// у нее пуст ровно по той же причине, что у преобразователя, — спрашивать права на запись
-    /// ради пересчета строк незачем.
+    /// у нее пуст ровно по той же причине, что у преобразователя: она пересчитывает готовые строки.
     ///
     /// <b>Файл кладет ОБОЛОЧКА.</b> Расширение собирает байты и придумывает имя, но не касается
-    /// диска: файл наружу — тот же транспорт, что и сеть, и дверь у него одна. Папку разрешает
-    /// политика, след в журнале безопасности обязателен (<see cref="Keep"/>).
+    /// диска: сохраняет оболочка в папку шага (<see cref="Keep"/>).
     /// </summary>
     private static async Task<StepOutcome> AutomationStepAsync(ScenarioStep      step,
                                                                IExtensionAction  action,
@@ -123,40 +121,16 @@ public static partial class ScenarioRunner
                                StepTable.Of(schema, rows));
     }
 
-    /// <summary>
-    /// Положить собранный расширением файл — через те же рубежи, что и «экспорт выборки»:
-    /// папка из корней политики (10.11) и обязательный след в журнале безопасности.
-    ///
-    /// Метка конфиденциальности сюда не приходит, и это не упущение: в потоке шагов лежат
-    /// строки, принесенные запросом, папкой обмена или триггером, а не прочитанные из
-    /// коллекции, — рубеж меток стоит там, где данные ИЗ БАЗЫ выходят наружу
-    /// (<c>ExportSourceIsolated</c>).
-    /// </summary>
+    /// <summary>Сохранить файл, собранный действием расширения, в выбранную папку.</summary>
     private static StepOutcome Keep(ScenarioStep step, IExtensionAction action, byte[] bytes,
                                     ActionResult result, StepTable table,
                                     string scenario, DateTimeOffset now)
     {
-        // Повторная проверка после Blocker: политику могли сменить, пока сценарий ждал тика.
-        var folder = EgressGate.CheckFolder(step.Folder);
-        if (!folder.Allowed) return StepOutcome.Bad($"«{action.Name}»: папка файла — "
-                                                  + folder.Explanation);
-
-        if (!ExportTrace.Ready) return StepOutcome.Bad(ExportTrace.NoJournal);
-
         Directory.CreateDirectory(step.Folder);
 
         var path = Path.Combine(step.Folder, Stamped(result.FileName, now));
 
         File.WriteAllBytes(path, bytes);
-
-        var traced = new ExportedCollection(step.DbId, "строки сценария", table.Rows.Count,
-                                            table.Columns, ConfidentialityLabel.Open);
-
-        if (!ExportTrace.Note(path, [traced], now, scenario))
-        {
-            try { File.Delete(path); } catch { /* best-effort */ }
-            return StepOutcome.Bad(ExportTrace.NotWritten);
-        }
 
         return new StepOutcome(true,
             $"Действие «{action.Name}»: {result.Explanation} → {Path.GetFileName(path)}",
@@ -169,7 +143,7 @@ public static partial class ScenarioRunner
     /// вчерашний файл не должен молча пропадать под сегодняшним.
     ///
     /// Путь из имени вырезается целиком: расширение называет ФАЙЛ, а не место — место выбрано
-    /// шагом и разрешено политикой, и «..\..\» в имени не должно уводить из него никуда.
+    /// шагом, и «..\..\» в имени не должно уводить из него никуда.
     /// </summary>
     private static string Stamped(string wanted, DateTimeOffset now)
     {
@@ -270,12 +244,7 @@ public static partial class ScenarioRunner
 
     // ── Шаг «экспорт выборки» ─────────────────────────────────────────────────
 
-    /// <summary>
-    /// Выборка коллекции в файл: формат пишут ГОТОВЫЕ писатели экспорта, папку разрешает
-    /// политика (10.11), метки стоят вторым рубежом, а след в журнале безопасности обязателен —
-    /// с той же оговоркой, что у ручного экспорта (<see cref="ExportTrace"/>): журнал
-    /// спрашивается до файла, строка пишется после, не легла — файл удаляется.
-    /// </summary>
+    /// <summary>Выгрузить отобранные записи коллекции штатным потоковым писателем.</summary>
     private static async Task<StepOutcome> ExportStepAsync(ScenarioStep                   step,
                                                            IReadOnlyList<DatabaseManager> databases,
                                                            string                         scenario,
@@ -284,12 +253,6 @@ public static partial class ScenarioRunner
     {
         if (databases.FirstOrDefault(d => d.DbId == step.DbId) is not { } target)
             return StepOutcome.Bad("база данных для выгрузки сейчас не открыта");
-
-        // Повторная проверка после Blocker: политику могли сменить, пока сценарий ждал тика.
-        var folder = EgressGate.CheckFolder(step.Folder);
-        if (!folder.Allowed) return StepOutcome.Bad("папка выгрузки: " + folder.Explanation);
-
-        if (!ExportTrace.Ready) return StepOutcome.Bad(ExportTrace.NoJournal);
 
         try
         {
@@ -382,17 +345,6 @@ public static partial class ScenarioRunner
             // Недописанный файл не оставляется: половина выгрузки хуже ее отсутствия.
             if (fileCreated) try { File.Delete(unit.FilePath); } catch { /* best-effort */ }
             throw;
-        }
-
-        // След — после файла (объем и отпечаток появляются только у готового), но без следа
-        // файл не живет: не записалось — не выгружаем, дословно как у ручного экспорта.
-        var traced = new ExportedCollection(step.DbId, source.Collection, kept,
-                                            headers, source.Label);
-
-        if (!ExportTrace.Note(unit.FilePath, [traced], now, scenario))
-        {
-            try { File.Delete(unit.FilePath); } catch { /* best-effort */ }
-            return StepOutcome.Bad(ExportTrace.NotWritten);
         }
 
         var line = $"Экспорт «{source.Collection}»: строк {kept}"

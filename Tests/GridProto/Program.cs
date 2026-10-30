@@ -741,9 +741,8 @@ int RunKeys()
     var repo3 = mgr3.Constructor;
     var cid3  = repo3.GetAllCollections().First(c => c.Name == col.Name).Id!.Value;
 
-    var journalPath = Path.Combine(outDir, "keys-journal.db");
-    foreach (var suffix in new[] { "", "-wal", "-shm" }) if (File.Exists(journalPath + suffix)) File.Delete(journalPath + suffix);
-    SecurityJournal.Attach(new SecurityJournal(journalPath));
+
+
 
     var failed = 0;
     void Expect(bool ok, string what)
@@ -1030,7 +1029,7 @@ int RunKeys()
     Click(Center(2, textKey));
     Key(Avalonia.Input.Key.C, RawInputModifiers.Control);
     Expect(WaitUntil(() => Clip() == value2, TimeSpan.FromSeconds(5)), $"Ctrl+C: в буфере «{value2}»");
-    Expect(SecurityJournal.Current!.Recent().Any(r => r.Event == SecurityEvent.Copy), "след копирования в журнале безопасности");
+
     Click(Center(3, textKey));
     Key(Avalonia.Input.Key.V, RawInputModifiers.Control);
     Expect(WaitUntil(() => repo3.GetFieldValues(rid3).GetValueOrDefault(textId) == value2, TimeSpan.FromSeconds(10)), "Ctrl+V: значение записано в базу");
@@ -1552,7 +1551,8 @@ int RunKeys()
     finally { ConstructorSettings.SetPasteGrowsTable(false); }
 
     w.Close();
-    SecurityJournal.Attach(null);
+
+
     Console.WriteLine();
     Console.WriteLine(failed == 0 ? "Все проверки прошли." : $"ПРОВАЛОВ: {failed}");
     return failed == 0 ? 0 : 3;

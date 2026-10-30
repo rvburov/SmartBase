@@ -84,12 +84,6 @@ public partial class SettingsView
         if (stream.ItemsPath.Length > 0) facts.Add("записи в событии: " + stream.ItemsPath);
         if (stream.KeyField.Length  > 0) facts.Add("ключ события: " + stream.KeyField);
 
-        // Вердикт политики — тем же словом, что у соединения: отказ, найденный здесь, дешевле
-        // отказа, найденного ночью в журнале.
-        if (connection is not null && stream.BuildAddress(connection) is { } address
-            && EgressGate.Check(address) is { Allowed: false } denied)
-            facts.Add("политика: " + denied.Explanation);
-
         return CardRow(stream.Name, description, string.Join(" · ", facts),
             edit:   () => _ = EditStreamAsync(stream),
             delete: () => _ = DeleteStreamAsync(stream));
@@ -97,7 +91,7 @@ public partial class SettingsView
 
     /// <summary>
     /// Слушается ли поток прямо сейчас — словами. Ответов четыре, и путать их нельзя: «не
-    /// слушается» лечится включением сценария, «нет связи» — той стороной или политикой.
+    /// слушается» лечится включением сценария, «нет связи» — проверкой соединения со сторонней программой.
     /// </summary>
     private string StateText(IntegrationsRegistry registry, IntegrationStream stream)
     {
@@ -126,7 +120,6 @@ public partial class SettingsView
     private async Task EditStreamAsync(IntegrationStream card)
     {
         if (VisualRoot is not Window win || Integrations is null) return;
-        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
 
         var registry = Integrations;
 
@@ -155,7 +148,6 @@ public partial class SettingsView
     private async Task DeleteStreamAsync(IntegrationStream stream)
     {
         if (VisualRoot is not Window win || Integrations is null) return;
-        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
 
         var registry = Integrations;
         var used     = registry.ScenariosOfStream(stream.Id);

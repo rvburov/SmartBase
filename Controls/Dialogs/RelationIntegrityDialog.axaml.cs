@@ -26,8 +26,6 @@ public partial class RelationIntegrityDialog : Window
     private bool _busy;
     private bool _confirmedRepair;
     private string? _backupPath;
-    private CancellationTokenSource? _operationCancellation;
-    private int _permissionGeneration;
 
     public RelationIntegrityDialog(string databaseName,
         Func<IProgress<RelationIntegrityProgress>, CancellationToken, Task<RelationIntegrityReport>> scan,
@@ -61,41 +59,9 @@ public partial class RelationIntegrityDialog : Window
         base.OnClosing(e);
     }
 
-    /// <summary>Смена прав делает снимок отчета и подтверждение непригодными. Поздний ответ
-    /// фонового чтения не может вернуть в окно подписи из прежнего снимка доступа.</summary>
-    public void InvalidatePermissions()
-    {
-        Dispatcher.UIThread.VerifyAccess();
-        _permissionGeneration++;
-        _operationCancellation?.Cancel();
-        _report = null;
-        _all.Clear();
-        _shown.Clear();
-        CategoryCombo.ItemsSource = null;
-        _backupPath = null;
-        BackupLink.IsVisible = false;
-        BackupLink.Content = null;
-        BackupPathText.IsVisible = false;
-        BackupPathText.Text = null;
-        ResultText.IsVisible = false;
-        ResultText.Text = null;
-        CoverageText.IsVisible = false;
-        SummaryText.Text = "Права доступа изменились. Запустите проверку заново.";
-        NoticeBanner.Kind = NoticeBanner.BannerKind.Info;
-        NoticeBanner.Show("Прежний отчет и выбранные исправления сброшены после изменения прав доступа.");
-        foreach (var progress in OwnedWindows.OfType<ProgressDialog>())
-        {
-            progress.SetSaving("Права доступа изменились. Остановка…");
-            progress.SetInfo("");
-        }
-        foreach (var confirmation in OwnedWindows.OfType<ConfirmDialog>().ToArray()) confirmation.Close(false);
-        RefreshActions();
-    }
-
     private async Task ScanAsync(bool preserveResult = false)
     {
         if (_busy) return;
-        var generation = _permissionGeneration;
         NoticeBanner.Hide();
         _report = null;
         _all.Clear();
@@ -109,12 +75,11 @@ public partial class RelationIntegrityDialog : Window
             {
                 var progress = new Progress<RelationIntegrityProgress>(p =>
                 {
-                    if (generation == _permissionGeneration) dialog.SetInfo(
+                    dialog.SetInfo(
                         $"Проверено связей: {p.ScannedEdges:N0}; свойств: {p.ScannedFields:N0}; замечаний: {p.Issues:N0}.");
                 });
                 return await _scan(progress, ct);
             });
-            if (generation != _permissionGeneration) return;
             _report = report;
             SummaryText.Text = $"Проверено связей: {report.ScannedEdges:N0}; свойств: {report.ScannedFields:N0}.\n" +
                 $"Подтвержденные ошибки: {report.ConfirmedIssues:N0}; " +
@@ -139,12 +104,10 @@ public partial class RelationIntegrityDialog : Window
         }
         catch (OperationCanceledException)
         {
-            if (generation != _permissionGeneration) return;
             SummaryText.Text = "Проверка отменена. Данные не изменены.";
         }
         catch (Exception ex)
         {
-            if (generation != _permissionGeneration) return;
             ShowFailure(ex, "Проверка не завершена. Повторите ее после восстановления доступа к базе.");
             SummaryText.Text = "Проверка не завершена.";
         }
@@ -154,7 +117,6 @@ public partial class RelationIntegrityDialog : Window
     private async Task RepairAsync()
     {
         if (_busy || _report is not { Status: RelationIntegrityStatus.Completed } report) return;
-        var generation = _permissionGeneration;
         var selected = _all.Where(r => r.Selected && r.CanRepair).Select(r => r.Issue.Key).ToArray();
         if (selected.Length == 0) return;
         NoticeBanner.Hide();
@@ -162,7 +124,6 @@ public partial class RelationIntegrityDialog : Window
         {
             var plan = await RunWorkAsync("Предварительный просмотр исправлений",
                 (_, ct) => _preview(report, selected, ct));
-            if (generation != _permissionGeneration) return;
             if (!plan.CanApply)
             {
                 NoticeBanner.Kind = NoticeBanner.BannerKind.Info;
@@ -183,14 +144,12 @@ public partial class RelationIntegrityDialog : Window
                 "Перед изменением будет создана и проверена резервная копия базы. Исправления применятся одним пакетом.",
                 "Исправить");
             if (await confirm.ShowDialog<bool>(this) != true) return;
-            if (generation != _permissionGeneration) return;
             var result = await RunWorkAsync("Резервная копия и исправление связей", async (dialog, ct) =>
             {
                 var progress = new Progress<string>(message =>
-                { if (generation == _permissionGeneration) dialog.SetSaving(message); });
+                { dialog.SetSaving(message); });
                 return await _apply(plan, progress, ct);
             });
-            if (generation != _permissionGeneration) return;
             if (result.Backup is { } backup) ShowBackup(backup.ArtifactPath);
             ResultText.Text = result.Applied
                 ? $"Исправление завершено. Удалено ошибочных связей: {result.RemovedEdges:N0}."
@@ -211,14 +170,12 @@ public partial class RelationIntegrityDialog : Window
         }
         catch (OperationCanceledException)
         {
-            if (generation != _permissionGeneration) return;
             NoticeBanner.Kind = NoticeBanner.BannerKind.Info;
             NoticeBanner.Show("Исправление отменено. Запустите проверку перед следующей попыткой.");
             InvalidateReport();
         }
         catch (Exception ex)
         {
-            if (generation != _permissionGeneration) return;
             ShowFailure(ex, "Исправление не выполнено. Запустите проверку заново.");
             InvalidateReport();
         }
@@ -230,7 +187,6 @@ public partial class RelationIntegrityDialog : Window
         _busy = true;
         RefreshActions();
         using var cancellation = new CancellationTokenSource();
-        _operationCancellation = cancellation;
         var dialog = new ProgressDialog { Title = title };
         dialog.SetSaving(title + "…");
         dialog.EnableCancel(cancellation.Cancel);
@@ -240,7 +196,6 @@ public partial class RelationIntegrityDialog : Window
         {
             dialog.Done();
             await closed;
-            _operationCancellation = null;
             _busy = false;
             RefreshActions();
         }
@@ -356,7 +311,6 @@ public partial class RelationIntegrityDialog : Window
         RelationIntegrityIssueKind.MissingTargetRecord => "Удаленная целевая запись",
         RelationIntegrityIssueKind.MissingTargetCollection => "Удаленная целевая коллекция",
         RelationIntegrityIssueKind.TargetUnavailable => "Целевая база недоступна",
-        RelationIntegrityIssueKind.TargetAccessDenied => "Нет доступа к цели",
         RelationIntegrityIssueKind.MissingConfiguration => "Отсутствует настройка связи",
         RelationIntegrityIssueKind.InvalidConfiguration => "Неверная настройка связи",
         RelationIntegrityIssueKind.MissingDependency => "Отсутствует зависимое свойство",

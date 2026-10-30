@@ -1,20 +1,6 @@
 namespace SmartBase.Tests.Unit;
 
-/// <summary>
-/// Сторож правила «наружу — одна дверь» (docs/ROADMAP-API.md, раздел 10.2, и
-/// docs/developer/features/integrations/overview.md). Смысл правила не в порядке ради порядка:
-/// на вопрос проверяющего «где программа выходит наружу» ответ обязан быть «один файл», а не
-/// «надо посмотреть весь проект». Стоит завестись второму <c>HttpClient</c> где-нибудь в
-/// расширении — и белый список, квоты и журнал мимо него не работают, а узнать об этом
-/// получится только чтением всего кода.
-///
-/// Правило словесное и потому теряется — как и стандарт прокрутки, за которым следит
-/// <see cref="ScrollingConventionTests"/>. Поэтому оно проверяется сборкой.
-///
-/// Тест намеренно грубый: ищет упоминания сетевых типов в тексте файлов, а не разбирает код.
-/// Ложное срабатывание на комментарий здесь — не беда, а признак того, что кто-то собрался
-/// писать сетевой вызов не в том месте.
-/// </summary>
+/// <summary>Сетевые транспорты сосредоточены в Integrations: HTTP-клиент, поток событий и слушатель имеют общие настройки и обработку ошибок.</summary>
 public sealed class OneDoorOutwardTests
 {
     /// <summary>Папки с кодом приложения. Tests/ не сканируется: тут сами названия типов и лежат.</summary>
@@ -114,7 +100,7 @@ public sealed class OneDoorOutwardTests
             .ToList();
 
         Assert.True(offenders.Count == 0,
-            "Обращение наружу мимо шлюза Integrations/EgressGate.cs:\n  " + string.Join("\n  ", offenders));
+            "Обращение наружу вне Integrations:\n  " + string.Join("\n  ", offenders));
     }
 
     /// <summary>
@@ -151,8 +137,7 @@ public sealed class OneDoorOutwardTests
 
     /// <summary>
     /// Условная компиляция сборки без слушателя живет ровно в одном файле — в двери внутрь,
-    /// ровно как <c>CLOSED_LOOP</c> живет в двери наружу. Расползись она по коду, и дистрибутивов
-    /// стало бы четыре разных вместо одного с двумя понятными отличиями.
+    /// чтобы вариант упаковки не менял поведение остальных компонентов приложения.
     /// </summary>
     [Fact]
     public void No_listener_switch_lives_only_in_the_inward_gate()
@@ -235,80 +220,6 @@ public sealed class OneDoorOutwardTests
         foreach (var relative in SocketsAllowedIn)
             Assert.True(File.Exists(Path.Combine(root, relative)),
                 $"В списке исключений указан несуществующий файл: {relative}");
-    }
-
-    /// <summary>
-    /// Условная компиляция закрытой сборки живет ровно в одном файле — в шлюзе. Расползись
-    /// <c>#if CLOSED_LOOP</c> по коду, и дистрибутивов станет два разных: проверять пришлось бы
-    /// оба целиком, а сейчас различие описывается одной фразой — в закрытой сборке шлюз
-    /// отвечает отказом и сетевого клиента за ним нет (docs/ROADMAP-API.md, 10.16.1).
-    /// </summary>
-    [Fact]
-    public void Closed_loop_switch_lives_only_in_the_gate()
-    {
-        var root = RepoRoot();
-        var gate = Path.Combine("Integrations", "EgressGate.cs");
-
-        var offenders = Sources(root)
-            .Where(f => f.Path != gate && f.Text.Contains("CLOSED_LOOP", StringComparison.Ordinal))
-            .Select(f => f.Path)
-            .ToList();
-
-        Assert.True(offenders.Count == 0,
-            "Условная компиляция закрытой сборки вне шлюза:\n  " + string.Join("\n  ", offenders));
-    }
-
-    /// <summary>
-    /// Отправляющий слой закрытой сборки — заглушка, и в ней не должно быть ни сетевого
-    /// клиента, ни сокета. Иначе обещание «в закрытом дистрибутиве сетевого кода нет»
-    /// перестает быть правдой, а заметить это чтением настроек невозможно.
-    /// </summary>
-    [Fact]
-    public void Closed_loop_transport_has_no_network_code()
-    {
-        var path = Path.Combine(RepoRoot(), "Integrations", "EgressHttp.Closed.cs");
-        Assert.True(File.Exists(path), "Заглушка отправляющего слоя пропала: " + path);
-
-        var text = File.ReadAllText(path);
-
-        var found = OutboundTypes.Concat(SocketTypes).Concat(ListenerTypes)
-            .Where(type => text.Contains(type, StringComparison.Ordinal))
-            .ToList();
-
-        Assert.True(found.Count == 0,
-            "В заглушке закрытой сборки завелся сетевой код:\n  " + string.Join("\n  ", found));
-    }
-
-    /// <summary>
-    /// Подмена отправляющего слоя объявлена в проекте. Без этой проверки можно переименовать
-    /// файл или потерять строку в SmartBase.csproj — и закрытая сборка молча соберется с
-    /// обычным сетевым клиентом внутри.
-    /// </summary>
-    [Fact]
-    public void Closed_loop_swap_is_declared_in_the_project()
-    {
-        var project = File.ReadAllText(Path.Combine(RepoRoot(), "SmartBase.csproj"));
-
-        Assert.Contains("'$(ClosedLoop)' == 'true'", project, StringComparison.Ordinal);
-        Assert.Contains("<Compile Remove=\"Integrations\\EgressHttp.Open.cs\" />", project,
-            StringComparison.Ordinal);
-        Assert.Contains("<Compile Remove=\"Integrations\\EgressHttp.Closed.cs\" />", project,
-            StringComparison.Ordinal);
-
-        Assert.True(File.Exists(Path.Combine(RepoRoot(), "Integrations", "EgressHttp.Open.cs")));
-    }
-
-    /// <summary>
-    /// Сам шлюз обязан быть на месте. Без этой проверки удаление файла превратило бы оба
-    /// теста выше в вечнозеленые: запрещать станет нечего и некому.
-    /// </summary>
-    [Fact]
-    public void The_gate_itself_is_in_place()
-    {
-        var root = RepoRoot();
-
-        Assert.True(File.Exists(Path.Combine(root, "Integrations", "EgressGate.cs")));
-        Assert.True(File.Exists(Path.Combine(root, "Integrations", "EgressPolicy.cs")));
     }
 
     // ── Второй рубеж: анализатор запрещенных вызовов ──────────────────────────

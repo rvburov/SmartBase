@@ -42,7 +42,7 @@
                  VerticalContentAlignment="Center"
                  CornerRadius="{StaticResource RadiusMedium}" />
 
-        <!-- Итоговый адрес и вердикт политики: путь относительный, и человеку нужно видеть, что
+        <!-- Итоговый адрес: путь относительный, и человеку нужно видеть, что
              из него и адреса соединения получается и можно ли туда вообще. -->
         <TextBlock x:Name="FullAddressText"
                    Margin="0,0,0,12"

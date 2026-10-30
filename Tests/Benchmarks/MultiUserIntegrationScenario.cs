@@ -48,9 +48,8 @@ internal sealed class MultiUserIntegrationScenario : IMultiUserScenario
             { CollectionId = collection, Name = "Значение", FieldType = "text", Position = 2000 }).Id!.Value;
         // Разрешается только подготовка тела для синтетической базы. Сетевые адреса и
         // производственные учетные данные у сценария отсутствуют.
-        EgressGate.AttachPolicy(EgressPolicySet.Of(new EgressPolicy(
-            EgressMode.Internal, [], [], [fixture.DataDirectory], 1000, 1024 * 1024, 100,
-            null, false, "многопользовательский стенд")));
+
+
         return new MultiUserIntegrationScenario(fixture, collection, key, value);
     }
 

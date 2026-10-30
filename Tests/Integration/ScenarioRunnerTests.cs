@@ -33,9 +33,9 @@ public sealed class ScenarioRunnerTests : IDisposable
 
     public void Dispose()
     {
-        EgressGate.Close();
+
         RunJournal.Attach(null);
-        SecurityJournal.Attach(null);
+
         _registry.Dispose();
         _db.Dispose();
         TempDatabase.Cleanup(_appDb);
@@ -46,20 +46,6 @@ public sealed class ScenarioRunnerTests : IDisposable
     private IntegrationsRegistry Cards => _registry.Integrations;
 
     private const string Master = "секрет-организации";
-
-    private static void AllowLoopback(int maxRows = 1000, bool master = false) =>
-        EgressGate.AttachPolicy(EgressPolicySet.Of(new EgressPolicy(
-            EgressMode.Internal,
-            Hosts:           ["127.0.0.1"],
-            Networks:        ["127.0.0.0/8"],
-            Folders:         [],
-            MaxRowsPerRun:   maxRows,
-            MaxBytesPerDay:  1024 * 1024,
-            MaxRunsPerHour:  100,
-            ValidUntil:      null,
-            UserMayAddHosts: false,
-            Source:          "тест",
-            MasterHash:      master ? MasterPassword.Hash(Master) : "")));
 
     /// <summary>Коллекция «Заказы» со свойством «Номер».</summary>
     private (int CollectionId, int NumberId) Collection()
@@ -117,7 +103,7 @@ public sealed class ScenarioRunnerTests : IDisposable
     [Fact]
     public async Task Request_step_puts_the_answer_into_the_collection()
     {
-        AllowLoopback();
+
         using var server = new TinyServer(_ => TinyServer.Reply(200, Items("Молоток", "Отвертка")));
 
         var (collectionId, numberId) = Collection();
@@ -139,7 +125,7 @@ public sealed class ScenarioRunnerTests : IDisposable
     [Fact]
     public async Task A_second_run_updates_instead_of_duplicating()
     {
-        AllowLoopback();
+
         using var server = new TinyServer(_ => TinyServer.Reply(200, Items("Молоток")));
 
         var (collectionId, numberId) = Collection();
@@ -161,7 +147,7 @@ public sealed class ScenarioRunnerTests : IDisposable
     [Fact]
     public async Task Steps_run_in_order()
     {
-        AllowLoopback();
+
         using var server = new TinyServer(_ => TinyServer.Reply(200, Items("Молоток")));
 
         var (collectionId, numberId) = Collection();
@@ -189,7 +175,7 @@ public sealed class ScenarioRunnerTests : IDisposable
     [Fact]
     public async Task The_first_failed_step_stops_the_chain()
     {
-        AllowLoopback();
+
         using var server = new TinyServer(_ => TinyServer.Reply(500, "beda"));
 
         var (collectionId, numberId) = Collection();
@@ -214,7 +200,7 @@ public sealed class ScenarioRunnerTests : IDisposable
     [Fact]
     public async Task A_request_without_a_binding_is_refused_with_the_reason()
     {
-        AllowLoopback();
+
         using var server = new TinyServer(_ => TinyServer.Reply(200, Items("Молоток")));
 
         Collection();
@@ -240,7 +226,7 @@ public sealed class ScenarioRunnerTests : IDisposable
     [Fact]
     public async Task A_closed_database_stops_the_scenario()
     {
-        AllowLoopback();
+
         using var server = new TinyServer(_ => TinyServer.Reply(200, Items("Молоток")));
 
         var (collectionId, numberId) = Collection();
@@ -271,7 +257,7 @@ public sealed class ScenarioRunnerTests : IDisposable
     [Fact]
     public async Task The_journal_gets_a_line_for_the_step_and_for_the_scenario()
     {
-        AllowLoopback();
+
         using var server = new TinyServer(_ => TinyServer.Reply(200, Items("Молоток")));
 
         var journal = new RunJournal(Path.Combine(_dir, "integrations.db"));
@@ -312,7 +298,7 @@ public sealed class ScenarioRunnerTests : IDisposable
     [Fact]
     public async Task A_failure_before_the_first_request_is_journalled()
     {
-        AllowLoopback();
+
         using var server = new TinyServer(_ => TinyServer.Reply(200, Items("Молоток")));
 
         var journal = new RunJournal(Path.Combine(_dir, "integrations.db"));
@@ -328,41 +314,6 @@ public sealed class ScenarioRunnerTests : IDisposable
         Assert.Equal(RunChannel.Scenario, row.Channel);
         Assert.False(row.Ok);
         Assert.Contains("привязка", row.Explanation, StringComparison.Ordinal);
-    }
-
-    /// <summary>
-    /// Запуск, остановленный политикой ДО сокета, места в часовом потолке не занимает. Иначе
-    /// сценарий по расписанию продлевал бы отказ сам себе: часовое окно не опустело бы никогда.
-    /// </summary>
-    [Fact]
-    public async Task A_run_stopped_before_the_socket_does_not_count()
-    {
-        // Потолок запусков в час — ноль: любой обмен запрещен накопительной квотой.
-        EgressGate.AttachPolicy(EgressPolicySet.Of(new EgressPolicy(
-            EgressMode.Internal, ["127.0.0.1"], ["127.0.0.0/8"], [], 1000, 1024 * 1024, 0,
-            null, false, "тест")));
-
-        using var server = new TinyServer(_ => TinyServer.Reply(200, Items("Молоток")));
-
-        var journal = new RunJournal(Path.Combine(_dir, "integrations.db"));
-        RunJournal.Attach(journal);
-
-        // Считает расход журнал, а решает шлюз — так это и связано в приложении.
-        EgressGate.AttachUsage(journal.AsUsage());
-
-        var (collectionId, numberId) = Collection();
-        var requestId = NewRequest(server);
-        BindTo(requestId, collectionId, numberId);
-
-        var outcome = await Run(Save(ScenarioStep.OfRequest(requestId)));
-
-        Assert.False(outcome.Ok);
-        Assert.Empty(server.Seen);
-
-        var step = Assert.Single(journal.Recent(), r => r.Channel == RunChannel.Request);
-
-        Assert.False(step.Ok);
-        Assert.False(step.Counts);
     }
 
     // ── Замок на исходящем ────────────────────────────────────────────────────
@@ -388,127 +339,4 @@ public sealed class ScenarioRunnerTests : IDisposable
         }).Id;
     }
 
-    private SecurityJournal Security()
-    {
-        var journal = new SecurityJournal(Path.Combine(_dir, "security.db"));
-        SecurityJournal.Attach(journal);
-        return journal;
-    }
-
-    /// <summary>
-    /// Сценарий по расписанию — единственное место, где отправка уходит ночью и без человека, и
-    /// замок на ней держит так же, как на кнопке: неподтвержденный шаг не доходит до сокета.
-    /// </summary>
-    [Fact]
-    public async Task An_unconfirmed_outgoing_step_stops_before_the_socket()
-    {
-        AllowLoopback(master: true);
-        Security();
-
-        using var server = new TinyServer(_ => TinyServer.Reply(200, Items("Молоток")));
-
-        var (collectionId, numberId) = Collection();
-        var requestId = NewPush(server);
-        BindTo(requestId, collectionId, numberId);
-
-        var outcome = await Run(Save(ScenarioStep.OfRequest(requestId)));
-
-        Assert.False(outcome.Ok);
-        Assert.Contains("направление", outcome.Problem, StringComparison.Ordinal);
-        Assert.Empty(server.Seen);
-    }
-
-    /// <summary>
-    /// Заблокированный шаг оставляет в журнале безопасности ИМЯ СЦЕНАРИЯ. Отправку, ушедшую
-    /// сама собой в три часа ночи, проверяющий обязан уметь привязать к тому, кто ее завел, —
-    /// иначе строка журнала говорит «программа попробовала» и больше ничего.
-    /// </summary>
-    [Fact]
-    public async Task The_security_row_names_the_scenario()
-    {
-        AllowLoopback(master: true);
-        var journal = Security();
-
-        using var server = new TinyServer(_ => TinyServer.Reply(200, Items("Молоток")));
-
-        var (collectionId, numberId) = Collection();
-        var requestId = NewPush(server);
-        BindTo(requestId, collectionId, numberId);
-
-        await Run(Save(ScenarioStep.OfRequest(requestId)));
-
-        // Строк у отправки ДВЕ: намерение до сокета и итог после. Имя сценария обязано стоять в
-        // обеих — проверяющий отбирает журнал по нему.
-        var row = Assert.Single(journal.Page(new SecurityFilter(Event: SecurityEvent.Send)));
-
-        Assert.False(row.Allowed);
-        Assert.Equal("Заказы каждые полчаса",     row.Scenario);
-        Assert.Equal(_db.Manager.DbId,            row.DbId);
-
-        var result = Assert.Single(journal.Page(new SecurityFilter(Event: SecurityEvent.Result)));
-
-        Assert.Equal("Заказы каждые полчаса", result.Scenario);
-        Assert.Contains("до сети не дошло",   result.Explanation, StringComparison.Ordinal);
-    }
-
-    /// <summary>
-    /// Подтвержденный шаг проходит целиком — и отмечается использованным: обмен, работающий
-    /// каждый день, не должен отключиться по простою посреди работы.
-    /// </summary>
-    [Fact]
-    public async Task A_confirmed_outgoing_step_goes_through_and_marks_the_direction()
-    {
-        AllowLoopback(master: true);
-        Security();
-
-        using var server = new TinyServer(_ => TinyServer.Reply(200, Items("Молоток")));
-
-        var (collectionId, numberId) = Collection();
-        var requestId = NewPush(server);
-        BindTo(requestId, collectionId, numberId);
-
-        var request = Cards.FindRequest(requestId)!;
-
-        Cards.ConfirmDirection(request, Master, "Петров П. П.", days: 90,
-                               DateTimeOffset.Now, out var trouble);
-        Assert.Equal("", trouble);
-
-        var outcome = await Run(Save(ScenarioStep.OfRequest(requestId)));
-
-        Assert.True(outcome.Ok, outcome.Problem);
-        Assert.Single(server.Seen);
-        Assert.NotNull(Cards.Direction(requestId)!.UsedAt);
-    }
-
-    /// <summary>
-    /// Правка запроса после подтверждения останавливает отправку. Подтвердить безобидный запрос
-    /// и дописать в него выгрузку — самый дешевый обход согласования, и закрыт он должен быть не
-    /// на экране, а здесь, где отправка происходит на самом деле.
-    /// </summary>
-    [Fact]
-    public async Task An_edited_request_stops_even_with_a_confirmation_in_place()
-    {
-        AllowLoopback(master: true);
-        Security();
-
-        using var server = new TinyServer(_ => TinyServer.Reply(200, Items("Молоток")));
-
-        var (collectionId, numberId) = Collection();
-        var requestId = NewPush(server);
-        BindTo(requestId, collectionId, numberId);
-
-        var request = Cards.FindRequest(requestId)!;
-
-        Cards.ConfirmDirection(request, Master, "Петров П. П.", days: 90,
-                               DateTimeOffset.Now, out _);
-
-        // Тело поменялось — отпечаток разошелся с подтвержденным.
-        Cards.SaveRequest(request with { Body = "{\"итог\":1,\"клиенты\":\"все\"}" });
-
-        var outcome = await Run(Save(ScenarioStep.OfRequest(requestId)));
-
-        Assert.False(outcome.Ok);
-        Assert.Contains("правили", outcome.Problem, StringComparison.Ordinal);
-        Assert.Empty(server.Seen);
-    }
 }

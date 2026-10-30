@@ -221,7 +221,7 @@ public partial class TableView
 
             // Правка с клавиатуры — активной ячейки (якоря), как второй клик.
             case Key.Enter or Key.F2 when mods == KeyModifiers.None:
-                BeginEdit(range.AnchorRow, range.AnchorColumn, byMouse: false);
+                BeginEdit(range.AnchorRow, range.AnchorColumn);
                 return true;
 
             // Пробел на выделенной галочке переключает ее (кнопки в ячейке нет — квадрат нарисован).

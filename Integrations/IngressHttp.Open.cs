@@ -155,29 +155,11 @@ public sealed class IngressHttp : IDisposable
         var call = new IngressCall(
             request.HttpMethod ?? "",
             request.Url?.AbsolutePath ?? "/",
-            TokenOf(request),
             body,
             request.RemoteEndPoint?.Address.ToString() ?? "",
             request.Url?.Query ?? "");
 
         await WriteAsync(context, _answer(call));
-    }
-
-    /// <summary>
-    /// Токен из заголовка. Понимаются оба вида: свой заголовок и привычный
-    /// <c>Authorization: Bearer</c>. Второй нужен не ради красоты — половина готовых
-    /// инструментов умеет только его.
-    /// </summary>
-    private static string TokenOf(HttpListenerRequest request)
-    {
-        var own = request.Headers[IngressApi.TokenHeader];
-        if (!string.IsNullOrWhiteSpace(own)) return own.Trim();
-
-        var auth = request.Headers["Authorization"] ?? "";
-
-        return auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
-            ? auth[7..].Trim()
-            : "";
     }
 
     /// <summary>Сколько ждать очередной порции тела — иначе байты по капле держат прием вечно.</summary>

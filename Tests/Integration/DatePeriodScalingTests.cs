@@ -29,25 +29,25 @@ public sealed class DatePeriodScalingTests
         }
         Assert.False(f.Db.Manager.Context.DbFieldValues.AsNoTracking().Any(value => value.FieldId == f.Automatic));
 
-        // Скрытая расчетная колонка не должна запускать даже получение часов.
-        f.Repo.DatePeriodClock = () => throw new InvalidOperationException("Расчет вне окна колонок");
+        // Скрытая расчетная колонка не должна читать исходный диапазон.
+        using var commands = new Commands(f.Db.Path);
         var textOnly = f.Repo.GetFieldValuesBatch(ids, [f.Text]);
         Assert.Equal(ids.Order(), textOnly.Keys.Order());
         Assert.All(textOnly.Values, row => Assert.Equal([f.Text], row.Keys));
+        commands.AssertNoAdditionalValueReads();
     }
 
     [SkippableTheory]
     [InlineData("sqlite")]
     [InlineData("postgres")]
-    public void Fixed_period_read_uses_the_snapshot_without_asking_for_the_current_time(string profile)
+    public void Fixed_period_read_uses_the_snapshot_without_reading_the_source_range(string profile)
     {
         using var f = new Fixture(profile);
         var ids = new[] { f.RecordIds[1000], f.RecordIds[1001] };
         // После фиксации исходные даты могут исчезнуть или измениться. Чтение снимка
-        // не должно превращаться в повторный расчет по этим датам или по часам.
+        // не должно превращаться в повторный расчет по этим датам.
         f.Db.Manager.Context.Database.ExecuteSqlInterpolated($@"UPDATE db_field_values
             SET value = 'не дата' WHERE fieldid = {f.Start} OR fieldid = {f.End}");
-        f.Repo.DatePeriodClock = () => throw new InvalidOperationException("Часы не нужны для снимка");
         using var commands = new Commands(f.Db.Path);
         var values = f.Repo.GetFieldValuesBatch(ids, [f.Fixed]);
         Assert.Equal(ids.Order(), values.Keys.Order());
@@ -59,55 +59,48 @@ public sealed class DatePeriodScalingTests
     [SkippableTheory]
     [InlineData("sqlite")]
     [InlineData("postgres")]
-    public async Task Page_and_horizontal_top_up_use_one_callers_clock_snapshot(string profile)
+    public async Task Page_and_horizontal_top_up_read_only_requested_ranges_and_refresh_after_a_source_change(string profile)
     {
         using var f = new Fixture(profile);
-        var original = new DateTime(2026, 10, 28, 9, 23, 47);
-        var clock = original;
-        var calls = 0;
-        f.Repo.DatePeriodClock = () => { Interlocked.Increment(ref calls); return clock; };
-        var work = f.Repo.LoadPageAsync(f.Collection,
-            repo => new ConstructorRepository.RecordPage(repo.GetRecordsPage(f.Collection, 0, 3)), [f.Current]);
-        clock = original.AddHours(10);
-        var page = await work;
-        Assert.Equal(1, calls);
+        var page = await f.Repo.LoadPageAsync(f.Collection,
+            repo => new ConstructorRepository.RecordPage(repo.GetRecordsPage(f.Collection, 0, 3)), [f.WorkWindow]);
         Assert.Equal(3, page.Page.Records.Count);
         foreach (var record in page.Page.Records)
-            Assert.Equal(f.PositionOf(record.Id!.Value) % 3 == 0 ? "" : "1380",
-                page.Values[record.Id.Value][f.Current]);
-
-        clock = original.AddMinutes(2);
+        {
+            Assert.Equal([f.WorkWindow], page.Values[record.Id!.Value].Keys);
+            Assert.Equal(f.PositionOf(record.Id.Value) % 3 == 0 ? "" : "3600",
+                page.Values[record.Id.Value][f.WorkWindow]);
+        }
         var ids = page.Page.Records.Select(record => record.Id!.Value).ToArray();
-        var topUpWork = f.Repo.LoadValuesAsync(ids, [f.Current]);
-        clock = original.AddDays(5);
-        var topUp = await topUpWork;
-        Assert.Equal(2, calls);
+        f.Repo.SetFieldValue(ids[0], f.Start, "2026-10-28T09:30/2026-10-28T10:00");
+        var topUp = await f.Repo.LoadValuesAsync(ids, [f.WorkWindow]);
+        Assert.Equal(ids.Order(), topUp.Values.Keys.Order());
         foreach (var id in ids)
-            Assert.Equal(f.PositionOf(id) % 3 == 0 ? "" : "1500", topUp.Values[id][f.Current]);
+        {
+            Assert.Equal([f.WorkWindow], topUp.Values[id].Keys);
+            Assert.Equal(id == ids[0] ? "1800" : f.PositionOf(id) % 3 == 0 ? "" : "3600",
+                topUp.Values[id][f.WorkWindow]);
+        }
     }
 
     [SkippableTheory]
     [InlineData("sqlite")]
     [InlineData("postgres")]
-    public void Export_keeps_one_current_time_snapshot_across_page_boundaries(string profile)
+    public void Export_reads_a_periods_unselected_range_dependency_across_page_boundaries(string profile)
     {
         using var f = new Fixture(profile, count: 9);
-        var clock = new DateTime(2026, 10, 28, 9, 23, 47);
-        var calls = 0;
-        f.Repo.DatePeriodClock = () => { calls++; return clock; };
-        var columns = new[] { new ExportColumn(f.Current.ToString(), "Период", f.Current, "date_period") };
-        using var rows = f.Repo.ReadExportRowsIsolated(f.Collection, columns, false, default, pageSize: 3).GetEnumerator();
-        var count = 0;
-        while (rows.MoveNext())
+        var columns = new[]
         {
-            var position = ++count;
-            Assert.Equal([position % 3 == 0 ? "" : "1380"], rows.Current);
-            // Первая страница уже прочитана. Следующие страницы должны пользоваться
-            // тем же моментом, даже если реальная длительность успела измениться.
-            if (count == 1) clock = clock.AddHours(10);
+            new ExportColumn(f.Automatic.ToString(), "Период", f.Automatic, "date_period"),
+            new ExportColumn(f.WorkWindow.ToString(), "Рабочий период", f.WorkWindow, "date_period"),
+        };
+        var rows = f.Repo.ReadExportRowsIsolated(f.Collection, columns, false, default, pageSize: 3).ToArray();
+        Assert.Equal(9, rows.Length);
+        for (var index = 0; index < rows.Length; index++)
+        {
+            var id = f.RecordIds[index];
+            Assert.Equal([f.Expected(id), f.PositionOf(id) % 3 == 0 ? "" : "3600"], rows[index]);
         }
-        Assert.Equal(9, count);
-        Assert.Equal(1, calls);
     }
 
     [SkippableTheory]
@@ -116,8 +109,6 @@ public sealed class DatePeriodScalingTests
     public void Exporting_title_and_text_does_not_read_hidden_period_dependencies(string profile)
     {
         using var f = new Fixture(profile, count: 9);
-        var calls = 0;
-        f.Repo.DatePeriodClock = () => { calls++; return new DateTime(2026, 10, 28, 9, 23, 47); };
         var columns = new[]
         {
             new ExportColumn("__title__", "Название", null, "text"),
@@ -131,7 +122,6 @@ public sealed class DatePeriodScalingTests
             var position = index + 1;
             Assert.Equal(["Запись " + position, position % 2 == 0 ? "even" : "odd"], rows[index]);
         }
-        Assert.Equal(1, calls);
         commands.AssertNoAdditionalValueReads();
     }
 
@@ -245,9 +235,8 @@ public sealed class DatePeriodScalingTests
             commands.AssertBounded();
         }
 
-        // Синхронные операции не имеют общего async-снимка часов. Ни расчет
-        // текущего времени, ни подмена сохраненного результата здесь не нужны.
-        f.Repo.DatePeriodClock = () => throw new InvalidOperationException("Фильтр снимка не использует часы");
+        // Синхронные операции тоже используют сохраненный результат, даже когда
+        // исходный диапазон уже невозможно разобрать.
         using (var commands = new Commands(f.Db.Path))
         {
             AssertCounts(new() { ["1800"] = 1199, ["5400"] = 1, [""] = 1200 },
@@ -293,7 +282,7 @@ public sealed class DatePeriodScalingTests
         private readonly Commands _enableCommandEvents = new(null);
         internal readonly MultiUserTestDatabase Db;
         internal ConstructorRepository Repo => Db.Repo;
-        internal readonly int Collection, Start, End, Text, Automatic, Fixed, Current;
+        internal readonly int Collection, Start, End, Text, Automatic, Fixed, WorkWindow;
         internal readonly int[] RecordIds;
         private readonly Dictionary<int, int> _positions;
         internal string Key => Automatic.ToString();
@@ -316,14 +305,15 @@ public sealed class DatePeriodScalingTests
                 _positions = records.ToDictionary(record => record.Id, record => record.Position);
                 // Свойства добавляются к уже существующим записям: их появление не запускает
                 // расчет всей коллекции. Снимки ниже моделируют ранее сохраненное состояние.
-                Automatic = Period("Автоматический", new(Start, End));
-                Fixed = Period("Зафиксированный", new(Start, End, Automatic: false));
-                Current = Period("До текущего времени", new(Start));
+                Automatic = Period("Автоматический", new(Start));
+                Fixed = Period("Зафиксированный", new(Start, Automatic: false));
+                WorkWindow = Period("Рабочий интервал", new(Start, DayStart: "09:00", DayEnd: "10:00"));
                 context.Database.ExecuteSqlInterpolated($@"INSERT INTO db_field_values (recordid,fieldid,value)
-                    SELECT id,{Start},'2026-10-28T09:00' FROM db_records
+                    SELECT id,{Start},CASE WHEN position % 3 = 1 THEN '2026-10-28T09:00/2026-10-28T11:00'
+                        ELSE '2026-10-28T09:00/2026-10-28T12:00' END FROM db_records
                     WHERE collectionid={Collection} AND position % 3 <> 0");
                 context.Database.ExecuteSqlInterpolated($@"INSERT INTO db_field_values (recordid,fieldid,value)
-                    SELECT id,{End},CASE WHEN position % 3 = 1 THEN '2026-10-28T11:00' ELSE '2026-10-28T12:00' END
+                    SELECT id,{End},'2040-12-31'
                     FROM db_records WHERE collectionid={Collection}");
                 context.Database.ExecuteSqlInterpolated($@"INSERT INTO db_field_values (recordid,fieldid,value)
                     SELECT id,{Text},CASE WHEN position % 2 = 0 THEN 'even' ELSE 'odd' END
@@ -359,7 +349,7 @@ public sealed class DatePeriodScalingTests
 
     /// <summary>Считаем настоящие команды EF, включая изолированные фоновые контексты.
     /// Время не ограничиваем: медленный диск не превращает проверку формы запросов в случайную.</summary>
-    private sealed class Commands : IObserver<DiagnosticListener>, IObserver<KeyValuePair<string, object?>>, IDisposable
+    internal sealed class Commands : IObserver<DiagnosticListener>, IObserver<KeyValuePair<string, object?>>, IDisposable
     {
         private readonly string? _identity;
         private readonly IDisposable _all;

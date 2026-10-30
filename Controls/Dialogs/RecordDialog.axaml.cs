@@ -435,7 +435,7 @@ public partial class RecordDialog : Window
         }
         catch (InvalidOperationException ex)
         {
-            // Права отозвали, пока окно было открыто (PermissionDeniedException и т.п.) —
+            // Запись не сохранилась —
             // причину показываем баннером, ввод пользователя не теряется.
             ShowError(ex.Message);
             return;

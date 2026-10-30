@@ -50,22 +50,14 @@ public sealed class RegisterMessageAction : IExtensionAction
     /// <summary>Первая строка ответа об удаче.</summary>
     public const string RegisteredWord = "Зарегистрировано";
 
-    /// <summary>
-    /// Отказ тому, кого нет в списке. Без подробностей: чужому они ни к чему. Уходит с первым
-    /// предложением жирным (<see cref="ReplyMarkup.Headed"/>).
-    /// </summary>
-    public const string NotListed = "Вы не в списке регистрирующих. Обратитесь к администратору";
-
     public string Key         => ActionKey;
     public string Name        => "Зарегистрировать по сообщению";
     public string Description =>
         "Обрабатывает действия Регистрация, Просмотр, Удаление и Изменение. При регистрации "
       + "выдает номер или исполнение по ГОСТ 2.201-80. Первый документ новой серии, удаление и "
-      + "изменение выполняет после ответа Да, ответ Нет отменяет операцию. Доступ — по настройке "
-      + "«Кто регистрирует по сообщениям».";
+      + "изменение выполняет после ответа Да, ответ Нет отменяет операцию.";
 
     public ExtensionActionKind Kind => ExtensionActionKind.Operation;
-    public bool ChecksPermissions => true;
 
     public IReadOnlyList<ExtensionActionField> Fields =>
     [
@@ -77,8 +69,6 @@ public sealed class RegisterMessageAction : IExtensionAction
 
     public ActionResult Run(ActionContext context, ActionInput input)
     {
-        // Допуск — первым и отдельно: тому, кого нет в списке, разбор его сообщения не нужен.
-        var senders = MessageRegistration.Senders(context.Setting(DocRegistryExtension.SendersKey));
         var sender  = input.Value(SenderField);
 
         if (sender.Length == 0)
@@ -93,17 +83,6 @@ public sealed class RegisterMessageAction : IExtensionAction
             return ActionResult.Failed(
                 "текст сообщения действию не передан: в шаге не заполнено поле «Текст сообщения» — "
                 + "в нем называют колонку события с текстом, в двойных фигурных скобках");
-
-        // Объяснение и ответ здесь разные: отправителю — что его нет в списке, настраивавшему —
-        // что список пуст, иначе он искал бы этого отправителя в списке, которого нет.
-        if (senders.Count == 0)
-            return new ActionResult(false,
-                "список регистрирующих по сообщениям пуст: заполните настройку расширения "
-                + $"«{DocRegistryExtension.SendersLabel}»", Reply: ReplyMarkup.Headed(NotListed));
-
-        if (!senders.Contains(sender))
-            return new ActionResult(false, $"отправителя «{sender}» нет в списке регистрирующих",
-                                    Reply: ReplyMarkup.Headed(NotListed));
 
         var orgs = DocRegistryExtension.ParseOrgCodes(context.Setting(DocRegistryExtension.OrgCodesKey));
 

@@ -256,6 +256,9 @@ public sealed class CsvExportTests
         using var db  = new TempDatabase();
         using var dir = new TempDir();
 
+        // Проверяем заданную хронологию операций, независимо от событий регистрации фикстуры.
+        db.Context.ChangeLog.RemoveRange(db.Context.ChangeLog);
+        db.Context.SaveChanges();
         var col = SampleData.AddCollection(db.Constructor, "Хронология");
         SampleData.AddRecords(db.Constructor, col.Id!.Value, 120);
 

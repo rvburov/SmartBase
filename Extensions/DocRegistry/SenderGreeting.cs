@@ -4,8 +4,7 @@ using SmartBase.Utils;
 namespace SmartBase.Extensions.DocRegistry;
 
 /// <summary>
-/// Приветствие тем, кого добавили в «Кто регистрирует по сообщениям»: строка о доступе и
-/// инструкция одним сообщением.
+/// Отправка инструкции адресатам из списка «Получатели инструкции».
 ///
 /// Уходит только по кнопке <see cref="ButtonText"/> под списком и только новым — тем, кому
 /// инструкция еще не уходила (решения пользователя 21.10.2026). Кнопка оставляет человеку выбор,
@@ -24,14 +23,14 @@ public static class SenderGreeting
     /// <summary>Подпись кнопки под списком.</summary>
     public const string ButtonText = "Отправить инструкцию";
 
-    /// <summary>Первая строка сообщения — слова пользователя.</summary>
-    public const string FirstLine = "Вам открыт доступ к регистрации документов в журнале КД.";
+    /// <summary>Первая строка сообщения с инструкцией.</summary>
+    public const string FirstLine = "Инструкция по регистрации документов в журнале КД.";
 
     /// <summary>Скрытая настройка: идентификаторы тех, кому инструкция уже ушла.</summary>
     public const string InstructedKey = "senders.instructed";
 
     /// <summary>
-    /// Текст сообщения: строка о доступе — жирным, как заголовок, — пустая строка и инструкция.
+    /// Текст сообщения: заголовок, пустая строка и инструкция.
     /// Разметка — как у остальных ответов (<see cref="ReplyMarkup"/>).
     /// </summary>
     public static string Text => ReplyMarkup.Bold(FirstLine) + "\n\n" + MessageInstructions.Text;

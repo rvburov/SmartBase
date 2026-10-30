@@ -35,7 +35,7 @@ public sealed partial class DatabaseManager : IDisposable
     public AppDbContext          Context     { get; }
     public CategoryRepository    Categories  { get; }
     public ConstructorRepository Constructor { get; }
-    public PermissionService     Permissions { get; }
+    public UserDirectory          Users { get; }
 
     /// <summary>Режим журнала SQLite после монтирования («wal» локально, «delete» на сетевом
     /// пути); у PostgreSQL — пусто. Расхождение с ожидаемым пишется в журнал диагностики.</summary>
@@ -124,7 +124,7 @@ public sealed partial class DatabaseManager : IDisposable
             // Общая база (сетевая папка) здесь НЕ сжимается никогда: VACUUM переписывает весь файл
             // через сеть под эксклюзивным замком, и первый смонтировавший заставил бы остальных
             // двадцать человек минуты смотреть на «database is locked». Для нее — ручное
-            // «Сжать файл» администратора (CompactFile) и резервная копия (BackupTo).
+            // «Сжать файл» (CompactFile) и резервная копия (BackupTo).
             // Большой файл сам не сжимается (AutoCompactMaxLiveBytes): сжатие переписывает
             // живые данные целиком, и база все это время недоступна.
             if (!IsShared && CompactRequested(Context))
@@ -145,14 +145,12 @@ public sealed partial class DatabaseManager : IDisposable
             WalCheckpointer.Watch(path);
         }
 
-        // Пользователи/права этой базы: регистрируем текущего пользователя (первый
-        // открывший базу без админов становится администратором) и строим кеш прав.
-        // Репозиторий получает сервис прав — его мутаторы проверяют права первой строкой.
-        Permissions = new PermissionService(Context) { DbId = DbId };
-        Permissions.EnsureCurrentUserRegistered();
+        // Участники базы — справочник имен для авторства и назначений.
+        Users = new UserDirectory(Context);
+        Users.EnsureCurrentUserRegistered();
 
         Categories  = new CategoryRepository(Context);
-        Constructor = new ConstructorRepository(Context) { Permissions = Permissions };
+        Constructor = new ConstructorRepository(Context);
 
         // Постоянный номер базы для межбазовых связей (db_meta, одинаков на всех компьютерах).
         // Без права записи номер не заводится: база работает, но целью новой межбазовой связи
@@ -199,10 +197,9 @@ public sealed partial class DatabaseManager : IDisposable
         // файловых столбцов у коллекции может быть сколько угодно, это штатный режим.
         Constructor.RepairDocFieldRoles();
 
-        // Автоочистка журнала по возрасту (политика в db_meta, задается администратором):
-        // в фоне на свежем подключении — старт не блокируется.
-        _maintenance.Add(
-            Constructor.ApplyChangeLogRetention(Permissions.RetentionEnabled, Permissions.RetentionMonths));
+        // Автоочистка истории по настройкам базы в фоне на свежем подключении.
+        var retention = Constructor.GetChangeLogRetention();
+        _maintenance.Add(Constructor.ApplyChangeLogRetention(retention.Enabled, retention.Months));
 
         // Очередь уведомлений по задачам: события старше квартала доставлять уже некому и
         // незачем. Тоже в фоне и тоже best-effort.

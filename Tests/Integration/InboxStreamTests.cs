@@ -28,7 +28,7 @@ public sealed class InboxStreamTests : IDisposable
 
     public void Dispose()
     {
-        EgressGate.Close();
+
         _db.Dispose();
         try { if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true); }
         catch { /* временная папка */ }
@@ -36,8 +36,6 @@ public sealed class InboxStreamTests : IDisposable
 
     private InboxLayout Layout()
     {
-        EgressGate.AttachPolicy(EgressPolicySet.Of(new EgressPolicy(
-            EgressMode.Internal, [], [], [_root], 1000, 1024 * 1024, 100, null, false, "тест")));
 
         var layout = InboxFolder.Open(_root, out var explanation);
         Assert.NotNull(layout);

@@ -56,7 +56,7 @@ public partial class MainWindow
     {
         if (_relationChangesClosed) return;
         FileAutoMountsChanged();
-        var mounted = _workspace.Mounted.Where(m => m.Permissions.AccessGranted).ToArray();
+        var mounted = _workspace.Mounted.ToArray();
         if (!_relationMounted.SetEquals(mounted))
         {
             // Отключение/смена допуска отменяет работу, захватившую прежние подключения.
@@ -79,7 +79,7 @@ public partial class MainWindow
         try
         {
             // Только адреса и права. Даже граф конфигов строится в фоне на своих подключениях.
-            var mounted = _workspace.Mounted.Where(m => m.Permissions.AccessGranted).ToArray();
+            var mounted = _workspace.Mounted.ToArray();
             var work = ConstructorRepository.CaptureAutoRefreshGraph(mounted.Select(m => m.Constructor).ToArray(),
                 changes, refreshAll: changes.Any(c => c.CollectionId == 0));
             var token = _relationChangesCancellation.Token;

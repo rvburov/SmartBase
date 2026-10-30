@@ -27,7 +27,7 @@
                    TextWrapping="Wrap"
                    FontSize="{DynamicResource FontSizeSmall}"
                    Foreground="{StaticResource BrushSecondaryText}"
-                   Text="Наружу уйдет только отмеченное здесь. Имя справа — то, под которым поле ждет сторонняя программа: у нас «Номер заказа», у них order_no. Помеченные свойства выбрать нельзя." />
+                   Text="Наружу уйдет только отмеченное здесь. Имя справа — то, под которым поле ждет сторонняя программа: у нас «Номер заказа», у них order_no." />
 
         <Grid ColumnDefinitions="*,12,*" Margin="0,0,0,12">
             <StackPanel Grid.Column="0">
@@ -116,25 +116,15 @@
                                     <CheckBox Grid.Column="0"
                                               Content="{Binding Title}"
                                               IsChecked="{Binding Takes, Mode=TwoWay}"
-                                              IsEnabled="{Binding Allowed}"
                                               VerticalAlignment="Center" />
                                     <TextBox Grid.Column="2"
                                              Height="30"
                                              Text="{Binding Alias, Mode=TwoWay}"
-                                             IsEnabled="{Binding Allowed}"
                                              Watermark="имя в JSON"
                                              VerticalContentAlignment="Center"
                                              HorizontalAlignment="Stretch" />
                                 </Grid>
 
-                                <!-- Почему галочки нет — прямо под строкой: узнать, что поле
-                                     наружу не уходит, надо здесь, а не из пустой колонки у той
-                                     стороны через неделю. -->
-                                <TextBlock Text="{Binding Note}"
-                                           IsVisible="{Binding HasNote}"
-                                           TextWrapping="Wrap"
-                                           FontSize="{DynamicResource FontSizeSmall}"
-                                           Foreground="{StaticResource BrushSecondaryText}" />
                             </StackPanel>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>

@@ -258,101 +258,7 @@ public partial class PropertyEditorDialog : Window
         NameBox.KeyDown += (_, e) => { if (e.Key == Avalonia.Input.Key.Enter) TrySave(); };
         NameBox.TextChanged += (_, _) => HideError();
 
-        SetupLabel();
     }
-
-    // ── Конфиденциальность ───────────────────────────────────────────────────
-
-    /// <summary>Метка свойства, стоящая сейчас.</summary>
-    private SmartBase.Core.Models.ConfidentialityLabel _label;
-
-    /// <summary>Идет установка метки — событие списка не должно уйти на второй круг.</summary>
-    private bool _labelBusy;
-
-    /// <summary>Порядок в списке — от свободного к строгому, как читается шкала.</summary>
-    private static readonly SmartBase.Core.Models.ConfidentialityLabel[] Labels =
-    [
-        SmartBase.Core.Models.ConfidentialityLabel.Open,
-        SmartBase.Core.Models.ConfidentialityLabel.Restricted,
-        SmartBase.Core.Models.ConfidentialityLabel.Closed,
-    ];
-
-    /// <summary>
-    /// Метка свойства (docs/ROADMAP-API.md, 10.6) — точный запрет «это поле наружу нельзя»,
-    /// в отличие от грубого рубежа у базы.
-    ///
-    /// Показывается только у СОХРАНЕННОГО свойства: у нового еще нет ключа, которому ставить
-    /// метку, а заводить метку «про запас» в окне создания значило бы объяснять человеку, почему
-    /// она иногда не сохраняется. Поставить ее можно сразу после создания, открыв свойство
-    /// заново.
-    ///
-    /// Метка применяется СРАЗУ, а не по «Сохранить»: понижение спрашивает мастер-пароль и пишет
-    /// в журнал безопасности, и складывать такое действие в общую кнопку значило бы прятать его
-    /// среди правок формата.
-    /// </summary>
-    private void SetupLabel()
-    {
-        if (_editFieldId is not { } fieldId || _systemMode) return;
-
-        _label = _repository.GetFieldLabel(fieldId);
-
-        LabelSection.IsVisible   = true;
-        LabelCombo.ItemsSource   = Labels.Select(SmartBase.Core.Models.Confidentiality.Title).ToList();
-        LabelCombo.SelectedIndex = Array.IndexOf(Labels, _label);
-        ShowLabelHint();
-
-        LabelCombo.SelectionChanged += async (_, _) => await ApplyLabelAsync(fieldId);
-    }
-
-    private async Task ApplyLabelAsync(int fieldId)
-    {
-        if (_labelBusy || LabelCombo.SelectedIndex < 0) return;
-
-        var chosen = Labels[LabelCombo.SelectedIndex];
-        if (chosen == _label) return;
-
-        bool done;
-
-        if (chosen > _label)
-        {
-            // Повышение идет без вопросов: строже — значит безопаснее.
-            var trouble = _repository.SetFieldLabel(fieldId, chosen);
-            done = trouble.Length == 0;
-            if (!done) ShowError(char.ToUpperInvariant(trouble[0]) + trouble[1..]);
-        }
-        else
-        {
-            var ask = PasswordDialog.ForMaster(
-                $"свойства «{NameBox.Text?.Trim()}»",
-                SmartBase.Core.Models.Confidentiality.Title(_label),
-                SmartBase.Core.Models.Confidentiality.Title(chosen),
-                password => _repository.SetFieldLabel(fieldId, chosen, password));
-
-            done = await ask.ShowDialog<bool>(this);
-        }
-
-        if (done)
-        {
-            _label = chosen;
-            ShowLabelHint();
-            HideError();
-            return;
-        }
-
-        // Отказались или не вышло — список возвращается на прежнюю метку: показывать
-        // выбранное там, где оно не применилось, значит отпустить человека уверенным, что
-        // поле помечено.
-        _labelBusy = true;
-        LabelCombo.SelectedIndex = Array.IndexOf(Labels, _label);
-        _labelBusy = false;
-    }
-
-    private void ShowLabelHint() => LabelHint.Text =
-        _label == SmartBase.Core.Models.ConfidentialityLabel.Open
-            ? "Открыто: свойство можно подставить в исходящий шаг обмена."
-            : "Помеченное свойство в исходящий шаг подставить нельзя — его не будет в списке при "
-            + "настройке привязки. Понизить метку можно только по мастер-паролю политики "
-            + "организации, и понижение попадет в журнал безопасности.";
 
     // Переключатель «Отображать в календаре» виден только для типа «Дата»,
     // «Добавить в раздел задач» — только для типа «Пользователь», редактор пунктов —
@@ -758,7 +664,7 @@ public partial class PropertyEditorDialog : Window
         if (repo is not null)
             foreach (var c in repo.GetAllCollections())
                 // Пункт списка — одна строка (TitleText); выбор идет по Id.
-                if (c.Id.HasValue && (repo.Permissions?.Can(PermAction.ViewCollection, c.Id.Value) ?? true))
+                if (c.Id.HasValue)
                     items.Add(new TargetCollectionItem { Id = c.Id.Value, Name = TitleText.FirstLine(c.Name) });
         RelationTargetCombo.ItemsSource   = items;
         // Цель нужно выбрать явно (список сменился). Исключение — старая связь без базы: ее
@@ -812,7 +718,7 @@ public partial class PropertyEditorDialog : Window
         {
             if (RelationDbResolver.MountedEntryFor(_repository) is not { } db) return;
             var name = TitleText.FirstLine(_editField?.Name ?? NameBox.Text ?? "");
-            await RelationIntegrityDialog.ShowForAsync(this, db.Manager, db.Entry, db.Permissions,
+            await RelationIntegrityDialog.ShowForAsync(this, db.Manager, db.Entry,
                 $"Связь «{name}» · {db.Entry.Name}", fieldId);
         };
     }
@@ -1129,7 +1035,6 @@ public partial class PropertyEditorDialog : Window
         CancelBtn.IsEnabled = false;
         try { await SavePropertyAsync(); }
         catch (OperationCanceledException) { ShowError("Сохранение отменено"); }
-        catch (PermissionDeniedException ex) { ShowError(ex.Message); }
         finally
         {
             _savingProperty = false;
@@ -1289,7 +1194,7 @@ public partial class PropertyEditorDialog : Window
         if (_selectedType == "relation")
         {
             try { SavedDataFieldIds = _repository.SaveRelationDataColumns(savedFieldId, CollectRelationData()); }
-            catch (Exception ex) when (ex is InvalidOperationException or PermissionDeniedException)
+            catch (InvalidOperationException ex)
             {
                 _editFieldId ??= savedFieldId;
                 ShowError(ex.Message);

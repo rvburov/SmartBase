@@ -154,8 +154,7 @@ public partial class ConstructorRepository
             if (DatePeriodConfig.FromConfig(field.ConfigJson) is not { } config) continue;
             field.ConfigJson = (config with
             {
-                StartFieldId = fieldMap.GetValueOrDefault(config.StartFieldId, crossDatabase ? 0 : config.StartFieldId),
-                EndFieldId = config.EndFieldId is int end ? fieldMap.GetValueOrDefault(end, crossDatabase ? 0 : end) : null,
+                DateFieldId = fieldMap.GetValueOrDefault(config.DateFieldId, crossDatabase ? 0 : config.DateFieldId),
             }).ToConfigJson(field.ConfigJson);
         }
         db.SaveChanges();

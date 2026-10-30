@@ -25,12 +25,12 @@ public partial class MainWindow
         QueueRelationIntegrityChecks();
     }
 
-    // Старт, возвращение базы и смена прав требуют нового снимка. Закрытые базы не открываем:
+    // Старт и возвращение базы требуют нового снимка. Закрытые базы не открываем:
     // отсутствие подключения не доказывает потерю цели. Стартовая проверка ничего не исправляет.
     private void QueueRelationIntegrityChecks(bool force = false)
     {
         if (_integrityClosed) return;
-        var mounted = _workspace.Mounted.Where(db => db.Permissions.AccessGranted).ToHashSet();
+        var mounted = _workspace.Mounted.ToHashSet();
         if (!force && _integrityMounted.SetEquals(mounted)) return;
         _integrityMounted = mounted;
         foreach (var dbId in _integrityNotices.Keys.Where(id => mounted.All(db => db.DbId != id)).ToArray())
@@ -52,7 +52,7 @@ public partial class MainWindow
         _integrityPending = false;
         _integrityRunning = true;
         var token = _integrityCancellation.Token;
-        // Захватываем только сервисы и кеш прав. Чтения таблиц делает Scan на своем фоне.
+        // Захватываем список подключенных баз. Чтения таблиц делает Scan на своем фоне.
         var mounted = _integrityMounted.ToArray();
         try
         {
@@ -67,7 +67,7 @@ public partial class MainWindow
                     _integrityNotices.Remove(manager.DbId);
                     continue;
                 }
-                // Переименование другого пользователя тоже обновляет права. Сами замечания
+                // Переименование другого пользователя обновляет справочник. Сами замечания
                 // от этого не меняются: повторяем карточку только при смене их состава.
                 var stamp = report.SourceDatabaseIdentity + ":" +
                     string.Join(";", report.Counts.OrderBy(p => p.Key).Select(p => $"{p.Key}:{p.Value}")) + ":" +

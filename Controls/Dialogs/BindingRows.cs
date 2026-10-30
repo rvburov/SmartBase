@@ -70,17 +70,13 @@ public sealed class BindingMapRow(string column, IReadOnlyList<string> options, 
 /// </summary>
 /// <param name="fieldId">Ключ свойства; 0 — название записи.</param>
 /// <param name="title">Имя свойства, как его видит человек.</param>
-/// <param name="allowed">Можно ли его вообще отправлять: помеченное свойство выбрать нельзя.</param>
-public sealed class OutgoingFieldRow(int fieldId, string title, bool allowed) : INotifyPropertyChanged
+public sealed class OutgoingFieldRow(int fieldId, string title) : INotifyPropertyChanged
 {
     private bool   _takes;
     private string _alias = "";
 
     public int    FieldId { get; } = fieldId;
     public string Title   { get; } = title;
-
-    /// <summary>Доступна ли галочка. Метка конфиденциальности снимает ее совсем.</summary>
-    public bool Allowed => allowed;
 
     /// <summary>Уходит ли свойство наружу.</summary>
     public bool Takes
@@ -110,12 +106,6 @@ public sealed class OutgoingFieldRow(int fieldId, string title, bool allowed) : 
             Picked?.Invoke();
         }
     }
-
-    /// <summary>Почему галочки нет — подпись рядом со строкой; пусто, если все в порядке.</summary>
-    public string Note { get; init; } = "";
-
-    /// <summary>Есть ли что показать в подписи — для видимости в разметке.</summary>
-    public bool HasNote => Note.Length > 0;
 
     /// <summary>Кого позвать, когда человек поменял строку. Ставит окно.</summary>
     public Action? Picked { get; init; }

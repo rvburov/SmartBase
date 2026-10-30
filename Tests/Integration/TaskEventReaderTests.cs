@@ -192,35 +192,4 @@ public sealed class TaskEventReaderTests
         Assert.Equal(col,    e.CollectionId);
     }
 
-    [Fact]
-    public void Events_of_a_forbidden_collection_are_not_shown()
-    {
-        AppSettings.AttachStore(new FakeSettingsDatabase());
-        using var db = new TempDatabase();
-        var repo = db.Constructor;
-
-        var col = SampleData.AddCollection(repo, "Закрытая").Id!.Value;
-        var (execId, _, _) = EnableTasks(repo, col);
-        var rec = SampleData.AddRecord(repo, col, "Задача").Id!.Value;
-
-        var reader = ReaderFor(db);
-        reader.Read();
-        reader.Commit();
-
-        // Событие себе не пишется, поэтому кладем его руками — как это сделал бы сосед.
-        Enqueue(db, CurrentUser.Key, CurrentUser.DisplayName, recordId: rec);
-        db.Context.TaskEvents.Where(e => e.RecordId == rec)
-                             .ExecuteUpdate(s => s.SetProperty(e => e.CollectionId, col));
-
-        // Доступ к коллекции закрыли: чтение очереди прав не проверяет — это делает читатель.
-        var me = db.Context.DbUsers.First(u => u.UserKey == CurrentUser.Key);
-        db.Permissions.SetMask(me.Id, col, 0);
-        me.IsAdmin    = false;
-        me.IsApproved = true;
-        db.Context.SaveChanges();
-        db.Permissions.Reload(notify: false);
-
-        Assert.Empty(reader.Read());
-        _ = execId;
-    }
 }

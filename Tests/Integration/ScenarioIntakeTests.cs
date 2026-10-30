@@ -41,7 +41,7 @@ public sealed class ScenarioIntakeTests : IDisposable
 
     public void Dispose()
     {
-        EgressGate.Close();
+
         RunJournal.Attach(null);
         _registry.Dispose();
         _db.Dispose();
@@ -54,22 +54,6 @@ public sealed class ScenarioIntakeTests : IDisposable
     private static readonly DateTimeOffset Now = new(2026, 9, 10, 12, 0, 0, TimeSpan.Zero);
 
     private IntegrationsRegistry Cards => _registry.Integrations;
-
-    // ── Обвязка ───────────────────────────────────────────────────────────────
-
-    /// <summary>Политика, разрешающая ровно этот корень обмена: шаг спрашивает ее сам.</summary>
-    private void AllowRoot(string? root = null) =>
-        EgressGate.AttachPolicy(EgressPolicySet.Of(new EgressPolicy(
-            EgressMode.Internal,
-            Hosts:           [],
-            Networks:        [],
-            Folders:         [root ?? _root],
-            MaxRowsPerRun:   1000,
-            MaxBytesPerDay:  1024 * 1024,
-            MaxRunsPerHour:  100,
-            ValidUntil:      null,
-            UserMayAddHosts: false,
-            Source:          "тест")));
 
     private InboxLayout Layout()
     {
@@ -159,7 +143,7 @@ public sealed class ScenarioIntakeTests : IDisposable
     [Fact]
     public async Task An_empty_folder_leaves_no_trace()
     {
-        AllowRoot();
+
         Layout();                      // папки созданы, но пусты
         var journal = Journal();
 
@@ -178,7 +162,7 @@ public sealed class ScenarioIntakeTests : IDisposable
     [Fact]
     public async Task A_file_just_written_is_left_alone()
     {
-        AllowRoot();
+
         var layout = Layout();
         var path   = Path.Combine(layout.Incoming, "kd-001.txt");
 
@@ -200,7 +184,7 @@ public sealed class ScenarioIntakeTests : IDisposable
     [Fact]
     public async Task The_file_reaches_the_next_step_and_gets_an_answer()
     {
-        AllowRoot();
+
         Put("kd-001.txt", Message);
 
         var echo = new Echo();
@@ -231,7 +215,7 @@ public sealed class ScenarioIntakeTests : IDisposable
     [Fact]
     public async Task A_failed_scenario_answers_with_the_reason()
     {
-        AllowRoot();
+
         Put("kd-002.txt", Message);
 
         var echo = new Echo { Answer = ActionResult.Failed("это не то сообщение") };
@@ -260,7 +244,7 @@ public sealed class ScenarioIntakeTests : IDisposable
     [Fact]
     public async Task One_run_takes_one_file()
     {
-        AllowRoot();
+
         Put("kd-003.txt", Message);
         Put("kd-004.txt", Message);
 
@@ -284,7 +268,7 @@ public sealed class ScenarioIntakeTests : IDisposable
     [Fact]
     public async Task A_repeat_is_answered_by_the_old_receipt()
     {
-        AllowRoot();
+
         var layout = Layout();
         var scenario = Of(ScenarioStep.OfIntake(_root), ScenarioStep.OfAction("stand", "echo", 0, 0));
 
@@ -310,16 +294,13 @@ public sealed class ScenarioIntakeTests : IDisposable
     // ── Что не пропускается ───────────────────────────────────────────────────
 
     /// <summary>
-    /// Папка обмена — такая же дверь, как сетевой адрес, и открыть ее себе самому пользователь
-    /// не может: разрешает политика организации.
+    /// Настроенная папка обмена доступна сценарию без внешнего файла политики.
     /// </summary>
     [Fact]
-    public void A_folder_outside_the_policy_is_named_by_the_blocker()
+    public void A_configured_folder_needs_no_external_policy()
     {
-        AllowRoot(Path.Combine(_dir, "чужая"));
 
-        Assert.Contains("папка обмена", Blocker(Of(ScenarioStep.OfIntake(_root)), new Stand(new Echo())),
-                        StringComparison.Ordinal);
+        Assert.Empty(Blocker(Of(ScenarioStep.OfIntake(_root)), new Stand(new Echo())));
     }
 
     /// <summary>
@@ -329,7 +310,7 @@ public sealed class ScenarioIntakeTests : IDisposable
     [Fact]
     public async Task Two_intake_steps_are_refused()
     {
-        AllowRoot();
+
         Put("kd-006.txt", Message);
 
         var outcome = await Run(

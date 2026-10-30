@@ -201,50 +201,25 @@ public sealed class AuditColumnQueryTests
     [SkippableTheory]
     [InlineData("sqlite")]
     [InlineData("postgres")]
-    public async Task Granted_api_reads_exact_audit_snapshots_and_denied_audit_queries_stay_denied(string provider)
+    public void Api_reads_exact_audit_snapshots(string provider)
     {
         using var data = new AuditData(provider);
         var repo = data.Database.Repo;
-        var previous = EgressGate.Policy;
-        try
-        {
-            EgressGate.AttachPolicy(new EgressPolicySet([new EgressPolicy(EgressMode.Internal,
-                [], [], [], 1000, 1024 * 1024, 60, null, false, "проверка чтения аудита")]));
-            var keys = new[] { data.Fields["updated_at"].ToString(), ReadGrant.TitleKey, data.Fields["created_by"].ToString() };
-            var first = repo.ApiReadIsolated(data.Collection, keys, "", 0, 2);
-            Assert.Null(first.Trouble);
-            Assert.True(first.More);
-            Assert.Equal(data.Ids.Take(2), first.Rows.Select(r => r.Id));
-            for (var i = 0; i < 2; i++) Assert.Equal(
-                new[] { data.Raw[data.Ids[i]]["updated_at"], $"R{i + 1}", data.Raw[data.Ids[i]]["created_by"] }, first.Rows[i].Values);
-            var next = repo.ApiReadIsolated(data.Collection, keys, "", first.Rows[^1].Id, 2);
-            Assert.False(next.More);
-            Assert.Equal(data.Ids.Skip(2), next.Rows.Select(r => r.Id));
-        }
-        finally { EgressGate.AttachPolicy(previous); }
 
-        // Закрываем доступ настоящим кешем PermissionService, который передается фоновым клонам.
-        using (var writer = data.Database.OpenContext())
-        {
-            var me = writer.DbUsers.Single(u => u.UserKey == CurrentUser.Key);
-            me.IsAdmin = false;
-            me.IsApproved = true;
-            writer.DbPermissions.RemoveRange(writer.DbPermissions.Where(p => p.UserId == me.Id));
-            writer.DbPermissions.Add(new DbPermissionEntity { UserId = me.Id, CollectionId = data.Collection, ActionsMask = 0 });
-            writer.SaveChanges();
-        }
-        data.Database.Manager.Permissions.Reload(notify: false);
-        var field = data.Fields["created_by"];
-        var key = field.ToString();
-        Assert.Throws<PermissionDeniedException>(() => repo.GetColumnValues(data.Collection, key));
-        Assert.Throws<PermissionDeniedException>(() => repo.GetFieldValueCounts(data.Collection, field));
-        Assert.Throws<PermissionDeniedException>(() => repo.GetFilteredRecordIds(data.Collection,
-            new Dictionary<string, HashSet<string>> { [key] = ["Иванов Иван"] }));
-        await Assert.ThrowsAsync<PermissionDeniedException>(() => repo.GetColumnCountsAsync(data.Collection, key));
-        await Assert.ThrowsAsync<PermissionDeniedException>(() => repo.GetColumnValueListAsync(data.Collection, key));
-        await Assert.ThrowsAsync<PermissionDeniedException>(() => repo.GetColumnValueTotalsAsync(data.Collection, key));
-        await Assert.ThrowsAsync<PermissionDeniedException>(() => repo.GetFilteredRecordIdsAsync(data.Collection,
-            new Dictionary<string, HashSet<string>>(), false, key, true, "created_by", default));
+
+        var keys = new[] { data.Fields["updated_at"].ToString(), ConstructorRepository.ApiTitleKey, data.Fields["created_by"].ToString() };
+        var first = repo.ApiReadIsolated(data.Collection, keys, "", 0, 2);
+        Assert.Null(first.Trouble);
+        Assert.True(first.More);
+        Assert.Equal(data.Ids.Take(2), first.Rows.Select(r => r.Id));
+        for (var i = 0; i < 2; i++) Assert.Equal(
+            new[] { data.Raw[data.Ids[i]]["updated_at"], $"R{i + 1}", data.Raw[data.Ids[i]]["created_by"] }, first.Rows[i].Values);
+        var next = repo.ApiReadIsolated(data.Collection, keys, "", first.Rows[^1].Id, 2);
+        Assert.False(next.More);
+        Assert.Equal(data.Ids.Skip(2), next.Rows.Select(r => r.Id));
+
+
+
     }
 
     [SkippableTheory]
@@ -256,11 +231,10 @@ public sealed class AuditColumnQueryTests
         var repo = data.Database.Repo;
         var root = Directory.CreateTempSubdirectory("sb_audit_outgoing_").FullName;
         var appDb = Path.Combine(root, "app.db");
-        var previous = EgressGate.Policy;
         try
         {
-            EgressGate.AttachPolicy(new EgressPolicySet([new EgressPolicy(EgressMode.Internal,
-                [], [], [], 1000, 1024 * 1024, 60, null, false, "проверка исходящего аудита")]));
+
+
             using var registry = DatabaseRegistry.Open(Path.Combine(root, "default.db"), appDb);
             var cards = registry.Integrations;
             var connection = cards.Save(IntegrationConnection.New() with
@@ -276,7 +250,7 @@ public sealed class AuditColumnQueryTests
                     Method = RequestMethod.Post, Path = "/audit",
                 });
                 cards.SaveOutgoing(request.Id, binding);
-                Assert.Equal(binding.Mark(), cards.Outgoing(request.Id)!.Mark());
+                Assert.Equal(JsonSerializer.Serialize(binding), JsonSerializer.Serialize(cards.Outgoing(request.Id)!));
                 cases.Add((request, binding, expected));
             }
 
@@ -316,7 +290,7 @@ public sealed class AuditColumnQueryTests
             {
                 // Сохраненная привязка не меняется от смены типа; реальный OutgoingSource
                 // перечитывает ее из app.db и проходит прежние проверки привязки и вывода данных.
-                Assert.Equal(scenario.Binding.Mark(), cards.Outgoing(scenario.Request.Id)!.Mark());
+                Assert.Equal(JsonSerializer.Serialize(scenario.Binding), JsonSerializer.Serialize(cards.Outgoing(scenario.Request.Id)!));
                 var full = OutgoingSource.Build(cards, scenario.Request, [data.Database.Manager]);
                 var selected = OutgoingSource.Build(cards, scenario.Request, [data.Database.Manager], selectedIds);
                 Assert.Null(full.Trouble);
@@ -348,7 +322,8 @@ public sealed class AuditColumnQueryTests
         }
         finally
         {
-            EgressGate.AttachPolicy(previous);
+
+
             TempDatabase.Cleanup(appDb);
             Directory.Delete(root, recursive: true);
         }

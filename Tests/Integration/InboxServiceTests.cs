@@ -22,16 +22,10 @@ public sealed class InboxServiceTests : IDisposable
 
     public void Dispose()
     {
-        EgressGate.Close();
+
         _db.Dispose();
         try { if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true); }
         catch { /* временная папка */ }
-    }
-
-    private void AllowRoot()
-    {
-        EgressGate.AttachPolicy(EgressPolicySet.Of(new EgressPolicy(
-            EgressMode.Internal, [], [], [_root], 1000, 1024 * 1024, 100, null, false, "тест")));
     }
 
     /// <summary>Служба, видящая ровно одну открытую базу — временную.</summary>
@@ -53,7 +47,7 @@ public sealed class InboxServiceTests : IDisposable
     [Fact]
     public async Task Without_a_folder_the_reason_is_named()
     {
-        AllowRoot();
+
         AppSettings.SaveInboxFolder("");
         AppSettings.SaveInboxDb(1);
 
@@ -66,7 +60,7 @@ public sealed class InboxServiceTests : IDisposable
     [Fact]
     public async Task Without_a_database_the_reason_is_named()
     {
-        AllowRoot();
+
         AppSettings.SaveInboxFolder(_root);
         AppSettings.SaveInboxDb(0);
 
@@ -84,7 +78,7 @@ public sealed class InboxServiceTests : IDisposable
     [Fact]
     public async Task Unavailable_database_stops_the_sweep()
     {
-        AllowRoot();
+
         Configure();
 
         var layout = InboxFolder.Open(_root, out _)!;
@@ -102,36 +96,13 @@ public sealed class InboxServiceTests : IDisposable
         Assert.Empty(Directory.EnumerateFiles(layout.Failed));
     }
 
-    // ── Папка вне политики ────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Папка-приемник — такая же дверь, как сетевой адрес. Служба спрашивает разрешение при
-    /// каждом обходе: сохраненный путь — всего лишь память о выборе, а корни задает организация.
-    /// </summary>
-    [Fact]
-    public async Task Folder_outside_the_policy_stops_the_sweep()
-    {
-        AllowRoot();
-        Configure();
-        InboxFolder.Open(_root, out _);   // папки уже разложены
-
-        EgressGate.AttachPolicy(EgressPolicySet.Of(new EgressPolicy(
-            EgressMode.Internal, [], [], [Path.Combine(Path.GetTempPath(), "sbinbox_чужой")],
-            1000, 1024 * 1024, 100, null, false, "тест")));
-
-        var run = await Service().RunNowAsync();
-
-        Assert.NotEqual("", run.Problem);
-        Assert.Contains("обход не состоялся", run.Summary(), StringComparison.Ordinal);
-    }
-
     // ── Обычный обход ─────────────────────────────────────────────────────────
 
     /// <summary>Кнопка «Проверить папку» ведет ту же службу, что ходит по расписанию.</summary>
     [Fact]
     public async Task Manual_sweep_processes_the_folder()
     {
-        AllowRoot();
+
         Configure();
 
         var collection = SampleData.AddCollection(_db.Constructor, "Заказы");
@@ -156,7 +127,7 @@ public sealed class InboxServiceTests : IDisposable
     [Fact]
     public async Task Empty_folder_is_not_a_problem()
     {
-        AllowRoot();
+
         Configure();
         InboxFolder.Open(_root, out _);
 

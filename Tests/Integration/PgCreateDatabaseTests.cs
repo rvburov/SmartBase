@@ -74,7 +74,7 @@ public sealed class PgCreateDatabaseTests
             var info = new PgConnectionInfo(PgTestServer.Host, PgTestServer.Port, db, role, "секрет-1", "Prefer");
             using var m = DatabaseManager.Open(9201, "pg-created", info.ToConnectionString(), provider: "postgres");
             Assert.True(m.Context.IsPostgres);
-            Assert.True(m.Permissions.IsAdmin);
+
             var col = SampleData.AddCollection(m.Constructor, "Первая");
             Assert.NotNull(col.Id);
         }

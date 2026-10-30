@@ -23,7 +23,7 @@ internal static class MultiUserBench
         {
             Console.Error.WriteLine(ex.Message);
             Console.Error.WriteLine("multiuser --provider sqlite|postgres [--profile wal|shared] " +
-                "[--scenario lifecycle|hotcell|rollback|planning|library|integrations|access|structure] [--clients 1000] [--rounds 1] " +
+                "[--scenario lifecycle|hotcell|rollback|planning|library|integrations|people|structure] [--clients 1000] [--rounds 1] " +
                 "[--timeout-seconds 180] [--p95-ms N] [--out НОВАЯ_ПАПКА]");
             return 2;
         }
@@ -47,7 +47,7 @@ internal static class MultiUserBench
                 "planning" => MultiUserPlanningScenario.Create(fixture),
                 "library" => MultiUserLibraryScenario.Create(fixture),
                 "integrations" => MultiUserIntegrationScenario.Create(fixture),
-                "access" => MultiUserAccessScenario.Create(fixture),
+                "people" => MultiUserPeopleScenario.Create(fixture),
                 "structure" => MultiUserStructureScenario.Create(fixture),
                 _ => (IMultiUserScenario?)null,
             };
@@ -81,9 +81,7 @@ internal static class MultiUserBench
                     context.Database.OpenConnection();
                     client.OpenMilliseconds = open.Elapsed.TotalMilliseconds;
                     client.Connected = true;
-                    var permissions = new PermissionService(context);
-                    permissions.Reload();
-                    var repo = new ConstructorRepository(context) { Permissions = permissions };
+                    var repo = new ConstructorRepository(context);
                     // Компиляция запроса и первая загрузка модели входят в подготовку, а не
                     // теряются у первых клиентов за счет более позднего начала секундомера.
                     repo.GetFields(fixture.SourceCollection);
@@ -214,9 +212,7 @@ internal static class MultiUserBench
                 Provider = options.Provider,
                 Profile = options.Profile,
                 Scenario = options.Scenario,
-                AccessModel = options.Scenario == "access"
-                    ? "Четные участники могут писать, нечетные только читают; ожидаемые запреты проверяются отдельно"
-                    : "Разные синтетические пользователи с одинаковым полным допуском",
+                PeopleModel = "Разные синтетические участники; старые маски и допуски не ограничивают работу с данными",
                 RepositoryWriteAdmission = new
                 {
                     Scope = "Один процесс и одна база; WriteScope приложения, не ограничитель стенда",
@@ -251,7 +247,7 @@ internal static class MultiUserBench
                 {
                     "Независимые сессии в одном процессе на одной машине; это не 1000 окон/компьютеров.",
                     "1000 готовых сессий входят в обычные очереди приложения: SQLite EF-транзакции пишут по одной, PostgreSQL WriteScope — до 16. Очереди не координируют разные процессы.",
-                    "Идентичность задана тестовым scope; вход из разных ОС не моделируется. Маски доступа проверяются отдельным сценарием access.",
+                    "Идентичность автора задана тестовым scope; разные компьютеры не моделируются.",
                     "Профиль shared на локальном диске не моделирует SMB/NFS, задержку или отказ сети.",
                     "Замеры относятся к этой фикстуре и машине; без --p95-ms задержки не имеют продуктового порога.",
                 },
@@ -319,8 +315,8 @@ internal sealed record MultiUserOptions(string Provider, string Profile, string 
         if (provider is not ("sqlite" or "postgres")) throw new ArgumentException("--provider: sqlite или postgres");
         if (provider == "sqlite" ? profile is not ("wal" or "shared") : profile != "server")
             throw new ArgumentException("--profile: wal/shared только для SQLite; у PostgreSQL профиль server");
-        if (scenario is not ("lifecycle" or "hotcell" or "rollback" or "planning" or "library" or "integrations" or "access" or "structure"))
-            throw new ArgumentException("--scenario: lifecycle, hotcell, rollback, planning, library, integrations, access или structure");
+        if (scenario is not ("lifecycle" or "hotcell" or "rollback" or "planning" or "library" or "integrations" or "people" or "structure"))
+            throw new ArgumentException("--scenario: lifecycle, hotcell, rollback, planning, library, integrations, people или structure");
         double? p95 = null;
         if (values.TryGetValue("--p95-ms", out var threshold))
         {

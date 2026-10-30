@@ -139,19 +139,6 @@ public sealed class DatabaseRegistry : IDisposable, ISettingsDatabase
             "\"LastRunAt\" TEXT NULL);");
 
         db.Database.ExecuteSqlRaw(
-            "CREATE TABLE IF NOT EXISTS \"integration_directions\" (" +
-            "\"RequestId\" INTEGER NOT NULL CONSTRAINT \"PK_integration_directions\" PRIMARY KEY, " +
-            "\"Fingerprint\" TEXT NOT NULL, " +
-            "\"Confirmed\" TEXT NOT NULL, " +
-            "\"At\" TEXT NOT NULL, " +
-            "\"Until\" TEXT NOT NULL, " +
-            "\"UsedAt\" TEXT NULL);");
-
-        // Второе подтверждение (принцип двух рук, 10.3) появилось позже таблицы — достраиваем,
-        // как и все прочее, аддитивно.
-        AddColumns(db, "integration_directions", [("Second", "TEXT"), ("SecondAt", "TEXT")]);
-
-        db.Database.ExecuteSqlRaw(
             "CREATE TABLE IF NOT EXISTS \"integration_streams\" (" +
             "\"Id\" INTEGER NOT NULL CONSTRAINT \"PK_integration_streams\" PRIMARY KEY AUTOINCREMENT, " +
             "\"Name\" TEXT NOT NULL, " +
@@ -162,29 +149,7 @@ public sealed class DatabaseRegistry : IDisposable, ISettingsDatabase
             "\"ItemsPath\" TEXT NULL, " +
             "\"KeyField\" TEXT NULL);");
 
-        db.Database.ExecuteSqlRaw(
-            "CREATE TABLE IF NOT EXISTS \"integration_tokens\" (" +
-            "\"Id\" INTEGER NOT NULL CONSTRAINT \"PK_integration_tokens\" PRIMARY KEY AUTOINCREMENT, " +
-            "\"Name\" TEXT NOT NULL, " +
-            "\"DbId\" INTEGER NOT NULL, " +
-            "\"Hash\" TEXT NOT NULL, " +
-            "\"RobotKey\" TEXT NOT NULL, " +
-            "\"CreatedAt\" TEXT NOT NULL, " +
-            "\"UsedAt\" TEXT NULL, " +
-            "\"Enabled\" INTEGER NOT NULL DEFAULT 1);");
 
-        db.Database.ExecuteSqlRaw(
-            "CREATE TABLE IF NOT EXISTS \"integration_grants\" (" +
-            "\"Id\" INTEGER NOT NULL CONSTRAINT \"PK_integration_grants\" PRIMARY KEY AUTOINCREMENT, " +
-            "\"TokenId\" INTEGER NOT NULL, " +
-            "\"CollectionId\" INTEGER NOT NULL, " +
-            "\"Collection\" TEXT NOT NULL, " +
-            "\"FieldKeys\" TEXT NOT NULL, " +
-            "\"Fields\" TEXT NOT NULL, " +
-            "\"Confirmed\" TEXT NOT NULL, " +
-            "\"At\" TEXT NOT NULL, " +
-            "\"Until\" TEXT NOT NULL, " +
-            "\"UsedAt\" TEXT NULL);");
     }
 
     /// <summary>

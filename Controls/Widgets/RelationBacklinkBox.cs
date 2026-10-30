@@ -340,7 +340,7 @@ public sealed class RelationBacklinkBox : Panel
             _loading = false;
             _shown.Clear();
             _shownIds.Clear();
-            ShowHint(ex is PermissionDeniedException ? "Нет доступа к коллекции" : "Поиск недоступен");
+            ShowHint("Поиск недоступен");
         }
     }
 

@@ -281,11 +281,6 @@ public partial class TimeCollectorWindow : Window
             RenderLog();
             SetStatus("Отменено", "BrushSecondaryText");
         }
-        catch (PermissionDeniedException ex)
-        {
-            Rollback();
-            Fail(ex.Message);
-        }
         catch (TimeCollectException ex)
         {
             Rollback();

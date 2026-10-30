@@ -72,8 +72,6 @@ public partial class ConstructorRepository
         }
         catch (OperationCanceledException)
         { return new(RelationIntegrityStatus.Cancelled, 0, "Исправление отменено. Данные не изменялись.", backup); }
-        catch (PermissionDeniedException)
-        { return new(RelationIntegrityStatus.NoAccess, 0, "Для исправления нужна учетная запись администратора базы и права изменения записей.", backup); }
         catch (Exception ex) when (ex is DbException or DbUpdateException or IOException or UnauthorizedAccessException)
         { return new(backup is null ? RelationIntegrityStatus.BackupFailed : RelationIntegrityStatus.Unavailable,
             0, "Не удалось безопасно завершить исправление. Изменения связей отменены.", backup); }
@@ -88,7 +86,6 @@ public partial class ConstructorRepository
         try
         {
             ct.ThrowIfCancellationRequested();
-            DemandIntegrityAdmin();
             if (report.Status != RelationIntegrityStatus.Completed || report.SourceDatabaseIdentity != RelationDatabaseIdentity
                 || report.SourceDbId != RelationDbResolver.DbIdFor(this) || report.Fingerprint.Length == 0)
                 return IntegrityPlanFailure(report, RelationIntegrityStatus.InvalidPlan, "Отчет недействителен. Выполните проверку заново.");
@@ -99,15 +96,14 @@ public partial class ConstructorRepository
             if (fresh.Status != RelationIntegrityStatus.Completed)
                 return IntegrityPlanFailure(report, fresh.Status, fresh.Message);
             if (fresh.Fingerprint != report.Fingerprint)
-                return IntegrityPlanFailure(report, RelationIntegrityStatus.Conflict, "Данные или права изменились. Выполните проверку заново.");
+                return IntegrityPlanFailure(report, RelationIntegrityStatus.Conflict, "Данные изменились. Выполните проверку заново.");
             var selected = keys.Select(k => byKey[k]).ToArray();
-            DemandIntegrityRepairCollections(selected);
             return new(RelationIntegrityStatus.Completed, report.SourceDbId, report.SourceDatabaseIdentity,
                 IntegrityPlanFingerprint(report.Fingerprint, keys), report.Fingerprint, selected,
                 $"Будет удалено недействительных или повторяющихся ребер: {selected.Select(i => i.EdgeId).Distinct().Count()}. Остальные связи сохранятся.", report.Options);
         }
         catch (OperationCanceledException) { return IntegrityPlanFailure(report, RelationIntegrityStatus.Cancelled, "Подготовка отменена."); }
-        catch (PermissionDeniedException) { return IntegrityPlanFailure(report, RelationIntegrityStatus.NoAccess, "Исправлять связи может только администратор базы с правами изменения записей."); }
+
         catch (Exception ex) when (ex is DbException or IOException)
         { return IntegrityPlanFailure(report, RelationIntegrityStatus.Unavailable, "База недоступна. План не подготовлен."); }
     }
@@ -115,18 +111,16 @@ public partial class ConstructorRepository
     private RelationIntegrityRepairResult? ValidateIntegrityPlan(RelationIntegrityRepairPlan plan, CancellationToken ct,
         IntegrityLocks? locks = null)
     {
-        DemandIntegrityAdmin();
         var fresh = ScanRelationIntegrityCore(plan.Options, null, ct, locks);
         if (fresh.Status != RelationIntegrityStatus.Completed)
             return new(fresh.Status, 0, fresh.Message);
         if (fresh.Fingerprint != plan.SourceFingerprint || plan.SourceDatabaseIdentity != RelationDatabaseIdentity
             || plan.SourceDbId != RelationDbResolver.DbIdFor(this)
             || IntegrityPlanFingerprint(fresh.Fingerprint, plan.Issues.Select(i => i.Key)) != plan.Fingerprint)
-            return new(RelationIntegrityStatus.Conflict, 0, "Данные, настройки или права изменились. Выполните проверку заново.");
+            return new(RelationIntegrityStatus.Conflict, 0, "Данные или настройки изменились. Выполните проверку заново.");
         var current = fresh.Issues.ToDictionary(i => i.Key, StringComparer.Ordinal);
         if (plan.Issues.Any(i => !current.TryGetValue(i.Key, out var issue) || !issue.CanRepair || !issue.IsConfirmed || issue.EdgeId != i.EdgeId))
             return new(RelationIntegrityStatus.Conflict, 0, "Выбранные проблемы больше не подтверждены. Данные не изменялись.");
-        DemandIntegrityRepairCollections(plan.Issues);
         return null;
     }
 
@@ -163,24 +157,6 @@ public partial class ConstructorRepository
         savepoint.Commit();
         locks.CommitSource();
         return new(RelationIntegrityStatus.Applied, removed, $"Исправлено ребер: {removed}. Резервная копия проверена и сохранена.", backup);
-    }
-
-    private void DemandIntegrityAdmin()
-    {
-        if (Permissions is null) return;
-        var permissions = new PermissionService(db) { DbId = RelationDbResolver.DbIdFor(this) };
-        permissions.Reload(notify: false);
-        if (!permissions.IsAdmin) throw new PermissionDeniedException(PermAction.EditRecord);
-    }
-
-    private void DemandIntegrityRepairCollections(IEnumerable<RelationIntegrityIssue> issues)
-    {
-        if (Permissions is null) return;
-        var permissions = new PermissionService(db) { DbId = RelationDbResolver.DbIdFor(this) };
-        permissions.Reload(notify: false);
-        if (!permissions.IsAdmin) throw new PermissionDeniedException(PermAction.EditRecord);
-        foreach (var id in issues.Where(i => i.CollectionId.HasValue).Select(i => i.CollectionId!.Value).Distinct())
-            permissions.Demand(PermAction.ViewCollection | PermAction.EditRecord, id);
     }
 
     private static string IntegrityPlanFingerprint(string sourceFingerprint, IEnumerable<string> keys) =>

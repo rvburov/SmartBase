@@ -1,47 +1,19 @@
 using SmartBase.Core.Models;
 using SmartBase.Database;
+using SmartBase.Database.Repositories;
 using SmartBase.Integrations;
 
 namespace SmartBase.Tests.Integration;
 
-/// <summary>
-/// Тело исходящего запроса, собранное из настоящей коллекции (<see cref="OutgoingSource"/> и
-/// <c>ConstructorRepository.ReadOutgoingIsolated</c>, docs/ROADMAP-API.md, раздел 2).
-///
-/// Форма привязки и вид тела проверяются на модели — <c>Tests/Unit/OutgoingBindingTests</c>.
-/// Здесь то, чего на модели не проверить: значения берутся из записей, метки закрывают отправку
-/// ВТОРЫМ рубежом (после окна настройки), потолок политики считается по факту прочитанного, а
-/// смена состава полей роняет подтверждение направления.
-///
-/// Набор идет в общей очереди шлюза: и политика, и метки спрашиваются у <c>EgressGate</c>,
-/// одного на приложение.
-/// </summary>
+/// <summary>Исходящий JSON из настоящей коллекции: порядок, выбранные поля и записи, условия, переоткрытие и технический размер сообщения.</summary>
 [Collection(EgressCollection.Name)]
-public sealed class OutgoingSourceTests : IDisposable
+public sealed class OutgoingSourceTests
 {
-    public void Dispose() => EgressGate.Close();
 
     private static readonly DateTimeOffset Now =
         new(new DateTime(2026, 9, 12, 12, 0, 0, DateTimeKind.Utc));
 
     private const string Master = "секрет-организации";
-
-    // ── Стенд ─────────────────────────────────────────────────────────────────
-
-    /// <summary>Политика с потолком строк; без нее наружу не уходит ничего.</summary>
-    private static void AttachPolicy(int maxRows = 1000) =>
-        EgressGate.AttachPolicy(EgressPolicySet.Of(new EgressPolicy(
-            EgressMode.Internal,
-            Hosts:           ["api.zavod.local"],
-            Networks:        ["10.0.0.0/8"],
-            Folders:         [],
-            MaxRowsPerRun:   maxRows,
-            MaxBytesPerDay:  1024 * 1024,
-            MaxRunsPerHour:  100,
-            ValidUntil:      null,
-            UserMayAddHosts: false,
-            Source:          "тест",
-            MasterHash:      MasterPassword.Hash(Master))));
 
     /// <summary>Коллекция «Заказы» с суммой и двумя записями.</summary>
     private static (int Collection, int Sum) Orders(TempDatabase db)
@@ -106,7 +78,6 @@ public sealed class OutgoingSourceTests : IDisposable
     [Fact]
     public async Task Records_become_the_body_in_the_order_of_the_binding()
     {
-        AttachPolicy();
 
         await WithStand(async (cards, data) =>
         {
@@ -132,7 +103,6 @@ public sealed class OutgoingSourceTests : IDisposable
     [Fact]
     public async Task Request_without_a_binding_carries_nothing_from_the_collection()
     {
-        AttachPolicy();
 
         await WithStand(async (cards, data) =>
         {
@@ -148,7 +118,6 @@ public sealed class OutgoingSourceTests : IDisposable
     [Fact]
     public async Task Closed_database_is_not_open_here()
     {
-        AttachPolicy();
 
         await WithStand(async (cards, data) =>
         {
@@ -165,62 +134,9 @@ public sealed class OutgoingSourceTests : IDisposable
         });
     }
 
-    // ── Метки: второй рубеж ───────────────────────────────────────────────────
-
-    /// <summary>
-    /// Метку могли поставить ПОСЛЕ того, как привязку собрали. Окно настройки такое поле больше
-    /// не покажет, но сохраненная привязка о нем не знает — и отправка обязана встать.
-    /// </summary>
-    [Fact]
-    public async Task Field_labeled_after_the_binding_was_made_stops_the_send()
-    {
-        AttachPolicy();
-
-        await WithStand(async (cards, data) =>
-        {
-            var (collection, sum) = Orders(data);
-            var request = Push(cards);
-            cards.SaveOutgoing(request.Id, Binding(collection, sum));
-
-            data.Constructor.SetFieldLabel(sum, ConfidentialityLabel.Restricted);
-
-            var (payload, trouble) = OutgoingSource.Build(cards, request, [data.Manager]);
-
-            Assert.Null(payload);
-            Assert.Contains("Сумма", trouble!, StringComparison.Ordinal);
-            Assert.Contains("наружу", trouble!, StringComparison.Ordinal);
-
-            await Task.CompletedTask;
-        });
-    }
-
-    /// <summary>Закрытый контур запрещает исходящие независимо от политики, режима и прав.</summary>
-    [Fact]
-    public async Task Closed_loop_database_has_no_outgoing_path()
-    {
-        AttachPolicy();
-
-        await WithStand(async (cards, data) =>
-        {
-            var (collection, sum) = Orders(data);
-            var request = Push(cards);
-            cards.SaveOutgoing(request.Id, Binding(collection, sum));
-
-            data.Constructor.SetDatabaseLabel(ConfidentialityLabel.Closed);
-
-            var (payload, trouble) = OutgoingSource.Build(cards, request, [data.Manager]);
-
-            Assert.Null(payload);
-            Assert.Contains("закрытым контуром", trouble!, StringComparison.Ordinal);
-
-            await Task.CompletedTask;
-        });
-    }
-
     [Fact]
     public async Task Deleted_property_stops_the_send_by_name()
     {
-        AttachPolicy();
 
         await WithStand(async (cards, data) =>
         {
@@ -239,36 +155,9 @@ public sealed class OutgoingSourceTests : IDisposable
         });
     }
 
-    // ── Потолок политики ──────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Отправить первые N из тысячи, промолчав об остальных, нельзя ни при каком объяснении:
-    /// человек уверен, что ушло все.
-    /// </summary>
-    [Fact]
-    public async Task More_records_than_the_policy_allows_is_refused_whole()
-    {
-        AttachPolicy(maxRows: 1);
-
-        await WithStand(async (cards, data) =>
-        {
-            var (collection, sum) = Orders(data);
-            var request = Push(cards);
-            cards.SaveOutgoing(request.Id, Binding(collection, sum));
-
-            var (payload, trouble) = OutgoingSource.Build(cards, request, [data.Manager]);
-
-            Assert.Null(payload);
-            Assert.Contains("потолок", trouble!, StringComparison.Ordinal);
-
-            await Task.CompletedTask;
-        });
-    }
-
     [Fact]
     public async Task Single_record_exchange_refuses_a_collection_of_two()
     {
-        AttachPolicy();
 
         await WithStand(async (cards, data) =>
         {
@@ -289,7 +178,6 @@ public sealed class OutgoingSourceTests : IDisposable
     [Fact]
     public async Task Empty_collection_gives_a_payload_of_zero_rows()
     {
-        AttachPolicy();
 
         await WithStand(async (cards, data) =>
         {
@@ -319,7 +207,6 @@ public sealed class OutgoingSourceTests : IDisposable
     [Fact]
     public async Task Only_the_chosen_records_go_out_and_in_table_order()
     {
-        AttachPolicy();
 
         await WithStand(async (cards, data) =>
         {
@@ -353,7 +240,6 @@ public sealed class OutgoingSourceTests : IDisposable
     [Fact]
     public async Task Records_of_another_collection_are_dropped()
     {
-        AttachPolicy();
 
         await WithStand(async (cards, data) =>
         {
@@ -383,7 +269,6 @@ public sealed class OutgoingSourceTests : IDisposable
     [Fact]
     public async Task Single_record_exchange_works_for_one_chosen_row()
     {
-        AttachPolicy();
 
         await WithStand(async (cards, data) =>
         {
@@ -410,7 +295,6 @@ public sealed class OutgoingSourceTests : IDisposable
     [Fact]
     public async Task Binding_survives_a_reopen()
     {
-        AttachPolicy();
 
         await WithStand(async (cards, data) =>
         {
@@ -439,41 +323,6 @@ public sealed class OutgoingSourceTests : IDisposable
         });
     }
 
-    /// <summary>
-    /// Состав полей входит в отпечаток запроса: дописать поле в уже подтвержденное направление —
-    /// самый дешевый способ обойти согласование, и он обязан не работать.
-    /// </summary>
-    [Fact]
-    public async Task Changing_the_fields_drops_the_confirmation()
-    {
-        AttachPolicy();
-
-        await WithStand(async (cards, data) =>
-        {
-            var (collection, sum) = Orders(data);
-            var request = Push(cards);
-            cards.SaveOutgoing(request.Id, Binding(collection, sum));
-
-            var direction = cards.ConfirmDirection(
-                request, Master, "Петров П. П.", days: 30, Now, out var trouble);
-
-            Assert.NotNull(direction);
-            Assert.Equal("", trouble);
-            Assert.Null(cards.OutwardTrouble(request, Now));
-
-            // Дописали поле — согласовано было другое.
-            cards.SaveOutgoing(request.Id, Binding(collection, sum) with
-            {
-                Fields = [.. Binding(collection, sum).Fields, new OutgoingField(sum, "amount_copy")],
-            });
-
-            Assert.Contains("правили после подтверждения",
-                            cards.OutwardTrouble(request, Now)!, StringComparison.Ordinal);
-
-            await Task.CompletedTask;
-        });
-    }
-
     // ── Отбор записей ─────────────────────────────────────────────────────────
 
     /// <summary>
@@ -484,7 +333,6 @@ public sealed class OutgoingSourceTests : IDisposable
     [Fact]
     public async Task Only_the_records_that_pass_the_filter_go_out()
     {
-        AttachPolicy();
 
         await WithStand(async (cards, data) =>
         {
@@ -517,7 +365,6 @@ public sealed class OutgoingSourceTests : IDisposable
     [Fact]
     public async Task A_filter_may_use_a_property_that_does_not_go_out()
     {
-        AttachPolicy();
 
         await WithStand(async (cards, data) =>
         {
@@ -544,44 +391,6 @@ public sealed class OutgoingSourceTests : IDisposable
     }
 
     /// <summary>
-    /// Отбор идет ДО потолка строк, иначе он ничего не решает: коллекция, которая целиком в
-    /// потолок не влезает, отправляется, если отобранного в нем помещается.
-    ///
-    /// Это и есть вторая половина найденной беды: с триггером «изменение данных» сценарий
-    /// переставал работать совсем, как только коллекция перерастала потолок.
-    /// </summary>
-    [Fact]
-    public async Task The_filter_runs_before_the_row_ceiling()
-    {
-        AttachPolicy(maxRows: 1);
-
-        await WithStand(async (cards, data) =>
-        {
-            var (collection, sum) = Orders(data);
-            var request = Push(cards);
-
-            // Без отбора две записи в потолок «одна строка» не влезают.
-            cards.SaveOutgoing(request.Id, Binding(collection, sum));
-            Assert.Contains("больше, чем разрешает политика",
-                            OutgoingSource.Build(cards, request, [data.Manager]).Trouble!,
-                            StringComparison.Ordinal);
-
-            // С отбором остается одна — и она проходит.
-            cards.SaveOutgoing(request.Id, Binding(collection, sum) with
-            {
-                Conditions = [new ScenarioCondition("Сумма", ScenarioTest.Equals, "250")],
-            });
-
-            var (payload, trouble) = OutgoingSource.Build(cards, request, [data.Manager]);
-
-            Assert.Null(trouble);
-            Assert.Equal(1, payload!.Rows);
-
-            await Task.CompletedTask;
-        });
-    }
-
-    /// <summary>
     /// Свойство отбора удалили — отправка встает СЛОВАМИ, а не отбирает ноль записей молча.
     /// Молчаливый ноль здесь худший из ответов: обмен выглядит работающим, а наружу месяцами
     /// не уходит ничего.
@@ -589,7 +398,6 @@ public sealed class OutgoingSourceTests : IDisposable
     [Fact]
     public async Task A_filter_on_a_missing_property_stops_the_send()
     {
-        AttachPolicy();
 
         await WithStand(async (cards, data) =>
         {
@@ -612,46 +420,11 @@ public sealed class OutgoingSourceTests : IDisposable
     }
 
     /// <summary>
-    /// Отбирать по ПОМЕЧЕННОМУ свойству нельзя. Значение такого поля наружу не уходит, но
-    /// уходит знание о нем: по тому, какие записи ушли, оно и восстанавливается.
-    /// </summary>
-    [Fact]
-    public async Task A_filter_on_a_labeled_property_is_refused()
-    {
-        AttachPolicy();
-
-        await WithStand(async (cards, data) =>
-        {
-            var (collection, sum) = Orders(data);
-
-            var secret = SampleData.AddField(data.Constructor, collection, "Скидка", "text").Id!.Value;
-            data.Constructor.SetFieldLabel(secret, ConfidentialityLabel.Restricted);
-
-            var request = Push(cards);
-            cards.SaveOutgoing(request.Id, Binding(collection, sum) with
-            {
-                Conditions = [new ScenarioCondition("Скидка", ScenarioTest.Filled)],
-            });
-
-            var (payload, trouble) = OutgoingSource.Build(cards, request, [data.Manager]);
-
-            Assert.Null(payload);
-            Assert.NotNull(trouble);
-            Assert.Contains("отбор идет по свойству", trouble, StringComparison.Ordinal);
-
-            await Task.CompletedTask;
-        });
-    }
-
-    /// <summary>
-    /// Отбор действует и на записи, выбранные РУКАМИ. Он входит в отпечаток направления, то есть
-    /// в то, что подтверждали мастер-паролем: пропусти его у кнопки — и ручная отправка уносила
-    /// бы записи, которых согласованный обмен не касается.
+    /// Отбор действует и на выбранные вручную записи: состав тела одинаков у фоновой и ручной отправки.
     /// </summary>
     [Fact]
     public async Task The_filter_applies_to_hand_picked_records_too()
     {
-        AttachPolicy();
 
         await WithStand(async (cards, data) =>
         {
@@ -677,7 +450,6 @@ public sealed class OutgoingSourceTests : IDisposable
     [Fact]
     public async Task The_filter_survives_a_reopen()
     {
-        AttachPolicy();
 
         await WithStand(async (cards, data) =>
         {
@@ -697,6 +469,123 @@ public sealed class OutgoingSourceTests : IDisposable
             Assert.Equal(ScenarioTest.Contains, back.Tests[0].Test);
             Assert.Equal("25", back.Tests[0].Value);
 
+            await Task.CompletedTask;
+        });
+    }
+    [Fact]
+    public async Task More_than_a_thousand_records_can_be_prepared_without_a_policy()
+    {
+        await WithStand(async (cards, data) =>
+        {
+            var collection = SampleData.AddCollection(data.Constructor, "Большой исходящий набор").Id!.Value;
+            var ids = data.Constructor.BulkAddRecords(collection, [], Enumerable.Range(0, 1200)
+                .Select(i => new BulkRecordRow($"Запись {i}", [])), 1200, default);
+            var request = Push(cards);
+            cards.SaveOutgoing(request.Id, new OutgoingBinding(data.Manager.DbId, collection,
+                [new OutgoingField(null, "title")]));
+            var (payload, trouble) = OutgoingSource.Build(cards, request, [data.Manager]);
+            Assert.Null(trouble);
+            Assert.NotNull(payload);
+            using var json = System.Text.Json.JsonDocument.Parse(payload.Body);
+            Assert.Equal(1200, json.RootElement.GetArrayLength());
+            Assert.Equal(1200, payload.Rows);
+            cards.SaveOutgoing(request.Id, new OutgoingBinding(data.Manager.DbId, collection,
+                [new OutgoingField(null, "title")], Conditions:
+                [new ScenarioCondition("Название", ScenarioTest.Contains, "1")]));
+            var selected = ids.Skip(600).Reverse().ToArray();
+            var filtered = OutgoingSource.Build(cards, request, [data.Manager], selected);
+            Assert.Null(filtered.Trouble);
+            using var selectedJson = System.Text.Json.JsonDocument.Parse(filtered.Payload!.Body);
+            var expected = Enumerable.Range(600, 600).Where(i => i.ToString().Contains('1')).Select(i => $"Запись {i}");
+            Assert.Equal(expected, selectedJson.RootElement.EnumerateArray().Select(row => row.GetProperty("title").GetString()));
+            await Task.CompletedTask;
+        });
+    }
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Range_period_reads_only_the_selected_dependency_for_full_and_chosen_pages(bool chosen)
+    {
+        await WithStand(async (cards, data) =>
+        {
+            const int count = 2101; // Полная выгрузка: две страницы; выбранные записи: одиннадцать.
+            var collection = SampleData.AddCollection(data.Constructor, "Периоды отправки").Id!.Value;
+            var start = SampleData.AddField(data.Constructor, collection, "Начало", "date").Id!.Value;
+            var period = data.Constructor.AddField(new DbField
+            {
+                CollectionId = collection, Name = "Период", FieldType = "date_period", IsSystem = true,
+                ConfigJson = new DatePeriodConfig(start).ToConfigJson(),
+            }).Id!.Value;
+            var ids = data.Constructor.BulkAddRecords(collection, [start], Enumerable.Range(0, count)
+                .Select(i => new BulkRecordRow($"Запись {i}", [i % 2 == 0
+                    ? "2026-10-28T07:00/2026-10-28T09:00" : "2026-10-28T08:00/2026-10-28T11:00"])), count, default);
+            var request = Push(cards);
+            cards.SaveOutgoing(request.Id, new OutgoingBinding(data.Manager.DbId, collection,
+                [new OutgoingField(null, "title"), new OutgoingField(period, "period")]));
+            var (payload, trouble) = OutgoingSource.Build(cards, request, [data.Manager],
+                chosen ? ids.AsEnumerable().Reverse().ToArray() : null);
+            Assert.Null(trouble);
+            Assert.NotNull(payload);
+            using var json = System.Text.Json.JsonDocument.Parse(payload.Body);
+            Assert.Equal(count, json.RootElement.GetArrayLength());
+            Assert.Equal(Enumerable.Range(0, count).Select(i => i % 2 == 0 ? "7200" : "10800"),
+                json.RootElement.EnumerateArray().Select(row => row.GetProperty("period").GetString()));
+            Assert.All(json.RootElement.EnumerateArray(), row => Assert.Equal(2, row.EnumerateObject().Count()));
+            Assert.Equal(Enumerable.Range(0, count).Select(i => $"Запись {i}"),
+                json.RootElement.EnumerateArray().Select(row => row.GetProperty("title").GetString()));
+            await Task.CompletedTask;
+        });
+    }
+
+    [Fact]
+    public async Task Outgoing_title_selection_does_not_read_a_hidden_periods_date_range()
+    {
+        await WithStand(async (cards, data) =>
+        {
+            var collection = SampleData.AddCollection(data.Constructor, "Выбранные столбцы отправки").Id!.Value;
+            var dates = SampleData.AddField(data.Constructor, collection, "Диапазон", "date").Id!.Value;
+            data.Constructor.AddField(new DbField
+            {
+                CollectionId = collection, Name = "Скрытый период", FieldType = "date_period", IsSystem = true,
+                ConfigJson = new DatePeriodConfig(dates).ToConfigJson(),
+            });
+            data.Constructor.BulkAddRecords(collection, [dates],
+                [new BulkRecordRow("Только название", ["2026-10-28T09:00/2026-10-28T11:00"])], 1, default);
+            var request = Push(cards);
+            cards.SaveOutgoing(request.Id, new OutgoingBinding(data.Manager.DbId, collection,
+                [new OutgoingField(null, "title")]));
+            using var commands = new DatePeriodScalingTests.Commands(data.Path);
+            var (payload, trouble) = OutgoingSource.Build(cards, request, [data.Manager]);
+            Assert.Null(trouble);
+            Assert.NotNull(payload);
+            using var json = System.Text.Json.JsonDocument.Parse(payload.Body);
+            var row = Assert.Single(json.RootElement.EnumerateArray());
+            Assert.Equal("Только название", row.GetProperty("title").GetString());
+            Assert.Single(row.EnumerateObject());
+            commands.AssertNoAdditionalValueReads();
+            await Task.CompletedTask;
+        });
+    }
+
+    [Fact]
+    public async Task An_escaped_body_above_the_technical_message_limit_is_reported_without_a_partial_payload()
+    {
+        await WithStand(async (cards, data) =>
+        {
+            var collection = SampleData.AddCollection(data.Constructor, "Размер сообщения").Id!.Value;
+            var field = SampleData.AddField(data.Constructor, collection, "Текст").Id!.Value;
+            var record = SampleData.AddRecord(data.Constructor, collection, "Запись").Id!.Value;
+            // В хранилище 17 МБ; после JSON-экранирования размер превышает 32 МБ.
+            var text = new string('\\', 17 * 1024 * 1024);
+            data.Constructor.SetFieldValue(record, field, text);
+            var request = Push(cards);
+            cards.SaveOutgoing(request.Id, new OutgoingBinding(data.Manager.DbId, collection,
+                [new OutgoingField(field, "text")]));
+            var (payload, trouble) = OutgoingSource.Build(cards, request, [data.Manager]);
+            Assert.Null(payload);
+            Assert.NotNull(trouble);
+            Assert.Contains("32 МБ", trouble, StringComparison.Ordinal);
+            Assert.Equal(text, data.Constructor.GetFieldValues(record)[field]);
             await Task.CompletedTask;
         });
     }

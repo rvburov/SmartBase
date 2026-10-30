@@ -7,13 +7,15 @@ namespace SmartBase.Database.Repositories;
 /// <param name="Name">Имя, под которым свойство ждут в сообщении.</param>
 /// <param name="Type">Тип словами — «Текст», «Число», «Дата». Разработчику сторонней
 /// программы нужен не внутренний код типа, а ответ на вопрос «что сюда класть».</param>
-public sealed record ApiField(string Name, string Type);
+/// <param name="Id">Ключ свойства для выбора столбцов при чтении.</param>
+public sealed record ApiField(string Name, string Type, int? Id = null);
 
 /// <summary>Коллекция в описании API: имя, колонка названия и свойства.</summary>
 /// <param name="Name">Имя коллекции — его отправитель пишет в поле «collection».</param>
 /// <param name="Title">Как называется колонка названия записи в этой коллекции.</param>
 /// <param name="Fields">Свойства, которые обмен заполняет.</param>
-public sealed record ApiCollection(string Name, string Title, IReadOnlyList<ApiField> Fields);
+/// <param name="Id">Ключ коллекции для однозначного выбора при чтении.</param>
+public sealed record ApiCollection(string Name, string Title, IReadOnlyList<ApiField> Fields, int? Id = null);
 
 /// <summary>
 /// Описание собственного API — «что у нас есть и как это заполнить» (docs/ROADMAP-API.md,
@@ -55,12 +57,12 @@ public partial class ConstructorRepository
                 .Where(f => f.Id is int
                          && !FieldTypeInfo.IsComputed(f.FieldType)
                          && !FieldTypeInfo.IsRelation(f.FieldType))
-                .Select(f => new ApiField(f.Name, FieldTypeInfo.Label(f.FieldType)))
+                .Select(f => new ApiField(f.Name, FieldTypeInfo.Label(f.FieldType), f.Id))
                 .ToList();
 
             var title = GetSystemFieldNames(collection.Id).GetValueOrDefault(TitleKey, "Название");
 
-            result.Add(new ApiCollection(collection.Name!, title, fields));
+            result.Add(new ApiCollection(collection.Name!, title, fields, collection.Id));
         }
 
         return result;

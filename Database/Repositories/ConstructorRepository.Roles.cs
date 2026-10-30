@@ -365,8 +365,7 @@ public partial class ConstructorRepository
 
         if (adopt.Count == 0 && create.Count == 0) return false;
 
-        if (adopt.Count   > 0) Demand(PermAction.EditField,   collectionId);
-        if (create.Count  > 0) Demand(PermAction.CreateField, collectionId);
+
 
         // Своя транзакция, если разметку зовут напрямую (тумблер роли в диалоге свойства);
         // при вызове «между делом» из AddTaskRecord — присоединяемся к его транзакции,
@@ -424,20 +423,14 @@ public partial class ConstructorRepository
 
     // Починка разметки ролей при монтировании (RepairTaskFieldRoles, RepairDocFieldRoles) его не
     // срывает, но и не молчит: раньше отказ глотался, и коллекция с поломанной разметкой жила
-    // дальше без единого следа. Отказ по правам — обычное дело у пользователя без прав на схему
-    // (доведет тот, у кого они есть), поэтому это сведения. Сбой записи — предупреждение: разметка
+    // дальше без единого следа. Сбой записи — предупреждение: разметка
     // осталась поломанной, а повтор будет только при следующем подключении базы.
     private void LogRepairNotDone(string section, int collectionId, string? collectionName, Exception ex)
     {
         var collection = collectionName ?? $"#{collectionId}";
-        if (ex is PermissionDeniedException)
-            Serilog.Log.Information(
-                "Разметка ролей раздела «{Section:l}» в коллекции «{Collection:l}» ({Db:l}) не доведена до конца. " +
-                "{Reason:l} Доведет пользователь с правами на схему", section, collection, db.DisplayPath, ex.Message);
-        else
-            Serilog.Log.Warning(ex,
-                "Разметка ролей раздела «{Section:l}» в коллекции «{Collection:l}» ({Db:l}) не починена — " +
-                "повтор при следующем подключении базы", section, collection, db.DisplayPath);
+        Serilog.Log.Warning(ex,
+            "Разметка ролей раздела «{Section:l}» в коллекции «{Collection:l}» ({Db:l}) не починена — " +
+            "повтор при следующем подключении базы", section, collection, db.DisplayPath);
     }
 
     // Новое поле под роль: тип и настройки предопределены самой ролью.

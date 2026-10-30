@@ -263,7 +263,7 @@ if (only == "frames") dbSet = "main";
 
 // ── Папка данных стенда ──────────────────────────────────────────────────────
 Directory.CreateDirectory(runDir);
-foreach (var name in new[] { "app.db", "main.db", "security.db", "integrations.db", DocTextIndex.FileName })
+foreach (var name in new[] { "app.db", "main.db", "integrations.db", DocTextIndex.FileName })
     foreach (var suffix in new[] { "", "-wal", "-shm", "-journal" })
         if (File.Exists(Path.Combine(runDir, name + suffix))) File.Delete(Path.Combine(runDir, name + suffix));
 var mainPath   = Path.Combine(runDir, "main.db");
@@ -341,7 +341,8 @@ DocIndexService.Attach(new DocIndexService(new DocTextIndex(Path.Combine(runDir,
 {
     MaxFileMb = LibrarySettings.IndexMaxMb,
 });
-SecurityJournal.Attach(new SecurityJournal(Path.Combine(runDir, "security.db")));
+
+
 Scaling.Load();
 Boot("настройки, кеш документов, журнал безопасности");
 

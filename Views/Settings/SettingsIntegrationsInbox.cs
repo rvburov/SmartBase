@@ -23,9 +23,6 @@ namespace SmartBase.Views.Settings;
 /// переименованием). Экран об этом говорит прямо: иначе человек, включивший прием на своей
 /// машине, будет думать, что включил его для всех.
 ///
-/// Разрешена ли сама папка, решает политика организации. Экран показывает ее вердикт СРАЗУ, под
-/// строкой пути, — не дожидаясь нажатия: ответ «туда нельзя» нужен до того, как человек начнет
-/// договариваться с отправителем о формате.
 /// </summary>
 public partial class SettingsView
 {
@@ -59,8 +56,7 @@ public partial class SettingsView
         var folder    = AppSettings.LoadInboxFolder();
         var databases = _databases?.Invoke() ?? [];
 
-        // Порядок тот же, что в плане (раздел 6.7): сначала сеть, потом папка, потом токены и
-        // описание. Сеть первой не потому, что важнее, — с нее начинают читать.
+        // Сначала параметры сетевого приема, затем папка и описание формата обмена.
         Add(rows, AccessModeRow());
 
         Add(rows, FolderRow(folder));
@@ -68,8 +64,6 @@ public partial class SettingsView
         Add(rows, AutoRow(folder, databases));
         Add(rows, CheckRow(folder, databases));
 
-        Add(rows, TokensRow());
-        Add(rows, ReadsRow());
         Add(rows, ApiRow());
 
         Add(rows, Row("Что класть в папку",
@@ -87,7 +81,6 @@ public partial class SettingsView
         var choose = RowButton("Выбрать…", () => _ = ChooseInboxFolderAsync());
         var clear  = RowButton("Убрать",  () =>
         {
-            if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
 
             AppSettings.SaveInboxFolder("");
             BuildIntegrationsInbox();
@@ -112,30 +105,18 @@ public partial class SettingsView
             block);
     }
 
-    /// <summary>
-    /// Что скажет политика об этой папке. Ответ дается сразу, без нажатия: узнать «туда нельзя»
-    /// после того, как с отправителем договорились о формате, — потерянный день.
-    /// </summary>
+    /// <summary>Путь и доступность выбранной папки обмена.</summary>
     private static string FolderVerdict(string folder)
     {
-        if (folder.Length == 0)
-            return "Папка не выбрана — прием выключен.";
-
-        var decision = EgressGate.CheckFolder(folder);
-
-        if (!decision.Allowed)
-            return "Политика: " + decision.Explanation
-                 + ". Корни папок обмена задает организация — см. раздел «Безопасность» в профиле.";
-
+        if (folder.Length == 0) return "Папка не выбрана — прием файлов выключен.";
         return Directory.Exists(folder)
-            ? "Политика: папка разрешена."
-            : "Политика: папка разрешена, но сейчас недоступна — возможно, отключен сетевой диск.";
+            ? "Папка доступна."
+            : "Папка сейчас недоступна — возможно, отключен сетевой диск.";
     }
 
     private async Task ChooseInboxFolderAsync()
     {
         if (TopLevel.GetTopLevel(this) is not { } top) return;
-        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
 
         IStorageFolder? start = null;
         var current = AppSettings.LoadInboxFolder();

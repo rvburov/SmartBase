@@ -28,7 +28,7 @@ public sealed record StreamState(bool Connected, DateTimeOffset Since, string Tr
 /// документа из-за того, что их сценарии шли вперемешку.
 ///
 /// <b>Ответ — по итогу всего сценария</b>, и идет он той же цепочкой, что любая отправка
-/// (<see cref="RequestLauncher"/>): замок направления, оба журнала, зеркало.
+/// (<see cref="RequestLauncher"/>), с записью результата в рабочий журнал.
 ///
 /// <b>Пока программа выключена, события не принимаются и ответов нет.</b> Догонять пропущенное
 /// служба не берется: у потока нет памяти, а спросить «что я пропустила» можно только запросом,
@@ -490,7 +490,7 @@ public sealed class StreamService : IDisposable
         var db  = scenario.Steps.FirstOrDefault(s => s.DbId > 0)?.DbId ?? 0;
 
         var sent = await RequestLauncher.SendAsync(
-            _cards, connection, request, payload: null, db, now, now,
+            _cards, connection, request, payload: null, db, now,
             scenario.Name, ScenarioRunner.ReplyMark, _life.Token, row, text);
 
         if (sent.Ok)

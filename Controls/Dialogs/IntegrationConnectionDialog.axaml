@@ -34,13 +34,7 @@
                  VerticalContentAlignment="Center"
                  CornerRadius="{StaticResource RadiusMedium}" />
 
-        <!-- Строка политики — не украшение: она отвечает на вопрос «а можно ли вообще по
-             этому адресу», не дожидаясь нажатия «Проверить связь». Отказ шлюза объясняет
-             себя словами, иначе его принимают за поломку сети. -->
-        <TextBlock x:Name="PolicyText"
-                   Margin="0,0,0,12"
-                   TextWrapping="Wrap"
-                   FontSize="{DynamicResource FontSizeSmall}" />
+
 
         <TextBlock Text="Авторизация"
                    Margin="0,0,0,6"

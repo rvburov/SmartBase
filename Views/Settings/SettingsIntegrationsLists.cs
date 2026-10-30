@@ -66,81 +66,15 @@ public partial class SettingsView
                         + (used > 0 ? $" · запросов: {used}" : "")
                         + (streams > 0 ? $" · потоков: {streams}" : "");
 
-        var decision = connection.BaseAddress is null
-            ? EgressDecision.Deny(EgressDenyReason.BadAddress, "адрес не разобрался")
-            : EgressGate.Check(connection.BaseAddress);
-
-        var policy = decision.Allowed
-            ? "Политика: адрес разрешен"
-            : "Политика: " + decision.Explanation;
-
-        // «Показать политику» появляется только у ОТКАЗА и ведет в контур безопасности: там
-        // написано, какие адреса разрешены и кто это задал. Отказ, объясняющий себя одной
-        // строкой и не показывающий, куда идти дальше, отправляет человека искать наугад
-        // (docs/ROADMAP-API.md, 10.18 и 6.7).
-        var extra = new List<(string, Action)>
-        {
-            ("Дублировать", () => _ = EditConnectionAsync(connection.Copy())),
-        };
-
-        if (!decision.Allowed)
-        {
-            extra.Insert(0, ("Показать политику", ShowPolicy));
-            extra.Insert(0, ("Скопировать заявку",
-                             () => _ = CopyAddressRequestAsync(registry, connection, decision)));
-        }
-
-        return CardRow(connection.Name, description, policy,
+        return CardRow(connection.Name, description, "",
             edit:   () => _ = EditConnectionAsync(connection),
             delete: () => _ = DeleteConnectionAsync(connection),
-            more:   extra);
+            more:   [("Дублировать", () => _ = EditConnectionAsync(connection.Copy()))]);
     }
-
-    /// <summary>
-    /// Положить в буфер готовую заявку на разрешение адреса (docs/ROADMAP-API.md, 10.18).
-    ///
-    /// Отказ «адрес не входит в белый список» оставляет человека с задачей, которую он решать не
-    /// умеет: к кому идти, что писать, какие сведения приложить. Ответственный за интеграции все
-    /// равно спросит то же самое — адрес, зачем, какая коллекция, какие поля, — и спросит не
-    /// сразу, а через день. Заявка собирает эти ответы из карточек, где они уже лежат.
-    /// </summary>
-    private async Task CopyAddressRequestAsync(Database.IntegrationsRegistry registry,
-                                               IntegrationConnection connection,
-                                               EgressDecision decision)
-    {
-        var opened = _databases?.Invoke() ?? [];
-
-        var note = Database.AddressRequestNote.Text(
-            Database.AddressRequestNote.Gather(
-                registry, connection, decision.Explanation,
-                collections: (dbId, collectionId) =>
-                    opened.FirstOrDefault(d => d.DbId == dbId)?
-                          .Constructor.CollectionName(collectionId) ?? "",
-                who:     Utils.CurrentUser.DisplayName,
-                machine: Environment.MachineName),
-            EgressSetup.Last.Set,
-            DateOnly.FromDateTime(DateTime.Today));
-
-        await (TopLevel.GetTopLevel(this)?.Clipboard?.SetTextAsync(note) ?? Task.CompletedTask);
-
-        Controls.Widgets.AppNotifications.Info(
-            "Заявка на разрешение адреса скопирована — вставьте ее в письмо ответственному "
-            + "за интеграции.");
-    }
-
-    /// <summary>Открыть контур безопасности: там написано, что разрешено и кем задано.</summary>
-    private void ShowPolicy() => PolicyRequested?.Invoke(this, EventArgs.Empty);
-
-    /// <summary>
-    /// Человек просит показать правила целиком. Экран контура живет в модуле «Профиль», а
-    /// настройки о нем не знают — переключает разделы хозяин окна.
-    /// </summary>
-    public event EventHandler? PolicyRequested;
 
     private async Task EditConnectionAsync(IntegrationConnection card)
     {
         if (VisualRoot is not Window win || Integrations is null) return;
-        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
 
         var registry = Integrations;
         var hasSecret = card.Id > 0 && registry.HasSecret(card.Id);
@@ -162,7 +96,6 @@ public partial class SettingsView
     private async Task DeleteConnectionAsync(IntegrationConnection connection)
     {
         if (VisualRoot is not Window win || Integrations is null) return;
-        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
 
         var registry = Integrations;
         var used     = registry.RequestsOf(connection.Id);
@@ -317,55 +250,13 @@ public partial class SettingsView
         if (registry.Outgoing(request.Id) is { } outgoing)
             extra += (extra.Length > 0 ? " · " : "") + "Уносит: " + outgoing.Describe();
 
-        // Состояние исходящего направления — прямо в карточке. Человек, у которого обмен встал,
-        // должен увидеть причину здесь, а не искать ее в журнале: «срок вышел» и «запрос
-        // правили» лечатся по-разному.
-        var trouble = request.Outward
-            ? registry.OutwardTrouble(request, DateTimeOffset.Now)
-            : null;
-
-        if (request.Outward)
-            extra += (extra.Length > 0 ? " · " : "") + "Направление: "
-                   + (trouble ?? registry.Direction(request.Id)?.Describe() ?? "подтверждено");
-
-        // «Что уйдет» есть у любого запроса — читающий тоже стоит посмотреть глазами перед
-        // первым запуском. Подтверждение появляется только у исходящего: читающему подтверждать
-        // нечего, и кнопка, которая ничего не делает, читается как поломка.
         var more = new List<(string Text, Action Click)>
         {
             ("Что уйдет", () => _ = PreviewRequestAsync(registry, request, connection)),
         };
 
-        // «Что уносит» — только у исходящего: читающий запрос данные не отдает, и предлагать ему
-        // набрать состав полей значило бы обещать отправку, которой не будет.
         if (request.Outward)
-        {
             more.Add(("Что уносит", () => _ = EditOutgoingAsync(registry, request)));
-
-            // Кнопка выбирается по тому, ДЕЙСТВУЕТ ли направление, а не по тому, существует ли
-            // запись о нем. Запрос правили, вышел срок, направление простаивало — строка в базе
-            // осталась, но разрешения нет, и человеку нужна ровно одна кнопка: подтвердить
-            // заново. Предлагать в этом состоянии «Отозвать» значило бы просить его отменить то,
-            // что уже не работает, и лишь потом разрешить снова.
-            var direction = registry.Direction(request.Id);
-
-            // Ждет второй подписи — и кнопка об этом же. Предложи здесь «Подтвердить заново», и
-            // второй человек сбросил бы согласие первого вместо того, чтобы добавить свое.
-            var awaiting = direction is { Confirmed2: false }
-                        && EgressGate.Policy.RequiresSecondConfirm;
-
-            more.Add((direction, trouble, awaiting) switch
-            {
-                (null, _, _)     => ("Подтвердить",
-                                     () => _ = ConfirmDirectionAsync(registry, request)),
-                (_, _, true)     => ("Подтвердить вторым",
-                                     () => _ = CountersignDirectionAsync(registry, request)),
-                (_, null, _)     => ("Отозвать",
-                                     () => _ = RevokeDirectionAsync(registry, request)),
-                _                => ("Подтвердить заново",
-                                     () => _ = ConfirmDirectionAsync(registry, request)),
-            });
-        }
 
         return CardRow(request.Name, description, extra,
             edit:   () => _ = EditRequestAsync(request),
@@ -402,12 +293,9 @@ public partial class SettingsView
             return;
         }
 
-        // Причина отказа берется у того же замка, что стоит на настоящей отправке, — иначе
-        // сухой прогон однажды показал бы «уйдет», там где не уйдет.
         var preview = RequestRunner.Preview(
             connection, request, registry.Secret(connection.Id),
             VariableContext.Now(registry.LastRun(request.Id), connection.Address, payload?.Single),
-            Database.OutwardGuard.Refusal(registry, request, DateTimeOffset.Now),
             payload);
 
         await new RequestPreviewDialog(preview).ShowDialog(win);
@@ -415,16 +303,11 @@ public partial class SettingsView
 
     /// <summary>
     /// Набрать состав того, что запрос уносит из коллекции (docs/ROADMAP-API.md, раздел 2).
-    ///
-    /// Право спрашивается как у любой другой настройки обмена: запускать настроенное можно и без
-    /// него, а менять состав выгрузки — нельзя. Подтверждение направления сбрасывать отдельно не
-    /// надо: состав входит в отпечаток запроса, и правка роняет его сама.
     /// </summary>
     private async Task EditOutgoingAsync(Database.IntegrationsRegistry registry,
                                          IntegrationRequest request)
     {
         if (VisualRoot is not Window win) return;
-        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
 
         var databases = _databases?.Invoke() ?? [];
 
@@ -450,112 +333,9 @@ public partial class SettingsView
         BuildIntegrationsRequests();
     }
 
-    /// <summary>
-    /// Подтвердить исходящее направление мастер-паролем. Пароль проверяет реестр (а он —
-    /// политику): экран его не видит и не хранит.
-    /// </summary>
-    private async Task ConfirmDirectionAsync(Database.IntegrationsRegistry registry,
-                                             IntegrationRequest request)
-    {
-        if (VisualRoot is not Window win) return;
-        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsOutward)) return;
-
-        var what = $"{request.Name}: {request.Method.ToString().ToUpperInvariant()} {request.Path}";
-
-        var done = await new DirectionConfirmDialog(what, (password, days) =>
-        {
-            registry.ConfirmDirection(request, password, Utils.CurrentUser.DisplayName, days,
-                                      DateTimeOffset.Now, out var trouble);
-
-            if (trouble.Length > 0) return trouble;
-
-            // След подтверждения — в журнале безопасности, а не в рабочем: это решение о
-            // полномочии, и читает его проверяющий. Не записалось — говорим об этом сразу:
-            // подтверждение без следа ничем не лучше отправки без следа.
-            var written = Database.SecurityJournal.Add(Database.SecurityEntry.New(
-                Database.SecurityEvent.Confirm, allowed: true,
-                who: Utils.CurrentUser.DisplayName, scenario: "",
-                address: request.Path, fields: "", rows: 0, bytes: 0, bodyHash: "",
-                explanation: $"подтверждено направление «{request.Name}» на {days} дней",
-                dbId: 0, at: DateTimeOffset.Now, confirmed: Utils.CurrentUser.DisplayName));
-
-            return written
-                ? null
-                : "подтверждение записано, но след в журнале безопасности не лег — сообщите "
-                + "ответственному за интеграции";
-        }).ShowDialog<bool>(win);
-
-        if (done) BuildIntegrationsRequests();
-    }
-
-    /// <summary>
-    /// Подтвердить направление ВТОРЫМ человеком — принцип двух рук (10.3). Окно то же самое, что
-    /// у первого подтверждения, только срок не спрашивается: он уже назначен первым, и второе
-    /// подтверждение — допуск к согласованному, а не новое согласование.
-    /// </summary>
-    private async Task CountersignDirectionAsync(Database.IntegrationsRegistry registry,
-                                                 IntegrationRequest request)
-    {
-        if (VisualRoot is not Window win) return;
-        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsOutward)) return;
-
-        var what = $"{request.Name}: {request.Method.ToString().ToUpperInvariant()} {request.Path}";
-        var first = registry.Direction(request.Id)?.Confirmed ?? "";
-
-        var done = await new DirectionConfirmDialog(what, (password, _) =>
-        {
-            registry.CountersignDirection(request, password, Utils.CurrentUser.DisplayName,
-                                          DateTimeOffset.Now, out var trouble);
-
-            if (trouble.Length > 0) return trouble;
-
-            var written = Database.SecurityJournal.Add(Database.SecurityEntry.New(
-                Database.SecurityEvent.Confirm, allowed: true,
-                who: Utils.CurrentUser.DisplayName, scenario: "",
-                address: request.Path, fields: "", rows: 0, bytes: 0, bodyHash: "",
-                explanation: $"второе подтверждение направления «{request.Name}»; "
-                           + $"первым подтвердил {first}",
-                dbId: 0, at: DateTimeOffset.Now, confirmed: Utils.CurrentUser.DisplayName));
-
-            return written
-                ? null
-                : "подтверждение записано, но след в журнале безопасности не лег — сообщите "
-                + "ответственному за интеграции";
-        }, second: first).ShowDialog<bool>(win);
-
-        if (done) BuildIntegrationsRequests();
-    }
-
-    /// <summary>Отозвать подтверждение — руками, до срока.</summary>
-    private async Task RevokeDirectionAsync(Database.IntegrationsRegistry registry,
-                                            IntegrationRequest request)
-    {
-        if (VisualRoot is not Window win) return;
-        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsOutward)) return;
-
-        var yes = await new ConfirmDialog(
-            $"Отозвать подтверждение у запроса «{request.Name}»? Он перестанет отправлять данные "
-            + "наружу, а вернуть разрешение можно только мастер-паролем.",
-            "Отозвать").ShowDialog<bool>(win);
-
-        if (!yes) return;
-
-        registry.RevokeDirection(request.Id);
-
-        Database.SecurityJournal.Add(Database.SecurityEntry.New(
-            Database.SecurityEvent.Revoke, allowed: true,
-            who: Utils.CurrentUser.DisplayName, scenario: "",
-            address: request.Path, fields: "", rows: 0, bytes: 0, bodyHash: "",
-            explanation: $"отозвано направление «{request.Name}»",
-            dbId: 0, at: DateTimeOffset.Now));
-
-        BuildIntegrationsRequests();
-    }
-
     private async Task EditRequestAsync(IntegrationRequest card)
     {
         if (VisualRoot is not Window win || Integrations is null) return;
-        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
 
         var registry    = Integrations;
         var connections = registry.Connections();
@@ -573,7 +353,6 @@ public partial class SettingsView
     private async Task DeleteRequestAsync(IntegrationRequest request)
     {
         if (VisualRoot is not Window win || Integrations is null) return;
-        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
 
         // Запрос с шагом сценария не удаляется — как и соединение с запросами: сценарий с дырой
         // посреди списка шагов хуже отказа.
@@ -606,7 +385,6 @@ public partial class SettingsView
     private async Task ImportCurlAsync()
     {
         if (VisualRoot is not Window win || Integrations is null) return;
-        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
 
         var import = await new CurlImportDialog().ShowDialog<CurlImport?>(win);
         if (import is null) return;

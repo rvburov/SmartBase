@@ -45,24 +45,24 @@ public sealed class SenderGreetingTests
         Assert.Equal("1001; 1002", twice);
     }
 
-    /// <summary>Сообщение — строка о доступе, пустая строка и инструкция целиком. Переводы строк
+    /// <summary>Сообщение — строка заголовка, пустая строка и инструкция целиком. Переводы строк
     /// — «\n»: перенос под ту сторону ставит сценарий.</summary>
     [Fact]
-    public void Text_is_the_access_line_and_the_instruction()
+    public void Text_is_the_heading_and_the_instruction()
     {
         var seen = ReplyMarkup.Text(SenderGreeting.Text);
 
-        Assert.StartsWith("Вам открыт доступ к регистрации документов в журнале КД.\n\nИнструкция по работе с журналом КД\n",
+        Assert.StartsWith("Инструкция по регистрации документов в журнале КД.\n\nИнструкция по работе с журналом КД\n",
                           seen, StringComparison.Ordinal);
         Assert.EndsWith("Инструкция", seen.TrimEnd(), StringComparison.Ordinal);
         Assert.DoesNotContain('\r', SenderGreeting.Text);
     }
 
-    /// <summary>Строка о доступе — жирным, как заголовок; за ней — оформленная инструкция.</summary>
+    /// <summary>Первая строка — жирным, как заголовок; за ней — оформленная инструкция.</summary>
     [Fact]
-    public void The_access_line_is_bold_like_a_heading()
+    public void The_first_line_is_bold_like_a_heading()
     {
-        Assert.StartsWith("<b>Вам открыт доступ к регистрации документов в журнале КД.</b>\n\n"
+        Assert.StartsWith("<b>Инструкция по регистрации документов в журнале КД.</b>\n\n"
                           + "<b><font size='4'>Инструкция по работе с журналом КД</font></b>\n",
                           SenderGreeting.Text, StringComparison.Ordinal);
     }

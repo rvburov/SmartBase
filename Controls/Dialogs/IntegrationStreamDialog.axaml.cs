@@ -198,9 +198,7 @@ public partial class IntegrationStreamDialog : Window
     private static string Verdict(EgressResponse ended, bool opened, int total)
     {
         if (!opened)
-            return ended.Reason == EgressDenyReason.None
-                ? "Поток не открылся: " + ended.Explanation
-                : "Запрещено политикой: " + ended.Explanation;
+            return "Поток не открылся: " + ended.Explanation;
 
         var head = total == 0
             ? $"Поток открыт. За {ListenSeconds} с не пришло ничего — той стороне было не о чем "
@@ -244,7 +242,7 @@ public partial class IntegrationStreamDialog : Window
         KeepWindowPosition(pos);
     }
 
-    /// <summary>Итоговый адрес и вердикт политики — не дожидаясь нажатия «Проверить».</summary>
+    /// <summary>Итоговый адрес — не дожидаясь нажатия «Проверить».</summary>
     private void ShowFullAddress()
     {
         var connection = Connection();
@@ -256,10 +254,7 @@ public partial class IntegrationStreamDialog : Window
             return;
         }
 
-        var decision = EgressGate.Check(address);
-
-        FullAddressText.Text = "Откроется по адресу: " + address
-            + (decision.Allowed ? "" : ". Политика: " + decision.Explanation);
+        FullAddressText.Text = "Откроется по адресу: " + address;
     }
 
     /// <summary>Карточку правят — прежний итог проверки к ней уже не относится.</summary>

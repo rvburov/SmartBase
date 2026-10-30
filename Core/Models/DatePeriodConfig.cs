@@ -4,18 +4,17 @@ using System.Text.Json.Nodes;
 
 namespace SmartBase.Core.Models;
 
-/// <summary>Правило длительности по датам этой коллекции. Дни недели: бит 0 — понедельник,
+/// <summary>Правило длительности по диапазону одного свойства даты. Дни недели: бит 0 — понедельник,
 /// бит 6 — воскресенье; часы — локальное календарное время без перевода в часовой пояс сервера.</summary>
-public sealed record DatePeriodConfig(int StartFieldId, int? EndFieldId = null, bool Automatic = true,
-                                     int Weekdays = 127, string DayStart = "00:00", string DayEnd = "24:00")
+public sealed record DatePeriodConfig(int DateFieldId, bool Automatic = true, int Weekdays = 127,
+                                     string DayStart = "00:00", string DayEnd = "24:00")
 {
     public bool IsValid => TryValidate(out _, out _);
 
     internal bool TryValidate(out int start, out int end)
     {
         start = end = 0;
-        return StartFieldId > 0 && (EndFieldId is null or > 0)
-            && Weekdays is > 0 and <= 127 && TryGetDayMinutes(out start, out end);
+        return DateFieldId > 0 && Weekdays is > 0 and <= 127 && TryGetDayMinutes(out start, out end);
     }
 
     public bool TryGetDayMinutes(out int start, out int end)
@@ -42,16 +41,17 @@ public sealed record DatePeriodConfig(int StartFieldId, int? EndFieldId = null, 
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
             if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("datePeriod", out var node)
-                || node.ValueKind != JsonValueKind.Object
-                || !node.TryGetProperty("startFieldId", out var s) || !s.TryGetInt32(out var start)) return null;
-            if (node.TryGetProperty("version", out var version)
-                && (version.ValueKind != JsonValueKind.Number || !version.TryGetInt32(out var v) || v != 1)) return null;
-            int? end = null;
-            if (node.TryGetProperty("endFieldId", out var e) && e.ValueKind != JsonValueKind.Null)
-            {
-                if (e.ValueKind != JsonValueKind.Number || !e.TryGetInt32(out var id)) return null;
-                end = id;
-            }
+                || node.ValueKind != JsonValueKind.Object) return null;
+            var version = 1;
+            if (node.TryGetProperty("version", out var storedVersion)
+                && (storedVersion.ValueKind != JsonValueKind.Number || !storedVersion.TryGetInt32(out version))) return null;
+            if (version is not (1 or 2)) return null;
+
+            // В прежней настройке выбранное свойство хранилось как начало. Его диапазон
+            // становится единственным источником; второй источник и режим «сейчас» сняты.
+            var fieldKey = version == 1 ? "startFieldId" : "dateFieldId";
+            if (!node.TryGetProperty(fieldKey, out var field) || field.ValueKind != JsonValueKind.Number
+                || !field.TryGetInt32(out var dateFieldId)) return null;
             var automatic = true;
             if (node.TryGetProperty("automatic", out var a))
             {
@@ -73,7 +73,7 @@ public sealed record DatePeriodConfig(int StartFieldId, int? EndFieldId = null, 
                 if (de.ValueKind != JsonValueKind.String) return null;
                 dayEnd = de.GetString()!;
             }
-            var config = new DatePeriodConfig(start, end, automatic, weekdays, dayStart, dayEnd);
+            var config = new DatePeriodConfig(dateFieldId, automatic, weekdays, dayStart, dayEnd);
             return config.IsValid ? config : null;
         }
         catch (JsonException ex)
@@ -84,7 +84,7 @@ public sealed record DatePeriodConfig(int StartFieldId, int? EndFieldId = null, 
         catch (InvalidOperationException) { return null; }
     }
 
-    /// <summary>Сохраняет прочие настройки свойства (в том числе метки доступа).</summary>
+    /// <summary>Записывает правило диапазона версии 2, сохраняя прочие настройки свойства.</summary>
     public string ToConfigJson(string? originalJson = null)
     {
         JsonObject root;
@@ -92,7 +92,7 @@ public sealed record DatePeriodConfig(int StartFieldId, int? EndFieldId = null, 
         catch (JsonException) { root = new(); }
         root["datePeriod"] = JsonSerializer.SerializeToNode(new
         {
-            version = 1, startFieldId = StartFieldId, endFieldId = EndFieldId,
+            version = 2, dateFieldId = DateFieldId,
             automatic = Automatic, weekdays = Weekdays, dayStart = DayStart, dayEnd = DayEnd,
         });
         return root.ToJsonString();

@@ -2,7 +2,7 @@ namespace SmartBase.Core.Models;
 
 public enum RelationAutoStatus
 {
-    Ready, Applied, NoRule, Unavailable, NoAccess, InvalidRule, Ambiguous, Cancelled, Conflict,
+    Ready, Applied, NoRule, Unavailable, InvalidRule, Ambiguous, Cancelled, Conflict,
 }
 
 /// <summary>Изменение одной ячейки, рассчитанное без записи в базу.</summary>
@@ -29,7 +29,7 @@ public sealed class RelationAutoPreview
     public int UnmatchedEmpty { get; }
     /// <summary>Записей, совпавших только без учета регистра и пробелов по краям (считается для окна).</summary>
     public int FoldOnly { get; }
-    public int Unavailable => Status is RelationAutoStatus.Unavailable or RelationAutoStatus.NoAccess ? 1 : 0;
+    public int Unavailable => Status == RelationAutoStatus.Unavailable ? 1 : 0;
     public string Message { get; }
     public IReadOnlyList<RelationAutoChange> Changes { get; }
     internal string Fingerprint { get; }

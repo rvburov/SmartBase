@@ -108,13 +108,12 @@ public sealed partial class ConstructorRepository
         var keys = fieldIds ?? GetFields(collectionId).Where(f => f.Id.HasValue).Select(f => f.Id!.Value).ToList();
         var crossPaths = CrossDbPathsForKeys(collectionId, keys.Select(id => id.ToString())
             .Concat((relationFieldIds ?? []).Select(id => id.ToString())));
-        var periodNow = DatePeriodClock();
         return Task.Run(() =>
         {
             var t0 = GridTimings.Start();
             using var ctx = new AppDbContext(db.DbPath);
             ctx.ApplyPerformancePragmas();
-            var repo = new ConstructorRepository(ctx) { Permissions = Permissions, DatePeriodClock = () => periodNow };
+            var repo = new ConstructorRepository(ctx);
             using var foreignScope = (ForeignResolver(crossPaths)?.Target as ForeignPropertyReader)?.OpenScope();
             GridTimings.Stop(t0, "страница (фон): подключение");
 
@@ -148,12 +147,11 @@ public sealed partial class ConstructorRepository
             .Select(f => f.CollectionId).Distinct().ToList();
         foreach (var collection in collections)
             foreach (var (id, path) in CrossDbPathsForKeys(collection, keys) ?? []) paths[id] = path;
-        var periodNow = DatePeriodClock();
         return Task.Run(() =>
         {
             using var ctx = new AppDbContext(db.DbPath);
             ctx.ApplyPerformancePragmas();
-            var repo = new ConstructorRepository(ctx) { Permissions = Permissions, DatePeriodClock = () => periodNow };
+            var repo = new ConstructorRepository(ctx);
             using var foreignScope = (ForeignResolver(paths)?.Target as ForeignPropertyReader)?.OpenScope();
             return new TopUpData(repo.GetFieldValuesBatch(recordIds, fieldIds), repo.ReadPageLinks(recordIds, relationFieldIds));
         });
@@ -517,7 +515,6 @@ public sealed partial class ConstructorRepository
         var crossPaths  = CrossDbPathsForKeys(collectionId, filtersCopy.Keys.Append(sortKey ?? ""));
         var dbPath      = db.DbPath;
         var run         = RelationColumnRun.Capture(ct);
-        var periodNow   = DatePeriodClock();
 
         return Task.Run(async () =>
         {
@@ -527,7 +524,7 @@ public sealed partial class ConstructorRepository
                                           (sortKey is null ? "" : $", сортировка по {sortKey}"));
             await using var ctx = new AppDbContext(dbPath);
             ctx.ApplyPerformancePragmas();
-            var repo = new ConstructorRepository(ctx) { Permissions = Permissions, ComputedRun = run, DatePeriodClock = () => periodNow };
+            var repo = new ConstructorRepository(ctx) { ComputedRun = run };
             var ids  = await repo.FilteredIdsSortedAsync(collectionId, filtersCopy, excludeHidden, sortKey, sortAsc,
                                                          sortFieldType, ForeignResolver(crossPaths), ct);
             slow.Context += $", отобрано {ids.Count:N0}";
@@ -569,7 +566,6 @@ public sealed partial class ConstructorRepository
         var fieldType = storedType;
         if (FieldTypeInfo.IsAuditComputed(fieldType))
         {
-            Demand(PermAction.ViewCollection, collectionId);
             return await AuditSortedIdsAsync(q, fieldType, sortAsc, ct);
         }
 
@@ -578,8 +574,7 @@ public sealed partial class ConstructorRepository
             var field = DatePeriodField(fid);
             if (field is null)
                 return await q.OrderBy(r => r.Position).ThenBy(r => r.Id).Select(r => r.Id).ToListAsync(ct);
-            if (DatePeriodConfig.FromConfig(field.ConfigJson) is { Automatic: false }
-                && Permissions?.Can(PermAction.ViewCollection, collectionId) != false)
+            if (DatePeriodConfig.FromConfig(field.ConfigJson) is { Automatic: false })
                 return await NumberSortedIdsAsync(collectionId, q, fid, sortAsc, filters.Count == 0, excludeHidden, ct);
             // Храним только id и числовой ключ, без строк и словарей всех ячеек.
             // Порядок чтения — порядок таблицы; порядковый номер сохраняет устойчивость.
@@ -826,9 +821,7 @@ public sealed partial class ConstructorRepository
                 {
                     context = new AppDbContext(path);
                     context.ApplyPerformancePragmas();
-                    var permissions = new PermissionService(context) { DbId = dbId };
-                    permissions.Reload(notify: false);
-                    var repo = new ConstructorRepository(context) { Permissions = permissions };
+                    var repo = new ConstructorRepository(context);
                     _opened[dbId] = (context, repo);
                     return repo;
                 }

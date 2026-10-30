@@ -90,32 +90,6 @@ public sealed class FileAutoSafetyTests
         Assert.Equal(afterExternalChange, f.Snapshot());
     }
 
-    [SkippableTheory]
-    [InlineData("sqlite", false)]
-    [InlineData("postgres", false)]
-    [InlineData("sqlite", true)]
-    [InlineData("postgres", true)]
-    public void Final_write_rechecks_durable_rights_even_when_the_ui_cache_still_grants_access(
-        string provider, bool denyView)
-    {
-        using var f = new Fixture(provider);
-        string? afterRevocation = null;
-        var revoked = 0;
-        var result = f.Resolve(new InlineProgress(value =>
-        {
-            if (value != .45 || Interlocked.Exchange(ref revoked, 1) != 0) return;
-            Assert.True(f.Manager.Permissions.IsAdmin);
-            f.RevokeDurably(denyView ? PermAction.ViewCollection : PermAction.EditRecord);
-            Assert.True(f.Manager.Permissions.IsAdmin);
-            afterRevocation = f.Snapshot();
-        }));
-
-        Assert.Equal(1, revoked);
-        Assert.NotNull(afterRevocation);
-        Assert.Equal(ConstructorRepository.FileAutoResolveResult.NoAccess, result);
-        Assert.Equal(afterRevocation, f.Snapshot());
-    }
-
     [Fact]
     public void Cancellation_after_a_thousand_staged_writes_rolls_back_the_entire_update()
     {
@@ -379,25 +353,6 @@ public sealed class FileAutoSafetyTests
         }
     }
 
-    [Fact]
-    public void Queued_work_rechecks_fresh_permissions_and_honors_precancellation()
-    {
-        using var f = new Fixture();
-        var work = new FileAutoWork(f.Manager.Path, f.FileField, f.One, f.Manager.Permissions);
-        var before = f.Snapshot();
-        using var cancel = new CancellationTokenSource();
-        cancel.Cancel();
-        Assert.Equal(ConstructorRepository.FileAutoResolveResult.Cancelled,
-            ConstructorRepository.ExecuteFileAutoWork(work, cancel.Token));
-        Assert.Equal(before, f.Snapshot());
-        f.RevokeDurably(PermAction.EditRecord);
-        Assert.True(f.Manager.Permissions.IsAdmin);
-        before = f.Snapshot();
-        Assert.Equal(ConstructorRepository.FileAutoResolveResult.NoAccess,
-            ConstructorRepository.ExecuteFileAutoWork(work));
-        Assert.Equal(before, f.Snapshot());
-    }
-
     private sealed class InlineProgress(Action<double> report) : IProgress<double>
     {
         public void Report(double value) => report(value);
@@ -474,18 +429,7 @@ public sealed class FileAutoSafetyTests
             Rule = rule;
         }
 
-        public void RevokeDurably(PermAction denied)
-        {
-            using var other = Other();
-            var user = other.DbUsers.Single(u => u.UserKey == SmartBase.Utils.CurrentUser.Key);
-            user.IsAdmin = false;
-            user.IsApproved = true;
-            var mask = other.DbPermissions.SingleOrDefault(p => p.UserId == user.Id && p.CollectionId == null);
-            if (mask is null)
-                other.DbPermissions.Add(new DbPermissionEntity { UserId = user.Id, ActionsMask = (int)(PermAction.All & ~denied) });
-            else mask.ActionsMask = (int)(PermAction.All & ~denied);
-            other.SaveChanges();
-        }
+
 
         public ConstructorRepository.FileAutoResolveResult Resolve(IProgress<double>? progress = null,
             CancellationToken ct = default) => Repo.ResolveAutoFileFieldAsync(FileField, progress, ct).GetAwaiter().GetResult();

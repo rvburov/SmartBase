@@ -18,9 +18,8 @@ public sealed class InfrastructureSmokeTests
             // Сиды категорий выполняются в composition root — база не пустая.
             Assert.NotEmpty(db.Categories.GetAll());
 
-            // Текущий пользователь ОС зарегистрирован первым → администратор с полным доступом.
-            Assert.True(db.Permissions.IsAdmin);
-            Assert.True(db.Permissions.AccessGranted);
+            // Текущий пользователь зарегистрирован для авторства и выбора исполнителей.
+            Assert.Contains(db.Users.GetUsers(), u => u.UserKey == SmartBase.Utils.CurrentUser.Key);
         }
 
         Assert.False(File.Exists(path), "файл БД должен быть удален при Dispose");

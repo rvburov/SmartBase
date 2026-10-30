@@ -150,7 +150,7 @@ public static class IntegrationActions
         {
             outcome = await RequestLauncher.SendAsync(
                 registry, connection, request, payload, DbOf(databases, request, registry),
-                DateTimeOffset.UtcNow, DateTimeOffset.Now, ct: cts.Token);
+                DateTimeOffset.UtcNow, ct: cts.Token);
         }
         catch (OperationCanceledException)
         {

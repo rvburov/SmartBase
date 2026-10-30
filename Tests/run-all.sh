@@ -29,6 +29,10 @@ echo "== Фильтр баз в календаре, задачах и библи
 dotnet run --project Tests/Sections -f net10.0 -- --only sidebarfilter
 
 echo
+echo "== Профиль и история старой базы без экранов доступа =="
+dotnet run --project Tests/RecordPage -f net10.0 -- --only profile
+
+echo
 echo "== Свойство «Дата период времени»: окно и открытые виды =="
 dotnet run --project Tests/RecordPage -f net10.0 -- --only dateperiod
 

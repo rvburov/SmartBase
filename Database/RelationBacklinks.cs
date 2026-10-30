@@ -8,8 +8,7 @@ namespace SmartBase.Database;
 /// <summary>
 /// Блок «Ссылаются на эту запись» страницы записи: чтение идет в фоне на своих подключениях, и
 /// открытие записи не ждет подсчета, сколько бы ссылок ни было. Базы снимаются на UI-потоке
-/// (<see cref="Capture"/>): база записи и подключенные другие базы, куда у пользователя есть
-/// допуск. Неподключенные базы не читаются, их ссылки не показываются — как в окне удаления.
+/// (<see cref="Capture"/>): база записи и подключенные другие базы. Неподключенные базы не читаются, их ссылки не показываются — как в окне удаления.
 ///
 /// Другая база ссылается номером базы записи, а номер ведет в основную копию файла
 /// (<see cref="RelationDbResolver.MountedRepoFor"/>): у второй подключенной копии с тем же номером
@@ -40,7 +39,7 @@ public sealed class RelationBacklinkReader
     {
         var own = RelationBaseRef.Of(owner);
         var others = own.LinkId > 0 && RelationDbResolver.MountedRepoFor(own.LinkId)?.DbPath == owner.DbPath
-            ? RelationBaseRef.Mounted().Where(b => b.Path != own.Path && b.Permissions?.AccessGranted != false).ToList()
+            ? RelationBaseRef.Mounted().Where(b => b.Path != own.Path).ToList()
             : [];
         return new(own, others, recordId, collectionId);
     }

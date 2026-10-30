@@ -26,10 +26,10 @@ public partial class ConstructorRepository
     private AutoConnections CaptureIntegrityConnections()
     {
         var ownId = RelationDbResolver.DbIdFor(this);
-        var source = new AutoConnection(ownId, DbPath, Permissions);
+        var source = new AutoConnection(ownId, DbPath);
         var targets = RelationDbResolver.HasScopedResolver ? new Dictionary<int, AutoConnection>()
             : RelationDbResolver.MountedReposExcept(ownId)
-                .ToDictionary(p => p.DbId, p => new AutoConnection(p.DbId, p.Repo.DbPath, p.Repo.Permissions));
+                .ToDictionary(p => p.DbId, p => new AutoConnection(p.DbId, p.Repo.DbPath));
         if (ownId > 0) targets[ownId] = source;
         if (!RelationDbResolver.HasScopedResolver) return new(source, targets);
         var pending = new Queue<AutoConnection>();
@@ -50,7 +50,7 @@ public partial class ConstructorRepository
                 foreach (var id in ids.Distinct())
                     if (RelationDbResolver.MountedRepoFor(id) is { } repo)
                     {
-                        var target = new AutoConnection(id, repo.DbPath, repo.Permissions);
+                        var target = new AutoConnection(id, repo.DbPath);
                         targets[id] = target;
                         pending.Enqueue(target);
                     }
@@ -76,7 +76,7 @@ public partial class ConstructorRepository
         Func<ConstructorRepository, T> action, bool writable = false)
     {
         using var source = NewIntegrityContext(connections.Source.Path, writable);
-        var repo = new ConstructorRepository(source) { Permissions = connections.Source.Permissions };
+        var repo = new ConstructorRepository(source);
         var contexts = new List<AppDbContext>();
         var repositories = new Dictionary<int, ConstructorRepository>();
         ConstructorRepository? Resolve(int id)
@@ -87,7 +87,7 @@ public partial class ConstructorRepository
             if (target.Path == connections.Source.Path) return repo;
             var context = NewIntegrityContext(target.Path, writable);
             contexts.Add(context);
-            return repositories[id] = new ConstructorRepository(context) { Permissions = target.Permissions };
+            return repositories[id] = new ConstructorRepository(context);
         }
         using var resolver = RelationDbResolver.UseScopedResolver(Resolve, candidate => ReferenceEquals(candidate, repo)
             ? connections.Source.DbId : repositories.FirstOrDefault(p => ReferenceEquals(p.Value, candidate)).Key);
@@ -101,22 +101,18 @@ public partial class ConstructorRepository
         var scan = new IntegrityScan(this, options, progress, ct, locks);
         try { return scan.Run(); }
         catch (OperationCanceledException) { return scan.Failure(RelationIntegrityStatus.Cancelled, "Проверка отменена. Данные не изменялись."); }
-        catch (PermissionDeniedException) { return scan.Failure(RelationIntegrityStatus.NoAccess, "Нет доступа к проверяемым данным."); }
+
         catch (Exception ex) when (ex is DbException or IOException)
         { return scan.Failure(RelationIntegrityStatus.Unavailable, "База недоступна. Проверка не завершена, данные не изменялись."); }
         finally { scan.Dispose(); }
     }
 
     private sealed class IntegrityCatalog(ConstructorRepository owner,
-        Dictionary<int, DbFieldEntity> fields, Dictionary<int, DbCollectionEntity> collections,
-        PermissionService? permissions)
+        Dictionary<int, DbFieldEntity> fields, Dictionary<int, DbCollectionEntity> collections)
     {
         public ConstructorRepository Owner { get; } = owner;
         public Dictionary<int, DbFieldEntity> Fields { get; } = fields;
         public Dictionary<int, DbCollectionEntity> Collections { get; } = collections;
-        public PermissionService? Permissions { get; } = permissions;
-        public bool Can(PermAction action, int collection) => Permissions?.Can(action, collection) != false;
-        public bool Admin => Permissions?.IsAdmin != false;
     }
 
     private sealed class IntegrityScan(ConstructorRepository owner, RelationIntegrityScanOptions options,
@@ -145,14 +141,9 @@ public partial class ConstructorRepository
         {
             ct.ThrowIfCancellationRequested();
             _source = Catalog(owner)!;
-            if (_source.Permissions?.AccessGranted == false || _source.Collections.Count > 0
-                && !_source.Collections.Keys.Any(id => _source.Can(PermAction.ViewCollection, id)))
-                return Failure(RelationIntegrityStatus.NoAccess, "Нет доступа к проверяемым данным.");
             foreach (var field in _source.Fields.Values.OrderBy(f => f.Id))
             {
                 ct.ThrowIfCancellationRequested();
-                if (!_source.Can(PermAction.ViewCollection, field.CollectionId)) continue;
-                if (!_source.Collections.ContainsKey(field.CollectionId) && !_source.Admin) continue;
                 if (field.FieldType is not ("relation" or "lookup" or "rollup")) continue;
                 if (options.FieldId is int only && field.Id != only
                     && RelationComputedConfig.FromConfig(field.ConfigJson)?.RelationFieldId != only) continue;
@@ -185,7 +176,7 @@ public partial class ConstructorRepository
                     sources.TryGetValue(edge.FromRecordId, out var source);
                     _source.Fields.TryGetValue(edge.FieldId, out var field);
                     AddHash(source is null ? "missing-source" : JsonSerializer.Serialize(new { source.Id, source.CollectionId,
-                        Title = _source.Can(PermAction.ViewCollection, source.CollectionId) ? source.Title : "" }));
+                        source.Title }));
                     CheckEdge(edge, field, source, targets, conditions);
                 }
                 var last = page[^1];
@@ -206,12 +197,6 @@ public partial class ConstructorRepository
             {
                 ct.ThrowIfCancellationRequested();
                 locks?.Acquire(repository);
-                PermissionService? permissions = null;
-                if (repository.Permissions is not null)
-                {
-                    permissions = new PermissionService(repository.AutoContext) { DbId = RelationDbResolver.DbIdFor(repository) };
-                    permissions.Reload(notify: false);
-                }
                 var fields = new Dictionary<int, DbFieldEntity>();
                 var cursor = 0;
                 while (true)
@@ -224,13 +209,11 @@ public partial class ConstructorRepository
                     cursor = page[^1].Id;
                 }
                 var collections = repository.AutoContext.DbCollections.AsNoTracking().ToList().ToDictionary(c => c.Id);
-                var catalog = new IntegrityCatalog(repository, fields, collections, permissions);
+                var catalog = new IntegrityCatalog(repository, fields, collections);
                 _catalogs[key] = catalog;
                 AddHash(key);
-                AddHash(permissions?.IsAdmin == false ? "user" : "admin");
                 foreach (var collection in collections.Values.OrderBy(c => c.Id))
-                    AddHash(JsonSerializer.Serialize(new { collection.Id, collection.Name,
-                        View = catalog.Can(PermAction.ViewCollection, collection.Id), Edit = catalog.Can(PermAction.EditRecord, collection.Id) }));
+                    AddHash(JsonSerializer.Serialize(new { collection.Id, collection.Name }));
                 foreach (var field in fields.Values.OrderBy(f => f.Id)) AddHash(JsonSerializer.Serialize(ToDbField(field)));
                 return catalog;
             }
@@ -353,12 +336,6 @@ public partial class ConstructorRepository
                     "Целевая база не открыта или недоступна. Существование целей не проверено.", false);
                 return null;
             }
-            if (!target.Can(PermAction.ViewCollection, relation.TargetCollectionId))
-            {
-                FieldIssue(field, RelationIntegrityIssueKind.TargetAccessDenied,
-                    "Нет доступа к целевой коллекции. Существование целей не проверено.", false);
-                return null;
-            }
             if (!target.Collections.ContainsKey(relation.TargetCollectionId))
             {
                 FieldIssue(field, RelationIntegrityIssueKind.MissingTargetCollection, "Целевая коллекция отсутствует. Требуется ручная проверка настройки.");
@@ -374,7 +351,7 @@ public partial class ConstructorRepository
             var done = new HashSet<(string, int)>();
             bool Key(IntegrityCatalog catalog, int collection, string key) => int.TryParse(key, out var id)
                 && catalog.Fields.TryGetValue(id, out var field) && field.CollectionId == collection
-                && catalog.Can(PermAction.ViewCollection, collection) && Walk(catalog, field);
+                && Walk(catalog, field);
             bool Walk(IntegrityCatalog catalog, DbFieldEntity field)
             {
                 var id = (catalog.Owner.RelationDatabaseIdentity, field.Id);
@@ -459,7 +436,7 @@ public partial class ConstructorRepository
                 if (!_configs.TryGetValue(field.Id, out var cfg)) _configs[field.Id] = cfg = StrictConfig(field.ConfigJson, out _);
                 if (cfg is not { Where.Count: > 0 } || cfg.WhereUnreadable is not null) continue;
                 var configuredDb = cfg.TargetDbId == _dbId && _dbId > 0 ? 0 : cfg.TargetDbId;
-                if (Target(cfg.TargetDbId) is not { } catalog || !catalog.Can(PermAction.ViewCollection, cfg.TargetCollectionId)) continue;
+                if (Target(cfg.TargetDbId) is not { } catalog) continue;
                 var ids = group.Where(e => (e.TargetDbId == _dbId && _dbId > 0 ? 0 : e.TargetDbId) == configuredDb)
                     .Select(e => e.ToRecordId).Distinct().ToList();
                 try
@@ -476,19 +453,14 @@ public partial class ConstructorRepository
             IReadOnlyDictionary<int, TargetProof> targets,
             IReadOnlyDictionary<int, (IReadOnlySet<int> Allowed, string Condition)> conditions)
         {
-            if (source is not null && !_source.Can(PermAction.ViewCollection, source.CollectionId)
-                || field is not null && !_source.Can(PermAction.ViewCollection, field.CollectionId)
-                || source is null && field is null && !_source.Admin) return;
             var collectionId = source?.CollectionId ?? field?.CollectionId;
             var collectionExists = collectionId is int cid && _source.Collections.ContainsKey(cid);
-            if (!collectionExists && !_source.Admin) return;
             _edges++;
-            var edit = collectionExists ? _source.Can(PermAction.EditRecord, collectionId!.Value) : _source.Admin;
             RelationIntegrityIssue Issue(RelationIntegrityIssueKind kind, string description, bool confirmed = true, bool repair = false) =>
                 new($"edge:{edge.Id}:{kind}", kind, _dbId, _identity, collectionId, edge.FieldId, edge.FromRecordId,
                     edge.Id, edge.TargetDbId, edge.ToRecordId,
                     collectionExists ? _source.Collections[collectionId!.Value].Name : "", field?.Name ?? "", source?.Title ?? "",
-                    description, confirmed, repair && edit && _source.Admin);
+                    description, confirmed, repair);
             void Add(RelationIntegrityIssueKind kind, string message, bool confirmed = true, bool repair = false) =>
                 AddIssue(Issue(kind, message, confirmed, repair));
             if (collectionId.HasValue && !collectionExists)
@@ -530,9 +502,7 @@ public partial class ConstructorRepository
             { Add(RelationIntegrityIssueKind.TargetUnavailable, "Целевая база не открыта или недоступна. Удаление цели не доказано.", false); return; }
             if (proof.Collections.TryGetValue(edge.ToRecordId, out var targetCollection))
             {
-                if (!proof.Catalog.Can(PermAction.ViewCollection, targetCollection))
-                    Add(RelationIntegrityIssueKind.TargetAccessDenied, "Нет доступа к целевой записи. Удаление цели не доказано.", false);
-                else if (canonicalDb == configuredDb && targetCollection != cfg.TargetCollectionId)
+                if (canonicalDb == configuredDb && targetCollection != cfg.TargetCollectionId)
                     Add(RelationIntegrityIssueKind.TargetCollectionMismatch,
                         "Прежняя цель находится в другой коллекции. Ее полная идентичность сохранена, исправление не требуется.");
                 else if (canonicalDb == configuredDb && conditions.TryGetValue(edge.FieldId, out var condition)
@@ -541,10 +511,8 @@ public partial class ConstructorRepository
                         $"Не подходит под условие выбора: {condition.Condition}. Связь сохранена; снять ее можно вручную.");
                 return;
             }
-            if (canonicalDb != configuredDb && !proof.Catalog.Admin
-                || canonicalDb == configuredDb && (!proof.Catalog.Collections.ContainsKey(cfg.TargetCollectionId)
-                    || !proof.Catalog.Can(PermAction.ViewCollection, cfg.TargetCollectionId)))
-            { Add(RelationIntegrityIssueKind.TargetAccessDenied, "Недостаточно данных или прав для проверки прежней цели. Удаление не доказано.", false); return; }
+            if (canonicalDb == configuredDb && !proof.Catalog.Collections.ContainsKey(cfg.TargetCollectionId))
+            { Add(RelationIntegrityIssueKind.TargetUnavailable, "Целевая коллекция отсутствует. Удаление записи не доказано.", false); return; }
             Add(RelationIntegrityIssueKind.MissingTargetRecord, "Целевая запись отсутствует в проверенной доступной базе.", repair: true);
         }
 

@@ -289,28 +289,6 @@ public sealed class RelationAutoTests
     }
 
     [Fact]
-    public void Denied_target_read_keeps_old_links_and_does_not_save_the_rule()
-    {
-        using var f = new Fixture();
-        var order = f.AddSource("same");
-        var target = f.AddTarget("same");
-        f.Repo.SetLinks(f.Relation, order, [target]);
-        var field = f.Proposed();
-        var preview = f.Repo.PreviewAutoRelation(field);
-        var permissions = f.Database.Permissions;
-        permissions.SetMask(permissions.CurrentUserId, null, (int)PermAction.All);
-        permissions.SetMask(permissions.CurrentUserId, f.Target, (int)PermAction.None);
-        var me = f.Database.Context.DbUsers.First(u => u.UserKey == CurrentUser.Key);
-        me.IsAdmin = false;
-        me.IsApproved = true;
-        f.Database.Context.SaveChanges();
-        permissions.Reload(notify: false);
-        Assert.Equal(RelationAutoStatus.NoAccess, f.Repo.PreviewAutoRelation(field).Status);
-        Assert.Throws<RelationAutoApplyException>(() => f.Repo.SaveAutoRelationField(field, preview));
-        Assert.Equal([target], f.Repo.GetLinkTargetIds(f.Relation, order));
-    }
-
-    [Fact]
     public void Direct_self_dependency_is_rejected_even_in_an_empty_collection()
     {
         using var f = new Fixture();
@@ -358,7 +336,7 @@ public sealed class RelationAutoTests
     }
 
     [Fact]
-    public void Existing_rule_refresh_needs_record_edit_right_but_does_not_require_field_edit_right()
+    public void Existing_rule_refresh_preserves_required_metadata()
     {
         using var f = new Fixture();
         var order = f.AddSource("same");
@@ -367,13 +345,6 @@ public sealed class RelationAutoTests
         var field = f.Proposed();
         field.IsRequired = true;
         f.Repo.SaveAutoRelationField(field, f.Repo.PreviewAutoRelation(field));
-        var permissions = f.Database.Permissions;
-        permissions.SetMask(permissions.CurrentUserId, null, (int)(PermAction.All & ~PermAction.EditField));
-        var me = f.Database.Context.DbUsers.First(u => u.UserKey == CurrentUser.Key);
-        me.IsAdmin = false;
-        me.IsApproved = true;
-        f.Database.Context.SaveChanges();
-        permissions.Reload(notify: false);
         f.Repo.SetFieldValue(order, f.SourceKey, "next");
         var results = f.Repo.RefreshAutoRelationsForChange(f.Source, f.SourceKey, order);
         Assert.All(results, result => Assert.True(result.Applied, result.Message));

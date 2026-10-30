@@ -13,7 +13,7 @@ output=
 p95=
 usage() {
   echo "Tests/run-concurrency.sh [--clients 1..1000] [--rounds N] [--timeout-seconds N]"
-  echo "  [--provider all|sqlite|postgres] [--scenario all|lifecycle|hotcell|rollback|planning|library|integrations|access|structure]"
+  echo "  [--provider all|sqlite|postgres] [--scenario all|lifecycle|hotcell|rollback|planning|library|integrations|people|structure]"
   echo "  [--p95-ms N] [--out НОВАЯ_ПАПКА]"
 }
 while (($#)); do
@@ -36,7 +36,7 @@ for number in "$clients" "$rounds" "$timeout_seconds"; do
 done
 if ((clients > 1000 || rounds > 10000 || timeout_seconds > 3600)); then usage >&2; exit 2; fi
 case "$provider" in all|sqlite|postgres) ;; *) usage >&2; exit 2 ;; esac
-case "$scenario" in all|lifecycle|hotcell|rollback|planning|library|integrations|access|structure) ;; *) usage >&2; exit 2 ;; esac
+case "$scenario" in all|lifecycle|hotcell|rollback|planning|library|integrations|people|structure) ;; *) usage >&2; exit 2 ;; esac
 if [[ -n "$p95" && ! "$p95" =~ ^[0-9]+([.][0-9]+)?$ ]]; then usage >&2; exit 2; fi
 if [[ -n "$p95" && ! "$p95" =~ [1-9] ]]; then usage >&2; exit 2; fi
 if [[ -z "$output" ]]; then
@@ -50,7 +50,7 @@ dotnet build Tests/Benchmarks --configuration Release > "$output/build.log" 2>&1
   cat "$output/build.log" >&2
   exit 1
 }
-scenarios=(lifecycle hotcell rollback planning library integrations access structure)
+scenarios=(lifecycle hotcell rollback planning library integrations people structure)
 if [[ "$scenario" != all ]]; then scenarios=("$scenario"); fi
 providers=(sqlite postgres)
 if [[ "$provider" != all ]]; then providers=("$provider"); fi

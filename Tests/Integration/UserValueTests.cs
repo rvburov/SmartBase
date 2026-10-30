@@ -31,7 +31,7 @@ public sealed class UserValueTests
     // Дата создания «до нас» — чужой аудит, который перенос обязан сохранить, а дубль — перештамповать.
     private const string OldCreatedAt = "2024-01-15T08:00:00.0000000";
 
-    // Регистрация соседа в базе — как PermissionService при монтировании на его машине
+    // Регистрация соседа в базе — как UserDirectory при монтировании на его машине
     // (тот же хелпер, что в UserOptionsTests).
     private static int JoinUser(string path, string key, string name, bool approved = false)
     {

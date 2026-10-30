@@ -22,6 +22,12 @@ public enum OutgoingShape
     Single,
 }
 
+/// <summary>Собранное тело запроса не помещается в одно сообщение транспорта.</summary>
+internal sealed class OutgoingBodyLimitException() : InvalidOperationException(
+    "тело запроса больше технического ограничения 32 МБ; сузьте отбор отправляемых данных")
+{
+}
+
 /// <summary>
 /// Одно поле, уходящее наружу.
 /// </summary>
@@ -34,18 +40,7 @@ public sealed record OutgoingField(int? FieldId, string Name);
 /// Исходящая привязка — «какие поля коллекции и под какими именами уходят наружу». Зеркало
 /// <see cref="CollectionBinding"/> (docs/ROADMAP-API.md, раздел 2: «Наружу — зеркально»).
 ///
-/// До нее наружу могло уйти только то, что человек напечатал в теле запроса руками: замок из
-/// шага 5 стоял на двери, через которую нечего было вынести. Теперь тело собирается из записей
-/// коллекции — и именно поэтому состав выгрузки задан списком, а не правилом.
-///
-/// <b>Ни «отправить запись целиком», ни «все поля».</b> Список полей перечислен поименно
-/// (раздел 10.6): состав того, что уходит, должен читаться глазами и не меняться сам собой,
-/// когда в коллекции заведут новое свойство. Заведешь правило «все, кроме помеченных» — и новое
-/// поле начнет уходить наружу в тот же день, когда его создали, никого не спросив.
-///
-/// <b>Помеченного поля в привязке нет и быть не может.</b> Запрет срабатывает при настройке —
-/// помеченные свойства просто не показываются в списке, — а <see cref="Problems"/> проверяет это
-/// еще раз при сохранении: метку могли поставить после того, как привязку собрали.
+/// Состав выгрузки задан явно: поле коллекции и имя в JSON стороннего сервиса.
 ///
 /// Модель без ввода-вывода: строки читает репозиторий, тело собирает <see cref="OutgoingBody"/>.
 /// </summary>
@@ -57,7 +52,7 @@ public sealed record OutgoingField(int? FieldId, string Name);
 /// <param name="Shape">Как обернуто тело.</param>
 /// <param name="Envelope">Имя поля-обертки (только для <see cref="OutgoingShape.Wrapped"/>).</param>
 /// <param name="Conditions">Какие записи уходят; пусто — вся коллекция. Условия названы по
-/// свойствам коллекции и проверяются ДО потолка строк — см. <see cref="Tests"/>.</param>
+/// свойствам коллекции — см. <see cref="Tests"/>.</param>
 public sealed record OutgoingBinding(
     int                              DbId,
     int                              CollectionId,
@@ -75,22 +70,7 @@ public sealed record OutgoingBinding(
     /// <summary>Обмен на одну запись: больше одной такой запрос не примет.</summary>
     public bool Single => Shape == OutgoingShape.Single;
 
-    /// <summary>
-    /// Условия отбора; пустой список — уходит вся коллекция.
-    ///
-    /// <b>Зачем они здесь.</b> Раздел 2 обещает «наружу — зеркально: коллекция И ФИЛЬТР (какие
-    /// записи)», а привязка знала только «какие поля». Из-за этого самый частый обмен из раздела
-    /// 1 — «статус стал „Отгружен" → отправить эту запись» — не выражался вовсе: сценарий по
-    /// триггеру «изменение данных» отправлял ВСЮ коллекцию при каждой правке одной строки и
-    /// переставал работать совсем, как только коллекция перерастала потолок строк.
-    ///
-    /// <b>Отбор идет ДО потолка, а не после.</b> Иначе он ничего бы не решал: потолок проверяется
-    /// по числу прочитанных строк, и коллекция на сто тысяч записей отказывала бы и с фильтром,
-    /// отбирающим три.
-    ///
-    /// Условия те же самые, что у шага «отбор» и у шага «экспорт выборки»
-    /// (<see cref="ScenarioCondition"/>) — один язык на все отборы в подсистеме.
-    /// </summary>
+    /// <summary>Условия отбора записей; пустой список означает всю коллекцию.</summary>
     public IReadOnlyList<ScenarioCondition> Tests => Conditions ?? [];
 
     /// <summary>
@@ -135,32 +115,6 @@ public sealed record OutgoingBinding(
 
         return problems;
     }
-
-    /// <summary>
-    /// Отпечаток состава: что именно уходит наружу. Входит в отпечаток запроса
-    /// (<c>IntegrationRequest.Fingerprint</c>), поэтому дописанное поле роняет подтверждение
-    /// направления — как его роняет правка тела или пути. Иначе состав выгрузки оставался бы
-    /// единственной частью отправки, которую можно поменять после согласования.
-    ///
-    /// Собирается из смысла, а не сериализацией записи: заведи в модели новое свойство — и
-    /// сериализация сменилась бы у всех разом, отключив обмен там, где ничего не меняли.
-    /// Разделитель — знак 0x1F кодом, по той же причине, что и в отпечатке запроса.
-    /// </summary>
-    public string Mark() => string.Join((char)0x1F,
-        [
-            ((int)Shape).ToString(System.Globalization.CultureInfo.InvariantCulture),
-            Envelope.Trim(),
-            DbId.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            CollectionId.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            .. Fields.Select(f => (f.FieldId?.ToString(System.Globalization.CultureInfo.InvariantCulture)
-                                   ?? "название") + "=" + f.Name.Trim()),
-
-            // Отбор входит в отпечаток наравне с составом полей: он решает, какие записи уйдут,
-            // и снятое условие расширяет выгрузку не меньше, чем дописанное поле. Не считай его
-            // — и отбор остался бы единственной частью отправки, которую можно поменять после
-            // согласования, не уронив подтверждения направления.
-            .. Tests.Select(t => "если:" + t),
-        ]);
 
     /// <summary>Как это читается на карточке запроса.</summary>
     public string Describe()
@@ -215,6 +169,60 @@ public sealed record OutgoingPayload(string Body, int Rows, string Fields, strin
 /// </summary>
 public static class OutgoingBody
 {
+    /// <summary>Счетчик точного размера строк JSON, подготовленный один раз на чтение коллекции.</summary>
+    public static RowSizer CreateRowSizer(OutgoingBinding binding, IReadOnlyList<ExportColumn> columns) =>
+        new(binding, columns);
+
+    public sealed class RowSizer : IDisposable
+    {
+        private readonly IReadOnlyList<ExportColumn> _columns;
+        private readonly JsonEncodedText[] _names;
+        private readonly CountStream _stream = new();
+        private readonly Utf8JsonWriter _writer;
+
+        internal RowSizer(OutgoingBinding binding, IReadOnlyList<ExportColumn> columns)
+        {
+            _columns = columns;
+            _names = binding.Fields.Select(f => JsonEncodedText.Encode(
+                f.Name.Trim(), JavaScriptEncoder.UnsafeRelaxedJsonEscaping)).ToArray();
+            _writer = new Utf8JsonWriter(_stream, new JsonWriterOptions
+            {
+                Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+            });
+        }
+
+        public long Measure(string[] row)
+        {
+            _stream.Count = 0;
+            _writer.Reset(_stream);
+            WriteRow(_writer, _names, _columns, row);
+            _writer.Flush();
+            return _stream.Count;
+        }
+
+        public void Dispose()
+        {
+            _writer.Dispose();
+            _stream.Dispose();
+        }
+
+        private sealed class CountStream : Stream
+        {
+            public long Count { get; set; }
+            public override bool CanRead => false;
+            public override bool CanSeek => false;
+            public override bool CanWrite => true;
+            public override long Length => Count;
+            public override long Position { get => Count; set => throw new NotSupportedException(); }
+            public override void Flush() { }
+            public override void Write(byte[] buffer, int offset, int count) => Count += count;
+            public override void Write(ReadOnlySpan<byte> buffer) => Count += buffer.Length;
+            public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+            public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+            public override void SetLength(long value) => throw new NotSupportedException();
+        }
+    }
+
     /// <summary>
     /// Собрать тело. <paramref name="columns"/> идут в том же порядке, что и
     /// <see cref="OutgoingBinding.Fields"/>, — их дает репозиторий, читающий строки: тип поля
@@ -232,7 +240,7 @@ public static class OutgoingBody
             throw new ArgumentException(
                 "Колонок не столько же, сколько полей привязки", nameof(columns));
 
-        var buffer = new MemoryStream();
+        using var buffer = new BodyStream();
         var names  = binding.Fields
                             .Select(f => JsonEncodedText.Encode(
                                 f.Name.Trim(), JavaScriptEncoder.UnsafeRelaxedJsonEscaping))
@@ -300,8 +308,34 @@ public static class OutgoingBody
                                   IReadOnlyList<string[]> rows)
     {
         writer.WriteStartArray();
-        foreach (var row in rows) WriteRow(writer, names, columns, row);
+        foreach (var row in rows)
+        {
+            WriteRow(writer, names, columns, row);
+            writer.Flush();
+        }
         writer.WriteEndArray();
+    }
+
+    /// <summary>Предел одного сообщения проверяется по мере записи JSON.</summary>
+    private sealed class BodyStream : MemoryStream
+    {
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            Check(count);
+            base.Write(buffer, offset, count);
+        }
+
+        public override void Write(ReadOnlySpan<byte> buffer)
+        {
+            Check(buffer.Length);
+            base.Write(buffer);
+        }
+
+        private void Check(int count)
+        {
+            if (Position + count > EgressHttp.MaxResponseBytes)
+                throw new OutgoingBodyLimitException();
+        }
     }
 
     /// <summary>

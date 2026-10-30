@@ -113,7 +113,7 @@ public partial class TableView
         var def   = _colDefs[column];
         var start = def.IsReadOnly ? CellTypingStart.None : CellTyping.Start(def.FieldType, typed);
         if (start == CellTypingStart.None) return false;
-        if (BeginEdit(row, column, byMouse: false) is not { } editor) return false;
+        if (BeginEdit(row, column) is not { } editor) return false;
 
         switch (editor)
         {

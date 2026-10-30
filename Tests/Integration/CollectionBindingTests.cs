@@ -380,35 +380,6 @@ public sealed class CollectionBindingTests
         Assert.Contains("Отвертка", titles);
     }
 
-    /// <summary>
-    /// Права спрашиваются ДО первой записи, а не по ходу: отказ на середине оставил бы
-    /// коллекцию наполовину обновленной, а обмен повторяется по расписанию — разбираться в
-    /// таком состоянии потом некому.
-    /// </summary>
-    [Fact]
-    public void Rights_are_asked_before_the_first_record()
-    {
-        using var db = new TempDatabase();
-        var (collectionId, numberId, _) = Collection(db.Constructor);
-
-        var userId = db.Permissions.CurrentUserId;
-        db.Permissions.SetMask(userId, null, (int)PermAction.ViewCollection);
-
-        var me = db.Context.DbUsers.First(u => u.UserKey == CurrentUser.Key);
-        me.IsAdmin    = false;
-        me.IsApproved = true;
-        db.Context.SaveChanges();
-        db.Permissions.Reload(notify: false);
-
-        Assert.Throws<PermissionDeniedException>(() => Apply(db.Constructor,
-            new CollectionBinding(Db, collectionId,
-                [new BindingColumn("Название", null), new BindingColumn("Номер", numberId)]),
-            """[{"Название":"Молоток","Номер":"А-1"},{"Название":"Отвертка","Номер":"А-2"}]"""));
-
-        // Ни одной записи: отказ случился до первой, а не на второй.
-        Assert.Empty(db.Constructor.GetRecords(collectionId));
-    }
-
     // ── Плохая строка не уносит остальные ─────────────────────────────────────
 
     /// <summary>

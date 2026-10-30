@@ -1,6 +1,5 @@
 using System.Globalization;
 using Microsoft.Data.Sqlite;
-using SmartBase.Integrations;
 
 namespace SmartBase.Database;
 
@@ -18,23 +17,20 @@ public enum RunChannel
     /// случаются ДО первого запроса, — нет привязки, база не открыта, соединение потеряно: своей
     /// строки у них не будет вовсе, и без этой причина не видна нигде.
     ///
-    /// В накопительный расход не идет: его уже заняли строки шагов, а посчитать одно и то же
-    /// дважды значит вдвое занизить потолок.
     /// </summary>
     Scenario,
 
     /// <summary>
     /// Обращение сторонней программы к нашему слушателю. Свой канал, а не «папка»: путь другой, и
     /// разбирающему «почему записи не появились» первым делом нужно знать, каким именно путем
-    /// они шли. В расход не идет по той же причине, что и файл, — данные идут ВНУТРЬ.
+    /// они шли.
     /// </summary>
     Ingress,
 
     /// <summary>
     /// Поток событий сторонней программы: подключился, потерял связь, прислал событие, которое не
     /// разобралось. Сами события сюда не пишутся — их след оставляет сценарий, который они
-    /// завели. В расход не идет: события идут ВНУТРЬ, а ответ на них — отдельная отправка со
-    /// своей строкой и своим счетом.
+    /// завели. Ответ на событие — отдельная отправка со своей строкой.
     /// </summary>
     Stream,
 }
@@ -54,11 +50,8 @@ public enum RunChannel
 /// <param name="Bytes">Сколько байт получено или отправлено.</param>
 /// <param name="Ms">Сколько заняло, миллисекунд.</param>
 /// <param name="DbId">Ключ базы, которую задел запуск; 0 — ни одной.</param>
-/// <param name="Counts">Считается ли запуск в накопительные квоты политики. Обмен файлами не
-/// считается: квоты ограничивают то, что уходит наружу, а файл из папки идет внутрь.</param>
-/// <param name="Direction">Направление — ключ карточки запроса; 0 — запуск без карточки (файл из
-/// папки, итоговая строка сценария). По нему считается суточный потолок объема: подтверждают и
-/// отзывают именно карточку, и потолок в 10.6 назначен ей же, а не обмену целиком.</param>
+/// <param name="Counts">Обращение дошло до сети. Сохранено для совместимости строк журнала.</param>
+/// <param name="Direction">Ключ карточки запроса для повтора; 0 — запуск без карточки.</param>
 /// <param name="SentBody">Тело запроса, как оно ушло: без секрета и не длиннее потолка. Пусто —
 /// тела не было либо запуск до сети не дошел.</param>
 /// <param name="GotBody">Тело ответа сторонней программы, по тем же правилам.</param>
@@ -90,7 +83,7 @@ public sealed record RunEntry(
     /// <summary>Новая строка «сейчас»; момент передается явно — тест не должен зависеть от часов.</summary>
     public static RunEntry New(RunChannel channel, string name, string address, bool ok,
                                string explanation, int rows, long bytes, TimeSpan elapsed,
-                               int dbId, DateTimeOffset at, bool counts, int direction,
+                               int dbId, DateTimeOffset at, bool counts = false, int direction = 0,
                                string sentBody = "", string gotBody = "",
                                string scenario = "", string step = "") =>
         new(0, at.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture),
@@ -142,7 +135,7 @@ public sealed record RunFilter(
 /// Свой файл <c>integrations.db</c> рядом с <c>app.db</c> и <c>logs.db</c>, а не таблица внутри
 /// файла базы данных, и это решение, а не случайность: файл базы ездит по сетевой папке, и тела
 /// запросов раздули бы его на всех машинах разом. И не «Диагностика»: Serilog хранит текст, а
-/// здесь нужны числа, по которым считаются квоты.
+/// здесь нужны результаты и счетчики передачи.
 ///
 /// <b>Секрета в журнале нет ни при каких настройках.</b> Адрес записывается замаскированным —
 /// тем самым <c>SafeAddress</c>, который готовит отправляющий слой. Журнал выгружают и
@@ -167,7 +160,7 @@ public sealed class RunJournal
 
     /// <summary>
     /// У скольких последних строк держатся ТЕЛА запроса и ответа. Числа в журнале дешевы и
-    /// нужны долго — по ним считаются квоты и по ним видно, что обмен вообще шел. Тела дороги и
+    /// нужны долго — по ним видно, когда и с каким результатом шел обмен. Тела дороги и
     /// нужны коротко: их смотрят, пока разбираются со свежей бедой, а не через полгода.
     ///
     /// Держи тела у всех двадцати тысяч строк — и журнал отладки вырос бы в сотни мегабайт на
@@ -580,215 +573,6 @@ public sealed class RunJournal
         _                   => channel.ToString(),
     };
 
-    // ── Накопительные счетчики ────────────────────────────────────────────────
-
-    /// <summary>
-    /// Сколько запусков и байт засчитано с указанного момента — по всему обмену. Считаются только
-    /// строки с <see cref="RunEntry.Counts"/>: квоты ограничивают то, что уходит НАРУЖУ, а файл
-    /// из папки идет внутрь и к ним отношения не имеет.
-    ///
-    /// Считаются и НЕудачные запуски тоже: отказ сторонней программы все равно был обращением к
-    /// ней, и не считать его значило бы разрешить бесконечный перебор в ответ на ошибки.
-    ///
-    /// Общая сумма байт нужна экрану — «сколько всего ушло за сутки», — а не потолку: суточный
-    /// потолок объема назначен направлению, и считает его <see cref="BytesSince"/>.
-    /// </summary>
-    public (int Runs, long Bytes) Since(DateTimeOffset moment) => Since(moment, direction: null);
-
-    /// <summary>
-    /// Сколько байт засчитано с указанного момента ПО ОДНОМУ направлению — ключу карточки
-    /// запроса. Это и есть счет, по которому проверяется суточный потолок объема (10.6).
-    /// </summary>
-    public long BytesSince(DateTimeOffset moment, int direction) =>
-        Since(moment, direction).Bytes;
-
-    /// <summary>
-    /// Сколько байт отдано с указанного момента по ОДНОЙ выдаче чтения — ключу выдачи. Счет
-    /// отдельный от исходящих направлений намеренно: у чтения свой суточный потолок, и займи
-    /// оно общий — сторонняя программа, читающая нас, съедала бы разрешение чужих отправок.
-    ///
-    /// Считаются только УДАЧНЫЕ ответы: отказ данных не отдал. Битый журнал отвечает «потолок
-    /// выбран» — тем же правилом, что <see cref="Since(DateTimeOffset)"/>: непрочитанный расход
-    /// не должен снимать ограничение.
-    /// </summary>
-    public long ReadBytesSince(DateTimeOffset moment, int grant)
-    {
-        try
-        {
-            lock (_lock)
-            {
-                using var connection = Open();
-                using var command    = connection.CreateCommand();
-
-                command.CommandText = """
-                    SELECT IFNULL(SUM(Bytes), 0) FROM runs
-                    WHERE Channel = $ingress AND Direction = $grant AND Ok = 1
-                      AND At >= $since;
-                    """;
-
-                command.Parameters.AddWithValue("$ingress", (int)RunChannel.Ingress);
-                command.Parameters.AddWithValue("$grant",   grant);
-                command.Parameters.AddWithValue("$since",
-                    moment.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture));
-
-                return command.ExecuteScalar() is long spent ? spent : 0L;
-            }
-        }
-        catch (SqliteException failure)
-        {
-            Serilog.Log.Warning("Журнал обмена: расход выдачи не сосчитался — {Reason:l}",
-                                failure.Message);
-            return long.MaxValue;
-        }
-    }
-
-    /// <summary>
-    /// Общий счет: <paramref name="direction"/> равен <c>null</c> — по всему обмену, иначе по
-    /// одному направлению. Одним запросом на оба случая, потому что «считается ли строка» и
-    /// «неудачные тоже» здесь общие, а разойдясь, они однажды разошлись бы в сторону разрешения.
-    /// </summary>
-    private (int Runs, long Bytes) Since(DateTimeOffset moment, int? direction)
-    {
-        try
-        {
-            lock (_lock)
-            {
-                using var connection = Open();
-                using var command    = connection.CreateCommand();
-
-                command.CommandText = """
-                    SELECT COUNT(*), IFNULL(SUM(Bytes), 0) FROM runs
-                    WHERE Counts = 1 AND At >= $since
-                      AND ($any = 1 OR Direction = $direction);
-                    """;
-
-                command.Parameters.AddWithValue("$since",
-                    moment.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture));
-                command.Parameters.AddWithValue("$any",       direction is null ? 1 : 0);
-                command.Parameters.AddWithValue("$direction", direction ?? 0);
-
-                using var reader = command.ExecuteReader();
-
-                return reader.Read()
-                    ? (reader.GetInt32(0), reader.GetInt64(1))
-                    : (0, 0L);
-            }
-        }
-        catch (SqliteException failure)
-        {
-            // Счетчик не прочитался — считаем, что квота выбрана. Отсутствие настройки обязано
-            // быть безопасным состоянием: битый журнал не должен снимать ограничения.
-            Serilog.Log.Warning("Журнал обмена: счетчики не читаются — {Reason:l}", failure.Message);
-            return (int.MaxValue, long.MaxValue);
-        }
-    }
-
-    /// <summary>
-    /// Когда из скользящего окна выпадет самый старый засчитанный расход. <c>null</c> — расхода в
-    /// окне нет, ждать нечего.
-    ///
-    /// Этим и отвечают человеку на «а когда обмен пойдет снова». Берется САМАЯ РАННЯЯ строка окна:
-    /// когда она выпадет, потолок отпустит хотя бы на ее объем. Обещать «тогда все пройдет»
-    /// нельзя — следом выпадет не весь расход, а одна строка, — поэтому и сказано «отпустит
-    /// после», а не «возобновится в».
-    ///
-    /// Направление 0 со значением «по всему обмену» здесь не путается с направлением 0 как ключом
-    /// карточки: <paramref name="direction"/> ниже нуля означает «любое», и так его зовет потолок
-    /// запусков в час, который общий.
-    /// </summary>
-    /// <param name="now">Текущий момент.</param>
-    /// <param name="direction">Ключ карточки; отрицательное — по всему обмену.</param>
-    /// <param name="window">Ширина окна: сутки у объема, час у числа запусков.</param>
-    public DateTimeOffset? FreesAt(DateTimeOffset now, int direction, TimeSpan window)
-    {
-        try
-        {
-            lock (_lock)
-            {
-                using var connection = Open();
-                using var command    = connection.CreateCommand();
-
-                command.CommandText = """
-                    SELECT MIN(At) FROM runs
-                    WHERE Counts = 1 AND At >= $since
-                      AND ($any = 1 OR Direction = $direction);
-                    """;
-
-                command.Parameters.AddWithValue("$since",
-                    (now - window).ToUniversalTime().ToString("o", CultureInfo.InvariantCulture));
-                command.Parameters.AddWithValue("$any",       direction < 0 ? 1 : 0);
-                command.Parameters.AddWithValue("$direction", direction < 0 ? 0 : direction);
-
-                if (command.ExecuteScalar() is not string oldest) return null;
-
-                return DateTimeOffset.TryParse(oldest, CultureInfo.InvariantCulture,
-                                               DateTimeStyles.RoundtripKind, out var at)
-                    ? at + window
-                    : null;
-            }
-        }
-        catch (SqliteException failure)
-        {
-            // Не сосчиталось — молчим. Придумывать время, которого не знаем, хуже, чем не
-            // ответить: обещанное и не сбывшееся дороже отсутствия обещания.
-            Serilog.Log.Warning("Журнал обмена: момент освобождения квоты не сосчитался — {Reason:l}",
-                                failure.Message);
-            return null;
-        }
-    }
-
-    /// <summary>
-    /// Расход по направлениям за период: ключ карточки, ее имя и сколько байт ушло. Нужен экрану
-    /// «Журнал»: потолок объема теперь у каждого направления свой, и общая строка «передано за
-    /// сутки» на вопрос «почему отказали» больше не отвечает.
-    ///
-    /// Имя берется у самой свежей строки направления — карточку могли переименовать, и показывать
-    /// человеку прошлогоднее имя незачем.
-    /// </summary>
-    public IReadOnlyList<(int Direction, string Name, long Bytes)> SpentByDirection(DateTimeOffset moment)
-    {
-        try
-        {
-            lock (_lock)
-            {
-                using var connection = Open();
-                using var command    = connection.CreateCommand();
-
-                command.CommandText = """
-                    SELECT Direction,
-                           (SELECT Name FROM runs AS last
-                             WHERE last.Direction = runs.Direction AND last.Counts = 1
-                               AND last.At >= $since
-                             ORDER BY last.Id DESC LIMIT 1),
-                           IFNULL(SUM(Bytes), 0)
-                    FROM runs
-                    WHERE Counts = 1 AND At >= $since
-                    GROUP BY Direction
-                    ORDER BY SUM(Bytes) DESC;
-                    """;
-
-                command.Parameters.AddWithValue("$since",
-                    moment.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture));
-
-                var spent = new List<(int, string, long)>();
-                using var reader = command.ExecuteReader();
-
-                while (reader.Read())
-                    spent.Add((reader.GetInt32(0),
-                               reader.IsDBNull(1) ? "" : reader.GetString(1),
-                               reader.GetInt64(2)));
-
-                return spent;
-            }
-        }
-        catch (SqliteException failure)
-        {
-            Serilog.Log.Warning("Журнал обмена: расход по направлениям не читается — {Reason:l}",
-                                failure.Message);
-            return [];
-        }
-    }
-
     // ── Уборка ────────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -862,37 +646,11 @@ public sealed class RunJournal
         }
     }
 
-    // ── Подключение к шлюзу ───────────────────────────────────────────────────
-
-    /// <summary>
-    /// Счетчик расхода для <see cref="EgressGate"/>: шлюз решает, а считает журнал. Разделение
-    /// то же, что у политики, — в шлюзе нет ввода-вывода, и проверять его решения можно без
-    /// файлов.
-    /// </summary>
-    public sealed class Usage(RunJournal journal) : IEgressUsage
-    {
-        public int RunsSince(DateTimeOffset moment) => journal.Since(moment).Runs;
-
-        public long BytesSince(DateTimeOffset moment, int direction) =>
-            journal.BytesSince(moment, direction);
-
-        /// <summary>
-        /// Час запусков — окно ОБЩЕЕ, сутки объема — окно направления. Разные окна у двух
-        /// потолков не случайность, а то же правило, что и у самих потолков (10.6): запусков в
-        /// час считается по всему обмену, байт в сутки — по каждому направлению отдельно.
-        /// </summary>
-        public DateTimeOffset? FreesAt(DateTimeOffset now, int direction, TimeSpan window) =>
-            journal.FreesAt(now, window >= TimeSpan.FromDays(1) ? direction : -1, window);
-    }
-
-    /// <summary>Счетчик расхода поверх этого журнала.</summary>
-    public IEgressUsage AsUsage() => new Usage(this);
-
     // ── Единственный экземпляр на приложение ──────────────────────────────────
 
     /// <summary>
     /// Журнал приложения; <c>null</c> — еще не подключен. Прием тот же, что у
-    /// <c>AppSettings.AttachStore</c> и <c>EgressGate.AttachPolicy</c>: контейнера зависимостей
+    /// <c>AppSettings.AttachStore</c>: контейнера зависимостей
     /// в приложении нет, а тащить журнал параметром через десяток экранов незачем.
     ///
     /// Писать через <c>null</c> безопасно — <see cref="Add"/> просто ничего не сделает. Обмен

@@ -37,7 +37,7 @@ ok 'quick/full, ручной запуск и exact-tag reuse'
 
 check_results() {
   CI_PROFILE="$1" CI_SCOPE_RESULT=success CI_QUICK_RESULT="$2" CI_MATRIX_RESULT="$3" \
-    CI_CLOSED_RESULT="$4" CI_POSTGRES_RESULT="$5" CI_TOOLS_RESULT="$6" bash "$ci_here/check-results.sh" >/dev/null 2>&1
+    CI_LISTENER_RESULT="$4" CI_POSTGRES_RESULT="$5" CI_TOOLS_RESULT="$6" bash "$ci_here/check-results.sh" >/dev/null 2>&1
 }
 check_results quick success skipped skipped skipped skipped
 check_results full success success success success success
@@ -65,10 +65,10 @@ assert "workflow_dispatch" in data["on"] and "workflow_call" in data["on"]
 assert data["on"]["workflow_call"]["inputs"]["full"]["type"] == "boolean"
 assert data["on"]["workflow_call"]["inputs"]["ref"]["type"] == "string"
 jobs = data["jobs"]
-assert set(jobs) == {"scope", "agent-tests", "test", "closed-loop", "postgres", "tools", "checks"}
+assert set(jobs) == {"scope", "agent-tests", "test", "no-listener", "postgres", "tools", "checks"}
 assert jobs["checks"]["if"] == "always()"
 assert set(jobs["checks"]["needs"]) == set(jobs) - {"checks"}
-for name in ("test", "closed-loop", "postgres", "tools"):
+for name in ("test", "no-listener", "postgres", "tools"):
     assert jobs[name]["needs"] == "scope"
     assert jobs[name]["if"] == "needs.scope.outputs.full == 'true'"
 assert {m["os"] for m in jobs["test"]["strategy"]["matrix"]["include"]} == {

@@ -44,7 +44,7 @@ public partial class ConstructorRepository
             var labels = ResolveRelationLabels(edges.Select(e => new RelationTarget(e.TargetDbId, e.ToRecordId)).Distinct().ToList(),
                 oldConfig?.DisplayField ?? RelationConfig.TitleField, oldConfig?.TargetDbId);
             if (edges.Any(e => !labels.TryGetValue(new(e.TargetDbId, e.ToRecordId), out var label)
-                || label == RelationProperty.NoAccess || label == RelationProperty.Unavailable || label == RelationProperty.UnknownBase
+                || label == RelationProperty.Unavailable || label == RelationProperty.UnknownBase
                 || label == RelationProperty.MissingField
                 || label == RelationProperty.Cycle))
                 throw new InvalidOperationException("Не удалось прочитать все цели связи. Преобразование в текст отменено.");

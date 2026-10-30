@@ -48,9 +48,9 @@ public partial class TableView
     /// Подменю «Форматирование текста» → «Расположение текста». <paramref name="current"/> — что
     /// отметить галочкой (спрашивается на каждое открытие: расположение могли сменить клавишами или в
     /// другом меню); null в группе — галочки в ней нет. <paramref name="apply"/> пишет изменения по
-    /// адресату меню. Запрещенный пункт не гаснет, а по клику объясняет причину (Guarded).
+    /// адресату меню.
     /// </summary>
-    private void AddTextFormatItems(ContextMenu menu, PermAction permission,
+    private void AddTextFormatItems(ContextMenu menu,
                                     Func<(CellHAlign? H, CellVAlign? V)> current,
                                     Action<IReadOnlyList<(StyleAspect Aspect, string? Value)>> apply)
     {
@@ -62,7 +62,7 @@ public partial class TableView
         {
             var item  = new MenuItem { InputGesture = MenuGesture(shortcut) };
             var value = CellAlign.Store(align);
-            Guarded(item, permission, () => apply([(StyleAspect.HAlign, value)]));
+            item.Click += (_, _) => apply([(StyleAspect.HAlign, value)]);
             placement.Items.Add(item);
             horizontal.Add((item, align, text));
         }
@@ -74,7 +74,7 @@ public partial class TableView
         {
             var item  = new MenuItem();
             var value = CellAlign.Store(align);
-            Guarded(item, permission, () => apply([(StyleAspect.VAlign, value)]));
+            item.Click += (_, _) => apply([(StyleAspect.VAlign, value)]);
             placement.Items.Add(item);
             vertical.Add((item, align, text));
         }
@@ -82,7 +82,7 @@ public partial class TableView
         placement.Items.Add(new Separator());
 
         var reset = new MenuItem { Header = MenuIcons.PlainHeader("По умолчанию") };
-        Guarded(reset, permission, () => apply(ResetAlignment));
+        reset.Click += (_, _) => apply(ResetAlignment);
         placement.Items.Add(reset);
 
         void Refresh()
@@ -106,7 +106,7 @@ public partial class TableView
     private void AddCellTextFormatItems(ContextMenu menu, TableRowVm row, TableColumnDef def)
     {
         if (!CellAlign.Applies(def.FieldType)) return;
-        AddTextFormatItems(menu, PermAction.EditRecord,
+        AddTextFormatItems(menu,
             () =>
             {
                 var style = ResolvedStyle(row, def.Key);
@@ -117,7 +117,7 @@ public partial class TableView
 
     /// <summary>Меню строки: строка или все выделенные строки; отметка — заданное строке.</summary>
     private void AddRowTextFormatItems(ContextMenu menu, Func<TableRowVm?> row) =>
-        AddTextFormatItems(menu, PermAction.EditRecord,
+        AddTextFormatItems(menu,
             () =>
             {
                 var style = RowStyleOf(RecordIdOf(row));
@@ -133,7 +133,7 @@ public partial class TableView
     private void AddColumnTextFormatItems(ContextMenu menu, string key, string fieldType)
     {
         if (!CellAlign.Applies(fieldType)) return;
-        AddTextFormatItems(menu, PermAction.EditField,
+        AddTextFormatItems(menu,
             () =>
             {
                 var style = ColumnStyleOf(key);
@@ -165,8 +165,8 @@ public partial class TableView
 
     /// <summary>
     /// Ctrl+L / Ctrl+E / Ctrl+R — горизонталь выделенного: выделенные столбцы (по заголовку), иначе
-    /// выделенные ячейки (пока фокус в таблице — как у буфера обмена), иначе выделенные строки. Права
-    /// и путь записи — те же, что у пунктов меню. Нечего выравнивать — клавиша не наша.
+    /// выделенные ячейки (пока фокус в таблице — как у буфера обмена), иначе выделенные строки.
+    /// Путь записи — тот же, что у пунктов меню. Нечего выравнивать — клавиша не наша.
     /// </summary>
     private bool HandleAlignShortcut(KeyEventArgs e)
     {
@@ -180,21 +180,18 @@ public partial class TableView
         if (_selectedColumnKeys.Count > 0)
         {
             if (AlignableColumnKeys(_selectedColumnKeys) is not { Count: > 0 } keys) return false;
-            PermissionNotice.Run(this, Can(PermAction.EditField), PermAction.EditField,
-                () => ApplyColumnStyle(keys, changes));
+            ApplyColumnStyle(keys, changes);
             return true;
         }
 
         if (HasCellSelection && IsKeyboardFocusWithin)
         {
-            PermissionNotice.Run(this, Can(PermAction.EditRecord), PermAction.EditRecord,
-                () => Fire(() => ApplySelectedCellsStyleAsync(changes)));
+            Fire(() => ApplySelectedCellsStyleAsync(changes));
             return true;
         }
 
         if (SelectedRecordIds() is not { Count: > 0 } ids) return false;
-        PermissionNotice.Run(this, Can(PermAction.EditRecord), PermAction.EditRecord,
-            () => ApplyRowStyle(ids, changes));
+        ApplyRowStyle(ids, changes);
         return true;
     }
 }

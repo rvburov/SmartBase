@@ -1,91 +1,22 @@
 using System.Text.Json;
 using SmartBase.Core.Models;
 using SmartBase.Database;
+using SmartBase.Database.Entities;
 using SmartBase.Database.Repositories;
 using SmartBase.Integrations;
 
 namespace SmartBase.Tests.Integration;
 
-/// <summary>
-/// Чтение по выдаче (<see cref="IngressHandler"/>, <c>GET /v1/records</c> и
-/// <c>GET /v1/changes</c> — docs/ROADMAP-API.md, шаг 10).
-///
-/// Ответ на чтение — данные, ПОКИДАЮЩИЕ программу, и проверяется здесь ровно то, на чем держится
-/// замок:
-///
-/// <list type="bullet">
-///   <item>без выдачи и без маски чтения не отдается ничего;</item>
-///   <item>отдаются только поля выдачи, а метка, поставленная после, останавливает чтение;</item>
-///   <item>каждый ответ — строка в журнале безопасности; журнал недоступен — чтения нет;</item>
-///   <item>суточный потолок выдачи останавливает чтение, и окно у него скользящее;</item>
-///   <item>журнал изменений отвечает про удаления — именами, как и ведется.</item>
-/// </list>
-/// </summary>
+/// <summary>Чтение HTTP API: состав полей, курсоры, дата изменения и история без авторизации.</summary>
 [Collection(EgressCollection.Name)]
 public sealed class IngressReadTests : IDisposable
 {
     private static readonly DateTimeOffset Now = new(2026, 9, 12, 12, 0, 0, TimeSpan.Zero);
+    private readonly TempDatabase _db = new(dbId: 7, name: "Основная");
 
-    private const string Master = "секрет-организации";
+    public IngressReadTests() => RunJournal.Attach(null);
+    public void Dispose() { RunJournal.Attach(null); _db.Dispose(); }
 
-    private readonly string           _dir;
-    private readonly TempDatabase     _db = new(dbId: 7, name: "Основная");
-    private readonly DatabaseRegistry _registry;
-
-    public IngressReadTests()
-    {
-        _dir      = Directory.CreateTempSubdirectory("sbread_").FullName;
-        _registry = DatabaseRegistry.Open(Path.Combine(_dir, "default.db"),
-                                          Path.Combine(_dir, "app.db"));
-
-        // Чтению нужны оба журнала: по рабочему считается потолок выдачи, в журнал
-        // безопасности ложится след КАЖДОГО ответа — и без него чтения нет.
-        RunJournal.Attach(new RunJournal(Path.Combine(_dir, "integrations.db")));
-        SecurityJournal.Attach(new SecurityJournal(Path.Combine(_dir, "security.db")));
-
-        Policy();
-    }
-
-    public void Dispose()
-    {
-        RunJournal.Attach(null);
-        SecurityJournal.Attach(null);
-        EgressGate.Close();
-
-        _registry.Dispose();
-        _db.Dispose();
-
-        try { SqliteGate.ClearAllPools(); } catch { /* best-effort */ }
-        try { Directory.Delete(_dir, recursive: true); } catch { /* временная папка */ }
-    }
-
-    // ── Обвязка ───────────────────────────────────────────────────────────────
-
-    private IntegrationsRegistry Cards => _registry.Integrations;
-
-    private void Policy(long maxBytes = 1024 * 1024) =>
-        EgressGate.AttachPolicy(new EgressPolicySet(
-            [new EgressPolicy(EgressMode.Internal, [], [], [], 1000, maxBytes, 60, null, false,
-                              "тест", MasterPassword.Hash(Master))]));
-
-    /// <summary>Токен с маской чтения — как его собирает администратор: выдача токена, робот,
-    /// галка «Просмотр коллекции» в панели пользователей.</summary>
-    private (string Secret, AccessToken Token) IssueReader(bool canRead = true)
-    {
-        var (token, secret) = Cards.Issue("Отчеты цеха", 7, "ПК17", Now);
-        _db.Permissions.EnsureRobot(token.RobotKey, token.Name, Now);
-
-        if (canRead)
-        {
-            var robot = _db.Permissions.GetUsers().First(u => u.UserKey == token.RobotKey);
-            _db.Permissions.SetMask(robot.Id, null,
-                (int)(PermissionService.RobotDefaultMask | PermAction.ViewCollection));
-        }
-
-        return (secret, token);
-    }
-
-    /// <summary>Коллекция «Заказы»: «Номер» и «Сумма», две записи со значениями.</summary>
     private (int Id, int Number, int Total) Orders()
     {
         var collection = SampleData.AddCollection(_db.Constructor, "Заказы");
@@ -105,34 +36,12 @@ public sealed class IngressReadTests : IDisposable
         return (collection.Id!.Value, number.Id!.Value, total.Id!.Value);
     }
 
-    private ReadGrant Grant(AccessToken token, int collectionId, params string[] keys)
-    {
-        var grant = Cards.ConfirmGrant(token.Id, collectionId, "Заказы",
-                                       keys, "поля выдачи", Master, "Буров Р. В.", 90, Now,
-                                       out var trouble);
+    private IngressAnswer Get(string path, string query) => IngressHandler.Handle(
+        new IngressCall("GET", path, "", "127.0.0.1", query), [_db.Manager], null, Now);
 
-        Assert.Equal("", trouble);
-        return grant!;
-    }
+    private IngressAnswer Read(string query = "collection=Заказы") => Get(IngressApi.RecordsPath, query);
+    private static JsonElement Body(IngressAnswer answer) => JsonDocument.Parse(answer.Body).RootElement;
 
-    private IngressAnswer Get(string path, string secret, string query,
-                              DateTimeOffset? moment = null) =>
-        IngressHandler.Handle(
-            new IngressCall("GET", path, secret, "", "127.0.0.1", query),
-            Cards, [_db.Manager], null, moment ?? Now);
-
-    private IngressAnswer Read(string secret, string query = "collection=Заказы",
-                               DateTimeOffset? moment = null) =>
-        Get(IngressApi.RecordsPath, secret, query, moment);
-
-    private static JsonElement Body(IngressAnswer answer) =>
-        JsonDocument.Parse(answer.Body).RootElement;
-
-    /// <summary>
-    /// Все строковые и числовые значения ответа на любой глубине. Утечку значения ищут среди
-    /// значений, а не подстрокой по тексту: «100» подстрокой находилось и в дробной части секунд
-    /// у отметки времени, и тест изредка падал на ровном месте.
-    /// </summary>
     private static IEnumerable<string> Values(JsonElement element) => element.ValueKind switch
     {
         JsonValueKind.Object => element.EnumerateObject().SelectMany(p => Values(p.Value)),
@@ -141,86 +50,13 @@ public sealed class IngressReadTests : IDisposable
         JsonValueKind.Number => new[] { element.GetRawText() },
         _                    => Array.Empty<string>(),
     };
-
-    // ── Замок ─────────────────────────────────────────────────────────────────
-
-    /// <summary>Маска есть, выдачи нет — и это НЕ то же самое, что «нет такого адреса»:
-    /// человек должен узнать, что чтение существует, но его разрешают выдачей.</summary>
     [Fact]
-    public void Without_a_grant_reading_is_refused()
-    {
-        Orders();
-        var (secret, _) = IssueReader();
-
-        var answer = Read(secret);
-
-        Assert.Equal(403, answer.Status);
-        Assert.Contains("выдачи нет", answer.Body, StringComparison.Ordinal);
-    }
-
-    /// <summary>Выдача есть, а маски чтения у робота нет — токен по умолчанию только пишет.</summary>
-    [Fact]
-    public void Without_the_read_mask_reading_is_refused()
+    public void Only_the_selected_fields_are_returned()
     {
         var (id, number, _) = Orders();
-        var (secret, token) = IssueReader(canRead: false);
 
-        Grant(token, id, ReadGrant.TitleKey, number.ToString());
 
-        Assert.Equal(403, Read(secret).Status);
-    }
-
-    [Fact]
-    public void A_wrong_master_password_grants_nothing()
-    {
-        var (id, _, _) = Orders();
-        var (_, token) = IssueReader();
-
-        var grant = Cards.ConfirmGrant(token.Id, id, "Заказы", [ReadGrant.TitleKey], "Название",
-                                       "не тот пароль", "Буров", 90, Now, out var trouble);
-
-        Assert.Null(grant);
-        Assert.Contains("не подошел", trouble, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void An_expired_grant_refuses_with_the_date()
-    {
-        var (id, number, _) = Orders();
-        var (secret, token) = IssueReader();
-
-        Grant(token, id, ReadGrant.TitleKey, number.ToString());
-
-        var answer = Read(secret, moment: Now.AddDays(120));
-
-        Assert.Equal(403, answer.Status);
-        Assert.Contains("срок выдачи вышел", answer.Body, StringComparison.Ordinal);
-    }
-
-    /// <summary>Токен убрали — выдачи ушли вместе с ним, а не остались строками в паспорте.</summary>
-    [Fact]
-    public void Grants_leave_together_with_their_token()
-    {
-        var (id, _, _) = Orders();
-        var (_, token) = IssueReader();
-
-        Grant(token, id, ReadGrant.TitleKey);
-        Cards.RemoveToken(token.Id);
-
-        Assert.Empty(Cards.Grants());
-    }
-
-    // ── Чтение ────────────────────────────────────────────────────────────────
-
-    [Fact]
-    public void Only_the_granted_fields_leave()
-    {
-        var (id, number, _) = Orders();
-        var (secret, token) = IssueReader();
-
-        Grant(token, id, ReadGrant.TitleKey, number.ToString());
-
-        var answer = Read(secret);
+        var answer = Read($"collection=Заказы&fields=t,{number}");
 
         Assert.Equal(200, answer.Status);
 
@@ -232,46 +68,26 @@ public sealed class IngressReadTests : IDisposable
         Assert.Equal("Молоток", values.GetProperty("Название").GetString());
         Assert.Equal("А-1",     values.GetProperty("Номер").GetString());
 
-        // «Сумма» в выдаче не названа — ее в ответе нет вовсе, ни у одной записи: ни имени поля,
+        // «Сумма» в выборе не названа — ее в ответе нет вовсе, ни у одной записи: ни имени поля,
         // ни значений ни под каким именем.
         Assert.DoesNotContain("Сумма", answer.Body, StringComparison.Ordinal);
         Assert.DoesNotContain(Values(Body(answer)), value => value is "100" or "250");
-    }
-
-    /// <summary>Метка, поставленная ПОСЛЕ выдачи, останавливает чтение целиком — тем же вторым
-    /// рубежом, что у исходящей привязки.</summary>
-    [Fact]
-    public void A_label_set_after_the_grant_stops_the_read()
-    {
-        var (id, number, _) = Orders();
-        var (secret, token) = IssueReader();
-
-        Grant(token, id, ReadGrant.TitleKey, number.ToString());
-
-        Assert.Equal("", _db.Constructor.SetFieldLabel(number, ConfidentialityLabel.Restricted));
-
-        var answer = Read(secret);
-
-        Assert.Equal(403, answer.Status);
-        Assert.Contains("Номер", answer.Body, StringComparison.Ordinal);
     }
 
     [Fact]
     public void The_cursor_pages_by_key()
     {
         var (id, number, _) = Orders();
-        var (secret, token) = IssueReader();
 
-        Grant(token, id, ReadGrant.TitleKey, number.ToString());
 
-        var first = Read(secret, "collection=Заказы&limit=1");
+        var first = Read("collection=Заказы&limit=1");
 
         Assert.Equal(200, first.Status);
         Assert.Equal(1, Body(first).GetProperty("rows").GetArrayLength());
 
         var next = Body(first).GetProperty("next").GetInt32();
 
-        var second = Read(secret, $"collection=Заказы&limit=1&after={next}");
+        var second = Read($"collection=Заказы&limit=1&after={next}");
 
         Assert.Equal(200, second.Status);
         Assert.Equal(1, Body(second).GetProperty("rows").GetArrayLength());
@@ -284,14 +100,12 @@ public sealed class IngressReadTests : IDisposable
     public void Since_narrows_to_records_touched_after_the_moment()
     {
         var (id, number, _) = Orders();
-        var (secret, token) = IssueReader();
 
-        Grant(token, id, ReadGrant.TitleKey, number.ToString());
 
         // Момент в далеком будущем — не правился никто; в далеком прошлом — правились все.
-        Assert.Equal(0, Body(Read(secret, "collection=Заказы&since=2199-01-01T00:00:00Z"))
+        Assert.Equal(0, Body(Read("collection=Заказы&since=2199-01-01T00:00:00Z"))
                             .GetProperty("rows").GetArrayLength());
-        Assert.Equal(2, Body(Read(secret, "collection=Заказы&since=2000-01-01T00:00:00Z"))
+        Assert.Equal(2, Body(Read("collection=Заказы&since=2000-01-01T00:00:00Z"))
                             .GetProperty("rows").GetArrayLength());
     }
 
@@ -299,121 +113,24 @@ public sealed class IngressReadTests : IDisposable
     public void Garbage_parameters_are_named_not_guessed()
     {
         var (id, number, _) = Orders();
-        var (secret, token) = IssueReader();
 
-        Grant(token, id, ReadGrant.TitleKey, number.ToString());
 
-        Assert.Equal(400, Read(secret, "collection=Заказы&since=вчера").Status);
-        Assert.Equal(400, Read(secret, "collection=Заказы&after=-5").Status);
-        Assert.Equal(400, Read(secret, "").Status);
-        Assert.Equal(404, Read(secret, "collection=Накладные").Status);
+        Assert.Equal(400, Read("collection=Заказы&since=вчера").Status);
+        Assert.Equal(400, Read("collection=Заказы&after=-5").Status);
+        Assert.Equal(400, Read("").Status);
+        Assert.Equal(404, Read("collection=Накладные").Status);
     }
-
-    // ── Журналы и потолок ─────────────────────────────────────────────────────
-
-    [Fact]
-    public void Every_answer_leaves_a_security_trail_with_the_body_hash()
-    {
-        var (id, number, _) = Orders();
-        var (secret, token) = IssueReader();
-
-        Grant(token, id, ReadGrant.TitleKey, number.ToString());
-
-        var answer = Read(secret);
-        Assert.Equal(200, answer.Status);
-
-        var trail = SecurityJournal.Current!.Page(
-            new SecurityFilter(SecurityEvent.Read, BlockedOnly: false, Since: null), take: 10);
-
-        var entry = Assert.Single(trail);
-
-        Assert.True(entry.Allowed);
-        Assert.Equal("Отчеты цеха", entry.Who);
-        Assert.Equal(2, entry.Rows);
-        Assert.True(entry.Bytes > 0);
-        Assert.Equal(SecurityJournal.Sha256(answer.Body), entry.BodyHash);
-    }
-
-    [Fact]
-    public void A_refused_read_is_journaled_too()
-    {
-        Orders();
-        var (secret, _) = IssueReader();   // выдачи нет
-
-        Assert.Equal(403, Read(secret).Status);
-
-        var trail = SecurityJournal.Current!.Page(
-            new SecurityFilter(SecurityEvent.Read, BlockedOnly: true, Since: null), take: 10);
-
-        Assert.Single(trail);
-    }
-
-    /// <summary>Правило «не записалось — не отправляем» переносится на чтение дословно.</summary>
-    [Fact]
-    public void No_security_journal_means_no_data_out()
-    {
-        var (id, number, _) = Orders();
-        var (secret, token) = IssueReader();
-
-        Grant(token, id, ReadGrant.TitleKey, number.ToString());
-
-        SecurityJournal.Attach(null);
-
-        var answer = Read(secret);
-
-        Assert.Equal(503, answer.Status);
-        Assert.DoesNotContain("А-1", answer.Body, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void The_daily_ceiling_stops_the_read()
-    {
-        var (id, number, _) = Orders();
-        var (secret, token) = IssueReader();
-
-        Grant(token, id, ReadGrant.TitleKey, number.ToString());
-
-        // Потолок в десять байт: первый ответ проходит (израсходовано ноль) и занимает сотни,
-        // второй упирается в выбранный потолок.
-        Policy(maxBytes: 10);
-
-        Assert.Equal(200, Read(secret).Status);
-
-        var answer = Read(secret);
-
-        Assert.Equal(429, answer.Status);
-        Assert.Contains("потолок", answer.Body, StringComparison.Ordinal);
-    }
-
-    /// <summary>Расход выдачи не занимает потолки исходящих направлений: счет отдельный.</summary>
-    [Fact]
-    public void Read_bytes_do_not_eat_the_outgoing_quota()
-    {
-        var (id, number, _) = Orders();
-        var (secret, token) = IssueReader();
-
-        Grant(token, id, ReadGrant.TitleKey, number.ToString());
-
-        Assert.Equal(200, Read(secret).Status);
-
-        // Общий счет исходящих (Counts = 1) пуст: чтение в него не легло.
-        Assert.Equal((0, 0L), RunJournal.Current!.Since(Now.AddDays(-1)));
-    }
-
-    // ── Журнал изменений ──────────────────────────────────────────────────────
 
     [Fact]
     public void Changes_answer_deletions_by_name()
     {
         var (id, number, _) = Orders();
-        var (secret, token) = IssueReader();
 
-        Grant(token, id, ReadGrant.TitleKey, number.ToString());
 
         var doomed = _db.Constructor.GetRecords(id).First(r => r.Title == "Гвозди");
         _db.Constructor.DeleteRecord(doomed.Id!.Value);
 
-        var answer = Get(IngressApi.ChangesPath, secret, "collection=Заказы");
+        var answer = Get(IngressApi.ChangesPath, "collection=Заказы");
 
         Assert.Equal(200, answer.Status);
 
@@ -424,11 +141,218 @@ public sealed class IngressReadTests : IDisposable
     }
 
     [Fact]
-    public void Changes_are_locked_by_the_same_grant()
+    public void Without_a_field_selection_all_columns_are_read_without_a_registry_or_journal()
     {
         Orders();
-        var (secret, _) = IssueReader();   // выдачи нет
-
-        Assert.Equal(403, Get(IngressApi.ChangesPath, secret, "collection=Заказы").Status);
+        var answer = Read();
+        Assert.Equal(200, answer.Status);
+        var values = Body(answer).GetProperty("rows")[0].GetProperty("values");
+        Assert.Equal("Молоток", values.GetProperty("Название").GetString());
+        Assert.Equal("А-1", values.GetProperty("Номер").GetString());
+        Assert.Equal("100", values.GetProperty("Сумма").GetString());
     }
+
+    [Fact]
+    public void Fields_can_be_selected_by_live_names_without_reading_other_columns()
+    {
+        Orders();
+        var answer = Read("collection=Заказы&fields=Номер");
+        Assert.Equal(200, answer.Status);
+        var values = Body(answer).GetProperty("rows")[0].GetProperty("values");
+        Assert.Single(values.EnumerateObject());
+        Assert.Equal("А-1", values.GetProperty("Номер").GetString());
+    }
+
+    [Theory]
+    [InlineData("collection=Заказы&limit=-1")]
+    [InlineData("collection=Заказы&limit=много")]
+    [InlineData("collection=Заказы&after=2147483648")]
+    [InlineData("collection=Заказы&collection=Другая")]
+    [InlineData("collection=Заказы&fields=нет")]
+    public void Invalid_read_parameters_do_not_expand_or_guess_the_selection(string query)
+    {
+        Orders();
+        Assert.Equal(400, Read(query).Status);
+    }
+
+    [Fact]
+    public void Large_valid_page_limit_is_clamped_without_overflow()
+    {
+        Orders();
+        var answer = Read("collection=Заказы&limit=9223372036854775807");
+        Assert.Equal(200, answer.Status);
+        Assert.Equal(2, Body(answer).GetProperty("rows").GetArrayLength());
+    }
+
+    [Fact]
+    public void Historical_security_metadata_no_longer_restricts_api_reading()
+    {
+        var (id, number, _) = Orders();
+        _db.Context.DbMeta.Add(new DbMetaEntity { Key = "confidentiality", Value = "closed" });
+        _db.Context.DbMeta.Add(new DbMetaEntity { Key = "password.hash", Value = "старый-хэш" });
+        var user = _db.Context.DbUsers.First();
+        user.IsApproved = false;
+        user.IsAdmin = false;
+        _db.Context.DbPermissions.Add(new DbPermissionEntity { UserId = user.Id, ActionsMask = 0 });
+        _db.Context.DbFields.Find(number)!.ConfigJson = """{"confidentiality":"restricted"}""";
+        _db.Context.SaveChanges();
+
+        var answer = Read();
+        Assert.Equal(200, answer.Status);
+        Assert.Equal(2, Body(answer).GetProperty("rows").GetArrayLength());
+        Assert.Contains("А-1", answer.Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void An_empty_field_selection_keeps_record_keys_and_does_not_compute_hidden_periods()
+    {
+        var (id, _, _) = Orders();
+        var start = SampleData.AddField(_db.Constructor, id, "Начало", "date").Id!.Value;
+        _db.Constructor.AddField(new DbField
+        {
+            CollectionId = id, Name = "Период", FieldType = "date_period", IsSystem = true,
+            ConfigJson = new DatePeriodConfig(start).ToConfigJson(),
+        });
+        using var commands = new DatePeriodScalingTests.Commands(_db.Path);
+        var page = _db.Constructor.ApiReadIsolated(id, [], "", 0, 10);
+        Assert.Null(page.Trouble);
+        Assert.Empty(page.Columns);
+        Assert.Equal(2, page.Rows.Count);
+        Assert.All(page.Rows, r => Assert.Empty(r.Values));
+        commands.AssertNoAdditionalValueReads();
+    }
+    [Fact]
+    public void Api_period_reads_the_selected_date_range_dependency_without_returning_it()
+    {
+        var (id, _, _) = Orders();
+        var start = SampleData.AddField(_db.Constructor, id, "Начало", "date").Id!.Value;
+        var period = _db.Constructor.AddField(new DbField
+        {
+            CollectionId = id, Name = "Период", FieldType = "date_period", IsSystem = true,
+            ConfigJson = new DatePeriodConfig(start).ToConfigJson(),
+        }).Id!.Value;
+        var ids = _db.Constructor.GetRecords(id).Select(record => record.Id!.Value).ToArray();
+        _db.Constructor.SetFieldValue(ids[0], start, "2026-10-28T07:00/2026-10-28T09:00");
+        _db.Constructor.SetFieldValue(ids[1], start, "2026-10-28T08:00/2026-10-28T11:00");
+        var page = _db.Constructor.ApiReadIsolated(id, [period.ToString()], "", 0, 1);
+        Assert.Null(page.Trouble);
+        Assert.True(page.More);
+        Assert.Single(page.Columns);
+        Assert.Equal("7200", Assert.Single(Assert.Single(page.Rows).Values));
+        var next = _db.Constructor.ApiReadIsolated(id, [period.ToString()], "", Assert.Single(page.Rows).Id, 1);
+        Assert.Null(next.Trouble);
+        Assert.False(next.More);
+        Assert.Single(next.Columns);
+        Assert.Equal("10800", Assert.Single(Assert.Single(next.Rows).Values));
+    }
+
+    [Fact]
+    public void An_ambiguous_collection_name_is_rejected_and_can_be_selected_by_its_key()
+    {
+        var firstGroup = _db.Constructor.AddGroup(new DbGroup { Name = "Первая" }).Id!.Value;
+        var secondGroup = _db.Constructor.AddGroup(new DbGroup { Name = "Вторая" }).Id!.Value;
+        var first = SampleData.AddCollection(_db.Constructor, "Совпадение", firstGroup).Id!.Value;
+        var second = SampleData.AddCollection(_db.Constructor, "Совпадение", secondGroup).Id!.Value;
+        SampleData.AddRecord(_db.Constructor, first, "Первая запись");
+        SampleData.AddRecord(_db.Constructor, second, "Вторая запись");
+
+        var ambiguous = Read("collection=Совпадение");
+        Assert.Equal(400, ambiguous.Status);
+        Assert.Contains("collectionId", ambiguous.Body, StringComparison.Ordinal);
+        var selected = Read($"collectionId={second}");
+        Assert.Equal(200, selected.Status);
+        Assert.Equal(second, Body(selected).GetProperty("collectionId").GetInt32());
+        Assert.Equal("Вторая запись", Assert.Single(Body(selected).GetProperty("rows").EnumerateArray())
+            .GetProperty("values").GetProperty("Название").GetString());
+        Assert.DoesNotContain("Первая запись", selected.Body, StringComparison.Ordinal);
+
+        var schema = Body(Get(IngressApi.SchemaPath, "")).GetProperty("collections");
+        Assert.Equal(new[] { first, second }.Order(), schema.EnumerateArray()
+            .Where(c => c.GetProperty("name").GetString() == "Совпадение")
+            .Select(c => c.GetProperty("id").GetInt32()).Order());
+    }
+
+    [Fact]
+    public void Numeric_collection_names_are_names_and_never_implicit_keys()
+    {
+        var (original, _, _) = Orders();
+        var numeric = SampleData.AddCollection(_db.Constructor, original.ToString()).Id!.Value;
+        SampleData.AddRecord(_db.Constructor, numeric, "Числовое имя");
+        var byName = Read($"collection={original}");
+        Assert.Equal(200, byName.Status);
+        Assert.Equal(numeric, Body(byName).GetProperty("collectionId").GetInt32());
+        Assert.Equal("Числовое имя", Assert.Single(Body(byName).GetProperty("rows").EnumerateArray())
+            .GetProperty("values").GetProperty("Название").GetString());
+        Assert.Equal(404, Read($"collection={original}&collectionId={original}").Status);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("2147483648")]
+    [InlineData("нет")]
+    public void Invalid_collection_keys_are_reported_without_guessing_a_name(string key)
+    {
+        Orders();
+        Assert.Equal(400, Read($"collectionId={key}").Status);
+    }
+
+    [Fact]
+    public void A_duplicate_output_name_switches_to_field_keys_without_losing_values()
+    {
+        var (id, number, total) = Orders();
+        _db.Constructor.SetSystemFieldName(id, "__title__", "Номер", "Название");
+        var namedT = SampleData.AddField(_db.Constructor, id, "t").Id!.Value;
+        var numericName = SampleData.AddField(_db.Constructor, id, number.ToString()).Id!.Value;
+        var first = _db.Constructor.GetRecords(id).First();
+        _db.Constructor.SetFieldValue(first.Id!.Value, namedT, "Буквенное имя");
+        _db.Constructor.SetFieldValue(first.Id!.Value, numericName, "Числовое имя");
+
+        var answer = Read();
+        Assert.Equal(200, answer.Status);
+        var root = Body(answer);
+        var values = root.GetProperty("rows")[0].GetProperty("values");
+        Assert.Equal(5, values.EnumerateObject().Count());
+        Assert.Equal("Молоток", values.GetProperty("t").GetString());
+        Assert.Equal("А-1", values.GetProperty(number.ToString()).GetString());
+        Assert.Equal("100", values.GetProperty(total.ToString()).GetString());
+        Assert.Equal("Буквенное имя", values.GetProperty(namedT.ToString()).GetString());
+        Assert.Equal("Числовое имя", values.GetProperty(numericName.ToString()).GetString());
+        var columns = root.GetProperty("columns").EnumerateArray().ToDictionary(
+            c => c.GetProperty("fieldKey").GetString()!, c => c);
+        Assert.Equal("Номер", columns["t"].GetProperty("name").GetString());
+        Assert.Equal("Номер", columns[number.ToString()].GetProperty("name").GetString());
+        Assert.Equal("t", columns[namedT.ToString()].GetProperty("name").GetString());
+        Assert.Equal(number.ToString(), columns[numericName.ToString()].GetProperty("name").GetString());
+        foreach (var column in columns.Values)
+            Assert.True(values.TryGetProperty(column.GetProperty("key").GetString()!, out _));
+
+        var one = Body(Read($"collectionId={id}&fields={number}")).GetProperty("rows")[0].GetProperty("values");
+        Assert.Single(one.EnumerateObject());
+        Assert.Equal("А-1", one.GetProperty("Номер").GetString());
+    }
+
+    [Fact]
+    public void Repeated_selection_of_one_field_by_key_and_name_is_deduplicated()
+    {
+        var (_, number, _) = Orders();
+        var answer = Read($"collection=Заказы&fields=t,{number},Номер,t");
+        Assert.Equal(200, answer.Status);
+        Assert.Equal(2, Body(answer).GetProperty("columns").GetArrayLength());
+        Assert.Equal(2, Body(answer).GetProperty("rows")[0].GetProperty("values").EnumerateObject().Count());
+    }
+
+    [Fact]
+    public void History_with_duplicate_collection_names_is_not_mixed_even_with_an_explicit_key()
+    {
+        var (id, _, _) = Orders();
+        var group = _db.Constructor.AddGroup(new DbGroup { Name = "Другая группа" }).Id!.Value;
+        var other = SampleData.AddCollection(_db.Constructor, "Заказы", group).Id!.Value;
+        SampleData.AddRecord(_db.Constructor, other, "Из другой коллекции");
+        var answer = Get(IngressApi.ChangesPath, $"collectionId={id}");
+        Assert.Equal(409, answer.Status);
+        Assert.Contains("только имя", answer.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("Из другой коллекции", answer.Body, StringComparison.Ordinal);
+    }
+
 }

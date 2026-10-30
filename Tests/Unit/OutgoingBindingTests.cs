@@ -63,48 +63,7 @@ public sealed class OutgoingBindingTests
             (Valid() with { DbId = 0 }).Problems(),
             p => p.Contains("коллекция", StringComparison.OrdinalIgnoreCase));
 
-    // ── Отпечаток состава ─────────────────────────────────────────────────────
 
-    /// <summary>
-    /// Состав входит в отпечаток запроса, поэтому дописанное поле обязано ронять подтверждение
-    /// направления: иначе состав выгрузки остался бы единственной частью отправки, которую можно
-    /// поменять после согласования.
-    /// </summary>
-    [Fact]
-    public void Mark_changes_with_everything_that_changes_what_goes_out()
-    {
-        var mark = Valid().Mark();
-
-        Assert.Equal(mark, Valid().Mark());   // сам по себе не «плывет»
-
-        Assert.NotEqual(mark, (Valid() with
-        {
-            Fields = [.. Valid().Fields, new OutgoingField(12, "client")],
-        }).Mark());
-
-        Assert.NotEqual(mark, (Valid() with
-        {
-            Fields = [new OutgoingField(null, "order_no"), new OutgoingField(11, "amount")],
-        }).Mark());
-
-        Assert.NotEqual(mark, (Valid() with { Shape = OutgoingShape.Single }).Mark());
-        Assert.NotEqual(mark, (Valid() with { CollectionId = 8 }).Mark());
-    }
-
-    /// <summary>
-    /// Отпечаток запроса БЕЗ состава остается прежним: иначе в день обновления программы
-    /// подтверждения слетели бы у всех разом, включая тех, кто ничего не менял.
-    /// </summary>
-    [Fact]
-    public void Request_without_outgoing_keeps_its_old_fingerprint()
-    {
-        var request = new IntegrationRequest(
-            5, "Отдать заказы", 1, RequestMethod.Post, "/orders", [], """{"итог":1}""",
-            RequestPaging.None, "", "");
-
-        Assert.Equal(request.Fingerprint(), request.Fingerprint(""));
-        Assert.NotEqual(request.Fingerprint(), request.Fingerprint(Valid().Mark()));
-    }
 
     // ── Тело ──────────────────────────────────────────────────────────────────
 
@@ -261,41 +220,7 @@ public sealed class OutgoingBindingTests
                         p => p.Contains("условий отбора больше", StringComparison.OrdinalIgnoreCase));
     }
 
-    /// <summary>
-    /// Отбор входит в отпечаток состава наравне с полями. Снятое условие расширяет выгрузку не
-    /// меньше, чем дописанное поле, — не считай его, и отбор остался бы единственной частью
-    /// отправки, которую можно поменять после согласования, не уронив подтверждения направления.
-    /// </summary>
-    [Fact]
-    public void The_filter_is_part_of_the_fingerprint()
-    {
-        var plain = Valid();
 
-        var filtered = plain with
-        {
-            Conditions = [new ScenarioCondition("Статус", ScenarioTest.Equals, "Отгружен")],
-        };
-
-        var otherSample = plain with
-        {
-            Conditions = [new ScenarioCondition("Статус", ScenarioTest.Equals, "Оплачен")],
-        };
-
-        var otherTest = plain with
-        {
-            Conditions = [new ScenarioCondition("Статус", ScenarioTest.Contains, "Отгружен")],
-        };
-
-        Assert.NotEqual(plain.Mark(),    filtered.Mark());
-        Assert.NotEqual(filtered.Mark(), otherSample.Mark());
-        Assert.NotEqual(filtered.Mark(), otherTest.Mark());
-
-        // Тот же отбор — тот же отпечаток: пересохранение без правок подтверждения не роняет.
-        Assert.Equal(filtered.Mark(), (plain with
-        {
-            Conditions = [new ScenarioCondition("Статус", ScenarioTest.Equals, "Отгружен")],
-        }).Mark());
-    }
 
     /// <summary>Отбор виден на карточке: и числом в общей строке, и словами отдельно.</summary>
     [Fact]

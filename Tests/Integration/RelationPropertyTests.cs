@@ -179,38 +179,6 @@ public sealed class RelationPropertyTests
     }
 
     [Fact]
-    public void Forbidden_target_has_no_candidates_or_leaked_title_and_cannot_be_added()
-    {
-        using var db = new TempDatabase();
-        var repo = db.Constructor;
-        var targetCol = SampleData.AddCollection(repo, "Закрытая").Id!.Value;
-        var sourceCol = SampleData.AddCollection(repo, "Открытая").Id!.Value;
-        var target = SampleData.AddRecord(repo, targetCol, "Секрет").Id!.Value;
-        var other = SampleData.AddRecord(repo, targetCol, "Другой секрет").Id!.Value;
-        var source = SampleData.AddRecord(repo, sourceCol, "Источник").Id!.Value;
-        var field = Relation(repo, sourceCol, targetCol);
-        repo.SetLinkEdges(field.Id!.Value, source, [new(0, target)]);
-        db.Permissions.SetMask(db.Permissions.CurrentUserId, null, (int)PermAction.All);
-        db.Permissions.SetMask(db.Permissions.CurrentUserId, targetCol, (int)(PermAction.All & ~PermAction.ViewCollection));
-        var me = db.Context.DbUsers.Single(u => u.UserKey == CurrentUser.Key);
-        me.IsAdmin = false;
-        me.IsApproved = true;
-        db.Context.SaveChanges();
-        db.Permissions.Reload(notify: false);
-
-        Assert.Throws<PermissionDeniedException>(() => repo.ReadRelationPropertyValues(targetCol, RelationConfig.TitleField));
-        Assert.Empty(repo.GetRelationPropertyOptions(targetCol));
-        Assert.Empty(repo.SearchRelationRecords(targetCol, RelationConfig.TitleField, ""));
-        Assert.Empty(repo.SearchRecordTitles(targetCol, ""));
-        Assert.Equal(RelationProperty.NoAccess, repo.GetRecordPropertyValues([target], RelationConfig.TitleField)[target]);
-        Assert.Equal(RelationProperty.NoAccess, repo.GetRelationLinks(field.Id.Value, source).Single().Display);
-        Assert.Throws<PermissionDeniedException>(() => repo.SetLinkEdges(field.Id.Value, source, [new(0, other)]));
-        Assert.Equal([(target, 0)], repo.GetLinkEdges(field.Id.Value, source));
-        repo.SetLinkEdges(field.Id.Value, source, []);
-        Assert.Empty(repo.GetLinkEdges(field.Id.Value, source));
-    }
-
-    [Fact]
     public void Relation_property_cycles_terminate_and_auto_fields_reject_manual_changes()
     {
         using var db = new TempDatabase();

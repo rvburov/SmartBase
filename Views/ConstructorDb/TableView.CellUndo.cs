@@ -56,7 +56,6 @@ public partial class TableView
     public async Task UndoLastCellChangeAsync()
     {
         if (_repository is null || _undoSteps.Count == 0) return;
-        if (!Can(PermAction.EditRecord)) { PermissionNotice.Show(this, PermAction.EditRecord); return; }
         var repository = _repository;
 
         var step = _undoSteps[^1];
@@ -110,11 +109,10 @@ public partial class TableView
         if (changed > 0) ReloadRows();
 
         // Досозданное вставкой — уже без значений: убираем записи и столбцы, в которые после
-        // вставки никто ничего не вписал. Без права удалять записи или свойства они остаются:
-        // создать их право было, а убрать — нет.
+        // вставки никто ничего не вписал.
         var (removedRecords, removedFields) = (0, 0);
-        var growthRecords = Can(PermAction.DeleteRecord) ? step.Growth.Records : [];
-        var growthFields  = Can(PermAction.DeleteField)  ? step.Growth.Fields  : [];
+        var growthRecords = step.Growth.Records;
+        var growthFields  = step.Growth.Fields;
         if (growthRecords.Count + growthFields.Count > 0)
         {
             try

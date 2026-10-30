@@ -5,10 +5,9 @@ using SmartBase.Database.Entities;
 namespace SmartBase.Database.Repositories;
 
 /// <summary>Кто ссылается на записи: свойство-связь, его коллекция, число записей-источников и
-/// запрещает ли настройка связи удалять цель. <see cref="Hidden"/> — коллекция-источник закрыта
-/// для пользователя: ее имен и чисел окно не показывает.</summary>
+/// запрещает ли настройка связи удалять цель.</summary>
 public sealed record RelationReference(int FieldId, string Field, int CollectionId, string Collection, int Sources,
-    bool Restrict, bool Hidden = false);
+    bool Restrict);
 
 /// <summary>Удаление или перенос записи запрещены настройкой связи «Запретить удаление».</summary>
 public sealed class RelationDeleteRestrictedException(string message) : InvalidOperationException(message);
@@ -30,10 +29,6 @@ public sealed class RelationDeleteRestrictedException(string message) : InvalidO
 /// </summary>
 public partial class ConstructorRepository
 {
-    /// <summary>Чьи права решают, называть ли коллекцию-источник в тексте (у изолированного
-    /// подключения своих прав нет — их передает общий репозиторий).</summary>
-    internal PermissionService? ReferenceViewer { get; set; }
-
     /// <summary>Ссылки на записи <paramref name="recordIds"/> из ребер с базой цели из
     /// <paramref name="targetDbIds"/>. Источники из <paramref name="excludedSources"/> и из коллекций
     /// <paramref name="excludedSourceCollections"/> (они удаляются вместе с целью) не считаются.</summary>
@@ -96,15 +91,9 @@ public partial class ConstructorRepository
         var collectionIds = counted.Select(c => c.Field.CollectionId).Distinct().ToList();
         var collections = db.DbCollections.AsNoTracking().Where(c => collectionIds.Contains(c.Id))
             .ToDictionary(c => c.Id, c => c.Name);
-        var viewer = ReferenceViewer ?? Permissions;
-        return counted.Select(c =>
-            {
-                var hidden = viewer?.Can(PermAction.ViewCollection, c.Field.CollectionId) == false;
-                return new RelationReference(c.Field.Id, hidden ? "" : c.Field.Name, c.Field.CollectionId,
-                    hidden ? "" : TitleText.FirstLine(collections.GetValueOrDefault(c.Field.CollectionId, "")),
-                    c.Sources, c.Restrict, hidden);
-            })
-            .OrderBy(r => r.Hidden).ThenBy(r => r.Collection, StringComparer.CurrentCulture)
+        return counted.Select(c => new RelationReference(c.Field.Id, c.Field.Name, c.Field.CollectionId,
+                TitleText.FirstLine(collections.GetValueOrDefault(c.Field.CollectionId, "")), c.Sources, c.Restrict))
+            .OrderBy(r => r.Collection, StringComparer.CurrentCulture)
             .ThenBy(r => r.Field, StringComparer.CurrentCulture).ToList();
     }
 
@@ -165,18 +154,13 @@ public partial class ConstructorRepository
     public static string DescribeReferenceList(IEnumerable<RelationReference> references,
         Func<RelationReference, string?>? database = null)
     {
-        var list = references.ToList();
-        var open = list.Where(r => !r.Hidden).Select(r => DescribeReference(r, database?.Invoke(r)));
-        var hidden = list.Where(r => r.Hidden).GroupBy(r => database?.Invoke(r))
-            .Select(g => DescribeReference(g.First(), g.Key));
-        return string.Join(", ", open.Concat(hidden));
+        return string.Join(", ", references.Select(r => DescribeReference(r, database?.Invoke(r))));
     }
 
-    /// <summary>Одна ссылка для текста окна. Закрытая для пользователя коллекция — без имен и чисел.</summary>
+    /// <summary>Одна ссылка для текста окна.</summary>
     public static string DescribeReference(RelationReference reference, string? database = null)
     {
         var from = database is null ? "" : $" из базы «{database}»";
-        if (reference.Hidden) return $"связи закрытых коллекций{from}";
         return $"«{reference.Collection} · {reference.Field}»{from} ({reference.Sources} {RecordsWord(reference.Sources)})";
     }
 

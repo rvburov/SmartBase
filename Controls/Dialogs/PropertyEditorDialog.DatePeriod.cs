@@ -33,13 +33,9 @@ public partial class PropertyEditorDialog
             ToolTip.SetTip(item, _types[e.Index].Hint);
         };
         DatePeriodStartCombo.ItemsSource = _datePeriodSources;
-        DatePeriodEndCombo.ItemsSource = _datePeriodSources;
         DatePeriodStartCombo.SelectedIndex = _datePeriodSources.Count == 1 ? 0 : -1;
-        DatePeriodEndModeCombo.SelectedIndex = 1;
-        DatePeriodEndModeCombo.SelectionChanged += (_, _) => { UpdateDatePeriodVisibility(); HideError(); };
         DatePeriodAutomaticToggle.IsCheckedChanged += (_, _) => { UpdateDatePeriodVisibility(); HideError(); };
         DatePeriodStartCombo.SelectionChanged += (_, _) => HideError();
-        DatePeriodEndCombo.SelectionChanged += (_, _) => HideError();
         DatePeriodDayStart.TextChanged += (_, _) => HideError();
         DatePeriodDayEnd.TextChanged += (_, _) => HideError();
         foreach (var day in DatePeriodWeekdays.Children.OfType<CheckBox>())
@@ -49,9 +45,8 @@ public partial class PropertyEditorDialog
 
     private void UpdateDatePeriodVisibility()
     {
-        DatePeriodEndCombo.IsVisible = DatePeriodEndModeCombo.SelectedIndex == 1;
         DatePeriodModeHint.Text = DatePeriodAutomaticToggle.IsChecked == true
-            ? "Значение рассчитывается по выбранным датам и обновляется при просмотре."
+            ? "Значение пересчитывается при изменении диапазона дат или настроек свойства."
             : "Значение фиксируется при создании записи. Для существующих записей используйте «Пересчитать» в меню записи или свойства.";
     }
 
@@ -66,13 +61,9 @@ public partial class PropertyEditorDialog
             choices.Add(missing);
             return missing;
         }
-        var start = Source(config.StartFieldId);
-        var end = config.EndFieldId is int endId ? Source(endId) : null;
+        var source = Source(config.DateFieldId);
         DatePeriodStartCombo.ItemsSource = choices;
-        DatePeriodEndCombo.ItemsSource = choices;
-        DatePeriodStartCombo.SelectedItem = start;
-        DatePeriodEndModeCombo.SelectedIndex = end is null ? 0 : 1;
-        DatePeriodEndCombo.SelectedItem = end;
+        DatePeriodStartCombo.SelectedItem = source;
         DatePeriodAutomaticToggle.IsChecked = config.Automatic;
         DatePeriodDayStart.Text = config.DayStart;
         DatePeriodDayEnd.Text = config.DayEnd;
@@ -83,25 +74,10 @@ public partial class PropertyEditorDialog
 
     private string? BuildDatePeriodConfigJson()
     {
-        if (DatePeriodStartCombo.SelectedItem is not DatePeriodFieldItem { Missing: false } start)
+        if (DatePeriodStartCombo.SelectedItem is not DatePeriodFieldItem { Missing: false } source)
         {
-            ShowError("Выберите свойство даты, от которого считать время.");
+            ShowError("Выберите свойство с датами для расчета.");
             return null;
-        }
-        int? endId = null;
-        if (DatePeriodEndModeCombo.SelectedIndex is not (0 or 1))
-        {
-            ShowError("Выберите, до какой даты считать время.");
-            return null;
-        }
-        if (DatePeriodEndModeCombo.SelectedIndex == 1)
-        {
-            if (DatePeriodEndCombo.SelectedItem is not DatePeriodFieldItem { Missing: false } end)
-            {
-                ShowError("Выберите свойство даты окончания.");
-                return null;
-            }
-            endId = end.Id;
         }
         var mask = 0;
         var days = DatePeriodWeekdays.Children.OfType<CheckBox>().ToArray();
@@ -111,7 +87,7 @@ public partial class PropertyEditorDialog
             ShowError("Выберите хотя бы один день недели.");
             return null;
         }
-        var config = new DatePeriodConfig(start.Id, endId, DatePeriodAutomaticToggle.IsChecked == true,
+        var config = new DatePeriodConfig(source.Id, DatePeriodAutomaticToggle.IsChecked == true,
             mask, DatePeriodDayStart.Text?.Trim() ?? "", DatePeriodDayEnd.Text?.Trim() ?? "");
         if (!config.IsValid)
         {

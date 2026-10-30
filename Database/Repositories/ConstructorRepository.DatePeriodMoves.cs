@@ -20,8 +20,7 @@ public partial class ConstructorRepository
         var lockIds = periods.Select(f => plan[f.Id!.Value].FieldId).ToList();
         foreach (var config in parsed.Values)
         {
-            if (plan.TryGetValue(config.StartFieldId, out var start)) lockIds.Add(start.FieldId);
-            if (config.EndFieldId is int end && plan.TryGetValue(end, out var mappedEnd)) lockIds.Add(mappedEnd.FieldId);
+            if (plan.TryGetValue(config.DateFieldId, out var date)) lockIds.Add(date.FieldId);
         }
         LockDatePeriodMetadata(lockIds);
         var targets = db.DbFields.AsNoTracking().Where(f => f.CollectionId == targetCollectionId)
@@ -35,13 +34,12 @@ public partial class ConstructorRepository
                 if (!bySource.TryGetValue(oldId, out var original) || original.FieldType != "date"
                     || !plan.TryGetValue(oldId, out var mapped) || mapped.To != "date"
                     || !targets.TryGetValue(mapped.FieldId, out var targetDate) || targetDate.FieldType != "date")
-                    throw MoveDatePeriodError(source.Name, "сопоставьте его источники со свойствами типа «Дата» в целевой коллекции");
+                    throw MoveDatePeriodError(source.Name, "сопоставьте его источник со свойством типа «Дата» в целевой коллекции");
                 return mapped.FieldId;
             }
             var expected = config with
             {
-                StartFieldId = MappedDate(config.StartFieldId),
-                EndFieldId = config.EndFieldId is int end ? MappedDate(end) : null,
+                DateFieldId = MappedDate(config.DateFieldId),
             };
             var targetId = plan[source.Id!.Value].FieldId;
             if (!targets.TryGetValue(targetId, out var target) || target.FieldType != "date_period")

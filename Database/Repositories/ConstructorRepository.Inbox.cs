@@ -23,7 +23,7 @@ public sealed record InboxPlan(CollectionBinding Binding, IReadOnlyList<string> 
 /// это единственный способ обойтись без настройки на каждого отправителя.
 ///
 /// Дальше все то же самое, что у сетевого ответа: <c>ApplyRows</c>, обычный путь записи, журнал
-/// изменений и права. Два транспорта — один код записи; иначе получились бы две расходящиеся
+/// изменений. Два транспорта — один код записи; иначе получились бы две расходящиеся
 /// реализации одного и того же (docs/ROADMAP-API.md, раздел 7).
 /// </summary>
 public partial class ConstructorRepository
@@ -193,12 +193,11 @@ public partial class ConstructorRepository
     {
         using var ctx = new AppDbContext(db.DbPath);
         // Текст отказа уходит отправителю: закрытые для робота коллекции в нем не называются.
-        var repo = new ConstructorRepository(ctx) { ReferenceViewer = Permissions };
+        var repo = new ConstructorRepository(ctx);
 
         if (repo.FindInboxCollection(message.Collection, out problem) is not { } collectionId)
             return null;
 
-        Demand(PermAction.DeleteRecord, collectionId);
 
         // Ключ — название записи либо обычное свойство, как у сопоставления при обновлении.
         var titleLabel = repo.GetSystemFieldNames(collectionId)
@@ -281,7 +280,7 @@ public partial class ConstructorRepository
         }
 
         // Связь с запретом удаления держит сообщение целиком, до первой удаленной записи —
-        // по той же причине, что и право: удаление наполовину не просил никто.
+        // удаление наполовину не просил никто.
         var restricted = repo.IncomingReferences(erase, repo.RelationTargetsOfThisBase(), erase, restrictOnly: true);
         if (restricted.Count > 0)
         {
@@ -329,17 +328,11 @@ public partial class ConstructorRepository
     /// свойство значило бы сломать все, что на него навешано, а создать половину полей и
     /// отказаться на конфликте — оставить коллекцию в состоянии, которого не просил никто.
     ///
-    /// Права спрашиваются на публичной точке входа: создание коллекции — «Создание коллекции»
-    /// (право уровня базы), добор полей — «Создание свойства». Спрашиваются ОБА и всегда: иначе
-    /// одно и то же сообщение проходило бы или нет в зависимости от того, что уже есть в базе,
-    /// а робот без прав мог бы выведывать состав базы по разнице отказов.
     /// </summary>
     public InboxEnsure? EnsureCollectionIsolated(InboxMessage message, out string problem)
     {
         problem = "";
 
-        Demand(PermAction.CreateCollection);
-        Demand(PermAction.CreateField);
 
         using var ctx = new AppDbContext(db.DbPath);
         var repo = new ConstructorRepository(ctx);

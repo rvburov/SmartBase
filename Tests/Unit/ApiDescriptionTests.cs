@@ -17,19 +17,21 @@ public sealed class ApiDescriptionTests
     private static readonly IReadOnlyList<ApiCollection> Schema =
     [
         new("Заказы", "Номер",
-            [new ApiField("Клиент", "Текст"), new ApiField("Сумма", "Число")]),
-        new("Склад", "Название", [new ApiField("Остаток", "Число")]),
+            [new ApiField("Клиент", "Текст", 11), new ApiField("Сумма", "Число", 12)], 7),
+        new("Склад", "Название", [new ApiField("Остаток", "Число", 13)], 9),
     ];
 
     [Fact]
     public void The_text_promises_the_addresses_the_listener_answers()
     {
-        var text = ApiDescription.Text("http://127.0.0.1:8787", "Основная", Schema);
+        var text = ApiDescription.Text("http://127.0.0.1:8787", "Основная", Schema, 7);
 
         Assert.Contains(IngressApi.InboxPath,   text, StringComparison.Ordinal);
         Assert.Contains(IngressApi.PingPath,    text, StringComparison.Ordinal);
         Assert.Contains(IngressApi.SchemaPath,  text, StringComparison.Ordinal);
-        Assert.Contains(IngressApi.TokenHeader, text, StringComparison.Ordinal);
+        Assert.Contains("database=7", text, StringComparison.Ordinal);
+        Assert.Contains("без входа и токенов", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("Authorization", text, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -48,20 +50,17 @@ public sealed class ApiDescriptionTests
         Assert.Contains("не ограничен",             text, StringComparison.Ordinal);
     }
 
-    /// <summary>
-    /// Про открытый текст сказано ПРЯМО (6.2: «сказать об этом надо прямо»).
-    ///
-    /// Описание пересылают той стороне, и решение «по какой сети ходить» принимают там. Молчание
-    /// об открытом тексте в документе, который читает именно тот, кто будет слать токен, — худшее
-    /// место для умолчания: «защита только токеном» звучит надежно ровно до вопроса «а токен-то
-    /// как едет».
-    /// </summary>
     [Fact]
-    public void The_text_says_plainly_that_the_token_travels_in_the_open()
+    public void The_text_explains_database_selection_and_read_field_selection()
     {
         var text = ApiDescription.Text("http://127.0.0.1:8787", "Основная", Schema);
 
-        Assert.Contains("ОТКРЫТЫМ ТЕКСТОМ", text, StringComparison.Ordinal);
+        Assert.Contains("ровно одна база", text, StringComparison.Ordinal);
+        Assert.Contains("fields", text, StringComparison.Ordinal);
+        Assert.Contains("уникальным в пределах базы", text, StringComparison.Ordinal);
+        Assert.Contains("collectionId", text, StringComparison.Ordinal);
+        Assert.Contains("columns", text, StringComparison.Ordinal);
+        Assert.Contains("409", text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -91,10 +90,13 @@ public sealed class ApiDescriptionTests
     [Fact]
     public void The_json_carries_the_schema_and_no_values()
     {
-        var json = ApiDescription.Json("Основная", Schema);
+        var json = ApiDescription.Json("Основная", Schema, 7);
         var root = JsonDocument.Parse(json).RootElement;
 
         Assert.Equal("Основная", root.GetProperty("database").GetString());
+        Assert.Equal(7, root.GetProperty("databaseId").GetInt32());
+        Assert.Equal("none", root.GetProperty("authentication").GetString());
+        Assert.Equal(IngressApi.DatabaseParameter, root.GetProperty("databaseParameter").GetString());
         Assert.Equal(IngressApi.InboxPath, root.GetProperty("inbox").GetString());
 
         var collections = root.GetProperty("collections");
@@ -102,6 +104,8 @@ public sealed class ApiDescriptionTests
 
         var first = collections[0];
         Assert.Equal("Заказы", first.GetProperty("name").GetString());
+        Assert.Equal(7, first.GetProperty("id").GetInt32());
+        Assert.Equal(11, first.GetProperty("fields")[0].GetProperty("id").GetInt32());
         Assert.Equal("Номер",  first.GetProperty("title").GetString());
         Assert.Equal(2,        first.GetProperty("fields").GetArrayLength());
         Assert.Equal("Клиент", first.GetProperty("fields")[0].GetProperty("name").GetString());

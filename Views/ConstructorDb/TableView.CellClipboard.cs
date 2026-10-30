@@ -69,11 +69,6 @@ public partial class TableView
 
         var text = TableClipboardFormat.Build(matrix);
 
-        // След в журнале безопасности — ДО буфера: копирование выносит данные наружу так же, как
-        // выгрузка в файл, и копирования, о котором не осталось записи, быть не должно.
-        if (!CopyTrace.Ready) { AppNotifications.Error(CopyTrace.NoJournal); return false; }
-        if (!NoteCopy(columns, matrix.Count, text)) { AppNotifications.Error(CopyTrace.NotWritten); return false; }
-
         var relationCells = new List<RelationClipboardCell>();
         for (var r = 0; r < rows.Count; r++)
             for (var c = 0; c < columns.Count; c++)
@@ -97,26 +92,10 @@ public partial class TableView
         return all;
     }
 
-    private bool NoteCopy(List<int> columns, int rows, string text)
-    {
-        if (_repository is null) return false;
-
-        // Метка — самая строгая среди базы и скопированных столбцов, как у выгрузки.
-        var label = _repository.GetDatabaseLabel();
-        foreach (var c in columns)
-            if (_fields.FirstOrDefault(f => f.Id?.ToString() == _colDefs[c].Key) is { } field)
-                label = Confidentiality.Strictest(label, Confidentiality.FromConfig(field.ConfigJson));
-
-        return CopyTrace.Note(DatabaseId?.Invoke() ?? 0, _repository.CollectionName(_collectionId),
-                              [.. columns.Select(c => _colDefs[c].Header)], rows, rows * columns.Count,
-                              text, label, DateTimeOffset.Now);
-    }
-
     /// <summary>Вырезать: скопировать значения и сразу очистить ячейки. Отменяется Ctrl+Z, как
     /// очистка; если скопировать не удалось, ничего не стирается.</summary>
     public async Task CutCellsAsync()
     {
-        if (!Can(PermAction.EditRecord)) { PermissionNotice.Show(this, PermAction.EditRecord); return; }
         if (!await CopyCellsAsync()) return;
         await ClearCellsAsync("Вырезание");
     }
@@ -170,7 +149,6 @@ public partial class TableView
     public async Task ClearCellsAsync(string operation = "Очистка")
     {
         if (!HasCellSelection || _repository is null) return;
-        if (!Can(PermAction.EditRecord)) { PermissionNotice.Show(this, PermAction.EditRecord); return; }
 
         if (await SelectedCellsAsync() is not { } cells) return;
 
@@ -206,7 +184,6 @@ public partial class TableView
     {
         FollowSelectionIdentity();
         if (_cellRange is not { } range || _repository is null) return;
-        if (!Can(PermAction.EditRecord)) { PermissionNotice.Show(this, PermAction.EditRecord); return; }
 
         var text = await GetClipboardTextAsync();
         if (text is null) return;
@@ -339,9 +316,9 @@ public partial class TableView
         List<int> records = [], fields = [];
         try
         {
-            if (needCols > 0 && Can(PermAction.CreateField))
+            if (needCols > 0)
                 fields = _repository.AddPasteTextFields(_collectionId, needCols);
-            if (needRows > 0 && plain && Can(PermAction.CreateRecord))
+            if (needRows > 0 && plain)
                 records = _repository.AddEmptyRecords(_collectionId, needRows);
         }
         catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath))
@@ -640,7 +617,7 @@ public partial class TableView
             Header       = MenuIcons.PasteValuesHeader(),
             InputGesture = MenuGesture("table.paste"),
         };
-        Guarded(paste, PermAction.EditRecord, () => { select(); Fire(PasteCellsAsync); });
+        paste.Click += (_, _) => { select(); Fire(PasteCellsAsync); };
         menu.Items.Add(paste);
 
         // Пустой буфер — вставлять нечего: пункт гаснет при открытии меню, а не молчит по нажатию.
@@ -659,7 +636,7 @@ public partial class TableView
             Header       = MenuIcons.ClearValuesHeader(),
             InputGesture = MenuGesture("table.clearCells"),
         };
-        Guarded(clear, PermAction.EditRecord, () => { select(); Fire(() => ClearCellsAsync()); });
+        clear.Click += (_, _) => { select(); Fire(() => ClearCellsAsync()); };
         menu.Items.Add(clear);
     }
 
@@ -712,7 +689,6 @@ public partial class TableView
         OnMenuOpening(menu, () =>
         {
             host.Items.Clear();
-            host.IsEnabled = Can(PermAction.EditRecord);
 
             var current = row.CellStyle(def.Key);
             host.Items.Add(ColorMenu.Build("Фон ячейки", current.Bg,

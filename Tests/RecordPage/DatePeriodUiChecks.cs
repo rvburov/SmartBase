@@ -51,7 +51,8 @@ internal static class DatePeriodUiChecks
             Pump();
             var blockedIndex = unavailableTypes.Items.IndexOf(blocked);
             var typePopup = unavailableTypes.GetVisualDescendants().OfType<Avalonia.Controls.Primitives.Popup>().Single(popup => popup.IsOpen);
-            var typeScroll = typePopup.Child!.GetVisualDescendants().OfType<ScrollViewer>().First();
+            var typePopupChild = typePopup.Child ?? throw new InvalidOperationException("Список типов не создал содержимое окна");
+            var typeScroll = typePopupChild.GetVisualDescendants().OfType<ScrollViewer>().First();
             Console.WriteLine($"  Прокрутка списка типов до конца: extent={typeScroll.Extent}, "
                 + $"viewport={typeScroll.Viewport}, offset={typeScroll.Offset}, panel={unavailableTypes.ItemsPanelRoot?.Bounds}");
             // Попап сначала получает viewport. Проверяем весь последний пункт в его
@@ -59,17 +60,18 @@ internal static class DatePeriodUiChecks
             Wait(() =>
             {
                 typeScroll.ScrollToEnd();
-                typePopup.Child.UpdateLayout();
+                typePopupChild.UpdateLayout();
                 Pump();
                 if (unavailableTypes.ContainerFromIndex(blockedIndex) is not ComboBoxItem item) return false;
                 var position = item.TranslatePoint(default, typeScroll);
                 return position is { } point && point.Y >= -1
                     && point.Y + item.Bounds.Height <= typeScroll.Viewport.Height + 1;
             }, "последний пункт типов не реализовался после прокрутки выпадающего списка");
-            var blockedContainer = unavailableTypes.ContainerFromIndex(blockedIndex) as ComboBoxItem;
+            var blockedContainer = unavailableTypes.ContainerFromIndex(blockedIndex) as ComboBoxItem
+                ?? throw new InvalidOperationException("Недоступный тип не создал контейнер после прокрутки");
             Console.WriteLine($"  Диагностика списка типов: open={unavailableTypes.IsDropDownOpen}, "
                 + $"items={unavailableTypes.ItemCount}, index={blockedIndex}, panel={unavailableTypes.ItemsPanelRoot?.GetType().Name}, "
-                + $"container={blockedContainer?.GetType().Name ?? "null"}, bounds={unavailableTypes.Bounds}, "
+                + $"container={blockedContainer.GetType().Name}, bounds={unavailableTypes.Bounds}, "
                 + $"visible={unavailableTypes.IsEffectivelyVisible}, enabled={unavailableTypes.IsEffectivelyEnabled}");
             foreach (var item in unavailableTypes.GetRealizedContainers().OfType<ComboBoxItem>())
                 Console.WriteLine($"    item index={unavailableTypes.IndexFromContainer(item)}, "
@@ -82,9 +84,10 @@ internal static class DatePeriodUiChecks
             Expect(blockedContainer is { IsEnabled: false },
                 "запрет типа применен к настоящему пункту выпадающего списка");
             using (var image = unavailable.CaptureRenderedFrame()) image?.Save(Path.Combine(output, "date-period-type-menu.png"));
-            var inputRoot = TopLevel.GetTopLevel(blockedContainer!)!;
-            var itemOrigin = blockedContainer!.TranslatePoint(default, inputRoot)!.Value;
-            var blockedPoint = blockedContainer!.TranslatePoint(new Point(blockedContainer.Bounds.Width / 2,
+            var inputRoot = TopLevel.GetTopLevel(blockedContainer)
+                ?? throw new InvalidOperationException("Пункт списка не подключен к окну ввода");
+            var itemOrigin = blockedContainer.TranslatePoint(default, inputRoot)!.Value;
+            var blockedPoint = blockedContainer.TranslatePoint(new Point(blockedContainer.Bounds.Width / 2,
                 blockedContainer.Bounds.Height / 2), inputRoot)!.Value;
             var withinInputRoot = itemOrigin.X >= 0 && itemOrigin.Y >= 0
                 && itemOrigin.X + blockedContainer.Bounds.Width <= inputRoot.ClientSize.Width + 1
@@ -106,8 +109,8 @@ internal static class DatePeriodUiChecks
             Wait(() => unavailableClosed.IsCompleted, "не закрылось окно без даты");
 
             var collection = repository.AddCollection(new DbCollection { Name = "Рабочие периоды" }).Id!.Value;
-            var start = repository.AddField(new DbField { CollectionId = collection, Name = "Начало", FieldType = "date" }).Id!.Value;
-            var end = repository.AddField(new DbField { CollectionId = collection, Name = "Окончание", FieldType = "date" }).Id!.Value;
+            var start = repository.AddField(new DbField { CollectionId = collection, Name = "План", FieldType = "date" }).Id!.Value;
+            var end = repository.AddField(new DbField { CollectionId = collection, Name = "Факт", FieldType = "date" }).Id!.Value;
             repository.AddField(new DbField { CollectionId = collection, Name = "Изменено", FieldType = "updated_at" });
             repository.AddField(new DbField { CollectionId = empty, Name = "Чужая дата", FieldType = "date" });
 
@@ -116,10 +119,10 @@ internal static class DatePeriodUiChecks
             Pump();
             SelectPeriod(dialog);
             var source = Find<ComboBox>(dialog, "DatePeriodStartCombo");
-            var ending = Find<ComboBox>(dialog, "DatePeriodEndCombo");
-            var endMode = Find<ComboBox>(dialog, "DatePeriodEndModeCombo");
-            Expect(endMode.SelectedIndex == 1 && ending.IsVisible,
-                "новый период по умолчанию считает до другого свойства даты");
+            Expect(dialog.FindControl<ComboBox>("DatePeriodEndCombo") is null
+                && dialog.FindControl<ComboBox>("DatePeriodEndModeCombo") is null
+                && dialog.GetVisualDescendants().OfType<TextBlock>().Any(label => label.Text == "Даты для расчета"),
+                "настройка содержит один выбор «Даты для расчета», без списка «До» и второй даты");
             Expect(source.Items.OfType<PropertyEditorDialog.DatePeriodFieldItem>().Select(field => field.Id).Order()
                 .SequenceEqual(new[] { start, end }.Order()), "источники содержат только обычные даты этой коллекции");
             Expect(Find<ToggleSwitch>(dialog, "DatePeriodAutomaticToggle").IsChecked == true
@@ -127,25 +130,23 @@ internal static class DatePeriodUiChecks
                 && Find<TextBox>(dialog, "DatePeriodDayEnd").Text == "24:00"
                 && Days(dialog).All(day => day.IsChecked == true), "стандартный расчет учитывает все дни целиком автоматически");
             Find<TextBox>(dialog, "NameBox").Text = "Рабочее время";
-            source.SelectedItem = source.Items.OfType<PropertyEditorDialog.DatePeriodFieldItem>().Single(field => field.Id == start);
+            source.SelectedIndex = -1;
             Click(Find<Button>(dialog, "SaveBtn"));
-            Expect(!closed.IsCompleted && Find<NoticeBanner>(dialog, "NoticeBanner").Message?.Contains("даты окончания") == true
+            Expect(!closed.IsCompleted && Find<NoticeBanner>(dialog, "NoticeBanner").IsVisible
                 && !repository.GetFields(collection).Any(property => property.FieldType == "date_period"),
-                "без выбранного окончания новый период не подменяет его текущим временем");
-            ending.SelectedItem = ending.Items.OfType<PropertyEditorDialog.DatePeriodFieldItem>().Single(field => field.Id == end);
-            endMode.SelectedIndex = 0;
-            Pump();
-            Expect(!ending.IsVisible, "режим текущего времени скрывает ненужный выбор конечной даты");
-            endMode.SelectedIndex = 1;
-            Pump();
-            Expect(ending.IsVisible && ending.SelectedItem is PropertyEditorDialog.DatePeriodFieldItem { Id: var keptEnd } && keptEnd == end,
-                "возврат к другой дате сохраняет выбранное поле окончания");
+                "без выбранных дат расчет не сохраняется и не подменяет источник текущим временем");
+            source.SelectedItem = source.Items.OfType<PropertyEditorDialog.DatePeriodFieldItem>().Single(field => field.Id == start);
             Find<ToggleSwitch>(dialog, "DatePeriodAutomaticToggle").IsChecked = false;
             Find<TextBox>(dialog, "DatePeriodDayStart").Text = "18:00";
             Find<TextBox>(dialog, "DatePeriodDayEnd").Text = "09:00";
             Click(Find<Button>(dialog, "SaveBtn"));
             Expect(!closed.IsCompleted && Find<NoticeBanner>(dialog, "NoticeBanner").IsVisible,
                 "обратный суточный интервал не сохраняется и объясняется в окне");
+            Find<TextBox>(dialog, "DatePeriodDayStart").Text = "24:00";
+            Find<TextBox>(dialog, "DatePeriodDayEnd").Text = "24:00";
+            Click(Find<Button>(dialog, "SaveBtn"));
+            Expect(!closed.IsCompleted && Find<NoticeBanner>(dialog, "NoticeBanner").IsVisible,
+                "24:00 недопустимо в начале рабочего интервала");
             Find<TextBox>(dialog, "DatePeriodDayStart").Text = "09:00";
             Find<TextBox>(dialog, "DatePeriodDayEnd").Text = "18:00";
             foreach (var day in Days(dialog)) day.IsChecked = false;
@@ -159,69 +160,49 @@ internal static class DatePeriodUiChecks
             var field = repository.GetFields(collection).Single(property => property.Name == "Рабочее время");
             var config = DatePeriodConfig.FromConfig(field.ConfigJson);
             Expect(closed.Result && config is { Automatic: false, Weekdays: 31, DayStart: "09:00", DayEnd: "18:00" }
-                && config.StartFieldId == start && config.EndFieldId == end,
-                "сохранение переносит источник, конец, неделю, часы и фиксированный режим в базу");
+                && config.DateFieldId == start,
+                "сохранение переносит единственный источник, неделю, часы и фиксированный режим в базу");
 
             var reopened = new PropertyEditorDialog(repository, collection, field.Id) { MaxHeight = 800 };
             var reopenedClosed = reopened.ShowDialog<bool>(owner);
             Pump();
             Expect(Find<ComboBox>(reopened, "DatePeriodStartCombo").SelectedItem is PropertyEditorDialog.DatePeriodFieldItem { Id: var sourceId }
-                && sourceId == start && Find<ComboBox>(reopened, "DatePeriodEndModeCombo").SelectedIndex == 1
-                && Find<ComboBox>(reopened, "DatePeriodEndCombo").SelectedItem is PropertyEditorDialog.DatePeriodFieldItem { Id: var endId }
-                && endId == end && Find<TextBox>(reopened, "DatePeriodDayStart").Text == "09:00"
+                && sourceId == start && Find<TextBox>(reopened, "DatePeriodDayStart").Text == "09:00"
                 && Find<TextBox>(reopened, "DatePeriodDayEnd").Text == "18:00"
                 && Find<ToggleSwitch>(reopened, "DatePeriodAutomaticToggle").IsChecked == false
                 && Days(reopened).Select((day, index) => day.IsChecked == (index < 5)).All(value => value),
-                "повторное открытие восстанавливает все параметры");
+                "повторное открытие восстанавливает выбранные даты, режим, дни и часы");
             Find<TextBox>(reopened, "DatePeriodDayEnd").Text = "24:00";
             Click(Find<Button>(reopened, "CancelBtn"));
             Wait(() => reopenedClosed.IsCompleted, "не закрылось редактирование периода");
             Expect(DatePeriodConfig.FromConfig(repository.GetFields(collection).Single(property => property.Id == field.Id).ConfigJson)?.DayEnd == "18:00",
                 "отмена не сохраняет черновой интервал");
 
-            var now = new DateTime(2026, 10, 27, 10, 0, 0);
-            repository.DatePeriodClock = () => now;
-            var currentDialog = new PropertyEditorDialog(repository, collection) { MaxHeight = 800 };
-            var currentClosed = currentDialog.ShowDialog<bool>(owner);
+            var automaticDialog = new PropertyEditorDialog(repository, collection) { MaxHeight = 800 };
+            var automaticClosed = automaticDialog.ShowDialog<bool>(owner);
             Pump();
-            SelectPeriod(currentDialog);
-            Find<TextBox>(currentDialog, "NameBox").Text = "До настоящего времени";
-            var currentSource = Find<ComboBox>(currentDialog, "DatePeriodStartCombo");
-            currentSource.SelectedItem = currentSource.Items.OfType<PropertyEditorDialog.DatePeriodFieldItem>().Single(field => field.Id == start);
-            // В скрытом списке остается другое поле: сохранение текущего режима не должно
-            // случайно использовать его вместо часов. Проверяем реальный путь окна.
-            var currentEnd = Find<ComboBox>(currentDialog, "DatePeriodEndCombo");
-            currentEnd.SelectedItem = currentEnd.Items.OfType<PropertyEditorDialog.DatePeriodFieldItem>().Single(field => field.Id == end);
-            Find<ComboBox>(currentDialog, "DatePeriodEndModeCombo").SelectedIndex = 0;
-            Find<TextBox>(currentDialog, "DatePeriodDayStart").Text = "09:00";
-            Find<TextBox>(currentDialog, "DatePeriodDayEnd").Text = "18:00";
-            var currentDays = Days(currentDialog);
-            for (var i = 0; i < currentDays.Length; i++) currentDays[i].IsChecked = i < 5;
-            Click(Find<Button>(currentDialog, "SaveBtn"));
-            Wait(() => currentClosed.IsCompleted, "не сохранился режим текущего времени");
-            var automatic = repository.GetFields(collection).Single(property => property.Name == "До настоящего времени");
+            SelectPeriod(automaticDialog);
+            Find<TextBox>(automaticDialog, "NameBox").Text = "Автоматический период";
+            var automaticSource = Find<ComboBox>(automaticDialog, "DatePeriodStartCombo");
+            automaticSource.SelectedItem = automaticSource.Items.OfType<PropertyEditorDialog.DatePeriodFieldItem>().Single(field => field.Id == start);
+            Find<TextBox>(automaticDialog, "DatePeriodDayStart").Text = "09:00";
+            Find<TextBox>(automaticDialog, "DatePeriodDayEnd").Text = "18:00";
+            var automaticDays = Days(automaticDialog);
+            for (var i = 0; i < automaticDays.Length; i++) automaticDays[i].IsChecked = i < 5;
+            Click(Find<Button>(automaticDialog, "SaveBtn"));
+            Wait(() => automaticClosed.IsCompleted, "не сохранился автоматический расчет");
+            var automatic = repository.GetFields(collection).Single(property => property.Name == "Автоматический период");
             var automaticId = automatic.Id!.Value;
             var automaticKey = automaticId.ToString();
-            Expect(currentClosed.Result && DatePeriodConfig.FromConfig(automatic.ConfigJson)
-                is { Automatic: true, EndFieldId: null, StartFieldId: var currentStart } && currentStart == start,
-                "выбор текущего времени сохраняется без ссылки на скрытую конечную дату");
-            var currentReopened = new PropertyEditorDialog(repository, collection, automatic.Id) { MaxHeight = 800 };
-            var currentReopenedClosed = currentReopened.ShowDialog<bool>(owner);
-            Pump();
-            Expect(Find<ComboBox>(currentReopened, "DatePeriodEndModeCombo").SelectedIndex == 0
-                && !Find<ComboBox>(currentReopened, "DatePeriodEndCombo").IsVisible,
-                "повторное открытие существующего расчета до текущего времени не применяет новое умолчание");
-            Click(Find<Button>(currentReopened, "SaveBtn"));
-            Wait(() => currentReopenedClosed.IsCompleted, "не закрылось сохранение текущего режима");
-            Expect(DatePeriodConfig.FromConfig(repository.GetFields(collection).Single(property => property.Id == automatic.Id).ConfigJson)
-                is { EndFieldId: null, Automatic: true },
-                "повторное сохранение текущего режима не заменяет его другим полем даты");
+            Expect(automaticClosed.Result && DatePeriodConfig.FromConfig(automatic.ConfigJson)
+                is { Automatic: true, DateFieldId: var automaticSourceId } && automaticSourceId == start,
+                "автоматический расчет использует начало и конец одного выбранного свойства даты");
             var record = repository.AddRecord(new DbRecord { CollectionId = collection, Title = "Первый" }).Id!.Value;
             var second = repository.AddRecord(new DbRecord { CollectionId = collection, Title = "Второй" }).Id!.Value;
             foreach (var id in new[] { record, second })
             {
-                repository.SetFieldValue(id, start, "2026-10-26T09:00");
-                repository.SetFieldValue(id, end, "2026-10-27T10:00");
+                repository.SetFieldValue(id, start, "2026-10-26T09:00/2026-10-27T10:00");
+                repository.SetFieldValue(id, end, "2026-10-26T11:00/2026-10-26T16:00");
             }
             repository.RecalculateDatePeriods([record, second], [field.Id!.Value]);
             var page = new RecordPageView();
@@ -237,11 +218,11 @@ internal static class DatePeriodUiChecks
             page.Show(repository, record, collection);
             table.Load(repository, collection);
             Pump();
-            var grid = table.FindControl<SmartBase.Views.ConstructorDb.DrawnGrid.GridPanel>("RecordsGrid")!;
+            var grid = Find<SmartBase.Views.ConstructorDb.DrawnGrid.GridPanel>(table, "RecordsGrid");
             Wait(() => grid.Rows?.FindCachedByRecordId(record) is not null, "строка таблицы не загрузилась");
             var properties = Find<PropertyList>(page, "PropertiesHost");
             Expect(Display(field.Name) == "10 ч" && Display(automatic.Name) == "10 ч",
-                "страница показывает длительность в часах вместо сырых секунд");
+                "страница считает десять рабочих часов из диапазона одного свойства даты");
             var fixedCard = properties.Cards.ToList().FindIndex(card => card.Name == field.Name);
             properties.ScrollIntoView(fixedCard);
             Pump();
@@ -254,28 +235,18 @@ internal static class DatePeriodUiChecks
                 "набор в вычисленное свойство не меняет сохраненный результат");
 
             grid.ScrollToCell(0, automaticKey);
-            Wait(() => CachedPeriod("36000"), "период не загрузился перед проверкой невидимой колонки");
+            Wait(() => CachedPeriod("36000"), "автоматический период не загрузился в видимую колонку");
+            grid.Rows!.FindCachedByRecordId(record)![start.ToString()] = "2026-10-26T09:00/2026-10-27T11:00";
+            Wait(() => CachedPeriod("39600") && Display(automatic.Name) == "11 ч", "правка диапазона не обновила автоматический период");
+            Expect(Display(field.Name) == "10 ч" && CachedPeriod("39600"),
+                "правка диапазона в таблице обновляет автоматический расчет и сохраняет фиксированный снимок");
+            var warmRows = grid.Rows;
             grid.Surface.OffsetX = 0;
             Pump();
-            Expect(grid.Surface.Columns.Left(grid.Surface.Columns.IndexOf(automaticKey)) >= grid.Surface.ViewportWidth,
-                "текущий период находится за горизонтальной границей окна перед проверкой обновления");
-            now = now.AddHours(1);
-            Await(InvokeTask(page, "RefreshDatePeriodsForTimeAsync"), "не обновился период в панели");
-            Await(InvokeTask(table, "RefreshDatePeriodsForTimeAsync"), "не завершилась проверка невидимого периода");
-            Expect(CachedPeriod("36000") && Display(automatic.Name) == "11 ч",
-                "минутное обновление таблицы пропускает невидимую колонку, а открытая страница считает свой период");
             grid.ScrollToCell(0, automaticKey);
             Pump();
-            Wait(() => CachedPeriod("39600"), "прокрутка к периоду не обновила устаревшую ячейку без ожидания минутного таймера");
-            Expect(CachedPeriod("39600"),
-                "возвращение к колонке само обновляет период без ручного вызова обновления и ожидания минуты");
-            Expect(Display(automatic.Name) == "11 ч" && Display(field.Name) == "10 ч",
-                "минутное обновление меняет автоматический период и сохраняет фиксированный");
-            Expect(grid.Rows?.FindCachedByRecordId(record)?[automatic.Id!.Value.ToString()] == "39600"
-                && grid.Rows?.FindCachedByRecordId(record)?[field.Id.Value.ToString()] == "36000",
-                "обновление таблицы заменяет только автоматическое значение в кеше видимой строки");
-            Expect(properties.CurrentEditor is TextBox { IsReadOnly: true, Text: "10 ч" },
-                "обновление часов не закрывает редактор другого свойства");
+            Expect(ReferenceEquals(warmRows, grid.Rows) && CachedPeriod("39600") && grid.Rows?.Source is PlainRowSource,
+                "прокрутка не заменяет теплые страницы и не запускает полный пересчет таблицы");
 
             var fixedRow = (PropertyRowVm)properties.Cards.Single(card => card.Name == field.Name).Tag!;
             var autoRow = (PropertyRowVm)properties.Cards.Single(card => card.Name == automatic.Name).Tag!;
@@ -283,15 +254,15 @@ internal static class DatePeriodUiChecks
             var autoMenu = (ContextMenu)Invoke(page, "BuildPropertyMenu", autoRow)!;
             Expect(MenuAction(fixedMenu) is not null && MenuAction(autoMenu) is null,
                 "ручной пересчет предлагается только фиксированному периоду");
-            repository.SetFieldValue(record, end, "2026-10-27T12:00");
+            repository.SetFieldValue(record, start, "2026-10-26T09:00/2026-10-27T12:00");
             Click(MenuAction(fixedMenu)!);
             Wait(() => repository.GetFieldValues(record).GetValueOrDefault(field.Id.Value) == "43200",
                 "пересчет свойства не обновил текущую запись");
             Expect(repository.GetFieldValues(second).GetValueOrDefault(field.Id.Value) == "36000",
                 "одиночный пересчет не изменил соседнюю запись");
 
-            repository.SetFieldValue(record, end, "2026-10-27T13:00");
-            repository.SetFieldValue(second, end, "2026-10-27T11:00");
+            repository.SetFieldValue(record, start, "2026-10-26T09:00/2026-10-27T13:00");
+            repository.SetFieldValue(second, start, "2026-10-26T09:00/2026-10-27T11:00");
             Wait(() => grid.Rows?.FindCachedByRecordId(record) is not null, "строка таблицы не загрузилась");
             table.SelectRecords([record, second]);
             var rowMenu = (ContextMenu)Invoke(table, "BuildRowContextMenu", (Func<TableRowVm?>)(() => grid.Rows?.FindCachedByRecordId(record)))!;
@@ -302,64 +273,80 @@ internal static class DatePeriodUiChecks
                 "пересчет строки не применился ко всему выделению");
             Wait(() => Display(field.Name) == "13 ч", "событие пакетного пересчета не обновило открытую панель записи");
             Expect(!manager.Context.DbFieldValues.Any(value => value.FieldId == automatic.Id),
-                "показ и обновление автоматического периода не записали его результат в базу");
+                "показ и обновление автоматического периода не записывают его результат в базу");
 
             grid.ScrollToCell(0, automaticKey);
-            Wait(() => CachedPeriod("39600"), "период не загрузился в видимую колонку перед сменой правила");
+            Wait(() => CachedPeriod("46800"), "период не загрузился перед сменой правила");
             var beforeRuleChange = grid.Rows;
-            ChangeRule(new DatePeriodConfig(start, end, Weekdays: 31, DayStart: "09:00", DayEnd: "18:00"));
-            Wait(() => CachedPeriod("46800"), "после перехода от текущего времени к другому полю кеш сохранил старый период");
+            ChangeRule(new DatePeriodConfig(end, Weekdays: 31, DayStart: "09:00", DayEnd: "18:00"));
+            Wait(() => CachedPeriod("18000") && Display(automatic.Name) == "5 ч", "новый источник не заменил старое значение в открытых видах");
             Expect(!ReferenceEquals(beforeRuleChange, grid.Rows) && grid.Rows?.Source is PlainRowSource,
-                "изменение правила перечитывает страницы без материализации полного списка записей");
-
-            var otherEnd = repository.AddField(new DbField
-            {
-                CollectionId = collection, Name = "Другое окончание", FieldType = "date",
-            }).Id!.Value;
-            repository.SetFieldValue(record, otherEnd, "2026-10-27T15:00");
-            table.AddColumnForField(otherEnd);
-            ChangeRule(new DatePeriodConfig(start, otherEnd, Weekdays: 31, DayStart: "09:00", DayEnd: "18:00"));
-            Wait(() => CachedPeriod("54000"), "новое конечное поле не заменило старое значение в открытой таблице");
-            Expect(CachedPeriod("54000"), "смена конечного свойства сразу отражается в той же видимой ячейке");
-
-            ChangeRule(new DatePeriodConfig(start, otherEnd, Weekdays: 96, DayStart: "09:00", DayEnd: "18:00"));
-            Wait(() => CachedPeriod("0"), "смена дней недели не обновила значение видимой ячейки");
-            Expect(CachedPeriod("0"), "смена расписания не оставляет кеш от прежней рабочей недели");
-            ChangeRule(new DatePeriodConfig(start, otherEnd, Automatic: false, Weekdays: 31, DayStart: "09:00", DayEnd: "18:00"));
-            Wait(() => CachedPeriod(""), "переход к фиксированному режиму сохранил старое автоматическое значение");
-            Expect(CachedPeriod(""), "фиксированный режим существующей записи не выдает автоматический результат за снимок");
+                "смена источника обновляет видимые страницы без материализации полного списка записей");
+            ChangeRule(new DatePeriodConfig(end, Weekdays: 96, DayStart: "09:00", DayEnd: "18:00"));
+            Wait(() => CachedPeriod("0") && Display(automatic.Name) == "0 мин", "смена дней недели не обновила расчет");
+            Expect(CachedPeriod("0"), "выбор только выходных дает ноль для понедельника");
+            ChangeRule(new DatePeriodConfig(end, Weekdays: 31, DayStart: "12:00", DayEnd: "14:00"));
+            Wait(() => CachedPeriod("7200") && Display(automatic.Name) == "2 ч", "смена рабочего интервала не обновила расчет");
+            Expect(CachedPeriod("7200"), "рабочие часы обрезают диапазон выбранного свойства");
+            ChangeRule(new DatePeriodConfig(end, Automatic: false, Weekdays: 31, DayStart: "09:00", DayEnd: "18:00"));
+            Wait(() => CachedPeriod("") && Display(automatic.Name) == "", "фиксированный режим сохранил прежнее автоматическое значение");
+            Expect(CachedPeriod(""), "фиксированный режим существующей записи ждет явного пересчета");
             Await(table.RecalculateDatePeriodsAsync([record], [automaticId]), "не пересчитался новый фиксированный режим");
-            Wait(() => CachedPeriod("54000"), "снимок после ручного пересчета не появился в таблице");
-            Expect(CachedPeriod("54000"), "пересчет нового фиксированного режима показывает сохраненный снимок");
+            Wait(() => CachedPeriod("18000") && Display(automatic.Name) == "5 ч", "ручной снимок не появился в открытых видах");
+            repository.SetFieldValue(record, end, "2026-10-26T11:00/2026-10-26T17:00");
+            table.RefreshRecordRow(record);
+            page.ReloadFromDb();
+            Expect(CachedPeriod("18000") && Display(automatic.Name) == "5 ч",
+                "после правки дат фиксированный снимок остается прежним до команды пересчета");
+            ChangeRule(new DatePeriodConfig(end, Weekdays: 31, DayStart: "09:00", DayEnd: "18:00"));
+            Wait(() => CachedPeriod("21600") && Display(automatic.Name) == "6 ч", "автоматический режим оставил фиксированный снимок");
+            Expect(CachedPeriod("21600"), "возврат в автоматический режим считает актуальный диапазон");
 
-            ChangeRule(new DatePeriodConfig(start, Weekdays: 31, DayStart: "09:00", DayEnd: "18:00"));
-            Wait(() => CachedPeriod("39600"), "переход обратно к текущему времени оставил фиксированный снимок");
-            Expect(CachedPeriod("39600"), "возврат из фиксированного режима к текущему времени заново считает видимую ячейку");
+            repository.SetFieldValue(record, end, "2026-09-01/2026-09-04");
+            table.RefreshRecordRow(record);
+            page.ReloadFromDb();
+            Wait(() => CachedPeriod("97200") && Display(automatic.Name) == "1 д 3 ч", "диапазон дней не дал ожидаемые 27 рабочих часов");
+            Expect(CachedPeriod("97200"), "01–04 сентября без времени считаются до начала четвертого числа: 27 рабочих часов");
+            ChangeRule(new DatePeriodConfig(end));
+            Wait(() => CachedPeriod("259200") && Display(automatic.Name) == "3 д", "целые сутки не дали трех дней");
+            Expect(CachedPeriod("259200"), "тот же диапазон с 00:00–24:00 дает ровно три дня");
+            repository.SetFieldValue(record, end, "2026-09-04");
+            table.RefreshRecordRow(record);
+            page.ReloadFromDb();
+            Wait(() => CachedPeriod("0") && Display(automatic.Name) == "0 мин", "одиночная дата не дала нулевой период");
+            Expect(CachedPeriod("0"), "одиночная дата не превращается в сутки и не считается до текущего времени");
+            repository.SetFieldValue(record, end, "");
+            table.RefreshRecordRow(record);
+            page.ReloadFromDb();
+            Wait(() => CachedPeriod("") && Display(automatic.Name) == "", "пустые исходные даты оставили старый расчет");
+            Expect(CachedPeriod(""), "пустая дата показывает пустое значение, а не ноль");
+
+            repository.SetFieldValue(record, end, "2026-10-26T11:00/2026-10-26T17:00");
+            table.RefreshRecordRow(record);
+            page.ReloadFromDb();
+            Wait(() => CachedPeriod("21600"), "диапазон не восстановился перед проверкой смены типа");
             var unchangedRows = grid.Rows;
             var renamed = repository.GetFields(collection).Single(property => property.Id == automaticId);
             renamed.Name = "Переименованный период";
             repository.UpdateField(renamed);
             table.RebuildColumn(automaticKey);
             Pump();
-            Expect(ReferenceEquals(unchangedRows, grid.Rows) && CachedPeriod("39600"),
+            Expect(ReferenceEquals(unchangedRows, grid.Rows) && CachedPeriod("21600"),
                 "переименование периода сохраняет теплые страницы и правильное значение");
-
-            var sourceChanged = repository.GetFields(collection).Single(property => property.Id == start);
+            var sourceChanged = repository.GetFields(collection).Single(property => property.Id == end);
             sourceChanged.FieldType = "text";
             repository.UpdateField(sourceChanged);
-            table.RebuildColumn(start.ToString());
-            Wait(() => CachedPeriod(""), "смена типа даты-источника оставила рассчитанное значение в кеше");
-            Expect(CachedPeriod(""), "период очищается в открытой таблице после смены типа источника даты");
-
+            table.RebuildColumn(end.ToString());
+            page.ReloadFromDb();
+            Wait(() => CachedPeriod(""), "смена типа источника оставила рассчитанное значение в кеше");
+            Expect(CachedPeriod(""), "период очищается после смены типа источника даты");
+            CheckMissingSource(repository, owner, collection, automaticId, Expect);
+            CheckSoleSource(repository, owner, Expect);
             using (var image = owner.CaptureRenderedFrame()) image?.Save(Path.Combine(output, "date-period-ui.png"));
-
             owner.Content = null;
             Pump();
-            Expect(!Field<DispatcherTimer>(table, "_datePeriodTimer").IsEnabled
-                && !Field<DispatcherTimer>(table, "_datePeriodViewportTimer").IsEnabled
-                && !Field<DispatcherTimer>(page, "_datePeriodTimer").IsEnabled,
-                "после снятия видов минутные таймеры и отложенное обновление окна остановлены");
             CheckLiveQueries(repository, owner, Expect);
+            CheckLazyWindow(repository, owner, Expect);
             return failures == 0 ? 0 : 1;
 
             string Display(string name)
@@ -377,6 +364,7 @@ internal static class DatePeriodUiChecks
                 changed.ConfigJson = rule.ToConfigJson(changed.ConfigJson);
                 repository.UpdateField(changed);
                 table.RebuildColumn(automaticKey);
+                page.ReloadFromDb();
                 Pump();
             }
         }
@@ -404,116 +392,209 @@ internal static class DatePeriodUiChecks
         }
     }
 
-    /// <summary>Меняется сам набор строк, включая прежде невидимые и пустой вид:
-    /// одного обновления уже нарисованных значений для текущего периода недостаточно.</summary>
+    /// <summary>Отбор и сортировка должны реагировать на реальные изменения диапазона,
+    /// включая записи вне текущего результата и пустой вид со скрытой колонкой периода.</summary>
     private static void CheckLiveQueries(ConstructorRepository repository, Window owner, Action<bool, string> expect)
     {
-        var savedClock = repository.DatePeriodClock;
-        var now = new DateTime(2026, 10, 28, 9, 0, 0);
-        repository.DatePeriodClock = () => now;
-        try
+        var collection = repository.AddCollection(new DbCollection { Name = "Диапазон в отборе" }).Id!.Value;
+        var dates = repository.AddField(new DbField
         {
-            var collection = repository.AddCollection(new DbCollection { Name = "Текущий период в отборе" }).Id!.Value;
-            var start = repository.AddField(new DbField
-            {
-                CollectionId = collection, Name = "Начало", FieldType = "date",
-            }).Id!.Value;
-            var period = repository.AddField(new DbField
-            {
-                CollectionId = collection, Name = "Прошло времени", FieldType = "date_period", IsSystem = true,
-                ConfigJson = new DatePeriodConfig(start).ToConfigJson(),
-            }).Id!.Value;
-            var first = repository.AddRecord(new DbRecord { CollectionId = collection, Title = "Первая" }).Id!.Value;
-            var second = repository.AddRecord(new DbRecord { CollectionId = collection, Title = "Вторая" }).Id!.Value;
-            repository.SetFieldValue(first, start, "2026-10-28T07:00");
-            repository.SetFieldValue(second, start, "2026-10-28T07:01");
-            var key = period.ToString();
-            var table = new TableView();
-            owner.Content = table;
-            table.Load(repository, collection);
-            Pump();
-            var grid = Find<SmartBase.Views.ConstructorDb.DrawnGrid.GridPanel>(table, "RecordsGrid");
-            Await(grid.QueryTask, "обычный вид периода не открылся");
-            grid.ScrollToCell(0, key);
-            Wait(() => grid.Rows?.FindCachedByRecordId(first)?[key] == "7200",
-                "период первой записи не загрузился в обычном виде");
-            var plainRows = grid.Rows;
-            Await(InvokeTask(table, "RefreshDatePeriodsForTimeAsync"), "не обновился обычный вид периода");
-            expect(ReferenceEquals(plainRows, grid.Rows) && grid.Rows?.Source is PlainRowSource,
-                "обновление часов без фильтра и сортировки сохраняет постраничный источник и его строки");
-
-            // Тот же вход, что у подтверждения окна фильтра: фасад сохраняет выбор,
-            // ApplyFilters передает его копию сетке и запускает настоящий фоновый запрос.
-            var filters = Field<Dictionary<string, HashSet<string>>>(table, "_filters");
-            filters[key] = ["7200"];
-            Invoke(table, "ApplyFilters");
-            Await(grid.QueryTask, "не применился начальный отбор по текущему периоду");
-            Wait(() => HasIds(first), "первый отбор должен выбрать только запись от 07:00");
-            expect(HasIds(first), "при 09:00 отбор по двум часам показывает запись от 07:00");
-
-            now = now.AddMinutes(1);
-            RefreshQuery("не обновился отбор периода после смены минуты");
-            Wait(() => HasIds(second), "после 09:01 прежнее совпадение осталось или новое не появилось");
-            grid.ScrollToCell(0, key);
-            Wait(() => grid.Rows?.FindCachedByRecordId(second)?[key] == "7200",
-                "новое совпадение не показывает значение, соответствующее отбору");
-            expect(HasIds(second) && grid.Rows?.FindCachedByRecordId(second)?[key] == "7200",
-                "следующая минута убирает прежнее совпадение и показывает прежде невидимую подходящую запись");
-
-            var sameMinuteRows = grid.Rows;
-            RefreshQuery("повторная проверка той же минуты не завершилась");
-            expect(ReferenceEquals(sameMinuteRows, grid.Rows) && HasIds(second),
-                "повторное обновление в той же минуте не пересоздает отфильтрованный список строк");
-
-            repository.SaveColumnDisplay(collection, [(key, false, 1)]);
-            table.ReloadColumns();
-            Pump();
-            expect(grid.Surface.Columns.IndexOf(key) < 0,
-                "колонка периода действительно скрыта перед проверкой зависимости отбора");
-
-            now = now.AddMinutes(1);
-            RefreshQuery("не обновился отбор без совпадений");
-            Wait(() => HasIds(), "при 09:02 ни один период не равен двум часам");
-            expect(HasIds(), "текущий отбор может стать пустым после смены минуты даже при скрытой колонке периода");
-            now = now.AddMinutes(-1);
-            RefreshQuery("пустой вид не обновился при возвращении подходящего периода");
-            Wait(() => HasIds(second), "из пустого вида не появилось новое совпадение");
-            expect(HasIds(second), "пересчет текущего отбора работает без видимых записей и показанной колонки периода");
-            repository.SaveColumnDisplay(collection, [(key, true, 1)]);
-            table.ReloadColumns();
-            Pump();
-
-            // Будущий старт сначала дает пустое значение, затем ноль. Его место должно
-            // поменяться даже при неизменных исходных ячейках и прежнем порядке записей.
-            now = new DateTime(2026, 10, 28, 9, 0, 0);
-            repository.SetFieldValue(second, start, "2026-10-28T09:01");
-            filters.Clear();
-            SetField(table, "_sortKey", key);
-            SetField(table, "_sortAsc", true);
-            Invoke(table, "ApplyFilters");
-            Await(grid.QueryTask, "не применилась сортировка по текущему периоду");
-            Wait(() => HasIds(first, second), "будущая дата должна быть в пустом хвосте сортировки");
-            expect(HasIds(first, second), "до наступления даты пустой будущий период находится после положительного");
-            now = now.AddMinutes(1);
-            RefreshQuery("не обновилась сортировка после наступления даты");
-            Wait(() => HasIds(second, first), "нулевой период не переместился перед положительным");
-            expect(HasIds(second, first), "при наступлении даты нулевой период перемещается из пустого хвоста в начало сортировки");
-
-            bool HasIds(params int[] ids) => grid.Rows?.Source is IdListRowSource source
-                && source.Ids.SequenceEqual(ids);
-
-            void RefreshQuery(string error)
-            {
-                Await(InvokeTask(table, "RefreshDatePeriodsForTimeAsync"), error);
-                Await(grid.QueryTask, error);
-            }
-        }
-        finally
+            CollectionId = collection, Name = "Даты", FieldType = "date",
+        }).Id!.Value;
+        var notes = repository.AddField(new DbField
         {
-            owner.Content = null;
-            Pump();
-            repository.DatePeriodClock = savedClock;
-        }
+            CollectionId = collection, Name = "Примечание", FieldType = "text",
+        }).Id!.Value;
+        var period = repository.AddField(new DbField
+        {
+            CollectionId = collection, Name = "Длительность", FieldType = "date_period", IsSystem = true,
+            ConfigJson = new DatePeriodConfig(dates).ToConfigJson(),
+        }).Id!.Value;
+        var first = repository.AddRecord(new DbRecord { CollectionId = collection, Title = "Первая" }).Id!.Value;
+        var second = repository.AddRecord(new DbRecord { CollectionId = collection, Title = "Вторая" }).Id!.Value;
+        repository.SetFieldValue(first, dates, "2026-10-28T07:00/2026-10-28T09:00");
+        repository.SetFieldValue(second, dates, "2026-10-28T07:00/2026-10-28T08:00");
+        var key = period.ToString();
+        var table = new TableView();
+        owner.Content = table;
+        table.Load(repository, collection);
+        Pump();
+        var grid = Find<SmartBase.Views.ConstructorDb.DrawnGrid.GridPanel>(table, "RecordsGrid");
+        Await(grid.QueryTask, "обычный вид периода не открылся");
+        grid.ScrollToCell(0, key);
+        Wait(() => grid.Rows?.FindCachedByRecordId(first)?[key] == "7200", "период первой записи не загрузился");
+        var plainRows = grid.Rows;
+        for (var i = 0; i < 5; i++) Pump();
+        expect(ReferenceEquals(plainRows, grid.Rows) && grid.Rows?.Source is PlainRowSource,
+            "отрисовка без правки данных сохраняет постраничный источник строк");
+
+        // Тот же вход, что у подтверждения окна фильтра: фасад сохраняет выбор,
+        // ApplyFilters передает его копию сетке и запускает настоящий фоновый запрос.
+        var filters = Field<Dictionary<string, HashSet<string>>>(table, "_filters");
+        filters[key] = ["7200"];
+        Invoke(table, "ApplyFilters");
+        Wait(() => HasIds(first), "начальный отбор должен выбрать только двухчасовой диапазон");
+        expect(HasIds(first), "отбор по двум часам показывает подходящий диапазон");
+        grid.ScrollToCell(0, key);
+        Wait(() => grid.Rows?.FindCachedByRecordId(first) is not null, "отобранная строка не загрузилась");
+        grid.Rows!.FindCachedByRecordId(first)![dates.ToString()] = "2026-10-28T07:00/2026-10-28T10:00";
+        Wait(() => HasIds(), "правка исходной ячейки не убрала запись из активного отбора");
+        expect(HasIds(), "правка даты в таблице сразу исключает несовпадающий рассчитанный период");
+
+        repository.SaveColumnDisplay(collection, [(key, false, 1)]);
+        table.ReloadColumns();
+        Pump();
+        expect(grid.Surface.Columns.IndexOf(key) < 0, "колонка периода скрыта перед проверкой пустого отбора");
+        repository.SetFieldValue(second, dates, "2026-10-28T07:00/2026-10-28T09:00");
+        table.RefreshRecordRow(second);
+        Wait(() => HasIds(second), "из пустого вида не появилось новое совпадение после внешней правки");
+        expect(HasIds(second), "внешняя правка возвращает ранее невидимую запись даже при скрытой колонке периода");
+        repository.SetFieldValue(second, dates, "2026-10-28T07:00/2026-10-28T08:00");
+        table.RefreshRecordRow(second);
+        Wait(() => HasIds(), "внешняя правка не убрала переставший подходить диапазон");
+        expect(HasIds(), "после внешней правки отбор корректно становится пустым");
+
+        var rule = repository.GetFields(collection).Single(field => field.Id == period);
+        rule.ConfigJson = new DatePeriodConfig(dates, DayStart: "07:00", DayEnd: "09:00").ToConfigJson(rule.ConfigJson);
+        repository.UpdateField(rule);
+        table.RebuildColumn(key);
+        Wait(() => HasIds(first), "смена часов не обновила активный отбор");
+        expect(HasIds(first), "изменение настроек периода заново проверяет весь активный отбор");
+        filters.Clear();
+        SetField(table, "_sortKey", key);
+        SetField(table, "_sortAsc", true);
+        Invoke(table, "ApplyFilters");
+        Wait(() => HasIds(second, first), "не применилась сортировка по диапазону");
+        expect(HasIds(second, first), "сортировка ставит часовой диапазон перед двухчасовым");
+        repository.SaveColumnDisplay(collection, [(key, true, 1)]);
+        table.ReloadColumns();
+        Pump();
+        grid.ScrollToCell(0, key);
+        Wait(() => grid.Rows?.FindCachedByRecordId(first) is not null
+            && grid.Rows.FindCachedByRecordId(second) is not null, "строки сортировки не загрузились");
+        var beforeTitle = grid.Rows;
+        grid.Rows!.FindCachedByRecordId(first)![TableRowVm.TitleKey] = "Переименованная первая";
+        for (var i = 0; i < 5; i++) Pump();
+        expect(ReferenceEquals(beforeTitle, grid.Rows) && HasIds(second, first),
+            "правка названия не пересоздает строки при активной сортировке по периоду");
+        grid.Rows!.FindCachedByRecordId(first)![notes.ToString()] = "Не относится к датам";
+        for (var i = 0; i < 5; i++) Pump();
+        expect(ReferenceEquals(beforeTitle, grid.Rows) && HasIds(second, first),
+            "правка другого свойства не запускает повторную сортировку по периоду");
+        grid.Rows!.FindCachedByRecordId(first)![dates.ToString()] = "2026-10-28T07:00/2026-10-28T07:30";
+        Wait(() => HasIds(first, second), "правка ячейки не изменила порядок активной сортировки");
+        expect(HasIds(first, second), "правка даты через модель ячейки пересортировывает зависимое свойство");
+        repository.SetFieldValue(second, dates, "2026-10-28T08:00/2026-10-28T12:00");
+        table.RefreshRecordRow(second);
+        Wait(() => HasIds(first, second), "внешняя правка не сохранила ожидаемую сортировку");
+        rule = repository.GetFields(collection).Single(field => field.Id == period);
+        rule.ConfigJson = new DatePeriodConfig(dates, DayStart: "07:00", DayEnd: "08:00").ToConfigJson(rule.ConfigJson);
+        repository.UpdateField(rule);
+        table.RebuildColumn(key);
+        Wait(() => HasIds(second, first), "смена часов не обновила активную сортировку");
+        expect(HasIds(second, first), "смена рабочего интервала меняет порядок сортировки по вычисляемому свойству");
+        owner.Content = null;
+        Pump();
+
+        bool HasIds(params int[] ids) => grid.Rows?.Source is IdListRowSource source && source.Ids.SequenceEqual(ids);
+    }
+
+    private static void CheckMissingSource(ConstructorRepository repository, Window owner, int collection, int field,
+        Action<bool, string> expect)
+    {
+        var dialog = new PropertyEditorDialog(repository, collection, field) { MaxHeight = 800 };
+        var closed = dialog.ShowDialog<bool>(owner);
+        Pump();
+        expect(Find<ComboBox>(dialog, "DatePeriodStartCombo").SelectedItem is PropertyEditorDialog.DatePeriodFieldItem { Missing: true },
+            "изменившая тип исходная дата показана как недоступный сохраненный выбор");
+        Click(Find<Button>(dialog, "SaveBtn"));
+        expect(!closed.IsCompleted && Find<NoticeBanner>(dialog, "NoticeBanner").IsVisible,
+            "недоступный источник нельзя сохранить без явного выбора другой даты");
+        Click(Find<Button>(dialog, "CancelBtn"));
+        Wait(() => closed.IsCompleted, "не закрылось окно с недоступным источником");
+    }
+
+    private static void CheckSoleSource(ConstructorRepository repository, Window owner, Action<bool, string> expect)
+    {
+        var collection = repository.AddCollection(new DbCollection { Name = "Единственная дата" }).Id!.Value;
+        var dates = repository.AddField(new DbField { CollectionId = collection, Name = "Даты", FieldType = "date" }).Id!.Value;
+        var legacy = repository.AddField(new DbField
+        {
+            CollectionId = collection, Name = "Старый период", FieldType = "date_period", IsSystem = true,
+            ConfigJson = "{\"datePeriod\":{\"version\":1,\"startFieldId\":" + dates + ",\"endFieldId\":" + dates
+                + ",\"automatic\":true,\"weekdays\":127,\"dayStart\":\"00:00\",\"dayEnd\":\"24:00\"}}",
+        }).Id!.Value;
+        var dialog = new PropertyEditorDialog(repository, collection) { MaxHeight = 800 };
+        var closed = dialog.ShowDialog<bool>(owner);
+        Pump();
+        SelectPeriod(dialog);
+        expect(Find<ComboBox>(dialog, "DatePeriodStartCombo").SelectedItem is PropertyEditorDialog.DatePeriodFieldItem { Id: var selected }
+            && selected == dates, "единственное свойство даты выбирается автоматически");
+        Click(Find<Button>(dialog, "CancelBtn"));
+        Wait(() => closed.IsCompleted, "не закрылось окно с единственной датой");
+        dialog = new PropertyEditorDialog(repository, collection, legacy) { MaxHeight = 800 };
+        closed = dialog.ShowDialog<bool>(owner);
+        Pump();
+        expect(Find<ComboBox>(dialog, "DatePeriodStartCombo").SelectedItem is PropertyEditorDialog.DatePeriodFieldItem { Id: var restored }
+            && restored == dates, "старое правило восстанавливает прежний источник как единственные даты для расчета");
+        Click(Find<Button>(dialog, "SaveBtn"));
+        Wait(() => closed.IsCompleted, "старое правило не сохранилось в новом формате");
+        var saved = DatePeriodConfig.FromConfig(repository.GetFields(collection).Single(field => field.Id == legacy).ConfigJson);
+        expect(closed.Result && saved is { DateFieldId: var savedDates, Automatic: true } && savedDates == dates,
+            "повторное сохранение старого правила оставляет источник и автоматический режим");
+    }
+
+    private static void CheckLazyWindow(ConstructorRepository repository, Window owner, Action<bool, string> expect)
+    {
+        var collection = repository.AddCollection(new DbCollection { Name = "Ленивые периоды" }).Id!.Value;
+        var dates = repository.AddField(new DbField { CollectionId = collection, Name = "Даты", FieldType = "date" }).Id!.Value;
+        for (var i = 0; i < 20; i++)
+            repository.AddField(new DbField { CollectionId = collection, Name = $"Текст {i}", FieldType = "text" });
+        var period = repository.AddField(new DbField
+        {
+            CollectionId = collection, Name = "Период справа", FieldType = "date_period", IsSystem = true,
+            ConfigJson = new DatePeriodConfig(dates, DayStart: "09:00", DayEnd: "18:00").ToConfigJson(),
+        }).Id!.Value;
+        // Системный тип по умолчанию размещается раньше обычных свойств. Здесь
+        // явно ставим его справа, за видимым окном и его областью предзагрузки.
+        repository.SaveColumnOrder(collection, ["__title__", .. repository.GetFields(collection)
+            .Where(field => field.Id is not null && field.Id != period).OrderBy(field => field.Id)
+            .Select(field => field.Id!.Value.ToString()), period.ToString()]);
+        var ids = repository.BulkAddRecords(collection, [dates], Enumerable.Range(0, 1000)
+            .Select(i => new BulkRecordRow($"Запись {i}", ["2026-09-01/2026-09-04"])), 1000, CancellationToken.None);
+        var table = new TableView();
+        owner.Content = table;
+        table.Load(repository, collection);
+        Pump();
+        var grid = Find<SmartBase.Views.ConstructorDb.DrawnGrid.GridPanel>(table, "RecordsGrid");
+        // При оценке длины 0 IsCellLoaded(0, ...) возвращает true: строка еще
+        // вне среза. Ждем настоящую первую страницу после фонового счета.
+        Wait(() => grid.Rows is { DataCount: 1000 } initialRows
+            && initialRows.TryGetCached(0) is not null && initialRows.IsCellLoaded(0, dates),
+            "не загрузилась первая страница тысячи записей с окном колонок");
+        var periodColumn = grid.Surface.Columns.IndexOf(period.ToString());
+        var firstWindow = grid.Surface.Columns.VisibleRange(grid.Surface.OffsetX, grid.Surface.ViewportWidth);
+        Console.WriteLine($"  Ленивый показ: source={grid.Rows?.Source.GetType().Name}, rows={grid.Rows?.DataCount}, "
+            + $"lastCached={grid.Rows?.TryGetCached(999) is not null}, periodLoaded={grid.Rows?.IsCellLoaded(0, period)}, "
+            + $"fieldWindow={(grid.Rows?.FieldWindow is { } window ? string.Join(',', window) : "all")}, "
+            + $"period={period}, column={periodColumn}, visible={firstWindow}, "
+            + $"viewport={grid.Surface.ViewportWidth}, offset={grid.Surface.OffsetX}, "
+            + $"columnOrder={string.Join(',', Enumerable.Range(0, grid.Surface.Columns.Count).Select(index => grid.Surface.Columns[index].Key))}");
+        expect(grid.Rows?.Source is PlainRowSource && grid.Rows.TryGetCached(999) is null
+            && !grid.Rows.IsCellLoaded(0, period),
+            "первый показ не загружает дальнюю страницу и невидимую колонку периода из тысячи записей");
+        var rows = grid.Rows;
+        grid.ScrollToCell(0, period.ToString());
+        Wait(() => grid.Rows?.IsCellLoaded(0, period) == true
+            && grid.Rows.FindCachedByRecordId(ids[0])?[period.ToString()] == "97200", "период не дочитался при горизонтальной прокрутке");
+        expect(ReferenceEquals(rows, grid.Rows) && grid.Rows?.TryGetCached(999) is null,
+            "прокрутка дочитывает вычисляемую колонку в той же странице, не загружая конец таблицы");
+        var warmed = grid.Rows;
+        for (var i = 0; i < 5; i++) Pump();
+        expect(ReferenceEquals(warmed, grid.Rows) && grid.Rows?.FindCachedByRecordId(ids[0])?[period.ToString()] == "97200",
+            "повторная отрисовка без правок не сбрасывает страницы и расчет диапазона");
+        owner.Content = null;
+        Pump();
     }
 
     private static MenuItem? MenuAction(ContextMenu menu) =>
@@ -529,7 +610,6 @@ internal static class DatePeriodUiChecks
     private static T Find<T>(Control parent, string name) where T : Control => parent.FindControl<T>(name)!;
     private static object? Invoke(object target, string name, params object[] arguments) =>
         target.GetType().GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(target, arguments);
-    private static Task InvokeTask(object target, string name) => (Task)Invoke(target, name)!;
     private static T Field<T>(object target, string name) =>
         (T)target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(target)!;
     private static void SetField(object target, string name, object? value) =>
@@ -551,9 +631,8 @@ internal static class DatePeriodUiChecks
         {
             if (timer.Elapsed > TimeSpan.FromSeconds(15)) throw new InvalidOperationException(error);
             Pump();
-            // RunJobs разбирает готовую очередь, но сам не продвигает отложенные
-            // DispatcherTimer. Настоящий короткий цикл нужен для проверки прокрутки,
-            // которая в приложении запускает обновление через debounce, без private-вызова.
+            // Даем завершиться настоящим отложенным событиям интерфейса и фоновым
+            // чтениям страниц, не вызывая внутренние обработчики вместо работы окна.
             using var turn = new CancellationTokenSource(TimeSpan.FromMilliseconds(20));
             Dispatcher.UIThread.MainLoop(turn.Token);
         }

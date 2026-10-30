@@ -28,7 +28,6 @@ public sealed class StreamServiceTests : IDisposable
     private readonly string           _dir;
     private readonly DatabaseRegistry _registry;
     private readonly RunJournal       _journal;
-    private readonly SecurityJournal  _security;
 
     private readonly List<string> _notices = [];
 
@@ -37,30 +36,16 @@ public sealed class StreamServiceTests : IDisposable
         _dir      = Directory.CreateTempSubdirectory("sbstream_").FullName;
         _registry = DatabaseRegistry.Open(Path.Combine(_dir, "database.db"), Path.Combine(_dir, "app.db"));
         _journal  = new RunJournal(Path.Combine(_dir, "integrations.db"));
-        _security = new SecurityJournal(Path.Combine(_dir, "security.db"));
 
         RunJournal.Attach(_journal);
-        SecurityJournal.Attach(_security);
 
-        EgressGate.AttachPolicy(EgressPolicySet.Of(new EgressPolicy(
-            EgressMode.Internal,
-            Hosts:           ["127.0.0.1"],
-            Networks:        ["127.0.0.0/8"],
-            Folders:         [],
-            MaxRowsPerRun:   1000,
-            MaxBytesPerDay:  1024 * 1024,
-            MaxRunsPerHour:  100,
-            ValidUntil:      null,
-            UserMayAddHosts: false,
-            Source:          "тест",
-            MasterHash:      MasterPassword.Hash(Master))));
     }
 
     public void Dispose()
     {
-        EgressGate.Close();
+
         RunJournal.Attach(null);
-        SecurityJournal.Attach(null);
+
         _registry.Dispose();
         _db.Dispose();
         try { SqliteGate.ClearAllPools(); } catch { /* best-effort */ }
@@ -158,13 +143,6 @@ public sealed class StreamServiceTests : IDisposable
             Body         = """{"to": {{поле.author}}, "message": "{{ответ.текст}}"}""",
         });
 
-        if (confirm)
-        {
-            Cards.ConfirmDirection(reply, Master, "Петров П. П.", days: 90, DateTimeOffset.Now,
-                                   out var trouble);
-            Assert.Equal("", trouble);
-        }
-
         return (stream, reply);
     }
 
@@ -249,8 +227,6 @@ public sealed class StreamServiceTests : IDisposable
         Assert.Equal("""{"to": 1001, "message": "Принято: Нужна втулка"}""", sent.Body);
 
         // Ответ — отправка: у нее след в журнале безопасности и отметка в журнале запусков.
-        Assert.Contains(_security.Page(new SecurityFilter(Event: SecurityEvent.Send)),
-                        row => row.Allowed && row.Scenario == "Заявки по событию");
 
         var run = Assert.Single(Journal(RunChannel.Request));
         Assert.True(run.Ok);
@@ -485,36 +461,6 @@ public sealed class StreamServiceTests : IDisposable
         Assert.Equal(4, Journal(RunChannel.Scenario).Count);
     }
 
-    /// <summary>
-    /// Неподтвержденный ответ не доходит до сокета — замок на нем держит так же, как на любой
-    /// отправке. Запись при этом сделана: событие обработано, не ушел только ответ, и человеку
-    /// об этом сказано.
-    /// </summary>
-    [Fact]
-    public async Task An_unconfirmed_reply_stops_before_the_socket()
-    {
-        using var stand = new StreamStand();
-        var (stream, reply) = Cabling(stand, confirm: false);
-        var collection = Collection();
-        Save(stream, reply, collection);
-
-        var clerk = new Clerk();
-        using var service = Service(clerk);
-
-        service.Begin();
-        await stand.WaitConnectedAsync(Patience);
-        await stand.SendAsync(Event(1, "Нужна втулка"));
-
-        await Until(() => clerk.Seen.Count == 1, "сценарий отработал");
-        await service.SettleAsync(Patience);
-
-        Assert.Empty(stand.Requests);
-        Assert.Single(_db.Constructor.GetRecords(collection));
-
-        lock (_notices)
-            Assert.Contains(_notices, n => n.Contains("ответ на событие не ушел", StringComparison.Ordinal));
-    }
-
     /// <summary>Сценарий без запроса ответа события принимает, а отвечать не берется.</summary>
     [Fact]
     public async Task A_scenario_without_a_reply_request_stays_silent()
@@ -633,28 +579,4 @@ public sealed class StreamServiceTests : IDisposable
         lock (_notices) Assert.Single(_notices);
     }
 
-    /// <summary>
-    /// Адрес, которого нет в политике, не слушается: поток открывается через ту же дверь, что и
-    /// запрос, и правила у нее те же.
-    /// </summary>
-    [Fact]
-    public async Task A_stream_outside_the_policy_is_not_opened()
-    {
-        using var stand = new StreamStand();
-        var (stream, reply) = Cabling(stand);
-        Save(stream, reply, Collection());
-
-        EgressGate.AttachPolicy(EgressPolicySet.Of(new EgressPolicy(
-            EgressMode.Internal, ["api.zavod.local"], ["10.0.0.0/8"], [], 1000, 1024 * 1024, 100,
-            null, false, "тест")));
-
-        using var service = Service(new Clerk());
-
-        service.Begin();
-
-        await Until(() => service.State(stream.Id)?.Trouble.Length > 0, "отказ политики");
-
-        Assert.Contains("белый список", service.State(stream.Id)!.Trouble, StringComparison.Ordinal);
-        Assert.Equal(0, stand.Connections);
-    }
 }

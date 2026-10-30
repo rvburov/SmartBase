@@ -305,13 +305,6 @@ public sealed partial class IntegrationsRegistry(SystemDbContext db)
                 $"Запрос не удален: его выполняют сценарии ({used.Count}). "
                 + "Уберите шаг из сценария или удалите сценарий.");
 
-        // Подтверждение исходящего направления уходит вместе с запросом. Оставь его — и
-        // следующий запрос, получивший тот же ключ (SQLite выдает их заново после удаления),
-        // унаследовал бы чужое разрешение. Отпечаток такой запрос, скорее всего, не сойдется, но
-        // «скорее всего» — не то основание, на котором держат разрешение отправлять данные.
-        if (db.IntegrationDirections.FirstOrDefault(d => d.RequestId == id) is { } direction)
-            db.IntegrationDirections.Remove(direction);
-
         db.IntegrationRequests.Remove(entity);
         db.SaveChanges();
     }

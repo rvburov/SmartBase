@@ -92,7 +92,7 @@ public static class InboxFolder
     /// XML, чужая выгрузка, — и шагу нужна строка целиком. Формат неизвестен, значит неизвестно и
     /// где в файле что лежит, а читать потоком то, о чем ничего не знаешь, нечем.
     ///
-    /// Потолок нарочно НЕ из политики. Политика ограничивает то, что уходит наружу; здесь же
+    /// Техническое ограничение размера файла: здесь
     /// дело не в правах, а в том, что программа обязана пережить любой файл, который кто угодно
     /// положил в папку обмена.
     /// </summary>
@@ -104,9 +104,6 @@ public static class InboxFolder
     /// Разложить папки под корнем и вернуть их. <c>null</c> — корень не годится, причина в
     /// <paramref name="explanation"/>.
     ///
-    /// Разрешение спрашивается ЗДЕСЬ, у политики организации: папка-приемник — такая же дверь,
-    /// как сетевой адрес, и открыть ее себе самому пользователь не должен. Это единственная
-    /// точка, где появляются пути обмена, поэтому проверку не обойти, не начав с нее.
     /// </summary>
     public static InboxLayout? Open(string? root, out string explanation)
     {
@@ -115,13 +112,6 @@ public static class InboxFolder
         if (string.IsNullOrWhiteSpace(root))
         {
             explanation = "папка обмена не выбрана";
-            return null;
-        }
-
-        var decision = EgressGate.CheckFolder(root);
-        if (!decision.Allowed)
-        {
-            explanation = decision.Explanation;
             return null;
         }
 
@@ -367,7 +357,13 @@ public static class InboxFolder
     /// сколько вернулось. Без этого выключенная посреди обмена машина уносит файл с собой
     /// навсегда, а отправитель никогда не узнает почему.
     /// </summary>
-    public static int ReclaimStale(InboxLayout layout, DateTimeOffset now)
+    public static int ReclaimStale(InboxLayout layout, DateTimeOffset now) =>
+        ReclaimStale(layout, now, ownershipOpened: null);
+
+    // Наблюдатель позволяет детерминированно проверить столкновение чтения и уборки;
+    // состояние остается локальным вызову и не влияет на соседние приемники.
+    internal static int ReclaimStale(InboxLayout layout, DateTimeOffset now,
+                                      Action<string>? ownershipOpened)
     {
         if (!Directory.Exists(layout.Incoming)) return 0;
 
@@ -380,11 +376,19 @@ public static class InboxFolder
 
             try
             {
-                // Не отбираем переименованный файл, пока владелец переставляет старое
-                // время записи на момент захвата. Проверяем возраст уже ПОД защитой:
-                // до открытия сосед еще мог успеть обновить отметку.
-                using var ownership = OpenForClaim(path);
+                // Свежий захват не открываем монопольно даже на мгновение: владелец
+                // читает его несколькими потоковыми проходами. Иначе уборка соседа
+                // может помешать открытию файла между этими проходами.
                 var info = new FileInfo(path);
+                if (!info.Exists) continue;
+                if (now - new DateTimeOffset(info.LastWriteTimeUtc, TimeSpan.Zero) < StaleClaim) continue;
+
+                // Возраст перепроверяется ПОД защитой: после предварительного чтения
+                // владелец мог обновить отметку. Дескриптор также защищает окно между
+                // переименованием давно доставленного файла и его первой отметкой.
+                using var ownership = OpenForClaim(path);
+                ownershipOpened?.Invoke(path);
+                info.Refresh();
                 if (!info.Exists) continue;
                 if (now - new DateTimeOffset(info.LastWriteTimeUtc, TimeSpan.Zero) < StaleClaim) continue;
 

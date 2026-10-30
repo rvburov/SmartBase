@@ -20,7 +20,7 @@ case "${CI_PROFILE:-}" in
   *) echo '::error::Неизвестный профиль проверок' >&2; exit 1 ;;
 esac
 require_result test "${CI_MATRIX_RESULT:-missing}" "$expected"
-require_result closed-loop "${CI_CLOSED_RESULT:-missing}" "$expected"
+require_result no-listener "${CI_LISTENER_RESULT:-missing}" "$expected"
 require_result postgres "${CI_POSTGRES_RESULT:-missing}" "$expected"
 require_result tools "${CI_TOOLS_RESULT:-missing}" "$expected"
 printf 'Профиль %s: все обязательные проверки завершены\n' "$CI_PROFILE"

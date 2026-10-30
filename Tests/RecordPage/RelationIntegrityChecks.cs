@@ -54,8 +54,7 @@ internal static class RelationIntegrityChecks
             var before = Snapshot();
             AppSettings.SaveBackupFolder(backupDirectory);
             var settings = new SettingsView();
-            settings.Initialize(registry, id => id == entry.Id, isDbAdmin: _ => true,
-                databases: () => [manager]);
+            settings.Initialize(registry, id => id == entry.Id, databases: () => [manager]);
             settings.ShowCategory("database");
             owner = new Window { Width = 1100, Height = 760, Content = settings };
             owner.Show();
@@ -89,13 +88,6 @@ internal static class RelationIntegrityChecks
             Expect(Snapshot() == before && BackupFiles().Length == 0
                 && dialog.FindControl<Button>("RepairBtn")!.IsEnabled,
                 "отмена исправления сохраняет данные и выбранный черновик без резервной копии");
-            Preview(dialog);
-            SetAccess(false);
-            Wait(() => !dialog.OwnedWindows.OfType<ConfirmDialog>().Any(), "отзыв прав не закрыл старое подтверждение");
-            Expect(Rows(dialog).Length == 0 && Private<RelationIntegrityReport?>(dialog, "_report") is null
-                && !dialog.FindControl<Button>("RepairBtn")!.IsEnabled && Snapshot() == before,
-                "отзыв прав во время подтверждения удаляет прежние подписи и план без записи или копии");
-            SetAccess(true);
             CloseDialog(dialog);
 
             var blocked = Path.Combine(folder, "not-a-directory");
@@ -134,11 +126,6 @@ internal static class RelationIntegrityChecks
             Expect(Rows(dialog).All(row => Issue(row).Kind != RelationIntegrityIssueKind.InvalidSelfLink)
                 && Rows(dialog).Any(row => Issue(row).Kind == RelationIntegrityIssueKind.TargetUnavailable),
                 "повторная проверка убрала исправленную ошибку и сохранила непроверенную цель в отчете");
-            SetAccess(false);
-            Expect(!dialog.FindControl<Button>("BackupLink")!.IsVisible
-                && !dialog.FindControl<TextBlock>("BackupPathText")!.IsVisible && Rows(dialog).Length == 0,
-                "после отзыва прав окно скрывает ссылку на полную копию и прежние строки отчета");
-            SetAccess(true);
             CloseDialog(dialog);
 
             var afterRepair = Snapshot();
@@ -159,37 +146,8 @@ internal static class RelationIntegrityChecks
             Click(cancelDialog, cancelDialog.FindControl<Button>("CloseBtn")!);
             Wait(() => cancelledClosed.IsCompleted, "окно отмененной проверки не закрылось");
 
-            var lateReply = new TaskCompletionSource<RelationIntegrityReport>(TaskCreationOptions.RunContinuationsAsynchronously);
-            var lateDialog = new RelationIntegrityDialog("Поздний отчет", (_, _) => lateReply.Task,
-                (r, keys, ct) => repo.PreviewRelationIntegrityRepairAsync(r, keys, ct),
-                (_, _, _) => throw new InvalidOperationException("Запись не должна вызываться"));
-            void InvalidateLate(object? sender, EventArgs args) => lateDialog.InvalidatePermissions();
-            manager.Permissions.Changed += InvalidateLate;
-            try
-            {
-                lateDialog.ShowDialog<bool>(owner);
-                Wait(() => Private<bool>(lateDialog, "_busy"), "не началось ожидание позднего отчета");
-                SetAccess(false);
-                lateReply.SetResult(report);
-                Wait(() => !Private<bool>(lateDialog, "_busy"), "поздний ответ не завершился");
-                Expect(Rows(lateDialog).Length == 0 && Private<RelationIntegrityReport?>(lateDialog, "_report") is null
-                    && lateDialog.FindControl<TextBlock>("SummaryText")!.Text!.Contains("Права доступа изменились")
-                    && Snapshot() == afterRepair,
-                    "отчет, пришедший после отзыва прав, не возвращает в окно старые названия и счетчики");
-                CloseDialog(lateDialog);
-            }
-            finally { manager.Permissions.Changed -= InvalidateLate; }
-            var deniedBefore = Snapshot();
-            dialog = OpenFromSettings();
-            Expect(Rows(dialog).All(row => !CanRepair(row) && !Detail(row).Contains("Исходная запись")
-                && !Detail(row).Contains("Доступная цель")) && !dialog.FindControl<Button>("RepairBtn")!.IsEnabled
-                && Snapshot() == deniedBefore,
-                "отказ исходных прав не раскрывает записи и не предлагает исправления");
-            CloseDialog(dialog);
-
             // Окно свойства-связи проверяет только свое свойство тем же окном отчета. Кнопка
             // есть, когда база подключена в рабочем пространстве.
-            SetAccess(true);
             var other = repo.AddField(new DbField { CollectionId = collection, Name = "Другая связь", FieldType = "relation",
                 ConfigJson = new RelationConfig(collection, false).ToConfigJson() });
             manager.Context.DbRecordLinks.Add(new DbRecordLinkEntity
@@ -257,22 +215,6 @@ internal static class RelationIntegrityChecks
                 Wait(() => !owner.OwnedWindows.Contains(opened), "отчет не закрылся");
             }
             string[] BackupFiles() => Directory.Exists(backupDirectory) ? Directory.GetFiles(backupDirectory) : [];
-            void SetAccess(bool allowed)
-            {
-                var me = manager.Context.DbUsers.First(user => user.UserKey == CurrentUser.Key);
-                if (allowed)
-                {
-                    me.IsAdmin = true;
-                    manager.Context.SaveChanges();
-                    manager.Permissions.Reload();
-                }
-                manager.Permissions.SetMask(manager.Permissions.CurrentUserId, null, (int)(allowed ? PermAction.All : PermAction.None));
-                me.IsAdmin = allowed;
-                me.IsApproved = true;
-                manager.Context.SaveChanges();
-                manager.Permissions.Reload();
-                Pump();
-            }
             string Snapshot() => JsonSerializer.Serialize(new
             {
                 Links = manager.Context.DbRecordLinks.AsNoTracking().OrderBy(edge => edge.Id).ToList(),

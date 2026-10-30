@@ -108,7 +108,6 @@ public partial class ConstructorRepository
     /// </summary>
     public bool SetUserFieldTaskExec(int fieldId, bool enabled, bool adoptByName = true)
     {
-        Demand(PermAction.EditField, CollectionOfField(fieldId));
         var field = db.DbFields.Find(fieldId);
         if (field is null || field.FieldType != "user" || field.IsTaskExec == enabled) return false;
 
@@ -137,10 +136,7 @@ public partial class ConstructorRepository
                 $"Свойство «{field.Name}» — это роль статуса задачи, исполнителем оно быть не может. " +
                 "Заведите для исполнителя отдельное свойство типа «Пользователь».");
 
-        // Авто-поля потребуют права создания — проверяем ДО записи флага, чтобы
-        // отказ не оставил коллекцию наполовину включенной.
-        if (enabled && TaskRolesIncomplete(field.CollectionId, fieldId))
-            Demand(PermAction.CreateField, field.CollectionId);
+
 
         field.IsTaskExec = enabled;
         Log("update", "field", field.Name, CollectionNameOf(field.CollectionId));
@@ -264,9 +260,7 @@ public partial class ConstructorRepository
             : null;
         if (candidate is not null)
         {
-            Demand(PermAction.EditField, collectionId);
-            if (TaskRolesIncomplete(collectionId, candidate.Id))
-                Demand(PermAction.CreateField, collectionId);
+
             candidate.IsTaskExec = true;
             Log("update", "field", candidate.Name, CollectionNameOf(collectionId));
             db.SaveChanges();
@@ -318,9 +312,8 @@ public partial class ConstructorRepository
     /// в коллекциях, где остался исполнитель: без него раздел все равно молчит, и плодить там
     /// «Статус 2» не за чем.
     ///
-    /// Возвращает число вылеченных коллекций. Монтирование не срывает: у пользователя без
-    /// прав на схему починка не доходит до конца (доведет следующий, у кого права есть), а отказ
-    /// остается в журнале диагностики (<see cref="LogRepairNotDone"/>).
+    /// Возвращает число вылеченных коллекций. Сбой записи остается в журнале диагностики
+    /// (<see cref="LogRepairNotDone"/>) и не срывает монтирование.
     /// </summary>
     public int RepairTaskFieldRoles()
     {
@@ -386,14 +379,13 @@ public partial class ConstructorRepository
                 }
                 db.SaveChanges();
 
-                // Освободившиеся роли заводятся заново — обычным путем, со своими правами
-                // и транзакцией. Упадет по правам — коллекция остается без роли, но уже
-                // БЕЗ поломанной: следующее действие с задачами доведет набор до полного.
+                // Освободившиеся роли заводятся заново в транзакции. При сбое записи
+                // следующее действие с задачами доведет набор до полного.
                 if (keepExec is not null)
                     EnsureTaskRoles(collectionId, keepExec.Id, adoptByName: true);
                 healed++;
             }
-            catch (Exception ex) when (ex is PermissionDeniedException or DbUpdateException)
+            catch (Exception ex) when (ex is DbUpdateException)
             {
                 db.ChangeTracker.Clear();   // несохраненные флаги не должны утечь в следующие чтения
                 LogRepairNotDone("Задачи", collectionId, name, ex);
@@ -673,7 +665,6 @@ public partial class ConstructorRepository
     private TaskRecord AddTaskRecordCore(int? collection, string title, string executor,
                                        string assigner, string status, DateValue? due)
     {
-        Demand(PermAction.CreateRecord, collection);
 
         // Вся задача — ОДНОЙ транзакцией (см. BeginWrite). Раньше это были 9–11 независимых
         // коммитов (на первой задаче в коллекции — до 15–20), и каждый на сетевой папке
@@ -758,10 +749,8 @@ public partial class ConstructorRepository
 
         // Роли ЦЕЛИ готовим ДО переноса. Смена коллекции пересоздает запись календарным
         // путем (AddCalendarRecord + копия значений + удаление исходной, каждый со своим
-        // SaveChanges и без общей транзакции). Если спросить права после него, отказ
-        // застанет перенос уже закоммиченным: запись в цели, а исполнителя/назначившего
-        // и статуса нет — задача исчезла из раздела вместе со значениями. Поля,
-        // созданные заранее, при отказе остаются пустыми — это безобидно.
+        // SaveChanges и без общей транзакции). Роли создаются заранее, чтобы перенесенная
+        // запись сохранила исполнителя, назначившего и статус.
         // Только когда перенос ДЕЙСТВИТЕЛЬНО будет: коллекцию меняет календарный путь, а у
         // задачи без даты его нет (диалог гасит комбо, но выбранное значение все равно
         // приезжает в кандидате). Иначе запись осталась бы в своей коллекции, а исполнитель

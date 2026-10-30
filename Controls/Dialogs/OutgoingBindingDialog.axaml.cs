@@ -147,20 +147,6 @@ public partial class OutgoingBindingDialog : Window
             return;
         }
 
-        // Закрытый контур запрещает исходящие целиком и раньше всех прочих проверок: у такой
-        // базы просто нет исходящих путей, и собирать привязку не из чего.
-        var closed = EgressGate.CheckDatabase(db.Repo.GetDatabaseLabel());
-
-        if (!closed.Allowed)
-        {
-            Empty(closed.Explanation, warning: true);
-
-            _building = false;
-            ShowFound();
-            ShowHint();
-            return;
-        }
-
         var saved = _saved is not null
                  && _saved.DbId == db.Id
                  && _saved.CollectionId == collectionId
@@ -179,7 +165,7 @@ public partial class OutgoingBindingDialog : Window
 
         // Название записи — такое же поле выгрузки, как остальные, и идет первым: чаще всего
         // именно оно и есть «номер заказа», ради которого обмен затевали.
-        AddRow(null, "Название записи", ConfidentialityLabel.Open, saved);
+        AddRow(null, "Название записи", saved);
 
         // Вычисляемые свойства и связи наружу не идут: первых нет в значениях записи, вторые
         // живут в другой таблице и в JSON превратились бы в номера чужих строк.
@@ -187,8 +173,7 @@ public partial class OutgoingBindingDialog : Window
                                 .Where(f => f.Id is int
                                          && !FieldTypeInfo.IsComputed(f.FieldType)
                                          && !FieldTypeInfo.IsRelation(f.FieldType)))
-            AddRow(field.Id!.Value, TitleText.FirstLine(field.Name),
-                   Confidentiality.FromConfig(field.ConfigJson), saved);
+            AddRow(field.Id!.Value, TitleText.FirstLine(field.Name), saved);
 
         FieldsEmpty.IsVisible = false;
 
@@ -197,21 +182,14 @@ public partial class OutgoingBindingDialog : Window
         ShowHint();
     }
 
-    /// <summary>
-    /// Одна строка списка. Помеченное свойство остается в списке, но выбрать его нельзя, и рядом
-    /// написано почему: узнать, что поле наружу не уходит, надо здесь, а не из пустой колонки у
-    /// той стороны через неделю.
-    /// </summary>
-    private void AddRow(int? fieldId, string title, ConfidentialityLabel label, OutgoingBinding? saved)
+    /// <summary>Выбор свойства и его имени в исходящем запросе.</summary>
+    private void AddRow(int? fieldId, string title, OutgoingBinding? saved)
     {
-        var mark   = EgressGate.CheckField(label);
         var chosen = saved?.Fields.FirstOrDefault(f => f.FieldId == fieldId);
-
-        _rows.Add(new OutgoingFieldRow(fieldId ?? 0, title, mark.Allowed)
+        _rows.Add(new OutgoingFieldRow(fieldId ?? 0, title)
         {
-            Takes  = mark.Allowed && chosen is not null,
-            Alias  = chosen?.Name ?? title,
-            Note   = mark.Allowed ? "" : mark.Explanation,
+            Takes = chosen is not null,
+            Alias = chosen?.Name ?? title,
             Picked = () => { if (!_building) ShowHint(); },
         });
     }
@@ -262,7 +240,7 @@ public partial class OutgoingBindingDialog : Window
     private OutgoingBinding Build() =>
         new(CurrentDb?.Id ?? 0,
             CurrentCollectionId,
-            [.. _rows.Where(r => r.Allowed && r.Takes)
+            [.. _rows.Where(r => r.Takes)
                      .Select(r => new OutgoingField(r.FieldId == 0 ? null : r.FieldId, r.Alias.Trim()))],
             CurrentShape,
             (EnvelopeInput.Text ?? "").Trim(),
@@ -286,7 +264,7 @@ public partial class OutgoingBindingDialog : Window
     /// </summary>
     private async Task EditTestsAsync()
     {
-        var columns = _rows.Where(r => r.Allowed).Select(r => r.Title).ToList();
+        var columns = _rows.Select(r => r.Title).ToList();
 
         if (columns.Count == 0)
         {

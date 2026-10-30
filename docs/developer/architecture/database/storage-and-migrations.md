@@ -19,7 +19,6 @@
 | `app.db` | [SystemDbContext](../../../../Database/SystemDbContext.cs) | системное: реестр БД (`databases`) + настройки (`app_settings`) |
 | `logs.db` | [AppLog](../../../../Logging/AppLog.cs) | диагностический лог Serilog для «Настройки → Диагностика»; автоочистка записей старше 30 дней — [features/logging.md](../../features/logging.md) |
 | `integrations.db` | [RunJournal](../../../../Database/RunJournal.cs) | журнал запусков обмена: что дергали, чем кончилось, сколько строк и байт. По нему же считаются накопительные квоты политики; уборка — последние 20 000 строк. Секрета в нем нет ни при каких настройках — [features/integrations/overview.md](../../features/integrations/overview.md) |
-| `security.db` | [SecurityJournal](../../../../Database/SecurityJournal.cs) | журнал безопасности: попытки отправки — и разрешенные, и заблокированные, — подтверждения направлений, понижения меток, ручной экспорт, копирование ячеек таблицы в буфер обмена. Только добавление, каждая строка включает хэш предыдущей; пользователь его не чистит. Ни секретов, ни значений полей: адрес замаскирован, тело — одним SHA-256 — [features/integrations/overview.md](../../features/integrations/overview.md) |
 
 `app.db` — независимое хранилище: никогда не показывается в сайдбаре и не удаляется.
 
@@ -73,9 +72,11 @@ WAL, вручную их удалять не нужно.
   маркер ищется вверх от сборки, и первым находится `SmartBase.csproj` самой рабочей папки.
 
 `database.db` → `AppSettings.DbPath`, `app.db` → `AppSettings.SystemDbPath`,
-`integrations.db` → `AppSettings.RunJournalPath`, `security.db` →
-`AppSettings.SecurityJournalPath`; `logs.db` и
+`integrations.db` → `AppSettings.RunJournalPath`; `logs.db` и
 все служебные файлы — прямо в `AppSettings.AppDataDir`.
+
+Старые `security.db`, файлы политики и служебные строки после обновления могут оставаться
+на диске. С 30.10.2026 приложение не открывает их как контур безопасности и не удаляет автоматически.
 
 ## Миграции схемы (database.db)
 

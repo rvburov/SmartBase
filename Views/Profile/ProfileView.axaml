@@ -5,13 +5,6 @@
              x:Class="SmartBase.Views.Profile.ProfileView"
              Background="{StaticResource BrushBg}">
 
-    <!-- Таблицы «Истории изменений», «Пользователей» и журнала безопасности — рисованная сетка
-         служебных таблиц (Controls/DrawnGrid/ServiceGrid): тот же вид, что у таблицы конструктора,
-         колонки и строки задает code-behind. Строка одного пункта, ячейка с данными и строка
-         таблицы — общие (Assets/Styles/SettingRows.axaml): панель администратора показывает те же
-         строки, что раздел «Интеграции», и вторая копия стилей разошлась бы с первой. -->
-
-
     <!-- В разделе «История изменений» строка раскрывается панелью «Детали» во всю высоту
          справа (Column 2) — как в «Настройки → Диагностика»: ее навбар встает вровень
          с навбаром профиля. Прочие разделы занимают всю ширину (Column 0). -->
@@ -19,9 +12,7 @@
 
     <DockPanel Grid.Column="0">
 
-        <!-- Шапка раздела (вынесена в компонент-навбар). Список пользователей открывается
-             ВМЕСТО панели администратора и приносит свою шапку — тогда навбар скрывается,
-             чтобы заголовков не было два. -->
+        <!-- Заголовок раздела и выбор базы истории изменений. -->
         <comp:NavbarProfile DockPanel.Dock="Top" x:Name="HeaderBar" />
 
         <!-- Содержимое выбранного раздела -->
@@ -141,7 +132,7 @@
                                         VerticalAlignment="Center" Margin="0,0,32,0">
                                 <TextBlock Classes="title" Text="Подразделение" />
                                 <TextBlock Classes="desc"
-                                           Text="Необязательное справочное поле: отдел, служба или филиал. На доступ к базам данных и отображаемое имя не влияет." />
+                                           Text="Необязательное справочное поле: отдел, служба или филиал. На отображаемое имя не влияет." />
                             </StackPanel>
                             <TextBox Grid.Column="1" x:Name="DepartmentBox"
                                      Width="240" Height="{StaticResource ControlHeightStandard}"
@@ -162,7 +153,7 @@
                                         VerticalAlignment="Center" Margin="0,0,32,0">
                                 <TextBlock Classes="title" Text="Должность" />
                                 <TextBlock Classes="desc"
-                                           Text="Необязательное справочное поле. На доступ к базам данных и отображаемое имя не влияет." />
+                                           Text="Необязательное справочное поле. На отображаемое имя не влияет." />
                             </StackPanel>
                             <TextBox Grid.Column="1" x:Name="PositionBox"
                                      Width="240" Height="{StaticResource ControlHeightStandard}"
@@ -180,113 +171,15 @@
                 </Grid>
             </ScrollViewer>
 
-            <!-- ── Панель администратора ─────────────────────────── -->
-            <ScrollViewer x:Name="AdminPanel" IsVisible="False"
-                          VerticalScrollBarVisibility="Auto">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <!-- Во всю ширину окна: содержимое раздела заканчивается там же,
-                             где заголовок и линия под ним. Прежний потолок в 1400 оставлял
-                             на широком экране пустую полосу справа, и строки обрывались,
-                             не доходя до края. -->
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <StackPanel Margin="16,0,16,32">
-
-                    <!-- Пользователь не администрирует ни одну базу -->
-                    <Border Classes="settingRow" x:Name="AdminNoAccessRow" IsVisible="False">
-                        <StackPanel Spacing="4">
-                            <TextBlock Classes="title" Text="Нет прав администратора" />
-                            <TextBlock Classes="desc"
-                                       Text="Вы не являетесь администратором ни одной из подключенных баз данных. Администратор — тот, кто создал базу (открыл ее первым); он выдает допуск и настраивает права остальных пользователей." />
-                        </StackPanel>
-                    </Border>
-
-                    <StackPanel x:Name="AdminContent">
-
-                    <!-- Способ входа нового пользователя: политика в db_meta самой базы (SQLite и
-                         PostgreSQL одинаково), рядом с паролем. «Подтверждение администратора» —
-                         замок открывает только он; пароль при этом не удаляется. Выбрать вход по
-                         паролю, когда пароля нет, — сперва окно установки пароля.
-
-                         Список, а не тумблер: у настройки два равноправных ПОРЯДКА входа, и оба
-                         названы словами. Тумблер называл словами только один из них, а второй
-                         человек достраивал сам. -->
-                    <Border Classes="settingRow">
-                        <Grid ColumnDefinitions="*,Auto">
-                            <StackPanel Grid.Column="0" Spacing="4"
-                                        VerticalAlignment="Center" Margin="0,0,32,0">
-                                <TextBlock Classes="title" Text="Способ входа нового пользователя" />
-                                <TextBlock Classes="desc"
-                                           Text="Чем пользователь получает допуск при первом открытии базы. Хранится в базе, действует на всех машинах." />
-                            </StackPanel>
-                            <!-- Ширина не задана, а ограничена сверху: список занимает ровно
-                                 столько, сколько просит его самое длинное значение
-                                 («Подтверждение администратора»), и не растет дальше 250 при
-                                 крупном шрифте. Фиксированная ширина держала бы пустое поле
-                                 справа от текста. -->
-                            <ComboBox Grid.Column="1" x:Name="AccessModeCombo"
-                                      MaxWidth="250" Height="{StaticResource ControlHeightStandard}"
-                                      VerticalAlignment="Center"
-                                      Background="{StaticResource BrushSecondaryBg}"
-                                      CornerRadius="{StaticResource RadiusBase}"
-                                      SelectionChanged="OnAccessModeChanged">
-                                <ComboBoxItem Tag="admin"    Content="Подтверждение администратора" />
-                                <ComboBoxItem Tag="password" Content="Вход по паролю" />
-                            </ComboBox>
-                        </Grid>
-                    </Border>
-                    <Border Classes="separator h" />
-
-                    <!-- Пароль базы -->
-                    <Border Classes="settingRow">
-                        <Grid ColumnDefinitions="*,Auto">
-                            <StackPanel Grid.Column="0" Spacing="4"
-                                        VerticalAlignment="Center" Margin="0,0,32,0">
-                                <TextBlock Classes="title" Text="Пароль базы данных" />
-                                <TextBlock x:Name="PasswordStateText" Classes="state" Text="" />
-                                <TextBlock x:Name="PasswordHintText" Classes="desc" Text="" />
-                            </StackPanel>
-                            <StackPanel Grid.Column="1" Orientation="Horizontal"
-                                        Spacing="8" VerticalAlignment="Center">
-                                <!-- Width=NaN: подписи длиннее фикс-ширины стиля dialog (110px) —
-                                     кнопка растет под текст, узкие добирают MinWidth. -->
-                                <Button x:Name="PasswordSetBtn" Classes="dialog"
-                                        Width="NaN" MinWidth="110" Padding="14,0"
-                                        Content="Установить пароль"
-                                        Click="OnPasswordSet" />
-                                <Button x:Name="PasswordRemoveBtn" Classes="dialog"
-                                        Width="NaN" MinWidth="110" Padding="14,0"
-                                        Content="Убрать"
-                                        Click="OnPasswordRemove" />
-                            </StackPanel>
-                        </Grid>
-                    </Border>
-                    <Border Classes="separator h" />
-
-                    <!-- Пользователи базы: сами пользователи, их роли и права живут в таблице
-                         во всю ширину (UsersPanel ниже) — «пользователь × действия» на
-                         странице настроек не помещается. Строка стоит сразу за паролем: обе
-                         про то, кого пускают в базу, а ниже идет история изменений. -->
-                    <Border Classes="settingRow">
-                        <Grid ColumnDefinitions="*,Auto">
-                            <StackPanel Grid.Column="0" Spacing="4"
-                                        VerticalAlignment="Center" Margin="0,0,32,0">
-                                <TextBlock Classes="title" Text="Пользователи" />
-                                <TextBlock x:Name="UsersCountText" Classes="state" Text="" />
-                                <TextBlock Classes="desc"
-                                           Text="Роли, допуск и права в базе и в коллекциях." />
-                            </StackPanel>
-                            <Button Grid.Column="1" x:Name="UsersOpenBtn" Classes="dialog"
-                                    Width="NaN" MinWidth="110" Padding="14,0"
-                                    VerticalAlignment="Center"
-                                    Content="Открыть"
-                                    Click="OnOpenUsersPanel" />
-                        </Grid>
-                    </Border>
-                    <Border Classes="separator h" />
-
-                    <!-- Срок хранения истории изменений (политика хранится в самой базе,
+            <!-- ── История изменений ─────────────────────────────────
+                 Таблица журнала как в конструкторе (рисованная сетка): колонки с фильтром и
+                 сортировкой в шапке (строятся в коде — ProfileHistoryTable.cs), страницы
+                 подгружаются при прокрутке. Выбор базы — в навбаре (NavbarProfile).
+                 Без боковых полей остальных панелей — таблица вплотную к краю,
+                 как TableView в конструкторе. -->
+            <Grid x:Name="HistoryPanel" IsVisible="False" RowDefinitions="Auto,*">
+                <StackPanel x:Name="HistoryMaintenance" Grid.Row="0" Margin="16,0" IsVisible="False">
+                    <!-- Срок хранения истории изменений (настройка хранится в самой базе,
                          применяется при открытии на любой машине).
 
                          Один список вместо списка и тумблера: «Бессрочно» — такое же значение
@@ -354,186 +247,24 @@
                     </Border>
                     <Border Classes="separator h" />
 
-                    <!-- Журнала безопасности здесь нет: он общий на все базы данных и живет своим
-                         разделом профиля (ProfileRegistry, ключ securitylog). Настройка одной базы
-                         и журнал всей программы в одном списке строк читались как одно и то же. -->
-
-                    </StackPanel>
-
-                    </StackPanel>
-                </Grid>
-            </ScrollViewer>
-
-            <!-- ── Безопасность ──────────────────────────────────────
-                 Контур безопасности: что ПРОГРАММЕ разрешено уносить наружу. Свой раздел,
-                 а не строка панели администратора: экран про машину, а не про выбранную
-                 базу, и спрашивает его любой, у кого не уходит отправка. Менять с него
-                 нечего — он только читает. Содержимое собирает SecurityContourView. -->
-            <Panel x:Name="SecurityPanel" IsVisible="False" />
-
-            <!-- ── Менеджер паролей ──────────────────────────────────
-                 Опись секретов машины: что где заведено и что из этого давно мертво. Вид —
-                 как список баз в «Управлении базой данных»: строка на секрет, кнопки справа.
-                 Видит ее администратор (кто что — решает SecretsInventory). Значений не
-                 показывает — кроме секретов соединений, и те отдельным окном, под мастер-паролем
-                 и со строкой в журнале безопасности. Содержимое собирает SecretsView, меню
-                 «Добавить пароль» живет в навбаре. -->
-            <Panel x:Name="SecretsPanel" IsVisible="False" />
-
-            <!-- ── История изменений ─────────────────────────────────
-                 Таблица журнала как в конструкторе (рисованная сетка): колонки с фильтром и
-                 сортировкой в шапке (строятся в коде — ProfileHistoryTable.cs), страницы
-                 подгружаются при прокрутке. Выбор базы — в навбаре (NavbarProfile).
-                 Без боковых полей остальных панелей — таблица вплотную к краю,
-                 как TableView в конструкторе. -->
-            <Panel x:Name="HistoryPanel" IsVisible="False">
-                <grid:ServiceGrid x:Name="HistoryGrid" />
-                <TextBlock x:Name="HistoryEmptyText"
-                           Text="Записей в журнале пока нет."
-                           IsVisible="False"
-                           FontSize="{DynamicResource FontSizeSmall}"
-                           Foreground="{StaticResource BrushSecondaryText}"
-                           HorizontalAlignment="Center"
-                           Margin="0,48,0,0" />
-            </Panel>
-
-            <!-- ── Пользователи выбранной базы ──────────────────────────────
-                 Открывается кнопкой «Открыть» ВМЕСТО панели администратора и занимает
-                 ее место целиком; крестик возвращает панель администратора (клик по
-                 разделу в сайдбаре — тоже). Своя шапка высотой 56 встает на место
-                 навбара модуля (тот скрывается): заголовок слева, база, область действия
-                 прав и крестик справа. Нижнюю границу шапки рисует общая линия окна на y=56
-                 (MainWindow) — своей линии нет, иначе удвоение. -->
-            <Grid x:Name="UsersPanel" IsVisible="False"
-                  RowDefinitions="Auto,*"
-                  Background="{StaticResource BrushBg}">
-
-                <Grid Grid.Row="0" ColumnDefinitions="*,Auto"
-                      Height="56" Margin="16,0">
-                    <TextBlock Grid.Column="0" Text="Пользователи"
-                               VerticalAlignment="Center"
-                               FontSize="{DynamicResource FontSizeLarge}"
-                               FontWeight="{StaticResource FontWeightBold}"
-                               TextTrimming="CharacterEllipsis"
-                               Margin="0,0,12,0" />
-
-                    <!-- Справа — те же два списка, что решают, к чему относится таблица:
-                         база (тот же список и те же иконки, что в навбаре панели
-                         администратора) и область прав внутри нее. Подписи стоят снаружи
-                         списков — сами списки показывают только значение. -->
-                    <StackPanel Grid.Column="1" Orientation="Horizontal"
-                                Spacing="8" VerticalAlignment="Center">
-                        <TextBlock Text="Базы данных"
-                                   VerticalAlignment="Center"
-                                   FontSize="{DynamicResource FontSizeSmall}"
-                                   Foreground="{StaticResource BrushSecondaryText}" />
-                        <ComboBox x:Name="UsersDbCombo"
-                                  Width="220" Height="{StaticResource ControlHeightStandard}"
-                                  VerticalAlignment="Center"
-                                  Background="{StaticResource BrushSecondaryBg}"
-                                  CornerRadius="{StaticResource RadiusBase}"
-                                  ItemTemplate="{StaticResource NavbarDbTemplate}"
-                                  SelectionChanged="OnUsersDbChanged" />
-
-                        <TextBlock Text="Права"
-                                   VerticalAlignment="Center"
-                                   FontSize="{DynamicResource FontSizeSmall}"
-                                   Foreground="{StaticResource BrushSecondaryText}" />
-                        <!-- Область действия прав: «Вся база данных», линия, коллекции этой
-                             базы. Настройки коллекции приоритетнее настроек базы
-                             (PermissionService.GetMask) — об этом и говорит линия. Пункты
-                             строит ProfileAdminUsers.cs. -->
-                        <ComboBox x:Name="ScopeCombo"
-                                  Width="200" Height="{StaticResource ControlHeightStandard}"
-                                  VerticalAlignment="Center"
-                                  Background="{StaticResource BrushSecondaryBg}"
-                                  CornerRadius="{StaticResource RadiusBase}"
-                                  SelectionChanged="OnScopeChanged" />
-
-                        <Button x:Name="UsersPanelCloseBtn"
-                                Classes="navbtn" Width="30" Height="30"
-                                VerticalAlignment="Center"
-                                CornerRadius="{StaticResource RadiusMedium}"
-                                ToolTip.Tip="Закрыть"
-                                Click="OnCloseUsersPanel">
-                            <Viewbox Width="{StaticResource IconSizeMedium}"
-                                     Height="{StaticResource IconSizeMedium}">
-                                <Canvas Width="24" Height="24">
-                                    <Path Data="{StaticResource IconClose}"
-                                          Stroke="{Binding $parent[Button].Foreground}"
-                                          StrokeThickness="{StaticResource IconStrokeMedium}"
-                                          StrokeLineCap="Round" StrokeJoin="Round" />
-                                </Canvas>
-                            </Viewbox>
-                        </Button>
-                    </StackPanel>
-                </Grid>
-
-                <!-- Матрица «пользователь × действия»: колонки строятся в коде
-                     (ProfileAdminUsers.cs) — вид таблицы конструктора: иконка типа
-                     в шапке, шеврон фильтра/сортировки, те же линии и высота строки.
-                     Первая колонка закреплена — имя видно при горизонтальной прокрутке.
-                     Под шапкой сразу таблица: никаких пояснительных полос над ней
-                     нет — что настраивается, сказано списками в шапке. -->
+                </StackPanel>
                 <Panel Grid.Row="1">
-                    <grid:ServiceGrid x:Name="UsersGrid" />
-                </Panel>
-            </Grid>
-
-            <!-- ── Журнал безопасности ─────────────────────────────────────
-                 Свой раздел профиля, видимый только администратору (ProfileRegistry.Visible).
-                 Вид — таблица как в «Истории изменений»: те же линии и шапка, отбор воронками,
-                 подробности строки в панели «Детали» справа. Проверка цепочки и выгрузка — в
-                 навбаре; итог проверки, число строк и путь к файлу — строкой состояния внизу.
-                 Строится в ProfileSecurityLog.cs. -->
-            <Grid x:Name="SecurityLogPanel" IsVisible="False"
-                  RowDefinitions="*,Auto"
-                  Background="{StaticResource BrushBg}">
-
-                <Panel Grid.Row="0">
-                    <grid:ServiceGrid x:Name="LogGrid" />
-                    <TextBlock x:Name="LogEmptyText"
-                               Text="Событий безопасности еще не было."
+                    <grid:ServiceGrid x:Name="HistoryGrid" />
+                    <TextBlock x:Name="HistoryEmptyText"
+                               Text="Записей в журнале пока нет."
                                IsVisible="False"
                                FontSize="{DynamicResource FontSizeSmall}"
                                Foreground="{StaticResource BrushSecondaryText}"
                                HorizontalAlignment="Center"
                                Margin="0,48,0,0" />
                 </Panel>
-
-                <!-- Строка состояния: слева итог проверки цепочки, справа число строк и файл.
-                     Габариты — как у нижней панели конструктора (FooterConstructor): высота 56,
-                     линия сверху, поля 16. Нижние панели программы одного роста, иначе при
-                     переходе между разделами край таблицы прыгал бы.
-
-                     Кнопки «Очистить» у журнала нет и не будет — журнал, который чистит тот, за
-                     кем он ведется, не журнал; убирается он только по сроку из политики. -->
-                <Border Grid.Row="1" Height="56" Background="{StaticResource BrushBg}">
-                    <DockPanel>
-                        <Border DockPanel.Dock="Top" Classes="separator h" />
-                        <Grid ColumnDefinitions="*,Auto" Margin="16,0">
-                            <TextBlock Grid.Column="0" x:Name="LogChainText"
-                                       FontSize="{DynamicResource FontSizeSmall}"
-                                       Foreground="{StaticResource BrushSecondaryText}"
-                                       TextTrimming="CharacterEllipsis"
-                                       VerticalAlignment="Center"
-                                       Margin="0,0,16,0" />
-                            <TextBlock Grid.Column="1" x:Name="LogFileText"
-                                       FontSize="{DynamicResource FontSizeSmall}"
-                                       Foreground="{StaticResource BrushSecondaryText}"
-                                       TextTrimming="CharacterEllipsis"
-                                       VerticalAlignment="Center" />
-                        </Grid>
-                    </DockPanel>
-                </Border>
             </Grid>
 
         </Grid>
 
     </DockPanel>
 
-    <!-- Вертикальный разделитель между разделом и деталями (во всю высоту). Общий: панель
-         деталей открывают и «История изменений», и «Журнал безопасности», но никогда вместе. -->
+    <!-- Разделитель между историей изменений и деталями строки. -->
     <Border Grid.Column="1" x:Name="DetailDivider"
             Classes="separator v" IsVisible="False" />
 
@@ -655,61 +386,6 @@
                          AcceptsReturn="True"
                          TextWrapping="Wrap" />
             </Grid>
-        </Grid>
-    </Border>
-
-    <!-- ── Детали строки журнала безопасности (во всю высоту) ──────────────
-         Тот же прием, что «Детали» истории изменений: своя шапка вровень с навбаром модуля,
-         карточки полей на сером фоне, кнопка копирования строки внизу. Карточки строятся в
-         ProfileSecurityLog.cs: их поля — те же, что колонки таблицы, плюс то, чему в колонках
-         места нет (сценарий, поля, объем, отпечаток, пояснение). -->
-    <Border Grid.Column="2" x:Name="LogDetailPanel"
-            IsVisible="False" Width="420"
-            Background="{StaticResource BrushBg}">
-        <Grid RowDefinitions="Auto,*,Auto">
-
-            <Grid Grid.Row="0" ColumnDefinitions="*,Auto"
-                  Height="56" Margin="16,0">
-                <TextBlock Grid.Column="0" Text="Детали"
-                           VerticalAlignment="Center"
-                           FontSize="{DynamicResource FontSizeLarge}"
-                           FontWeight="{StaticResource FontWeightBold}"
-                           TextTrimming="CharacterEllipsis"
-                           Margin="0,0,12,0" />
-                <Button Grid.Column="1" x:Name="LogDetailCloseBtn"
-                        Classes="navbtn" Width="30" Height="30"
-                        VerticalAlignment="Center"
-                        CornerRadius="{StaticResource RadiusMedium}"
-                        ToolTip.Tip="Закрыть">
-                    <Viewbox Width="{StaticResource IconSizeMedium}"
-                             Height="{StaticResource IconSizeMedium}">
-                        <Canvas Width="24" Height="24">
-                            <Path Data="{StaticResource IconClose}"
-                                  Stroke="{Binding $parent[Button].Foreground}"
-                                  StrokeThickness="{StaticResource IconStrokeMedium}"
-                                  StrokeLineCap="Round" StrokeJoin="Round" />
-                        </Canvas>
-                    </Viewbox>
-                </Button>
-            </Grid>
-
-            <ScrollViewer Grid.Row="1"
-                          Background="{StaticResource BrushSecondaryBg}"
-                          VerticalScrollBarVisibility="Auto"
-                          HorizontalScrollBarVisibility="Disabled">
-                <StackPanel x:Name="LogDetailCardsHost"
-                            Margin="16" Spacing="6" />
-            </ScrollViewer>
-
-            <Border Grid.Row="2"
-                    BorderBrush="{StaticResource BrushSeparator}"
-                    BorderThickness="{DynamicResource BorderLineTop}"
-                    Padding="16,12">
-                <Button x:Name="LogDetailCopyBtn" Classes="dialog"
-                        Width="NaN" MinWidth="110" Padding="14,0"
-                        HorizontalAlignment="Left"
-                        Content="Скопировать строку" />
-            </Border>
         </Grid>
     </Border>
 

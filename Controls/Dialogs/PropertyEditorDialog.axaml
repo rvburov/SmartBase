@@ -150,19 +150,14 @@
         <w:NoticeBanner x:Name="RoleNote" Margin="0,0,0,12" />
 
         <StackPanel x:Name="DatePeriodSection" IsVisible="False" Spacing="8" Margin="0,0,0,12">
-            <TextBlock Text="Считать время от свойства"
+            <TextBlock Text="Даты для расчета"
                        FontWeight="{StaticResource FontWeightBold}"
                        Foreground="{StaticResource BrushSecondaryText}" />
             <ComboBox x:Name="DatePeriodStartCombo" HorizontalAlignment="Stretch" Height="34" />
 
-            <TextBlock Text="До" FontWeight="{StaticResource FontWeightBold}"
+            <TextBlock Text="Период считается между началом и концом диапазона выбранного свойства. Одна дата дает 0 мин."
+                       TextWrapping="Wrap" FontSize="{DynamicResource FontSizeSmall}"
                        Foreground="{StaticResource BrushSecondaryText}" />
-            <ComboBox x:Name="DatePeriodEndModeCombo" HorizontalAlignment="Stretch" Height="34">
-                <ComboBoxItem Content="Текущего времени" />
-                <ComboBoxItem Content="Другого свойства с датой" />
-            </ComboBox>
-            <ComboBox x:Name="DatePeriodEndCombo" IsVisible="False"
-                      HorizontalAlignment="Stretch" Height="34" />
 
             <TextBlock Text="Дни недели" FontWeight="{StaticResource FontWeightBold}"
                        Foreground="{StaticResource BrushSecondaryText}" />
@@ -740,24 +735,6 @@
                 <ComboBox x:Name="ComputedTargetCombo" HorizontalAlignment="Stretch"
                           Height="{StaticResource ControlHeightStandard}" />
             </StackPanel>
-        </StackPanel>
-
-        <!-- ── Конфиденциальность ─────────────────────────────────────────── -->
-        <!-- Только у сохраненного свойства: у нового еще нет ключа, которому ставить метку. -->
-        <StackPanel x:Name="LabelSection" Spacing="0" IsVisible="False" Margin="0,0,0,12">
-            <TextBlock Text="Конфиденциальность"
-                       Margin="0,0,0,6"
-                       FontWeight="{StaticResource FontWeightBold}"
-                       Foreground="{StaticResource BrushSecondaryText}" />
-            <ComboBox x:Name="LabelCombo"
-                      Height="34" Margin="0,0,0,6"
-                      HorizontalAlignment="Stretch"
-                      VerticalContentAlignment="Center"
-                      CornerRadius="{StaticResource RadiusMedium}" />
-            <TextBlock x:Name="LabelHint"
-                       TextWrapping="Wrap"
-                       FontSize="{DynamicResource FontSizeSmall}"
-                       Foreground="{StaticResource BrushSecondaryText}" />
         </StackPanel>
 
         <!-- Пояснение для системных колонок «Название»/«Описание»: скрыто по умолчанию,

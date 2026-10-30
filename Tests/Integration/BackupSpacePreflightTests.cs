@@ -245,12 +245,20 @@ public sealed class BackupSpacePreflightTests
 
     private static void MakeBloated(TempDatabase db, int megabytes, bool checkpoint = true)
     {
+        // Фиксируем размер исходника для проверки сообщения. Фоновый PASSIVE мог
+        // пересечься с TRUNCATE и продолжить рост файла уже после снятия его длины.
+        WalCheckpointer.Unwatch(db.Path);
         db.Context.Database.ExecuteSqlRaw("CREATE TABLE backup_preflight_payload (value BLOB NOT NULL);");
         db.Context.Database.ExecuteSqlRaw(
             "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x < {0}) " +
             "INSERT INTO backup_preflight_payload SELECT zeroblob(1048576) FROM n;", megabytes);
         db.Context.Database.ExecuteSqlRaw("DELETE FROM backup_preflight_payload WHERE rowid > 1;");
-        if (checkpoint) db.Context.Database.ExecuteSqlRaw("PRAGMA wal_checkpoint(TRUNCATE);");
+        if (checkpoint)
+        {
+            Assert.Equal(0L, Scalar(db, "PRAGMA wal_checkpoint(TRUNCATE);"));
+            Assert.Equal(Scalar(db, "SELECT page_count * page_size FROM pragma_page_count, pragma_page_size;"),
+                new FileInfo(db.Path).Length);
+        }
         Assert.True(Scalar(db, "PRAGMA freelist_count;") > 0, "В фикстуре нет освобожденных страниц");
     }
 

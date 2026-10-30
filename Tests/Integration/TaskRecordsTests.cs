@@ -60,23 +60,10 @@ public sealed class TaskRecordsTests
     private static Dictionary<int, DbField> FieldsById(ConstructorRepository repo, int collectionId) =>
         repo.GetFields(collectionId).ToDictionary(f => f.Id!.Value);
 
-    // Состав полей коллекции для сравнения «до/после» отказа в правах.
-    private static List<string> FieldSnapshot(ConstructorRepository repo, int collectionId) =>
-        repo.GetFields(collectionId)
-            .OrderBy(f => f.Id!.Value)
-            .Select(f => $"{f.Id}:{f.Name}:{f.FieldType}")
-            .ToList();
 
-    // Понижает текущего пользователя до допущенного НЕ-администратора: с этого момента
-    // действуют маски прав (администратору разрешено все и проверки не срабатывают).
-    private static void DemoteToApprovedUser(TempDatabase db)
-    {
-        var me = db.Context.DbUsers.First(u => u.UserKey == CurrentUser.Key);
-        me.IsAdmin    = false;
-        me.IsApproved = true;
-        db.Context.SaveChanges();
-        db.Permissions.Reload(notify: false);
-    }
+
+
+
 
     // ── Чтение раздела ────────────────────────────────────────────────────────
 
@@ -482,96 +469,7 @@ public sealed class TaskRecordsTests
         Assert.Equal(CurrentUser.DisplayName, Value(t2, approverId));
     }
 
-    // ── Права на правку схемы задач ───────────────────────────────────────────
 
-    // Коллекция «с другой машины/со старой версии»: exec-поле уже помечено флагом, ролей нет,
-    // но поля с их именами есть, причем «Статус» — обычный список пользователя СО СВОИМИ
-    // опциями. Возвращает id «Статуса» и id постороннего user-поля «Проверяющий».
-    private static (int StatusId, int ReviewerId) SeedCollectionWithRoleLikeFields(
-        ConstructorRepository repo, int col)
-    {
-        repo.AddField(new DbField
-        {
-            CollectionId = col, Name = "Исполнитель", FieldType = "user", Position = 1000,
-            IsTaskExec = true,
-        });
-        var statusId = repo.AddField(new DbField
-        {
-            CollectionId = col, Name = "Статус", FieldType = "select", Position = 2000,
-            ConfigJson = "{\"options\":[\"Черновик\",\"Согласовано\"]}",
-        }).Id!.Value;
-        // Поле «Назначил» уже существует: именно оно и «Статус» — те чужие поля, которые
-        // EnsureTaskSupportFields помечает ролями молча (без него путь до дефекта не доходит —
-        // создание недостающей роли упирается в CreateField и маскирует проблему).
-        repo.AddField(new DbField
-        {
-            CollectionId = col, Name = "Назначил", FieldType = "user", Position = 3000,
-        });
-        var reviewerId = SampleData.AddField(repo, col, "Проверяющий", "user", position: 4000).Id!.Value;
-        return (statusId, reviewerId);
-    }
-
-    // Забирает у текущего пользователя права на свойства (записи менять по-прежнему можно).
-    private static void RevokeFieldRights(TempDatabase db)
-    {
-        db.Permissions.SetMask(db.Permissions.CurrentUserId, null,
-                               (int)(PermAction.All & ~PermAction.CreateField & ~PermAction.EditField));
-        DemoteToApprovedUser(db);
-    }
-
-    [Fact]
-    public void Enabling_tasks_on_a_field_requires_field_rights()
-    {
-        using var db = new TempDatabase();
-        var repo = db.Constructor;
-        var col = SampleData.AddCollection(repo, "Заявки").Id!.Value;
-        var (_, reviewerId) = SeedCollectionWithRoleLikeFields(repo, col);
-        RevokeFieldRights(db);
-
-        var fieldsBefore = FieldSnapshot(repo, col);
-
-        // Включение задач у поля = правка схемы коллекции: без права на свойства — отказ.
-        Assert.Throws<PermissionDeniedException>(() => repo.SetUserFieldTaskExec(reviewerId, true));
-        Assert.False(FieldsById(repo, col)[reviewerId].IsTaskExec);
-        // Отказ не оставляет коллекцию наполовину включенной: проверка идет ДО записи флага.
-        Assert.Equal(fieldsBefore, FieldSnapshot(repo, col));
-    }
-
-    [Fact]
-    public void Task_support_fields_marking_requires_field_rights_and_is_journalled()
-    {
-        // Продуктовое решение, которое фиксирует этот тест (занести в
-        // docs/developer/architecture/users-permissions.md):
-        // пометка СУЩЕСТВУЮЩИХ полей ролями задач и правка их ConfigJson — это изменение
-        // СХЕМЫ коллекции. Значит, требует права EditField (создание недостающих ролей —
-        // CreateField) и обязано попадать в журнал строкой Action=="update"/TargetType=="field".
-        // Сейчас ветка EnsureTaskCollection «exec-поле уже есть» (Tasks.cs:112-169) зовет
-        // EnsureTaskSupportFields без Demand и без Log: чужое поле «Статус» получает флаг роли,
-        // а его опции переписываются стандартными — молча, без прав и без следа в истории.
-        using var db = new TempDatabase();
-        var repo = db.Constructor;
-        var col = SampleData.AddCollection(repo, "Заявки").Id!.Value;
-        var (statusId, _) = SeedCollectionWithRoleLikeFields(repo, col);
-        RevokeFieldRights(db);
-
-        var statusConfigBefore = FieldsById(repo, col)[statusId].ConfigJson;
-        var fieldsBefore       = FieldSnapshot(repo, col);
-        var logRowsBefore      = db.Context.ChangeLog.Count();
-
-        // То же изменение схемы, но «между делом» — при добавлении задачи.
-        Assert.Throws<PermissionDeniedException>(() =>
-            repo.AddTaskRecord(col, "Задача", "Иванов Иван", "Петров Петр", "Согласовано", due: null));
-
-        var fieldsAfter = FieldsById(repo, col);
-        // Опции пользовательского списка не переписаны стандартными статусами.
-        Assert.Equal(statusConfigBefore, fieldsAfter[statusId].ConfigJson);
-        // Ролей никому не проставили, полей не добавили, записи не создали.
-        Assert.DoesNotContain(fieldsAfter.Values, f => f.IsTaskAssigner || f.IsTaskStatus);
-        Assert.Equal(fieldsBefore, FieldSnapshot(repo, col));
-        Assert.Equal(0, repo.CountRecords(col));
-        // И в истории изменений — ни одной новой строки: запрещенного действия не было.
-        Assert.Equal(logRowsBefore, db.Context.ChangeLog.Count());
-    }
 
     // ── Точный размер раздела (CountTasksByCollection) ────────────────────────
     //

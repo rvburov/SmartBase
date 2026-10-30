@@ -196,12 +196,9 @@ public sealed record EgressPlan(
 }
 
 /// <summary>
-/// Ответ на обращение наружу — или отказ шлюза. Одно и то же: для вызывающего кода и для
-/// журнала разницы быть не должно, иначе отказ политики начнут показывать как «не удалось
-/// подключиться», и запрет перестанет объяснять себя.
+/// Ответ HTTP-транспорта либо описание ошибки подключения.
 /// </summary>
 /// <param name="Sent">Запрос ушел и ответ получен. <c>false</c> — не ушел вовсе.</param>
-/// <param name="Reason">Почему не ушел; <see cref="EgressDenyReason.None"/> — ушел.</param>
 /// <param name="Explanation">Объяснение человеческим языком: и отказа, и сетевого сбоя.</param>
 /// <param name="StatusCode">Код ответа; 0 — ответа не было.</param>
 /// <param name="Body">Тело ответа, обрезанное по потолку.</param>
@@ -213,7 +210,6 @@ public sealed record EgressPlan(
 /// <param name="Attempts">Сколько попыток понадобилось.</param>
 public sealed record EgressResponse(
     bool                             Sent,
-    EgressDenyReason                 Reason,
     string                           Explanation,
     int                              StatusCode,
     string                           Body,
@@ -230,11 +226,8 @@ public sealed record EgressResponse(
     /// <summary>Сторонняя программа ответила перенаправлением, а за ним программа не идет.</summary>
     public bool Redirected => Sent && StatusCode is >= 300 and < 400;
 
-    /// <summary>Шлюз не пустил: запрос не отправлялся.</summary>
-    public static EgressResponse Denied(EgressDenyReason reason, string explanation, string address = "") =>
-        new(false, reason, explanation, 0, "", 0, false, TimeSpan.Zero, [], address, 0);
-
     /// <summary>Запрос ушел, но связи не случилось: обрыв, таймаут, отказ сертификата.</summary>
-    public static EgressResponse Failed(string explanation, string address, int attempts, TimeSpan elapsed) =>
-        new(false, EgressDenyReason.None, explanation, 0, "", 0, false, elapsed, [], address, attempts);
+    public static EgressResponse Failed(string explanation, string address = "", int attempts = 0,
+                                         TimeSpan elapsed = default) =>
+        new(false, explanation, 0, "", 0, false, elapsed, [], address, attempts);
 }

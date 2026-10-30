@@ -83,10 +83,8 @@ public partial class TableView
     private void InitGridInput()
     {
         RecordsGrid.VisibleRangeChanged    += (_, range) => VisibleRangeChanged?.Invoke(this, range);
-        RecordsGrid.RecordCreateRequested  += (_, _) => PermissionNotice.Run(this, Can(PermAction.CreateRecord), PermAction.CreateRecord,
-            () => RecordCreateRequested?.Invoke(this, (ConstructorSettings.OpenNewRecord, null)));
-        RecordsGrid.PropertyCreateRequested += (_, _) => PermissionNotice.Run(this, Can(PermAction.CreateField), PermAction.CreateField,
-            () => PropertyCreateRequested?.Invoke(this, EventArgs.Empty));
+        RecordsGrid.RecordCreateRequested  += (_, _) => RecordCreateRequested?.Invoke(this, (ConstructorSettings.OpenNewRecord, null));
+        RecordsGrid.PropertyCreateRequested += (_, _) => PropertyCreateRequested?.Invoke(this, EventArgs.Empty);
         RecordsGrid.Pressed       += OnGridPressed;
         RecordsGrid.RowsChanged   += (_, _) => { FollowEdit(); SyncSelection(); };
         RecordsGrid.RowsReplacing += (_, _) => ForgetCellEditing();   // набранное — в строку, пока она живая
@@ -203,8 +201,7 @@ public partial class TableView
         if (def.Key == TableColumnDef.AddPropKey)
         {
             if (left)
-                PermissionNotice.Run(this, Can(PermAction.CreateField), PermAction.CreateField,
-                                     () => PropertyCreateRequested?.Invoke(this, EventArgs.Empty));
+                PropertyCreateRequested?.Invoke(this, EventArgs.Empty);
             return;
         }
 
@@ -341,7 +338,7 @@ public partial class TableView
             _editOnRelease = null;
             if (e.InitialPressMouseButton == MouseButton.Left && _cellRange is { IsSingleCell: true } range
                 && range.AnchorRow == pending.Row && range.AnchorColumn == pending.Column)
-                BeginEdit(pending.Row, pending.Column, byMouse: true);
+                BeginEdit(pending.Row, pending.Column);
         }
 
         if (_buttonPress is not { } press) return;
@@ -425,19 +422,13 @@ public partial class TableView
     /// (<c>BuildCellEditor</c>) кладется над ячейкой. Фокус — в поле у текстовых типов, в список у
     /// списков; у даты, мультисписка и связи остается в таблице — их открывают кликом, а Enter, Tab
     /// и Escape работают с таблицы. Галочка, файл и вычисляемые колонки — только для чтения (правятся
-    /// кликом или никак). Без права правки записей — окно с причиной, если правку просили мышью;
-    /// клавиатура молчит. Возвращает открытый редактор; null — правка не открылась.
+    /// кликом или никак). Возвращает открытый редактор; null — правка не открылась.
     /// </summary>
-    private Control? BeginEdit(int row, int column, bool byMouse)
+    private Control? BeginEdit(int row, int column)
     {
         if (!IsDataColumn(column) || CachedRowAt(row) is not { IsLoading: false, IsAddRow: false } vm) return null;
         var def = _colDefs[column];
         if (def.IsReadOnly) return null;
-        if (!Can(PermAction.EditRecord))
-        {
-            if (byMouse) PermissionNotice.Show(this, PermAction.EditRecord);
-            return null;
-        }
         if (IsCellEditing) CommitEdit(focusGrid: false);
 
         ScrollCellIntoView(row, column);
@@ -616,8 +607,7 @@ public partial class TableView
         if (column < 0 || column >= _colDefs.Count || _colDefs[column].FieldType != "checkbox") return false;
         if (CachedRowAt(row) is not { IsLoading: false, IsAddRow: false } vm) return true;
         var key = _colDefs[column].Key;
-        PermissionNotice.Run(this, Can(PermAction.EditRecord), PermAction.EditRecord,
-                             () => vm[key] = IsTruthy(vm[key]) ? "0" : "1");
+        vm[key] = IsTruthy(vm[key]) ? "0" : "1";
         return true;
     }
 
@@ -626,7 +616,6 @@ public partial class TableView
     private async void PickFile(int row, string key)
     {
         if (CachedRowAt(row) is not { IsLoading: false, IsAddRow: false } vm || TopLevel.GetTopLevel(this) is not { } top) return;
-        if (!Can(PermAction.EditRecord)) { PermissionNotice.Show(this, PermAction.EditRecord); return; }
         var rid = vm.RecordId;
         if (await FileEditor.PickPathAsync(top) is not { } path) return;
         var target = vm.RecordId == rid ? vm : RowsSource?.FindCachedByRecordId(rid);
@@ -688,7 +677,6 @@ public partial class TableView
     {
         if (def.FileAutoFolder.Length > 0) return;
         if (CachedRowAt(row) is not { IsLoading: false, IsAddRow: false } vm) return;
-        if (!Can(PermAction.EditRecord)) { PermissionNotice.Show(this, PermAction.EditRecord); return; }
         var column = ColumnIndexOf(def.Key);
         if (column < 0) return;
         if (IsCellEditing) CommitEdit(focusGrid: false);

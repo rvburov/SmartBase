@@ -169,10 +169,8 @@ public sealed class RelationIntegrityRepairTests
         Assert.Equal(afterExternalWrite, f.Snapshot());
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void Changed_foreign_target_proof_after_backup_cannot_authorize_orphan_deletion(bool denyAccess)
+    [Fact]
+    public void Changed_foreign_target_proof_after_backup_cannot_authorize_orphan_deletion()
     {
         using var f = new RelationIntegrityFixture();
         var field = f.RelationField(f.SourceCollection, f.RemoteCollection, "Внешняя цель", targetDb: RelationIntegrityFixture.TargetId);
@@ -183,36 +181,13 @@ public sealed class RelationIntegrityRepairTests
         var result = Apply(f, plan, async (request, ct) =>
         {
             var backup = await Backup(f, request, ct);
-            if (denyAccess) f.SetRights(f.Target, PermAction.None);
-            else f.RestoreMissingRemoteRecord(955001);
+            f.RestoreMissingRemoteRecord(955001);
             return backup;
         });
         Assert.Equal(RelationIntegrityStatus.Conflict, result.Status);
         Assert.Equal(0, result.RemovedEdges);
         Assert.Equal(before, f.Snapshot());
         Assert.DoesNotContain(f.Scan().Issues, i => i.Kind == RelationIntegrityIssueKind.MissingTargetRecord);
-    }
-
-    [Fact]
-    public void Repair_rechecks_durable_administrator_rights_after_backup()
-    {
-        using var f = new RelationIntegrityFixture();
-        f.InsertEdge(f.Relation, f.SourceRecord, 0, 956001);
-        var plan = f.Preview(f.Scan());
-        string? afterRevocation = null;
-        var result = Apply(f, plan, async (request, ct) =>
-        {
-            var backup = await Backup(f, request, ct);
-            Assert.True(f.Source.Permissions.IsAdmin);
-            f.RevokeAdministratorWithoutReload(f.Source);
-            Assert.True(f.Source.Permissions.IsAdmin);
-            afterRevocation = f.Snapshot();
-            return backup;
-        });
-        Assert.Equal(RelationIntegrityStatus.NoAccess, result.Status);
-        Assert.Equal(0, result.RemovedEdges);
-        Assert.NotNull(afterRevocation);
-        Assert.Equal(afterRevocation, f.Snapshot());
     }
 
     [SkippableTheory]

@@ -42,8 +42,8 @@ public partial class ConstructorRepository
     }
 
     /// <summary>При подключении: прочитать номер базы или завести новый. Номер, занятый на этом
-    /// компьютере другой базой (<paramref name="taken"/>), новой базе не достается. Без права
-    /// записи номер не заводится — такая база не может быть целью новой межбазовой связи.</summary>
+    /// компьютере другой базой (<paramref name="taken"/>), новой базе не достается.
+    /// База, недоступная для записи, не может стать целью новой межбазовой связи.</summary>
     public int EnsureRelationBaseId(IReadOnlyCollection<int>? taken = null)
     {
         var stored = ReadRelationBaseId(db);

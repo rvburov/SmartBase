@@ -78,7 +78,7 @@ public partial class ImportExportDialog : Window
         // из каждой — коллекции, разрешенные к просмотру (право ViewCollection).
         _pickerItems = _dbs
             .SelectMany(d => d.Repo.GetAllCollections()
-                .Where(c => c.Id is int cid && (d.Repo.Permissions?.Can(PermAction.ViewCollection, cid) ?? true))
+                .Where(c => c.Id is not null)
                 // Пункт списка — одна строка (TitleText); выбор идет по паре (DbId, Id).
                 .Select(c => new CollectionPickerFlyout.Item(
                     d.Id, c.Id!.Value, TitleText.FirstLine(c.Name), TitleText.FirstLine(d.Name))))

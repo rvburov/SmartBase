@@ -64,11 +64,6 @@ public partial class ConstructorRepository
             var fid = field.Id!.Value;
             var ownIds = ids.Where(id => sourceCollections.GetValueOrDefault(id) == field.CollectionId).ToArray();
             if (ownIds.Length == 0) continue;
-            if (Permissions?.Can(PermAction.ViewCollection, field.CollectionId) == false)
-            {
-                foreach (var id in ownIds) Store(id, fid, "(нет доступа)");
-                continue;
-            }
             using var scope = RelationPropertyResolution.Enter(DbPath, fid);
             if (scope is null)
             {
@@ -114,16 +109,13 @@ public partial class ConstructorRepository
                     {
                         var targetRepo = ComputedTargetRepo(group.Key, relationConfig.TargetDbId);
                         if (targetRepo is null) { groupError[group.Key] = UnavailableLabel(group.Key); continue; }
-                        if (propertyKey != TitleKey
-                            && targetRepo.Permissions?.Can(PermAction.ViewCollection, relationConfig.TargetCollectionId) == false)
-                        { groupError[group.Key] = RelationProperty.NoAccess; continue; }
                         // Чужой общий контекст не уходит в фоновый поток чтения страницы.
                         var reader = ComputedTargetReader(group.Key, targetRepo, out var owned);
                         using (owned)
                             foreach (var value in ReadComputedTargetProperties(reader, relationConfig.TargetCollectionId, propertyKey, missing))
                                 values[value.RecordId] = value;
                     }
-                    catch (PermissionDeniedException) { groupError[group.Key] = RelationProperty.NoAccess; continue; }
+
                     catch (Exception ex) when (ex is System.Data.Common.DbException or System.IO.IOException
                                                         or InvalidOperationException or ArgumentException)
                     { groupError[group.Key] = "(вычисление недоступно)"; continue; }
@@ -157,10 +149,7 @@ public partial class ConstructorRepository
         var result = new List<RelationPropertyValue>();
         foreach (var group in records.GroupBy(r => r.CollectionId))
         {
-            if (!repo.CanReadRelationCollection(group.Key))
-                result.AddRange(group.Select(r => new RelationPropertyValue(r.Id, "", "", RelationProperty.NoAccess, "", null)));
-            else
-                result.AddRange(group.Select(r => new RelationPropertyValue(r.Id, r.Title ?? "", r.Title ?? "", r.Title ?? "", "text", null)));
+            result.AddRange(group.Select(r => new RelationPropertyValue(r.Id, r.Title ?? "", r.Title ?? "", r.Title ?? "", "text", null)));
         }
         return result;
     }
@@ -203,7 +192,6 @@ public partial class ConstructorRepository
     public void ValidateRelationComputedField(DbField field)
     {
         if (!FieldTypeInfo.IsRelationComputed(field.FieldType)) return;
-        Demand(PermAction.ViewCollection, field.CollectionId);
         var stack = new HashSet<(string Db, int Field)>();
         var completed = new HashSet<(string Db, int Field)>();
         Visit(this, field, 0);
@@ -230,7 +218,6 @@ public partial class ConstructorRepository
                         ?? throw new InvalidOperationException("Сначала настройте целевую коллекцию поля-связи.");
                     var target = relationCfg.TargetDbId == 0 ? repo : RelationDbResolver.RepoFor(relationCfg.TargetDbId)
                         ?? throw new InvalidOperationException("База связанной записи недоступна.");
-                    target.Demand(PermAction.ViewCollection, relationCfg.TargetCollectionId);
                     if (!target.RelationComputedContext.DbCollections.AsNoTracking().Any(c => c.Id == relationCfg.TargetCollectionId))
                         throw new InvalidOperationException("Целевая коллекция связи удалена.");
                     if (cfg.Aggregate == "count") return;
@@ -261,7 +248,6 @@ public partial class ConstructorRepository
                     if (cfg is null || cfg.DisplayKeys.All(k => k == TitleKey)) return;
                     var target = cfg.TargetDbId == 0 ? repo : RelationDbResolver.RepoFor(cfg.TargetDbId)
                         ?? throw new InvalidOperationException("База связанной записи недоступна.");
-                    target.Demand(PermAction.ViewCollection, cfg.TargetCollectionId);
                     foreach (var displayKey in cfg.DisplayKeys)
                     {
                         if (!int.TryParse(displayKey, out var targetId)) continue;

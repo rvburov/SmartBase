@@ -37,7 +37,7 @@ public sealed class DatePeriodMoveTests
         Assert.Equal(2, db.Repo.CountRecords(source.Collection));
         Assert.Equal("7200", db.Repo.GetFieldValues(records[0])[source.Fixed]);
         Assert.Equal("14400", db.Repo.GetFieldValues(records[0])[source.Automatic]);
-        Assert.Equal("2026-10-28T13:00", db.Repo.GetFieldValues(records[0])[source.End]);
+        Assert.Equal("2026-10-28T09:00/2026-10-28T13:00", db.Repo.GetFieldValues(records[0])[source.Start]);
         using var check = db.OpenContext();
         MultiUserTestDatabase.AssertHealthy(check);
     }
@@ -77,7 +77,7 @@ public sealed class DatePeriodMoveTests
         using var db = new MultiUserTestDatabase(profile);
         var source = AddSchema(db.Repo, SampleData.AddCollection(db.Repo, "Пустой снимок").Id!.Value);
         var original = SampleData.AddRecord(db.Repo, source.Collection, "Даты добавлены позже").Id!.Value;
-        db.Repo.SetFieldValue(original, source.Start, "2026-10-28T09:00");
+        db.Repo.SetFieldValue(original, source.Start, "2026-10-28T09:00/2026-10-28T13:00");
         db.Repo.SetFieldValue(original, source.End, "2026-10-28T13:00");
         Assert.Equal("", db.Repo.GetFieldValues(original)[source.Fixed]);
         Assert.Equal("14400", db.Repo.GetFieldValues(original)[source.Automatic]);
@@ -104,7 +104,7 @@ public sealed class DatePeriodMoveTests
         using var db = new MultiUserTestDatabase(profile);
         var (source, records) = Seed(db.Repo);
         var target = AddSchema(db.Repo, SampleData.AddCollection(db.Repo, "Другое рабочее окно").Id!.Value);
-        var ownRule = new DatePeriodConfig(target.Start, target.End, Automatic: false, DayStart: "09:00", DayEnd: "10:00");
+        var ownRule = new DatePeriodConfig(target.Start, Automatic: false, DayStart: "09:00", DayEnd: "10:00");
         var field = db.Repo.GetFields(target.Collection).Single(value => value.Id == target.Fixed);
         field.ConfigJson = ownRule.ToConfigJson();
         db.Repo.UpdateField(field);
@@ -118,7 +118,7 @@ public sealed class DatePeriodMoveTests
         else
         {
             var existing = Assert.Single(db.Repo.BulkAddRecords(target.Collection, [target.Start, target.End],
-                [new BulkRecordRow("Свой прежний снимок", ["2026-10-28T10:00", "2026-10-28T11:00"])], 1, default));
+                [new BulkRecordRow("Свой прежний снимок", ["2026-10-28T10:00/2026-10-28T11:00", "2030-01-01"])], 1, default));
             Assert.Equal("0", db.Repo.GetFieldValues(existing)[target.Fixed]);
             db.Repo.CopyFieldValuesByName(db.Repo, records[0], source.Collection, existing, target.Collection, createMissingFields: true);
             snapshots = new() { [existing] = "0" };
@@ -179,6 +179,11 @@ public sealed class DatePeriodMoveTests
         Assert.Equal(2, moved.Count);
         Assert.Equal(0, sourceDb.Repo.CountRecords(source.Collection));
         AssertValues(targetDb, target, new Dictionary<int, string> { [moved[0]] = "7200", [moved[1]] = "3600" });
+        var targetFields = targetDb.Repo.GetFields(target).ToDictionary(field => field.Name);
+        var remapped = DatePeriodConfig.FromConfig(targetFields[AutomaticName].ConfigJson);
+        Assert.NotNull(remapped);
+        Assert.Equal(targetFields[StartName].Id, remapped!.DateFieldId);
+        Assert.NotEqual(source.Start, remapped.DateFieldId);
         using var sourceCheck = sourceDb.OpenContext();
         using var targetCheck = targetDb.OpenContext();
         Assert.False(sourceCheck.DbFieldValues.Any(value => records.Contains(value.RecordId)));
@@ -196,7 +201,7 @@ public sealed class DatePeriodMoveTests
         int Period(string name, bool automatic) => repo.AddField(new DbField
         {
             CollectionId = collection, Name = name, FieldType = "date_period", IsSystem = true,
-            ConfigJson = new DatePeriodConfig(start, end, Automatic: automatic).ToConfigJson(),
+            ConfigJson = new DatePeriodConfig(start, Automatic: automatic).ToConfigJson(),
         }).Id!.Value;
         var automatic = Period(AutomaticName, true);
         var fixedField = Period(FixedName, false);
@@ -209,11 +214,11 @@ public sealed class DatePeriodMoveTests
         var schema = AddSchema(repo, SampleData.AddCollection(repo, "Исходная коллекция").Id!.Value);
         var records = repo.BulkAddRecords(schema.Collection, [schema.Start, schema.End],
         [
-            new BulkRecordRow("Первая", ["2026-10-28T09:00", "2026-10-28T11:00"]),
-            new BulkRecordRow("Вторая", ["2026-10-28T10:00", "2026-10-28T11:00"]),
+            new BulkRecordRow("Первая", ["2026-10-28T09:00/2026-10-28T11:00", "2030-01-01"]),
+            new BulkRecordRow("Вторая", ["2026-10-28T10:00/2026-10-28T11:00", "2030-01-01"]),
         ], 2, default);
-        repo.SetFieldValue(records[0], schema.End, "2026-10-28T13:00");
-        repo.SetFieldValue(records[1], schema.End, "2026-10-28T14:00");
+        repo.SetFieldValue(records[0], schema.Start, "2026-10-28T09:00/2026-10-28T13:00");
+        repo.SetFieldValue(records[1], schema.Start, "2026-10-28T10:00/2026-10-28T14:00");
         Assert.Equal("7200", repo.GetFieldValues(records[0])[schema.Fixed]);
         Assert.Equal("3600", repo.GetFieldValues(records[1])[schema.Fixed]);
         return (schema, records);
@@ -227,11 +232,10 @@ public sealed class DatePeriodMoveTests
         var fields = repo.GetFields(collection).ToDictionary(field => field.Name, StringComparer.OrdinalIgnoreCase);
         Assert.Equal(4, fields.Count);
         var start = fields[StartName].Id!.Value;
-        var end = fields[EndName].Id!.Value;
         Assert.Equal("date", fields[StartName].FieldType);
         Assert.Equal("date", fields[EndName].FieldType);
-        Assert.Equal(new DatePeriodConfig(start, end), DatePeriodConfig.FromConfig(fields[AutomaticName].ConfigJson));
-        Assert.Equal(ownFixedRule ?? new DatePeriodConfig(start, end, Automatic: false), DatePeriodConfig.FromConfig(fields[FixedName].ConfigJson));
+        Assert.Equal(new DatePeriodConfig(start), DatePeriodConfig.FromConfig(fields[AutomaticName].ConfigJson));
+        Assert.Equal(ownFixedRule ?? new DatePeriodConfig(start, Automatic: false), DatePeriodConfig.FromConfig(fields[FixedName].ConfigJson));
         foreach (var (record, snapshot) in expectedFixed)
         {
             var values = repo.GetFieldValues(record);

@@ -41,7 +41,7 @@ public sealed class ScenarioActionTests : IDisposable
 
     public void Dispose()
     {
-        EgressGate.Close();
+
         RunJournal.Attach(null);
         _registry.Dispose();
         _db.Dispose();
@@ -131,21 +131,6 @@ public sealed class ScenarioActionTests : IDisposable
             ActionResult.Table("[]", 0);
     }
 
-    // ── Обвязка ───────────────────────────────────────────────────────────────
-
-    private static void AllowLoopback(int maxRows = 1000) =>
-        EgressGate.AttachPolicy(EgressPolicySet.Of(new EgressPolicy(
-            EgressMode.Internal,
-            Hosts:           ["127.0.0.1"],
-            Networks:        ["127.0.0.0/8"],
-            Folders:         [],
-            MaxRowsPerRun:   maxRows,
-            MaxBytesPerDay:  8 * 1024 * 1024,
-            MaxRunsPerHour:  100,
-            ValidUntil:      null,
-            UserMayAddHosts: false,
-            Source:          "тест")));
-
     /// <summary>Коллекция, куда укладывает ответ шаг «запрос».</summary>
     private int Orders() => SampleData.AddCollection(_db.Constructor, "Заявки").Id!.Value;
 
@@ -222,7 +207,7 @@ public sealed class ScenarioActionTests : IDisposable
     [Fact]
     public async Task Every_answer_row_reaches_the_extension_with_its_values()
     {
-        AllowLoopback();
+
         using var server = new TinyServer(_ => TinyServer.Reply(200,
             Items(("Втулка", "Молоток"), ("Кронштейн", "Рубанок"))));
 
@@ -256,7 +241,7 @@ public sealed class ScenarioActionTests : IDisposable
     [Fact]
     public async Task A_notice_between_the_steps_does_not_lose_the_rows()
     {
-        AllowLoopback();
+
         using var server = new TinyServer(_ => TinyServer.Reply(200, Items(("Втулка", "Молоток"))));
 
         var orders    = Orders();
@@ -285,7 +270,7 @@ public sealed class ScenarioActionTests : IDisposable
     [Fact]
     public async Task An_unknown_column_stops_the_step_before_the_first_record()
     {
-        AllowLoopback();
+
         using var server = new TinyServer(_ => TinyServer.Reply(200, Items(("Втулка", "Молоток"))));
 
         var orders    = Orders();
@@ -409,7 +394,6 @@ public sealed class ScenarioActionTests : IDisposable
     [Fact]
     public async Task Too_many_rows_are_refused_before_anything_is_written()
     {
-        AllowLoopback(maxRows: StepTable.MaxRows + 100);
 
         var many = Enumerable.Range(1, StepTable.MaxRows + 1)
                              .Select(i => ($"Строка {i}", "Молоток")).ToArray();
@@ -443,7 +427,7 @@ public sealed class ScenarioActionTests : IDisposable
     [Fact]
     public async Task The_first_refused_row_stops_the_step_and_says_which_one()
     {
-        AllowLoopback();
+
         using var server = new TinyServer(_ => TinyServer.Reply(200,
             Items(("Втулка", "Молоток"), ("Кронштейн", "Рубанок"), ("Ось", "Рубанок"))));
 
@@ -505,7 +489,7 @@ public sealed class ScenarioActionTests : IDisposable
     [Fact]
     public async Task Only_the_rows_that_pass_reach_the_action()
     {
-        AllowLoopback();
+
         using var server = new TinyServer(_ => TinyServer.Reply(200,
             Items(("Втулка", "Молоток"), ("Кронштейн", ""), ("Шайба", "Рубанок"))));
 
@@ -532,7 +516,7 @@ public sealed class ScenarioActionTests : IDisposable
     [Fact]
     public async Task Nothing_passing_stops_the_scenario_without_a_complaint()
     {
-        AllowLoopback();
+
         using var server = new TinyServer(_ => TinyServer.Reply(200, Items(("Втулка", ""))));
 
         var orders    = Orders();
@@ -560,7 +544,7 @@ public sealed class ScenarioActionTests : IDisposable
     [Fact]
     public async Task A_column_that_is_not_there_stops_the_filter()
     {
-        AllowLoopback();
+
         using var server = new TinyServer(_ => TinyServer.Reply(200, Items(("Втулка", "Молоток"))));
 
         var orders    = Orders();

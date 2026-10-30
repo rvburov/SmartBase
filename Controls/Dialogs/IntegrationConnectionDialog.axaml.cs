@@ -6,33 +6,10 @@ using SmartBase.Integrations;
 
 namespace SmartBase.Controls.Dialogs;
 
-/// <summary>
-/// Итог окна: карточка соединения и что делать с секретом.
-/// </summary>
-/// <param name="Connection">Карточка; ключ сохраняется у существующего соединения.</param>
-/// <param name="Secret"><c>null</c> — секрет не трогать (человек правил адрес, а не токен);
-/// пустая строка — убрать; иначе — заменить.</param>
+/// <summary>Сохраненные параметры соединения и введенный для него секрет.</summary>
 public sealed record ConnectionDialogResult(IntegrationConnection Connection, string? Secret);
 
-/// <summary>
-/// Окно «Соединение»: куда и под кем ходим. Настраивается один раз и переиспользуется всеми
-/// запросами, поэтому здесь адрес и секрет, а не в каждой карточке запроса.
-///
-/// Три вещи, ради которых окно устроено именно так:
-///
-/// <list type="number">
-///   <item><b>Строка политики под адресом.</b> Она отвечает «а можно ли туда вообще» сразу,
-///   не дожидаясь «Проверить связь». Отказ шлюза объясняет себя словами — иначе его принимают
-///   за поломку сети и чинят перезагрузкой сервера.</item>
-///   <item><b>Сохранить можно и запрещенный политикой адрес.</b> Проверяется ФОРМА: политику
-///   расширят завтра, и терять из-за нее карточку незачем. Отправку все равно не пропустит
-///   шлюз.</item>
-///   <item><b>Секрет не живет в карточке.</b> Он уходит отдельным полем результата, а на
-///   экране виден только точками; хранит его <c>IntegrationsRegistry</c> в защищенном виде.</item>
-/// </list>
-///
-/// Возвращает <see cref="ConnectionDialogResult"/> или null при отмене.
-/// </summary>
+/// <summary>Настройка адреса, параметров и авторизации внешнего соединения.</summary>
 public partial class IntegrationConnectionDialog : Window
 {
     private readonly int    _id;
@@ -75,10 +52,9 @@ public partial class IntegrationConnectionDialog : Window
         ClearSecretCheck.IsVisible = hadSecret;
 
         ApplyAuth();
-        ShowPolicy();
 
         AuthCombo.SelectionChanged += (_, _) => ApplyAuth();
-        AddressBox.TextChanged     += (_, _) => { HideError(); HideStatus(); ShowPolicy(); };
+        AddressBox.TextChanged     += (_, _) => { HideError(); HideStatus(); };
 
         foreach (var box in new[] { NameBox, AuthNameBox, SecretBox, TimeoutBox, RetriesBox })
             box.TextChanged += (_, _) => { HideError(); HideStatus(); };
@@ -210,9 +186,7 @@ public partial class IntegrationConnectionDialog : Window
     private static string Verdict(EgressResponse answer)
     {
         if (!answer.Sent)
-            return answer.Reason == EgressDenyReason.None
-                ? "Не удалось: " + answer.Explanation
-                : "Запрещено политикой: " + answer.Explanation;
+            return "Не удалось: " + answer.Explanation;
 
         var head = $"Ответ {answer.StatusCode}";
 
@@ -249,32 +223,6 @@ public partial class IntegrationConnectionDialog : Window
             ConnectionAuth.Query => "api_key",
             _                    => "X-Api-Key",
         };
-    }
-
-    /// <summary>
-    /// Что скажет шлюз об этом адресе. Пустое поле — молчим: подсказывать «адрес не заполнен»
-    /// человеку, который его еще не начал вводить, незачем.
-    /// </summary>
-    private void ShowPolicy()
-    {
-        var address = (AddressBox.Text ?? "").Trim();
-
-        if (address.Length == 0)
-        {
-            PolicyText.IsVisible = false;
-            return;
-        }
-
-        var decision = Uri.TryCreate(address, UriKind.Absolute, out var uri)
-            ? EgressGate.Check(uri)
-            : EgressDecision.Deny(EgressDenyReason.BadAddress, "адрес не разобрался");
-
-        PolicyText.IsVisible  = true;
-        PolicyText.Text       = decision.Allowed
-            ? "Политика: адрес разрешен"
-            : "Политика: " + decision.Explanation + ". Сохранить карточку можно — отправку шлюз не пропустит.";
-        PolicyText.Foreground = Brush(decision.Allowed ? "BrushGreen" : "BrushSecondaryText",
-                                      decision.Allowed ? "#34C759"    : "#8E8E93");
     }
 
     private void ShowStatus(string text, bool ok)

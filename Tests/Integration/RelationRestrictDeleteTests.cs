@@ -191,12 +191,6 @@ public sealed class RelationRestrictDeleteTests
     [Fact]
     public void A_calendar_set_is_deleted_whole_or_not_at_all()
     {
-        using var f = new Fixture(restrict: true);
-        DenyDelete(f, f.Invoices);
-        Assert.Throws<PermissionDeniedException>(() => f.Repo.DeleteCalendarRecords([f.Client, f.Invoice]));
-        Assert.Equal(2, f.Repo.GetRecords(f.Clients).Count);
-        Assert.Equal([f.Client], f.Repo.GetLinkEdges(f.Relation, f.Invoice).Select(e => e.ToRecordId));
-
         using var g = new Fixture(restrict: true);
         g.Repo.DeleteCalendarRecords([g.Client, g.Invoice]);
         Assert.Equal([g.Free], g.Repo.GetRecords(g.Clients).Select(r => r.Id!.Value));
@@ -237,40 +231,6 @@ public sealed class RelationRestrictDeleteTests
         Assert.Empty(f.Repo.GetRecords(f.Clients));
     }
 
-    [Fact]
-    public async Task A_collection_closed_to_the_user_is_not_named()
-    {
-        using var f = new Fixture(restrict: false);
-        var me = f.Db.Context.DbUsers.First(u => u.UserKey == SmartBase.Utils.CurrentUser.Key);
-        f.Db.Permissions.SetMask(f.Db.Permissions.CurrentUserId, null, (int)PermAction.All);
-        f.Db.Permissions.SetMask(f.Db.Permissions.CurrentUserId, f.Invoices, (int)(PermAction.All & ~PermAction.ViewCollection));
-        me.IsAdmin = false;
-        me.IsApproved = true;
-        f.Db.Context.SaveChanges();
-        f.Db.Permissions.Reload(notify: false);
-
-        var references = (await RelationDeleteImpact.CheckRecordsAsync(f.Repo, [f.Client])).References;
-        Assert.Equal("связи закрытых коллекций", references);
-        Assert.DoesNotContain("Счета", references, StringComparison.Ordinal);
-
-        // Охрана изолированного подключения называет ссылки с правами того, кто удаляет.
-        f.SetRestrictAsAdmin(true);
-        var refused = Assert.Throws<RelationDeleteRestrictedException>(() => f.Repo.DeleteRecordsIsolated([f.Client]));
-        Assert.Contains("связи закрытых коллекций", refused.Message, StringComparison.Ordinal);
-        Assert.DoesNotContain("Счета", refused.Message, StringComparison.Ordinal);
-    }
-
-    private static void DenyDelete(Fixture f, int collection)
-    {
-        var me = f.Db.Context.DbUsers.First(u => u.UserKey == SmartBase.Utils.CurrentUser.Key);
-        f.Db.Permissions.SetMask(f.Db.Permissions.CurrentUserId, null, (int)PermAction.All);
-        f.Db.Permissions.SetMask(f.Db.Permissions.CurrentUserId, collection, (int)(PermAction.All & ~PermAction.DeleteRecord));
-        me.IsAdmin = false;
-        me.IsApproved = true;
-        f.Db.Context.SaveChanges();
-        f.Db.Permissions.Reload(notify: false);
-    }
-
     [Theory]
     [InlineData(1, "запись")]
     [InlineData(2, "записи")]
@@ -305,19 +265,6 @@ public sealed class RelationRestrictDeleteTests
             Relation = SampleData.AddField(Repo, Invoices, "Клиент", "relation").Id!.Value;
             SetRestrict(restrict);
             Repo.SetLinks(Relation, Invoice, [Client]);
-        }
-
-        // Настройку свойства меняет администратор: у пониженного пользователя права на правку нет.
-        public void SetRestrictAsAdmin(bool restrict)
-        {
-            var me = Db.Context.DbUsers.First(u => u.UserKey == SmartBase.Utils.CurrentUser.Key);
-            me.IsAdmin = true;
-            Db.Context.SaveChanges();
-            Db.Permissions.Reload(notify: false);
-            SetRestrict(restrict);
-            me.IsAdmin = false;
-            Db.Context.SaveChanges();
-            Db.Permissions.Reload(notify: false);
         }
 
         public void SetRestrict(bool restrict)

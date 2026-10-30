@@ -55,19 +55,8 @@ public sealed class DatabaseRowTests
         Assert.StartsWith(DatabaseRow.EngineName(postgres), Badge(postgres, false));
     }
 
-    /// <summary>
-    /// Название в списке и пароль подключения правит администратор базы. Исключение одно:
-    /// неподключенная база прав не показывает вовсе, и поля открыты — иначе база с устаревшим
-    /// паролем не чинится никогда (войти нельзя, а без входа не видно и прав).
-    /// </summary>
-    [Theory]
-    [InlineData(true,  true,  true)]    // подключена, администратор — правит
-    [InlineData(true,  false, false)]   // подключена, обычный пользователь — поля серые
-    [InlineData(false, false, true)]    // не подключена — прав не видно, поля открыты
-    [InlineData(false, true,  true)]
-    public void Only_the_database_admin_edits_the_name_and_the_password(
-        bool mounted, bool isAdmin, bool allowed) =>
-        Assert.Equal(allowed, DatabaseRow.CanManage(mounted, isAdmin));
+
+
 
     /// <summary>
     /// Строка размера пишется двумя способами, и различие не косметическое. В списке баз и в

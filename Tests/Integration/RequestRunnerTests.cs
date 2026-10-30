@@ -3,31 +3,10 @@ using SmartBase.Integrations;
 
 namespace SmartBase.Tests.Integration;
 
-/// <summary>
-/// Запуск запроса (<see cref="RequestRunner"/>) на настоящем сокете: подстановки, проход по
-/// страницам и потолок строк.
-///
-/// Проверяются решения, которые легко потерять правкой: первая порция идет БЕЗ параметра
-/// разбивки, сбор останавливается на конце данных и на потолке политики, а неизвестная
-/// подстановка не дает запросу уйти вовсе.
-/// </summary>
+/// <summary>Запуск запросов на локальном сервере: подстановки, страницы, конец данных, ошибки и сохранность результата.</summary>
 [Collection(EgressCollection.Name)]
-public sealed class RequestRunnerTests : IDisposable
+public sealed class RequestRunnerTests
 {
-    public void Dispose() => EgressGate.Close();
-
-    private static void AllowLoopback(int maxRows = 1000) =>
-        EgressGate.AttachPolicy(EgressPolicySet.Of(new EgressPolicy(
-            EgressMode.Internal,
-            Hosts:           ["127.0.0.1"],
-            Networks:        ["127.0.0.0/8"],
-            Folders:         [],
-            MaxRowsPerRun:   maxRows,
-            MaxBytesPerDay:  1024 * 1024,
-            MaxRunsPerHour:  100,
-            ValidUntil:      null,
-            UserMayAddHosts: false,
-            Source:          "тест")));
 
     private static IntegrationConnection Connection(TinyServer server) =>
         IntegrationConnection.New() with
@@ -64,7 +43,7 @@ public sealed class RequestRunnerTests : IDisposable
     private static Task<RunOutcome> Run(
         TinyServer server, IntegrationRequest request, VariableContext? context = null) =>
         RequestRunner.RunAsync(Connection(server), request, secret: "", context ?? Context(),
-                               refusal: null, payload: null);
+                               payload: null);
 
     /// <summary>Записи из итогового массива — по названию.</summary>
     private static List<string> Names(RunOutcome outcome) =>
@@ -79,7 +58,7 @@ public sealed class RequestRunnerTests : IDisposable
     [Fact]
     public async Task Single_answer_becomes_the_collected_array()
     {
-        AllowLoopback();
+
         using var server = new TinyServer(_ => TinyServer.Reply(200, Items("А", "Б")));
 
         var outcome = await Run(server, Request());
@@ -94,7 +73,7 @@ public sealed class RequestRunnerTests : IDisposable
     [Fact]
     public async Task Items_are_taken_by_the_path()
     {
-        AllowLoopback();
+
         using var server = new TinyServer(_ => TinyServer.Reply(200,
             "{\"ok\":true,\"data\":{\"items\":" + Items("А") + "}}"));
 
@@ -108,7 +87,7 @@ public sealed class RequestRunnerTests : IDisposable
     [Fact]
     public async Task Single_object_is_one_record()
     {
-        AllowLoopback();
+
         using var server = new TinyServer(_ => TinyServer.Reply(200, """{"name":"А"}"""));
 
         var outcome = await Run(server, Request());
@@ -122,7 +101,7 @@ public sealed class RequestRunnerTests : IDisposable
     [Fact]
     public async Task Last_run_reaches_the_other_program()
     {
-        AllowLoopback();
+
         using var server = new TinyServer(_ => TinyServer.Reply(200, Items("А")));
 
         var moment = new DateTimeOffset(2026, 9, 9, 8, 30, 0, TimeSpan.Zero);
@@ -138,7 +117,7 @@ public sealed class RequestRunnerTests : IDisposable
     [Fact]
     public async Task Unknown_substitution_stops_the_run_before_the_socket()
     {
-        AllowLoopback();
+
         using var server = new TinyServer(_ => TinyServer.Reply(200, Items("А")));
 
         var outcome = await Run(server, Request("/orders?who={{опечатка}}"));
@@ -157,7 +136,6 @@ public sealed class RequestRunnerTests : IDisposable
     [Fact]
     public async Task Pages_are_walked_until_the_empty_one()
     {
-        AllowLoopback();
 
         using var server = new TinyServer(request => TinyServer.Reply(200, request.Path switch
         {
@@ -177,7 +155,6 @@ public sealed class RequestRunnerTests : IDisposable
     [Fact]
     public async Task Offset_grows_by_the_number_of_records_taken()
     {
-        AllowLoopback();
 
         using var server = new TinyServer(request => TinyServer.Reply(200, request.Path switch
         {
@@ -196,7 +173,6 @@ public sealed class RequestRunnerTests : IDisposable
     [Fact]
     public async Task Cursor_stops_when_the_mark_runs_out()
     {
-        AllowLoopback();
 
         using var server = new TinyServer(request => TinyServer.Reply(200, request.Path switch
         {
@@ -219,7 +195,7 @@ public sealed class RequestRunnerTests : IDisposable
     [Fact]
     public async Task Endless_pagination_stops_at_the_page_limit()
     {
-        AllowLoopback(maxRows: 100_000);
+
         using var server = new TinyServer(_ => TinyServer.Reply(200, Items("А")));
 
         var outcome = await Run(server, Request(paging: RequestPaging.Page, pagingField: "page"));
@@ -229,45 +205,12 @@ public sealed class RequestRunnerTests : IDisposable
         Assert.Contains("порций", outcome.Explanation, StringComparison.Ordinal);
     }
 
-    // ── Потолок строк ─────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Потолок берется из политики организации, а не из настроек человека: настройка, которую
-    /// можно поднять, — это не потолок.
-    /// </summary>
-    [Fact]
-    public async Task Row_ceiling_of_the_policy_stops_the_collection()
-    {
-        AllowLoopback(maxRows: 3);
-        using var server = new TinyServer(_ => TinyServer.Reply(200, Items("А", "Б", "В", "Г", "Д")));
-
-        var outcome = await Run(server, Request());
-
-        Assert.True(outcome.Ok, outcome.Explanation);
-        Assert.Equal(3, outcome.Rows);
-        Assert.Equal(["А", "Б", "В"], Names(outcome));
-    }
-
-    /// <summary>Потолок в ноль — обмен запрещен, и до сокета дело не доходит.</summary>
-    [Fact]
-    public async Task Zero_ceiling_refuses_before_the_socket()
-    {
-        AllowLoopback(maxRows: 0);
-        using var server = new TinyServer(_ => TinyServer.Reply(200, Items("А")));
-
-        var outcome = await Run(server, Request());
-
-        Assert.False(outcome.Ok);
-        Assert.Contains("потолок строк", outcome.Explanation, StringComparison.Ordinal);
-        Assert.Empty(server.Seen);
-    }
-
     // ── Что считается неудачей ────────────────────────────────────────────────
 
     [Fact]
     public async Task Error_code_is_a_failure_with_the_code_in_the_reason()
     {
-        AllowLoopback();
+
         using var server = new TinyServer(_ => TinyServer.Reply(500, "beda", "text/plain"));
 
         var outcome = await Run(server, Request());
@@ -280,7 +223,7 @@ public sealed class RequestRunnerTests : IDisposable
     [Fact]
     public async Task Answer_that_is_not_json_is_a_failure()
     {
-        AllowLoopback();
+
         using var server = new TinyServer(_ => TinyServer.Reply(200, "не json", "text/plain"));
 
         var outcome = await Run(server, Request());
@@ -292,7 +235,7 @@ public sealed class RequestRunnerTests : IDisposable
     [Fact]
     public async Task Wrong_items_path_says_which_part_is_missing()
     {
-        AllowLoopback();
+
         using var server = new TinyServer(_ => TinyServer.Reply(200, """{"data":{"items":[]}}"""));
 
         var outcome = await Run(server, Request(itemsPath: "data.список"));
@@ -301,26 +244,12 @@ public sealed class RequestRunnerTests : IDisposable
         Assert.Contains("список", outcome.Explanation, StringComparison.Ordinal);
     }
 
-    /// <summary>Без политики запуск не начинается — состояние по умолчанию.</summary>
-    [Fact]
-    public async Task Without_a_policy_nothing_runs()
-    {
-        EgressGate.Close();
-        using var server = new TinyServer(_ => TinyServer.Reply(200, Items("А")));
-
-        var outcome = await Run(server, Request());
-
-        Assert.False(outcome.Ok);
-        Assert.Empty(server.Seen);
-    }
-
     /// <summary>
     /// Половина выгрузки, уложенная в коллекцию, хуже, чем ничего: недостачу потом не заметить.
     /// </summary>
     [Fact]
     public async Task Failure_in_the_middle_returns_no_records_at_all()
     {
-        AllowLoopback();
 
         using var server = new TinyServer(request => TinyServer.Reply(
             request.Path == "/orders" ? 200 : 500,
@@ -342,7 +271,7 @@ public sealed class RequestRunnerTests : IDisposable
     [Fact]
     public async Task Bodies_come_back_with_the_outcome()
     {
-        AllowLoopback();
+
         using var server = new TinyServer(_ => TinyServer.Reply(200, Items("А")));
 
         var outcome = await Run(server, Request() with
@@ -363,7 +292,7 @@ public sealed class RequestRunnerTests : IDisposable
     [Fact]
     public async Task Bodies_are_taken_from_the_first_page()
     {
-        AllowLoopback();
+
         var page = 0;
 
         using var server = new TinyServer(_ =>
@@ -383,130 +312,40 @@ public sealed class RequestRunnerTests : IDisposable
     [Fact]
     public async Task A_secret_typed_into_the_body_does_not_reach_the_journal()
     {
-        AllowLoopback();
+
         using var server = new TinyServer(_ => TinyServer.Reply(200, Items("А")));
 
         var outcome = await RequestRunner.RunAsync(
             Connection(server),
             Request() with { Method = RequestMethod.Post, Body = """{"token":"очень-секретно"}""" },
-            secret: "очень-секретно", context: Context(), refusal: null, payload: null);
+            secret: "очень-секретно", context: Context(), payload: null);
 
         Assert.DoesNotContain("очень-секретно", outcome.SentBody, StringComparison.Ordinal);
         Assert.Contains("***", outcome.SentBody, StringComparison.Ordinal);
     }
 
-    // ── Накопительные потолки ─────────────────────────────────────────────────
-
-    /// <summary>Счетчик расхода, отдающий заданные числа: расход считает журнал, решает шлюз.</summary>
-    private sealed class Spent(int runs, long bytes) : IEgressUsage
-    {
-        public int  RunsSince(DateTimeOffset moment)  => runs;
-        public long BytesSince(DateTimeOffset moment, int direction) => bytes;
-
-        public DateTimeOffset? FreesAt(DateTimeOffset now, int direction, TimeSpan window) => null;
-    }
-
-    /// <summary>
-    /// Потолок спрашивается ДО первого сокета: потолок, о котором узнают задним числом, ничего
-    /// не ограничивает. Сервер при этом не должен увидеть ни одного обращения.
-    /// </summary>
     [Fact]
-    public async Task Spent_hourly_ceiling_stops_the_run_before_the_socket()
+    public async Task Cancellation_during_an_http_body_remains_cancellation_for_the_caller()
     {
-        AllowLoopback();
-        EgressGate.AttachUsage(new Spent(runs: 100, bytes: 0));
-
-        using var server = new TinyServer(_ => TinyServer.Reply(200, Items("А")));
-
-        var outcome = await Run(server, Request());
-
-        Assert.False(outcome.Ok);
-        Assert.Contains("запусков в час", outcome.Explanation, StringComparison.Ordinal);
-        Assert.Empty(server.Seen);
+        using var server = new TinyServer(_ => null, stallAfterHeaders: true);
+        using var cancel = new CancellationTokenSource();
+        var task = RequestRunner.RunAsync(Connection(server), Request(), "", Context(), payload: null, ct: cancel.Token);
+        using var waiting = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (server.Seen.Count == 0) await Task.Delay(10, waiting.Token);
+        cancel.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => task.WaitAsync(TimeSpan.FromSeconds(5)));
     }
 
     [Fact]
-    public async Task Spent_daily_budget_stops_the_run_before_the_socket()
+    public async Task Collected_pages_above_the_technical_message_limit_return_no_partial_json()
     {
-        AllowLoopback();
-        EgressGate.AttachUsage(new Spent(runs: 0, bytes: 1024 * 1024));
-
-        using var server = new TinyServer(_ => TinyServer.Reply(200, Items("А")));
-
-        var outcome = await Run(server, Request());
-
-        Assert.False(outcome.Ok);
-        Assert.Contains("суточный потолок объема этого направления", outcome.Explanation,
-                        StringComparison.Ordinal);
-        Assert.Empty(server.Seen);
-    }
-
-    /// <summary>
-    /// Суточный потолок заведен против выноса базы «по капле» (10.6), поэтому в расход идет и
-    /// то, что УШЛО. Считать один ответ значило бы мерить противоположное: выгрузка на десять
-    /// мегабайт с ответом «ok» не занимала бы в потолке почти ничего.
-    /// </summary>
-    [Fact]
-    public async Task Sent_body_counts_towards_the_daily_volume()
-    {
-        AllowLoopback();
-        using var server = new TinyServer(_ => TinyServer.Reply(200, Items("А")));
-
-        var body = new string('я', 1000);   // 2000 байт в UTF-8 — вдвое больше знаков
-
-        var outcome = await Run(server,
-            Request() with { Method = RequestMethod.Post, Body = $"{{\"note\":\"{body}\"}}" });
-
-        Assert.True(outcome.Ok, outcome.Explanation);
-        Assert.True(outcome.Bytes > 2000,
-                    $"объем {outcome.Bytes} байт не включает отправленное тело");
-    }
-
-    /// <summary>
-    /// Размер отправляемого известен ДО сокета — значит, и отказать можно до него. Это
-    /// единственная проверка объема, которая успевает что-то предотвратить: данные, не влезающие
-    /// в остаток суток, наружу не уходят вовсе, а не пересчитываются задним числом.
-    /// </summary>
-    [Fact]
-    public async Task A_body_that_does_not_fit_the_budget_never_reaches_the_socket()
-    {
-        AllowLoopback();
-
-        // Суточное право почти выбрано: на запуск хватает, на тело — нет.
-        EgressGate.AttachUsage(new Spent(runs: 0, bytes: 1024 * 1024 - 100));
-
-        using var server = new TinyServer(_ => TinyServer.Reply(200, Items("А")));
-
-        var outcome = await Run(server,
-            Request() with { Method = RequestMethod.Post, Body = new string('x', 500) });
-
-        Assert.False(outcome.Ok);
-        Assert.Contains("суточный потолок объема этого направления", outcome.Explanation,
-                        StringComparison.Ordinal);
-        Assert.Empty(server.Seen);
-    }
-
-    /// <summary>
-    /// Спросить квоту один раз перед запуском мало: выгрузка на много порций перешагнула бы
-    /// суточный потолок, ни разу его не спросив. Собранное при этом отбрасывается целиком —
-    /// как при любой другой неудаче посреди выгрузки.
-    /// </summary>
-    [Fact]
-    public async Task Paging_stops_when_the_daily_budget_runs_out()
-    {
-        AllowLoopback();
-
-        // Суточное право почти выбрано: на запуск хватает, на первую же порцию — нет.
-        EgressGate.AttachUsage(new Spent(runs: 0, bytes: 1024 * 1024 - 10));
-
-        using var server = new TinyServer(_ => TinyServer.Reply(200, Items("А", "Б", "В")));
-
+        var pageBody = "[{\"text\":\"" + new string('x', 6 * 1024 * 1024) + "\"}]";
+        using var server = new TinyServer(_ => TinyServer.Reply(200, pageBody));
         var outcome = await Run(server, Request(paging: RequestPaging.Page, pagingField: "page"));
-
         Assert.False(outcome.Ok);
-        Assert.Contains("суточный потолок объема этого направления", outcome.Explanation,
-                        StringComparison.Ordinal);
+        Assert.Contains("32 МБ", outcome.Explanation, StringComparison.Ordinal);
         Assert.Equal("[]", outcome.Json);
-        Assert.Single(server.Seen);   // вторая порция уже не ушла
+        Assert.Equal(6, outcome.Pages);
+        Assert.Equal(6, server.Seen.Count);
     }
 }

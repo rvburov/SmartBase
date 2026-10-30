@@ -4,14 +4,7 @@ using SmartBase.Integrations;
 
 namespace SmartBase.Tests.Integration;
 
-/// <summary>
-/// Шаги «создать запись» и «экспорт выборки» и триггер «календарное событие»
-/// (docs/ROADMAP-API.md, шаг 11) — на настоящей базе.
-///
-/// Проверяются обещания, а не механика: подстановки считаются ДО первой записи, выгрузка не
-/// живет без следа в журнале безопасности и без разрешения политики на папку, а календарный
-/// триггер заводит сценарий по событию ровно один раз и приносит его строками.
-/// </summary>
+/// <summary>Шаги сценария создают и обновляют записи, выгружают выбранные данные в файл и реагируют на календарные события.</summary>
 [Collection(EgressCollection.Name)]
 public sealed class ScenarioDeedsTests : IDisposable
 {
@@ -37,9 +30,9 @@ public sealed class ScenarioDeedsTests : IDisposable
 
     public void Dispose()
     {
-        EgressGate.Close();
+
         RunJournal.Attach(null);
-        SecurityJournal.Attach(null);
+
         _registry.Dispose();
         _db.Dispose();
         TempDatabase.Cleanup(_appDb);
@@ -52,11 +45,6 @@ public sealed class ScenarioDeedsTests : IDisposable
     // ── Стенд ─────────────────────────────────────────────────────────────────
 
     private IntegrationsRegistry Cards => _registry.Integrations;
-
-    private void Policy(params string[] folders) =>
-        EgressGate.AttachPolicy(EgressPolicySet.Of(new EgressPolicy(
-            EgressMode.Internal, [], [], folders, 1000, 1024 * 1024, 100,
-            null, false, "тест")));
 
     /// <summary>«Журнал смен» со свойством «Смена» — сюда пишет шаг «создать запись».</summary>
     private (int Id, int Shift) Journal()
@@ -357,11 +345,8 @@ public sealed class ScenarioDeedsTests : IDisposable
     // ── Шаг «экспорт выборки» ─────────────────────────────────────────────────
 
     [Fact]
-    public async Task An_export_step_writes_the_file_and_leaves_a_trace()
+    public async Task An_export_step_writes_filtered_rows_without_a_security_journal()
     {
-        Policy(_folder);
-        var journal = new SecurityJournal(Path.Combine(_dir, "security.db"));
-        SecurityJournal.Attach(journal);
 
         var orders = Orders();
 
@@ -380,76 +365,9 @@ public sealed class ScenarioDeedsTests : IDisposable
         Assert.Contains("Заказ 3", text, StringComparison.Ordinal);
         Assert.DoesNotContain("Заказ 2", text, StringComparison.Ordinal);
 
-        // След — тот же, что у ручного экспорта, только с именем сценария.
-        var row = journal.Recent().Single();
-
-        Assert.Equal(SecurityEvent.Export,     row.Event);
-        Assert.Equal("Дела по расписанию",     row.Scenario);
-        Assert.Equal(file,                     row.Address);
-        Assert.Equal(2,                        row.Rows);
-        Assert.Contains("выгружено сценарием", row.Explanation, StringComparison.Ordinal);
-
         // Строка отчета называет отсев: молча потерянная половина неотличима от поломки.
         Assert.Contains(outcome.Lines, l => l.Contains("отсеяно условиями 1",
                                                        StringComparison.Ordinal));
-    }
-
-    /// <summary>Папка вне политики — сценарий не запускается вовсе, и причина названа еще в
-    /// списке: автоматическая выгрузка работает только внутри разрешенных корней (10.11).</summary>
-    [Fact]
-    public async Task A_folder_outside_the_policy_blocks_the_scenario()
-    {
-        Policy(Path.Combine(_dir, "Разрешенная"));
-        SecurityJournal.Attach(new SecurityJournal(Path.Combine(_dir, "security.db")));
-
-        var scenario = Save(null, ScenarioStep.OfExport(
-            _db.Manager.DbId, Orders(), _folder, "csv"));
-
-        var outcome = await Run(scenario);
-
-        Assert.False(outcome.Started);
-        Assert.Contains("папка выгрузки", outcome.Problem, StringComparison.Ordinal);
-        Assert.Empty(Directory.GetFiles(_folder));
-    }
-
-    /// <summary>Без журнала безопасности файл не создается: не записалось — не выгружаем.</summary>
-    [Fact]
-    public async Task Without_the_security_journal_no_file_is_written()
-    {
-        Policy(_folder);
-        SecurityJournal.Attach(null);
-
-        var scenario = Save(null, ScenarioStep.OfExport(
-            _db.Manager.DbId, Orders(), _folder, "csv"));
-
-        var outcome = await Run(scenario);
-
-        Assert.False(outcome.Ok);
-        Assert.Contains("Журнал безопасности", outcome.Problem, StringComparison.Ordinal);
-        Assert.Empty(Directory.GetFiles(_folder));
-    }
-
-    /// <summary>Помеченное свойство останавливает выгрузку словами — вторым рубежом, как у
-    /// отправки: метку могли поставить после того, как сценарий собрали.</summary>
-    [Fact]
-    public async Task A_labeled_field_stops_the_export()
-    {
-        Policy(_folder);
-        SecurityJournal.Attach(new SecurityJournal(Path.Combine(_dir, "security.db")));
-
-        var orders = Orders();
-        var status = _db.Constructor.GetFields(orders).Single(f => f.Name == "Статус");
-
-        _db.Constructor.SetFieldLabel(status.Id!.Value, ConfidentialityLabel.Closed);
-
-        var scenario = Save(null, ScenarioStep.OfExport(
-            _db.Manager.DbId, orders, _folder, "csv"));
-
-        var outcome = await Run(scenario);
-
-        Assert.False(outcome.Ok);
-        Assert.Contains("Статус", outcome.Problem, StringComparison.Ordinal);
-        Assert.Empty(Directory.GetFiles(_folder));
     }
 
     // ── Триггер «календарное событие» ─────────────────────────────────────────
@@ -461,7 +379,7 @@ public sealed class ScenarioDeedsTests : IDisposable
     [Fact]
     public async Task A_calendar_event_starts_the_scenario_once_and_brings_its_row()
     {
-        Policy();
+
         RunJournal.Attach(new RunJournal(Path.Combine(_dir, "integrations.db")));
 
         var events = SampleData.AddCollection(_db.Constructor, "Смены");

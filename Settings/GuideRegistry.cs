@@ -27,6 +27,7 @@ public static class GuideRegistry
         new("table",          "table.md"),
         new("record-page",    "record-page.md"),
         new("properties",     "properties.md"),
+        new("date-period",    "date-period.md"),
         new("filters",        "filters-sorting.md"),
         new("calendar",       "calendar.md"),
         new("tasks",          "tasks.md"),

@@ -275,17 +275,6 @@ public partial class PdfWatermarkWindow : Window
         var date   = DateBox.Date!.Value;
         var shape  = _shape;
 
-        // Право проверяем ЗДЕСЬ, на общем репозитории: у свежего репозитория движка Permissions
-        // нет по контракту, поэтому фоновые записи проверок не проходят вовсе. Точку входа
-        // нужно создать явно, иначе прогон уйдет в фон и упадет там.
-        if (_repo.Permissions is { } perms &&
-            (!perms.Can(PermAction.CreateRecord, shape.CollectionId) ||
-             !perms.Can(PermAction.EditRecord,   shape.CollectionId)))
-        {
-            SetStatus("Нет права дописывать записи в журнал выдачи", "BrushRed");
-            return;
-        }
-
         var dbPath = _repo.DbPath;
 
         SetBusy(true);

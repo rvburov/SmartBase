@@ -10,7 +10,7 @@ public partial class ConstructorRepository
     // Оба компонента — int; этот ключ сохраняет точный порядок (Position, Id)
     // первого появления группы без дополнительных запросов или списка записей.
     private const long DatePeriodOrderStride = 2147483648L;
-    private sealed record DatePeriodColumnInput(int Id, string? Start, string? End);
+    private sealed record DatePeriodColumnInput(int Id, string? Value);
 
     // Обход всей колонки нужен только явным операциям над колонкой (отбор, сортировка,
     // счетчики). Один SQL отдает ровно нужные источники: ни списка всех id, ни повторных
@@ -21,67 +21,48 @@ public partial class ConstructorRepository
         ct.ThrowIfCancellationRequested();
         if (field.Id is not int fieldId) yield break;
         var config = DatePeriodConfig.FromConfig(field.ConfigJson);
-        var readable = Permissions?.Can(PermAction.ViewCollection, field.CollectionId) != false;
-        var calculate = readable && config is { Automatic: true };
+        var calculate = config is { Automatic: true };
         if (calculate)
         {
-            var wanted = config!.EndFieldId is int end
-                ? new[] { config.StartFieldId, end }.Distinct().ToArray() : [config.StartFieldId];
-            var available = db.DbFields.AsNoTracking().Where(f => f.CollectionId == field.CollectionId
-                && f.FieldType == "date" && Enumerable.Contains(wanted, f.Id)).Select(f => f.Id).Count();
-            calculate = available == wanted.Length;
+            calculate = db.DbFields.AsNoTracking().Any(f => f.CollectionId == field.CollectionId
+                && f.FieldType == "date" && f.Id == config!.DateFieldId);
         }
 
         var ordered = scope.AsNoTracking().Where(r => r.CollectionId == field.CollectionId)
             .OrderBy(r => r.Position).ThenBy(r => r.Id);
         IQueryable<DatePeriodColumnInput> query;
-        if (!readable || config is null || config.Automatic && !calculate)
-            query = ordered.Select(r => new DatePeriodColumnInput(r.Id, null, null));
+        if (config is null || config.Automatic && !calculate)
+            query = ordered.Select(r => new DatePeriodColumnInput(r.Id, null));
         else if (!config.Automatic)
             query = ordered.Select(r => new DatePeriodColumnInput(r.Id,
                 db.DbFieldValues.Where(v => v.RecordId == r.Id && v.FieldId == fieldId)
-                    .Select(v => v.Value).FirstOrDefault(), null));
+                    .Select(v => v.Value).FirstOrDefault()));
         else
         {
-            var startId = config.StartFieldId;
-            if (config.EndFieldId is int endId)
-                query = ordered.Select(r => new DatePeriodColumnInput(r.Id,
-                    db.DbFieldValues.Where(v => v.RecordId == r.Id && v.FieldId == startId)
-                        .Select(v => v.Value).FirstOrDefault(),
-                    db.DbFieldValues.Where(v => v.RecordId == r.Id && v.FieldId == endId)
-                        .Select(v => v.Value).FirstOrDefault()));
-            else
-                query = ordered.Select(r => new DatePeriodColumnInput(r.Id,
-                    db.DbFieldValues.Where(v => v.RecordId == r.Id && v.FieldId == startId)
-                        .Select(v => v.Value).FirstOrDefault(), null));
+            var dateId = config.DateFieldId;
+            query = ordered.Select(r => new DatePeriodColumnInput(r.Id,
+                db.DbFieldValues.Where(v => v.RecordId == r.Id && v.FieldId == dateId)
+                    .Select(v => v.Value).FirstOrDefault()));
         }
 
-        var now = calculate && config!.EndFieldId is null ? DatePeriodClock() : default;
-        if (calculate && config!.EndFieldId is null)
-            now = new DateTime(now.Ticks - now.Ticks % TimeSpan.TicksPerMinute, now.Kind);
         var calculator = config is not null ? DatePeriodValue.Prepare(config) : default;
         // Часто даты повторяются у тысяч записей. Кеш ограничен независимо от размера
-        // коллекции; повтор одной пары не разбирает строки дат и не считает часы заново.
-        var cache = new Dictionary<(string Start, string End), string>();
+        // коллекции; повтор диапазона не разбирает строку дат и не считает часы заново.
+        var cache = new Dictionary<string, string>(StringComparer.Ordinal);
 
         foreach (var row in StreamDatePeriodQuery(query, ct))
         {
             var result = "";
-            if (readable && config is { Automatic: false }) result = row.Start ?? "";
+            if (config is { Automatic: false }) result = row.Value ?? "";
             else if (calculate)
             {
-                var pair = (row.Start ?? "", row.End ?? "");
-                if (!cache.TryGetValue(pair, out result!))
+                var source = row.Value ?? "";
+                if (!cache.TryGetValue(source, out result!))
                 {
                     result = "";
-                    if (DateValue.TryParse(pair.Item1, out var start))
-                    {
-                        if (config!.EndFieldId is null) result = calculator.Calculate(start, null, now);
-                        else if (DateValue.TryParse(pair.Item2, out var end))
-                            result = calculator.Calculate(start, end, now);
-                    }
+                    if (DateValue.TryParse(source, out var range)) result = calculator.Calculate(range);
                     if (cache.Count >= 1024) cache.Clear();
-                    cache[pair] = result;
+                    cache[source] = result;
                 }
             }
             yield return (row.Id, result);
@@ -144,8 +125,7 @@ public partial class ConstructorRepository
         var counts = new Dictionary<string, int>(StringComparer.Ordinal);
         var config = DatePeriodConfig.FromConfig(field.ConfigJson);
         var records = scope.AsNoTracking().Where(r => r.CollectionId == field.CollectionId);
-        if (field.Id is not int fieldId || config is null
-            || Permissions?.Can(PermAction.ViewCollection, field.CollectionId) == false)
+        if (field.Id is not int fieldId || config is null)
         {
             var total = records.Count();
             return total > 0 ? [("", total)] : [];
@@ -167,12 +147,9 @@ public partial class ConstructorRepository
         }
         else
         {
-            var startId = config.StartFieldId;
-            var endId = config.EndFieldId ?? -1;
-            var wanted = config.EndFieldId is null ? new[] { startId } : new[] { startId, endId }.Distinct().ToArray();
-            var available = db.DbFields.AsNoTracking().Where(f => f.CollectionId == field.CollectionId
-                && f.FieldType == "date" && Enumerable.Contains(wanted, f.Id)).Select(f => f.Id).Count();
-            if (available != wanted.Length)
+            var dateId = config.DateFieldId;
+            if (!db.DbFields.AsNoTracking().Any(f => f.CollectionId == field.CollectionId
+                    && f.FieldType == "date" && f.Id == dateId))
             {
                 var total = records.Count();
                 return total > 0 ? [("", total)] : [];
@@ -180,33 +157,20 @@ public partial class ConstructorRepository
             // Сначала группируем одинаковые исходные даты в SQL: тысячи строк с одними
             // датами передаются одним счетчиком и требуют единственного вычисления.
             var grouped = from record in records
-                          join start in db.DbFieldValues.AsNoTracking().Where(v => v.FieldId == startId)
-                              on record.Id equals start.RecordId into starts
-                          from start in starts.DefaultIfEmpty()
-                          join end in db.DbFieldValues.AsNoTracking().Where(v => v.FieldId == endId)
-                              on record.Id equals end.RecordId into ends
-                          from end in ends.DefaultIfEmpty()
-                          group record by new
-                          {
-                              Start = start == null ? "" : start.Value ?? "",
-                              End = end == null ? "" : end.Value ?? "",
-                          } into g
+                          join date in db.DbFieldValues.AsNoTracking().Where(v => v.FieldId == dateId)
+                              on record.Id equals date.RecordId into dates
+                          from date in dates.DefaultIfEmpty()
+                          group record by date == null ? "" : date.Value ?? "" into g
                           select new
                           {
-                              g.Key.Start, g.Key.End, Count = g.Count(),
+                              Value = g.Key, Count = g.Count(),
                               First = g.Min(r => (long)r.Position * DatePeriodOrderStride + r.Id),
                           };
-            var now = config.EndFieldId is null ? DatePeriodClock() : default;
-            if (config.EndFieldId is null) now = new DateTime(now.Ticks - now.Ticks % TimeSpan.TicksPerMinute, now.Kind);
             var calculator = DatePeriodValue.Prepare(config);
             foreach (var group in StreamDatePeriodQuery(grouped.OrderBy(g => g.First), ct))
             {
                 var value = "";
-                if (DateValue.TryParse(group.Start, out var start))
-                {
-                    if (config.EndFieldId is null) value = calculator.Calculate(start, null, now);
-                    else if (DateValue.TryParse(group.End, out var end)) value = calculator.Calculate(start, end, now);
-                }
+                if (DateValue.TryParse(group.Value, out var range)) value = calculator.Calculate(range);
                 counts[value] = counts.GetValueOrDefault(value) + group.Count;
             }
         }

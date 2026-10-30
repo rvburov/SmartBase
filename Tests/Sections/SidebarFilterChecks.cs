@@ -71,7 +71,6 @@ internal static class SidebarFilterChecks
             user.IsAdmin = false;
             user.IsApproved = false;
             locked.Context.SaveChanges();
-            locked.Permissions.Reload();
             busy.Context.Database.SetCommandTimeout(1);
             var pending = new[]
             {
@@ -97,10 +96,10 @@ internal static class SidebarFilterChecks
                 Pump();
                 Expect(changes == 1, "изменение настройки само перестраивает открытую панель и сообщает набор");
                 sidebar.ActiveIdsChanged -= changed;
-                Expect(HasRoots(7101, 7104, 7106, 7107), "пустые и неподходящие базы скрыты, служебные корни остались");
+                Expect(HasRoots(7101, 7106, 7107), "пустые и неподходящие базы скрыты, служебные корни остались");
                 Expect(Walk(Roots()).Any(n => n.DbId == eligible.DbId && n.Id == collection && !n.IsGroup && !n.IsDatabase),
                     "подходящая коллекция без записей во вложенной группе видна");
-                Expect(Roots().Single(n => n.DbId == locked.DbId).IsLocked, "запертая база доступна для запроса допуска");
+                Expect(!Roots().Any(n => n.DbId == locked.DbId), "старая отметка допуска не создает отдельный корень пустой базы");
                 Expect(Roots().Count(n => n.IsPending) == 2 && Roots().Any(n => n.IsPending && n.Failed),
                     "подключаемая и недоступная базы сохраняют статусы");
 

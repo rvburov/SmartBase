@@ -18,7 +18,6 @@ public partial class SettingsView
             await ConfirmDialog.Info("Для проверки связей подключите базу данных.").ShowDialog(owner);
             return;
         }
-        var permissions = (_databases?.Invoke() ?? []).Select(db => db.Permissions).Distinct().ToArray();
-        await RelationIntegrityDialog.ShowForAsync(owner, source, entry, permissions, entry.Name);
+        await RelationIntegrityDialog.ShowForAsync(owner, source, entry, entry.Name);
     }
 }

@@ -5,11 +5,7 @@ using SmartBase.Integrations;
 
 namespace SmartBase.Tests.Integration;
 
-/// <summary>
-/// Тесты, которые заряжают шлюз своей политикой. Шлюз — глобальное состояние, а классы тестов
-/// xUnit по умолчанию выполняет параллельно: без общей коллекции политика одного класса
-/// подменяла бы политику другого прямо посреди запроса.
-/// </summary>
+/// <summary>Общая очередь тестов обмена: рабочий журнал и настройки процесса имеют статическое состояние.</summary>
 [CollectionDefinition(EgressCollection.Name)]
 public sealed class EgressCollection
 {
@@ -36,6 +32,7 @@ internal sealed class TinyServer : IDisposable
     private readonly Func<Seen, string?>      _reply;
     private readonly bool                     _dropFirst;
     private readonly bool                     _truncateFirst;
+    private readonly bool                     _stallAfterHeaders;
     private readonly List<Seen>               _seen = [];
     private          int                      _handled;
 
@@ -43,11 +40,13 @@ internal sealed class TinyServer : IDisposable
         Func<Seen, string?> reply,
         bool dualStack = false,
         bool dropFirst = false,
-        bool truncateFirst = false)
+        bool truncateFirst = false,
+        bool stallAfterHeaders = false)
     {
         _reply         = reply;
         _dropFirst     = dropFirst;
         _truncateFirst = truncateFirst;
+        _stallAfterHeaders = stallAfterHeaders;
 
         if (dualStack)
         {
@@ -108,6 +107,15 @@ internal sealed class TinyServer : IDisposable
 
                     await stream.WriteAsync(half, _stop.Token);
                     await stream.FlushAsync(_stop.Token);
+                    return;
+                }
+
+                if (_stallAfterHeaders)
+                {
+                    var head = Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\n[");
+                    await stream.WriteAsync(head, _stop.Token);
+                    await stream.FlushAsync(_stop.Token);
+                    await Task.Delay(Timeout.Infinite, _stop.Token);
                     return;
                 }
 

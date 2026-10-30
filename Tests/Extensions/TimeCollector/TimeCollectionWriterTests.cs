@@ -165,22 +165,6 @@ public sealed class TimeCollectionWriterTests
         Assert.StartsWith("Трудоемкость (", shell.CollectionName);
     }
 
-    // ── Права ─────────────────────────────────────────────────────────────────
-
-    /// <summary>Своего права расширение не заводит — создание каркаса упирается в общее
-    /// «Создавать коллекции» (та же точка отказа, что у «Документов в коллекцию»).</summary>
-    [Fact]
-    public void Shell_creation_needs_the_create_collection_right()
-    {
-        using var db = new TempDatabase();
-        SetRights(db, PermAction.All & ~PermAction.CreateCollection);
-
-        var ex = Assert.Throws<PermissionDeniedException>(
-            () => TimeCollectionWriter.CreateShell(db.Constructor, "Трудоемкость"));
-
-        Assert.Equal(PermAction.CreateCollection, ex.Action);
-    }
-
     // ── Записи ────────────────────────────────────────────────────────────────
 
     [Fact]
@@ -612,19 +596,4 @@ public sealed class TimeCollectionWriterTests
         Assert.All(db.Constructor.GetRowStyles(shell.CollectionId).Values, s => Assert.Equal("#FFCC00", s.Bg));
     }
 
-    // Понижает текущего пользователя до допущенного не-админа с заданной маской на всю базу
-    // (тот же прием, что в матрице прав ядра: маски пишет только администратор).
-    private static void SetRights(TempDatabase db, PermAction mask)
-    {
-        var me = db.Context.DbUsers.First(u => u.UserKey == CurrentUser.Key);
-        me.IsAdmin = true;
-        db.Context.SaveChanges();
-        db.Permissions.Reload(notify: false);
-        db.Permissions.SetMask(db.Permissions.CurrentUserId, null, (int)mask);
-
-        me.IsAdmin    = false;   // теперь маска действует: администратору можно все
-        me.IsApproved = true;
-        db.Context.SaveChanges();
-        db.Permissions.Reload(notify: false);
-    }
 }

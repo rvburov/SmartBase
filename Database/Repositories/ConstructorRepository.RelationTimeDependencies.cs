@@ -4,19 +4,18 @@ namespace SmartBase.Database.Repositories;
 
 public partial class ConstructorRepository
 {
-    /// <summary>Ключи автоматического подбора: течение времени само не запускает запись связей.
-    /// Обычный показ, поиск и ручной выбор продолжают видеть все свойства.</summary>
+    /// <summary>Ключи автоматического подбора с корректной конфигурацией зависимых периодов.</summary>
     public List<RelationPropertyOption> GetAutoRelationPropertyOptions(int collectionId)
     {
         var options = GetRelationPropertyOptions(collectionId);
-        var check = new AutoRelationTimeDependencies();
+        var check = new AutoRelationConfigDependencies();
         check.Seed(this, collectionId, options);
         return options.Where(p => check.Problem(this, collectionId, p.Key) is null).ToList();
     }
 
     // Читается только схема. Один пакет свойств на коллекцию, общий кеш для всех ключей окна;
     // рекурсия не читает значения записей и не запускает вычисление или подбор.
-    private sealed class AutoRelationTimeDependencies
+    private sealed class AutoRelationConfigDependencies
     {
         private readonly Dictionary<(string Path, int Collection), Dictionary<string, RelationPropertyOption>> _fields = [];
         private readonly Dictionary<(string Path, int Collection, string Key), string?> _done = [];
@@ -30,7 +29,7 @@ public partial class ConstructorRepository
             var identity = (owner.DbPath, collection, key);
             if (_done.TryGetValue(identity, out var previous)) return previous;
             // Общие ошибки схемы/циклы проверяет существующий валидатор подбора.
-            // Здесь ограничиваем только новую зависимость от текущего времени.
+            // Здесь проверяем конфигурацию периода, в том числе через lookup/rollup.
             if (_active.Count >= 64 || !_active.Add(identity)) return null;
             string? problem;
             try { problem = Inspect(owner, collection, key); }
@@ -41,7 +40,6 @@ public partial class ConstructorRepository
 
         private string? Inspect(ConstructorRepository owner, int collection, string key)
         {
-            if (!owner.CanReadRelationCollection(collection)) return null;
             var parts = RelationConfig.SplitKeys(key);
             if (parts.Count > 1)
             {
@@ -59,9 +57,11 @@ public partial class ConstructorRepository
             {
                 if (DatePeriodConfig.FromConfig(field.ConfigJson) is not { } period)
                     return "Настройка периода времени повреждена. Откройте свойство и задайте ее заново.";
-                return period is { Automatic: true, EndFieldId: null }
-                    ? "Период до текущего времени нельзя использовать в автоматическом подборе: течение времени не запускает обновление связей. Выберите фиксированный период или две даты."
-                    : null;
+                if (period.Automatic && (!options.TryGetValue(
+                        period.DateFieldId.ToString(System.Globalization.CultureInfo.InvariantCulture), out var date)
+                        || date.FieldType != "date"))
+                    return "Свойство даты для расчета периода удалено или изменило тип. Выберите даты для расчета заново; прежние связи сохранены.";
+                return null;
             }
             if (field.FieldType is "lookup" or "rollup")
             {

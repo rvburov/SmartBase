@@ -88,7 +88,7 @@ internal static class DocumentMessages
             {
                 if (pending is null)
                     return ReplyMarkup.Refused("Подтверждение: нет операции, ожидающей ответа. Отправьте запрос заново");
-                // Забираем один раз, в том числе при отказе в правах или сбое записи.
+                // Забираем один раз, в том числе при сбое записи.
                 waiting.Items.Remove(key);
                 if (no) return Reply(ReplyMarkup.Bold("Операция отменена"), 0);
                 return Confirm(context, repo, pending);
@@ -134,35 +134,30 @@ internal static class DocumentMessages
             }
             if (problems.Count > 0) return ReplyMarkup.Refused(string.Join("\n", problems));
 
-            try
-            {
-                Demand(repo, context.CollectionId, known);
-                var check = Shape(repo, context.CollectionId);
-                if (check.Shape is not { } shape) return ActionResult.Failed(check.Problem!);
-                var (card, problem) = Find(repo, shape, number!, context);
-                if (card is null) return ReplyMarkup.Refused(problem);
-                if (known == View) return Reply(card.Text(), 1);
+            var check = Shape(repo, context.CollectionId);
+            if (check.Shape is not { } shape) return ActionResult.Failed(check.Problem!);
+            var (card, problem) = Find(repo, shape, number!, context);
+            if (card is null) return ReplyMarkup.Refused(problem);
+            if (known == View) return Reply(card.Text(), 1);
 
-                var after = Apply(card, changes);
-                if (known == Edit && after == card)
-                    return ReplyMarkup.Refused("Изменение: новые значения совпадают с текущими. Изменений нет");
+            var after = Apply(card, changes);
+            if (known == Edit && after == card)
+                return ReplyMarkup.Refused("Изменение: новые значения совпадают с текущими. Изменений нет");
 
-                foreach (var expired in waiting.Items.Where(p => p.Value.Expires <= context.Now).Select(p => p.Key).ToArray())
-                    waiting.Items.Remove(expired);
-                if (waiting.Items.Count >= 256)
-                    return ReplyMarkup.Refused("Подтверждение: слишком много ожидающих операций. Повторите запрос позже");
-                waiting.Items[key] = new Pending(known, card, shape, changes, context.Now + Lifetime);
-                // Перечень изменений строками: старое значение зачеркнуто, новое — жирным.
-                var preview = known == Delete
-                    ? $"{ReplyMarkup.Bold("Подтвердите удаление документа:")}\n{card.Text()}"
-                    : $"{ReplyMarkup.Bold("Подтвердите изменение документа:")}\n{card.Text()}\n\n"
-                      + $"{ReplyMarkup.Bold("Изменения:")}\n"
-                      + string.Join("\n", changes.Select(c =>
-                            $"{c.Key}: {ReplyMarkup.Struck(ReplyMarkup.Escape(Value(card, c.Key)))} → "
-                            + ReplyMarkup.Bold(ReplyMarkup.Escape(c.Value))));
-                return Reply($"{preview}\n\n{Prompt}", 0);
-            }
-            catch (PermissionDeniedException error) { return ReplyMarkup.Refused(error.Message); }
+            foreach (var expired in waiting.Items.Where(p => p.Value.Expires <= context.Now).Select(p => p.Key).ToArray())
+                waiting.Items.Remove(expired);
+            if (waiting.Items.Count >= 256)
+                return ReplyMarkup.Refused("Подтверждение: слишком много ожидающих операций. Повторите запрос позже");
+            waiting.Items[key] = new Pending(known, card, shape, changes, context.Now + Lifetime);
+            // Перечень изменений строками: старое значение зачеркнуто, новое — жирным.
+            var preview = known == Delete
+                ? $"{ReplyMarkup.Bold("Подтвердите удаление документа:")}\n{card.Text()}"
+                : $"{ReplyMarkup.Bold("Подтвердите изменение документа:")}\n{card.Text()}\n\n"
+                  + $"{ReplyMarkup.Bold("Изменения:")}\n"
+                  + string.Join("\n", changes.Select(c =>
+                        $"{c.Key}: {ReplyMarkup.Struck(ReplyMarkup.Escape(Value(card, c.Key)))} → "
+                        + ReplyMarkup.Bold(ReplyMarkup.Escape(c.Value))));
+            return Reply($"{preview}\n\n{Prompt}", 0);
         }
     }
 
@@ -179,7 +174,6 @@ internal static class DocumentMessages
                 return ReplyMarkup.RefusedHeaded("Ожидается подтверждение. Для нового запроса сначала ответьте Нет");
             try
             {
-                DemandRegistration(repo, shape.CollectionId);
                 return repo.InWriteTransaction(() =>
                 {
                     var series = Series(repo, shape, request.Org, request.Eskd);
@@ -224,7 +218,6 @@ internal static class DocumentMessages
                     return WriteRegistration(context, repo, shape, input);
                 });
             }
-            catch (PermissionDeniedException error) { return ReplyMarkup.Refused(error.Message); }
             catch (DocRegistryException error) { return ReplyMarkup.Refused($"Номер: {error.Message}"); }
         }
     }
@@ -232,13 +225,6 @@ internal static class DocumentMessages
     private static string[] Series(ConstructorRepository repo, RegistryShape shape, string org, string eskd) =>
         DocRegistrar.Designations(repo, shape).Where(d => Designation.NumberIn(d, org, eskd) is not null)
             .OrderBy(d => d, StringComparer.Ordinal).ToArray();
-
-    private static void DemandRegistration(ConstructorRepository repo, int collection)
-    {
-        repo.Permissions?.Demand(PermAction.ViewCollection, collection);
-        repo.Permissions?.Demand(PermAction.CreateRecord, collection);
-        repo.Permissions?.Demand(PermAction.EditRecord, collection);
-    }
 
     private static ActionResult WriteRegistration(ActionContext context, ConstructorRepository repo,
                                                    RegistryShape shape, RegistrationInput input)
@@ -253,8 +239,6 @@ internal static class DocumentMessages
     {
         try
         {
-            if (pending.Registration is not null) DemandRegistration(repo, context.CollectionId);
-            else Demand(repo, context.CollectionId, pending.Action);
             return repo.InWriteTransaction(() =>
             {
                 var check = Shape(repo, context.CollectionId);
@@ -287,15 +271,7 @@ internal static class DocumentMessages
                 return Reply($"{ReplyMarkup.Bold("Изменено")}\n{Apply(current, pending.Changes).Text([.. pending.Changes.Keys])}", 1);
             });
         }
-        catch (PermissionDeniedException error) { return ReplyMarkup.Refused(error.Message); }
         catch (DocRegistryException error) { return ReplyMarkup.Refused($"Номер: {error.Message}"); }
-    }
-
-    private static void Demand(ConstructorRepository repo, int collection, string action)
-    {
-        repo.Permissions?.Demand(PermAction.ViewCollection, collection);
-        if (action != View)
-            repo.Permissions?.Demand(action == Delete ? PermAction.DeleteRecord : PermAction.EditRecord, collection);
     }
 
     private static SchemaCheck Shape(ConstructorRepository repo, int collectionId)

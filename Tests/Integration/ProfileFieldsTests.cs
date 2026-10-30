@@ -119,7 +119,7 @@ public sealed class ProfileFieldsTests
         {
             CurrentUser.Department = "Отдел эксплуатации";
             CurrentUser.Position   = "Главный инженер";
-            db.Permissions.SyncDisplayName();
+            db.Users.SyncDisplayName();
 
             // В базу уезжает только имя: подразделение и должность — личные справочные поля,
             // схема db_users их не знает и переименования из-за них не происходит.

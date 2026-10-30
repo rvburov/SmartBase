@@ -265,7 +265,6 @@ public partial class RecordPageView : UserControl
         HeaderBar.CollectionPanelToggled += (_, open) => CollectionPanelToggled?.Invoke(this, open);
 
         FooterBar.ActionsRequested += (_, anchor) => ShowActionsMenu(anchor);
-        InitializeDatePeriodRuntime();
     }
 
     /// <summary>Синхронизирует визуальное состояние кнопки с фактической видимостью блока коллекции.</summary>
@@ -274,7 +273,6 @@ public partial class RecordPageView : UserControl
     /// <param name="dbId">База показываемой записи: 0 — активная, &gt;0 — открыта межбазовым переходом.</param>
     public void Show(ConstructorRepository repository, int recordId, int collectionId, int dbId = 0)
     {
-        _datePeriodRefreshCancellation?.Cancel();
         // Порог медленности: список свойств рисованный, и открытие не зависит от числа свойств;
         // сюда уходит только чтение записи и полей.
         using var slow = Logging.Diag.Measure("открытие страницы записи", Logging.Diag.UiOpen,
@@ -344,7 +342,6 @@ public partial class RecordPageView : UserControl
 
     public void Clear()
     {
-        _datePeriodRefreshCancellation?.Cancel();
         ResetBacklinks();
         _reloadAfterList = false;
         _vm = null;
@@ -1010,8 +1007,7 @@ public partial class RecordPageView : UserControl
         // Новое свойство встает после выделенного — как пункт меню у этого свойства.
         if (ShortcutSettings.Matches("record.createProperty", e))
         {
-            PermissionNotice.Run(this, Can(PermAction.CreateField), PermAction.CreateField,
-                () => PropertyCreateAfterRequested?.Invoke(this, fieldId.ToString()));
+            PropertyCreateAfterRequested?.Invoke(this, fieldId.ToString());
             e.Handled = true;
             return;
         }
@@ -1025,16 +1021,14 @@ public partial class RecordPageView : UserControl
 
         if (ShortcutSettings.Matches("record.editProperty", e))
         {
-            PermissionNotice.Run(this, Can(PermAction.EditField), PermAction.EditField,
-                () => PropertyEditRequested?.Invoke(this, fieldId));
+            PropertyEditRequested?.Invoke(this, fieldId);
             e.Handled = true;
             return;
         }
 
         if (ShortcutSettings.Matches("record.duplicateProperty", e))
         {
-            PermissionNotice.Run(this, Can(PermAction.DuplicateField), PermAction.DuplicateField,
-                () => PropertyDuplicateRequested?.Invoke(this, [.. _selectedFieldIds]));
+            PropertyDuplicateRequested?.Invoke(this, [.. _selectedFieldIds]);
             e.Handled = true;
             return;
         }
@@ -1055,16 +1049,14 @@ public partial class RecordPageView : UserControl
     {
         if (ShortcutSettings.Matches("record.createProperty", e))
         {
-            PermissionNotice.Run(this, Can(PermAction.CreateField), PermAction.CreateField,
-                () => PropertyCreateAfterRequested?.Invoke(this, TableRowVm.TitleKey));
+            PropertyCreateAfterRequested?.Invoke(this, TableRowVm.TitleKey);
             e.Handled = true;
             return;
         }
 
         if (ShortcutSettings.Matches("record.editProperty", e))
         {
-            PermissionNotice.Run(this, Can(PermAction.EditField), PermAction.EditField,
-                () => TitleRenameRequested?.Invoke(this, EventArgs.Empty));
+            TitleRenameRequested?.Invoke(this, EventArgs.Empty);
             e.Handled = true;
             return;
         }
@@ -1084,13 +1076,6 @@ public partial class RecordPageView : UserControl
     // отличиями по существу: свойства в панели идут сверху вниз, поэтому сдвиг называется
     // «вверх/вниз», а пункта «Ручная ширина столбцов» нет вовсе — столбцов в панели нет.
     // Пункты собираются из общих MenuIcons/ColorMenu, поэтому вид у двух меню один.
-
-    private bool Can(PermAction action) =>
-        _repo?.Permissions?.Can(action, _vm?.CollectionId ?? 0) ?? true;
-
-    // Запрещенное действие не гасим, а объясняем по клику — как в таблице.
-    private void Guarded(MenuItem item, PermAction action, Action run) =>
-        item.Click += (_, _) => Controls.Dialogs.PermissionNotice.Run(this, Can(action), action, run);
 
     // ── Действия обмена над записью ───────────────────────────────────────────
 
@@ -1148,19 +1133,17 @@ public partial class RecordPageView : UserControl
 
         var miEdit = new MenuItem { Header = Controls.Components.MenuIcons.EditHeader() }
             .WithGesture("record.editProperty", this);
-        Guarded(miEdit, PermAction.EditField, () => PropertyEditRequested?.Invoke(this, fieldId));
+        miEdit.Click += (_, _) => PropertyEditRequested?.Invoke(this, fieldId);
         menu.Items.Add(miEdit);
 
         var miDuplicate = new MenuItem { Header = Controls.Components.MenuIcons.DuplicateHeader() }
             .WithGesture("record.duplicateProperty", this);
-        Guarded(miDuplicate, PermAction.DuplicateField,
-                () => PropertyDuplicateRequested?.Invoke(this, TargetFieldIds(fieldId)));
+        miDuplicate.Click += (_, _) => PropertyDuplicateRequested?.Invoke(this, TargetFieldIds(fieldId));
         menu.Items.Add(miDuplicate);
 
         var miCreate = new MenuItem { Header = Controls.Components.MenuIcons.CreatePropertyHeader() }
             .WithGesture("record.createProperty", this);
-        Guarded(miCreate, PermAction.CreateField,
-                () => PropertyCreateAfterRequested?.Invoke(this, fieldId.ToString()));
+        miCreate.Click += (_, _) => PropertyCreateAfterRequested?.Invoke(this, fieldId.ToString());
         menu.Items.Add(miCreate);
 
         var miDisplay = new MenuItem { Header = Controls.Components.MenuIcons.DisplayHeader() };
@@ -1180,16 +1163,14 @@ public partial class RecordPageView : UserControl
         if (FileAutoRule.FromConfig(row.Field.ConfigJson) is not null)
         {
             var miRefresh = new MenuItem { Header = "Обновить привязку" };
-            Guarded(miRefresh, PermAction.EditRecord,
-                    () => PropertyAutoFileRefreshRequested?.Invoke(this, fieldId));
+            miRefresh.Click += (_, _) => PropertyAutoFileRefreshRequested?.Invoke(this, fieldId);
             menu.Items.Add(miRefresh);
         }
         if (row.Field.FieldType == "date_period"
             && DatePeriodConfig.FromConfig(row.Field.ConfigJson) is { Automatic: false })
         {
             var recalculate = new MenuItem { Header = "Пересчитать" };
-            Guarded(recalculate, PermAction.EditRecord,
-                () => _ = RecalculateDatePeriodsAsync(TargetFieldIds(fieldId)));
+            recalculate.Click += (_, _) => _ = RecalculateDatePeriodsAsync(TargetFieldIds(fieldId));
             menu.Items.Add(recalculate);
         }
 
@@ -1204,8 +1185,7 @@ public partial class RecordPageView : UserControl
             Header    = Controls.Components.MenuIcons.DeleteHeader(),
             IsEnabled = !row.Field.IsRequired,
         }.WithGesture("record.deleteProperties", this);
-        Guarded(miDelete, PermAction.DeleteField,
-                () => PropertiesDeleteRequested?.Invoke(this, TargetFieldIds(fieldId)));
+        miDelete.Click += (_, _) => PropertiesDeleteRequested?.Invoke(this, TargetFieldIds(fieldId));
         menu.Items.Add(miDelete);
 
         return menu;
@@ -1228,13 +1208,12 @@ public partial class RecordPageView : UserControl
 
         var miEdit = new MenuItem { Header = Controls.Components.MenuIcons.EditHeader() }
             .WithGesture("record.editProperty", this);
-        Guarded(miEdit, PermAction.EditField, () => TitleRenameRequested?.Invoke(this, EventArgs.Empty));
+        miEdit.Click += (_, _) => TitleRenameRequested?.Invoke(this, EventArgs.Empty);
         menu.Items.Add(miEdit);
 
         var miCreate = new MenuItem { Header = Controls.Components.MenuIcons.CreatePropertyHeader() }
             .WithGesture("record.createProperty", this);
-        Guarded(miCreate, PermAction.CreateField,
-                () => PropertyCreateAfterRequested?.Invoke(this, TableRowVm.TitleKey));
+        miCreate.Click += (_, _) => PropertyCreateAfterRequested?.Invoke(this, TableRowVm.TitleKey);
         menu.Items.Add(miCreate);
 
         var miDisplay = new MenuItem { Header = Controls.Components.MenuIcons.DisplayHeader() };
@@ -1252,8 +1231,8 @@ public partial class RecordPageView : UserControl
         return menu;
     }
 
-    // Цвет свойства — тот же аспект column_meta, что видимость и подпись, поэтому право как
-    // у правки свойства. Состав пересчитывается в Opening: и отметка текущего цвета (current),
+    // Цвет свойства хранится в column_meta. Состав пересчитывается в Opening:
+    // и отметка текущего цвета (current),
     // и применение (makeApply) — у свойств оно берет НАБОР, а выделение к моменту клика могло
     // смениться.
     private void AddColorItems(ContextMenu menu, Func<RowStyle> current,
@@ -1261,7 +1240,6 @@ public partial class RecordPageView : UserControl
     {
         var host = new MenuItem { Header = Controls.Components.MenuIcons.ColorHeader() };
         Controls.Components.MenuIcons.FixSubmenuGap(host);
-        host.IsEnabled = Can(PermAction.EditField);
 
         menu.Opening += (_, _) =>
         {
@@ -1374,15 +1352,14 @@ public partial class RecordPageView : UserControl
         if (AddDescriptionLink() is { } link) BottomTitleHost.Children.Add(link);
     }
 
-    // Ссылка «+ «Добавить описание»» — только пока поля с ролью «Описание» у коллекции нет и есть
-    // право создавать свойства. Показывается вместо имени свойства, то есть лишь когда снизу
+    // Ссылка «+ «Добавить описание»» — только пока поля с ролью «Описание» у коллекции нет.
+    // Показывается вместо имени свойства, то есть лишь когда снизу
     // пусто: стоит выбрать текстовую карточку — крошка занята ее именем, и ссылка уходит до
     // следующего открытия записи. Клик уходит наверх (AddDescriptionRequested): поле заводит
     // контроллер, чтобы колонка появилась и в таблице.
     private Control? AddDescriptionLink()
     {
         if (_vm is null || _vm.DescriptionFieldId is not null) return null;
-        if (_repo?.Permissions is { } perms && !perms.Can(PermAction.CreateField, _vm.CollectionId)) return null;
 
         // Плюс — часть самой подписи, а не иконка: один TextBlock, поэтому символ идет
         // ровно в размер текста крошки и не требует отдельной подгонки.
@@ -1516,6 +1493,15 @@ public partial class RecordPageView : UserControl
             if (_fileEditors.TryGetValue(fid, out var ed)) ed.SyncStorage(val);
         }
         PropertiesHost.RefreshValues();
+        // Вычисляемый период также приходит среди побочных изменений даты. Его
+        // открытый редактор только для чтения не имеет привязки к Value.
+        var index = PropertiesHost.EditingIndex;
+        if (index >= 0 && index < _cards.Count
+            && _cards[index].Tag is PropertyRowVm current
+            && current.Field.FieldType == "date_period"
+            && changes.Any(change => change.FieldId == current.Field.Id)
+            && PropertiesHost.CurrentEditor is TextBox { IsReadOnly: true } editor)
+            editor.Text = FieldTypeInfo.FormatComputedDisplay(current.Value, current.Field.FieldType);
         SchedulePropertyFilter();
     }
 

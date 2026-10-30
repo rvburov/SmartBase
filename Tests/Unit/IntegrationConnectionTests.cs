@@ -2,15 +2,7 @@ using SmartBase.Integrations;
 
 namespace SmartBase.Tests.Unit;
 
-/// <summary>
-/// Карточка соединения (<see cref="IntegrationConnection"/>): что считается заполненным
-/// правильно и что нет.
-///
-/// Проверяется ФОРМА, а не доступность. Разрешен ли адрес политикой — вопрос
-/// <see cref="EgressGate"/>, отвечает ли сервер — кнопки «Проверить связь». Смешивать эти три
-/// вопроса нельзя: адрес, запрещенный политикой, все равно должен сохраняться (политику
-/// расширят завтра), а неразобравшийся адрес — нет.
-/// </summary>
+/// <summary>Проверки формы соединения и настроек авторизации на стороне внешнего сервиса. Доступность сервера проверяет транспорт.</summary>
 public sealed class IntegrationConnectionTests
 {
     private static IntegrationConnection Valid() =>
@@ -53,7 +45,7 @@ public sealed class IntegrationConnectionTests
     }
 
     [Fact]
-    public void Address_that_policy_would_refuse_is_still_a_valid_card()
+    public void Any_valid_http_address_is_a_valid_card()
     {
         // Форма правильная — сохранять можно; разрешит ли политика, решает шлюз при отправке.
         Assert.Empty((Valid() with { Address = "https://api.attacker.example" }).Problems());
@@ -156,7 +148,6 @@ public sealed class IntegrationConnectionTests
         // исправлять по одному и жать «Сохранить» четыре раза.
         Assert.Equal(4, card.Problems().Count);
     }
-
 
     // ── Дублирование ──────────────────────────────────────────────────────────
 

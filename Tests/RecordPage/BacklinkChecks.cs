@@ -198,21 +198,6 @@ internal static class BacklinkChecks
             Expect(Names()[^1] == "Добавить свойство", "без ссылок и со скрытием пустых раздела нет");
             Click(toggle);
 
-            // Нет права просмотра коллекции-источника — ее карточки нет совсем.
-            page.Show(repo, client, clients);
-            Wait(() => !page.BacklinksLoading);
-            var userId = manager.Permissions.CurrentUserId;
-            manager.Permissions.SetMask(userId, bills, 0);
-            var me = manager.Context.DbUsers.First(u => u.Id == userId);
-            me.IsAdmin = false;
-            me.IsApproved = true;
-            manager.Context.SaveChanges();
-            manager.Permissions.Reload(notify: false);
-            page.RefreshBacklinks();
-            Wait(() => !page.BacklinksLoading && !Names().Contains("Счета · Клиент"));
-            Expect(!Names().Contains("Счета · Клиент") && Names().Contains("Сделки · Клиент"),
-                   "закрытая коллекция-источник не показывается");
-
             Console.WriteLine($"Ссылки на запись: проверок {checkedCount}, провалов {failed}.");
             return failed == 0 ? 0 : 2;
 

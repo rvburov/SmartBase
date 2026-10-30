@@ -61,8 +61,7 @@
         <!-- Стандарт габаритов диалоговых окон (расширений не касается) -->
         <StyleInclude Source="avares://SmartBase/Assets/Styles/WindowMetrics.axaml" />
         <StyleInclude Source="avares://SmartBase/Assets/Styles/Controls.axaml" />
-        <!-- Вид строки настройки, ячейки с данными и строки таблицы: нужен и «Настройкам»,
-             и панели администратора (контур безопасности, журнал безопасности). -->
+        <!-- Общий вид строки настройки, ячейки с данными и строки таблицы. -->
         <StyleInclude Source="avares://SmartBase/Assets/Styles/SettingRows.axaml" />
         <StyleInclude Source="avares://SmartBase/Controls/Widgets/AppCheckBox.axaml" />
     </Application.Styles>

@@ -15,7 +15,7 @@ public partial class ConstructorRepository
         var result = new Dictionary<int, List<(RelationTarget Target, string Display)>>();
         if (fromRecordIds.Count == 0) return result;
         var field = db.DbFields.AsNoTracking().FirstOrDefault(f => f.Id == fieldId);
-        if (field is null || !CanReadRelationCollection(field.CollectionId)) return result;
+        if (field is null) return result;
         var cfg = RelationConfig.FromConfig(field.ConfigJson);
         if (cfg is null) return result;
         var edges = (from l in db.DbRecordLinks.AsNoTracking()
@@ -39,7 +39,6 @@ public partial class ConstructorRepository
 
     public List<RelationPropertyOption> GetRelationPropertyOptions(int collectionId)
     {
-        if (!CanReadRelationCollection(collectionId)) return [];
         var result = new List<RelationPropertyOption>
         {
             new(RelationConfig.TitleField, GetSystemFieldNames(collectionId).GetValueOrDefault(TitleKey, "Название"), "text"),
@@ -49,14 +48,10 @@ public partial class ConstructorRepository
         return result;
     }
 
-    public bool CanReadRelationCollection(int collectionId) =>
-        Permissions?.Can(PermAction.ViewCollection, collectionId) ?? true;
-
-    /// <summary>Значения выбранного свойства в порядке записей. Запрет чтения отличается от пустой коллекции.</summary>
+    /// <summary>Значения выбранного свойства в порядке записей.</summary>
     public List<RelationPropertyValue> ReadRelationPropertyValues(int collectionId, string fieldKey,
         IReadOnlyCollection<int>? ids = null)
     {
-        Demand(PermAction.ViewCollection, collectionId);
         if (ids is { Count: 0 }) return [];
         if (fieldKey.Contains(RelationConfig.KeySeparator)) return ReadCompositePropertyValues(collectionId, fieldKey, ids);
         var query = db.DbRecords.AsNoTracking().Where(r => r.CollectionId == collectionId);
@@ -139,7 +134,7 @@ public partial class ConstructorRepository
         }).ToList();
     }
 
-    /// <summary>Пакетный показ целей из их собственных коллекций; запрет не раскрывает заголовок.</summary>
+    /// <summary>Пакетный показ целей из их собственных коллекций; несуществующие записи пропускаются.</summary>
     public Dictionary<int, string> GetRecordPropertyValues(IReadOnlyCollection<int> ids, string fieldKey)
     {
         if (ids.Count == 0) return [];
@@ -148,11 +143,6 @@ public partial class ConstructorRepository
         var result = new Dictionary<int, string>();
         foreach (var group in records.GroupBy(r => r.CollectionId))
         {
-            if (!CanReadRelationCollection(group.Key))
-            {
-                foreach (var r in group) result[r.Id] = RelationProperty.NoAccess;
-                continue;
-            }
             foreach (var value in ReadRelationPropertyValues(group.Key, fieldKey, group.Select(r => r.Id).ToList()))
                 result[value.RecordId] = value.Display;
         }
@@ -183,7 +173,6 @@ public partial class ConstructorRepository
     {
         ct.ThrowIfCancellationRequested();
         var sourceCollection = CollectionOfRecord(recordId);
-        Demand(PermAction.ViewCollection, sourceCollection);
         var connections = CaptureAutoConnections(new DbField { CollectionId = sourceCollection ?? 0, FieldType = "relation", ConfigJson = cfg.ToConfigJson() });
         var targets = selected.ToArray();
         return Task.Run(() => WithAutoConnections(connections, repo =>
@@ -221,7 +210,6 @@ public partial class ConstructorRepository
         int excludeId, int take, CancellationToken ct, RelationConfig? condition = null)
     {
         ct.ThrowIfCancellationRequested();
-        if (!CanReadRelationCollection(collectionId)) return [];
         take = Math.Clamp(take, 1, 1000);
         var term = query?.Trim() ?? "";
         if (condition is { HasCondition: true })
@@ -313,14 +301,14 @@ public partial class ConstructorRepository
             var differentPropertyDatabase = RelationConfig.SplitKeys(fieldKey).Any(k => int.TryParse(k, out _))
                 && expectedTargetDbId is int expected && !IsExpectedRelationTargetDatabase(group.Key, expected);
             // Численный id свойства имеет смысл только в базе, для которой выбран этот selector.
-            // Чтение Title сохраняет проверку существования и прав, не читая одноименную цифру чужого поля.
+            // Чтение Title сохраняет проверку существования, не читая одноименную цифру чужого поля.
             var values = target?.GetRecordPropertyValues(group.Select(t => t.RecordId).ToList(),
                 differentPropertyDatabase ? RelationConfig.TitleField : fieldKey);
             foreach (var edge in group)
             {
                 if (values is null) labels[edge] = UnavailableLabel(group.Key);
                 else if (values.TryGetValue(edge.RecordId, out var text))
-                    labels[edge] = differentPropertyDatabase && text != RelationProperty.NoAccess ? RelationProperty.MissingField : text;
+                    labels[edge] = differentPropertyDatabase ? RelationProperty.MissingField : text;
             }
         }
         return labels;

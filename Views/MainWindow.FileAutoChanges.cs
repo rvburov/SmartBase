@@ -35,7 +35,7 @@ public partial class MainWindow
     private void FileAutoMountsChanged()
     {
         if (_fileAutoClosed) return;
-        var current = _workspace.Mounted.Where(m => m.Permissions.AccessGranted).ToHashSet();
+        var current = _workspace.Mounted.ToHashSet();
         if (_fileAutoMounted.SetEquals(current)) return;
         _fileAutoMounted.Clear();
         _fileAutoMounted.UnionWith(current);
@@ -83,7 +83,7 @@ public partial class MainWindow
             foreach (var work in pending)
             {
                 if (_fileAutoClosed) break;
-                var manager = _workspace.Mounted.FirstOrDefault(m => m.Path == work.DbPath && m.Permissions.AccessGranted);
+                var manager = _workspace.Mounted.FirstOrDefault(m => m.Path == work.DbPath);
                 if (manager is null) continue;
                 try
                 {
@@ -91,7 +91,7 @@ public partial class MainWindow
                     if (_fileAutoClosed) break;
                     // После await прежний manager мог быть отключен или заменен новым.
                     // Результат старого владельца не должен трогать закрытый UI-контекст.
-                    if (!_workspace.Mounted.Contains(manager) || !manager.Permissions.AccessGranted) continue;
+                    if (!_workspace.Mounted.Contains(manager)) continue;
                     if (token.IsCancellationRequested || result == ConstructorRepository.FileAutoResolveResult.Cancelled)
                     {
                         QueueFileAutoWork(work);

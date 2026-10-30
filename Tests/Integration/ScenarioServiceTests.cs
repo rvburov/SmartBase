@@ -33,14 +33,13 @@ public sealed class ScenarioServiceTests : IDisposable
 
         RunJournal.Attach(_journal);
 
-        EgressGate.AttachPolicy(EgressPolicySet.Of(new EgressPolicy(
-            EgressMode.Internal, ["127.0.0.1"], ["127.0.0.0/8"], [], 1000, 1024 * 1024, 100,
-            null, false, "тест")));
+
     }
 
     public void Dispose()
     {
-        EgressGate.Close();
+
+
         RunJournal.Attach(null);
         _registry.Dispose();
         _db.Dispose();

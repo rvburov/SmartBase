@@ -23,7 +23,7 @@ public sealed class TempDatabase : IDisposable
     public AppDbContext          Context     => Manager.Context;
     public ConstructorRepository Constructor => Manager.Constructor;
     public CategoryRepository    Categories  => Manager.Categories;
-    public PermissionService     Permissions => Manager.Permissions;
+    public UserDirectory         Users => Manager.Users;
     /// <summary>Постоянный номер базы для межбазовых связей (заводится при открытии).</summary>
     public int                   LinkId      => Manager.Constructor.RelationBaseId;
 

@@ -166,24 +166,6 @@ public sealed class RelationBacklinkTests
     }
 
     [Fact]
-    public void A_closed_source_collection_is_not_shown_at_all()
-    {
-        using var f = new Fixture();
-        f.Repo.SetLinks(f.BillClient, f.AddBill("Счет"), [f.Client]);
-        var userId = f.Database.Permissions.CurrentUserId;
-        f.Database.Permissions.SetMask(userId, f.Bills, 0);
-        var me = f.Database.Context.DbUsers.First(u => u.Id == userId);
-        me.IsAdmin = false;
-        me.IsApproved = true;
-        f.Database.Context.SaveChanges();
-        f.Database.Permissions.Reload(notify: false);
-        Assert.Equal(["Сделки · Клиент"], f.Groups().Select(g => $"{g.Collection} · {g.Field}"));
-        var hidden = new RelationBacklinkGroup(0, f.BillClient, "Клиент", f.Bills, "Счета", 1, false, [], [0]);
-        Assert.Throws<PermissionDeniedException>(() => f.Repo.RelationBacklinkSources(hidden, f.Client, null, null, 200));
-        Assert.Throws<PermissionDeniedException>(() => f.Repo.RelationBacklinkTotal(hidden, f.Client));
-    }
-
-    [Fact]
     public void The_edge_query_reads_only_the_covering_index()
     {
         // Без ANALYZE план от объема не зависит: хватает малой базы. Именно этот запрос идет на
@@ -395,16 +377,6 @@ public sealed class RelationBacklinkWorkspaceTests
                 }
                 finally { defDb.Context.Database.ExecuteSqlRaw("ALTER TABLE db_fields_hidden RENAME TO db_fields"); }
 
-                // Без допуска к базе «Учет» она не читается вовсе: даже если ее файл не прочитать,
-                // раздела «Ссылки не прочитаны» с ее именем нет.
-                var me = accounting.Context.DbUsers.First(u => u.Id == accounting.Permissions.CurrentUserId);
-                me.IsAdmin = false;
-                me.IsApproved = false;
-                accounting.Context.SaveChanges();
-                accounting.Permissions.Reload(notify: false);
-                accounting.Context.Database.ExecuteSqlRaw("ALTER TABLE db_fields RENAME TO db_fields_hidden");
-                try { Assert.Single(RelationBacklinkReader.Capture(defDb.Constructor, client, clients).Load(default)); }
-                finally { accounting.Context.Database.ExecuteSqlRaw("ALTER TABLE db_fields_hidden RENAME TO db_fields"); }
             }
             finally
             {

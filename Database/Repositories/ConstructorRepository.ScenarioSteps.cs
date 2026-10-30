@@ -89,13 +89,11 @@ public partial class ConstructorRepository
     {
         var matching = !string.IsNullOrWhiteSpace(matchField);
 
-        // Права спрашиваются по тому, что шаг СОБИРАЕТСЯ делать. Обновление без права правки —
-        // это правка чужих данных мимо запрета, а создание без права создания — обход его же.
-        if (matching)      Demand(PermAction.EditRecord,   collectionId);
-        if (createMissing) Demand(PermAction.CreateRecord, collectionId);
+
+
 
         using var ctx = new AppDbContext(db.DbPath);
-        var repo = new ConstructorRepository(ctx) { FileAutoPermissions = AutoFilePermissions };
+        var repo = new ConstructorRepository(ctx);
 
         var collection = repo.CollectionName(collectionId);
         if (collection.Length == 0)
@@ -252,30 +250,21 @@ public partial class ConstructorRepository
     /// <param name="Label">Самая строгая метка среди базы и колонок — в след журнала
     /// безопасности.</param>
     /// <param name="Trouble">Почему выгружать нельзя; <c>null</c> — можно.</param>
-    public sealed record ExportSource(IReadOnlyList<ExportColumn> Columns, string Collection,
-                                      ConfidentialityLabel Label, string? Trouble)
+    public sealed record ExportSource(IReadOnlyList<ExportColumn> Columns, string Collection, string? Trouble)
     {
         public static ExportSource Bad(string trouble) =>
-            new([], "", ConfidentialityLabel.Open, trouble);
+            new([], "", trouble);
     }
 
     /// <summary>
-    /// Колонки коллекции под автоматическую выгрузку — с обеими метками контура вторым рубежом,
-    /// как у отправки (<see cref="ReadOutgoingIsolated"/>). Берутся ВИДИМЫЕ колонки — то, что
-    /// человек видит в таблице; помеченная среди них останавливает шаг словами, а спрятать ее
-    /// из выгрузки можно тем же способом, что и с экрана, — скрыв колонку.
+    /// Видимые колонки коллекции под автоматическую выгрузку.
     /// </summary>
     public ExportSource ExportSourceIsolated(int collectionId)
     {
-        Demand(PermAction.ViewCollection, collectionId);
 
         using var ctx = new AppDbContext(db.DbPath);
         ctx.ApplyPerformancePragmas();
         var repo = new ConstructorRepository(ctx);
-
-        var label  = repo.GetDatabaseLabel();
-        var closed = EgressGate.CheckDatabase(label);
-        if (!closed.Allowed) return ExportSource.Bad(closed.Explanation);
 
         var collection = repo.CollectionName(collectionId);
         if (collection.Length == 0)
@@ -285,20 +274,7 @@ public partial class ConstructorRepository
         if (columns.Count == 0)
             return ExportSource.Bad($"в коллекции «{collection}» нет видимых колонок");
 
-        var strictest = label;
-
-        foreach (var column in columns)
-        {
-            var mark     = Confidentiality.FromConfig(column.ConfigJson);
-            var decision = EgressGate.CheckField(mark);
-
-            if (!decision.Allowed)
-                return ExportSource.Bad($"свойство «{column.Header}»: {decision.Explanation}");
-
-            strictest = Confidentiality.Strictest(strictest, mark);
-        }
-
-        return new ExportSource(columns, collection, strictest, null);
+        return new ExportSource(columns, collection, null);
     }
 
     private static bool Same(string? left, string? right) =>

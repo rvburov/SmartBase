@@ -17,30 +17,16 @@ public sealed class InboxFolderTests : IDisposable
 
     public void Dispose()
     {
-        EgressGate.Close();
+
         try { if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true); }
         catch { /* временная папка: не убралась — уберет система */ }
     }
 
     private static readonly DateTimeOffset Now = new(2026, 9, 10, 12, 0, 0, TimeSpan.Zero);
 
-    /// <summary>Политика, разрешающая ровно этот корень: приемник спрашивает ее сам.</summary>
-    private void AllowRoot(string? root = null) =>
-        EgressGate.AttachPolicy(EgressPolicySet.Of(new EgressPolicy(
-            EgressMode.Internal,
-            Hosts:           [],
-            Networks:        [],
-            Folders:         [root ?? _root],
-            MaxRowsPerRun:   1000,
-            MaxBytesPerDay:  1024 * 1024,
-            MaxRunsPerHour:  100,
-            ValidUntil:      null,
-            UserMayAddHosts: false,
-            Source:          "тест")));
-
     private InboxLayout Layout()
     {
-        AllowRoot();
+
         var layout = InboxFolder.Open(_root, out var explanation);
         Assert.NotNull(layout);
         Assert.Equal("", explanation);
@@ -70,33 +56,10 @@ public sealed class InboxFolderTests : IDisposable
         Assert.True(Directory.Exists(layout.Receipts));
     }
 
-    /// <summary>
-    /// Папка-приемник — такая же дверь, как сетевой адрес: открыть ее себе самому пользователь
-    /// не должен. Разрешение спрашивается там же, где появляются пути обмена, — обойти нечем.
-    /// </summary>
-    [Fact]
-    public void Folder_outside_the_policy_is_refused()
-    {
-        AllowRoot(Path.Combine(Path.GetTempPath(), "sbinbox_чужой_корень"));
-
-        Assert.Null(InboxFolder.Open(_root, out var explanation));
-        Assert.NotEqual("", explanation);
-        Assert.False(Directory.Exists(_root));   // и папок не наделал
-    }
-
-    [Fact]
-    public void Without_a_policy_nothing_opens()
-    {
-        EgressGate.Close();
-
-        Assert.Null(InboxFolder.Open(_root, out var explanation));
-        Assert.NotEqual("", explanation);
-    }
-
     [Fact]
     public void Empty_root_is_refused()
     {
-        AllowRoot();
+
         Assert.Null(InboxFolder.Open("  ", out var explanation));
         Assert.Contains("не выбрана", explanation, StringComparison.Ordinal);
     }

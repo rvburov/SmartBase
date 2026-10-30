@@ -11,7 +11,7 @@ namespace SmartBase.Controls.Dialogs;
 /// соединения — здесь только метод, путь, заголовки, тело и разбор ответа.
 ///
 /// Путь относительный, и окно это показывает: под строкой пути собран итоговый адрес. Хост
-/// берется только из соединения, потому что политика проверяет именно его — позволь тут полный
+/// берется только из соединения — позволь тут полный
 /// адрес, и карточка показывала бы одно соединение, а запрос уходил бы куда угодно.
 ///
 /// Кнопка «Проверить» отправляет запрос по-настоящему и показывает СЫРОЙ ответ: без него чужой
@@ -199,9 +199,7 @@ public partial class IntegrationRequestDialog : Window
     private static string Verdict(EgressResponse answer)
     {
         if (!answer.Sent)
-            return answer.Reason == EgressDenyReason.None
-                ? "Не удалось: " + answer.Explanation
-                : "Запрещено политикой: " + answer.Explanation;
+            return "Не удалось: " + answer.Explanation;
 
         var head = $"Ответ {answer.StatusCode} · {answer.Bytes:N0} байт · {answer.Elapsed.TotalSeconds:0.0} с";
 

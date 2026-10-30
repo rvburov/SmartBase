@@ -40,7 +40,7 @@ public partial class ConstructorRepository
             .Select(f => (Field: f, Config: RelationConfig.FromConfig(f.ConfigJson)))
             .Where(p => p.Config is { } c && c.TargetCollectionId == collectionId
                         && (panelBase ? c.TargetDbId == 0 || ownLinkId > 0 && c.TargetDbId == ownLinkId : c.TargetDbId == ownLinkId)
-                        && CanReadRelationCollection(p.Field.CollectionId))
+)
             .Select(p => p.Field).ToList();
         if (fields.Count == 0) return [];
         var collectionIds = fields.Select(f => f.CollectionId).Distinct().ToList();
@@ -73,7 +73,6 @@ public partial class ConstructorRepository
     public RelationBacklinkPage RelationBacklinkSources(RelationBacklinkGroup group, int recordId, string? query, int? before,
         int take, CancellationToken ct = default)
     {
-        Demand(PermAction.ViewCollection, group.CollectionId);
         var term = string.IsNullOrWhiteSpace(query) ? null : query.Trim();
         var found = new List<int>();
         foreach (var chunk in BacklinkSourceIds(group.FieldId, recordId, group.Targets, group.SourceDbId == 0 ? recordId : 0,
@@ -91,7 +90,6 @@ public partial class ConstructorRepository
     /// <summary>Точное число источников карточки — для подсказки под открытым списком.</summary>
     public int RelationBacklinkTotal(RelationBacklinkGroup group, int recordId, CancellationToken ct = default)
     {
-        Demand(PermAction.ViewCollection, group.CollectionId);
         var total = 0;
         foreach (var chunk in BacklinkSourceIds(group.FieldId, recordId, group.Targets, group.SourceDbId == 0 ? recordId : 0,
                      null, BacklinkCountChunk, ct))

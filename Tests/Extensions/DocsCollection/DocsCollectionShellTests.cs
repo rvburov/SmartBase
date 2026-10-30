@@ -9,7 +9,7 @@ namespace SmartBase.Tests.Extensions.DocsCollection;
 /// Каркас коллекции — второй шаг расширения: коллекция, подпись системной колонки и три
 /// пользовательских поля. Делается на ОБЩЕМ репозитории в UI-потоке, поэтому здесь же
 /// проверяется точка отказа по правам: расширение не заводит своего права и живет под
-/// <see cref="PermAction.CreateCollection"/>.
+/// создания коллекции.
 ///
 /// Состав и порядок колонок — часть договоренности с пользователем: он увидит именно такую
 /// таблицу, и молчаливая смена набора полей ломает уже созданные коллекции.
@@ -110,28 +110,10 @@ public sealed class DocsCollectionShellTests
         Assert.Equal("Документы", shell.CollectionName);
     }
 
-    // ── Права ─────────────────────────────────────────────────────────────────
-
-    /// <summary>Своего права расширение не заводит — создание каркаса упирается в общее
-    /// «Создавать коллекции». Проверка идет настоящим путем: репозиторий сам зовет Demand,
-    /// расширение только ловит исключение и показывает причину в статусе окна.</summary>
-    [Fact]
-    public void Shell_creation_needs_the_create_collection_right()
-    {
-        using var db = new TempDatabase();
-        SetRights(db, PermAction.All & ~PermAction.CreateCollection);
-
-        var ex = Assert.Throws<PermissionDeniedException>(
-            () => DocsCollectionBuilder.CreateShell(db.Constructor, "Документы"));
-
-        Assert.Equal(PermAction.CreateCollection, ex.Action);
-    }
-
     [Fact]
     public void Shell_creation_passes_with_the_right()
     {
         using var db = new TempDatabase();
-        SetRights(db, PermAction.All);
 
         var shell = DocsCollectionBuilder.CreateShell(db.Constructor, "Документы");
 
@@ -160,19 +142,4 @@ public sealed class DocsCollectionShellTests
         DocsCollectionBuilder.TryDelete(db.Constructor, collectionId: 999_999);
     }
 
-    // Понижает текущего пользователя до допущенного не-админа с заданной маской на всю базу
-    // (тот же прием, что в матрице прав ядра: маски пишет только администратор).
-    private static void SetRights(TempDatabase db, PermAction mask)
-    {
-        var me = db.Context.DbUsers.First(u => u.UserKey == CurrentUser.Key);
-        me.IsAdmin = true;
-        db.Context.SaveChanges();
-        db.Permissions.Reload(notify: false);
-        db.Permissions.SetMask(db.Permissions.CurrentUserId, null, (int)mask);
-
-        me.IsAdmin    = false;   // теперь маска действует: администратору можно все
-        me.IsApproved = true;
-        db.Context.SaveChanges();
-        db.Permissions.Reload(notify: false);
-    }
 }

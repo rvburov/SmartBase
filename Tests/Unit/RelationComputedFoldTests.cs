@@ -18,9 +18,9 @@ public sealed class RelationComputedFoldTests
         Assert.Equal(RelationProperty.Cycle,
             RelationComputedFold.Fold("lookup", "lookup", ", ", null, [Value(1, "а", "а"), Fault(2, RelationProperty.MissingField), cycle]).Value);
         var bad = RelationComputedFold.Fold("rollup", "sum", ", ", null,
-            [Value(1, "1", "1", "number"), Fault(2, RelationProperty.NoAccess), Fault(3, RelationProperty.MissingField)]);
-        Assert.Equal(RelationProperty.NoAccess, bad.Value);
-        Assert.Equal(new RelationComputedValue("", RelationProperty.NoAccess, "", null), bad.Typed);
+            [Value(1, "1", "1", "number"), Fault(2, RelationProperty.Unavailable), Fault(3, RelationProperty.MissingField)]);
+        Assert.Equal(RelationProperty.Unavailable, bad.Value);
+        Assert.Equal(new RelationComputedValue("", RelationProperty.Unavailable, "", null), bad.Typed);
     }
 
     [Fact]

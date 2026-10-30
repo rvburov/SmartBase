@@ -4,7 +4,7 @@ using System.Text.Json;
 namespace SmartBase.Integrations;
 
 /// <summary>
-/// Договор входящего канала: адреса и заголовок токена. Лежит у двери, потому что его читают
+/// Договор входящего канала: адреса и параметр выбора базы. Лежит у двери, потому что его читают
 /// обе стороны — слушатель, разбирающий запрос, и описание API, которое пересылают отправителю.
 /// Раздвоение этих строк означало бы, что программа принимает по одному адресу, а обещает
 /// другой.
@@ -14,38 +14,37 @@ public static class IngressApi
     /// <summary>Куда присылают сообщения.</summary>
     public const string InboxPath = "/v1/inbox";
 
-    /// <summary>Проверка связи: «жив ли слушатель и тот ли это токен».</summary>
+    /// <summary>Проверка связи и выбранной базы.</summary>
     public const string PingPath = "/v1/ping";
 
     /// <summary>Описание схемы коллекций.</summary>
     public const string SchemaPath = "/v1/schema";
 
-    /// <summary>Чтение записей — только по выдаче (docs/ROADMAP-API.md, шаг 10).</summary>
+    /// <summary>Чтение записей выбранной коллекции.</summary>
     public const string RecordsPath = "/v1/records";
 
-    /// <summary>Журнал изменений коллекции — только по выдаче; отвечает и про удаления.</summary>
+    /// <summary>Журнал изменений коллекции; отвечает и про удаления.</summary>
     public const string ChangesPath = "/v1/changes";
 
-    /// <summary>Заголовок, в котором едет токен.</summary>
-    public const string TokenHeader = "X-SmartBase-Token";
+    /// <summary>Параметр запроса с ключом базы из реестра приложения.</summary>
+    public const string DatabaseParameter = "database";
 }
 
 /// <summary>
 /// Обращение сторонней программы — уже прочитанное и отвязанное от сокета.
 ///
-/// Лежит рядом с дверью, а не с обработчиком, намеренно: слушатель ничего не знает ни про базы,
-/// ни про токены, а обработчик — ни про сокеты. Между ними только эта пара записей, и благодаря
+/// Лежит рядом с дверью, а не с обработчиком, намеренно: слушатель ничего не знает про базы,
+/// а обработчик — ни про сокеты. Между ними только эта пара записей, и благодаря
 /// ей прием проверяется тестами целиком, не открывая ни одного порта.
 /// </summary>
 /// <param name="Method">Метод: GET, POST.</param>
 /// <param name="Path">Путь без адреса и без параметров запроса.</param>
-/// <param name="Token">Текст токена из заголовка; пусто — заголовка не было.</param>
 /// <param name="Body">Тело запроса.</param>
 /// <param name="Remote">Откуда пришли — для журнала. На петлевом адресе это всегда
 /// <c>127.0.0.1</c>, и поле существует ради сетевого режима.</param>
 /// <param name="Query">Строка параметров как пришла, с «?» или без; разбирает ее
 /// <see cref="Param"/>. Нужна чтению: коллекция, момент и курсор едут параметрами.</param>
-public sealed record IngressCall(string Method, string Path, string Token, string Body,
+public sealed record IngressCall(string Method, string Path, string Body,
                                  string Remote = "", string Query = "")
 {
     /// <summary>
@@ -54,6 +53,7 @@ public sealed record IngressCall(string Method, string Path, string Token, strin
     /// </summary>
     public string Param(string name)
     {
+        string? found = null;
         foreach (var pair in (Query ?? "").TrimStart('?').Split('&',
                      StringSplitOptions.RemoveEmptyEntries))
         {
@@ -64,11 +64,14 @@ public sealed record IngressCall(string Method, string Path, string Token, strin
                                StringComparison.OrdinalIgnoreCase))
                 continue;
 
+            if (found is not null)
+                throw new FormatException($"Параметр «{name}» указан больше одного раза.");
+
             // Плюс — пробел: так кодируют формы, и «Заказы за сутки» приходит с плюсами.
-            return Uri.UnescapeDataString(pair[(eq + 1)..].Replace('+', ' ')).Trim();
+            found = Uri.UnescapeDataString(pair[(eq + 1)..].Replace('+', ' ')).Trim();
         }
 
-        return "";
+        return found ?? "";
     }
 }
 

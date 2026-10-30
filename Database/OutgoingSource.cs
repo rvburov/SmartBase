@@ -7,12 +7,11 @@ namespace SmartBase.Database;
 ///
 /// Между исходящей привязкой (<see cref="OutgoingBinding"/> — «какие поля и под какими именами»)
 /// и отправкой (<c>RequestRunner</c> — «что уходит в сокет») лежит работа с базой: найти
-/// открытую базу, проверить метки и права, прочитать строки, сложить тело. Она собрана здесь
+/// открытую базу, прочитать строки и сложить тело. Она собрана здесь
 /// одним вызовом, а не повторена у каждой кнопки, ровно по той же причине, что и замок на
 /// отправке: повторенная проверка однажды повторяется не целиком.
 ///
-/// <b>Тело собирается ОДИН раз на запуск и передается всем.</b> Сухой прогон, строка журнала
-/// безопасности и сама отправка обязаны говорить об одном и том же теле; собери его каждый
+/// <b>Тело собирается ОДИН раз на запуск и передается всем.</b> Сухой прогон и сама отправка обязаны говорить об одном и том же теле; собери его каждый
 /// заново — и экран показывал бы одно, в журнал легло бы второе, а ушло бы третье.
 /// </summary>
 public static class OutgoingSource
@@ -46,31 +45,26 @@ public static class OutgoingSource
         if (databases.FirstOrDefault(d => d.DbId == binding.DbId) is not { } source)
             return (null, "база данных, записи которой уходят, сейчас не открыта");
 
-        // Обмен на одну запись — потолок в одну запись: «одна» здесь не пожелание, а форма
-        // тела, которую та сторона согласилась принимать.
-        var limit = binding.Single ? 1 : EgressGate.Policy.MaxRowsPerRun;
-
-        if (limit <= 0)
-            return (null, "политика организации не разрешает отправлять записи: "
-                        + "потолок строк за запуск — 0");
+        var limit = binding.Single ? 1 : int.MaxValue;
 
         var read = source.Constructor.ReadOutgoingIsolated(binding, limit, ct, records);
 
         if (read.Trouble is { Length: > 0 } trouble) return (null, trouble);
 
-        // Потолок проверяется по ФАКТУ прочитанного, а не по счетчику записей: между счетом и
-        // чтением коллекция успевает измениться, а отправить первые N из тысячи, промолчав об
-        // остальных, нельзя ни при каком объяснении.
-        if (read.Rows.Count > limit)
-            return (null, binding.Single
-                ? $"в коллекции «{read.Collection}» больше одной записи, а этот обмен настроен "
-                + "отправлять одну"
-                : $"записей в коллекции «{read.Collection}» больше, чем разрешает политика "
-                + $"организации: потолок — {limit:N0} за один запуск");
+        if (binding.Single && read.Rows.Count > 1)
+            return (null, $"в коллекции «{read.Collection}» больше одной записи, а этот обмен "
+                        + "настроен отправлять одну");
 
         if (binding.Single && read.Rows.Count == 0)
             return (null, $"в коллекции «{read.Collection}» нет записи, которую надо отправить");
 
-        return (OutgoingBody.Build(binding, read.Columns, read.Rows, read.Collection), null);
+        try
+        {
+            return (OutgoingBody.Build(binding, read.Columns, read.Rows, read.Collection), null);
+        }
+        catch (OutgoingBodyLimitException error)
+        {
+            return (null, error.Message);
+        }
     }
 }

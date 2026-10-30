@@ -13,14 +13,13 @@ public partial class ConstructorRepository
 {
     public enum FileAutoResolveResult
     {
-        Ok, FolderInaccessible, NoRule, Cancelled, Conflict, NoAccess, TooManyMatches, Unavailable,
+        Ok, FolderInaccessible, NoRule, Cancelled, Conflict, TooManyMatches, Unavailable,
     }
 
     public static string FileAutoFailureMessage(FileAutoResolveResult result) => result switch
     {
         FileAutoResolveResult.FolderInaccessible => "Папка недоступна. Прежние привязки сохранены.",
         FileAutoResolveResult.Conflict => "Данные или настройки изменились во время поиска. Повторите обновление привязки.",
-        FileAutoResolveResult.NoAccess => "Нет прав на обновление привязки файлов. Прежние значения сохранены.",
         FileAutoResolveResult.TooManyMatches => "Слишком много подходящих файлов для одной записи. Уточните имя, формат или папку. Прежние привязки сохранены.",
         FileAutoResolveResult.Unavailable => "Не удалось завершить поиск файлов. Проверьте доступность базы и свободное место на диске. Прежние привязки сохранены.",
         _ => "",
@@ -35,7 +34,6 @@ public partial class ConstructorRepository
     {
         var field = db.DbFields.AsNoTracking().FirstOrDefault(f => f.Id == fieldId);
         if (field?.FieldType != "file") return FileAutoResolveResult.NoRule;
-        Demand(PermAction.EditRecord, field.CollectionId);
         var result = ResolveAutoFileFieldCore(fieldId, null, default, refresh: true);
         if (result == FileAutoResolveResult.Ok) DetachResolvedFileValues(fieldId);
         return result;
@@ -48,14 +46,12 @@ public partial class ConstructorRepository
     {
         var field = db.DbFields.AsNoTracking().FirstOrDefault(f => f.Id == fieldId);
         if (field?.FieldType != "file") return FileAutoResolveResult.NoRule;
-        Demand(PermAction.EditRecord, field.CollectionId);
         var path = DbPath;
-        var permissions = AutoFilePermissions;
         var config = field.ConfigJson;
         var result = await Task.Run(() =>
         {
             using var context = NewIntegrityContext(path, writable: true);
-            return new ConstructorRepository(context) { Permissions = permissions }
+            return new ConstructorRepository(context)
                 .ResolveAutoFileFieldCore(fieldId, progress, ct, refresh: true, expectedConfig: config);
         });
         if (result == FileAutoResolveResult.Ok)
@@ -87,7 +83,6 @@ public partial class ConstructorRepository
             if (expectedConfig is not null && expectedConfig != field.ConfigJson) return FileAutoResolveResult.Conflict;
             var rule = FileAutoRule.FromConfig(field.ConfigJson);
             if (rule is null) return FileAutoResolveResult.NoRule;
-            DemandFreshFileAccess(field.CollectionId);
             if (!ValidFileSource(rule, field.CollectionId)) return FileAutoResolveResult.NoRule;
 
             using var stage = new AutoFileStage(ct);
@@ -116,13 +111,12 @@ public partial class ConstructorRepository
             {
                 using var guard = db.Database.GetDbConnection().CreateCommand();
                 guard.Transaction = transaction.GetDbTransaction();
-                guard.CommandText = "LOCK TABLE db_fields, db_records, db_field_values, db_users, db_permissions IN SHARE ROW EXCLUSIVE MODE";
+                guard.CommandText = "LOCK TABLE db_fields, db_records, db_field_values IN SHARE ROW EXCLUSIVE MODE";
                 guard.ExecuteNonQuery();
             }
             var current = db.DbFields.AsNoTracking().FirstOrDefault(f => f.Id == fieldId);
             if (current?.FieldType != "file" || current.CollectionId != field.CollectionId
                 || current.ConfigJson != field.ConfigJson) return FileAutoResolveResult.Conflict;
-            DemandFreshFileAccess(field.CollectionId);
             if (!ValidFileSource(rule, field.CollectionId)
                 || fingerprint != ReadFileSourceSnapshot(fieldId, field.CollectionId, rule, recordId, null, ct))
                 return FileAutoResolveResult.Conflict;
@@ -152,7 +146,7 @@ public partial class ConstructorRepository
         catch (Exception ex) when (ct.IsCancellationRequested && ex is DbException or DbUpdateException)
         { return FileAutoResolveResult.Cancelled; }
         catch (FileAutoMatchLimitException) { return FileAutoResolveResult.TooManyMatches; }
-        catch (PermissionDeniedException) { return FileAutoResolveResult.NoAccess; }
+
         catch (Exception ex) when (IsWriteConflict(ex)) { return FileAutoResolveResult.Conflict; }
         catch (Exception ex) when (ex is DbException or DbUpdateException or IOException or UnauthorizedAccessException)
         { return FileAutoResolveResult.Unavailable; }
@@ -177,20 +171,6 @@ public partial class ConstructorRepository
     private bool ValidFileSource(FileAutoRule rule, int collectionId) => rule.SourceIsTitle
         || db.DbFields.AsNoTracking().Any(f => f.Id == rule.SourceFieldId
             && f.CollectionId == collectionId && f.FieldType == "text");
-
-    private void DemandFreshFileAccess(int collectionId)
-    {
-        if (AutoFilePermissions is not { } permissions) return;
-        permissions.Demand(PermAction.EditRecord, collectionId);
-        permissions.Demand(PermAction.ViewCollection, collectionId);
-        var fresh = new PermissionService(db);
-        fresh.Reload(notify: false);
-        fresh.Demand(PermAction.EditRecord, collectionId);
-        fresh.Demand(PermAction.ViewCollection, collectionId);
-    }
-
-    private bool CanWriteAutoFiles(int collectionId) => AutoFilePermissions is not { } permissions
-        || permissions.Can(PermAction.EditRecord, collectionId) && permissions.Can(PermAction.ViewCollection, collectionId);
 
     private string ReadFileSourceSnapshot(int fieldId, int collectionId, FileAutoRule rule, int? recordId,
         Action<int, string, string>? accept, CancellationToken ct)
@@ -268,29 +248,25 @@ public partial class ConstructorRepository
     private string? ResolveOrQueueAutoFile(int fieldId, int recordId, FileAutoRule rule)
     {
         var collectionId = CollectionOfRecord(recordId);
-        if (collectionId is not int collection || !CanWriteAutoFiles(collection)
+        if (collectionId is not int collection
             || !ValidFileSource(rule, collection)) return null;
         if (QueueAutoFileWork(fieldId, recordId)) return null;
         try
         {
-            DemandFreshFileAccess(collection);
             var source = ReadSourceValue(rule, recordId);
             if (source.Length == 0 || rule.PartialMatch && string.IsNullOrWhiteSpace(source)) return "";
             using var catalog = FileAutoCatalogCache.Acquire(rule, refresh: false, default);
             var matched = catalog.Match(rule, source, default);
-            DemandFreshFileAccess(collection);
             return matched;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DbException
-            or FileAutoMatchLimitException or PermissionDeniedException)
+            or FileAutoMatchLimitException)
         { return null; } // недоступность/слишком широкий поиск не стирают прежнее значение
     }
 
     private void ResolveAutoFileForRecord(int collectionId, int recordId)
     {
-        // Создание разрешено отдельно от последующего автозаполнения: отсутствие EditRecord
-        // не отменяет новую запись. Пустой источник дождется обычной правки значения.
-        if (!CanWriteAutoFiles(collectionId)) return;
+        // Пустой источник дождется обычной правки значения.
         foreach (var field in db.DbFields.AsNoTracking().Where(f => f.CollectionId == collectionId && f.FieldType == "file")
                      .Select(f => new { f.Id, f.ConfigJson }).ToList())
             if (FileAutoRule.FromConfig(field.ConfigJson) is { } rule

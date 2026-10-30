@@ -45,11 +45,11 @@ public sealed class IngressRepliesTests : IDisposable
     }
 
     /// <summary>
-    /// Один и тот же номер сообщения у РАЗНЫХ токенов — это разные отправители, и считать их
+    /// Один и тот же номер сообщения у РАЗНЫХ баз — это разные назначения, и считать их
     /// повторами друг друга нельзя: первый получил бы чужой ответ, а второй не получил бы записей.
     /// </summary>
     [Fact]
-    public void Different_senders_do_not_shadow_each_other()
+    public void Different_databases_do_not_shadow_each_other()
     {
         _replies.Remember(1, "заказ", Receipt("заказ", "от первого"), Now);
 

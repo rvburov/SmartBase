@@ -123,7 +123,6 @@ public sealed partial class ConstructorRepository
         var byTitle = new Dictionary<string, List<int>>(StringComparer.Ordinal);
         if (config.DisplayField == RelationConfig.TitleField)
         {
-            Demand(PermAction.ViewCollection, config.TargetCollectionId);
             foreach (var part in names.Chunk(500))
             {
                 var chunk = part.ToList();
@@ -190,7 +189,6 @@ public sealed partial class ConstructorRepository
     /// <param name="operation">Как назвать операцию в журнале: «Вставка», «Очистка», «Отмена вставки».</param>
     public LinkBulkResult SetLinksBulk(int collectionId, IReadOnlyList<LinkWrite> writes, string operation = "Правка")
     {
-        Demand(PermAction.EditRecord, collectionId);
         if (writes.Count == 0) return LinkBulkResult.Nothing;
 
         var changes = new List<LinkChange>();

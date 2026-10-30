@@ -5,7 +5,7 @@ using SmartBase.Utils;
 namespace SmartBase.Notifications;
 
 /// <summary>
-/// Читатель очередей событий задач по всем допущенным базам: курсор на базу, свое
+/// Читатель очередей событий задач по всем открытым базам: курсор на базу, свое
 /// подключение на базу, отвалившаяся база не гасит остальные.
 ///
 /// Курсоры персистентные (app.db) — за счет этого работает догон: события, случившиеся
@@ -19,7 +19,7 @@ namespace SmartBase.Notifications;
 /// <see cref="Commit"/> с UI-потока. Состояние под локом: Dictionary из двух потоков
 /// портится молча.
 /// </summary>
-public sealed class TaskEventReader(Func<IReadOnlyList<DatabaseManager>> grantedDbs) : ITaskEventSource
+public sealed class TaskEventReader(Func<IReadOnlyList<DatabaseManager>> openedDbs) : ITaskEventSource
 {
     // Сколько событий берем с одной базы за проход: больше пользователю все равно покажут
     // сводкой, а хвост приедет следующим тиком.
@@ -37,7 +37,7 @@ public sealed class TaskEventReader(Func<IReadOnlyList<DatabaseManager>> granted
         Dictionary<int, long> cursors;
         lock (_lock) cursors = new Dictionary<int, long>(_cursors);
 
-        foreach (var db in grantedDbs())
+        foreach (var db in openedDbs())
         {
             try
             {
@@ -58,10 +58,7 @@ public sealed class TaskEventReader(Func<IReadOnlyList<DatabaseManager>> granted
                     // одинаковые RecordId разных баз схлопнулись бы при дедупе и по метке.
                     e.DbId = db.DbId;
 
-                    // Изолированное чтение прав не проверяет: коллекция могла стать
-                    // недоступной с тех пор, как событие записали.
-                    if (db.Permissions.Can(PermAction.ViewCollection, e.CollectionId))
-                        events.Add(e);
+                    events.Add(e);
                 }
             }
             catch
@@ -90,7 +87,7 @@ public sealed class TaskEventReader(Func<IReadOnlyList<DatabaseManager>> granted
     public void Reseed()
     {
         var tails = new Dictionary<int, long>();
-        foreach (var db in grantedDbs())
+        foreach (var db in openedDbs())
         {
             try { tails[db.DbId] = db.Constructor.MaxTaskEventIdIsolated(); }
             catch { /* база недоступна — курсор посеется при следующем чтении */ }

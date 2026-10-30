@@ -6,16 +6,7 @@ using SmartBase.Integrations;
 
 namespace SmartBase.Tests.Integration;
 
-/// <summary>
-/// Действие-автоматизация в сценарии — вид «строки пришли → строки ушли»
-/// (docs/ROADMAP-API.md, шаг 13).
-///
-/// Расширения здесь стендовые, а не настоящие, по тому же правилу, что в
-/// <c>ScenarioActionTests</c>: проверяется договор между сценарием и ЛЮБЫМ расширением, а не
-/// правила конкретного. Главное, что проверяется, — рубежи файла: расширение его собирает, а
-/// кладет оболочка, только в разрешенную политикой папку и только со следом в журнале
-/// безопасности.
-/// </summary>
+/// <summary>Автоматические действия расширений выполняются через оболочку, сохраняют результат в выбранной папке и соблюдают контракт действия.</summary>
 [Collection(EgressCollection.Name)]
 public sealed class ScenarioAutomationTests : IDisposable
 {
@@ -41,9 +32,9 @@ public sealed class ScenarioAutomationTests : IDisposable
 
     public void Dispose()
     {
-        EgressGate.Close();
+
         RunJournal.Attach(null);
-        SecurityJournal.Attach(null);
+
         _registry.Dispose();
         _db.Dispose();
         TempDatabase.Cleanup(_appDb);
@@ -134,11 +125,6 @@ public sealed class ScenarioAutomationTests : IDisposable
     // ── Обвязка ───────────────────────────────────────────────────────────────
 
     private IntegrationsRegistry Cards => _registry.Integrations;
-
-    private void Policy(params string[] folders) =>
-        EgressGate.AttachPolicy(EgressPolicySet.Of(new EgressPolicy(
-            EgressMode.Internal, [], [], folders, 1000, 1024 * 1024, 100,
-            null, false, "тест")));
 
     private Scenario Save(params ScenarioStep[] steps) =>
         Cards.SaveScenario(Scenario.New() with
@@ -239,11 +225,8 @@ public sealed class ScenarioAutomationTests : IDisposable
     /// остается та же строка, что у ручного экспорта, — с именем сценария.
     /// </summary>
     [Fact]
-    public async Task A_made_file_is_placed_by_the_shell_and_traced()
+    public async Task A_made_file_is_placed_by_the_shell_without_a_security_journal()
     {
-        Policy(_folder);
-        var journal = new SecurityJournal(Path.Combine(_dir, "security.db"));
-        SecurityJournal.Attach(journal);
 
         var maker    = new Maker();
         var scenario = Save(Step(maker.Key, _folder));
@@ -259,60 +242,18 @@ public sealed class ScenarioAutomationTests : IDisposable
         Assert.StartsWith("Строки ", Path.GetFileName(file), StringComparison.Ordinal);
         Assert.Equal("строк 2", File.ReadAllText(file));
 
-        var row = journal.Recent().Single();
-
-        Assert.Equal(SecurityEvent.Export,     row.Event);
-        Assert.Equal("Сводка по расписанию",   row.Scenario);
-        Assert.Equal(file,                     row.Address);
-        Assert.Equal(2,                        row.Rows);
-        Assert.Contains("выгружено сценарием", row.Explanation, StringComparison.Ordinal);
-    }
-
-    /// <summary>Папка вне политики — сценарий не запускается, и сказано это до запуска (10.11).</summary>
-    [Fact]
-    public async Task A_folder_outside_the_policy_blocks_the_scenario()
-    {
-        Policy(Path.Combine(_dir, "Разрешенная"));
-        SecurityJournal.Attach(new SecurityJournal(Path.Combine(_dir, "security.db")));
-
-        var maker    = new Maker();
-        var scenario = Save(Step(maker.Key, _folder));
-
-        var outcome = await Run(scenario, Goods(), new Stand(maker));
-
-        Assert.False(outcome.Started);
-        Assert.Contains("папка файла", outcome.Problem, StringComparison.Ordinal);
-        Assert.Empty(Directory.GetFiles(_folder));
     }
 
     /// <summary>Папку у такого действия спрашивают обязательно: без нее файл некуда положить.</summary>
     [Fact]
     public void A_file_action_without_a_folder_is_named_in_the_list()
     {
-        Policy(_folder);
 
         var maker    = new Maker();
         var scenario = Save(Step(maker.Key));
 
         Assert.Contains("не выбрана папка", Blocker(scenario, Goods(), new Stand(maker)),
                         StringComparison.Ordinal);
-    }
-
-    /// <summary>Без журнала безопасности файла не остается: не записалось — не выгружаем.</summary>
-    [Fact]
-    public async Task Without_the_security_journal_no_file_is_left()
-    {
-        Policy(_folder);
-        SecurityJournal.Attach(null);
-
-        var maker    = new Maker();
-        var scenario = Save(Step(maker.Key, _folder));
-
-        var outcome = await Run(scenario, Goods(), new Stand(maker));
-
-        Assert.False(outcome.Ok);
-        Assert.Contains("Журнал безопасности", outcome.Problem, StringComparison.Ordinal);
-        Assert.Empty(Directory.GetFiles(_folder));
     }
 
     /// <summary>
@@ -322,8 +263,6 @@ public sealed class ScenarioAutomationTests : IDisposable
     [Fact]
     public async Task A_path_in_the_wanted_name_does_not_leave_the_folder()
     {
-        Policy(_folder);
-        SecurityJournal.Attach(new SecurityJournal(Path.Combine(_dir, "security.db")));
 
         var maker    = new Maker { Wanted = Path.Combine("..", "Чужое.xlsx") };
         var scenario = Save(Step(maker.Key, _folder));

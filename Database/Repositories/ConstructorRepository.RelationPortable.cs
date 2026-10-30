@@ -12,9 +12,8 @@ public partial class ConstructorRepository
     public List<ExportColumn> PreparePortableExportColumnsIsolated(int collectionId, IReadOnlyList<ExportColumn> columns,
         bool excludeHidden = false)
     {
-        Demand(PermAction.ViewCollection, collectionId);
         using var ctx = new AppDbContext(DbPath);
-        var repo = new ConstructorRepository(ctx) { Permissions = Permissions };
+        var repo = new ConstructorRepository(ctx);
         var fields = columns.Where(c => c.FieldId.HasValue)
             .Select(c => new RelationPortableField(c.FieldId!.Value, c.Header, c.FieldType, c.ConfigJson)).ToList();
         var includedFields = fields.Select(f => f.Id).ToHashSet();
@@ -113,7 +112,6 @@ public partial class ConstructorRepository
                 && !(IsRelationSourceDatabase(cfg.TargetDbId, portable.SourceDbId) && cfg.TargetCollectionId == portable.SourceCollectionId))
             {
                 var target = SnapshotExternalDatabase(shell, cfg.TargetDbId);
-                target.Demand(PermAction.ViewCollection, cfg.TargetCollectionId);
                 if (!target.RelationLifecycleContext.DbCollections.AsNoTracking().Any(c => c.Id == cfg.TargetCollectionId))
                     throw new ImportException("Целевая коллекция переносимой связи не найдена.");
             }
@@ -187,7 +185,6 @@ public partial class ConstructorRepository
                         var target = SnapshotExternalDatabase(shell, edge.Target.DbId);
                         if (target.CollectionOfRecord(targetId) is not int targetCollection)
                             throw new ImportException("Целевая запись переносимой связи не найдена.");
-                        target.Demand(PermAction.ViewCollection, targetCollection);
                     }
                     if (targetDbId == 0 && targetId == records[edge.From]) throw new ImportException("Переносимая связь ссылается на саму запись.");
                     object?[] row = [fieldMap[edge.Field], records[edge.From], targetId, targetDbId, edge.Position];

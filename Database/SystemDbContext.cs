@@ -26,16 +26,8 @@ public class SystemDbContext : DbContext
     /// <summary>Сценарии — там же: сценарий в файле базы сработал бы на каждой открытой копии.</summary>
     public DbSet<IntegrationScenarioEntity> IntegrationScenarios { get; set; } = null!;
 
-    public DbSet<IntegrationDirectionEntity> IntegrationDirections { get; set; } = null!;
-
     /// <summary>Потоки событий — там же: поток в файле базы открыла бы каждая копия программы.</summary>
     public DbSet<IntegrationStreamEntity> IntegrationStreams { get; set; } = null!;
-
-    /// <summary>Токены входящего канала — тоже локальные: порт слушает одна машина.</summary>
-    public DbSet<IntegrationTokenEntity> IntegrationTokens { get; set; } = null!;
-
-    /// <summary>Выдачи чтения — рядом с токенами: читает порт этой же машины.</summary>
-    public DbSet<IntegrationGrantEntity> IntegrationGrants { get; set; } = null!;
 
     private readonly string _path;
 
@@ -76,27 +68,9 @@ public class SystemDbContext : DbContext
             e.HasKey(x => x.Id);
         });
 
-        model.Entity<IntegrationDirectionEntity>(e =>
-        {
-            e.ToTable("integration_directions");
-            e.HasKey(x => x.RequestId);
-        });
-
         model.Entity<IntegrationStreamEntity>(e =>
         {
             e.ToTable("integration_streams");
-            e.HasKey(x => x.Id);
-        });
-
-        model.Entity<IntegrationTokenEntity>(e =>
-        {
-            e.ToTable("integration_tokens");
-            e.HasKey(x => x.Id);
-        });
-
-        model.Entity<IntegrationGrantEntity>(e =>
-        {
-            e.ToTable("integration_grants");
             e.HasKey(x => x.Id);
         });
     }

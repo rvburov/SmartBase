@@ -5,14 +5,14 @@ namespace SmartBase.Database.Repositories;
 
 public partial class ConstructorRepository
 {
-    /// <summary>Владелец UI снимает только адреса и права. Граф зависимостей и данные читаются
+    /// <summary>Владелец UI снимает только адреса. Граф зависимостей и данные читаются
     /// подготовленной работой на своих подключениях; порядок общий для всех открытых баз.</summary>
     public static Func<CancellationToken, IReadOnlyList<RelationAutoApplyResult>> CaptureAutoRefreshGraph(
         IReadOnlyList<ConstructorRepository> repositories, IReadOnlyList<RelationDataChange> changes,
         bool refreshAll = false, bool captureScopedTargets = false)
     {
         var descriptors = repositories.GroupBy(r => r.DbPath, StringComparer.Ordinal)
-            .Select(g => g.First()).Select(r => new AutoConnection(RelationDbResolver.DbIdFor(r), r.DbPath, r.Permissions))
+            .Select(g => g.First()).Select(r => new AutoConnection(RelationDbResolver.DbIdFor(r), r.DbPath))
             .ToList();
         // API без окна может задавать только scoped resolver, без Workspace.Mounted. Этот
         // синхронный путь захватывает его адреса до замены resolver на рабочие подключения.
@@ -39,7 +39,7 @@ public partial class ConstructorRepository
                 ct.ThrowIfCancellationRequested();
                 var context = new AppDbContext(connection.Path);
                 contexts.Add(context);
-                owners.Add((connection, new ConstructorRepository(context) { Permissions = connection.Permissions }));
+                owners.Add((connection, new ConstructorRepository(context)));
             }
             var byId = owners.Where(o => o.Connection.DbId > 0).GroupBy(o => o.Connection.DbId)
                 .ToDictionary(g => g.Key, g => g.First().Repo);
@@ -101,7 +101,7 @@ public partial class ConstructorRepository
         {
             return [new(RelationAutoStatus.Cancelled, 0, "Обновление связей отменено.")];
         }
-        catch (Exception ex) when (ex is System.Data.Common.DbException or IOException or PermissionDeniedException)
+        catch (Exception ex) when (ex is System.Data.Common.DbException or IOException)
         {
             // Недоступный каталог не позволяет доказать порядок зависимостей. Не запускаем
             // подбор по неполному графу и не считаем недоступные значения пустыми.

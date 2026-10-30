@@ -213,20 +213,13 @@ public sealed class RelationSelectBox : Panel
         }
     }
 
-    /// <summary>Общий показ для рисованной карточки и редактора, с теми же правами и форматированием.</summary>
+    /// <summary>Общий показ для рисованной карточки и редактора, с одинаковым форматированием.</summary>
     public static string DisplayText(ConstructorRepository repo, int fieldId, int recordId, RelationConfig cfg) =>
         string.Join(cfg.SeparatorString, repo.GetRelationLinks(fieldId, recordId)
             .Select(link => TitleText.FirstLine(link.Display)));
 
-    private bool CanSelect
-    {
-        get
-        {
-            if (!_editing || _cfg.Auto is not null || _repo.GetRecord(_recordId)?.CollectionId is not int collection) return false;
-            return _repo.CanReadRelationCollection(collection)
-                && (_repo.Permissions?.Can(PermAction.EditRecord, collection) ?? true);
-        }
-    }
+    private bool CanSelect =>
+        _editing && _cfg.Auto is null && _repo.GetRecord(_recordId)?.CollectionId is not null;
 
     private void OpenPopup()
     {
@@ -258,7 +251,7 @@ public sealed class RelationSelectBox : Panel
         }
         catch (Exception ex)
         {
-            // База на сетевом диске пропала, нет прав: строка без названий, список открывается.
+            // База на сетевом диске недоступна: строка без названий, список открывается.
             Serilog.Log.Warning(ex, "Не удалось прочитать свойства автосвязи");
             _autoHint.Text = "Подбирается автоматически.";
         }
@@ -506,11 +499,6 @@ public sealed class RelationSelectBox : Panel
                     var targetRepo = vm.DbId == 0 ? _repo : RelationDbResolver.RepoFor(vm.DbId);
                     var collection = targetRepo?.GetRecord(vm.Id)?.CollectionId;
                     if (collection is null) return;
-                    if (!targetRepo!.CanReadRelationCollection(collection.Value))
-                    {
-                        SmartBase.Controls.Dialogs.PermissionNotice.Show(this, PermAction.ViewCollection);
-                        return;
-                    }
                     if (_popup is not null) _popup.IsOpen = false;
                     Navigate?.Invoke(this, (vm.DbId, vm.Id));   // база ЭТОГО пункта, не текущего конфига
                 }
@@ -570,7 +558,7 @@ public sealed class RelationSelectBox : Panel
                 _shown.Clear();
                 if (_moreHint is not null)
                 {
-                    _moreHint.Text = ex is PermissionDeniedException ? "Нет доступа к коллекции" : "Поиск недоступен";
+                    _moreHint.Text = "Поиск недоступен";
                     _moreHint.IsVisible = true;
                 }
             });
@@ -649,12 +637,6 @@ public sealed class RelationSelectBox : Panel
         {
             if (_recordId > 0) _repo.SetLinkEdges(_fieldId, _recordId, next);
         }
-        catch (PermissionDeniedException)
-        {
-            SmartBase.Controls.Dialogs.PermissionNotice.Show(this, PermAction.EditRecord);
-            foreach (var item in _shown) item.Refresh();
-            return;
-        }
         catch (RelationConditionException ex)
         {
             // Список устарел: запись перестала подходить, пока он был открыт.
@@ -682,7 +664,7 @@ public sealed class RelationSelectBox : Panel
         public int    DbId  => target.DbId;   // база цели этого пункта (0 — та же БД, >0 — межбазовая)
         // Строка списка — одна строка: показываем первую (поиск выше идет по полному названию).
         public string Title => title.Length == 0 ? "(пусто)" : TitleText.FirstLine(title);
-        public string Detail => recordTitle is RelationProperty.NoAccess or RelationProperty.Unavailable or RelationProperty.UnknownBase ? "" : TitleText.FirstLine(recordTitle);
+        public string Detail => recordTitle is RelationProperty.Unavailable or RelationProperty.UnknownBase ? "" : TitleText.FirstLine(recordTitle);
         public bool HasDetail => Detail.Length > 0 && Detail != Title;
         public bool Outside => owner._outside.Contains(target);
 

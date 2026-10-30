@@ -24,7 +24,7 @@ public partial class ConstructorRepository
         var result = new Dictionary<int, List<(int Id, string Title)>>();
         if (fromRecordIds.Count == 0) return result;
         var field = db.DbFields.AsNoTracking().FirstOrDefault(f => f.Id == fieldId);
-        if (field is null || !CanReadRelationCollection(field.CollectionId)) return result;
+        if (field is null) return result;
         var cfg = RelationConfig.FromConfig(field.ConfigJson);
         var rows = (from l in db.DbRecordLinks.AsNoTracking()
                     where l.FieldId == fieldId && fromRecordIds.Contains(l.FromRecordId) && l.TargetDbId == 0
@@ -163,7 +163,6 @@ public partial class ConstructorRepository
     /// </summary>
     public void SetLinks(int fieldId, int fromRecordId, IReadOnlyList<int> toRecordIds)
     {
-        Demand(PermAction.EditRecord, CollectionOfRecord(fromRecordId));
         ExecuteAtomicWrite(() =>
         {
             SetLinksCore(fieldId, fromRecordId, toRecordIds);
@@ -186,7 +185,6 @@ public partial class ConstructorRepository
 
     private void SetLinkEdgesCore(int fieldId, int fromRecordId, IReadOnlyList<RelationTarget> targets, bool allowUnresolved)
     {
-        Demand(PermAction.EditRecord, CollectionOfRecord(fromRecordId));
         ExecuteAtomicWrite(() =>
         {
             ApplyLinkEdges(fieldId, fromRecordId, targets, allowUnresolved);
@@ -203,7 +201,6 @@ public partial class ConstructorRepository
         LockRecordsForWrite(targets.Where(t => localDatabases.Contains(t.DbId))
             .Select(t => t.RecordId).Append(fromRecordId));
         var source = db.DbRecords.FirstOrDefault(r => r.Id == fromRecordId);
-        Demand(PermAction.EditRecord, source?.CollectionId);
         if (source is null) return;
         if (db.Entry(source).State == EntityState.Unchanged) db.Entry(source).Reload();
         var field = db.DbFields.AsNoTracking().FirstOrDefault(f => f.Id == fieldId);
@@ -298,7 +295,6 @@ public partial class ConstructorRepository
             }
             else
             {
-                targetRepo.Demand(PermAction.ViewCollection, cfg.TargetCollectionId);
                 var ids = newTargets.Select(t => t.RecordId).ToList();
                 valid = targetRepo.ReadRelationPropertyValues(cfg.TargetCollectionId, RelationConfig.TitleField, ids)
                     .Select(r => r.RecordId).ToHashSet();
@@ -365,7 +361,6 @@ public partial class ConstructorRepository
     public List<(int Id, string Title)> SearchRecordTitles(
         int collectionId, string? query, int limit = 100, int excludeRecordId = 0)
     {
-        if (!CanReadRelationCollection(collectionId)) return [];
         var q = db.DbRecords.AsNoTracking().Where(r => r.CollectionId == collectionId);
         if (excludeRecordId > 0) q = q.Where(r => r.Id != excludeRecordId);
         var term = query?.Trim() ?? "";

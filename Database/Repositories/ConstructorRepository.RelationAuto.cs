@@ -34,7 +34,7 @@ public partial class ConstructorRepository
     {
         try { return PreviewAutoRelationCore(CloneAutoField(proposedField), ct, detailed); }
         catch (OperationCanceledException) { return AutoFailure(RelationAutoStatus.Cancelled, proposedField, "Подбор отменен."); }
-        catch (PermissionDeniedException) { return AutoFailure(RelationAutoStatus.NoAccess, proposedField, "Нет доступа к свойствам для подбора связей."); }
+
         catch (DbException) { return AutoFailure(RelationAutoStatus.Unavailable, proposedField, "База данных недоступна. Прежние связи сохранены."); }
         catch (IOException) { return AutoFailure(RelationAutoStatus.Unavailable, proposedField, "База данных недоступна. Прежние связи сохранены."); }
     }
@@ -44,7 +44,6 @@ public partial class ConstructorRepository
     public Task<RelationAutoPreview> PreviewAutoRelationAsync(DbField proposedField, CancellationToken ct = default,
         bool detailed = false)
     {
-        Demand(PermAction.ViewCollection, proposedField.CollectionId);
         if (db.Database.CurrentTransaction is not null)
             return Task.FromResult(AutoFailure(RelationAutoStatus.Conflict, proposedField,
                 "Фоновый подбор недоступен внутри незавершенной транзакции. Используйте синхронный подбор или завершите операцию."));
@@ -57,7 +56,6 @@ public partial class ConstructorRepository
     /// предварительного просмотра источник, цель или набор ребер требует нового просмотра.</summary>
     public int SaveAutoRelationField(DbField proposedField, RelationAutoPreview preview, CancellationToken ct = default)
     {
-        DemandAutoSave(proposedField);
         var field = CloneAutoField(proposedField);
         // Внешняя составная операция должна откатывать настройку и ребра вместе со своими
         // остальными изменениями. Отдельное подключение здесь не видит ее незавершенные данные.
@@ -73,7 +71,6 @@ public partial class ConstructorRepository
     public async Task<int> SaveAutoRelationFieldAsync(DbField proposedField, RelationAutoPreview preview,
         CancellationToken ct = default)
     {
-        DemandAutoSave(proposedField);
         if (db.Database.CurrentTransaction is not null)
             throw new RelationAutoApplyException(RelationAutoStatus.Conflict,
                 "Фоновое сохранение недоступно внутри незавершенной транзакции. Используйте синхронное сохранение или завершите операцию.");
@@ -108,7 +105,6 @@ public partial class ConstructorRepository
                 SaveAutoRelationField(proposed, preview, ct);
             else
             {
-                Demand(PermAction.EditRecord, proposed.CollectionId);
                 // Настройка та же, просмотр только что сделан и менять нечего — без транзакции записи
                 // и второго чтения: на сетевом диске это большинство фоновых пересчетов. Следующая
                 // правка данных сама запустит новый пересчет. Просмотр, сделанный раньше, так не
@@ -126,7 +122,7 @@ public partial class ConstructorRepository
         }
         catch (OperationCanceledException) { return new(RelationAutoStatus.Cancelled, 0, "Обновление отменено. Прежние связи сохранены."); }
         catch (RelationAutoApplyException ex) { return new(ex.Status, 0, ex.Message); }
-        catch (PermissionDeniedException) { return new(RelationAutoStatus.NoAccess, 0, "Нет прав на обновление связей."); }
+
         catch (DbException) { return new(RelationAutoStatus.Unavailable, 0, "База данных недоступна. Прежние связи сохранены."); }
         catch (IOException) { return new(RelationAutoStatus.Unavailable, 0, "База данных недоступна. Прежние связи сохранены."); }
     }
@@ -237,7 +233,6 @@ public partial class ConstructorRepository
     private RelationAutoPreview PreviewAutoRelationCore(DbField field, CancellationToken ct, bool detailed = false)
     {
         ct.ThrowIfCancellationRequested();
-        Demand(PermAction.ViewCollection, field.CollectionId);
         if (field.FieldType != "relation" || RelationConfig.FromConfig(field.ConfigJson) is not { Auto: { } rule } cfg)
             return AutoFailure(RelationAutoStatus.NoRule, field, "Правило автоматической связи не задано.");
         if (!rule.IsReady) return AutoFailure(RelationAutoStatus.InvalidRule, field, NotReadyMessage(rule));
@@ -250,31 +245,30 @@ public partial class ConstructorRepository
                 return AutoFailure(RelationAutoStatus.InvalidRule, field, Pair(i, "Свойство не может подбирать связи по самому себе."));
         var target = cfg.TargetDbId == 0 ? this : RelationDbResolver.RepoFor(cfg.TargetDbId);
         if (target is null) return AutoFailure(RelationAutoStatus.Unavailable, field, "Целевая база недоступна. Прежние связи сохранены.");
-        target.Demand(PermAction.ViewCollection, cfg.TargetCollectionId);
         if (!db.DbCollections.AsNoTracking().Any(c => c.Id == field.CollectionId)
             || !target.AutoContext.DbCollections.AsNoTracking().Any(c => c.Id == cfg.TargetCollectionId))
             return AutoFailure(RelationAutoStatus.InvalidRule, field, "Коллекция для подбора связей не найдена.");
         var sourceOptions = GetRelationPropertyOptions(field.CollectionId);
         var targetOptions = target.GetRelationPropertyOptions(cfg.TargetCollectionId);
-        var timeDependencies = new AutoRelationTimeDependencies();
-        timeDependencies.Seed(this, field.CollectionId, sourceOptions);
-        timeDependencies.Seed(target, cfg.TargetCollectionId, targetOptions);
+        var configDependencies = new AutoRelationConfigDependencies();
+        configDependencies.Seed(this, field.CollectionId, sourceOptions);
+        configDependencies.Seed(target, cfg.TargetCollectionId, targetOptions);
         for (var i = 0; i < pairs.Count; i++)
         {
             var sourceOption = sourceOptions.FirstOrDefault(p => p.Key == pairs[i].SourceField);
             var targetOption = targetOptions.FirstOrDefault(p => p.Key == pairs[i].TargetField);
             if (sourceOption is null || targetOption is null)
                 return AutoFailure(RelationAutoStatus.InvalidRule, field, Pair(i, "Свойство для сопоставления не найдено."));
-            var timeProblem = timeDependencies.Problem(this, field.CollectionId, pairs[i].SourceField)
-                ?? timeDependencies.Problem(target, cfg.TargetCollectionId, pairs[i].TargetField);
-            if (timeProblem is not null)
-                return AutoFailure(RelationAutoStatus.InvalidRule, field, Pair(i, timeProblem));
+            var configProblem = configDependencies.Problem(this, field.CollectionId, pairs[i].SourceField)
+                ?? configDependencies.Problem(target, cfg.TargetCollectionId, pairs[i].TargetField);
+            if (configProblem is not null)
+                return AutoFailure(RelationAutoStatus.InvalidRule, field, Pair(i, configProblem));
             if (!RelationAutoMatch.Compatible(sourceOption.FieldType, sourceOption.ConfigJson, targetOption.FieldType, targetOption.ConfigJson))
                 return AutoFailure(RelationAutoStatus.InvalidRule, field, Pair(i, "Для сопоставления выбраны несовместимые типы свойств."));
         }
         foreach (var condition in cfg.Where ?? [])
-            if (timeDependencies.Problem(target, cfg.TargetCollectionId, condition.Field) is { } timeProblem)
-                return AutoFailure(RelationAutoStatus.InvalidRule, field, timeProblem);
+            if (configDependencies.Problem(target, cfg.TargetCollectionId, condition.Field) is { } configProblem)
+                return AutoFailure(RelationAutoStatus.InvalidRule, field, configProblem);
         if (HasAutoDependencyCycle(field))
             return AutoFailure(RelationAutoStatus.InvalidRule, field, "Правило образует циклическую зависимость между свойствами.");
 
@@ -421,7 +415,7 @@ public partial class ConstructorRepository
         return rows;
     }
 
-    // Часть ключа, на которой подбор отказал: по ней видно, нет доступа, база недоступна или значение повреждено.
+    // Часть ключа, на которой подбор отказал: по ней видно, база недоступна или значение повреждено.
     private static RelationPropertyValue FailedAutoPart(AutoRow row, bool fold, int localDbId)
     {
         for (var i = 0; i < row.Parts.Length; i++)
@@ -432,8 +426,6 @@ public partial class ConstructorRepository
     private int SaveAutoRelationFieldCore(DbField field, RelationAutoPreview preview, CancellationToken ct,
         bool saveMetadata = true)
     {
-        if (saveMetadata) DemandAutoSave(field);
-        else Demand(PermAction.EditRecord, field.CollectionId);
         if (!preview.CanApply || preview.DatabaseIdentity != AutoDatabaseIdentity()
             || preview.CollectionId != field.CollectionId || preview.FieldId != (field.Id ?? 0)
             || preview.ConfigJson != field.ConfigJson)
@@ -615,12 +607,6 @@ public partial class ConstructorRepository
         command.Parameters.Add(p);
     }
 
-    private void DemandAutoSave(DbField field)
-    {
-        Demand(field.Id.HasValue ? PermAction.EditField : PermAction.CreateField, field.CollectionId);
-        Demand(PermAction.EditRecord, field.CollectionId);
-    }
-
     private void DetachAutoRelationTracking(int fieldId)
     {
         foreach (var entry in db.ChangeTracker.Entries().Where(e =>
@@ -728,6 +714,9 @@ public partial class ConstructorRepository
             // Любая ручная правка записи меняет ее аудит, даже если выбран другой столбец.
             if (field.FieldType is "updated_at" or "updated_by"
                 && owner.DbPath == changedPath && collection == changedCollection) return true;
+            if (field.FieldType == "date_period"
+                && DatePeriodConfig.FromConfig(field.ConfigJson) is { Automatic: true } period)
+                return Property(owner, collection, period.DateFieldId.ToString(System.Globalization.CultureInfo.InvariantCulture));
             if (field.FieldType == "relation" && RelationConfig.FromConfig(field.ConfigJson) is { Auto: not null } relation)
                 return Rule(owner, ToDbField(field), relation);
             if (field.FieldType is not ("lookup" or "rollup")
@@ -764,17 +753,15 @@ public partial class ConstructorRepository
 
     private RelationAutoPreview AutoValueFailure(DbField field, RelationPropertyValue value, string location)
     {
-        if (value.FieldType.Length == 0 && value.Display == RelationProperty.NoAccess)
-            return AutoFailure(RelationAutoStatus.NoAccess, field, "Нет доступа к зависимому свойству. Прежние связи сохранены.");
         if (value.FieldType.Length == 0 && value.Display is RelationProperty.Unavailable or RelationProperty.UnknownBase or "(вычисление недоступно)")
             return AutoFailure(RelationAutoStatus.Unavailable, field, "Зависимую базу не удалось прочитать. Прежние связи сохранены.");
         return AutoFailure(RelationAutoStatus.InvalidRule, field, $"В {location} свойстве есть недоступное значение или значение другого типа.");
     }
 
-    private sealed record AutoConnection(int DbId, string Path, PermissionService? Permissions);
+    private sealed record AutoConnection(int DbId, string Path);
     private sealed record AutoConnections(AutoConnection Source, IReadOnlyDictionary<int, AutoConnection> Targets);
 
-    // Снимок адресов/прав снимается вызывающим UI до Task.Run. Неизвестные базы в фоне не монтируются.
+    // Снимок адресов снимается вызывающим UI до Task.Run. Неизвестные базы в фоне не монтируются.
     private AutoConnections CaptureAutoConnections(DbField field)
     {
         var ownId = RelationDbResolver.DbIdFor(this);
@@ -783,19 +770,19 @@ public partial class ConstructorRepository
         var connections = RelationDbResolver.HasScopedResolver
             ? new Dictionary<int, AutoConnection>()
             : RelationDbResolver.MountedReposExcept(ownId)
-                .ToDictionary(p => p.DbId, p => new AutoConnection(p.DbId, p.Repo.DbPath, p.Repo.Permissions));
+                .ToDictionary(p => p.DbId, p => new AutoConnection(p.DbId, p.Repo.DbPath));
         var cfg = RelationConfig.FromConfig(field.ConfigJson);
         if (cfg is { TargetDbId: > 0 } && RelationDbResolver.MountedRepoFor(cfg.TargetDbId) is { } target)
-            connections[cfg.TargetDbId] = new(cfg.TargetDbId, target.DbPath, target.Permissions);
-        if (ownId > 0) connections[ownId] = new(ownId, DbPath, Permissions);
+            connections[cfg.TargetDbId] = new(cfg.TargetDbId, target.DbPath);
+        if (ownId > 0) connections[ownId] = new(ownId, DbPath);
         // В окне все доступные адреса уже находятся в mounted descriptors. Перед каждым
         // поиском читаем только их: каталог сетевой базы нельзя открывать до Task.Run.
         if (!RelationDbResolver.HasScopedResolver)
-            return new(new(ownId, DbPath, Permissions), connections);
+            return new(new(ownId, DbPath), connections);
         // Headless/scoped-резолвер не обязан иметь Workspace. Собираем также адреса целей из
         // конфигов, используя собственный каталог: общий контекст мог только что завершить tx.
         var queue = new Queue<AutoConnection>();
-        queue.Enqueue(new(ownId, DbPath, Permissions));
+        queue.Enqueue(new(ownId, DbPath));
         var visited = new HashSet<string>(StringComparer.Ordinal);
         while (queue.Count > 0 && visited.Count < 64)
         {
@@ -808,8 +795,7 @@ public partial class ConstructorRepository
                     .Select(f => new { f.CollectionId, f.ConfigJson }).ToList();
                 foreach (var row in fields)
                 {
-                    if (current.Permissions?.Can(PermAction.ViewCollection, row.CollectionId) == false
-                        || RelationConfig.FromConfig(row.ConfigJson) is not { TargetDbId: > 0 } relation) continue;
+                    if (RelationConfig.FromConfig(row.ConfigJson) is not { TargetDbId: > 0 } relation) continue;
                     if (connections.TryGetValue(relation.TargetDbId, out var known))
                     {
                         queue.Enqueue(known);
@@ -817,7 +803,7 @@ public partial class ConstructorRepository
                     }
                     var linked = RelationDbResolver.MountedRepoFor(relation.TargetDbId);
                     if (linked is null) continue;
-                    var connection = new AutoConnection(relation.TargetDbId, linked.DbPath, linked.Permissions);
+                    var connection = new AutoConnection(relation.TargetDbId, linked.DbPath);
                     connections[relation.TargetDbId] = connection;
                     queue.Enqueue(connection);
                 }
@@ -825,13 +811,13 @@ public partial class ConstructorRepository
             catch (DbException) { /* реальное чтение вернет Unavailable, прежние ребра сохранятся */ }
             catch (IOException) { /* недоступную вложенную базу в фоне не монтируем */ }
         }
-        return new(new(ownId, DbPath, Permissions), connections);
+        return new(new(ownId, DbPath), connections);
     }
 
     private static T WithAutoConnections<T>(AutoConnections connections, Func<ConstructorRepository, T> action)
     {
         using var source = new AppDbContext(connections.Source.Path);
-        var repo = new ConstructorRepository(source) { Permissions = connections.Source.Permissions };
+        var repo = new ConstructorRepository(source);
         var contexts = new Dictionary<int, AppDbContext>();
         var repositories = new Dictionary<int, ConstructorRepository>();
         ConstructorRepository? Resolve(int dbId)
@@ -842,7 +828,7 @@ public partial class ConstructorRepository
             if (connection.Path == connections.Source.Path) return repo;
             var context = new AppDbContext(connection.Path);
             contexts[dbId] = context;
-            return repositories[dbId] = new ConstructorRepository(context) { Permissions = connection.Permissions };
+            return repositories[dbId] = new ConstructorRepository(context);
         }
         using var resolver = RelationDbResolver.UseScopedResolver(Resolve, candidate => ReferenceEquals(candidate, repo)
             ? connections.Source.DbId

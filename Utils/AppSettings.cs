@@ -67,10 +67,6 @@ public static class AppSettings
     public static string DocThumbsDir { get; } =
         Path.Combine(AppDataDir, Core.Documents.DocThumbnail.FolderName);
 
-    // Журнал безопасности — рядом, но отдельным файлом: рабочий журнал чистит пользователь, а
-    // этот только дополняется и читается проверяющим (docs/ROADMAP-API.md, 10.10).
-    public static string SecurityJournalPath { get; } = Path.Combine(AppDataDir, "security.db");
-
     public static void EnsureCreated() =>
         Directory.CreateDirectory(AppDataDir);
 
@@ -1301,8 +1297,6 @@ public static class AppSettings
     // переименованием, см. Integrations/InboxFolder.cs). Держи ее в общей базе — и включение
     // приемника на одной машине включало бы его у всех.
     //
-    // Разрешен ли сам корень, решает политика организации, а не эта настройка: сохраненный
-    // путь — всего лишь память о выборе, и запрещенная папка просто не откроется.
     public static string LoadInboxFolder() => _store?.Get(KeyInboxFolder) ?? "";
 
     public static void SaveInboxFolder(string path) => _store?.Set(KeyInboxFolder, path ?? "");
@@ -1326,8 +1320,7 @@ public static class AppSettings
     // Настройка тоже МАШИННАЯ, и тут иначе быть не может: порт открывает конкретный компьютер.
     // Выключено по умолчанию — открытый порт заводят осознанно, а не обнаруживают.
     //
-    // Что именно разрешено, решает дверь (Integrations/IngressGate.cs): сохраненный режим —
-    // память о выборе, и запрещенный политикой режим просто не заработает.
+    // Режим и порт проверяются Integrations/IngressGate.cs до открытия слушателя.
 
     /// <summary>Режим приема по сети; неизвестное значение читается как «выключено».</summary>
     public static Integrations.IngressMode LoadIngressMode() => _store?.Get(KeyIngressMode) switch
@@ -1354,41 +1347,6 @@ public static class AppSettings
 
     public static void SaveIngressPort(int port) =>
         _store?.Set(KeyIngressPort, port.ToString(System.Globalization.CultureInfo.InvariantCulture));
-
-    // ── Последняя известная политика интеграций ────────────────────────────────
-    //
-    // Снимок текста политики по каждому источнику. Нужен ровно для одного случая: сетевая
-    // папка раздачи пропала (выключили сервер, отвалился диск P:), а ограничения обязаны
-    // остаться прежними. Без снимка пропажа источника меняла бы права — в ту или другую
-    // сторону, и обе одинаково плохи: либо обмен встает на ровном месте, либо, что хуже,
-    // исчезнувший строгий источник перестает сужать список разрешенного.
-    //
-    // Хранится СЫРОЙ текст, а не разобранная политика: разбор меняется вместе с программой,
-    // а снимок должен переживать обновление. Подпись хранится рядом своим ключом — источник,
-    // которому подпись обязательна, обязан пройти проверку и из снимка тоже.
-    //
-    // Ключ строки — «integrations.policy.<источник>»; имена источников задает
-    // Integrations/PolicySources.cs, ядро их не знает.
-    public static string LoadPolicySnapshot(string sourceKey) =>
-        _store?.Get(PolicySnapshotKey(sourceKey)) ?? "";
-
-    public static void SavePolicySnapshot(string sourceKey, string text)
-    {
-        var storeKey = PolicySnapshotKey(sourceKey);
-        if (string.IsNullOrWhiteSpace(text)) _store?.Remove(storeKey);
-        else                                 _store?.Set(storeKey, text);
-    }
-
-    /// <summary>
-    /// Забыть снимок источника. Зовется, когда источник пропал НЕ из-за недоступности, а
-    /// по-настоящему: папка на месте, файла в ней больше нет. Иначе отмененная политика
-    /// действовала бы вечно, и снять ее у службы ИТ не вышло бы никак.
-    /// </summary>
-    public static void ForgetPolicySnapshot(string sourceKey) =>
-        _store?.Remove(PolicySnapshotKey(sourceKey));
-
-    private static string PolicySnapshotKey(string sourceKey) =>
-        $"{PolicySnapshotPrefix}{sourceKey}";
 
     /// <summary>
     /// Убрать настройки расширений, которых в сборке больше нет: удалено расширение —
@@ -1646,9 +1604,6 @@ public static class AppSettings
     // Не ключ, а приставка: полный ключ собирает ExtensionKey из id расширения и имени
     // настройки — фиксированного списка тут быть не может, расширения приходят и уходят.
     private const string ExtensionKeyPrefix      = "ext.";
-    // Тоже приставка: имена источников политики задает Integrations/PolicySources.cs, и
-    // перечислять их здесь значило бы держать список в двух местах.
-    private const string PolicySnapshotPrefix    = "integrations.policy.";
     // Приставка привязок сочетаний клавиш: список действий задает реестр
     // Core/Models/ShortcutActions.cs — полный ключ собирает ShortcutKey.
     private const string ShortcutKeyPrefix       = "shortcut.";

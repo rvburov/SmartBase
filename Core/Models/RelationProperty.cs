@@ -22,7 +22,6 @@ public sealed record RelationPickerData(IReadOnlyList<RelationPropertyValue> Can
 
 public static class RelationProperty
 {
-    public const string NoAccess = "(нет доступа)";
     public const string Unavailable = "(база недоступна)";
     /// <summary>Старая межбазовая связь с номером реестра другого компьютера: база не определена,
     /// пока ее не выберут в окне свойства (ребра сохраняются).</summary>

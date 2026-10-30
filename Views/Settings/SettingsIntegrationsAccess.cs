@@ -14,13 +14,8 @@ namespace SmartBase.Views.Settings;
 /// половина, папка обмена, живет в <c>SettingsIntegrationsInbox</c>: экран один, потому что
 /// вопрос у человека один — «как до нас достучаться».
 ///
-/// Три вещи и ровно в этом порядке: каким способом к нам обращаются, кому это разрешено и что
-/// переслать тому, кто будет писать отправителя.
-///
-/// <b>Выключено по умолчанию.</b> Порт открывают осознанно, а не обнаруживают; сетевой режим при
-/// этом не просто галочка с предупреждением — его разрешает политика организации, и строка о нем
-/// показана серой с объяснением, к кому идти. Запрет обязан объяснять себя, иначе его считают
-/// поломкой.
+/// Режим приема, порт и описание API для отправителя. Настройки приема относятся к этой
+/// машине, а разрешения операционной системы на сетевой порт настраиваются отдельно.
 /// </summary>
 public partial class SettingsView
 {
@@ -36,65 +31,30 @@ public partial class SettingsView
     {
         var mode = AppSettings.LoadIngressMode();
         var port = AppSettings.LoadIngressPort();
-
         var block = new StackPanel { Spacing = 6 };
 
         block.Children.Add(ModeChoice("Выключен", IngressMode.Off, mode,
-            "Никого не слушаем. Это состояние по умолчанию."));
-
+            "Прием по сети выключен."));
         block.Children.Add(ModeChoice("Только с этого компьютера", IngressMode.Loopback, mode,
-            $"Адрес {IngressGate.LoopbackHost} — программы, запущенные на этой же машине. "
-            + "С соседнего компьютера сюда не достучаться физически, даже зная токен. "
-            + "Прав администратора не требуется."));
+            $"Адрес {IngressGate.LoopbackHost} — программы на этой же машине. "
+            + "С соседнего компьютера этот адрес недоступен."));
+        block.Children.Add(ModeChoice("Разрешить по локальной сети", IngressMode.Network, mode,
+            "Слушать все адреса машины. Для открытия сетевого порта могут потребоваться "
+            + "права администратора операционной системы."));
 
-        // Сетевой режим показан всегда: пустое место на его месте читалось бы как «такого не
-        // бывает», а серая строка с причиной — как «есть, но не вам решать».
-        var verdict = IngressGate.Check(IngressMode.Network, port);
-
-        var network = ModeChoice("Разрешить по локальной сети", IngressMode.Network, mode,
-            verdict.Allowed
-                ? "Слушать будем все адреса машины сразу — их бывает несколько. Нужны права "
-                + "администратора ОДИН раз: занять адрес и открыть порт в брандмауэре."
-                : Capitalize(verdict.Explanation)
-                + ". Разрешает его организация, а не пользователь, — обратитесь к "
-                + "ответственному за интеграции.");
-
-        network.IsEnabled = verdict.Allowed;
-        block.Children.Add(network);
-
-        if (verdict.Allowed && ListenerPermissions.Needed)
+        if (mode == IngressMode.Network && ListenerPermissions.Needed)
             block.Children.Add(PermissionsLine(port));
 
         block.Children.Add(PortLine(mode, port));
-
-        // Слушаем или нет — в ячейке с данными: это ответ программы, а не пояснение к
-        // переключателям, и отличаться он должен так же, как отличается показанное от набранного.
         var state = new List<Control> { Note(StateLine()) };
-
         if (mode == IngressMode.Network && MachineAddress.All().Count > 1)
             state.Add(Note("Адреса этой машины: " + string.Join(", ", MachineAddress.All())
-                           + ". Отправителю называют тот, по которому он до нас дотянется."));
-
-        // Сказано ПРЯМО и на самом экране, а не в документации, которую не читают (6.2). Сетевой
-        // режим защищен одним токеном, и по обычному HTTP этот токен идет по проводу открытым
-        // текстом: кто угодно в той же сети, кто умеет смотреть трафик, унесет его целиком.
-        //
-        // Для заводской сети это приемлемо — так в разделе и написано, — но приемлемо только
-        // тогда, когда человек об этом знает. Умолчание здесь было бы не бережностью, а обманом:
-        // «защита только токеном» звучит надежно ровно до первого вопроса «а токен-то как едет».
-        if (mode == IngressMode.Network)
-            state.Add(Note(
-                "Защита — один токен, и по обычному HTTP он идет по сети ОТКРЫТЫМ ТЕКСТОМ: любой, "
-                + "кто смотрит трафик той же сети, его прочитает и сможет писать в базу от имени "
-                + "этого робота. Для заводской сети это обычно приемлемо; если нет — оставьте "
-                + "прием только с этого компьютера или используйте папку обмена."));
-
+                           + ". Отправителю нужен доступный ему адрес."));
         block.Children.Add(DataBox(state));
 
         return Row("Как к нам обращаются",
-            "Прием по сети нужен тем отправителям, которые стоят на этом же компьютере: "
-            + "учетной системе, скрипту, макросу табличного редактора. Всем остальным — папка "
-            + "обмена ниже: она работает, даже когда программа закрыта.",
+            "Сторонняя программа отправляет запросы на выбранный адрес. Для обмена файлами "
+            + "используется папка ниже: файлы дождутся следующего запуска SmartBase.",
             block);
     }
 
@@ -112,13 +72,6 @@ public partial class SettingsView
         radio.IsCheckedChanged += (_, _) =>
         {
             if (radio.IsChecked != true || AppSettings.LoadIngressMode() == value) return;
-
-            if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup))
-            {
-                radio.IsChecked = false;
-                return;
-            }
-
             AppSettings.SaveIngressMode(value);
             _ingress?.Apply();
             BuildIntegrationsInbox();
@@ -159,7 +112,6 @@ public partial class SettingsView
     private async Task GrantListenerAsync(int port)
     {
         if (VisualRoot is not Window win) return;
-        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
 
         var trouble = await ListenerPermissions.GrantAsync(port);
 
@@ -176,9 +128,6 @@ public partial class SettingsView
             .ShowDialog(win);
     }
 
-    private static string Capitalize(string text) =>
-        text.Length == 0 ? text : char.ToUpperInvariant(text[0]) + text[1..];
-
     /// <summary>Номер порта. Правится, только когда прием включен: менять номер двери, которой
     /// нет, незачем.</summary>
     private Control PortLine(IngressMode mode, int port)
@@ -190,8 +139,6 @@ public partial class SettingsView
 
         var apply = RowButton("Применить", () =>
         {
-            if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
-
             if (!int.TryParse(box.Text, out var wanted) || !IngressGate.ValidPort(wanted))
             {
                 _ = ConfirmDialog
@@ -238,273 +185,6 @@ public partial class SettingsView
                  + ". Обычно это занятый номер — попробуйте другой.";
 
         return "Сейчас не слушаю: прием выключен.";
-    }
-
-    // ── Токены доступа ────────────────────────────────────────────────────────
-
-    private Border TokensRow()
-    {
-        var block = new StackPanel { Spacing = 8 };
-
-        if (Integrations is not { } registry)
-        {
-            block.Children.Add(DataBox("Список станет доступен, когда откроется база данных."));
-            return Row("Токены доступа", TokensHelp(), block);
-        }
-
-        var tokens = registry.Tokens();
-        var opened = _databases?.Invoke() ?? [];
-
-        if (tokens.Count == 0)
-            block.Children.Add(DataBox("Не выдано ни одного токена — постучаться к нам сейчас "
-                                       + "некому."));
-
-        foreach (var token in tokens)
-        {
-            var database = opened.FirstOrDefault(d => d.DbId == token.DbId)?.Name
-                        ?? $"база №{token.DbId} (сейчас не открыта)";
-
-            var line = Note($"{token.Name} — {database}"
-                + (token.Enabled ? "" : " · выключен")
-                + (token.Used is { } used
-                    ? $" · последнее обращение {used.ToLocalTime():dd.MM.yyyy HH:mm}"
-                    : " · обращений не было"));
-
-            var item = token;
-
-            // Сам токен — в ячейке с данными, действия над ним — рядом, как кнопки строки в
-            // «Управлении базой данных»: показанное и нажимаемое не смешиваются.
-            var actions = ButtonLine(
-                RowButton(item.Enabled ? "Выключить" : "Включить", () =>
-                {
-                    if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
-
-                    registry.EnableToken(item.Id, !item.Enabled);
-                    BuildIntegrationsInbox();
-                }),
-                RowButton("Убрать", () => _ = RemoveTokenAsync(registry, item)));
-
-            var box = DataBox(new[] { line });
-            box.VerticalAlignment = VerticalAlignment.Center;
-            actions.VerticalAlignment = VerticalAlignment.Center;
-            actions.Margin = new Avalonia.Thickness(8, 0, 0, -6);
-
-            var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
-            Grid.SetColumn(box, 0);
-            Grid.SetColumn(actions, 1);
-            grid.Children.Add(box);
-            grid.Children.Add(actions);
-
-            block.Children.Add(grid);
-        }
-
-        block.Children.Add(ButtonLine(
-            RowButton("Создать токен", () => _ = IssueTokenAsync(registry))));
-
-        return Row("Токены доступа", TokensHelp(), block);
-    }
-
-    private static string TokensHelp() =>
-        "Токен — это пользователь-робот в базе данных: он виден администратору в списке "
-        + "пользователей, его именем подписаны сделанные им записи, и допуск ему отзывается там "
-        + "же, где человеку. По умолчанию роботу разрешено только создавать и изменять записи — "
-        + "читать базу через этот канал нельзя вовсе.";
-
-    /// <summary>
-    /// Выдать токен под одну из открытых баз. Сам поток — окно, робот, единственный показ текста —
-    /// общий с менеджером паролей (<see cref="TokenIssue"/>): порядок его шагов забывать нельзя, и
-    /// держать его в двух местах значило бы однажды забыть в одном.
-    /// </summary>
-    private async Task IssueTokenAsync(Database.IntegrationsRegistry registry)
-    {
-        if (VisualRoot is not Window win) return;
-        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
-
-        await TokenIssue.RunAsync(win, registry, _databases?.Invoke() ?? [],
-                                  issued: BuildIntegrationsInbox);
-    }
-
-    private async Task RemoveTokenAsync(Database.IntegrationsRegistry registry, AccessToken token)
-    {
-        if (VisualRoot is not Window win) return;
-        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
-
-        var ok = await new ConfirmDialog(
-            $"Убрать токен «{token.Name}»?\n\n"
-            + "Отправитель с этим токеном перестанет проходить сразу же. Пользователь-робот в "
-            + "базе останется: его именем подписаны уже сделанные записи, и удалить его значило "
-            + "бы обезличить историю изменений.").ShowDialog<bool>(win);
-
-        if (!ok) return;
-
-        registry.RemoveToken(token.Id);
-        BuildIntegrationsInbox();
-    }
-
-    // ── Что можно читать ──────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Выдачи чтения (docs/ROADMAP-API.md, шаг 10). Блок стоит СРАЗУ за токенами: токен
-    /// отвечает «кто может постучаться», выдача — «что ему позволено вычитать», и читаются
-    /// они подряд.
-    /// </summary>
-    private Border ReadsRow()
-    {
-        var block = new StackPanel { Spacing = 8 };
-
-        if (Integrations is not { } registry)
-        {
-            block.Children.Add(DataBox("Список станет доступен, когда откроется база данных."));
-            return Row("Что можно читать", ReadsHelp(), block);
-        }
-
-        var grants = registry.Grants();
-        var tokens = registry.Tokens();
-        var now    = DateTimeOffset.Now;
-
-        if (grants.Count == 0)
-            block.Children.Add(DataBox(
-                "Выдач нет — вычитать данные по сети не может никто. Это состояние по "
-                + "умолчанию: чтение разрешают осознанно, а не обнаруживают."));
-
-        foreach (var grant in grants)
-        {
-            var token = tokens.FirstOrDefault(t => t.Id == grant.TokenId);
-
-            var lines = new List<Control>
-            {
-                Note($"{token?.Name ?? $"токен №{grant.TokenId}"} → коллекция «{grant.Collection}»"),
-                Note($"поля: {grant.Fields} · {grant.Describe()}"),
-            };
-
-            if (grant.Trouble(now) is { } trouble)
-            {
-                var bad = Note("не действует: " + trouble);
-                bad.Foreground = Ink("BrushRed", "#FF3B30");
-                lines.Add(bad);
-            }
-
-            var box = DataBox(lines);
-            box.VerticalAlignment = VerticalAlignment.Center;
-
-            var item    = grant;
-            var actions = ButtonLine(RowButton("Отозвать", () => _ = RevokeGrantAsync(registry, item)));
-            actions.VerticalAlignment = VerticalAlignment.Center;
-            actions.Margin            = new Avalonia.Thickness(8, 0, 0, -6);
-
-            var line = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
-            Grid.SetColumn(box, 0);
-            Grid.SetColumn(actions, 1);
-            line.Children.Add(box);
-            line.Children.Add(actions);
-
-            block.Children.Add(line);
-        }
-
-        var issue = RowButton("Разрешить чтение…", () => _ = IssueGrantAsync(registry));
-        issue.IsEnabled = tokens.Count > 0;
-
-        block.Children.Add(ButtonLine(issue));
-
-        if (tokens.Count == 0)
-            block.Children.Add(Note("Сначала создайте токен: выдача разрешает чтение ему."));
-
-        return Row("Что можно читать", ReadsHelp(), block);
-    }
-
-    private static string ReadsHelp() =>
-        "Токен по умолчанию только пишет. Чтение разрешает ВЫДАЧА: одна коллекция, "
-        + "поименованные поля, срок — подтверждается мастер-паролем организации, как исходящее "
-        + "направление. Каждый ответ ложится в журнал безопасности и занимает суточный потолок "
-        + "выдачи; помеченные поля не выдаются вовсе.";
-
-    private async Task IssueGrantAsync(Database.IntegrationsRegistry registry)
-    {
-        if (VisualRoot is not Window win) return;
-        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsOutward)) return;
-
-        var opened = _databases?.Invoke() ?? [];
-
-        // Токены закрытых баз в списке не предлагаются: состав их коллекций взять неоткуда.
-        var usable = registry.Tokens()
-            .Select(t => (Token: t, Db: opened.FirstOrDefault(d => d.DbId == t.DbId)))
-            .Where(p => p.Db is not null)
-            .ToList();
-
-        if (usable.Count == 0)
-        {
-            await ConfirmDialog.Info(
-                    "Нет ни одного токена открытой базы данных: выдача разрешает чтение "
-                    + "токену, и сначала нужен он.")
-                .ShowDialog(win);
-            return;
-        }
-
-        DatabaseManager DbOf(int tokenId) => usable.First(p => p.Token.Id == tokenId).Db!;
-
-        var dialog = new ReadGrantDialog(
-            [.. usable.Select(p => (p.Token.Id, $"{p.Token.Name} — {p.Db!.Name}"))],
-            tokenId => [.. DbOf(tokenId).Constructor.GetAllCollections()
-                            .Where(c => c.Id is not null)
-                            .Select(c => (c.Id!.Value, c.Name ?? ""))],
-            (tokenId, collectionId) =>
-                DbOf(tokenId).Constructor.GrantColumnsIsolated(collectionId),
-            choice =>
-            {
-                var made = registry.ConfirmGrant(
-                    choice.TokenId, choice.CollectionId, choice.Collection,
-                    choice.FieldKeys, choice.Fields, choice.Password,
-                    CurrentUser.DisplayName, choice.Days, DateTimeOffset.Now, out var trouble);
-
-                if (made is null) return trouble;
-
-                // След — в журнал безопасности, как у направления: это решение о полномочии,
-                // и читает его проверяющий. Не записалось — сказать сразу.
-                var token = registry.Token(choice.TokenId);
-
-                var written = Database.SecurityJournal.Add(Database.SecurityEntry.New(
-                    Database.SecurityEvent.Confirm, allowed: true,
-                    who: CurrentUser.DisplayName, scenario: "",
-                    address: IngressApi.RecordsPath + "?collection=" + choice.Collection,
-                    fields: choice.Fields, rows: 0, bytes: 0, bodyHash: "",
-                    explanation: $"выдано чтение коллекции «{choice.Collection}» токену "
-                               + $"«{token?.Name ?? choice.TokenId.ToString()}» на {choice.Days} дней",
-                    dbId: token?.DbId ?? 0, at: DateTimeOffset.Now,
-                    confirmed: CurrentUser.DisplayName, collection: choice.Collection));
-
-                return written
-                    ? null
-                    : "выдача записана, но след в журнале безопасности не лег — сообщите "
-                    + "ответственному за интеграции";
-            });
-
-        if (await dialog.ShowDialog<bool>(win)) BuildIntegrationsInbox();
-    }
-
-    private async Task RevokeGrantAsync(Database.IntegrationsRegistry registry,
-                                        ReadGrant grant)
-    {
-        if (VisualRoot is not Window win) return;
-        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsOutward)) return;
-
-        var yes = await new ConfirmDialog(
-            $"Отозвать выдачу на коллекцию «{grant.Collection}»? Чтение остановится сразу же, "
-            + "а вернуть его можно только мастер-паролем.",
-            "Отозвать").ShowDialog<bool>(win);
-
-        if (!yes) return;
-
-        registry.RevokeGrant(grant.Id);
-
-        Database.SecurityJournal.Add(Database.SecurityEntry.New(
-            Database.SecurityEvent.Revoke, allowed: true,
-            who: CurrentUser.DisplayName, scenario: "",
-            address: IngressApi.RecordsPath + "?collection=" + grant.Collection,
-            fields: grant.Fields, rows: 0, bytes: 0, bodyHash: "",
-            explanation: $"отозвана выдача чтения коллекции «{grant.Collection}»",
-            dbId: 0, at: DateTimeOffset.Now, collection: grant.Collection));
-
-        BuildIntegrationsInbox();
     }
 
     // ── Описание API ──────────────────────────────────────────────────────────
@@ -555,7 +235,7 @@ public partial class SettingsView
 
         var collections = await Task.Run(repo.ApiSchemaIsolated);
 
-        return ApiDescription.Text(address, name, collections);
+        return ApiDescription.Text(address, name, collections, target.DbId);
     }
 
     /// <summary>

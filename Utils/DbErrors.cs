@@ -25,11 +25,6 @@ public static class DbErrors
     /// <summary>Показ уведомления (MainWindow.Notify). Вызывается уже на UI-потоке.</summary>
     public static Action<string>? Notify;
 
-    /// <summary>Показ окна «действие запрещено правами» (MainWindow → PermissionNotice).
-    /// Отдельно от тоста: отказ по правам — ответ на осознанное действие человека,
-    /// его нужно прочитать, а не заметить краем глаза.</summary>
-    public static Action<string>? NotifyDenied;
-
     /// <summary>Сигнал монитору доступности (DbHealthMonitor.ReportFailureByPath).</summary>
     public static Action<string, Exception>? ReportFailure;
 
@@ -42,21 +37,12 @@ public static class DbErrors
     /// монитор оповещен), пробрасывать не нужно. false — чужое исключение.</summary>
     public static bool Handle(Exception ex, string? dbPath)
     {
-        if (ex is Core.Models.PermissionDeniedException)
-        {
-            // Действие запрещено правами: интерфейс обычно объясняет это еще до вызова
-            // (PermissionNotice в меню), сюда доходят обходные пути и гонки — право
-            // отозвали, пока меню/окно были открыты. Не ошибка приложения → Warning.
-            Log.Warning(ex, "Действие запрещено правами: {Path:l}", Display(dbPath));
-            Dispatcher.UIThread.Post(() => (NotifyDenied ?? Notify)?.Invoke(ex.Message));
-            return true;
-        }
         if (ex is Database.Repositories.RelationConditionException)
         {
             // Новая связь не подходит под условие выбора записей (или его нельзя проверить). Список
             // выбора и вставка говорят это сами; сюда доходят остальные пути и гонки.
             Log.Information("Связь отклонена условием выбора: {Path:l}", Display(dbPath));
-            Dispatcher.UIThread.Post(() => (NotifyDenied ?? Notify)?.Invoke(ex.Message));
+            Dispatcher.UIThread.Post(() => Notify?.Invoke(ex.Message));
             return true;
         }
         if (ex is Database.Repositories.RelationDeleteRestrictedException)
@@ -64,7 +50,7 @@ public static class DbErrors
             // Запись держит связь с запретом удаления. Окна удаления говорят это заранее, сюда
             // доходят остальные пути и гонки (ссылку поставили, пока окно было открыто).
             Log.Information("Удаление отклонено связью с запретом: {Path:l}", Display(dbPath));
-            Dispatcher.UIThread.Post(() => (NotifyDenied ?? Notify)?.Invoke(ex.Message));
+            Dispatcher.UIThread.Post(() => Notify?.Invoke(ex.Message));
             return true;
         }
         if (DbHealthMonitor.IsBusyError(ex))

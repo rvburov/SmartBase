@@ -12,9 +12,7 @@ namespace SmartBase.Database.Repositories;
 /// не может — он повторяется по расписанию, и каждый запуск обязан ложиться в ту же таблицу.
 ///
 /// Записи пишутся ОБЫЧНЫМ путем — <c>AddRecord</c> и <c>SetFieldValue</c>, а не пакетной
-/// вставкой сырым SQL, которой пользуется импорт файла. Причина в объемах: файл приносит
-/// миллионы строк, а один запуск обмена ограничен потолком политики — там тысячи. За обычный
-/// путь при этом достается все, что к нему прилагается: журнал изменений, права, пересчет
+/// вставкой сырым SQL, которой пользуется импорт файла. Обычный путь сохраняет журнал изменений, пересчет
 /// календарного и задачного индексов, авто-привязка файлов. Пакетная вставка все это обходит,
 /// и обмен молча ломал бы то, что человек видит на других экранах.
 /// </summary>
@@ -42,11 +40,6 @@ public partial class ConstructorRepository
 
         if (!db.DbCollections.AsNoTracking().Any(c => c.Id == binding.CollectionId))
             throw new ImportException("Коллекция не найдена — возможно, ее удалили.");
-
-        // Права спрашиваются ДО первой записи, хотя их проверит и каждый AddRecord отдельно:
-        // отказ на середине оставил бы коллекцию наполовину обновленной, а обмен повторяется
-        // по расписанию — разбираться в таком состоянии потом некому.
-        DemandRights(binding);
 
         var reader = ColumnReader(binding, schema);
         var fields = FieldsOfBinding(binding);
@@ -175,68 +168,19 @@ public partial class ConstructorRepository
         return new BindingResult(created, updated, skipped, unclear, empty);
     }
 
-    /// <summary>
-    /// То же на ОТДЕЛЬНОМ подключении — для вызова с фонового потока. Общий контекст с фонового
-    /// потока трогать нельзя: его параллельно использует интерфейс, и EF отвечает на это
-    /// «A second operation was started on this context instance» (см. <c>ImportStreamedCollectionIsolated</c>).
-    ///
-    /// Права ручной записи спрашиваются ЗДЕСЬ, на публичной точке входа. Автоподстановка
-    /// наследует исходные права отдельно: ее отложенная работа проверит их перед записью.
-    /// </summary>
-    public BindingResult ApplyRowsIsolated(
-        CollectionBinding      binding,
-        ImportSchema           schema,
-        IEnumerable<ImportRow> rows,
-        CancellationToken      ct,
-        IProgress<int>?        progress = null)
+    /// <summary>Применить привязку в фоне на своем подключении.</summary>
+    public BindingResult ApplyRowsIsolated(CollectionBinding binding, ImportSchema schema,
+        IEnumerable<ImportRow> rows, CancellationToken ct, IProgress<int>? progress = null)
     {
-        DemandRights(binding);
-
         using var ctx = new AppDbContext(db.DbPath);
-        return new ConstructorRepository(ctx) { FileAutoPermissions = AutoFilePermissions }
-            .ApplyRows(binding, schema, rows, ct, progress);
+        return new ConstructorRepository(ctx).ApplyRows(binding, schema, rows, ct, progress);
     }
 
-    /// <summary>
-    /// Отдельное подключение к той же базе — для работы, которую ведет не интерфейс: шаг
-    /// сценария выполняет действие расширения в фоне, а расширение пишет записи само
-    /// (<c>Extensions/ExtensionAction.cs</c>).
-    ///
-    /// Подключение открывается ОДНО на всю работу, а не на строку: сообщений в пачке бывает
-    /// несколько сотен, и подключение на каждое стоило бы дороже самой записи.
-    ///
-    /// Права ручной записи спрашиваются ЗДЕСЬ, на публичной точке входа, — как и у
-    /// <see cref="ApplyRowsIsolated"/>. По умолчанию спрашивается право заводить записи;
-    /// исходные ограничения автоподстановки передаются клону независимо от этого контракта.
-    /// Для операции, выбирающей права по входным данным, checkInside передает живой кеш прав
-    /// клону: его мутаторы проверяют свои права, а чтение проверяет само действие.
-    /// </summary>
-    /// <param name="collectionId">Коллекция, с которой будет работать вызванная работа.</param>
-    /// <param name="work">Что сделать на отдельном подключении.</param>
-    /// <param name="checkInside">Проверять права внутри операции вместо общего CreateRecord.</param>
-    public T UseIsolated<T>(int collectionId, Func<ConstructorRepository, T> work, bool checkInside = false)
+    /// <summary>Выполнить работу расширения на отдельном подключении.</summary>
+    public T UseIsolated<T>(int collectionId, Func<ConstructorRepository, T> work)
     {
-        if (!checkInside) Demand(PermAction.CreateRecord, collectionId);
-
         using var ctx = new AppDbContext(db.DbPath);
-        return work(new ConstructorRepository(ctx)
-        {
-            Permissions = checkInside ? Permissions : null,
-            FileAutoPermissions = AutoFilePermissions,
-        });
-    }
-
-    /// <summary>
-    /// Права, без которых привязку применять нечем. Спрашивается только то, что привязка
-    /// собирается делать: право заводить записи не нужно тому, кто выбрал «только обновлять».
-    /// </summary>
-    private void DemandRights(CollectionBinding binding)
-    {
-        if (!binding.Matches || binding.CreateMissing)
-            Demand(PermAction.CreateRecord, binding.CollectionId);
-
-        if (binding.Matches && binding.UpdateExisting)
-            Demand(PermAction.EditRecord, binding.CollectionId);
+        return work(new ConstructorRepository(ctx));
     }
 
     // ── Чтение колонок источника ──────────────────────────────────────────────
@@ -457,16 +401,11 @@ public partial class ConstructorRepository
     /// Прочитать записи коллекции под исходящую привязку — на ОТДЕЛЬНОМ подключении: зовут это
     /// и из фонового сценария, а общий контекст принадлежит интерфейсу.
     ///
-    /// Здесь стоят обе метки конфиденциальности, и стоят они ВТОРЫМ рубежом. Первый — окно
-    /// настройки: помеченное свойство в списке не появляется вовсе (10.6). Но метку могли
-    /// поставить после того, как привязку собрали, — и тогда отправка обязана встать, а не
-    /// уносить поле, которое кто-то только что закрыл.
-    ///
     /// Читается на одну строку больше потолка: «влезло ровно столько» и «не влезло» — разные
     /// ответы, и отправить первые N из тысячи, промолчав об остальных, нельзя.
     /// </summary>
     /// <param name="binding">Что и под какими именами уходит.</param>
-    /// <param name="limit">Потолок строк за запуск — из политики организации.</param>
+    /// <param name="limit">Максимум строк результата; int.MaxValue — вся выборка.</param>
     /// <param name="ct">Отмена.</param>
     /// <param name="records">Какие записи отправлять; <c>null</c> или пусто — всю коллекцию.
     /// Список приходит от точки вызова: человек выделил строки в таблице и позвал действие
@@ -475,17 +414,9 @@ public partial class ConstructorRepository
                                              CancellationToken ct,
                                              IReadOnlyList<int>? records = null)
     {
-        // Права — на публичной точке входа, как у ApplyRowsIsolated: изолированный клон
-        // репозитория прав не несет. Отправка наружу начинается с чтения, и права на чтение
-        // коллекции — то самое, чего требует эта половина.
-        Demand(PermAction.ViewCollection, binding.CollectionId);
-
         using var ctx = new AppDbContext(db.DbPath);
         ctx.ApplyPerformancePragmas();
         var isolated = new ConstructorRepository(ctx);
-
-        var closed = EgressGate.CheckDatabase(isolated.GetDatabaseLabel());
-        if (!closed.Allowed) return OutgoingRows.Bad(closed.Explanation);
 
         var collection = isolated.CollectionName(binding.CollectionId);
         if (collection.Length == 0)
@@ -509,18 +440,11 @@ public partial class ConstructorRepository
                     $"свойства, уходившего под именем «{field.Name}», в коллекции "
                     + $"«{collection}» больше нет — привязку надо собрать заново");
 
-            var mark = EgressGate.CheckField(Confidentiality.FromConfig(column.ConfigJson));
-
-            if (!mark.Allowed)
-                return OutgoingRows.Bad($"свойство «{column.Header}»: {mark.Explanation}");
-
             columns.Add(column);
         }
 
         // Колонки отбора — сверх уходящих: отбирать можно по свойству, которое наружу не идет
-        // («Отправлено» = пусто), и это обычный случай, а не исключение. Помеченные свойства сюда
-        // тоже не попадают: условие по закрытому полю не выносит значение наружу, но выносит
-        // ЗНАНИЕ о нем — по тому, какие записи ушли, оно и восстанавливается.
+        // («Отправлено» = пусто), и это обычный случай, а не исключение.
         var extra = new List<ExportColumn>();
 
         foreach (var test in binding.Tests)
@@ -533,12 +457,6 @@ public partial class ConstructorRepository
                     $"свойства «{test.Column}», по которому идет отбор, в коллекции "
                     + $"«{collection}» нет — отбор надо собрать заново");
 
-            var mark = EgressGate.CheckField(Confidentiality.FromConfig(found.ConfigJson));
-
-            if (!mark.Allowed)
-                return OutgoingRows.Bad(
-                    $"отбор идет по свойству «{found.Header}»: {mark.Explanation}");
-
             extra.Add(found);
         }
 
@@ -550,18 +468,32 @@ public partial class ConstructorRepository
                            .Select(t => (Test: t, At: all.FindIndex(c => Same(c.Header, t.Column))))
                            .ToList();
 
-        var take = Math.Max(0, limit) + 1;
-
-        var rows = records is { Count: > 0 }
-            ? isolated.ChosenRows(binding.CollectionId, all, records, tests, take)
-            : ReadExportRowsIsolated(binding.CollectionId, all, excludeHidden: false, ct)
-              .Where(row => Fits(tests, row))
-              .Take(take)
-              .ToList();
-
-        // Колонки отбора уходили только ради условий — обрезаем их, иначе они попали бы в тело.
-        if (extra.Count > 0)
-            rows = [.. rows.Select(row => row[..columns.Count])];
+        var take = limit >= int.MaxValue ? int.MaxValue : Math.Max(0, limit) + 1;
+        var source = records is { Count: > 0 }
+            ? isolated.ChosenRows(binding.CollectionId, all, records, tests, take, ct)
+            : isolated.ReadExportRowsIsolated(binding.CollectionId, all, excludeHidden: false, ct)
+                .Where(row => Fits(tests, row)).Take(take);
+        var rows = new List<string[]>();
+        // Технический размер запроса проверяется по мере чтения страниц, до сборки
+        // тела. Счетчик использует тот же JSON-писатель без буфера данных.
+        using var sizer = OutgoingBody.CreateRowSizer(binding, columns);
+        long bytes = binding.Shape switch
+        {
+            OutgoingShape.Single => 0,
+            OutgoingShape.Wrapped => 7 + System.Text.Json.JsonEncodedText.Encode(binding.Envelope.Trim(),
+                System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping).EncodedUtf8Bytes.Length,
+            _ => 2,
+        };
+        foreach (var sourceRow in source)
+        {
+            ct.ThrowIfCancellationRequested();
+            var row = extra.Count > 0 ? sourceRow[..columns.Count] : sourceRow;
+            if (!binding.Single && rows.Count > 0) bytes++;
+            bytes += sizer.Measure(row);
+            if (bytes > EgressHttp.MaxResponseBytes)
+                return OutgoingRows.Bad("Тело запроса превышает технический размер 32 МБ. Сузьте отбор записей или состав полей.");
+            rows.Add(row);
+        }
 
         return new OutgoingRows(columns, rows, collection, null);
     }
@@ -577,68 +509,51 @@ public partial class ConstructorRepository
     private static bool Fits(IReadOnlyList<(ScenarioCondition Test, int At)> tests, string[] row) =>
         tests.All(t => t.At >= 0 && t.At < row.Length && t.Test.HoldsValue(row[t.At]));
 
-    /// <summary>
-    /// Значения выбранных записей в порядке колонок. Порядок строк — тот же, что в таблице
-    /// (Position, Id), а не тот, в каком человек их выделял: выделение мышью порядка не имеет, и
-    /// отправить одни и те же записи двумя разными списками значило бы получить два разных тела.
-    ///
-    /// Записи не из этой коллекции отбрасываются молча: выделение живет в таблице, а коллекцию
-    /// за это время могли переключить.
-    ///
-    /// <b>Отбор привязки действует и здесь</b>, хотя записи выбрал человек руками. Причина не в
-    /// строгости: отбор входит в отпечаток направления, то есть в то, что подтвердили
-    /// мастер-паролем. Пропусти его у кнопки — и ручная отправка уносила бы записи, которых
-    /// согласованный обмен не касается, оставаясь при этом тем же самым направлением.
-    /// </summary>
-    private List<string[]> ChosenRows(int collectionId, IReadOnlyList<ExportColumn> columns,
-                                      IReadOnlyList<int> records,
-                                      IReadOnlyList<(ScenarioCondition Test, int At)> tests,
-                                      int take)
+    /// <summary>Выбранные записи в порядке таблицы, с чтением значений только текущей страницы.</summary>
+    private IEnumerable<string[]> ChosenRows(int collectionId, IReadOnlyList<ExportColumn> columns,
+        IReadOnlyList<int> records, IReadOnlyList<(ScenarioCondition Test, int At)> tests,
+        int take, CancellationToken ct)
     {
-        // Отбор идет ПОСЛЕ чтения, а не срезает выборку в SQL: условия работают над значениями
-        // полей, которые лежат в отдельной таблице и собираются пачкой ниже. Выделение человека
-        // и так ограничено экраном, поэтому читать «на всякий случай больше» здесь нечего —
-        // берем ровно то, что выделено, и отсеиваем.
-        var chosen = db.DbRecords.AsNoTracking()
-                       .Where(r => r.CollectionId == collectionId && records.Contains(r.Id))
-                       .OrderBy(r => r.Position).ThenBy(r => r.Id)
-                       .ToList();
-
-        var values = GetFieldValuesBatch([.. chosen.Select(r => r.Id)]);
-        // Тип мог измениться после сохранения исходящей привязки. Как и в полном
-        // экспорте, аудит читается из записи только по живому полю этой коллекции.
+        var selected = db.DbRecords.AsNoTracking()
+            .Where(r => r.CollectionId == collectionId && records.Contains(r.Id));
+        var fields = columns.Where(c => c.FieldId.HasValue).Select(c => c.FieldId!.Value).Distinct().ToArray();
         var auditTypes = db.DbFields.AsNoTracking().Where(f => f.CollectionId == collectionId &&
             (f.FieldType == "created_at" || f.FieldType == "updated_at"
              || f.FieldType == "created_by" || f.FieldType == "updated_by"))
             .ToDictionary(f => f.Id, f => f.FieldType);
-
-        var rows = new List<string[]>(chosen.Count);
-
-        foreach (var record in chosen)
+        int? afterPosition = null, afterId = null;
+        var accepted = 0;
+        while (true)
         {
-            var mine = values.GetValueOrDefault(record.Id);
-            var row  = new string[columns.Count];
-
-            for (var i = 0; i < columns.Count; i++)
-                row[i] = columns[i].Key == TitleKey
-                    ? record.Title
-                    : columns[i].FieldId is int field
-                        ? auditTypes.TryGetValue(field, out var auditType)
-                            ? auditType switch
-                            {
-                                "created_at" => record.CreatedAt ?? "", "updated_at" => record.UpdatedAt ?? "",
-                                "created_by" => record.CreatedBy ?? "", _ => record.UpdatedBy ?? "",
-                            }
-                            : mine?.GetValueOrDefault(field, "") ?? ""
-                        : "";
-
-            if (!Fits(tests, row)) continue;
-
-            rows.Add(row);
-            if (rows.Count >= take) break;
+            ct.ThrowIfCancellationRequested();
+            var query = selected;
+            if (afterPosition is int position && afterId is int id)
+                query = query.Where(r => r.Position > position || r.Position == position && r.Id > id);
+            var page = query.OrderBy(r => r.Position).ThenBy(r => r.Id).Take(200).ToList();
+            if (page.Count == 0) yield break;
+            var values = GetFieldValuesBatch(page.Select(r => r.Id).ToArray(), fields);
+            foreach (var record in page)
+            {
+                ct.ThrowIfCancellationRequested();
+                var mine = values.GetValueOrDefault(record.Id);
+                var row = new string[columns.Count];
+                for (var i = 0; i < columns.Count; i++)
+                    row[i] = columns[i].Key == TitleKey ? record.Title
+                        : columns[i].FieldId is int field
+                            ? auditTypes.TryGetValue(field, out var auditType)
+                                ? auditType switch
+                                {
+                                    "created_at" => record.CreatedAt ?? "", "updated_at" => record.UpdatedAt ?? "",
+                                    "created_by" => record.CreatedBy ?? "", _ => record.UpdatedBy ?? "",
+                                }
+                                : mine?.GetValueOrDefault(field, "") ?? ""
+                            : "";
+                if (!Fits(tests, row)) continue;
+                yield return row;
+                if (++accepted >= take) yield break;
+            }
+            (afterPosition, afterId) = (page[^1].Position, page[^1].Id);
         }
-
-        return rows;
     }
 
     /// <summary>Позиция для первой новой записи — в конец коллекции, как при обычном добавлении.</summary>

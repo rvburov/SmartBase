@@ -487,41 +487,33 @@ internal static class RelationChecks
                 "переход к доступной записи работает и у автоматической связи только для чтения");
 
             manager.Context.Database.ExecuteSqlInterpolated($"UPDATE db_field_values SET Value = '200' WHERE RecordId = {b} AND FieldId = {targetInn.Id.Value}");
-            var permissions = manager.Permissions;
-            permissions.SetMask(permissions.CurrentUserId, null, (int)PermAction.All);
-            permissions.SetMask(permissions.CurrentUserId, source, (int)(PermAction.All & ~PermAction.EditRecord));
-            var me = manager.Context.DbUsers.First(user => user.UserKey == CurrentUser.Key);
-            me.IsAdmin = false;
-            me.IsApproved = true;
-            manager.Context.SaveChanges();
-            permissions.Reload(notify: false);
-            var deniedPicker = new RelationSelectBox(repo, relation.Id.Value, manualCfg!, editing: true) { RecordId = record, Height = 38 };
-            owner.Content = deniedPicker;
+            var manualPicker = new RelationSelectBox(repo, relation.Id.Value, manualCfg!, editing: true) { RecordId = record, Height = 38 };
+            owner.Content = manualPicker;
             Pump();
-            deniedPicker.OpenSearch("");
-            Wait(() => SearchReady(deniedPicker) && Shown(deniedPicker).Length == 2, "список без права изменения не загрузился");
-            var deniedPopup = Private<Popup>(deniedPicker, "_popup");
-            LayoutPopup(deniedPopup);
-            var deniedBoxes = deniedPopup.Child!.GetVisualDescendants().OfType<CheckBox>().ToArray();
-            Expect(deniedBoxes.Length == 2 && deniedBoxes.All(cb => !cb.IsEnabled),
-                "без права изменения записи ручной список также доступен только для просмотра");
-            var deniedEdges = repo.GetLinkEdges(relation.Id.Value, record).ToArray();
-            var deniedVm = Shown(deniedPicker).Single(item => (int)item.GetType().GetProperty("Id")!.GetValue(item)! == a);
-            deniedVm.GetType().GetProperty("Checked")!.SetValue(deniedVm, true);
+            manualPicker.OpenSearch("");
+            Wait(() => SearchReady(manualPicker) && Shown(manualPicker).Length == 2, "ручной список не загрузился");
+            var manualPopup = Private<Popup>(manualPicker, "_popup");
+            LayoutPopup(manualPopup);
+            var manualBoxes = manualPopup.Child!.GetVisualDescendants().OfType<CheckBox>().ToArray();
+            Expect(manualBoxes.Length == 2 && manualBoxes.All(cb => cb.IsEnabled),
+                "ручной список разрешает редактировать связи");
+            var manualEdges = repo.GetLinkEdges(relation.Id.Value, record).ToArray();
+            var manualVm = Shown(manualPicker).Single(item => (int)item.GetType().GetProperty("Id")!.GetValue(item)! == a);
+            manualVm.GetType().GetProperty("Checked")!.SetValue(manualVm, true);
             Pump();
-            Expect(repo.GetLinkEdges(relation.Id.Value, record).SequenceEqual(deniedEdges),
-                "отказ права изменения не оставляет частично измененных связей");
-            deniedPicker.OpenSearch("100");
+            Expect(repo.GetLinkEdges(relation.Id.Value, record).Any(edge => edge.ToRecordId == a),
+                "переключение доступного пункта сохраняет ручную связь");
+            manualPicker.OpenSearch("100");
             Pump();
-            var generation = Private<int>(deniedPicker, "_searchGeneration");
-            deniedPicker.OpenSearch("200");
-            Wait(() => SearchReady(deniedPicker) && Shown(deniedPicker) is { Length: 1 } rows
+            var generation = Private<int>(manualPicker, "_searchGeneration");
+            manualPicker.OpenSearch("200");
+            Wait(() => SearchReady(manualPicker) && Shown(manualPicker) is { Length: 1 } rows
                     && (int)rows[0].GetType().GetProperty("Id")!.GetValue(rows[0])! == b,
                 "последний запрос не заменил предыдущий результат поиска");
-            Expect(Private<int>(deniedPicker, "_searchGeneration") > generation && Shown(deniedPicker).Length == 1
-                && (int)Shown(deniedPicker)[0].GetType().GetProperty("Id")!.GetValue(Shown(deniedPicker)[0])! == b,
+            Expect(Private<int>(manualPicker, "_searchGeneration") > generation && Shown(manualPicker).Length == 1
+                && (int)Shown(manualPicker)[0].GetType().GetProperty("Id")!.GetValue(Shown(manualPicker)[0])! == b,
                 "быстрый поиск 100 затем 200 оставляет только последний результат, отмененный запрос его не затирает");
-            deniedPopup.IsOpen = false;
+            manualPopup.IsOpen = false;
             Console.WriteLine($"Настройки связей UI: проверок {checks}, провалов {failed}.");
             return failed == 0 ? 0 : 2;
 

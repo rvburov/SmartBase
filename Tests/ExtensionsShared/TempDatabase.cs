@@ -27,7 +27,7 @@ public sealed class TempDatabase : IDisposable
 
     public AppDbContext          Context     => Manager.Context;
     public ConstructorRepository Constructor => Manager.Constructor;
-    public PermissionService     Permissions => Manager.Permissions;
+    public UserDirectory         Users => Manager.Users;
 
     /// <param name="tag">Метка в имени файла — по ней в системной temp-папке видно, чей
     /// набор оставил файл, если уборка не отработала. Пусто — просто «sbext_&lt;guid&gt;.db».</param>

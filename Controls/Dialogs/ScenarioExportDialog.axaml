@@ -58,7 +58,7 @@
                      CornerRadius="{StaticResource RadiusBase}" />
         </Grid>
 
-        <TextBlock Text="Папка должна быть разрешена политикой организации: автоматическая выгрузка работает только внутри ее корней. Имя файла — коллекция и момент выгрузки."
+        <TextBlock Text="Выберите папку для автоматической выгрузки. Имя файла — коллекция и момент выгрузки."
                    Margin="0,0,0,12"
                    TextWrapping="Wrap"
                    FontSize="{DynamicResource FontSizeSmall}"

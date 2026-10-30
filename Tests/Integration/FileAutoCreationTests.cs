@@ -144,22 +144,6 @@ public sealed class FileAutoCreationTests
         Assert.Equal(f.PathFor("вручную"), f.Value(record));
     }
 
-    [Theory]
-    [InlineData(PermAction.EditRecord)]
-    [InlineData(PermAction.ViewCollection)]
-    public void Creation_without_file_write_access_succeeds_without_starting_autofill(PermAction denied)
-    {
-        using var f = new Fixture();
-        f.Deny(denied);
-        using var pending = new Pending(f);
-
-        var record = SampleData.AddRecord(f.Repo, f.Collection, "Отчет").Id!.Value;
-
-        Assert.True(f.Database.Context.DbRecords.Any(r => r.Id == record));
-        Assert.Equal("", f.Value(record));
-        Assert.Empty(pending.Work);
-    }
-
     [Fact]
     public void Text_sources_and_existing_text_are_resolved_without_changing_the_source()
     {
@@ -187,37 +171,6 @@ public sealed class FileAutoCreationTests
 
         Assert.Equal("", f.Value(record));
         Assert.Equal("Отчет", f.Database.Context.DbRecords.AsNoTracking().Single(r => r.Id == record).Title);
-    }
-
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void An_isolated_creation_keeps_rights_for_the_later_background_write(bool denyView)
-    {
-        using var f = new Fixture();
-        using var pending = new Pending(f);
-        var record = f.Repo.AddRecordIsolated(new DbRecord { CollectionId = f.Collection, Title = "Отчет" }, null).Id!.Value;
-        var work = Assert.Single(pending.Work);
-        f.Deny(denyView ? PermAction.ViewCollection : PermAction.EditRecord, reload: false);
-
-        Assert.True(f.Database.Permissions.IsAdmin);
-        Assert.Equal(ConstructorRepository.FileAutoResolveResult.NoAccess, ConstructorRepository.ExecuteFileAutoWork(work));
-        Assert.Equal("", f.Value(record));
-    }
-
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void Synchronous_reactions_do_not_fill_or_clear_files_when_durable_rights_were_revoked(bool clear)
-    {
-        using var f = new Fixture();
-        var record = SampleData.AddRecord(f.Repo, f.Collection, "Отчет").Id!.Value;
-        Assert.Equal(f.PathFor("Отчет"), f.Value(record));
-        f.Deny(PermAction.EditRecord, reload: false);
-
-        f.Repo.SetRecordTitle(record, clear ? "" : "Смета");
-
-        Assert.Equal(f.PathFor("Отчет"), f.Value(record));
     }
 
     [Theory]
@@ -288,19 +241,7 @@ public sealed class FileAutoCreationTests
             field.ConfigJson = rule.ToConfigJson();
             Repo.UpdateField(field);
         }
-        public void Deny(PermAction action, bool reload = true)
-        {
-            using var context = new AppDbContext(Database.Path);
-            var user = context.DbUsers.Single(u => u.UserKey == SmartBase.Utils.CurrentUser.Key);
-            user.IsAdmin = false;
-            user.IsApproved = true;
-            context.DbPermissions.Add(new DbPermissionEntity
-            {
-                UserId = user.Id, ActionsMask = (int)(PermAction.All & ~action),
-            });
-            context.SaveChanges();
-            if (reload) Database.Permissions.Reload(notify: false);
-        }
+
         public void Dispose()
         {
             Database.Dispose();

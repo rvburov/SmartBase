@@ -1,32 +1,19 @@
 using Microsoft.EntityFrameworkCore;
 using SmartBase.Core.Models;
-using SmartBase.Database.Entities;
-using SmartBase.Integrations;
 
 namespace SmartBase.Database.Repositories;
 
-/// <summary>
-/// Чтение записей под выдачу — то, что уходит в ответ на <c>GET /v1/records</c> и
-/// <c>GET /v1/changes</c> (docs/ROADMAP-API.md, шаг 10).
-///
-/// Ответ на чтение — данные, ПОКИДАЮЩИЕ программу, поэтому рубежи здесь те же, что у
-/// исходящей отправки (<c>ReadOutgoingIsolated</c>), и стоят они вторым эшелоном после окна
-/// выдачи: метку могли поставить ПОСЛЕ того, как выдачу подтвердили, и тогда чтение обязано
-/// встать, а не отдавать поле, которое кто-то только что закрыл.
-/// </summary>
+/// <summary>Постраничное чтение записей и истории изменений для HTTP API.</summary>
 public partial class ConstructorRepository
 {
     /// <summary>Сколько записей отдается за одно обращение. Дальше — курсором.</summary>
     public const int ApiPage = 500;
 
-    /// <summary>Колонка выдачи глазами окна: ключ хранения, имя и почему ее нельзя выбрать.</summary>
-    /// <param name="Key"><c>t</c> — название записи, число — ключ свойства.</param>
-    /// <param name="Name">Имя колонки — то, под которым значение уйdет в ответ.</param>
-    /// <param name="Trouble">Почему колонку нельзя включить в выдачу; <c>null</c> — можно.</param>
-    public sealed record GrantColumn(string Key, string Name, string? Trouble);
+    /// <summary>Ключ колонки названия записи в параметре fields.</summary>
+    public const string ApiTitleKey = "t";
 
-    /// <summary>Страница записей под выдачу.</summary>
-    /// <param name="Columns">Имена колонок — в порядке ключей выдачи.</param>
+    /// <summary>Страница записей по запросу.</summary>
+    /// <param name="Columns">Имена колонок — в порядке ключей запроса.</param>
     /// <param name="Rows">Записи страницы: ключ, момент правки и значения в порядке колонок.</param>
     /// <param name="More">Есть ли записи дальше курсора.</param>
     /// <param name="Trouble">Почему читать нельзя; <c>null</c> — страница готова.</param>
@@ -36,14 +23,16 @@ public partial class ConstructorRepository
         bool                                                     More,
         string?                                                  Trouble)
     {
+        /// <summary>Устойчивые ключи выбранных колонок: t либо ключ свойства.</summary>
+        public IReadOnlyList<string> FieldKeys { get; init; } = [];
         public static ApiRows Bad(string trouble) => new([], [], false, trouble);
     }
 
-    /// <summary>Строка журнала изменений под выдачу — имена, а не ключи: журнал ведется для
+    /// <summary>Строка журнала изменений по запросу — имена, а не ключи: журнал ведется для
     /// человека, и ключей записей в нем нет по построению.</summary>
     public sealed record ApiChange(long Id, string At, string Action, string Target, string Name);
 
-    /// <summary>Хвост журнала изменений под выдачу.</summary>
+    /// <summary>Хвост журнала изменений по запросу.</summary>
     public sealed record ApiChangesPage(
         IReadOnlyList<ApiChange> Changes,
         bool                     More,
@@ -52,92 +41,41 @@ public partial class ConstructorRepository
         public static ApiChangesPage Bad(string trouble) => new([], false, trouble);
     }
 
-    // ── Ключ коллекции по имени ───────────────────────────────────────────────
-
-    /// <summary>
-    /// Ключ коллекции по имени — на отдельном подключении: отправитель называет коллекцию
-    /// ИМЕНЕМ, как и в сообщении, потому что ключей чужой базы он знать не может.
-    /// </summary>
-    public int? CollectionIdByNameIsolated(string name)
+    /// <summary>Коллекции по явному ключу или имени, без выбора первой при совпадениях.</summary>
+    public IReadOnlyList<(int Id, string Name)> ApiCollectionsIsolated(string? name = null, int? id = null)
     {
         using var ctx = new AppDbContext(db.DbPath);
-
-        return new ConstructorRepository(ctx).GetAllCollections()
-            .FirstOrDefault(c => string.Equals(c.Name, name, StringComparison.CurrentCultureIgnoreCase))
-            ?.Id;
-    }
-
-    // ── Колонки для окна выдачи ───────────────────────────────────────────────
-
-    /// <summary>
-    /// Колонки коллекции глазами окна выдачи — на отдельном подключении. Помеченные и
-    /// невыдаваемые (вычисляемые, связи) показываются С ПРИЧИНОЙ, а не прячутся: пустое место
-    /// на месте свойства читается как поломка, а серая строка «помечено» — как правило.
-    /// </summary>
-    public IReadOnlyList<GrantColumn> GrantColumnsIsolated(int collectionId)
-    {
-        using var ctx = new AppDbContext(db.DbPath);
-        var isolated  = new ConstructorRepository(ctx);
-
-        var columns = new List<GrantColumn>
-        {
-            new(ReadGrant.TitleKey, isolated.GetSystemFieldNames(collectionId)
-                                            .GetValueOrDefault(TitleKey, "Название"), null),
-        };
-
-        foreach (var column in isolated.GetExportColumns(collectionId, includeHidden: true))
-        {
-            if (column.FieldId is not int id) continue;
-
-            var mark = EgressGate.CheckField(Confidentiality.FromConfig(column.ConfigJson));
-
-            columns.Add(new GrantColumn(
-                id.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                column.Header,
-                FieldTypeInfo.IsComputed(column.FieldType) ? "вычисляемое — считается на месте"
-                : FieldTypeInfo.IsRelation(column.FieldType) ? "связь — ключи чужой базе не нужны"
-                : !mark.Allowed ? "помечено: " + mark.Explanation
-                : null));
-        }
-
-        return columns;
+        var query = ctx.DbCollections.AsNoTracking().Where(c => c.Name != null);
+        if (id is int key) query = query.Where(c => c.Id == key);
+        return query.Select(c => new { c.Id, c.Name }).AsEnumerable()
+            .Where(c => string.IsNullOrEmpty(name) || string.Equals(c.Name!.Trim(), name.Trim(),
+                StringComparison.CurrentCultureIgnoreCase))
+            .Select(c => (c.Id, c.Name!)).ToList();
     }
 
     // ── Записи ────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Страница записей под выдачу — на отдельном подключении: читает ее обработчик обращения,
+    /// Страница записей по запросу — на отдельном подключении: читает ее обработчик обращения,
     /// который живет в фоне.
-    ///
-    /// Права спрашиваются на входе — права того, кто ОТКРЫЛ базу на машине-приемнике: слушает
-    /// его процесс, и обмен не может отдавать его руками то, что ему самому не показывают.
     /// </summary>
     /// <param name="collectionId">Коллекция.</param>
-    /// <param name="fieldKeys">Состав выдачи: <c>t</c> и ключи свойств.</param>
+    /// <param name="fieldKeys">Состав запроса: <c>t</c> и ключи свойств.</param>
     /// <param name="since">Отдавать только записи, правленные не раньше этого момента
     /// (ISO-8601); пусто — все.</param>
     /// <param name="after">Курсор: отдавать записи с ключом больше этого. Ноль — с начала.</param>
     /// <param name="take">Сколько записей на страницу; зажимается в 1..<see cref="ApiPage"/>.</param>
-    public ApiRows ApiReadIsolated(int collectionId, IReadOnlyList<string> fieldKeys,
+    public ApiRows ApiReadIsolated(int collectionId, IReadOnlyList<string>? fieldKeys,
                                    string since, int after, int take)
     {
-        Demand(PermAction.ViewCollection, collectionId);
-
         using var ctx = new AppDbContext(db.DbPath);
         ctx.ApplyPerformancePragmas();
         var isolated = new ConstructorRepository(ctx);
 
-        // Рубеж контура — тот же, что у отправки: закрытая база и просроченная политика
-        // останавливают чтение независимо от выдачи.
-        var closed = EgressGate.CheckDatabase(isolated.GetDatabaseLabel());
-        if (!closed.Allowed) return ApiRows.Bad(closed.Explanation);
-
         if (isolated.CollectionName(collectionId).Length == 0)
-            return ApiRows.Bad("коллекции, на которую выдано чтение, больше нет");
+            return ApiRows.Bad("коллекции больше нет");
 
-        // Колонки состава — живыми именами и с живыми метками. Пропавшее свойство
-        // останавливает чтение целиком: отдать урезанный состав молча значило бы, что та
-        // сторона строит на нем отчет и не знает, что колонка пропала.
+        // Имена и ключи проверяются по актуальной схеме на этом же подключении.
         var available = isolated.GetExportColumns(collectionId, includeHidden: true)
                                 .Where(c => c.FieldId is int)
                                 .ToDictionary(
@@ -145,14 +83,20 @@ public partial class ConstructorRepository
                                         System.Globalization.CultureInfo.InvariantCulture),
                                     StringComparer.Ordinal);
 
+        fieldKeys ??= [ApiTitleKey, .. available.Keys];
+
         var names  = new List<string>(fieldKeys.Count);
+        var canonicalKeys = new List<string>(fieldKeys.Count);
+        var selected = new HashSet<string>(StringComparer.Ordinal);
         var fields = new List<int?>(fieldKeys.Count);
         var auditTypes = new Dictionary<int, string>();
 
         foreach (var key in fieldKeys)
         {
-            if (key == ReadGrant.TitleKey)
+            if (key == ApiTitleKey)
             {
+                if (!selected.Add(ApiTitleKey)) continue;
+                canonicalKeys.Add(ApiTitleKey);
                 names.Add(isolated.GetSystemFieldNames(collectionId)
                                   .GetValueOrDefault(TitleKey, "Название"));
                 fields.Add(null);
@@ -160,14 +104,17 @@ public partial class ConstructorRepository
             }
 
             if (!available.TryGetValue(key, out var column))
-                return ApiRows.Bad("свойства из выдачи в коллекции больше нет — "
-                                 + "выдачу надо подтвердить заново");
+            {
+                var matches = available.Values.Where(c => string.Equals(c.Header, key,
+                    StringComparison.CurrentCultureIgnoreCase)).ToList();
+                if (matches.Count != 1)
+                    return ApiRows.Bad($"свойство «{key}» не найдено однозначно: укажите ключ свойства");
+                column = matches[0];
+            }
 
-            var mark = EgressGate.CheckField(Confidentiality.FromConfig(column.ConfigJson));
-
-            if (!mark.Allowed)
-                return ApiRows.Bad($"свойство «{column.Header}»: {mark.Explanation}");
-
+            var canonical = column.FieldId!.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            if (!selected.Add(canonical)) continue;
+            canonicalKeys.Add(canonical);
             names.Add(column.Header);
             fields.Add(column.FieldId);
             if (column.FieldId is int auditId && FieldTypeInfo.IsAuditComputed(column.FieldType))
@@ -192,7 +139,8 @@ public partial class ConstructorRepository
         var more = page.Count > Math.Clamp(take, 1, ApiPage);
         if (more) page.RemoveAt(page.Count - 1);
 
-        var values = isolated.GetFieldValuesBatch([.. page.Select(r => r.Id)]);
+        var values = isolated.GetFieldValuesBatch([.. page.Select(r => r.Id)],
+            [.. fields.Where(f => f is not null).Select(f => f!.Value)]);
         var rows   = new List<(int, string, string[])>(page.Count);
 
         foreach (var record in page)
@@ -216,7 +164,7 @@ public partial class ConstructorRepository
                       row));
         }
 
-        return new ApiRows(names, rows, more, null);
+        return new ApiRows(names, rows, more, null) { FieldKeys = canonicalKeys };
     }
 
     // ── Журнал изменений ──────────────────────────────────────────────────────
@@ -231,15 +179,7 @@ public partial class ConstructorRepository
     /// <param name="take">Сколько строк; зажимается в 1..<see cref="ApiPage"/>.</param>
     public ApiChangesPage ApiChangesIsolated(string collection, long after, int take)
     {
-        Demand(PermAction.ViewCollection);
-
         using var ctx = new AppDbContext(db.DbPath);
-        var isolated  = new ConstructorRepository(ctx);
-
-        // Рубеж контура тот же, что у чтения записей: имена записей — тоже данные, и
-        // просроченная политика останавливает и их.
-        var closed = EgressGate.CheckDatabase(isolated.GetDatabaseLabel());
-        if (!closed.Allowed) return ApiChangesPage.Bad(closed.Explanation);
 
         var page = ctx.ChangeLog
                       .AsNoTracking()

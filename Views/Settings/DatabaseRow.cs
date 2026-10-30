@@ -32,8 +32,7 @@ public sealed partial class DatabaseRow : ObservableObject
     public bool   IsPostgres { get; init; }
     /// <summary>Сведения о файле смонтированной SQLite-базы (null — не смонтирована / PostgreSQL).</summary>
     public DatabaseManager.StorageStats? Storage { get; init; }
-    /// <summary>Текущий пользователь может обслуживать файл (сжать/копия): база смонтирована,
-    /// это SQLite и он администратор базы.</summary>
+    /// <summary>Подключенную SQLite-базу можно сжать.</summary>
     public bool   CanMaintain { get; init; }
 
     /// <summary>Статусная строка (null — подключена, строки нет).</summary>
@@ -58,16 +57,6 @@ public sealed partial class DatabaseRow : ObservableObject
     /// тернарника разошлись бы на первой же правке написания.
     /// </summary>
     public static string EngineName(bool isPostgres) => isPostgres ? "PostgreSQL" : "SQLite";
-
-    /// <summary>
-    /// Может ли человек править название в списке и пароль подключения (окно «Настройки базы
-    /// данных»): это дело администратора базы, у остальных поля серые.
-    ///
-    /// Пока база НЕ подключена, прав не видно вовсе — и поля открыты. Иначе база с устаревшим
-    /// паролем становится мертвой навсегда: войти нельзя, а раз войти нельзя, то и прав она
-    /// никогда не покажет, и вписать верный пароль будет некому.
-    /// </summary>
-    public static bool CanManage(bool mounted, bool isAdmin) => !mounted || isAdmin;
 
     public bool ShowDeleteButton => !IsDefault;
     public bool ShowStatus       => StatusText is not null;

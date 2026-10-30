@@ -484,11 +484,6 @@ public partial class DocRegistryWindow : Window
             if (!fresh.Ok || fresh.Rows.Count == 0)
                 throw new DocRegistryException("Файл больше не годится к записи — смотрите разбор.");
 
-            // Права спрашиваем ЗДЕСЬ, на общем репозитории: пишет список фоновое подключение, а
-            // оно прав не несет — по уговору репозитория разрешение проверяет публичный вход.
-            _repo!.Permissions?.Demand(PermAction.CreateRecord, _shape!.CollectionId);
-            _repo!.Permissions?.Demand(PermAction.EditRecord,   _shape!.CollectionId);
-
             using var cancel = new CancellationTokenSource();
 
             progress = new ProgressDialog { Title = "Регистрация КД" };
@@ -519,10 +514,6 @@ public partial class DocRegistryWindow : Window
         {
             // Отмена — та же дорога, что и ошибка: записанные строки уже убраны, журнал чист.
             (message, brush) = ("Отменено — в журнал не записано ничего", "BrushSecondaryText");
-        }
-        catch (PermissionDeniedException ex)
-        {
-            (message, brush) = (ex.Message, "BrushRed");
         }
         catch (DocRegistryException ex)
         {
@@ -894,10 +885,6 @@ public partial class DocRegistryWindow : Window
 
             ClearDocumentFields(keepDocument: sameDocument);
             (message, brush) = ($"Зарегистрировано: {done.Designation}", "BrushAccent");
-        }
-        catch (PermissionDeniedException ex)
-        {
-            (message, brush) = (ex.Message, "BrushRed");
         }
         catch (DocRegistryException ex)
         {

@@ -73,8 +73,6 @@ public sealed class ReplyMarkupTests
                 "<b>Серия изменилась после запроса подтверждения.</b> Регистрация не выполнена. Отправьте запрос заново")]
     [InlineData("Ожидается подтверждение. Для нового запроса сначала ответьте Нет",
                 "<b>Ожидается подтверждение.</b> Для нового запроса сначала ответьте <b>Нет</b>")]
-    [InlineData(RegisterMessageAction.NotListed,
-                "<b>Вы не в списке регистрирующих.</b> Обратитесь к администратору")]
     public void A_headed_refusal_has_its_first_sentence_bold(string plain, string html)
     {
         Assert.Equal(html, ReplyMarkup.Headed(plain));
@@ -109,14 +107,15 @@ public sealed class ReplyMarkupTests
     }
 
     [Fact]
-    public void A_sender_outside_the_list_gets_a_headed_refusal()
+    public void An_unlisted_sender_gets_the_normal_registration_question()
     {
         using var db = new TempDatabase();
         var journal = JournalStand.Create(db.Constructor);
 
         var result = Run(Context(db, journal), Message(), sender: "9999");
 
-        Assert.Equal("<b>Вы не в списке регистрирующих.</b> Обратитесь к администратору", result.Reply);
+        Assert.True(result.Ok, result.Explanation);
+        Assert.StartsWith("<b>Заявка на регистрацию</b>\n", result.Reply, StringComparison.Ordinal);
         Assert.DoesNotContain("<", result.Explanation, StringComparison.Ordinal);
     }
 
@@ -427,7 +426,6 @@ public sealed class ReplyMarkupTests
         Номер: документ АБВГ.301121.001 не найден
         Подтверждение в этом случае не запрашивается, операция не выполняется.
         Если в заявке есть ошибки, программа перечислит их в ответе. Исправьте поля и отправьте запрос целиком.
-        Если вы не включены в список сотрудников с доступом, обратитесь к администратору.
 
         Чтобы снова получить эту инструкцию, отправьте отдельным сообщением:
         Инструкция
