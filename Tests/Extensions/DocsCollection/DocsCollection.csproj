@@ -41,4 +41,8 @@
     <ProjectReference Include="..\..\ExtensionsShared\ExtensionsShared.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Remove="WindowPlacement/**/*.cs" />
+  </ItemGroup>
+
 </Project>

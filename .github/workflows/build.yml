@@ -346,6 +346,7 @@ jobs:
           dotnet build Tests/BackupUi     --configuration Release
           dotnet build Tests/ConcurrentUi --configuration Release
           dotnet build Tests/TasksQuickAdd --configuration Release
+          dotnet build Tests/WindowPlacement --configuration Release
           dotnet build Tests/RecordPage --framework net10.0 --configuration Release
 
       # Живая Avalonia без экрана: разметка панели, подсветка, переходы по совпадениям, страницы
@@ -353,6 +354,16 @@ jobs:
       # в конце вывода шага.
       - name: Стенд панели чтения
         run: dotnet run --project Tests/DocReader --configuration Release --no-build
+
+      - name: Размещение окон и динамические формы
+        run: dotnet run --project Tests/WindowPlacement --configuration Release --no-build
+
+      - name: Размещение окон расширений
+        run: |
+          shopt -s nullglob
+          for project in Tests/Extensions/*/WindowPlacement/*.csproj; do
+            dotnet run --project "$project" --configuration Release
+          done
 
       - name: Фильтр баз в разделах
         run: dotnet run --project Tests/Sections --configuration Release --no-build -- --only sidebarfilter

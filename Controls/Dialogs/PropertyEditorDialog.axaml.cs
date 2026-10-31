@@ -241,9 +241,26 @@ public partial class PropertyEditorDialog : Window
         TypeCombo.SelectedIndex = idx >= 0 ? idx : 0;
         TypeCombo.SelectionChanged += (_, _) =>
         {
+            var position = Position;
+            if (IsVisible && Screens.ScreenFromPoint(position) is { } screen)
+            {
+                // Длинная форма использует внутреннюю прокрутку: сохраненная точка
+                // не должна увести кнопки ниже экрана. Размер рамки дан в DIP.
+                var scale = DesktopScaling > 0 ? DesktopScaling : 1;
+                var frameSize = FrameSize ?? ClientSize;
+                var area = screen.WorkingArea;
+                var lastTop = Math.Max(area.Y, area.Bottom - (int)Math.Ceiling(frameSize.Height * scale));
+                position = new PixelPoint(position.X, Math.Clamp(position.Y, area.Y, lastTop));
+                var frame = Math.Max(0, frameSize.Height - ClientSize.Height);
+                var available = Math.Floor((screen.WorkingArea.Bottom - position.Y) / scale - frame);
+                MaxHeight = Math.Max(MinHeight, Math.Max(1, available));
+            }
             var i = TypeCombo.SelectedIndex;
             if (i >= 0 && i < _types.Length) _selectedType = _types[i].Type;
             UpdateCalDateVisibility();
+            // Как при переключении импорта/экспорта: новая форма меняет высоту,
+            // но нативный пересчет размера не должен переносить само окно.
+            SmartBase.Controls.Behaviors.WindowPlacement.RestorePositionAfterLayout(this, position);
         };
         UpdateCalDateVisibility();
 

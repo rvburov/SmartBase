@@ -263,11 +263,11 @@ artifacts/bin/SmartBase/debug_net10.0/SmartBase                         # macOS,
 dotnet test Tests/Unit          # быстрый гейт (мс), без внешних зависимостей
 dotnet test Tests/Integration   # репозитории на SQLite + PostgreSQL (если поднят стенд sb-pg)
 dotnet test SmartBase.sln       # оба набора ядра
-./Tests/run-all.sh              # оба набора ядра и стенд панели чтения (+ --with-bench)
+./Tests/run-all.sh              # оба набора ядра и стенды интерфейса, включая размещение окон (+ --with-bench)
 
 ./Tests/run-extensions.sh              # все наборы расширений (Tests/Extensions/*)
 ./Tests/run-extensions.sh PdfRename    # один набор
-./Tests/run-all.sh --with-extensions   # ядро + расширения
+./Tests/run-all.sh --with-extensions   # ядро + расширения и геометрия их окон
 ```
 
 Тесты расширений — отдельные сборки, по проекту на расширение: удаление расширения уносит

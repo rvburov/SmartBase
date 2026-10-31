@@ -31,8 +31,9 @@ public static class WindowPlacement
             var placement = new Placement(window);
             window.SetValue(PlacementProperty, placement);
             window.Opened += (_, _) => placement.Open();
+            window.Resized += (_, args) => placement.Resized(args.Reason);
             window.SizeChanged += (_, _) => placement.Queue();
-            window.ScalingChanged += (_, _) => placement.Queue();
+            window.ScalingChanged += (_, _) => placement.ScalingChanged();
             window.PropertyChanged += (_, change) =>
             {
                 if (change.Property == TopLevel.FrameSizeProperty || change.Property == TopLevel.ClientSizeProperty)
@@ -93,11 +94,26 @@ public static class WindowPlacement
         if (GetCenterOnMainWindow(window))
         {
             if (window.GetValue(PlacementProperty) is not { HasPlacement: true } placement) return;
+            placement.AcceptMove();
             if (!placement.UserMoved)
             {
                 placement.Queue();
                 return;
             }
+        }
+
+        RestorePositionAfterLayout(window, position);
+    }
+
+    /// <summary>Удержать точку при явном переключении формы. Нативное изменение
+    /// размера может также передвинуть окно; это не ручное перемещение.</summary>
+    internal static void RestorePositionAfterLayout(Window window, PixelPoint position)
+    {
+        if (!window.IsVisible) return;
+        if (window.GetValue(PlacementProperty) is { } placement)
+        {
+            placement.Restore(position);
+            return;
         }
 
         var current = window.GetValue(PlacementProperty);
@@ -115,8 +131,15 @@ public static class WindowPlacement
         private bool _placing;
         private bool _queued;
         private bool _opened;
+        private bool _resizing;
         private int _show;
+        private int _layout;
+        private int _restoredLayout = -1;
         private PixelPoint _position;
+        private PixelPoint? _pendingMove;
+        private bool _moveQueued;
+        private PixelPoint? _restorePosition;
+        private bool _restoreQueued;
 
         public bool HasPlacement { get; private set; }
         public bool UserMoved { get; private set; }
@@ -124,9 +147,15 @@ public static class WindowPlacement
 
         public void Open()
         {
+            EndRestore();
             _show++;
+            _layout++;
             _queued = false;
             _opened = true;
+            _resizing = false;
+            _position = window.Position;
+            _pendingMove = null;
+            _moveQueued = false;
             HasPlacement = false;
             UserMoved = false;
             if (!GetCenterOnMainWindow(window)) return;
@@ -152,30 +181,162 @@ public static class WindowPlacement
 
         public void Moved()
         {
-            if (!_placing && HasPlacement && window.IsVisible && window.Position != _position)
+            if (!_placing && !_resizing && _restorePosition is null && _opened && window.IsVisible
+                && GetCenterOnMainWindow(window) && window.Position != _position)
+            {
+                // Win32 может сначала сообщить Move, а затем Resize. Решение о ручном
+                // переносе принимается после обоих уведомлений, сохраняя прежнюю опору.
+                _pendingMove = window.Position;
+                if (_moveQueued) return;
+                _moveQueued = true;
+                var show = _show;
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (show != _show) return;
+                    _moveQueued = false;
+                    AcceptMove();
+                }, DispatcherPriority.Loaded);
+            }
+        }
+
+        public void AcceptMove()
+        {
+            if (_pendingMove is not { } position) return;
+            _pendingMove = null;
+            if (_resizing || _restorePosition is not null || !_opened || !window.IsVisible) return;
+            UserMoved = true;
+            _position = position;
+        }
+
+        public void ScalingChanged()
+        {
+            // При переносе на другой монитор Move может еще ожидать Loaded.
+            // В Win32 смена масштаба приходит до перемещения из WM_DPICHANGED:
+            // принимаем предшествующий перенос до защиты самого DPI-пересчета.
+            AcceptMove();
+            Resized(WindowResizeReason.DpiChange);
+        }
+
+        public void Resized(WindowResizeReason reason)
+        {
+            if (!_opened || !window.IsVisible || !GetCenterOnMainWindow(window)) return;
+            if (reason == WindowResizeReason.User)
+            {
+                // Рамку меняет человек: новая точка и размер принадлежат ему.
+                // Отложенная коррекция предыдущей формы не должна отменить это действие.
+                EndRestore();
+                _layout++;
+                _queued = false;
+                _resizing = false;
                 UserMoved = true;
+                _position = window.Position;
+                _pendingMove = null;
+                return;
+            }
+            if (reason is not (WindowResizeReason.Application or WindowResizeReason.Layout or WindowResizeReason.DpiChange)
+                || window.WindowState != WindowState.Normal) return;
+
+            // Resized приходит от платформы до раскладки содержимого. В частности,
+            // Win32 при программном resize может прислать и Move: экранные координаты
+            // попадают в WINDOWPLACEMENT, который ожидает координаты рабочей области.
+            // Такой Move нельзя считать ручным и отменять из-за него центрирование.
+            _resizing = true;
+            _pendingMove = null;
+            if (_restorePosition is not null)
+            {
+                // Некоторые платформы подтверждают Resize отложенно. Раскладка,
+                // выполненная до этого подтверждения, еще не завершает фиксацию.
+                _layout++;
+                _restoredLayout = -1;
+                window.InvalidateMeasure();
+                return;
+            }
+            if (UserMoved || FindMainWindow(window) is null) Restore(_position);
+            else Queue();
+        }
+
+        public void Restore(PixelPoint position)
+        {
+            if (!_opened || !window.IsVisible) return;
+            AcceptMove();
+            // Отменяем прежнее отложенное центрирование: у явного переключения формы
+            // есть собственная точка. Повторные изменения до раскладки объединяются.
+            _layout++;
+            _queued = false;
+            if (_restorePosition is null) window.LayoutUpdated += RestoreLayout;
+            // Новый выбор может прийти между нативным Move и следующей раскладкой.
+            // Координаты окна в этот момент уже сдвинуты; опорой остается начало серии.
+            _restorePosition ??= position;
+            // Нужна раскладка и при переключении между двумя формами одной высоты.
+            window.InvalidateMeasure();
+        }
+
+        private void RestoreLayout(object? sender, EventArgs args)
+        {
+            if (!window.IsVisible) { EndRestore(); return; }
+            if (_restorePosition is not { } position) return;
+            var show = _show;
+            var layout = _layout;
+            _restoredLayout = layout;
+            Place(position);
+            if (show != _show || layout != _layout || _restorePosition is null) return;
+            if (_restoreQueued) return;
+            _restoreQueued = true;
+            // Ждем именно раскладку, а не просто ближайший Loaded: нативный resize
+            // мог еще не начаться. Последняя коррекция идет после его уведомлений.
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (show != _show) return;
+                _restoreQueued = false;
+                // Между раскладкой и Loaded мог прийти еще один выбор типа. Его
+                // размер сначала должен пройти собственную нативную раскладку.
+                if (_restoredLayout != _layout) return;
+                var finalLayout = _layout;
+                if (window.IsVisible && _restorePosition is { } final) Place(final);
+                if (show != _show || finalLayout != _layout) return;
+                EndRestore();
+            }, DispatcherPriority.Loaded);
+        }
+
+        private void EndRestore()
+        {
+            window.LayoutUpdated -= RestoreLayout;
+            _restorePosition = null;
+            _restoreQueued = false;
+            _restoredLayout = -1;
+            _resizing = false;
         }
 
         public void Queue()
         {
-            if (_queued || !_opened || UserMoved || !window.IsVisible || !GetCenterOnMainWindow(window)) return;
+            if (_queued || !_opened || _restorePosition is not null || UserMoved || !window.IsVisible || !GetCenterOnMainWindow(window)) return;
             _queued = true;
             var show = _show;
+            var layout = _layout;
             Dispatcher.UIThread.Post(() =>
             {
-                if (show != _show) return;
+                if (show != _show || layout != _layout) return;
                 _queued = false;
-                if (_opened && !UserMoved && window.IsVisible && GetCenterOnMainWindow(window))
-                    HasPlacement = Center(window);
+                try
+                {
+                    AcceptMove();
+                    if (_opened && !UserMoved && window.IsVisible && GetCenterOnMainWindow(window))
+                        HasPlacement = Center(window);
+                }
+                finally { _resizing = false; }
             }, DispatcherPriority.Loaded);
         }
 
         public void Close()
         {
+            EndRestore();
             _show++;
+            _layout++;
             _queued = false;
             _opened = false;
             HasPlacement = false;
+            _pendingMove = null;
+            _moveQueued = false;
         }
     }
 }

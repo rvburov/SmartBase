@@ -20,7 +20,11 @@ using Avalonia.Threading;
 using SmartBase.Controls.Behaviors;
 using SmartBase.Controls.Dialogs;
 using SmartBase.Controls.Widgets;
+using SmartBase.Core.Models;
+using SmartBase.Database;
+using SmartBase.Database.Repositories;
 using SmartBase.Utils;
+using WorkspaceResizeShift = SmartBase.Tests.Support.NativeResizeShift;
 using Placement = SmartBase.Controls.Behaviors.WindowPlacement;
 
 namespace SmartBase.Tests.WindowPlacement;
@@ -30,15 +34,16 @@ internal static class Program
     private static ClassicDesktopStyleApplicationLifetime _lifetime = null!;
     private static int _assertions;
     private static int _failed;
+    private static bool _moveBeforeResize;
 
     private static int Main()
     {
         Console.OutputEncoding = System.Text.Encoding.UTF8;
         using var watchdog = new System.Threading.Timer(_ =>
         {
-            Console.Error.WriteLine("ПРОВАЛ: стенд размещения окон не завершился за 45 секунд.");
+            Console.Error.WriteLine("ПРОВАЛ: стенд размещения окон не завершился за 120 секунд.");
             Environment.Exit(2);
-        }, null, TimeSpan.FromSeconds(45), Timeout.InfiniteTimeSpan);
+        }, null, TimeSpan.FromSeconds(120), Timeout.InfiniteTimeSpan);
 
         _lifetime = new ClassicDesktopStyleApplicationLifetime
         {
@@ -67,6 +72,21 @@ internal static class Program
         Run("ручная позиция сохраняется при layout и изменении содержимого", ManualMove);
         Run("нет главного окна, отказ от поведения и закрытие с ожидающим layout", Lifetimes);
         Run("настоящее окно системного свойства: ошибка, повторный показ, ручная позиция", PropertyDialog);
+        Run("смена типов нового и существующего свойства не накапливает нативный сдвиг", PropertyTypeChanges);
+        Run("быстрые выборы и повторный показ не оставляют старую фиксацию позиции", PropertyPinLifetime);
+        Run("форма у нижнего края остается видимой без горизонтального сдвига", PropertyAtBottom);
+        Run("переключения импорта и экспорта не накапливают сдвиг", ImportExportChanges);
+        foreach (var before in new[] { false, true })
+        {
+            _moveBeforeResize = before;
+            Console.WriteLine(before ? "  Порядок платформы: Move → Resize." : "  Порядок платформы: Resize → Move.");
+            Run("общий авторазмер не принимает нативный сдвиг за ручное перемещение", NativeAutomaticResize);
+            Run("отдельное главное окно сохраняет позицию при авторазмере", StandaloneAutomaticResize);
+            Run("основные формы сохраняют позицию при изменении содержимого", CoreWindows);
+            Run("сценарные и служебные формы сохраняют позицию при изменении содержимого", ScenarioWindows);
+            Run("вложенные настройки типов свойства не накапливают сдвиг", PropertyOptions);
+        }
+        Run("перенос, ручной resize и живая смена DPI сохраняют правильную опору", NativeEvents);
 
         Console.WriteLine($"\nПроверок: {_assertions}; не пройдено сценариев: {_failed}.");
         Console.WriteLine("Проверено в Headless; рамки окон и перенос между настоящими мониторами требуют проверки в ОС.");
@@ -421,6 +441,344 @@ internal static class Program
 
     private static T Required<T>(Window window, string name) where T : Control =>
         window.FindControl<T>(name) ?? throw new InvalidOperationException($"Не найден контрол {name}.");
+
+    private static void PropertyTypeChanges()
+    {
+        using var data = new PropertyData();
+        foreach (var (zoom, dpi) in new[] { (1.0, 1.0), (1.25, 1.0), (1.0, 1.25) })
+        {
+            Scaling.SetScale(zoom);
+            using var f = new Fixture(dpi);
+            foreach (var edit in new[] { false, true })
+            {
+                var dialog = f.Track(new PropertyEditorDialog(data.Repository, data.Collection,
+                    edit ? data.Description : null));
+                SetScale(dialog, dpi);
+                Required<TextBox>(dialog, "NameBox").Text = edit ? "Описание" : "Новое свойство";
+                var closed = dialog.ShowDialog<bool>(f.Main);
+                Settle(f.Main, dialog);
+                var combo = Required<ComboBox>(dialog, "TypeCombo");
+                Check(combo.IsEnabled, "Проверка переключения типов случайно открыла системный диалог.");
+                using var native = new WorkspaceResizeShift(dialog, _moveBeforeResize);
+                var heights = new HashSet<double>();
+                var width = dialog.ClientSize.Width;
+                var mode = edit ? "изменение" : "создание";
+
+                // Проверяем то же открытое окно, не закрывая его между выборами. После
+                // нескольких обходов повторяем все на позиции, выбранной человеком.
+                foreach (var manual in new[] { false, true })
+                {
+                    if (manual) dialog.Position += new PixelVector(53, 27);
+                    var anchor = dialog.Position;
+                    for (var cycle = 0; cycle < 2; cycle++)
+                    foreach (var (type, section) in new (string, string?)[]
+                    {
+                        ("status", "OptionsSection"), ("select", "OptionsSection"),
+                        ("multiselect", "OptionsSection"), ("date", "CalDateSection"), ("checkbox", null),
+                        ("number", "NumberSection"), ("file", "FileSection"),
+                        ("relation", "RelationSection"), ("user", "TaskSection"),
+                        ("date_period", "DatePeriodSection"), ("url", null),
+                        ("created_at", null), ("updated_at", null),
+                        ("created_by", null), ("updated_by", null), ("text", null),
+                    })
+                    {
+                        var selected = combo.Items.OfType<FieldTypeItem>().Single(item => item.Type == type);
+                        Check(selected.IsEnabled, $"Тип {type} недоступен в подготовленной коллекции.");
+                        combo.SelectedItem = selected;
+                        Settle(f.Main, dialog);
+                        Check(ReferenceEquals(combo.SelectedItem, selected), $"Тип {type} не выбран в настоящем ComboBox.");
+                        if (section is not null)
+                            Check(Required<Control>(dialog, section).IsVisible, $"Тип {type} не показал собственный блок настроек.");
+                        heights.Add(Math.Round(dialog.ClientSize.Height));
+                        Check(Math.Abs(dialog.ClientSize.Width - width) <= 1,
+                            $"Фиксированная ширина диалога изменилась при выборе {type}.");
+                        Check(dialog.Position == anchor,
+                            $"{mode}, зум {zoom}, DPI {dpi}, ручная позиция {manual}, обход {cycle + 1}, тип {type}: "
+                            + $"окно сдвинулось из {anchor} в {dialog.Position}; нативных изменений {native.Count}.");
+                        FitsWorkingArea(dialog, $"{mode}, {type}, зум {zoom}, DPI {dpi}, ручная позиция {manual}");
+                        if (cycle == 0 && !manual && Environment.GetEnvironmentVariable("SMARTBASE_WINDOW_SIZES") == "1")
+                        {
+                            var area = dialog.Screens.Primary!.WorkingArea;
+                            var save = Required<Button>(dialog, "SaveBtn");
+                            var bottom = save.TranslatePoint(new Point(0, save.Bounds.Height), dialog)!.Value.Y;
+                            Console.WriteLine($"  ГЕОМЕТРИЯ: {mode}, {type}, зум {zoom}, DPI {dpi}, "
+                                + $"position={dialog.Position}, client={dialog.ClientSize}, frame={dialog.FrameSize}, "
+                                + $"screen={area}, SaveBottom={dialog.Position.Y + bottom * dialog.DesktopScaling:F1}, "
+                                + $"windowBottom={dialog.Position.Y + (dialog.FrameSize ?? dialog.ClientSize).Height * dialog.DesktopScaling:F1}");
+                        }
+                    }
+
+                    // Явная фиксация не должна выдавать движение платформы за перенос
+                    // человеком. После нее обычный зум опять центрирует нетронутое окно,
+                    // а действительно выбранную человеком позицию по-прежнему сохраняет.
+                    native.Enabled = false;
+                    foreach (var nextZoom in new[] { zoom * 0.9, zoom })
+                    {
+                        Scaling.SetScale(nextZoom);
+                        Settle(f.Main, dialog);
+                        if (manual)
+                            Check(dialog.Position == anchor, "Зум после переключения типа стер настоящую ручную позицию.");
+                        else Centered(dialog, f.Main);
+                    }
+                    Check(Math.Abs(dialog.ClientSize.Width - width) <= 1, "Возврат зума после переключения типов изменил исходную ширину окна.");
+                    native.Enabled = true;
+                }
+
+                Check(heights.Count > 1, "Смена типов не изменила высоту — проверка не прошла настоящий SizeToContent.");
+                Check(native.Count >= 20, "Стенд не воспроизвел повторные нативные перемещения при изменении размеров.");
+                dialog.Close(false);
+                Settle(f.Main);
+                Check(closed.IsCompletedSuccessfully && !closed.Result, "Отмена окна свойства не завершила ShowDialog.");
+                Check(data.Repository.GetFields(data.Collection).Single(field => field.Id == data.Description).FieldType == "text",
+                    "Проверка геометрии сохранила черновой тип существующего свойства.");
+            }
+        }
+    }
+
+    private static void FitsWorkingArea(Window dialog, string context)
+    {
+        var area = (dialog.Screens.ScreenFromWindow(dialog) ?? dialog.Screens.Primary)!.WorkingArea;
+        var frame = dialog.FrameSize ?? dialog.ClientSize;
+        var windowBottom = dialog.Position.Y + frame.Height * dialog.DesktopScaling;
+        Check(windowBottom <= area.Bottom + 1,
+            $"{context}: низ окна {windowBottom:F1} вышел за рабочую область {area.Bottom}.");
+        var save = Required<Button>(dialog, "SaveBtn");
+        var inClient = save.TranslatePoint(new Point(0, save.Bounds.Height), dialog)!.Value.Y;
+        var clientOrigin = dialog.PointToScreen(default);
+        var saveBottom = clientOrigin.Y + inClient * dialog.DesktopScaling;
+        Check(save.IsEffectivelyVisible && save.Bounds.Height > 0 && inClient <= dialog.ClientSize.Height + 1
+            && saveBottom <= area.Bottom + 1,
+            $"{context}: кнопка сохранения недоступна, низ {saveBottom:F1}, рабочая область до {area.Bottom}.");
+    }
+
+    private static void PropertyPinLifetime()
+    {
+        using var data = new PropertyData();
+        using var f = new Fixture();
+        var rapid = f.Track(new PropertyEditorDialog(data.Repository, data.Collection));
+        rapid.Show(f.Main);
+        Settle(f.Main, rapid);
+        using (var native = new WorkspaceResizeShift(rapid, _moveBeforeResize))
+        {
+            var combo = Required<ComboBox>(rapid, "TypeCombo");
+            var anchor = rapid.Position;
+            var initialHeight = rapid.ClientSize.Height;
+            combo.SelectedItem = combo.Items.OfType<FieldTypeItem>().Single(item => item.Type == "status");
+            RenderBeforeLoaded(rapid);
+            var firstResizes = native.Count;
+            var firstHeight = rapid.ClientSize.Height;
+            Console.WriteLine($"  Быстрые типы: первая раскладка {initialHeight:F1} → {firstHeight:F1}, нативных изменений {firstResizes}.");
+            Check(firstResizes > 0 && firstHeight > initialHeight + 1,
+                "Первый выбор типа не изменил размер до ожидающей Loaded-коррекции.");
+            // Первый layout уже поставил Loaded-коррекцию в очередь. Второй выбор
+            // приходит до нее, а его изменение размера еще может не быть разложено.
+            combo.SelectedItem = combo.Items.OfType<FieldTypeItem>().Single(item => item.Type == "number");
+            Dispatcher.UIThread.RunJobs();
+            RenderBeforeLoaded(rapid);
+            Settle(f.Main, rapid);
+            Console.WriteLine($"  Быстрые типы: вторая раскладка {rapid.ClientSize.Height:F1}, нативных изменений {native.Count}.");
+            Check(firstResizes > 0 && native.Count > firstResizes,
+                "Быстрая смена типов не прошла две отдельные нативные раскладки.");
+            Check(rapid.Position == anchor, "Старая Loaded-коррекция отпустила фиксацию до раскладки второго типа.");
+            FitsWorkingArea(rapid, "быстрый выбор типов");
+
+            combo.SelectedItem = combo.Items.OfType<FieldTypeItem>().Single(item => item.Type == "date_period");
+            var beforeClose = native.Count;
+            RenderBeforeLoaded(rapid);
+            Check(native.Count > beforeClose, "Закрытие не попало в ожидающую фиксацию после нативного изменения размера.");
+            rapid.Close();
+            Settle(f.Main);
+            Check(!rapid.IsVisible, "Отложенная фиксация вновь показала закрытое окно свойства.");
+        }
+
+        var hidden = f.Track(new PropertyEditorDialog(data.Repository, data.Collection));
+        hidden.Show(f.Main);
+        Settle(f.Main, hidden);
+        using var hiddenNative = new WorkspaceResizeShift(hidden, _moveBeforeResize);
+        var types = Required<ComboBox>(hidden, "TypeCombo");
+        types.SelectedItem = types.Items.OfType<FieldTypeItem>().Single(item => item.Type == "status");
+        RenderBeforeLoaded(hidden);
+        Check(hiddenNative.Count > 0, "Hide/Show не попал в ожидающую фиксацию после нативного изменения размера.");
+        hidden.Hide();
+        f.Main.Position += new PixelVector(137, 59);
+        hidden.Show(f.Main);
+        Settle(f.Main, hidden);
+        Centered(hidden, f.Main);
+        var reopened = hidden.Position;
+        types.SelectedItem = types.Items.OfType<FieldTypeItem>().Single(item => item.Type == "number");
+        Settle(f.Main, hidden);
+        Check(hidden.Position == reopened, "После Hide/Show новое переключение использовало старую точку фиксации.");
+        FitsWorkingArea(hidden, "повторный показ свойства");
+    }
+
+    // Фиксируем SizeToContent на render-приоритете, оставив Loaded-коррекцию в очереди.
+    private static void RenderBeforeLoaded(Window window)
+    {
+        window.UpdateLayout();
+        AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+        Dispatcher.UIThread.RunJobs(DispatcherPriority.Render);
+    }
+
+    private static void PropertyAtBottom()
+    {
+        using var data = new PropertyData();
+        using var f = new Fixture();
+        var dialog = f.Track(new PropertyEditorDialog(data.Repository, data.Collection));
+        dialog.Show(f.Main);
+        Settle(f.Main, dialog);
+        var shortHeight = dialog.ClientSize.Height;
+        var area = dialog.Screens.Primary!.WorkingArea;
+        var low = new PixelPoint(dialog.Position.X + 37, area.Bottom - 20);
+        dialog.Position = low;
+        Settle(f.Main, dialog);
+        var combo = Required<ComboBox>(dialog, "TypeCombo");
+        using var native = new WorkspaceResizeShift(dialog, _moveBeforeResize);
+        combo.SelectedItem = combo.Items.OfType<FieldTypeItem>().Single(item => item.Type == "relation");
+        Settle(f.Main, dialog);
+        Check(dialog.Position.X == low.X, "Подъем формы из-за нижнего края изменил ее горизонтальную позицию.");
+        Check(dialog.Position.Y >= area.Y && dialog.Position.Y < low.Y,
+            "Форма не поднялась из нижней невидимой области экрана.");
+        Check(dialog.ClientSize.Height >= shortHeight - 1,
+            "Ограничение доступной высоты схлопнуло форму ниже прежнего короткого состояния.");
+        FitsWorkingArea(dialog, "форма у нижнего края");
+    }
+
+    private static void ImportExportChanges()
+    {
+        using var data = new PropertyData();
+        using var f = new Fixture();
+        var dialog = f.Track(new ImportExportDialog([new DbOption(9761, "Геометрия", data.Repository)], 9761));
+        dialog.Show(f.Main);
+        Settle(f.Main, dialog);
+        var mode = Required<ComboBox>(dialog, "ModeCombo");
+        using var native = new WorkspaceResizeShift(dialog, _moveBeforeResize);
+        var positions = new Dictionary<(int Mode, int Type), PixelPoint>();
+        for (var cycle = 0; cycle < 3; cycle++)
+        foreach (var selectedMode in new[] { 0, 1 })
+        foreach (var selectedType in new[] { 0, 1 })
+        {
+            mode.SelectedIndex = selectedMode;
+            var type = Required<ComboBox>(dialog, selectedMode == 0 ? "TypeCombo" : "ExportTypeCombo");
+            type.SelectedIndex = selectedType;
+            Settle(f.Main, dialog);
+            Centered(dialog, f.Main);
+            var key = (selectedMode, selectedType);
+            if (positions.TryGetValue(key, out var previous))
+                Check(dialog.Position == previous, "Возврат режима и типа импорта/экспорта накопил сдвиг окна.");
+            else positions.Add(key, dialog.Position);
+        }
+        Check(positions.Count == 4, "Проверены не все сочетания режима и типа импорта/экспорта.");
+    }
+
+    private static void NativeAutomaticResize()
+    {
+        foreach (var manual in new[] { false, true })
+        {
+            using var f = new Fixture();
+            var content = new Border { Height = 100 };
+            var child = f.AutoHeight(content);
+            child.Show(f.Main);
+            Settle(f.Main, child);
+            if (manual) child.Position += new PixelVector(91, 57);
+            Settle(f.Main, child);
+            var anchor = child.Position;
+            using var native = new WorkspaceResizeShift(child, _moveBeforeResize);
+            for (var cycle = 0; cycle < 4; cycle++)
+            foreach (var height in new[] { 300, 100, 430, 160 })
+            {
+                content.Height = height;
+                Settle(f.Main, child);
+                if (manual) Check(child.Position == anchor, "Нативный resize сдвинул вручную перемещенное окно.");
+                else Centered(child, f.Main);
+            }
+            Check(native.Count >= 16, "Проверка общего авторазмера не вызвала нативных изменений размера.");
+            native.Enabled = false;
+            child.Position += new PixelVector(21, 17);
+            anchor = child.Position;
+            Settle(f.Main, child);
+            native.Enabled = true;
+            content.Height = 200;
+            Settle(f.Main, child);
+            Check(child.Position == anchor, "Защита авторазмера перестала принимать новые ручные перемещения.");
+        }
+    }
+
+    private static void StandaloneAutomaticResize()
+    {
+        using var f = new Fixture();
+        var content = new Border { Height = 100 };
+        var child = f.AutoHeight(content);
+        _lifetime.MainWindow = child;
+        child.Show();
+        Settle(child);
+        var anchor = child.Position;
+        using var native = new WorkspaceResizeShift(child, _moveBeforeResize);
+        for (var cycle = 0; cycle < 3; cycle++)
+        foreach (var height in new[] { 340, 100 })
+        {
+            content.Height = height;
+            Settle(child);
+            Check(child.Position == anchor, "Авторазмер отдельного главного окна накопил сдвиг.");
+        }
+        Check(native.Count >= 6, "Отдельное главное окно не изменило нативный размер.");
+    }
+
+    private static void CoreWindows()
+    {
+        using var data = new PropertyData();
+        using var f = new Fixture();
+        CoreWindowChecks.Run(f.Main, data.Repository, data.Collection, Check,
+            window => Settle(f.Main, window), window => new WorkspaceResizeShift(window, _moveBeforeResize));
+    }
+
+    private static void ScenarioWindows()
+    {
+        using var f = new Fixture();
+        ScenarioWindowChecks.Run(f.Main, Check, window => Settle(f.Main, window),
+            window => new WorkspaceResizeShift(window, _moveBeforeResize));
+    }
+
+    private static void PropertyOptions()
+    {
+        using var data = new PropertyData();
+        using var f = new Fixture();
+        PropertyOptionChecks.Run(f.Main, data.Repository, data.Collection, Check,
+            window => Settle(f.Main, window), window => new WorkspaceResizeShift(window, _moveBeforeResize));
+    }
+
+    private static void NativeEvents()
+    {
+        using var f = new Fixture();
+        NativeEventChecks.Run(f.Main, Check, window => Settle(f.Main, window));
+    }
+
+    private sealed class PropertyData : IDisposable
+    {
+        private readonly string _directory = Path.Combine(Path.GetTempPath(), "smartbase_window_types_" + Guid.NewGuid().ToString("N"));
+        private readonly DatabaseManager _manager;
+        public ConstructorRepository Repository => _manager.Constructor;
+        public int Collection { get; }
+        public int Description { get; }
+
+        public PropertyData()
+        {
+            Directory.CreateDirectory(_directory);
+            _manager = DatabaseManager.Open(9761, "Геометрия свойств", Path.Combine(_directory, "properties.db"));
+            Collection = Repository.AddCollection(new DbCollection { Name = "Свойства" }).Id!.Value;
+            Repository.AddField(new DbField { CollectionId = Collection, Name = "Дата", FieldType = "date", IsCalStart = true });
+            Description = Repository.AddField(new DbField
+                { CollectionId = Collection, Name = "Описание", FieldType = "text", IsDescription = true }).Id!.Value;
+            var target = Repository.AddCollection(new DbCollection { Name = "Цель связи" }).Id!.Value;
+            Repository.AddField(new DbField { CollectionId = target, Name = "Код", FieldType = "text" });
+        }
+
+        public void Dispose()
+        {
+            _manager.Dispose();
+            SqliteGate.ClearAllPools();
+            Directory.Delete(_directory, recursive: true);
+        }
+    }
 
     private static Point PhysicalCenter(Window window)
     {

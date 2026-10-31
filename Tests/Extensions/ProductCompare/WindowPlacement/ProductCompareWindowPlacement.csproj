@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>SmartBase.Tests.Extensions.ProductCompare.WindowPlacement</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../../Support/NativeResizeShift.cs" Link="NativeResizeShift.cs" />
+    <PackageReference Include="Avalonia.Headless" Version="11.2.3" />
+    <PackageReference Include="Avalonia.Skia" Version="11.2.3" />
+    <ProjectReference Include="../../../../SmartBase.csproj" />
+    <Compile Include="../../WindowPlacement/WindowPlacementHarness.cs" Link="WindowPlacementHarness.cs" />
+  </ItemGroup>
+</Project>

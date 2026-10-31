@@ -13,6 +13,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="../Support/NativeResizeShift.cs" Link="NativeResizeShift.cs" />
     <PackageReference Include="Avalonia.Headless" Version="11.2.3" />
     <PackageReference Include="Avalonia.Skia" Version="11.2.3" />
     <ProjectReference Include="..\..\SmartBase.csproj" />

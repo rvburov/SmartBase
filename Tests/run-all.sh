@@ -25,6 +25,10 @@ echo "== Стенд панели чтения библиотеки =="
 dotnet run --project Tests/DocReader -f net10.0
 
 echo
+echo "== Размещение окон и динамические формы =="
+dotnet run --project Tests/WindowPlacement -f net10.0
+
+echo
 echo "== Фильтр баз в календаре, задачах и библиотеке =="
 dotnet run --project Tests/Sections -f net10.0 -- --only sidebarfilter
 
@@ -52,6 +56,12 @@ if [[ "${1:-}" == "--with-extensions" ]]; then
   echo
   echo "== Расширения (по проекту на расширение) =="
   ./Tests/run-extensions.sh
+  echo
+  echo "== Размещение окон расширений =="
+  shopt -s nullglob
+  for project in Tests/Extensions/*/WindowPlacement/*.csproj; do
+    dotnet run --project "$project" -f net10.0
+  done
 fi
 
 if [[ "${1:-}" == "--with-bench" ]]; then
