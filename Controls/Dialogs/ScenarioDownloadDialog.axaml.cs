@@ -1,3 +1,4 @@
+using System.Globalization;
 using Avalonia.Controls;
 using Avalonia.Input;
 using SmartBase.Integrations;
@@ -20,6 +21,7 @@ public partial class ScenarioDownloadDialog : Window
         RequestCombo.SelectedIndex = requests.ToList().FindIndex(request => request.Id == step.RequestId);
         NameBox.Text = step.Text;
         NameBox.MaxLength = ScenarioStep.MaxTextLength;
+        WaitSecondsBox.Text = step.DownloadWaitSeconds.ToString(CultureInfo.InvariantCulture);
 
         CancelBtn.Click += (_, _) => Close(null);
         SaveBtn.Click += (_, _) => Save();
@@ -28,9 +30,15 @@ public partial class ScenarioDownloadDialog : Window
 
     private void Save()
     {
+        if (!int.TryParse(WaitSecondsBox.Text, NumberStyles.Integer, CultureInfo.InvariantCulture,
+                          out var waitSeconds))
+        {
+            NoticeBanner.Show($"Укажите ожидание готовности целым числом от 0 до {ScenarioStep.MaxDownloadWaitSeconds} секунд.");
+            return;
+        }
         var index = RequestCombo.SelectedIndex;
         var requestId = index >= 0 && index < _requests.Count ? _requests[index].Id : 0;
-        var step = ScenarioStep.OfDownload(requestId, (NameBox.Text ?? "").Trim());
+        var step = ScenarioStep.OfDownload(requestId, (NameBox.Text ?? "").Trim(), waitSeconds);
         var problems = step.Problems();
         if (problems.Count > 0)
         {

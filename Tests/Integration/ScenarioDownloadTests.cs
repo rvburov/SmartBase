@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -132,6 +133,213 @@ public sealed class ScenarioDownloadTests : IDisposable
         Assert.StartsWith("POST /files/asset-23 ", Assert.Single(server.Requests), StringComparison.Ordinal);
         Assert.Equal("", Assert.Single(server.Bodies));
         Assert.Equal(Payload, Assert.Single(action.Seen).Bytes);
+    }
+
+    [Theory]
+    [InlineData(RequestMethod.Get)]
+    [InlineData(RequestMethod.Post)]
+    public async Task Explicit_wait_repeats_only_the_file_read_and_delivers_one_ready_file_with_unchanged_context(
+        RequestMethod method)
+    {
+        using var server = new FileServer(Payload, missingResponses: 1);
+        var body = method == RequestMethod.Post
+            ? """{"messageKey":{{поле.message-id}},"assetKey":{{поле.attachment-id}}}"""
+            : "";
+        var request = Request(server, path: "/assets/{{поле.attachment-id}}", method: method, body: body);
+        var action = new Receiver();
+        var journal = new RunJournal(Path.Combine(_dir, "wait-journal.db"));
+        RunJournal.Attach(journal);
+        using var stop = new CancellationTokenSource();
+
+        var outcome = await Run([
+            AttachmentColumns(), ScenarioStep.OfDownload(request.Id, "{{download-name}}", 4), Action(action),
+        ], [action], AttachmentEvent(true), stop.Token).WaitAsync(TimeSpan.FromSeconds(8));
+
+        Assert.True(outcome.Ok, outcome.Problem);
+        Assert.Equal(2, server.Requests.Count);
+        Assert.All(server.Requests, head => Assert.StartsWith(
+            method.ToString().ToUpperInvariant() + " /assets/23 ", head, StringComparison.Ordinal));
+        Assert.Equal(server.Bodies[0], server.Bodies[1]);
+        if (method == RequestMethod.Post)
+        {
+            foreach (var sent in server.Bodies)
+            {
+                using var json = JsonDocument.Parse(sent);
+                Assert.Equal(JsonValueKind.Number, json.RootElement.GetProperty("messageKey").ValueKind);
+                Assert.Equal(42, json.RootElement.GetProperty("messageKey").GetInt32());
+                Assert.Equal(JsonValueKind.Number, json.RootElement.GetProperty("assetKey").ValueKind);
+                Assert.Equal(23, json.RootElement.GetProperty("assetKey").GetInt32());
+            }
+        }
+        else Assert.All(server.Bodies, sent => Assert.Equal("", sent));
+        var received = Assert.Single(action.Seen);
+        Assert.Equal(Payload, received.Bytes);
+        Assert.Equal("Заявка.xlsx", received.FileName);
+        Assert.Equal("Заявка участника", received.Values["title"]);
+        Assert.Equal("participant-17", received.Values["sender"]);
+        Assert.Equal("42", received.Values["message-id"]);
+        Assert.Equal(stop.Token, received.Token);
+        Assert.Equal("Заявка участника", Assert.Single(_db.Constructor.GetRecords(_collection)).Title);
+        var logged = Assert.Single(journal.Recent(), entry => entry.Channel == RunChannel.Request);
+        Assert.True(logged.Ok);
+        Assert.Equal(request.Name, logged.Name);
+    }
+
+    [Theory]
+    [InlineData(RequestMethod.Get)]
+    [InlineData(RequestMethod.Post)]
+    public async Task Default_wait_stops_on_the_first_404_even_if_the_next_read_would_succeed(RequestMethod method)
+    {
+        using var server = new FileServer(Payload, missingResponses: 1);
+        var request = Request(server, method: method);
+        var action = new Receiver();
+
+        var outcome = await Run([ScenarioStep.OfDownload(request.Id, "{{file-name}}"), Action(action)],
+            [action], Event());
+
+        Assert.False(outcome.Ok);
+        Assert.Contains("404", outcome.Problem, StringComparison.Ordinal);
+        Assert.Single(server.Requests);
+        Assert.Empty(action.Seen);
+        Assert.Empty(_db.Constructor.GetRecords(_collection));
+    }
+
+    [Fact]
+    public async Task Waiting_keeps_the_original_numeric_request_context_when_the_source_row_and_saved_card_change()
+    {
+        using var server = new FileServer(Payload, missingResponses: 1);
+        var request = Request(server, path: "/assets/{{поле.attachment-id}}", method: RequestMethod.Post,
+            body: """{"messageKey":{{поле.message-id}},"assetKey":{{поле.attachment-id}}}""");
+        var record = new Dictionary<string, string>
+        {
+            ["message-id"] = "42", ["attachment-id"] = "23",
+        };
+
+        var pending = RequestLauncher.DownloadAsync(Cards, Cards.Find(request.ConnectionId)!, request,
+            record, "Ожидание файла", "1", DateTimeOffset.Now, waitSeconds: 4);
+        await server.BodyStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        record["message-id"] = "900";
+        record["attachment-id"] = "800";
+        Cards.SaveRequest(request with { Path = "/different", Body = "{}" });
+
+        var response = await pending.WaitAsync(TimeSpan.FromSeconds(8));
+
+        Assert.True(response.Ok, response.Explanation);
+        Assert.Equal(Payload, response.Content);
+        Assert.Equal(2, server.Requests.Count);
+        Assert.All(server.Requests, head => Assert.StartsWith("POST /assets/23 ", head, StringComparison.Ordinal));
+        Assert.All(server.Bodies, body =>
+        {
+            using var json = JsonDocument.Parse(body);
+            Assert.Equal(42, json.RootElement.GetProperty("messageKey").GetInt32());
+            Assert.Equal(23, json.RootElement.GetProperty("assetKey").GetInt32());
+        });
+    }
+
+    [Fact]
+    public async Task Waiting_for_a_missing_file_expires_without_calling_the_action_or_flooding_the_server()
+    {
+        using var server = new FileServer(Payload, status: 404);
+        var request = Request(server, method: RequestMethod.Post);
+        var action = new Receiver();
+        var watch = Stopwatch.StartNew();
+
+        var outcome = await Run([ScenarioStep.OfDownload(request.Id, "{{file-name}}", 1), Action(action)],
+            [action], Event()).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.False(outcome.Ok);
+        Assert.Contains("404", outcome.Problem, StringComparison.Ordinal);
+        Assert.Contains("ожид", outcome.Problem, StringComparison.OrdinalIgnoreCase);
+        Assert.InRange(server.Requests.Count, 1, 3);
+        Assert.True(watch.Elapsed >= TimeSpan.FromMilliseconds(700), "Шаг не использовал включенное ожидание.");
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(4), "Шаг вышел за ограниченный бюджет ожидания.");
+        Assert.Empty(action.Seen);
+        Assert.Empty(_db.Constructor.GetRecords(_collection));
+    }
+
+    [Fact]
+    public async Task Cancelling_while_waiting_after_404_does_not_send_another_request_or_run_the_action()
+    {
+        using var server = new FileServer(Payload, status: 404);
+        var request = Request(server, method: RequestMethod.Post);
+        var action = new Receiver();
+        using var stop = new CancellationTokenSource();
+
+        var pending = Run([ScenarioStep.OfDownload(request.Id, "{{file-name}}", 30), Action(action)],
+            [action], Event(), stop.Token);
+        await server.BodyStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        // Ответ уже отправлен. Даем клиенту перейти к ожидающему продолжению, не дожидаясь
+        // следующей секундной попытки: отмена должна прервать задержку, а не ждать ее конца.
+        await Task.Delay(80);
+        Assert.False(pending.IsCompleted);
+        stop.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            await pending.WaitAsync(TimeSpan.FromSeconds(2)));
+        Assert.Single(server.Requests);
+        Assert.Empty(action.Seen);
+        Assert.Empty(_db.Constructor.GetRecords(_collection));
+    }
+
+    [Theory]
+    [InlineData(302)]
+    [InlineData(403)]
+    [InlineData(500)]
+    public async Task Explicit_wait_does_not_repeat_a_redirect_or_a_different_http_failure(int status)
+    {
+        using var server = new FileServer(Payload, status: status);
+        var request = Request(server, method: RequestMethod.Post);
+        var action = new Receiver();
+
+        var outcome = await Run([ScenarioStep.OfDownload(request.Id, "{{file-name}}", 3), Action(action)],
+            [action], Event()).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.False(outcome.Ok);
+        Assert.Single(server.Requests);
+        Assert.Empty(action.Seen);
+        Assert.Empty(_db.Constructor.GetRecords(_collection));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(3)]
+    public async Task Empty_post_does_not_replay_when_the_connection_closes_without_an_http_response(int waitSeconds)
+    {
+        using var server = new FileServer(Payload, disconnectBeforeHeaders: true);
+        var request = Request(server, method: RequestMethod.Post);
+        var action = new Receiver();
+
+        var outcome = await Run([ScenarioStep.OfDownload(request.Id, "{{file-name}}", waitSeconds), Action(action)],
+            [action], Event()).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.False(outcome.Ok);
+        Assert.Single(server.Requests);
+        Assert.Empty(action.Seen);
+        Assert.Empty(_db.Constructor.GetRecords(_collection));
+    }
+
+    [Theory]
+    [InlineData("Обычный текст")]
+    [InlineData("Да")]
+    [InlineData("Нет")]
+    public async Task Enabled_wait_is_skipped_for_text_events_and_confirmations_without_a_file(string text)
+    {
+        using var server = new FileServer(Payload, status: 404);
+        var request = Request(server, path: "/assets/read", method: RequestMethod.Post,
+            body: """{"assetKey":{{поле.attachment-id}}}""");
+        var action = new Receiver();
+
+        var outcome = await Run([
+            AttachmentColumns(), ScenarioStep.OfDownload(request.Id, "{{download-name}}", 300), Action(action),
+        ], [action], AttachmentEvent(false, text)).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.True(outcome.Ok, outcome.Problem);
+        Assert.Empty(server.Requests);
+        var received = Assert.Single(action.Seen);
+        Assert.Null(received.Bytes);
+        Assert.Equal("", received.FileName);
+        Assert.Equal(text, received.Values["title"]);
+        Assert.Single(_db.Constructor.GetRecords(_collection));
     }
 
     [Theory]
@@ -443,29 +651,34 @@ public sealed class ScenarioDownloadTests : IDisposable
         Assert.Empty(_db.Constructor.GetRecords(_collection));
     }
 
-    [Fact]
-    public async Task File_larger_than_the_transport_ceiling_stops_without_calling_the_action()
+    [Theory]
+    [InlineData(200)]
+    [InlineData(404)]
+    public async Task File_larger_than_the_transport_ceiling_stops_without_calling_the_action_or_waiting_again(int status)
     {
-        using var server = new FileServer(new byte[checked((int)EgressHttp.MaxResponseBytes + 1)]);
+        using var server = new FileServer(new byte[checked((int)EgressHttp.MaxResponseBytes + 1)], status: status);
         var request = Request(server);
         var action = new Receiver();
 
-        var outcome = await Run([ScenarioStep.OfDownload(request.Id, "{{file-name}}"), Action(action)],
-            [action], Event());
+        var outcome = await Run([ScenarioStep.OfDownload(request.Id, "{{file-name}}", 3), Action(action)],
+            [action], Event()).WaitAsync(TimeSpan.FromSeconds(8));
 
         Assert.False(outcome.Ok);
+        Assert.Single(server.Requests);
         Assert.Empty(action.Seen);
         Assert.Empty(_db.Constructor.GetRecords(_collection));
     }
 
-    [Fact]
-    public async Task Cancellation_during_download_never_calls_the_action()
+    [Theory]
+    [InlineData(0)]
+    [InlineData(30)]
+    public async Task Cancellation_during_download_never_calls_the_action(int waitSeconds)
     {
         using var server = new FileServer(Payload, declaredLength: Payload.Length + 100, stall: true);
         var request = Request(server);
         var action = new Receiver();
         using var stop = new CancellationTokenSource();
-        var pending = Run([ScenarioStep.OfDownload(request.Id, "{{file-name}}"), Action(action)],
+        var pending = Run([ScenarioStep.OfDownload(request.Id, "{{file-name}}", waitSeconds), Action(action)],
             [action], Event(), stop.Token);
         await server.BodyStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
@@ -633,18 +846,23 @@ public sealed class ScenarioDownloadTests : IDisposable
         private readonly int _status;
         private readonly int _length;
         private readonly bool _stall;
+        private readonly int _missingResponses;
+        private readonly bool _disconnectBeforeHeaders;
         private readonly Task _work;
         public int Port { get; }
         public IReadOnlyList<string> Requests => _requests.ToArray();
         public IReadOnlyList<string> Bodies => _bodies.ToArray();
         public TaskCompletionSource BodyStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public FileServer(byte[] content, int status = 200, int? declaredLength = null, bool stall = false)
+        public FileServer(byte[] content, int status = 200, int? declaredLength = null, bool stall = false,
+            int missingResponses = 0, bool disconnectBeforeHeaders = false)
         {
             _content = content;
             _status = status;
             _length = declaredLength ?? content.Length;
             _stall = stall;
+            _missingResponses = missingResponses;
+            _disconnectBeforeHeaders = disconnectBeforeHeaders;
             _listener.Start();
             Port = ((IPEndPoint)_listener.LocalEndpoint).Port;
             _work = Task.Run(ServeAsync);
@@ -680,7 +898,9 @@ public sealed class ScenarioDownloadTests : IDisposable
                     }
                     _requests.Enqueue(requestHead);
                     _bodies.Enqueue(Encoding.UTF8.GetString(body));
-                    var headers = Encoding.ASCII.GetBytes($"HTTP/1.1 {_status} Reply\r\n"
+                    if (_disconnectBeforeHeaders) continue;
+                    var status = _requests.Count <= _missingResponses ? 404 : _status;
+                    var headers = Encoding.ASCII.GetBytes($"HTTP/1.1 {status} Reply\r\n"
                         + $"Content-Type: application/octet-stream\r\nContent-Length: {_length}\r\nConnection: close\r\n\r\n");
                     await stream.WriteAsync(headers, _stop.Token);
                     await stream.WriteAsync(_content, _stop.Token);

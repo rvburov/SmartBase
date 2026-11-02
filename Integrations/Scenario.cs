@@ -541,6 +541,8 @@ public enum ScenarioStepKind
 /// <param name="ColumnFormulas">Новые колонки и выражения для них
 /// (<see cref="ScenarioStepKind.Compute"/>) — по порядку: каждая следующая видит уже
 /// посчитанные. Список, как и словарь полей, не участвует в сравнении записей.</param>
+/// <param name="DownloadWaitSeconds">Сколько секунд ожидать готовность файла после первого
+/// HTTP 404. Только для <see cref="ScenarioStepKind.Download"/>; 0 — одна попытка.</param>
 public sealed record ScenarioStep(
     ScenarioStepKind                     Kind,
     int                                  RequestId,
@@ -555,10 +557,14 @@ public sealed record ScenarioStep(
     string                               Format         = "",
     IReadOnlyList<ScenarioFormula>?      ColumnFormulas = null,
     string                               MatchField     = "",
-    bool                                 CreateMissing  = true)
+    bool                                 CreateMissing  = true,
+    int                                  DownloadWaitSeconds = 0)
 {
     /// <summary>Сколько знаков умещается в карточке сообщения, не превращая ее в простыню.</summary>
     public const int MaxTextLength = 200;
+
+    /// <summary>Максимальное ожидание готовности файла после первого HTTP 404.</summary>
+    public const int MaxDownloadWaitSeconds = 300;
 
     /// <summary>Пустой набор — чтобы проверка на <c>null</c> не расползлась по всем местам.</summary>
     private static readonly IReadOnlyDictionary<string, string> Nothing =
@@ -594,8 +600,8 @@ public sealed record ScenarioStep(
         new(ScenarioStepKind.Request, requestId, "");
 
     /// <summary>Получить файл без записи ответа в коллекцию.</summary>
-    public static ScenarioStep OfDownload(int requestId, string fileName) =>
-        new(ScenarioStepKind.Download, requestId, fileName);
+    public static ScenarioStep OfDownload(int requestId, string fileName, int waitSeconds = 0) =>
+        new(ScenarioStepKind.Download, requestId, fileName, DownloadWaitSeconds: waitSeconds);
 
     public static ScenarioStep OfNotice(string text) =>
         new(ScenarioStepKind.Notify, 0, text);
@@ -643,6 +649,9 @@ public sealed record ScenarioStep(
                 problems.Add("В шаге не заполнено имя файла");
             else if (Text.Length > MaxTextLength)
                 problems.Add($"Выражение имени файла длиннее {MaxTextLength} знаков");
+
+            if (DownloadWaitSeconds is < 0 or > MaxDownloadWaitSeconds)
+                problems.Add($"Ожидание готовности файла — от 0 до {MaxDownloadWaitSeconds} секунд");
         }
 
         if (Kind == ScenarioStepKind.Notify)
@@ -759,7 +768,8 @@ public sealed record ScenarioStep(
 
         ScenarioStepKind.Download => "Получить файл: "
             + (name.Length > 0 ? name : $"№{RequestId}")
-            + (Text.Length > 0 ? " → " + Text : " — имя не задано"),
+            + (Text.Length > 0 ? " → " + Text : " — имя не задано")
+            + (DownloadWaitSeconds > 0 ? $", ожидание до {DownloadWaitSeconds} с после HTTP 404" : ""),
 
         ScenarioStepKind.Notify => "Сообщение: " + Text,
 

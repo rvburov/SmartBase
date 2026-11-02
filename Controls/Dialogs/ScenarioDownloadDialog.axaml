@@ -47,6 +47,21 @@
                    FontSize="{DynamicResource FontSizeSmall}"
                    Foreground="{StaticResource BrushSecondaryText}" />
 
+        <TextBlock Text="Ожидать готовности, секунд"
+                   Margin="0,0,0,6"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+        <TextBox x:Name="WaitSecondsBox"
+                 Height="{StaticResource ControlHeightStandard}"
+                 Margin="0,0,0,8"
+                 VerticalContentAlignment="Center"
+                 Watermark="От 0 до 300"
+                 CornerRadius="{StaticResource RadiusBase}" />
+        <TextBlock Text="0 — одна попытка. После первого HTTP 404 повторяет запрос получения файла, включая POST, в пределах указанного времени (до 300 секунд). Таймаут запроса задается в соединении."
+                   Margin="0,0,0,12"
+                   TextWrapping="Wrap"
+                   FontSize="{DynamicResource FontSizeSmall}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
         <w:NoticeBanner x:Name="NoticeBanner" Margin="0,0,0,12" />
 
         <Grid ColumnDefinitions="*,Auto,8,Auto" Margin="0,4,0,0">

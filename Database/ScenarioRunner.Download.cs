@@ -36,7 +36,8 @@ public static partial class ScenarioRunner
 
         var request = registry.FindRequest(step.RequestId)!;
         var connection = registry.Find(request.ConnectionId)!;
-        var answer = await RequestLauncher.DownloadAsync(registry, connection, request, record, scenario, mark, now, ct);
+        var answer = await RequestLauncher.DownloadAsync(registry, connection, request, record, scenario, mark,
+            now, ct, waitSeconds: step.DownloadWaitSeconds);
         if (!answer.Ok || answer.Truncated || answer.Content is null)
         {
             var why = answer.Truncated ? "файл больше технического ограничения 32 МБ"

@@ -8,6 +8,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using SmartBase.Database;
 using SmartBase.Database.Repositories;
+using SmartBase.Core.Models;
 using SmartBase.Extensions.DocRegistry;
 using SmartBase.Integrations;
 using SmartBase.Utils;
@@ -281,7 +282,121 @@ public sealed class FileMessageScenarioTests : IDisposable
         AssertPostRequests(server, 1);
     }
 
-    private Scenario Scenario(FileServer server, bool post = false)
+    [Fact]
+    public async Task A_workbook_waits_for_post_readiness_without_early_writes_and_is_registered_once()
+    {
+        Seed("301121");
+        var before = _db.Context.ChangeLog.AsNoTracking().Count();
+        var bytes = FileMessageBook.Create(new FileMessageBook.Row(2, Name: "После готовности"),
+            new FileMessageBook.Row(5, Name: "Вторая строка"));
+        using var server = new FileServer(bytes, messageId: PostMessageId, assetId: PostAssetId,
+            waitUntilReady: true);
+        var scenario = Scenario(server, post: true, waitSeconds: 3);
+
+        var pending = Run(scenario, PostEvent());
+        await server.FirstUnavailable.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal("Существующий", Assert.Single(_db.Constructor.GetRecords(_shape.CollectionId)).Title);
+        Assert.Equal(before, _db.Context.ChangeLog.AsNoTracking().Count());
+        Assert.Empty(_db.Context.DbMeta.AsNoTracking().Where(item =>
+            item.Key.StartsWith("extension-state:doc-registry:file:")));
+        Assert.DoesNotContain(200, server.ResponseStatuses);
+
+        server.SetReady();
+        var registered = await pending.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.True(registered.Ok, registered.Problem + " " + string.Join("; ", server.ContractErrors));
+        Assert.Equal(2, registered.Rows);
+        Assert.Contains("2 из 2", ReplyMarkup.Text(registered.Reply), StringComparison.Ordinal);
+        Assert.Contains(404, server.ResponseStatuses);
+        Assert.Equal(1, server.ResponseStatuses.Count(status => status == 200));
+        var attempts = server.Requests.Count;
+        Assert.True(attempts >= 2);
+        AssertPostRequests(server, attempts);
+        Assert.Single(server.Bodies.Distinct(StringComparer.Ordinal));
+        var records = _db.Constructor.GetRecords(_shape.CollectionId);
+        Assert.Equal(3, records.Count);
+        foreach (var record in records.Where(record => record.Title != "Существующий"))
+        {
+            var values = _db.Constructor.GetFieldValues(record.Id!.Value);
+            Assert.Equal("Иванов Иван Иванович", values[_shape.FioFieldId]);
+            Assert.Equal("Проект", values[_shape.ProjectFieldId]);
+            Assert.True(DateValue.TryParseStorage(values[_shape.DateFieldId], out var date));
+            Assert.Equal(Now.LocalDateTime, date.Start);
+        }
+        var receipt = Assert.Single(_db.Context.DbMeta.AsNoTracking().Where(item =>
+            item.Key.StartsWith("extension-state:doc-registry:file:")));
+        using var saved = JsonDocument.Parse(receipt.Value);
+        Assert.Equal(Convert.ToHexString(SHA256.HashData(bytes)), saved.RootElement.GetProperty("Digest").GetString());
+
+        var numbers = DocRegistrar.Designations(_db.Constructor, _shape).Order(StringComparer.Ordinal).ToArray();
+        var replay = await Run(scenario, PostEvent());
+
+        Assert.True(replay.Ok, replay.Problem);
+        Assert.Equal(0, replay.Rows);
+        Assert.Equal(registered.Reply, replay.Reply);
+        Assert.Equal(numbers, DocRegistrar.Designations(_db.Constructor, _shape).Order(StringComparer.Ordinal));
+        Assert.Equal(3, _db.Constructor.GetRecords(_shape.CollectionId).Count);
+        Assert.Single(_db.Context.DbMeta.AsNoTracking().Where(item =>
+            item.Key.StartsWith("extension-state:doc-registry:file:")));
+        AssertPostRequests(server, attempts + 1);
+        Assert.Equal(2, server.ResponseStatuses.Count(status => status == 200));
+    }
+
+    [Fact]
+    public async Task A_ready_workbook_keeps_its_sender_and_plain_yes_skips_download_waiting()
+    {
+        var bytes = FileMessageBook.Create(new FileMessageBook.Row(2, Name: "Новая серия"));
+        using var server = new FileServer(bytes, messageId: PostMessageId, assetId: PostAssetId,
+            waitUntilReady: true);
+        var scenario = Scenario(server, post: true, waitSeconds: 3);
+
+        var pending = Run(scenario, PostEvent());
+        await server.FirstUnavailable.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Empty(_db.Constructor.GetRecords(_shape.CollectionId));
+        Assert.Empty(_db.Context.DbMeta.AsNoTracking().Where(item =>
+            item.Key.StartsWith("extension-state:doc-registry:file:")));
+        server.SetReady();
+        var preview = await pending.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.True(preview.Ok, preview.Problem);
+        Assert.Equal(0, preview.Rows);
+        Assert.Contains("АБВГ.301121.001", ReplyMarkup.Text(preview.Reply), StringComparison.Ordinal);
+        Assert.Empty(_db.Constructor.GetRecords(_shape.CollectionId));
+        Assert.Empty(_db.Context.DbMeta.AsNoTracking().Where(item =>
+            item.Key.StartsWith("extension-state:doc-registry:file:")));
+        var attempts = server.Requests.Count;
+        Assert.True(attempts >= 2);
+        AssertPostRequests(server, attempts);
+
+        // Повторная загрузка больше недоступна. Оба текстовых ответа обязаны обойти
+        // скачивание и его ожидание, а подтверждать может только исходный отправитель.
+        server.SetUnavailable();
+        var wrongSender = await Run(scenario, PostEvent("Да", attachment: false,
+            messageId: PostMessageId + 1, author: "participant-18")).WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.False(wrongSender.Ok);
+        Assert.Empty(_db.Constructor.GetRecords(_shape.CollectionId));
+        AssertPostRequests(server, attempts);
+
+        var plain = PostEvent("Да", attachment: false, messageId: PostMessageId + 2);
+        Assert.Equal("false", Assert.Single(plain.Rows)["is-file"]);
+        Assert.Equal("[]", Assert.Single(plain.Rows)["file-ids"]);
+        var confirmed = await Run(scenario, plain).WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.True(confirmed.Ok, confirmed.Problem);
+        Assert.Equal(1, confirmed.Rows);
+        Assert.Contains("1 из 1", ReplyMarkup.Text(confirmed.Reply), StringComparison.Ordinal);
+        var record = Assert.Single(_db.Constructor.GetRecords(_shape.CollectionId));
+        var values = _db.Constructor.GetFieldValues(record.Id!.Value);
+        Assert.Equal("АБВГ.301121.001", values[_shape.DesignationFieldId]);
+        Assert.True(DateValue.TryParseStorage(values[_shape.DateFieldId], out var date));
+        Assert.Equal(Now.LocalDateTime, date.Start);
+        Assert.Single(_db.Context.DbMeta.AsNoTracking().Where(item =>
+            item.Key.StartsWith("extension-state:doc-registry:file:")));
+        AssertPostRequests(server, attempts);
+    }
+
+    private Scenario Scenario(FileServer server, bool post = false, int waitSeconds = 0)
     {
         var cards = _registry.Integrations;
         var connection = cards.Save(IntegrationConnection.New() with
@@ -318,10 +433,10 @@ public sealed class FileMessageScenarioTests : IDisposable
                         new ScenarioFormula("asset-id", """ЕСЛИ({{is-file}}; ЧИСЛО(ЗАМЕНИТЬ(ЗАМЕНИТЬ({{file-ids}}; "["; ""); "]"; "")); "")"""),
                         new ScenarioFormula("file-name", """ЕСЛИ({{is-file}}; "Список КД.xlsx"; "")"""),
                         new ScenarioFormula("request-id", """СЦЕПИТЬ({{event-id}}; ":"; {{asset-id}})""")),
-                    ScenarioStep.OfDownload(request.Id, "{{file-name}}"),
+                    ScenarioStep.OfDownload(request.Id, "{{file-name}}", waitSeconds: waitSeconds),
                     registration,
                 ]
-                : [ScenarioStep.OfDownload(request.Id, "{{file-name}}"), registration],
+                : [ScenarioStep.OfDownload(request.Id, "{{file-name}}", waitSeconds: waitSeconds), registration],
         }, Now);
     }
 
@@ -347,11 +462,12 @@ public sealed class FileMessageScenarioTests : IDisposable
         return new StepTable(row.Keys.ToArray(), [row]);
     }
 
-    private static StepTable PostEvent(string? text = null, bool attachment = true, int messageId = PostMessageId)
+    private static StepTable PostEvent(string? text = null, bool attachment = true, int messageId = PostMessageId,
+                                      string author = "participant-17")
     {
         var source = new Dictionary<string, object>
         {
-            ["author"] = "participant-17", ["event-id"] = messageId,
+            ["author"] = author, ["event-id"] = messageId,
             ["is-file"] = attachment, ["file-ids"] = attachment ? new[] { PostAssetId } : Array.Empty<int>(),
         };
         if (text is not null) source["body"] = text;
@@ -397,17 +513,25 @@ public sealed class FileMessageScenarioTests : IDisposable
         private readonly TcpListener _listener = new(IPAddress.Loopback, 0);
         private readonly CancellationTokenSource _stop = new();
         private readonly byte[] _answer;
+        private readonly int _status;
         private readonly int? _messageId;
         private readonly int? _assetId;
+        private readonly TaskCompletionSource _firstUnavailable = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private volatile TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal int Port { get; }
         internal ConcurrentQueue<string> Requests { get; } = new();
         internal ConcurrentQueue<string> Bodies { get; } = new();
         internal ConcurrentQueue<string> ContractErrors { get; } = new();
+        internal ConcurrentQueue<int> ResponseStatuses { get; } = new();
+        internal Task FirstUnavailable => _firstUnavailable.Task;
 
-        internal FileServer(byte[] content, int status = 200, int? messageId = null, int? assetId = null)
+        internal FileServer(byte[] content, int status = 200, int? messageId = null, int? assetId = null,
+                            bool waitUntilReady = false)
         {
+            _status = status;
             _messageId = messageId;
             _assetId = assetId;
+            if (!waitUntilReady) SetReady();
             var header = Encoding.ASCII.GetBytes($"HTTP/1.1 {status} Result\r\nContent-Type: application/octet-stream\r\n"
                 + $"Content-Length: {content.Length}\r\nConnection: close\r\n\r\n");
             _answer = new byte[header.Length + content.Length];
@@ -417,6 +541,11 @@ public sealed class FileMessageScenarioTests : IDisposable
             Port = ((IPEndPoint)_listener.LocalEndpoint).Port;
             _ = Task.Run(AcceptAsync);
         }
+
+        internal void SetReady() => _ready.TrySetResult();
+
+        internal void SetUnavailable() =>
+            _ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         private async Task AcceptAsync()
         {
@@ -457,10 +586,13 @@ public sealed class FileMessageScenarioTests : IDisposable
                     Requests.Enqueue(headers[0]);
                     Bodies.Enqueue(body);
                     var valid = _messageId is null || ValidPost(headers, body);
-                    var answer = valid ? _answer : Encoding.ASCII.GetBytes(
-                        "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                    var status = !valid ? 400 : !_ready.Task.IsCompleted ? 404 : _status;
+                    var answer = valid && status == _status ? _answer : Encoding.ASCII.GetBytes(
+                        $"HTTP/1.1 {status} Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                    ResponseStatuses.Enqueue(status);
                     await stream.WriteAsync(answer, _stop.Token);
                     await stream.FlushAsync(_stop.Token);
+                    if (status == 404) _firstUnavailable.TrySetResult();
                 }
                 catch (Exception error) when (error is IOException or OperationCanceledException
                     or ObjectDisposedException or SocketException) { }

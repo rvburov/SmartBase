@@ -453,6 +453,12 @@ public static class EgressHttp
 
             message.Content = content;
         }
+        else if (plan.Method == RequestMethod.Post)
+        {
+            // Без объекта содержимого HttpClient может повторить пустой POST после обрыва
+            // до заголовков ответа. Пустое тело сохраняет Content-Length: 0 и одну отправку.
+            message.Content = new ByteArrayContent([]);
+        }
 
         var sameOrigin = address.Scheme == plan.Address.Scheme
                       && address.Host.Equals(plan.Address.Host, StringComparison.OrdinalIgnoreCase)
