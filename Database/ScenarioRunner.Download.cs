@@ -11,9 +11,10 @@ public static partial class ScenarioRunner
             return $"запрос получения файла не найден (№{step.RequestId})";
         if (registry.Find(request.ConnectionId) is null)
             return $"у запроса «{request.Name}» не найдено соединение";
-        return request.Method != RequestMethod.Get || request.Paging != RequestPaging.None
-            || !string.IsNullOrWhiteSpace(request.Body)
-                ? "Для получения файла нужен запрос GET без тела и разбивки на страницы"
+        return request.Method is not (RequestMethod.Get or RequestMethod.Post)
+            || request.Paging != RequestPaging.None
+            || request.Method == RequestMethod.Get && !string.IsNullOrWhiteSpace(request.Body)
+                ? "Для получения файла нужен запрос GET без тела или POST, без разбивки на страницы"
                 : null;
     }
 

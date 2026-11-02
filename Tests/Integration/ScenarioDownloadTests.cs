@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.Json;
 using Avalonia.Controls;
 using SmartBase.Core.Models;
 using SmartBase.Database;
@@ -51,6 +52,86 @@ public sealed class ScenarioDownloadTests : IDisposable
         Assert.Equal(stop.Token, received.Token);
         Assert.StartsWith("GET /files/asset-23 ", Assert.Single(server.Requests), StringComparison.Ordinal);
         Assert.Equal("Заявка участника", Assert.Single(_db.Constructor.GetRecords(_collection)).Title);
+    }
+
+    [Fact]
+    public async Task Post_download_uses_numeric_event_keys_after_compute_and_preserves_binary_input_metadata()
+    {
+        using var server = new FileServer(Payload);
+        var request = Request(server, path: "/assets/read", method: RequestMethod.Post,
+            body: """{"messageKey":{{поле.message-id}},"assetKey":{{поле.attachment-id}}}""");
+        var action = new Receiver();
+        using var stop = new CancellationTokenSource();
+
+        var outcome = await Run([
+            AttachmentColumns(), ScenarioStep.OfDownload(request.Id, "{{download-name}}"), Action(action),
+        ], [action], AttachmentEvent(true), stop.Token);
+
+        Assert.True(outcome.Ok, outcome.Problem);
+        Assert.Null(Cards.Binding(request.Id));
+        Assert.StartsWith("POST /assets/read ", Assert.Single(server.Requests), StringComparison.Ordinal);
+        using var body = JsonDocument.Parse(Assert.Single(server.Bodies));
+        Assert.Equal(JsonValueKind.Number, body.RootElement.GetProperty("messageKey").ValueKind);
+        Assert.Equal(42, body.RootElement.GetProperty("messageKey").GetInt32());
+        Assert.Equal(JsonValueKind.Number, body.RootElement.GetProperty("assetKey").ValueKind);
+        Assert.Equal(23, body.RootElement.GetProperty("assetKey").GetInt32());
+        var received = Assert.Single(action.Seen);
+        Assert.Equal(Payload, received.Bytes);
+        Assert.Equal("Заявка.xlsx", received.FileName);
+        Assert.Equal("Заявка участника", received.Values["title"]);
+        Assert.Equal("participant-17", received.Values["sender"]);
+        Assert.Equal("42", received.Values["message-id"]);
+        Assert.Equal(stop.Token, received.Token);
+        Assert.Equal("Заявка участника", Assert.Single(_db.Constructor.GetRecords(_collection)).Title);
+    }
+
+    [Theory]
+    [InlineData("Обычный текст")]
+    [InlineData("Да")]
+    [InlineData("Нет")]
+    public async Task Compute_skips_a_post_download_for_text_and_confirmation_events_without_files(string text)
+    {
+        using var server = new FileServer(Payload);
+        // Пустой вычисленный ключ оставил бы в этом теле неверный JSON. Шаг обязан
+        // пропуститься по пустому имени файла раньше подготовки и отправки запроса.
+        var request = Request(server, path: "/assets/read", method: RequestMethod.Post,
+            body: """{"messageKey":{{поле.message-id}},"assetKey":{{поле.attachment-id}}}""");
+        var first = new Receiver("first", writes: false);
+        var second = new Receiver("second");
+
+        var outcome = await Run([
+            AttachmentColumns(), ScenarioStep.OfDownload(request.Id, "{{download-name}}"),
+            Action(first), Action(second),
+        ], [first, second], AttachmentEvent(false, text));
+
+        Assert.True(outcome.Ok, outcome.Problem);
+        Assert.Empty(server.Requests);
+        foreach (var action in new[] { first, second })
+        {
+            var received = Assert.Single(action.Seen);
+            Assert.Null(received.Bytes);
+            Assert.Equal("", received.FileName);
+            Assert.Equal(text, received.Values["title"]);
+            Assert.Equal("42", received.Values["message-id"]);
+            Assert.Equal("participant-17", received.Values["sender"]);
+        }
+        Assert.Equal(text, Assert.Single(_db.Constructor.GetRecords(_collection)).Title);
+    }
+
+    [Fact]
+    public async Task Post_download_can_have_an_empty_request_body()
+    {
+        using var server = new FileServer(Payload);
+        var request = Request(server, method: RequestMethod.Post);
+        var action = new Receiver();
+
+        var outcome = await Run([ScenarioStep.OfDownload(request.Id, "{{file-name}}"), Action(action)],
+            [action], Event());
+
+        Assert.True(outcome.Ok, outcome.Problem);
+        Assert.StartsWith("POST /files/asset-23 ", Assert.Single(server.Requests), StringComparison.Ordinal);
+        Assert.Equal("", Assert.Single(server.Bodies));
+        Assert.Equal(Payload, Assert.Single(action.Seen).Bytes);
     }
 
     [Theory]
@@ -276,9 +357,16 @@ public sealed class ScenarioDownloadTests : IDisposable
     }
 
     [Theory]
-    [InlineData(RequestMethod.Post, RequestPaging.None)]
+    [InlineData(RequestMethod.Put, RequestPaging.None)]
+    [InlineData(RequestMethod.Patch, RequestPaging.None)]
+    [InlineData(RequestMethod.Delete, RequestPaging.None)]
     [InlineData(RequestMethod.Get, RequestPaging.Page)]
-    public async Task Download_does_not_run_an_outgoing_or_paginated_request(RequestMethod method, RequestPaging paging)
+    [InlineData(RequestMethod.Get, RequestPaging.Offset)]
+    [InlineData(RequestMethod.Get, RequestPaging.Cursor)]
+    [InlineData(RequestMethod.Post, RequestPaging.Page)]
+    [InlineData(RequestMethod.Post, RequestPaging.Offset)]
+    [InlineData(RequestMethod.Post, RequestPaging.Cursor)]
+    public async Task Download_does_not_run_an_unsupported_method_or_paginated_request(RequestMethod method, RequestPaging paging)
     {
         using var server = new FileServer(Payload);
         var request = Request(server, method: method, paging: paging);
@@ -291,6 +379,20 @@ public sealed class ScenarioDownloadTests : IDisposable
         Assert.Empty(server.Requests);
         Assert.Empty(action.Seen);
         Assert.Empty(_db.Constructor.GetRecords(_collection));
+    }
+
+    [Fact]
+    public void A_get_download_request_with_a_body_cannot_be_saved_for_a_scenario()
+    {
+        using var server = new FileServer(Payload);
+        var request = Request(server);
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            Cards.SaveRequest(request with { Body = "{}" }));
+
+        Assert.Contains("GET", error.Message, StringComparison.Ordinal);
+        Assert.Equal("", Cards.FindRequest(request.Id)!.Body);
+        Assert.Empty(server.Requests);
     }
 
     [Fact]
@@ -401,7 +503,7 @@ public sealed class ScenarioDownloadTests : IDisposable
     }
 
     private IntegrationRequest Request(FileServer server, string path = "/files/{{поле.asset-id}}",
-        RequestMethod method = RequestMethod.Get, RequestPaging paging = RequestPaging.None)
+        RequestMethod method = RequestMethod.Get, RequestPaging paging = RequestPaging.None, string body = "")
     {
         var connection = Cards.Save(IntegrationConnection.New() with
         {
@@ -411,7 +513,7 @@ public sealed class ScenarioDownloadTests : IDisposable
         return Cards.SaveRequest(IntegrationRequest.New() with
         {
             Name = "Получение вложения " + Cards.Requests().Count,
-            ConnectionId = connection.Id, Path = path, Method = method,
+            ConnectionId = connection.Id, Path = path, Method = method, Body = body,
             Paging = paging, PagingField = paging == RequestPaging.None ? "" : "page",
         });
     }
@@ -435,6 +537,22 @@ public sealed class ScenarioDownloadTests : IDisposable
             ["message-id"] = "message-42", ["asset-id"] = "asset-23",
         };
         if (fileName is not null) row["file-name"] = fileName;
+        return new StepTable(row.Keys.ToArray(), [row]);
+    }
+
+    private static ScenarioStep AttachmentColumns() => ScenarioStep.OfCompute(
+        new ScenarioFormula("attachment-id",
+            """ЕСЛИ({{has-attachment}}; ЧИСЛО(ЗАМЕНИТЬ(ЗАМЕНИТЬ({{attachment-ids}}; "["; ""); "]"; "")); "")"""),
+        new ScenarioFormula("download-name", """ЕСЛИ({{has-attachment}}; "Заявка.xlsx"; "")"""));
+
+    private static StepTable AttachmentEvent(bool hasAttachment, string text = "Заявка участника")
+    {
+        var row = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["title"] = text, ["sender"] = "participant-17", ["message-id"] = "42",
+            ["has-attachment"] = hasAttachment ? "true" : "false",
+            ["attachment-ids"] = hasAttachment ? "[23]" : "[]",
+        };
         return new StepTable(row.Keys.ToArray(), [row]);
     }
 
@@ -510,6 +628,7 @@ public sealed class ScenarioDownloadTests : IDisposable
         private readonly TcpListener _listener = new(IPAddress.Loopback, 0);
         private readonly CancellationTokenSource _stop = new();
         private readonly ConcurrentQueue<string> _requests = new();
+        private readonly ConcurrentQueue<string> _bodies = new();
         private readonly byte[] _content;
         private readonly int _status;
         private readonly int _length;
@@ -517,6 +636,7 @@ public sealed class ScenarioDownloadTests : IDisposable
         private readonly Task _work;
         public int Port { get; }
         public IReadOnlyList<string> Requests => _requests.ToArray();
+        public IReadOnlyList<string> Bodies => _bodies.ToArray();
         public TaskCompletionSource BodyStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public FileServer(byte[] content, int status = 200, int? declaredLength = null, bool stall = false)
@@ -546,7 +666,20 @@ public sealed class ScenarioDownloadTests : IDisposable
                         head.WriteByte(one[0]);
                         if (head.Length >= 4 && Encoding.ASCII.GetString(head.GetBuffer(), (int)head.Length - 4, 4) == "\r\n\r\n") break;
                     }
-                    _requests.Enqueue(Encoding.ASCII.GetString(head.ToArray()));
+                    var requestHead = Encoding.ASCII.GetString(head.ToArray());
+                    var lengthHeader = requestHead.Split("\r\n", StringSplitOptions.RemoveEmptyEntries)
+                        .FirstOrDefault(line => line.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase));
+                    var bodyLength = lengthHeader is null ? 0 : int.Parse(lengthHeader["Content-Length:".Length..].Trim());
+                    var body = new byte[bodyLength];
+                    var read = 0;
+                    while (read < body.Length)
+                    {
+                        var count = await stream.ReadAsync(body.AsMemory(read), _stop.Token);
+                        if (count == 0) return;
+                        read += count;
+                    }
+                    _requests.Enqueue(requestHead);
+                    _bodies.Enqueue(Encoding.UTF8.GetString(body));
                     var headers = Encoding.ASCII.GetBytes($"HTTP/1.1 {_status} Reply\r\n"
                         + $"Content-Type: application/octet-stream\r\nContent-Length: {_length}\r\nConnection: close\r\n\r\n");
                     await stream.WriteAsync(headers, _stop.Token);

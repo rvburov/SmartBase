@@ -15,7 +15,7 @@
         Background="{StaticResource BrushBg}">
 
     <StackPanel Spacing="0" Margin="{StaticResource DialogPadding}">
-        <TextBlock Text="Запрос GET"
+        <TextBlock Text="Запрос"
                    Margin="0,0,0,6"
                    Foreground="{StaticResource BrushSecondaryText}" />
         <ComboBox x:Name="RequestCombo"
@@ -36,12 +36,12 @@
                  Watermark="Имя из события или название файла"
                  CornerRadius="{StaticResource RadiusBase}" />
 
-        <TextBlock Text="Выберите настроенный запрос GET. Имя файла можно взять из колонки события: {{Имя файла}}. Если колонка отсутствует или значение пустое, скачивание пропускается — обычные сообщения продолжают идти дальше."
+        <TextBlock Text="Выберите запрос GET без тела или POST. Разбивка на страницы должна быть выключена. Имя файла можно взять из колонки события: {{Имя файла}}. Если колонка отсутствует или значение пустое, скачивание пропускается — обычные сообщения продолжают идти дальше."
                    Margin="0,0,0,8"
                    TextWrapping="Wrap"
                    FontSize="{DynamicResource FontSizeSmall}"
                    Foreground="{StaticResource BrushSecondaryText}" />
-        <TextBlock Text="Путь и параметры запроса могут использовать значения события. Полученный файл передается следующему действию; привязка запроса к коллекции не нужна."
+        <TextBlock Text="Путь и тело POST могут использовать значения события. Полученный файл передается следующему действию; привязка запроса к коллекции не нужна."
                    Margin="0,0,0,12"
                    TextWrapping="Wrap"
                    FontSize="{DynamicResource FontSizeSmall}"

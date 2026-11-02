@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
@@ -21,6 +22,8 @@ public sealed class FileMessageScenarioTests : IDisposable
     private readonly DatabaseRegistry _registry;
     private readonly RegistryShape _shape;
     private static readonly DateTimeOffset Now = new(2026, 10, 31, 12, 0, 0, TimeSpan.Zero);
+    private const int PostMessageId = int.MaxValue - 7;
+    private const int PostAssetId = int.MaxValue - 8;
 
     public FileMessageScenarioTests()
     {
@@ -178,7 +181,107 @@ public sealed class FileMessageScenarioTests : IDisposable
         Assert.Single(server.Requests);
     }
 
-    private Scenario Scenario(FileServer server)
+    [Fact]
+    public async Task A_post_download_uses_numeric_ids_computed_from_the_event_and_registers_the_exact_workbook()
+    {
+        Seed("301121");
+        Seed("301122");
+        var bytes = FileMessageBook.Create(new FileMessageBook.Row(2, Name: "Втулка", Accounting: "Учтен"),
+            new FileMessageBook.Row(6, "АБВГ.301122.ХХХ", "Корпус", "Петров Петр Петрович", "Второй проект"));
+        using var server = new FileServer(bytes, messageId: PostMessageId, assetId: PostAssetId);
+
+        var outcome = await Run(Scenario(server, post: true), PostEvent());
+
+        Assert.True(outcome.Ok, outcome.Problem + " " + string.Join("; ", server.ContractErrors));
+        Assert.Equal(2, outcome.Rows);
+        var reply = ReplyMarkup.Text(outcome.Reply);
+        Assert.Contains("2 из 2", reply, StringComparison.Ordinal);
+        Assert.Contains("АБВГ.301121.002", reply, StringComparison.Ordinal);
+        Assert.Contains("АБВГ.301122.002", reply, StringComparison.Ordinal);
+        AssertPostRequests(server, 1);
+        var records = _db.Constructor.GetRecords(_shape.CollectionId);
+        var first = Assert.Single(records, record => record.Title == "Втулка");
+        Assert.Equal("Учтен", _db.Constructor.GetFieldValues(first.Id!.Value)[_shape.AccountingFieldId]);
+        var second = Assert.Single(records, record => record.Title == "Корпус");
+        var values = _db.Constructor.GetFieldValues(second.Id!.Value);
+        Assert.Equal("Петров Петр Петрович", values[_shape.FioFieldId]);
+        Assert.Equal("Второй проект", values[_shape.ProjectFieldId]);
+        var receipt = Assert.Single(_db.Context.DbMeta.AsNoTracking().Where(item =>
+            item.Key.StartsWith("extension-state:doc-registry:file:")));
+        using var saved = JsonDocument.Parse(receipt.Value);
+        Assert.Equal(Convert.ToHexString(SHA256.HashData(bytes)), saved.RootElement.GetProperty("Digest").GetString());
+    }
+
+    [Fact]
+    public async Task A_post_file_waits_for_plain_yes_with_false_and_empty_ids_and_redelivery_replays_its_receipt()
+    {
+        var bytes = FileMessageBook.Create(new FileMessageBook.Row(2, Name: "Первая серия"),
+            new FileMessageBook.Row(7, "АБВГ.806121.ХХХ", "Неизвестная серия"));
+        using var server = new FileServer(bytes, messageId: PostMessageId, assetId: PostAssetId);
+        var scenario = Scenario(server, post: true);
+
+        var preview = await Run(scenario, PostEvent());
+
+        Assert.True(preview.Ok, preview.Problem + " " + string.Join("; ", server.ContractErrors));
+        Assert.Equal(0, preview.Rows);
+        Assert.Empty(_db.Constructor.GetRecords(_shape.CollectionId));
+        Assert.Contains("АБВГ.301121.001", ReplyMarkup.Text(preview.Reply), StringComparison.Ordinal);
+        Assert.Contains("АБВГ.806121.001", ReplyMarkup.Text(preview.Reply), StringComparison.Ordinal);
+        Assert.Empty(_db.Context.DbMeta.AsNoTracking().Where(item =>
+            item.Key.StartsWith("extension-state:doc-registry:file:")));
+        AssertPostRequests(server, 1);
+
+        // Поля контракта остаются в обычном сообщении: false и [] проходят тот же Compute,
+        // пустое вычисленное имя пропускает скачивание, а текст доезжает до подтверждения.
+        var plain = PostEvent(text: "Да", attachment: false, messageId: PostMessageId + 1);
+        Assert.Equal("false", Assert.Single(plain.Rows)["is-file"]);
+        Assert.Equal("[]", Assert.Single(plain.Rows)["file-ids"]);
+        var confirmed = await Run(scenario, plain);
+
+        Assert.True(confirmed.Ok, confirmed.Problem);
+        Assert.Equal(2, confirmed.Rows);
+        Assert.Contains("2 из 2", ReplyMarkup.Text(confirmed.Reply), StringComparison.Ordinal);
+        AssertPostRequests(server, 1);
+        var numbers = DocRegistrar.Designations(_db.Constructor, _shape).Order(StringComparer.Ordinal).ToArray();
+        Assert.Equal(new[] { "АБВГ.301121.001", "АБВГ.806121.001" }, numbers);
+
+        var replay = await Run(scenario, PostEvent());
+
+        Assert.True(replay.Ok, replay.Problem);
+        Assert.Equal(0, replay.Rows);
+        Assert.Equal(confirmed.Reply, replay.Reply);
+        Assert.Equal(numbers, DocRegistrar.Designations(_db.Constructor, _shape).Order(StringComparer.Ordinal));
+        Assert.Equal(2, _db.Constructor.GetRecords(_shape.CollectionId).Count);
+        Assert.Single(_db.Context.DbMeta.AsNoTracking().Where(item =>
+            item.Key.StartsWith("extension-state:doc-registry:file:")));
+        AssertPostRequests(server, 2);
+    }
+
+    [Fact]
+    public async Task A_bad_row_in_a_post_downloaded_workbook_refuses_the_entire_request_without_rows_or_receipt()
+    {
+        Seed("301121");
+        var before = _db.Context.ChangeLog.AsNoTracking().Count();
+        var bytes = FileMessageBook.Create(new FileMessageBook.Row(2, Name: "Годная строка"),
+            new FileMessageBook.Row(7, "АБВГ.30112.ХХХ", "Ошибка кода"));
+        using var server = new FileServer(bytes, messageId: PostMessageId, assetId: PostAssetId);
+
+        var result = await Run(Scenario(server, post: true), PostEvent());
+
+        Assert.False(result.Ok);
+        Assert.Equal(0, result.Rows);
+        var reply = ReplyMarkup.Text(result.Reply);
+        Assert.Contains("0 из 2", reply, StringComparison.Ordinal);
+        Assert.Contains("Строка 7", reply, StringComparison.Ordinal);
+        Assert.Contains("АБВГ.30112.ХХХ", reply, StringComparison.Ordinal);
+        Assert.Equal("Существующий", Assert.Single(_db.Constructor.GetRecords(_shape.CollectionId)).Title);
+        Assert.Equal(before, _db.Context.ChangeLog.AsNoTracking().Count());
+        Assert.Empty(_db.Context.DbMeta.AsNoTracking().Where(item =>
+            item.Key.StartsWith("extension-state:doc-registry:file:")));
+        AssertPostRequests(server, 1);
+    }
+
+    private Scenario Scenario(FileServer server, bool post = false)
     {
         var cards = _registry.Integrations;
         var connection = cards.Save(IntegrationConnection.New() with
@@ -189,27 +292,36 @@ public sealed class FileMessageScenarioTests : IDisposable
         var request = cards.SaveRequest(IntegrationRequest.New() with
         {
             Name = "Получение вложения", ConnectionId = connection.Id,
-            Path = "/files/{{поле.asset-id}}", Method = RequestMethod.Get,
+            Path = post ? "/files/download" : "/files/{{поле.asset-id}}",
+            Method = post ? RequestMethod.Post : RequestMethod.Get,
+            Body = post ? """{"messageId":{{поле.event-id}},"assetId":{{поле.asset-id}}}""" : "",
+            Headers = post ? [new IntegrationHeader("Content-Type", "application/json")] : [],
         });
         Assert.Null(cards.Binding(request.Id));
         var stream = cards.SaveStream(IntegrationStream.New() with
         {
             Name = "События", ConnectionId = connection.Id, Path = "/events", ItemsPath = "data",
         });
+        var registration = ScenarioStep.OfAction(DocRegistryExtension.ExtensionId, RegisterMessageAction.ActionKey,
+            _db.Manager.DbId, _shape.CollectionId, new Dictionary<string, string>
+            {
+                [RegisterMessageAction.TextField] = "{{body}}",
+                [RegisterMessageAction.SenderField] = "{{author}}",
+                [RegisterMessageAction.MessageIdField] = post ? "{{request-id}}" : "{{event-id}}",
+            });
         return cards.SaveScenario(SmartBase.Integrations.Scenario.New() with
         {
             Name = "Книга из сообщения", Enabled = true, Trigger = ScenarioTrigger.OnStream(stream.Id),
-            Steps =
-            [
-                ScenarioStep.OfDownload(request.Id, "{{file-name}}"),
-                ScenarioStep.OfAction(DocRegistryExtension.ExtensionId, RegisterMessageAction.ActionKey,
-                    _db.Manager.DbId, _shape.CollectionId, new Dictionary<string, string>
-                    {
-                        [RegisterMessageAction.TextField] = "{{body}}",
-                        [RegisterMessageAction.SenderField] = "{{author}}",
-                        [RegisterMessageAction.MessageIdField] = "{{event-id}}",
-                    }),
-            ],
+            Steps = post
+                ? [
+                    ScenarioStep.OfCompute(
+                        new ScenarioFormula("asset-id", """ЕСЛИ({{is-file}}; ЧИСЛО(ЗАМЕНИТЬ(ЗАМЕНИТЬ({{file-ids}}; "["; ""); "]"; "")); "")"""),
+                        new ScenarioFormula("file-name", """ЕСЛИ({{is-file}}; "Список КД.xlsx"; "")"""),
+                        new ScenarioFormula("request-id", """СЦЕПИТЬ({{event-id}}; ":"; {{asset-id}})""")),
+                    ScenarioStep.OfDownload(request.Id, "{{file-name}}"),
+                    registration,
+                ]
+                : [ScenarioStep.OfDownload(request.Id, "{{file-name}}"), registration],
         }, Now);
     }
 
@@ -235,6 +347,39 @@ public sealed class FileMessageScenarioTests : IDisposable
         return new StepTable(row.Keys.ToArray(), [row]);
     }
 
+    private static StepTable PostEvent(string? text = null, bool attachment = true, int messageId = PostMessageId)
+    {
+        var source = new Dictionary<string, object>
+        {
+            ["author"] = "participant-17", ["event-id"] = messageId,
+            ["is-file"] = attachment, ["file-ids"] = attachment ? new[] { PostAssetId } : Array.Empty<int>(),
+        };
+        if (text is not null) source["body"] = text;
+        var rows = StreamEvents.Rows(JsonSerializer.Serialize(new { data = new[] { new[] { source } } }),
+            "data", out var trouble);
+        Assert.Equal("", trouble);
+        var row = Assert.Single(rows);
+        return new StepTable(row.Keys.ToArray(), [row]);
+    }
+
+    private static void AssertPostRequests(FileServer server, int count)
+    {
+        Assert.Empty(server.ContractErrors);
+        Assert.Equal(count, server.Requests.Count);
+        Assert.All(server.Requests, line => Assert.StartsWith("POST /files/download ", line, StringComparison.Ordinal));
+        Assert.Equal(count, server.Bodies.Count);
+        Assert.All(server.Bodies, body =>
+        {
+            using var request = JsonDocument.Parse(body);
+            var fields = request.RootElement;
+            Assert.Equal(2, fields.EnumerateObject().Count());
+            Assert.Equal(JsonValueKind.Number, fields.GetProperty("messageId").ValueKind);
+            Assert.Equal(JsonValueKind.Number, fields.GetProperty("assetId").ValueKind);
+            Assert.Equal(PostMessageId, fields.GetProperty("messageId").GetInt32());
+            Assert.Equal(PostAssetId, fields.GetProperty("assetId").GetInt32());
+        });
+    }
+
     private void Seed(string code) =>
         JournalStand.AddRow(_db.Constructor, _shape, "Существующий", $"АБВГ.{code}.001");
 
@@ -252,11 +397,17 @@ public sealed class FileMessageScenarioTests : IDisposable
         private readonly TcpListener _listener = new(IPAddress.Loopback, 0);
         private readonly CancellationTokenSource _stop = new();
         private readonly byte[] _answer;
+        private readonly int? _messageId;
+        private readonly int? _assetId;
         internal int Port { get; }
         internal ConcurrentQueue<string> Requests { get; } = new();
+        internal ConcurrentQueue<string> Bodies { get; } = new();
+        internal ConcurrentQueue<string> ContractErrors { get; } = new();
 
-        internal FileServer(byte[] content, int status = 200)
+        internal FileServer(byte[] content, int status = 200, int? messageId = null, int? assetId = null)
         {
+            _messageId = messageId;
+            _assetId = assetId;
             var header = Encoding.ASCII.GetBytes($"HTTP/1.1 {status} Result\r\nContent-Type: application/octet-stream\r\n"
                 + $"Content-Length: {content.Length}\r\nConnection: close\r\n\r\n");
             _answer = new byte[header.Length + content.Length];
@@ -295,13 +446,45 @@ public sealed class FileMessageScenarioTests : IDisposable
                         var expected = matched % 2 == 0 ? '\r' : '\n';
                         matched = one[0] == expected ? matched + 1 : one[0] == '\r' ? 1 : 0;
                     }
-                    Requests.Enqueue(request.ToString().Split('\r', '\n')[0]);
-                    await stream.WriteAsync(_answer, _stop.Token);
+                    var headers = request.ToString().Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
+                    var contentLength = headers.FirstOrDefault(header =>
+                        header.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase));
+                    var length = contentLength is null ? 0
+                        : int.Parse(contentLength["Content-Length:".Length..].Trim(), CultureInfo.InvariantCulture);
+                    var bytes = new byte[length];
+                    await stream.ReadExactlyAsync(bytes, _stop.Token);
+                    var body = Encoding.UTF8.GetString(bytes);
+                    Requests.Enqueue(headers[0]);
+                    Bodies.Enqueue(body);
+                    var valid = _messageId is null || ValidPost(headers, body);
+                    var answer = valid ? _answer : Encoding.ASCII.GetBytes(
+                        "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                    await stream.WriteAsync(answer, _stop.Token);
                     await stream.FlushAsync(_stop.Token);
                 }
                 catch (Exception error) when (error is IOException or OperationCanceledException
                     or ObjectDisposedException or SocketException) { }
             }
+        }
+
+        private bool ValidPost(string[] headers, string body)
+        {
+            try
+            {
+                using var request = JsonDocument.Parse(body);
+                var fields = request.RootElement;
+                if (headers[0].StartsWith("POST /files/download ", StringComparison.Ordinal)
+                    && headers.Any(header => header.StartsWith("Content-Type: application/json", StringComparison.OrdinalIgnoreCase))
+                    && fields.ValueKind == JsonValueKind.Object && fields.EnumerateObject().Count() == 2
+                    && fields.TryGetProperty("messageId", out var message) && message.ValueKind == JsonValueKind.Number
+                    && message.TryGetInt32(out var messageId) && messageId == _messageId
+                    && fields.TryGetProperty("assetId", out var asset) && asset.ValueKind == JsonValueKind.Number
+                    && asset.TryGetInt32(out var assetId) && assetId == _assetId)
+                    return true;
+            }
+            catch (JsonException) { }
+            ContractErrors.Enqueue("Ожидался POST с JSON и двумя точными числовыми идентификаторами Int32.");
+            return false;
         }
 
         public void Dispose()

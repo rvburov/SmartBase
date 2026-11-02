@@ -45,6 +45,41 @@ public sealed class ScenarioDownloadTransferTests : IDisposable
     }
 
     [Fact]
+    public void Post_download_method_and_event_body_survive_bundle_round_trip_with_remapped_request_keys()
+    {
+        const string body = """{"messageKey":{{поле.message-id}},"assetKey":{{поле.attachment-id}}}""";
+        using var source = Machine("post-source");
+        var original = Setup(source.Integrations, method: RequestMethod.Post, body: body);
+        var exported = ScenarioTransfer.Export(source.Integrations, [original], [], "Источник", Now);
+        var bundledRequest = Assert.Single(exported.Requests);
+        Assert.Equal("post", bundledRequest.Method);
+        Assert.Equal(body, bundledRequest.Body);
+        var parsed = ScenarioBundle.TryParse(exported.ToJson(), out var problem);
+        Assert.NotNull(parsed);
+        Assert.Empty(problem);
+
+        using var target = Machine("post-target");
+        Setup(target.Integrations, "Прежний сценарий", "Прежний запрос", "Прежнее соединение");
+        var report = ScenarioTransfer.Import(parsed!, target.Integrations, [], Now);
+
+        Assert.Equal(1, report.Scenarios);
+        var imported = Assert.Single(target.Integrations.Scenarios(), scenario => scenario.Name == original.Name);
+        Assert.False(imported.Enabled);
+        var step = Assert.Single(imported.Steps);
+        Assert.Equal(ScenarioStepKind.Download, step.Kind);
+        Assert.Equal("{{Вложение.Имя}}", step.Text);
+        Assert.NotEqual(original.Steps[0].RequestId, step.RequestId);
+        var request = target.Integrations.FindRequest(step.RequestId);
+        Assert.NotNull(request);
+        Assert.Equal(RequestMethod.Post, request.Method);
+        Assert.Equal(body, request.Body);
+        Assert.Equal("/files/42", request.Path);
+        Assert.Equal(RequestPaging.None, request.Paging);
+        Assert.Null(target.Integrations.Binding(request.Id));
+        Assert.Equal("Файловый сервис", target.Integrations.Find(request.ConnectionId)!.Name);
+    }
+
+    [Fact]
     public void A_request_used_to_download_a_file_cannot_be_deleted()
     {
         using var machine = Machine("used");
@@ -86,7 +121,8 @@ public sealed class ScenarioDownloadTransferTests : IDisposable
         DatabaseRegistry.Open(Path.Combine(_dir, name + ".db"), Path.Combine(_dir, name + "-app.db"));
 
     private static Scenario Setup(IntegrationsRegistry registry, string name = "Получение документов",
-                                  string requestName = "Получить вложение", string connectionName = "Файловый сервис")
+                                  string requestName = "Получить вложение", string connectionName = "Файловый сервис",
+                                  RequestMethod method = RequestMethod.Get, string body = "")
     {
         var connection = registry.Save(IntegrationConnection.New() with
         {
@@ -97,8 +133,9 @@ public sealed class ScenarioDownloadTransferTests : IDisposable
         {
             Name = requestName,
             ConnectionId = connection.Id,
-            Method = RequestMethod.Get,
+            Method = method,
             Path = "/files/42",
+            Body = body,
         });
         return registry.SaveScenario(Scenario.New() with
         {

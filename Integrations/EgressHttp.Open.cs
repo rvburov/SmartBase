@@ -67,14 +67,16 @@ public static class EgressHttp
     /// <summary>
     /// Получить файл без преобразования его байтов в текст. Использует тот же транспорт,
     /// что и обычный запрос: лимит ответа, отмена, повторы GET и перенаправления общие.
-    /// Тело запроса здесь не нужно: скачивание не должно выполнять изменяющую операцию.
+    /// API может отдавать файл по POST с параметрами в теле. Такой запрос не повторяется
+    /// автоматически и не следует перенаправлениям, как и обычный POST.
     /// </summary>
     public static Task<EgressResponse> DownloadAsync(
         EgressPlan plan, CancellationToken ct = default, long maxResponseBytes = MaxResponseBytes)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(maxResponseBytes);
-        return plan.Method != RequestMethod.Get || plan.Body.Length > 0
-            ? Task.FromResult(EgressResponse.Failed("для получения файла нужен GET без тела", plan.SafeAddress))
+        return plan.Method is not (RequestMethod.Get or RequestMethod.Post)
+            || (plan.Method == RequestMethod.Get && plan.Body.Length > 0)
+            ? Task.FromResult(EgressResponse.Failed("для получения файла нужен GET без тела или POST", plan.SafeAddress))
             : SendCoreAsync(plan, binary: true, ct, maxResponseBytes);
     }
 
