@@ -47,6 +47,15 @@
                    FontSize="{DynamicResource FontSizeSmall}"
                    Foreground="{StaticResource BrushSecondaryText}" />
 
+        <CheckBox x:Name="UseResponseFileNameCheck"
+                  Content="Использовать имя файла из ответа сервера"
+                  Margin="0,0,0,8" />
+        <TextBlock Text="Если сервер передает исходное имя, оно заменит заданное имя. Иначе используется поле «Имя файла». Пустое значение этого поля по-прежнему пропускает скачивание."
+                   Margin="0,0,0,12"
+                   TextWrapping="Wrap"
+                   FontSize="{DynamicResource FontSizeSmall}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
         <TextBlock Text="Ожидать готовности, секунд"
                    Margin="0,0,0,6"
                    Foreground="{StaticResource BrushSecondaryText}" />

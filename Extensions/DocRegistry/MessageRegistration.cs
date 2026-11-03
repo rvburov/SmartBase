@@ -8,16 +8,15 @@ namespace SmartBase.Extensions.DocRegistry;
 /// <param name="Org">Код организации — заглавными русскими буквами.</param>
 /// <param name="Eskd">Шестизначный код ЕСКД.</param>
 /// <param name="Number">Номер документа, исполнение которого заводится; <c>null</c> — новый
-/// документ, номер подберется первым свободным. При <c>Exact</c> — полный заданный номер.</param>
+/// документ, номер подберется первым свободным.</param>
 /// <param name="Name">Наименование документа.</param>
 /// <param name="Project">Проект.</param>
 /// <param name="Fio">ФИО регистрирующего — как написано в сообщении.</param>
-/// <param name="Exact">Передан полный номер документа без исполнения, а не маска.</param>
 public sealed record RegistrationRequest(string Org, string Eskd, int? Number,
-                                         string Name, string Project, string Fio, bool Exact = false)
+                                         string Name, string Project, string Fio)
 {
     /// <summary>Заводится исполнение уже выданного документа, а не новый документ.</summary>
-    public bool NewExecution => Number is not null && !Exact;
+    public bool NewExecution => Number is not null;
 }
 
 /// <summary>Один номер списка с исходным текстом, местом в заявке и собственными ошибками.</summary>
@@ -58,8 +57,8 @@ public sealed record BatchRegistrationRead(IReadOnlyList<BatchRegistrationItem> 
 /// <b>Номер пишут по маске, а не выбирают из списка.</b> В окне номер выбирают из выданных; в
 /// сообщении выбирать не из чего, поэтому то, что должна подобрать программа, пишется буквами
 /// «Х»: <c>ХХХ</c> — следующий свободный номер серии, <c>001-ХХ</c> — следующее свободное
-/// исполнение документа 001. Полный номер без исполнения также принимается, но его занятость
-/// проверяется перед записью; первый документ серии может требовать подтверждения.
+/// исполнение документа 001. Готовые номера при регистрации не принимаются: их выдает
+/// программа; первый документ серии может требовать подтверждения.
 ///
 /// <b>Латиница, похожая на кириллицу, прощается.</b> Код организации и буквы «Х» с клавиатуры
 /// набирают то в одной раскладке, то в другой, а на экране они неразличимы. Для программы же
@@ -94,7 +93,7 @@ public static class MessageRegistration
     public const string RegisterWord = "Регистрация";
 
     /// <summary>Образцы для ответа с ошибкой — отправитель исправляет по ним.</summary>
-    public const string NumberExample = "АААА.000000.ХХХ, АААА.000000.001 или АААА.000000.001-ХХ";
+    public const string NumberExample = "АААА.000000.ХХХ или АААА.000000.001-ХХ";
 
     /// <inheritdoc cref="NumberExample"/>
     public const string FioExample = "Иванов Иван Иванович";
@@ -144,14 +143,6 @@ public static class MessageRegistration
 
         var number = Value(values, NumberKey);
         var parsed = number.Length == 0 ? null : Number(number);
-        var exact = false;
-        if (parsed is null && DocumentMessages.ExactNumber(number) is { } full && !full.Contains('-'))
-        {
-            var parts = full.Split('.');
-            parsed = (parts[0], parts[1], int.Parse(parts[2], System.Globalization.CultureInfo.InvariantCulture));
-            exact = true;
-        }
-
         if (number.Length == 0)
             problems.Add($"{NumberKey}: не указан номер (Пример: {NumberExample})");
         else if (parsed is null)
@@ -180,7 +171,7 @@ public static class MessageRegistration
         // выглядеть одинаково, откуда бы строка в него ни пришла.
         var org = Listed(done.Org, orgCodes) ?? done.Org;
 
-        return (new RegistrationRequest(org, done.Eskd, done.Number, name, project, fio, exact), []);
+        return (new RegistrationRequest(org, done.Eskd, done.Number, name, project, fio), []);
     }
 
     /// <summary>
@@ -223,14 +214,6 @@ public static class MessageRegistration
             var raw = numbers[index].Trim();
             var problems = new List<string>();
             var parsed = raw.Length == 0 ? null : Number(raw);
-            var exact = false;
-            if (parsed is null && DocumentMessages.ExactNumber(raw) is { } full && !full.Contains('-'))
-            {
-                var parts = full.Split('.');
-                parsed = (parts[0], parts[1], int.Parse(parts[2], System.Globalization.CultureInfo.InvariantCulture));
-                exact = true;
-            }
-
             if (raw.Length == 0)
                 problems.Add($"{NumberKey}: не указан номер (Пример: {NumberExample})");
             else if (parsed is null)
@@ -247,7 +230,7 @@ public static class MessageRegistration
             RegistrationRequest? request = null;
             if (problems.Count == 0 && parsed is { } done)
                 request = new RegistrationRequest(Listed(done.Org, orgCodes) ?? done.Org, done.Eskd,
-                    done.Number, name, project, fio, exact);
+                    done.Number, name, project, fio);
             items.Add(new BatchRegistrationItem(index + 1, raw, request, problems));
         }
 

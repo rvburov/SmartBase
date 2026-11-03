@@ -165,6 +165,45 @@ public sealed class FileMessageScenarioTests : IDisposable
         Assert.Single(server.Requests);
     }
 
+    [Theory]
+    [InlineData("Контрольный перечень деталей.xlsx")]
+    [InlineData("Второй список узлов.xlsx")]
+    public async Task A_full_number_refuses_the_downloaded_file_with_its_original_response_name(string originalName)
+    {
+        Seed("301121");
+        var record = Assert.Single(_db.Constructor.GetRecords(_shape.CollectionId));
+        var before = _db.Constructor.GetFieldValues(record.Id!.Value);
+        var history = _db.Context.ChangeLog.AsNoTracking().Count();
+        var bytes = FileMessageBook.Create(new FileMessageBook.Row(2, Name: "Новый документ"),
+            new FileMessageBook.Row(3, "АБВГ.301121.014-XX", "Исполнение 1"),
+            new FileMessageBook.Row(4, "АБВГ.301121.014-ХХ", "Исполнение 2"),
+            new FileMessageBook.Row(7, "АБВГ.301121.123", "Номер без маски"));
+        using var server = new FileServer(bytes, fileName: originalName);
+        var initial = Event(fileName: "Вложение.xlsx");
+        Assert.Equal("Вложение.xlsx", Assert.Single(initial.Rows)["file-name"]);
+
+        var result = await Run(Scenario(server, useResponseFileName: true), initial);
+
+        Assert.False(result.Ok);
+        Assert.Equal(0, result.Rows);
+        var reply = ReplyMarkup.Text(result.Reply);
+        Assert.Contains("Зарегистрировано: 0 из 4", reply, StringComparison.Ordinal);
+        Assert.Contains("Строка 7: АБВГ.301121.123", reply, StringComparison.Ordinal);
+        Assert.Contains("Номер: неправильный номер", reply, StringComparison.Ordinal);
+        Assert.Contains($"Файл: {originalName}", reply, StringComparison.Ordinal);
+        Assert.DoesNotContain("Вложение.xlsx", reply, StringComparison.Ordinal);
+        Assert.DoesNotContain("download.xlsx", reply, StringComparison.Ordinal);
+        Assert.DoesNotContain("Подтвердите", reply, StringComparison.Ordinal);
+        var remaining = Assert.Single(_db.Constructor.GetRecords(_shape.CollectionId));
+        Assert.Equal(record.Id, remaining.Id);
+        Assert.Equal("Существующий", remaining.Title);
+        Assert.Equal(before, _db.Constructor.GetFieldValues(record.Id!.Value));
+        Assert.Equal(history, _db.Context.ChangeLog.AsNoTracking().Count());
+        Assert.Empty(_db.Context.DbMeta.AsNoTracking().Where(item =>
+            item.Key.StartsWith("extension-state:doc-registry:file:")));
+        Assert.StartsWith("GET /files/asset-23 ", Assert.Single(server.Requests), StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task A_download_error_stops_before_registration_and_creates_no_receipt()
     {
@@ -396,7 +435,8 @@ public sealed class FileMessageScenarioTests : IDisposable
         AssertPostRequests(server, attempts);
     }
 
-    private Scenario Scenario(FileServer server, bool post = false, int waitSeconds = 0)
+    private Scenario Scenario(FileServer server, bool post = false, int waitSeconds = 0,
+                              bool useResponseFileName = false)
     {
         var cards = _registry.Integrations;
         var connection = cards.Save(IntegrationConnection.New() with
@@ -433,10 +473,12 @@ public sealed class FileMessageScenarioTests : IDisposable
                         new ScenarioFormula("asset-id", """ЕСЛИ({{is-file}}; ЧИСЛО(ЗАМЕНИТЬ(ЗАМЕНИТЬ({{file-ids}}; "["; ""); "]"; "")); "")"""),
                         new ScenarioFormula("file-name", """ЕСЛИ({{is-file}}; "Список КД.xlsx"; "")"""),
                         new ScenarioFormula("request-id", """СЦЕПИТЬ({{event-id}}; ":"; {{asset-id}})""")),
-                    ScenarioStep.OfDownload(request.Id, "{{file-name}}", waitSeconds: waitSeconds),
+                    ScenarioStep.OfDownload(request.Id, "{{file-name}}", waitSeconds: waitSeconds,
+                        useResponseFileName: useResponseFileName),
                     registration,
                 ]
-                : [ScenarioStep.OfDownload(request.Id, "{{file-name}}", waitSeconds: waitSeconds), registration],
+                : [ScenarioStep.OfDownload(request.Id, "{{file-name}}", waitSeconds: waitSeconds,
+                    useResponseFileName: useResponseFileName), registration],
         }, Now);
     }
 
@@ -444,7 +486,8 @@ public sealed class FileMessageScenarioTests : IDisposable
         ScenarioRunner.RunAsync(scenario, _registry.Integrations, [manager ?? _db.Manager],
             [new DocRegistryExtension()], Now, _ => { }, initial: initial);
 
-    private static StepTable Event(string? text = null, bool attachment = true, string messageId = "event-1")
+    private static StepTable Event(string? text = null, bool attachment = true, string messageId = "event-1",
+                                   string fileName = "Список КД.xlsx")
     {
         var source = new Dictionary<string, string>
         {
@@ -453,7 +496,7 @@ public sealed class FileMessageScenarioTests : IDisposable
         if (text is not null) source["body"] = text;
         if (attachment)
         {
-            source["file-name"] = "Список КД.xlsx";
+            source["file-name"] = fileName;
             source["asset-id"] = "asset-23";
         }
         var rows = StreamEvents.Rows(JsonSerializer.Serialize(new { data = new[] { source } }), "data", out var trouble);
@@ -526,13 +569,15 @@ public sealed class FileMessageScenarioTests : IDisposable
         internal Task FirstUnavailable => _firstUnavailable.Task;
 
         internal FileServer(byte[] content, int status = 200, int? messageId = null, int? assetId = null,
-                            bool waitUntilReady = false)
+                            bool waitUntilReady = false, string? fileName = null)
         {
             _status = status;
             _messageId = messageId;
             _assetId = assetId;
             if (!waitUntilReady) SetReady();
-            var header = Encoding.ASCII.GetBytes($"HTTP/1.1 {status} Result\r\nContent-Type: application/octet-stream\r\n"
+            var disposition = fileName is null ? "" : "Content-Disposition: attachment; filename=download.xlsx; "
+                + $"filename*=UTF-8''{Uri.EscapeDataString(fileName)}\r\n";
+            var header = Encoding.ASCII.GetBytes($"HTTP/1.1 {status} Result\r\nContent-Type: application/octet-stream\r\n{disposition}"
                 + $"Content-Length: {content.Length}\r\nConnection: close\r\n\r\n");
             _answer = new byte[header.Length + content.Length];
             header.CopyTo(_answer, 0);

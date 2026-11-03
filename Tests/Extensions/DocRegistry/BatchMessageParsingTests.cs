@@ -126,17 +126,31 @@ public sealed class BatchMessageParsingTests
     }
 
     [Fact]
-    public void Existing_number_formats_remain_available_together()
+    public void Number_and_execution_masks_remain_available_together()
     {
         var parsed = MessageRegistration.ReadBatch(Message(
-            "АБВГ.301121.ХХХ, АБВГ.301121.014-ХХ, АБВГ.806121.015"), Orgs);
+            "АБВГ.301121.ХХХ, АБВГ.301121.014-XX, АБВГ.806121.XXX"), Orgs);
 
         Assert.True(parsed.Ok);
-        Assert.False(parsed.Items[0].Request!.Exact);
+        Assert.False(parsed.Items[0].Request!.NewExecution);
         Assert.True(parsed.Items[1].Request!.NewExecution);
         Assert.Equal(14, parsed.Items[1].Request!.Number);
-        Assert.True(parsed.Items[2].Request!.Exact);
-        Assert.Equal(15, parsed.Items[2].Request!.Number);
+        Assert.Null(parsed.Items[2].Request!.Number);
+    }
+
+    [Theory]
+    [InlineData("АБВГ.301121.123")]
+    [InlineData("АБВГ.301121.123-01")]
+    public void A_full_number_is_an_error_without_losing_the_other_masks(string number)
+    {
+        var parsed = MessageRegistration.ReadBatch(Message($"АБВГ.301121.ХХХ, {number}"), Orgs);
+
+        Assert.False(parsed.Ok);
+        Assert.Empty(parsed.Problems);
+        Assert.NotNull(parsed.Items[0].Request);
+        Assert.Empty(parsed.Items[0].Problems);
+        Assert.Null(parsed.Items[1].Request);
+        Assert.StartsWith("Номер: неправильный номер", Assert.Single(parsed.Items[1].Problems), StringComparison.Ordinal);
     }
 
     [Fact]

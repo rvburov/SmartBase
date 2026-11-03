@@ -290,7 +290,7 @@ public sealed class RegisterMessageActionTests
 
         Assert.False(result.Ok);
         Assert.Equal(
-            "Номер: неправильный номер (Пример: АААА.000000.ХХХ, АААА.000000.001 или АААА.000000.001-ХХ)\n"
+            "Номер: неправильный номер (Пример: АААА.000000.ХХХ или АААА.000000.001-ХХ)\n"
             + "Проект: не указан проект",
             ReplyMarkup.Text(result.Answer));
         Assert.Empty(db.Constructor.GetRecords(journal));

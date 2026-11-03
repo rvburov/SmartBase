@@ -193,8 +193,8 @@ internal static partial class DocumentMessages
 
                     var input = new RegistrationInput(request.Name, request.Org, request.Eskd, request.Fio,
                         request.Project, Execution: execution, Number: number);
-                    // Пустая серия — любой первый документ, по маске, полным номером или
-                    // исполнением: опечатка в коде классификации открыла бы новую серию молча.
+                    // Пустая серия — любой первый документ или исполнение: опечатка в коде
+                    // классификации открыла бы новую серию молча.
                     if (series.Length == 0)
                     {
                         var missing = EskdCatalog.Find(request.Eskd) is null;

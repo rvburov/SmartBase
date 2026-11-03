@@ -19,6 +19,10 @@ public sealed class ScenarioDownloadTransferTests : IDisposable
         Assert.Equal(0, ScenarioStep.OfDownload(42, "Документы.xlsx").DownloadWaitSeconds);
         Assert.Equal(0, new BundleStep("download", "Получить вложение", "Документы.xlsx",
             "", "", "", "", null, "", null).DownloadWaitSeconds);
+        Assert.False(new ScenarioStep(ScenarioStepKind.Download, 42, "Документы.xlsx").UseResponseFileName);
+        Assert.False(ScenarioStep.OfDownload(42, "Документы.xlsx").UseResponseFileName);
+        Assert.False(new BundleStep("download", "Получить вложение", "Документы.xlsx",
+            "", "", "", "", null, "", null).UseResponseFileName);
     }
 
     [Fact]
@@ -32,6 +36,7 @@ public sealed class ScenarioDownloadTransferTests : IDisposable
         var bundledStep = Assert.Single(Assert.Single(exported.Scenarios).Steps);
         Assert.Equal("download", bundledStep.Kind);
         Assert.Equal(0, bundledStep.DownloadWaitSeconds);
+        Assert.False(bundledStep.UseResponseFileName);
         Assert.Single(exported.Requests);
         Assert.Single(exported.Connections);
 
@@ -40,11 +45,13 @@ public sealed class ScenarioDownloadTransferTests : IDisposable
         var legacyStep = legacyJson["scenarios"]![0]!["steps"]![0]!.AsObject();
         legacyStep.Remove("downloadWaitSeconds");
         Assert.False(legacyStep.ContainsKey("downloadWaitSeconds"));
+        Assert.False(legacyStep.ContainsKey("useResponseFileName"));
         var parsed = ScenarioBundle.TryParse(legacyJson.ToJsonString(), out var problem);
         Assert.NotNull(parsed);
         Assert.Empty(problem);
         Assert.Equal(3, parsed.Version);
         Assert.Equal(0, Assert.Single(Assert.Single(parsed.Scenarios).Steps).DownloadWaitSeconds);
+        Assert.False(Assert.Single(Assert.Single(parsed.Scenarios).Steps).UseResponseFileName);
 
         using var target = Machine("target");
         // На другой машине такой же числовой ключ уже занят другим запросом.
@@ -57,6 +64,7 @@ public sealed class ScenarioDownloadTransferTests : IDisposable
         Assert.Equal(ScenarioStepKind.Download, step.Kind);
         Assert.Equal("{{Вложение.Имя}}", step.Text);
         Assert.Equal(0, step.DownloadWaitSeconds);
+        Assert.False(step.UseResponseFileName);
         Assert.NotEqual(original.Steps[0].RequestId, step.RequestId);
         var request = target.Integrations.FindRequest(step.RequestId);
         Assert.NotNull(request);
@@ -65,6 +73,53 @@ public sealed class ScenarioDownloadTransferTests : IDisposable
         Assert.Equal("/files/42", request.Path);
         Assert.Null(target.Integrations.Binding(request.Id));
         Assert.Equal("Файловый сервис", target.Integrations.Find(request.ConnectionId)!.Name);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(30)]
+    public void Server_file_name_option_survives_storage_and_version_five_bundle_round_trip(int waitSeconds)
+    {
+        using var source = Machine("response-name-source");
+        var original = Setup(source.Integrations, waitSeconds: waitSeconds, useResponseFileName: true);
+        Assert.True(Assert.Single(source.Integrations.FindScenario(original.Id)!.Steps).UseResponseFileName);
+
+        var exported = ScenarioTransfer.Export(source.Integrations, [original], [], "Источник", Now);
+        Assert.Equal(5, exported.Version);
+        Assert.True(Assert.Single(Assert.Single(exported.Scenarios).Steps).UseResponseFileName);
+        var json = exported.ToJson();
+        using var document = JsonDocument.Parse(json);
+        Assert.True(document.RootElement.GetProperty("scenarios")[0]
+            .GetProperty("steps")[0].GetProperty("useResponseFileName").GetBoolean());
+        var parsed = ScenarioBundle.TryParse(json, out var problem);
+        Assert.NotNull(parsed);
+        Assert.Empty(problem);
+        Assert.True(Assert.Single(Assert.Single(parsed.Scenarios).Steps).UseResponseFileName);
+
+        using var target = Machine("response-name-target");
+        Setup(target.Integrations, "Прежний сценарий", "Прежний запрос", "Прежнее соединение");
+        var report = ScenarioTransfer.Import(parsed, target.Integrations, [], Now);
+        Assert.Equal(1, report.Scenarios);
+        var imported = Assert.Single(target.Integrations.Scenarios(), scenario => scenario.Name == original.Name);
+        Assert.False(imported.Enabled);
+        var step = Assert.Single(imported.Steps);
+        Assert.True(step.UseResponseFileName);
+        Assert.Equal(waitSeconds, step.DownloadWaitSeconds);
+        Assert.Equal("{{Вложение.Имя}}", step.Text);
+        Assert.NotEqual(original.Steps[0].RequestId, step.RequestId);
+        Assert.Equal("Получить вложение", target.Integrations.FindRequest(step.RequestId)!.Name);
+
+        // Снятие галочки сохраняется в базе и снова дает старый формат без лишнего поля.
+        var explicitName = target.Integrations.SaveScenario(imported with
+        {
+            Steps = [step with { UseResponseFileName = false }],
+        });
+        Assert.False(Assert.Single(target.Integrations.FindScenario(explicitName.Id)!.Steps).UseResponseFileName);
+        var legacy = ScenarioTransfer.Export(target.Integrations, [explicitName], [], "Приемник", Now);
+        Assert.Equal(waitSeconds > 0 ? 4 : 3, legacy.Version);
+        using var legacyDocument = JsonDocument.Parse(legacy.ToJson());
+        Assert.False(legacyDocument.RootElement.GetProperty("scenarios")[0]
+            .GetProperty("steps")[0].TryGetProperty("useResponseFileName", out _));
     }
 
     [Theory]
@@ -88,10 +143,13 @@ public sealed class ScenarioDownloadTransferTests : IDisposable
         using var document = JsonDocument.Parse(json);
         Assert.Equal(waitSeconds, document.RootElement.GetProperty("scenarios")[0]
             .GetProperty("steps")[0].GetProperty("downloadWaitSeconds").GetInt32());
+        Assert.False(document.RootElement.GetProperty("scenarios")[0]
+            .GetProperty("steps")[0].TryGetProperty("useResponseFileName", out _));
         var parsed = ScenarioBundle.TryParse(json, out var problem);
         Assert.NotNull(parsed);
         Assert.Empty(problem);
         Assert.Equal(waitSeconds, Assert.Single(Assert.Single(parsed.Scenarios).Steps).DownloadWaitSeconds);
+        Assert.False(Assert.Single(Assert.Single(parsed.Scenarios).Steps).UseResponseFileName);
 
         using var target = Machine("post-target");
         Setup(target.Integrations, "Прежний сценарий", "Прежний запрос", "Прежнее соединение");
@@ -104,6 +162,7 @@ public sealed class ScenarioDownloadTransferTests : IDisposable
         Assert.Equal(ScenarioStepKind.Download, step.Kind);
         Assert.Equal("{{Вложение.Имя}}", step.Text);
         Assert.Equal(waitSeconds, step.DownloadWaitSeconds);
+        Assert.False(step.UseResponseFileName);
         Assert.NotEqual(original.Steps[0].RequestId, step.RequestId);
         var request = target.Integrations.FindRequest(step.RequestId);
         Assert.NotNull(request);
@@ -154,15 +213,17 @@ public sealed class ScenarioDownloadTransferTests : IDisposable
     }
 
     [Theory]
-    [InlineData(false, 0, 2)]
-    [InlineData(true, 0, 3)]
-    [InlineData(true, 45, 4)]
+    [InlineData(false, 0, false, 2)]
+    [InlineData(true, 0, false, 3)]
+    [InlineData(true, 45, false, 4)]
+    [InlineData(true, 0, true, 5)]
+    [InlineData(true, 45, true, 5)]
     public void A_stream_bundle_requires_only_the_version_of_its_most_recent_feature(
-        bool download, int waitSeconds, int expectedVersion)
+        bool download, int waitSeconds, bool useResponseFileName, int expectedVersion)
     {
         using var machine = Machine("stream");
         var cards = machine.Integrations;
-        var original = Setup(cards, waitSeconds: waitSeconds);
+        var original = Setup(cards, waitSeconds: waitSeconds, useResponseFileName: useResponseFileName);
         var request = cards.FindRequest(Assert.Single(original.Steps).RequestId)!;
         var stream = cards.SaveStream(IntegrationStream.New() with
         {
@@ -181,7 +242,10 @@ public sealed class ScenarioDownloadTransferTests : IDisposable
         Assert.Equal(expectedVersion, bundle.Version);
         Assert.Equal(stream.Name, Assert.Single(bundle.StreamList).Name);
         if (download)
+        {
             Assert.Equal(waitSeconds, Assert.Single(Assert.Single(bundle.Scenarios).Steps).DownloadWaitSeconds);
+            Assert.Equal(useResponseFileName, Assert.Single(Assert.Single(bundle.Scenarios).Steps).UseResponseFileName);
+        }
         else
             Assert.Empty(bundle.Requests);
     }
@@ -191,7 +255,8 @@ public sealed class ScenarioDownloadTransferTests : IDisposable
 
     private static Scenario Setup(IntegrationsRegistry registry, string name = "Получение документов",
                                   string requestName = "Получить вложение", string connectionName = "Файловый сервис",
-                                  RequestMethod method = RequestMethod.Get, string body = "", int waitSeconds = 0)
+                                  RequestMethod method = RequestMethod.Get, string body = "", int waitSeconds = 0,
+                                  bool useResponseFileName = false)
     {
         var connection = registry.Save(IntegrationConnection.New() with
         {
@@ -209,7 +274,7 @@ public sealed class ScenarioDownloadTransferTests : IDisposable
         return registry.SaveScenario(Scenario.New() with
         {
             Name = name,
-            Steps = [ScenarioStep.OfDownload(request.Id, "{{Вложение.Имя}}", waitSeconds)],
+            Steps = [ScenarioStep.OfDownload(request.Id, "{{Вложение.Имя}}", waitSeconds, useResponseFileName)],
         });
     }
 

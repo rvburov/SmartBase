@@ -31,6 +31,68 @@ public sealed class ScenarioDownloadTests : IDisposable
 
     private IntegrationsRegistry Cards => _registry.Integrations;
 
+    [Theory]
+    [InlineData(false, "Список КД.xlsx")]
+    [InlineData(true, "Исходный список КД.xlsx")]
+    public async Task Server_filename_is_used_only_when_the_download_step_explicitly_requests_it(
+        bool useResponseFileName, string expectedName)
+    {
+        using var server = new FileServer(Payload, contentDisposition:
+            "attachment; filename=fallback.xlsx; filename*=UTF-8''%D0%98%D1%81%D1%85%D0%BE%D0%B4%D0%BD%D1%8B%D0%B9%20%D1%81%D0%BF%D0%B8%D1%81%D0%BE%D0%BA%20%D0%9A%D0%94.xlsx");
+        var request = Request(server, path: "/assets/read");
+        var action = new Receiver();
+        var download = ScenarioStep.OfDownload(request.Id, "{{file-name}}") with
+            { UseResponseFileName = useResponseFileName };
+
+        var outcome = await Run([download, Action(action)], [action], Event());
+
+        Assert.True(outcome.Ok, outcome.Problem);
+        var received = Assert.Single(action.Seen);
+        Assert.Equal(expectedName, received.FileName);
+        Assert.Equal(Payload, received.Bytes);
+        Assert.Equal("message-42", received.Values["message-id"]);
+        Assert.Single(server.Requests);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("attachment")]
+    [InlineData("attachment; filename=\"../escape.xlsx\"")]
+    [InlineData("attachment; filename=\"unsafe?.xlsx\"")]
+    public async Task Unusable_server_filename_keeps_the_configured_name_and_unchanged_file(string? disposition)
+    {
+        using var server = new FileServer(Payload, contentDisposition: disposition);
+        var request = Request(server, path: "/assets/read");
+        var action = new Receiver();
+        var download = ScenarioStep.OfDownload(request.Id, "{{file-name}}") with { UseResponseFileName = true };
+
+        var outcome = await Run([download, Action(action)], [action], Event());
+
+        Assert.True(outcome.Ok, outcome.Problem);
+        var received = Assert.Single(action.Seen);
+        Assert.Equal("Список КД.xlsx", received.FileName);
+        Assert.Equal(Payload, received.Bytes);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(null)]
+    public async Task Preferring_the_server_name_still_skips_events_without_a_filename_before_network_work(string? name)
+    {
+        using var server = new FileServer(Payload, contentDisposition: "attachment; filename=server.xlsx");
+        var request = Request(server, path: "/assets/read");
+        var action = new Receiver();
+        var download = ScenarioStep.OfDownload(request.Id, "{{file-name}}") with { UseResponseFileName = true };
+
+        var outcome = await Run([download, Action(action)], [action], Event(name));
+
+        Assert.True(outcome.Ok, outcome.Problem);
+        Assert.Empty(server.Requests);
+        var received = Assert.Single(action.Seen);
+        Assert.Equal("", received.FileName);
+        Assert.Null(received.Bytes);
+    }
+
     [Fact]
     public async Task Binary_file_and_original_event_fields_reach_the_action_without_a_collection_binding()
     {
@@ -848,6 +910,7 @@ public sealed class ScenarioDownloadTests : IDisposable
         private readonly bool _stall;
         private readonly int _missingResponses;
         private readonly bool _disconnectBeforeHeaders;
+        private readonly string? _contentDisposition;
         private readonly Task _work;
         public int Port { get; }
         public IReadOnlyList<string> Requests => _requests.ToArray();
@@ -855,7 +918,7 @@ public sealed class ScenarioDownloadTests : IDisposable
         public TaskCompletionSource BodyStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public FileServer(byte[] content, int status = 200, int? declaredLength = null, bool stall = false,
-            int missingResponses = 0, bool disconnectBeforeHeaders = false)
+            int missingResponses = 0, bool disconnectBeforeHeaders = false, string? contentDisposition = null)
         {
             _content = content;
             _status = status;
@@ -863,6 +926,7 @@ public sealed class ScenarioDownloadTests : IDisposable
             _stall = stall;
             _missingResponses = missingResponses;
             _disconnectBeforeHeaders = disconnectBeforeHeaders;
+            _contentDisposition = contentDisposition;
             _listener.Start();
             Port = ((IPEndPoint)_listener.LocalEndpoint).Port;
             _work = Task.Run(ServeAsync);
@@ -901,6 +965,7 @@ public sealed class ScenarioDownloadTests : IDisposable
                     if (_disconnectBeforeHeaders) continue;
                     var status = _requests.Count <= _missingResponses ? 404 : _status;
                     var headers = Encoding.ASCII.GetBytes($"HTTP/1.1 {status} Reply\r\n"
+                        + (_contentDisposition is null ? "" : $"Content-Disposition: {_contentDisposition}\r\n")
                         + $"Content-Type: application/octet-stream\r\nContent-Length: {_length}\r\nConnection: close\r\n\r\n");
                     await stream.WriteAsync(headers, _stop.Token);
                     await stream.WriteAsync(_content, _stop.Token);

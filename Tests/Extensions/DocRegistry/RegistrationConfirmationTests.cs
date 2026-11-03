@@ -31,7 +31,7 @@ public sealed class RegistrationConfirmationTests : IDisposable
                 [RegisterMessageAction.SenderField] = sender,
             }));
 
-    private static string Request(string tail = "001", string code = "301121") =>
+    private static string Request(string tail = "ХХХ", string code = "301121") =>
         $"Действие: Регистрация\nНомер: АБВГ.{code}.{tail}\nНаименование: Кронштейн\nПроект: Машина\nФИО: Иванов Иван Иванович";
 
     private void Seed(int number, string code = "301121", string org = "АБВГ") =>
@@ -40,7 +40,7 @@ public sealed class RegistrationConfirmationTests : IDisposable
             Now.LocalDateTime);
 
     [Theory]
-    [InlineData("001")]
+    [InlineData("XXX")]
     [InlineData("ХХХ")]
     public void First_number_shows_the_actual_catalog_chain_and_waits(string tail)
     {
@@ -61,7 +61,7 @@ public sealed class RegistrationConfirmationTests : IDisposable
     }
 
     [Theory]
-    [InlineData("001")]
+    [InlineData("XXX")]
     [InlineData("ХХХ")]
     public void Unknown_code_requires_confirmation_without_asserting_that_it_is_closed(string tail)
     {
@@ -79,11 +79,11 @@ public sealed class RegistrationConfirmationTests : IDisposable
     }
 
     /// <summary>
-    /// Пустую серию открывает любой первый документ, а не только 001: опечатка в коде
-    /// классификации с явным номером или исполнением открыла бы ее так же молча.
+    /// Пустую серию открывает и документ, и исполнение: опечатка в коде классификации
+    /// открыла бы ее так же молча.
     /// </summary>
     [Theory]
-    [InlineData("005", "АБВГ.301121.005")]
+    [InlineData("ХХХ", "АБВГ.301121.001")]
     [InlineData("007-ХХ", "АБВГ.301121.007-01")]
     public void Any_first_document_of_an_empty_series_waits_for_confirmation(string tail, string designation)
     {
@@ -126,7 +126,7 @@ public sealed class RegistrationConfirmationTests : IDisposable
     }
 
     [Theory]
-    [InlineData("002")]
+    [InlineData("XXX")]
     [InlineData("ХХХ")]
     public void Later_documents_are_registered_without_confirmation(string tail)
     {
@@ -154,14 +154,30 @@ public sealed class RegistrationConfirmationTests : IDisposable
         Assert.Single(_db.Constructor.GetRecords(_journal));
     }
 
-    [Fact]
-    public void Occupied_numbers_and_their_executions_cannot_be_registered_again()
+    [Theory]
+    [InlineData("123", false)]
+    [InlineData("123", true)]
+    [InlineData("001", true)]
+    [InlineData("001-01", true)]
+    public void Full_numbers_are_refused_before_confirmation_even_when_the_number_is_free(string tail, bool existingSeries)
     {
-        Seed(1);
-        var result = Call(Request());
+        if (existingSeries) Seed(1);
+        var numbers = DocRegistrar.Designations(_db.Constructor, _shape);
+        var history = _db.Context.ChangeLog.Count();
+        var metadata = _db.Context.DbMeta.Count();
+
+        var result = Call(Request(tail));
+
         Assert.False(result.Ok);
-        Assert.Contains("уже зарегистрирован", ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
-        Assert.Single(_db.Constructor.GetRecords(_journal));
+        Assert.Equal(0, result.Rows);
+        var reply = ReplyMarkup.Text(result.Answer);
+        Assert.Contains("Номер: неправильный номер", reply, StringComparison.Ordinal);
+        Assert.Contains("АААА.000000.ХХХ или АААА.000000.001-ХХ", reply, StringComparison.Ordinal);
+        Assert.DoesNotContain("Подтвердите", reply, StringComparison.Ordinal);
+        Assert.False(Call("Да").Ok);
+        Assert.Equal(numbers, DocRegistrar.Designations(_db.Constructor, _shape));
+        Assert.Equal(history, _db.Context.ChangeLog.Count());
+        Assert.Equal(metadata, _db.Context.DbMeta.Count());
     }
 
     [Fact]
@@ -200,7 +216,7 @@ public sealed class RegistrationConfirmationTests : IDisposable
     public void A_new_request_cannot_replace_a_pending_registration()
     {
         Assert.True(Call(Request()).Ok);
-        Assert.False(Call(Request("002")).Ok);
+        Assert.False(Call(Request("001-ХХ")).Ok);
         Assert.True(Call("Да").Ok);
         Assert.Contains("АБВГ.301121.001", ReplyMarkup.Text(Call("Действие: Просмотр\nНомер: АБВГ.301121.001").Answer), StringComparison.Ordinal);
         Assert.Single(_db.Constructor.GetRecords(_journal));

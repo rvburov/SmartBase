@@ -149,10 +149,12 @@ public sealed class MessageRegistrationTests
     public void Known_lines_are_counted(string text, int known) =>
         Assert.Equal(known, MessageRegistration.KnownLines(text));
 
-    [Fact]
-    public void A_numbered_mask_asks_for_an_execution()
+    [Theory]
+    [InlineData("АБВГ.301121.001-ХХ")]
+    [InlineData("АБВГ.301121.001-XX")]
+    public void A_numbered_mask_asks_for_an_execution(string number)
     {
-        var (request, problems) = MessageRegistration.Read(Message("АБВГ.301121.001-ХХ"), Orgs);
+        var (request, problems) = MessageRegistration.Read(Message(number), Orgs);
 
         Assert.Empty(problems);
         Assert.Equal(1, request!.Number);
@@ -212,7 +214,7 @@ public sealed class MessageRegistrationTests
         Assert.Null(request);
         Assert.Equal(
         [
-            "Номер: неправильный номер (Пример: АААА.000000.ХХХ, АААА.000000.001 или АААА.000000.001-ХХ)",
+            "Номер: неправильный номер (Пример: АААА.000000.ХХХ или АААА.000000.001-ХХ)",
             "Проект: не указан проект",
             "ФИО: не полное ФИО (Пример: Иванов Иван Иванович)",
         ], problems);
@@ -234,10 +236,12 @@ public sealed class MessageRegistrationTests
     }
 
     /// <summary>
-    /// Готовое исполнение и неверная форма номера не принимаются; занятость полного номера
-    /// проверяет действие с доступом к журналу.
+    /// Готовые номера и исполнения не принимаются: при регистрации их подбирает программа.
     /// </summary>
     [Theory]
+    [InlineData("АБВГ.301121.001")]
+    [InlineData("АБВГ.301121.123")]
+    [InlineData("АБВГ.301121.999")]
     [InlineData("АБВГ.301121.014-01")]
     [InlineData("АБВГ.301121.ХХХ-ХХ")]
     [InlineData("АБВГ.301121")]

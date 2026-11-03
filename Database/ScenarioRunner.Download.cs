@@ -44,6 +44,8 @@ public static partial class ScenarioRunner
                 : answer.Explanation.Length > 0 ? answer.Explanation : $"HTTP {answer.StatusCode}";
             return StepOutcome.Bad($"Не удалось получить файл: {why}");
         }
+        if (step.UseResponseFileName && ResponseFileName.From(answer.Headers) is { Length: > 0 } responseName)
+            name = responseName;
         return new StepOutcome(true, $"Файл «{name}» получен: {answer.Bytes:N0} байт",
             File: answer.Content, FileName: name);
     }

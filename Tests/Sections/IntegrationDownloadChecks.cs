@@ -73,6 +73,8 @@ internal static class IntegrationDownloadChecks
             Expect(request.SelectedIndex == -1 && string.IsNullOrEmpty(name.Text),
                 "новая настройка не выбирает случайный запрос и не придумывает имя");
             Expect(wait.Text == "0", "у нового шага ожидание выключено: прежняя одна попытка");
+            Expect(Find<CheckBox>(dialog, "UseResponseFileNameCheck").IsChecked == false,
+                "новый шаг сохраняет заданное имя, пока имя из ответа сервера не включено");
             Expect(request.Items.Cast<string>().SequenceEqual(Requests.Select(item => item.Name)),
                 "список запросов не требует привязки к коллекции");
             Click(Find<Button>(dialog, "SaveBtn"));
@@ -107,29 +109,41 @@ internal static class IntegrationDownloadChecks
             Pump();
             Expect(Find<ComboBox>(dialog, "RequestCombo").SelectedIndex == 1
                 && Find<TextBox>(dialog, "NameBox").Text == "{{Вложение.Имя}}"
-                && Find<TextBox>(dialog, "WaitSecondsBox").Text == "45",
-                "повторное открытие восстанавливает запрос по ID, имя и ожидание");
+                && Find<TextBox>(dialog, "WaitSecondsBox").Text == "45"
+                && Find<CheckBox>(dialog, "UseResponseFileNameCheck").IsChecked == false,
+                "повторное открытие прежнего шага восстанавливает запрос, имя, ожидание и выключенную галочку");
             Geometry(dialog);
             Capture(dialog, "integration-download-settings");
             Find<ComboBox>(dialog, "RequestCombo").SelectedIndex = 0;
             Find<TextBox>(dialog, "NameBox").Text = "  {{Документ.Название}}  ";
             Find<TextBox>(dialog, "WaitSecondsBox").Text = "300";
+            Find<CheckBox>(dialog, "UseResponseFileNameCheck").IsChecked = true;
             Click(Find<Button>(dialog, "SaveBtn"));
             Wait(() => closed.IsCompleted, "Корректная настройка не сохранилась");
             var saved = closed.GetAwaiter().GetResult();
-            Expect(saved is { Kind: ScenarioStepKind.Download, RequestId: 17, Text: "{{Документ.Название}}", DownloadWaitSeconds: 300 },
-                "Готово возвращает Download с выбранным запросом, очищенным именем и верхней границей ожидания");
+            Expect(saved is { Kind: ScenarioStepKind.Download, RequestId: 17, Text: "{{Документ.Название}}", DownloadWaitSeconds: 300, UseResponseFileName: true },
+                "Готово сохраняет запрос, запасное имя, ожидание и включенное имя из ответа сервера");
 
             dialog = new ScenarioDownloadDialog(saved!, Requests);
             closed = dialog.ShowDialog<ScenarioStep?>(owner!);
             Pump();
-            Expect(Find<TextBox>(dialog, "WaitSecondsBox").Text == "300",
-                "открытие сохраненного шага удерживает ожидание 300 секунд");
+            Expect(Find<TextBox>(dialog, "WaitSecondsBox").Text == "300"
+                && Find<CheckBox>(dialog, "UseResponseFileNameCheck").IsChecked == true,
+                "открытие сохраненного шага удерживает ожидание и включенную галочку имени сервера");
             Find<TextBox>(dialog, "WaitSecondsBox").Text = "0";
+            Find<CheckBox>(dialog, "UseResponseFileNameCheck").IsChecked = false;
             Click(Find<Button>(dialog, "SaveBtn"));
             Wait(() => closed.IsCompleted, "Отключение ожидания не сохранилось");
-            Expect(closed.GetAwaiter().GetResult() is { DownloadWaitSeconds: 0 },
-                "ноль сохраняется и явно возвращает режим одной попытки");
+            var explicitName = closed.GetAwaiter().GetResult();
+            Expect(explicitName is { DownloadWaitSeconds: 0, UseResponseFileName: false },
+                "ноль и снятая галочка возвращают одну попытку и заданное имя");
+            dialog = new ScenarioDownloadDialog(explicitName!, Requests);
+            closed = dialog.ShowDialog<ScenarioStep?>(owner!);
+            Pump();
+            Expect(Find<CheckBox>(dialog, "UseResponseFileNameCheck").IsChecked == false,
+                "снятая галочка остается выключенной после нового открытия");
+            Click(Find<Button>(dialog, "CancelBtn"));
+            Wait(() => closed.IsCompleted, "Окно после проверки снятой галочки не закрылось");
 
             dialog = new ScenarioDownloadDialog(ScenarioStep.OfDownload(999, "Список.xlsx"), Requests);
             closed = dialog.ShowDialog<ScenarioStep?>(owner!);
@@ -163,12 +177,14 @@ internal static class IntegrationDownloadChecks
             Find<ComboBox>(editor, "RequestCombo").SelectedIndex = 0;
             Find<TextBox>(editor, "NameBox").Text = "{{Вложение.Имя}}";
             Find<TextBox>(editor, "WaitSecondsBox").Text = "120";
+            Find<CheckBox>(editor, "UseResponseFileNameCheck").IsChecked = true;
             Click(Find<Button>(editor, "SaveBtn"));
             Wait(() => DownloadCards(dialog).Count == 1, "Настроенный шаг не появился в списке");
             var card = DownloadCards(dialog).Single();
             Expect(card.Content is string text && text.Contains("Вложение сообщения", StringComparison.Ordinal)
-                && text.Contains("{{Вложение.Имя}}", StringComparison.Ordinal),
-                "карточка показывает запрос и выражение имени получаемого файла");
+                && text.Contains("{{Вложение.Имя}}", StringComparison.Ordinal)
+                && text.Contains("имя из ответа сервера", StringComparison.Ordinal),
+                "карточка показывает запрос, запасное имя и использование имени из ответа сервера");
             Expect(Inside(card, dialog) && Inside(Find<Button>(dialog, "SaveBtn"), dialog),
                 "карточка шага и кнопка сохранения помещаются в обычное окно сценария");
             ScenarioGeometry(dialog);
@@ -176,8 +192,8 @@ internal static class IntegrationDownloadChecks
             Click(Find<Button>(dialog, "SaveBtn"));
             Wait(() => closed.IsCompleted, "Сценарий с получением файла не сохранился");
             var saved = closed.GetAwaiter().GetResult() ?? throw new InvalidOperationException("Сценарий вернул null");
-            Expect(saved.Steps is [{ Kind: ScenarioStepKind.Download, RequestId: 17, Text: "{{Вложение.Имя}}", DownloadWaitSeconds: 120 }],
-                "сценарий сохраняет вид шага и выбранное ожидание готовности");
+            Expect(saved.Steps is [{ Kind: ScenarioStepKind.Download, RequestId: 17, Text: "{{Вложение.Имя}}", DownloadWaitSeconds: 120, UseResponseFileName: true }],
+                "сценарий сохраняет вид шага, выбранное ожидание и имя из ответа сервера");
 
             // Получение стоит между другими шагами: редактирование сохраняет порядок и их текст.
             scenario = saved with
@@ -191,21 +207,25 @@ internal static class IntegrationDownloadChecks
             editor = Editor(dialog);
             Expect(Find<ComboBox>(editor, "RequestCombo").SelectedIndex == 0
                 && Find<TextBox>(editor, "NameBox").Text == "{{Вложение.Имя}}"
-                && Find<TextBox>(editor, "WaitSecondsBox").Text == "120",
+                && Find<TextBox>(editor, "WaitSecondsBox").Text == "120"
+                && Find<CheckBox>(editor, "UseResponseFileNameCheck").IsChecked == true,
                 "нажатие карточки открывает сохраненную настройку скачивания");
             Find<ComboBox>(editor, "RequestCombo").SelectedIndex = 1;
             Find<TextBox>(editor, "NameBox").Text = "Другой список.xlsx";
             Find<TextBox>(editor, "WaitSecondsBox").Text = "45";
+            Find<CheckBox>(editor, "UseResponseFileNameCheck").IsChecked = false;
             Click(Find<Button>(editor, "SaveBtn"));
             Wait(() => dialog.OwnedWindows.Count == 0, "Измененный шаг не закрыл редактор");
             Expect(DownloadCards(dialog).Single().Content is string updated
                 && updated.Contains("Другой файл", StringComparison.Ordinal)
-                && updated.Contains("Другой список.xlsx", StringComparison.Ordinal),
-                "изменение запроса и имени обновляет карточку");
+                && updated.Contains("Другой список.xlsx", StringComparison.Ordinal)
+                && !updated.Contains("имя из ответа сервера", StringComparison.Ordinal),
+                "изменение запроса, имени и галочки обновляет карточку");
             Click(DownloadCards(dialog).Single());
             editor = Editor(dialog);
             Find<TextBox>(editor, "NameBox").Text = "Не сохранять.xlsx";
             Find<TextBox>(editor, "WaitSecondsBox").Text = "90";
+            Find<CheckBox>(editor, "UseResponseFileNameCheck").IsChecked = true;
             Click(Find<Button>(editor, "CancelBtn"));
             Wait(() => dialog.OwnedWindows.Count == 0, "Отмена правки не закрыла редактор");
             Click(Find<Button>(dialog, "SaveBtn"));
@@ -213,7 +233,7 @@ internal static class IntegrationDownloadChecks
             saved = closed.GetAwaiter().GetResult() ?? throw new InvalidOperationException("Правка вернула null");
             Expect(saved.Steps is
                 [{ Kind: ScenarioStepKind.Notify, Text: "Начало" },
-                 { Kind: ScenarioStepKind.Download, RequestId: 29, Text: "Другой список.xlsx", DownloadWaitSeconds: 45 },
+                 { Kind: ScenarioStepKind.Download, RequestId: 29, Text: "Другой список.xlsx", DownloadWaitSeconds: 45, UseResponseFileName: false },
                  { Kind: ScenarioStepKind.Notify, Text: "Конец" }],
                 "сохранение удерживает правку, отменяет черновик и сохраняет порядок соседних шагов");
         }
@@ -275,16 +295,19 @@ internal static class IntegrationDownloadChecks
             var request = Find<ComboBox>(dialog, "RequestCombo");
             var name = Find<TextBox>(dialog, "NameBox");
             var wait = Find<TextBox>(dialog, "WaitSecondsBox");
+            var responseName = Find<CheckBox>(dialog, "UseResponseFileNameCheck");
             var save = Find<Button>(dialog, "SaveBtn");
             var cancel = Find<Button>(dialog, "CancelBtn");
-            Expect(new Control[] { request, name, wait, save, cancel }.All(control => Inside(control, dialog)),
-                "три редактора и обе кнопки находятся в клиентской области диалога");
+            Expect(new Control[] { request, name, responseName, wait, save, cancel }.All(control => Inside(control, dialog)),
+                "три редактора, галочка имени и обе кнопки находятся в клиентской области диалога");
             var requestPoint = request.TranslatePoint(default, dialog)!.Value;
             var namePoint = name.TranslatePoint(default, dialog)!.Value;
             var waitPoint = wait.TranslatePoint(default, dialog)!.Value;
+            var responseNamePoint = responseName.TranslatePoint(default, dialog)!.Value;
             var savePoint = save.TranslatePoint(default, dialog)!.Value;
             Expect(requestPoint.Y + request.Bounds.Height <= namePoint.Y
-                && namePoint.Y + name.Bounds.Height < waitPoint.Y
+                && namePoint.Y + name.Bounds.Height < responseNamePoint.Y
+                && responseNamePoint.Y + responseName.Bounds.Height < waitPoint.Y
                 && waitPoint.Y + wait.Bounds.Height < savePoint.Y,
                 "редакторы и кнопки не накладываются друг на друга");
             Expect(Math.Abs(request.Bounds.Width - name.Bounds.Width) < 1

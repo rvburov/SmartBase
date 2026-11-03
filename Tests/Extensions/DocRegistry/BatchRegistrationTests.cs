@@ -77,22 +77,29 @@ public sealed class BatchRegistrationTests : IDisposable
     }
 
     [Theory]
-    [InlineData(0)]
-    [InlineData(1)]
-    [InlineData(2)]
-    public void A_hard_error_at_any_position_blocks_the_whole_list(int position)
+    [InlineData(0, "АБВГ.30112.ХХХ")]
+    [InlineData(1, "АБВГ.30112.ХХХ")]
+    [InlineData(2, "АБВГ.30112.ХХХ")]
+    [InlineData(0, "АБВГ.301121.123")]
+    [InlineData(1, "АБВГ.301121.123")]
+    [InlineData(2, "АБВГ.301121.123")]
+    [InlineData(2, "АБВГ.301121.123-01")]
+    public void A_hard_error_at_any_position_blocks_the_whole_list(int position, string invalidNumber)
     {
         Seed(1);
         var numbers = new[] { Mask, Mask, Mask };
-        numbers[position] = "АБВГ.30112.ХХХ";
+        numbers[position] = invalidNumber;
         var before = Snapshot();
 
         var result = Call(Request(numbers));
 
         Assert.False(result.Ok);
         Assert.Contains("0 из 3", ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
+        Assert.Contains($"{position + 1}. {invalidNumber} — Номер: неправильный номер",
+            ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
         Assert.Equal(before, Snapshot());
         Assert.False(Call("Да").Ok);
+        Assert.Equal(before, Snapshot());
     }
 
     [Fact]

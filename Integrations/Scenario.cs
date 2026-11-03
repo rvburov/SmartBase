@@ -543,6 +543,8 @@ public enum ScenarioStepKind
 /// посчитанные. Список, как и словарь полей, не участвует в сравнении записей.</param>
 /// <param name="DownloadWaitSeconds">Сколько секунд ожидать готовность файла после первого
 /// HTTP 404. Только для <see cref="ScenarioStepKind.Download"/>; 0 — одна попытка.</param>
+/// <param name="UseResponseFileName">Использовать имя из заголовка ответа сервера, если оно
+/// корректно. Выражение <see cref="Text"/> остается запасным именем и условием получения.</param>
 public sealed record ScenarioStep(
     ScenarioStepKind                     Kind,
     int                                  RequestId,
@@ -558,7 +560,8 @@ public sealed record ScenarioStep(
     IReadOnlyList<ScenarioFormula>?      ColumnFormulas = null,
     string                               MatchField     = "",
     bool                                 CreateMissing  = true,
-    int                                  DownloadWaitSeconds = 0)
+    int                                  DownloadWaitSeconds = 0,
+    bool                                 UseResponseFileName = false)
 {
     /// <summary>Сколько знаков умещается в карточке сообщения, не превращая ее в простыню.</summary>
     public const int MaxTextLength = 200;
@@ -600,8 +603,10 @@ public sealed record ScenarioStep(
         new(ScenarioStepKind.Request, requestId, "");
 
     /// <summary>Получить файл без записи ответа в коллекцию.</summary>
-    public static ScenarioStep OfDownload(int requestId, string fileName, int waitSeconds = 0) =>
-        new(ScenarioStepKind.Download, requestId, fileName, DownloadWaitSeconds: waitSeconds);
+    public static ScenarioStep OfDownload(int requestId, string fileName, int waitSeconds = 0,
+                                          bool useResponseFileName = false) =>
+        new(ScenarioStepKind.Download, requestId, fileName, DownloadWaitSeconds: waitSeconds,
+            UseResponseFileName: useResponseFileName);
 
     public static ScenarioStep OfNotice(string text) =>
         new(ScenarioStepKind.Notify, 0, text);
@@ -769,6 +774,7 @@ public sealed record ScenarioStep(
         ScenarioStepKind.Download => "Получить файл: "
             + (name.Length > 0 ? name : $"№{RequestId}")
             + (Text.Length > 0 ? " → " + Text : " — имя не задано")
+            + (UseResponseFileName ? ", имя из ответа сервера" : "")
             + (DownloadWaitSeconds > 0 ? $", ожидание до {DownloadWaitSeconds} с после HTTP 404" : ""),
 
         ScenarioStepKind.Notify => "Сообщение: " + Text,

@@ -162,7 +162,8 @@ public static class ScenarioTransfer
                 step.Conditions,
                 step.Format,
                 step.ColumnFormulas,
-                step.DownloadWaitSeconds))]);
+                step.DownloadWaitSeconds,
+                step.UseResponseFileName))]);
 
     private static string NameOfDatabase(IReadOnlyList<DatabaseManager> databases, int dbId) =>
         dbId <= 0 ? "" : databases.FirstOrDefault(d => d.DbId == dbId)?.Name ?? "";
@@ -450,7 +451,8 @@ public static class ScenarioTransfer
             step.Conditions,
             step.Format ?? "",
             step.Formulas,
-            DownloadWaitSeconds: step.DownloadWaitSeconds);
+            DownloadWaitSeconds: step.DownloadWaitSeconds,
+            UseResponseFileName: step.UseResponseFileName);
     }
 
     private static ScenarioTrigger Unpack(BundleTrigger? trigger,

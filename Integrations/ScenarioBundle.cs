@@ -74,7 +74,9 @@ public sealed record BundleStep(
     [property: JsonPropertyName("format")]     string Format = "",
     [property: JsonPropertyName("formulas")]   IReadOnlyList<ScenarioFormula>? Formulas = null,
     [property: JsonPropertyName("downloadWaitSeconds")]
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] int DownloadWaitSeconds = 0);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] int DownloadWaitSeconds = 0,
+    [property: JsonPropertyName("useResponseFileName")]
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool UseResponseFileName = false);
 
 /// <summary>Сценарий в переносимом виде. Тумблер не переносится — см. описание набора.</summary>
 public sealed record BundleScenario(
@@ -117,7 +119,13 @@ public sealed record ScenarioBundle(
     /// Версия формата, которую понимает эта сборка. Файл с большим номером — от более новой
     /// программы: разбирать его наугад нельзя, смысл полей мог смениться.
     /// </summary>
-    public const int SupportedVersion = 4;
+    public const int SupportedVersion = 5;
+
+    /// <summary>Набор с исходным именем файла из заголовка ответа сервера.</summary>
+    public const int ResponseFileNameVersion = 5;
+
+    /// <summary>Набор с ожиданием готовности файла после HTTP 404.</summary>
+    public const int DownloadWaitVersion = 4;
 
     /// <summary>Набор с получением двоичного файла без ожидания готовности.</summary>
     public const int DownloadVersion = 3;
@@ -133,17 +141,21 @@ public sealed record ScenarioBundle(
 
     /// <summary>
     /// Версия набора зависит от использованных возможностей. Получение файла требует третью,
-    /// ожидание его готовности — четвертую: прежний выпуск молча потерял бы эту настройку.
+    /// ожидание его готовности — четвертую, имя из ответа сервера — пятую: прежний выпуск
+    /// молча потерял бы эти настройки.
     /// Наборы без новых возможностей сохраняют прежние версии.
     /// </summary>
     public static int VersionFor(IReadOnlyList<BundleStream> streams,
                                  IReadOnlyList<Scenario>? scenarios = null) =>
         scenarios?.Any(scenario => scenario.Steps.Any(step =>
-            step.Kind == ScenarioStepKind.Download && step.DownloadWaitSeconds > 0)) == true
-            ? SupportedVersion
-            : scenarios?.Any(scenario => scenario.Steps.Any(step => step.Kind == ScenarioStepKind.Download)) == true
-                ? DownloadVersion
-                : streams.Count > 0 ? StreamVersion : PlainVersion;
+            step.Kind == ScenarioStepKind.Download && step.UseResponseFileName)) == true
+            ? ResponseFileNameVersion
+            : scenarios?.Any(scenario => scenario.Steps.Any(step =>
+                step.Kind == ScenarioStepKind.Download && step.DownloadWaitSeconds > 0)) == true
+                ? DownloadWaitVersion
+                : scenarios?.Any(scenario => scenario.Steps.Any(step => step.Kind == ScenarioStepKind.Download)) == true
+                    ? DownloadVersion
+                    : streams.Count > 0 ? StreamVersion : PlainVersion;
 
     /// <summary>Потоки набора; в файле прежней версии их нет.</summary>
     [JsonIgnore]

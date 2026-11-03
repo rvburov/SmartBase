@@ -74,15 +74,39 @@ public sealed class FileMessageRegistrationTests : IDisposable
         Assert.Equal("АБВГ.301121.014-02", Values("Исполнение 2")[_shape.DesignationFieldId]);
     }
 
-    [Fact]
-    public void The_file_obeys_the_bots_existing_exact_free_number_rule()
+    [Theory]
+    [InlineData("АБВГ.301121.123", false)]
+    [InlineData("АБВГ.301121.123", true)]
+    [InlineData("АБВГ.301121.014-01", true)]
+    public void A_full_number_rejects_the_entire_file_without_rows_history_or_receipt(string number, bool existingSeries)
     {
-        Seed();
-        var result = File(FileMessageBook.Create(new FileMessageBook.Row(2, "АБВГ.301121.014")));
+        if (existingSeries) Seed();
+        var before = Snapshot(_db.Context);
+        var result = File(FileMessageBook.Create(new FileMessageBook.Row(2, Mask, "Документ 1"),
+            new FileMessageBook.Row(3, "АБВГ.301121.014-XX", "Исполнение 1"),
+            new FileMessageBook.Row(4, "АБВГ.301121.014-ХХ", "Исполнение 2"),
+            new FileMessageBook.Row(5, Mask, "Документ 2"),
+            new FileMessageBook.Row(6, "АБВГ.301121.XXX", "Документ 3"),
+            new FileMessageBook.Row(7, number, "Номер без маски")));
 
-        Assert.True(result.Ok, result.Explanation);
-        Assert.Equal(1, result.Rows);
-        Assert.Equal("АБВГ.301121.014", Values("Документ")[_shape.DesignationFieldId]);
+        Assert.False(result.Ok);
+        Assert.Equal(0, result.Rows);
+        var reply = ReplyMarkup.Text(result.Answer);
+        Assert.Contains("Зарегистрировано: 0 из 6", reply, StringComparison.Ordinal);
+        Assert.Contains($"Строка 7: {number}", reply, StringComparison.Ordinal);
+        Assert.Contains("Номер: неправильный номер", reply, StringComparison.Ordinal);
+        Assert.DoesNotContain("Подтвердите", reply, StringComparison.Ordinal);
+        Assert.Equal(before, Snapshot(_db.Context));
+        Assert.False(Text("Да").Ok);
+        Assert.Equal(before, Snapshot(_db.Context));
+
+        // Отказ не занимает идентификатор сообщения: исправленный файл проходит под тем же.
+        var corrected = File(FileMessageBook.Create(new FileMessageBook.Row(2, Mask, "Исправленный")));
+        Assert.True(corrected.Ok, corrected.Explanation);
+        if (!existingSeries) corrected = Text("Да");
+        Assert.True(corrected.Ok, corrected.Explanation);
+        Assert.Equal(1, corrected.Rows);
+        Assert.Equal($"АБВГ.301121.{(existingSeries ? 2 : 1):D3}", Values("Исправленный")[_shape.DesignationFieldId]);
     }
 
     [Fact]

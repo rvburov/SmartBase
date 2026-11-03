@@ -22,6 +22,7 @@ public partial class ScenarioDownloadDialog : Window
         NameBox.Text = step.Text;
         NameBox.MaxLength = ScenarioStep.MaxTextLength;
         WaitSecondsBox.Text = step.DownloadWaitSeconds.ToString(CultureInfo.InvariantCulture);
+        UseResponseFileNameCheck.IsChecked = step.UseResponseFileName;
 
         CancelBtn.Click += (_, _) => Close(null);
         SaveBtn.Click += (_, _) => Save();
@@ -38,7 +39,8 @@ public partial class ScenarioDownloadDialog : Window
         }
         var index = RequestCombo.SelectedIndex;
         var requestId = index >= 0 && index < _requests.Count ? _requests[index].Id : 0;
-        var step = ScenarioStep.OfDownload(requestId, (NameBox.Text ?? "").Trim(), waitSeconds);
+        var step = ScenarioStep.OfDownload(requestId, (NameBox.Text ?? "").Trim(), waitSeconds,
+            UseResponseFileNameCheck.IsChecked == true);
         var problems = step.Problems();
         if (problems.Count > 0)
         {
