@@ -19,8 +19,15 @@ public sealed class FileMessageRegistrationTests : IDisposable
     private const string Mask = "АБВГ.301121.ХХХ";
     private const string Unknown = "АБВГ.806121.ХХХ";
 
-    public FileMessageRegistrationTests() =>
+    public FileMessageRegistrationTests()
+    {
+        // Ремонты открытия дописывают db_meta в фоне. Снимки атомарности начинаются после
+        // них и по-прежнему учитывают все метаданные, включая постоянную квитанцию файла.
+        Assert.True(SpinWait.SpinUntil(() => _db.Context.DbMeta.AsNoTracking().Count(item =>
+                item.Key == "repair.title-null" || item.Key == "repair.number-display") == 2,
+            TimeSpan.FromSeconds(10)), "Фоновые ремонты тестовой базы не завершились.");
         _shape = JournalStand.Shape(_db.Constructor, JournalStand.Create(_db.Constructor));
+    }
 
     public void Dispose() => _db.Dispose();
 

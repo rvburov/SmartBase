@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using SmartBase.Core.Models;
 using SmartBase.Extensions;
 using SmartBase.Extensions.DocRegistry;
@@ -13,6 +14,10 @@ public sealed class RegistrationConfirmationTests : IDisposable
     private static readonly DateTimeOffset Now = new(2026, 10, 19, 12, 0, 0, TimeSpan.Zero);
     public RegistrationConfirmationTests()
     {
+        // Общий счетчик метаданных сравнивается только после фоновых ремонтов открытия.
+        Assert.True(SpinWait.SpinUntil(() => _db.Context.DbMeta.AsNoTracking().Count(item =>
+                item.Key == "repair.title-null" || item.Key == "repair.number-display") == 2,
+            TimeSpan.FromSeconds(10)), "Фоновые ремонты тестовой базы не завершились.");
         _journal = JournalStand.Create(_db.Constructor);
         _shape = JournalStand.Shape(_db.Constructor, _journal);
     }
