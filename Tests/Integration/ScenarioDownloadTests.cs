@@ -32,6 +32,42 @@ public sealed class ScenarioDownloadTests : IDisposable
     private IntegrationsRegistry Cards => _registry.Integrations;
 
     [Theory]
+    [InlineData(RequestMethod.Get, false, true)]
+    [InlineData(RequestMethod.Get, true, true)]
+    [InlineData(RequestMethod.Post, false, true)]
+    [InlineData(RequestMethod.Post, true, true)]
+    [InlineData(RequestMethod.Get, false, false)]
+    [InlineData(RequestMethod.Get, true, false)]
+    [InlineData(RequestMethod.Post, false, false)]
+    [InlineData(RequestMethod.Post, true, false)]
+    public async Task Bare_server_filename_reaches_the_action_only_when_enabled(
+        RequestMethod method, bool useResponseFileName, bool unicodeEscaped)
+    {
+        var originalName = unicodeEscaped ? "Перечень деталей.xlsx" : "Parts list.xlsx";
+        var disposition = unicodeEscaped
+            ? """\u041F\u0435\u0440\u0435\u0447\u0435\u043D\u044C \u0434\u0435\u0442\u0430\u043B\u0435\u0439.xlsx"""
+            : "Parts list.xlsx";
+        using var server = new FileServer(Payload, contentDisposition: disposition);
+        var request = Request(server, path: "/assets/read", method: method,
+            body: method == RequestMethod.Post ? """{"messageKey":42,"assetKey":23}""" : "");
+        var action = new Receiver();
+        var download = ScenarioStep.OfDownload(request.Id, "{{file-name}}",
+            useResponseFileName: useResponseFileName);
+
+        var outcome = await Run([download, Action(action)], [action], Event("Вложение.xlsx"));
+
+        Assert.True(outcome.Ok, outcome.Problem);
+        var received = Assert.Single(action.Seen);
+        Assert.Equal(useResponseFileName ? originalName : "Вложение.xlsx", received.FileName);
+        Assert.Equal(Payload, received.Bytes);
+        Assert.Equal("message-42", received.Values["message-id"]);
+        Assert.Equal("participant-17", received.Values["sender"]);
+        Assert.Equal("Заявка участника", received.Values["title"]);
+        Assert.StartsWith(method.ToString().ToUpperInvariant() + " /assets/read ",
+            Assert.Single(server.Requests), StringComparison.Ordinal);
+    }
+
+    [Theory]
     [InlineData(false, "Список КД.xlsx")]
     [InlineData(true, "Исходный список КД.xlsx")]
     public async Task Server_filename_is_used_only_when_the_download_step_explicitly_requests_it(
@@ -59,6 +95,10 @@ public sealed class ScenarioDownloadTests : IDisposable
     [InlineData("attachment")]
     [InlineData("attachment; filename=\"../escape.xlsx\"")]
     [InlineData("attachment; filename=\"unsafe?.xlsx\"")]
+    [InlineData("""\u041G.xlsx""")]
+    [InlineData("""..\u002F\u0414.xlsx""")]
+    [InlineData("""\u0414\u000A.xlsx""")]
+    [InlineData("""\uD800.xlsx""")]
     public async Task Unusable_server_filename_keeps_the_configured_name_and_unchanged_file(string? disposition)
     {
         using var server = new FileServer(Payload, contentDisposition: disposition);

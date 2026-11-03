@@ -80,6 +80,62 @@ public sealed class FileMessageScenarioTests : IDisposable
         Assert.Equal(Convert.ToHexString(SHA256.HashData(bytes)), saved.RootElement.GetProperty("Digest").GetString());
     }
 
+    [Theory]
+    [InlineData("Перечень деталей.xlsx", true)]
+    [InlineData("Состав узлов.xlsx", true)]
+    [InlineData("Assembly list.xlsx", false)]
+    public async Task A_bare_response_name_survives_the_file_confirmation_and_receipt(
+        string originalName, bool unicodeEscaped)
+    {
+        var bytes = FileMessageBook.Create(new FileMessageBook.Row(2, Name: "Деталь"));
+        var disposition = JsonSerializer.Serialize(originalName)[1..^1];
+        Assert.Equal(unicodeEscaped, disposition.Contains(@"\u", StringComparison.Ordinal));
+        using var server = new FileServer(bytes, contentDisposition: disposition);
+        var scenario = Scenario(server, useResponseFileName: true);
+        var history = _db.Context.ChangeLog.AsNoTracking().Count();
+
+        var preview = await Run(scenario, Event(fileName: "Вложение.xlsx"));
+
+        Assert.True(preview.Ok, preview.Problem);
+        Assert.Equal(0, preview.Rows);
+        var previewText = ReplyMarkup.Text(preview.Reply);
+        Assert.Contains($"Файл: {originalName}", previewText, StringComparison.Ordinal);
+        Assert.DoesNotContain("Вложение.xlsx", previewText, StringComparison.Ordinal);
+        Assert.DoesNotContain(@"\u", previewText, StringComparison.Ordinal);
+        Assert.Empty(_db.Constructor.GetRecords(_shape.CollectionId));
+        Assert.Equal(history, _db.Context.ChangeLog.AsNoTracking().Count());
+        Assert.Empty(_db.Context.DbMeta.AsNoTracking().Where(item =>
+            item.Key.StartsWith("extension-state:doc-registry:file:")));
+
+        var confirmed = await Run(scenario, Event(text: "Да", attachment: false, messageId: "confirmation-2"));
+
+        Assert.True(confirmed.Ok, confirmed.Problem);
+        Assert.Equal(1, confirmed.Rows);
+        var confirmedText = ReplyMarkup.Text(confirmed.Reply);
+        Assert.Contains($"Файл: {originalName}", confirmedText, StringComparison.Ordinal);
+        Assert.DoesNotContain("Вложение.xlsx", confirmedText, StringComparison.Ordinal);
+        Assert.DoesNotContain(@"\u", confirmedText, StringComparison.Ordinal);
+        var record = Assert.Single(_db.Constructor.GetRecords(_shape.CollectionId));
+        Assert.Equal("Деталь", record.Title);
+        Assert.Equal("АБВГ.301121.001",
+            _db.Constructor.GetFieldValues(record.Id!.Value)[_shape.DesignationFieldId]);
+        Assert.Single(server.Requests);
+        var receipt = Assert.Single(_db.Context.DbMeta.AsNoTracking().Where(item =>
+            item.Key.StartsWith("extension-state:doc-registry:file:")));
+        using var saved = JsonDocument.Parse(receipt.Value);
+        Assert.Equal(Convert.ToHexString(SHA256.HashData(bytes)), saved.RootElement.GetProperty("Digest").GetString());
+        Assert.Contains($"Файл: {originalName}", ReplyMarkup.Text(saved.RootElement.GetProperty("Reply").GetString()!),
+            StringComparison.Ordinal);
+
+        var replay = await Run(scenario, Event(fileName: "Вложение.xlsx"));
+
+        Assert.True(replay.Ok, replay.Problem);
+        Assert.Equal(0, replay.Rows);
+        Assert.Equal(confirmed.Reply, replay.Reply);
+        Assert.Single(_db.Constructor.GetRecords(_shape.CollectionId));
+        Assert.Equal(2, server.Requests.Count);
+    }
+
     [Fact]
     public async Task A_text_yes_without_attachment_metadata_confirms_the_same_scenarios_complete_file()
     {
@@ -569,14 +625,15 @@ public sealed class FileMessageScenarioTests : IDisposable
         internal Task FirstUnavailable => _firstUnavailable.Task;
 
         internal FileServer(byte[] content, int status = 200, int? messageId = null, int? assetId = null,
-                            bool waitUntilReady = false, string? fileName = null)
+                            bool waitUntilReady = false, string? fileName = null, string? contentDisposition = null)
         {
             _status = status;
             _messageId = messageId;
             _assetId = assetId;
             if (!waitUntilReady) SetReady();
-            var disposition = fileName is null ? "" : "Content-Disposition: attachment; filename=download.xlsx; "
-                + $"filename*=UTF-8''{Uri.EscapeDataString(fileName)}\r\n";
+            var disposition = contentDisposition is not null ? $"Content-Disposition: {contentDisposition}\r\n"
+                : fileName is null ? "" : "Content-Disposition: attachment; filename=download.xlsx; "
+                    + $"filename*=UTF-8''{Uri.EscapeDataString(fileName)}\r\n";
             var header = Encoding.ASCII.GetBytes($"HTTP/1.1 {status} Result\r\nContent-Type: application/octet-stream\r\n{disposition}"
                 + $"Content-Length: {content.Length}\r\nConnection: close\r\n\r\n");
             _answer = new byte[header.Length + content.Length];
