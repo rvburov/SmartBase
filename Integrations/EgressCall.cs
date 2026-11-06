@@ -35,6 +35,9 @@ public sealed record EgressPlan(
     bool                             Idempotent,
     string                           SecretHeader)
 {
+    /// <summary>Двоичное тело запроса; null — обычное текстовое тело.</summary>
+    public byte[]? Data { get; init; }
+
     /// <summary>Чем заменяется секрет везде, где вызов показывается человеку.</summary>
     public const string Mask = "***";
 

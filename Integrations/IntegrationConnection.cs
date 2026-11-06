@@ -147,7 +147,7 @@ public sealed record IntegrationHeader(string Name, string Value)
     /// это при сохранении карточки стоит одной проверки, а не поймать — стоит суток
     /// разбирательств.
     /// </summary>
-    public string Trouble()
+    public string Trouble(bool allowVariables = false)
     {
         var name = (Name ?? "").Trim();
 
@@ -161,7 +161,10 @@ public sealed record IntegrationHeader(string Name, string Value)
         if (name.Any(c => c is ' ' or ':' or '	'))
             return $"в имени заголовка «{name}» есть пробел или двоеточие";
 
-        if (!IsAscii(Value ?? ""))
+        var value = Value ?? "";
+        if (allowVariables)
+            value = System.Text.RegularExpressions.Regex.Replace(value, @"\{\{[^{}\r\n]+\}\}", "");
+        if (!IsAscii(value))
             return $"значение заголовка «{name}» не из латиницы: заголовки HTTP бывают только "
                  + "латинскими";
 

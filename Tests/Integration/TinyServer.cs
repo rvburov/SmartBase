@@ -15,6 +15,7 @@ public sealed class EgressCollection
 /// <summary>Что сервер увидел в запросе.</summary>
 internal sealed record Seen(string Method, string Path, IReadOnlyList<IntegrationHeader> Headers, string Body)
 {
+    public byte[] Content { get; init; } = [];
     public string? Header(string name) =>
         Headers.FirstOrDefault(h => h.Name.Equals(name, StringComparison.OrdinalIgnoreCase))?.Value;
 }
@@ -165,6 +166,7 @@ internal sealed class TinyServer : IDisposable
             h => h.Name.Equals("Content-Length", StringComparison.OrdinalIgnoreCase));
 
         var body = "";
+        byte[] content = [];
         if (length is not null && int.TryParse(length.Value, out var size) && size > 0)
         {
             var buffer = new byte[size];
@@ -177,9 +179,10 @@ internal sealed class TinyServer : IDisposable
             }
 
             body = Encoding.UTF8.GetString(buffer, 0, got);
+            content = buffer[..got];
         }
 
-        return new Seen(start[0], start.Length > 1 ? start[1] : "", headers, body);
+        return new Seen(start[0], start.Length > 1 ? start[1] : "", headers, body) { Content = content };
     }
 
     private static bool EndOfHead(MemoryStream head)

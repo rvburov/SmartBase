@@ -196,7 +196,7 @@ public static partial class RequestRunner
     /// секрету взяться неоткуда — он живет в заголовке или в адресе, — но «неоткуда» здесь
     /// значит «пока никто не вписал его руками», и полагаться на это нельзя.
     /// </summary>
-    private static string Journalled(string? body, string secret)
+    internal static string Journalled(string? body, string secret)
     {
         var text = body ?? "";
 

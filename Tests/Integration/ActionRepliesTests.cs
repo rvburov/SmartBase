@@ -151,6 +151,53 @@ public sealed class ActionRepliesTests : IDisposable
     // ── Путь ──────────────────────────────────────────────────────────────────
 
     [Fact]
+    public async Task The_file_route_uses_saved_requests_and_keeps_its_snapshot()
+    {
+        using var stand = new StreamStand(answer: "{\"id\":\"accepted\"}");
+        var (stream, reply) = Cabling(stand);
+        Save(stream, reply, replyBreak: "<br>");
+        var upload = Cards.SaveRequest(IntegrationRequest.New() with
+        {
+            Name = "Блоки", ConnectionId = reply.ConnectionId, Method = RequestMethod.Post,
+            Path = "/blocks?item={{поле.item}}", Headers = [new("Upload-Offset", "{{поле.offset}}")],
+        });
+        var route = Replies.FilesRoute(StandId, Action, "sender", upload.Id, out var problem);
+        Assert.NotNull(route);
+        Assert.Equal("", problem);
+        var created = await route.CreateAsync("1002", "Привет\nстрока", "{\"attachments\":[1]}");
+        Assert.True(created.Ok, created.Explanation);
+        Assert.Contains("accepted", created.Body, StringComparison.Ordinal);
+        using (var json = System.Text.Json.JsonDocument.Parse(Assert.Single(stand.Requests).Body))
+        {
+            Assert.Equal(1002, json.RootElement.GetProperty("to").GetInt32());
+            Assert.Equal("Привет<br>строка", json.RootElement.GetProperty("message").GetString());
+            Assert.Equal(1, json.RootElement.GetProperty("attachments")[0].GetInt32());
+        }
+        var sent = await route.UploadAsync(new Dictionary<string, string> { ["item"] = "one", ["offset"] = "0" }, [1, 2]);
+        Assert.True(sent.Ok, sent.Explanation);
+        Assert.Equal(2, stand.Requests.Count);
+        Cards.SaveRequest(upload with { Path = "/changed" });
+        var changed = await route.UploadAsync(new Dictionary<string, string>(), [3]);
+        Assert.False(changed.Ok);
+        Assert.Equal(2, stand.Requests.Count);
+        Assert.Equal(2, _journal.Page(new RunFilter(Channel: RunChannel.Request)).Count);
+    }
+
+    [Fact]
+    public void A_missing_or_foreign_upload_request_is_refused_before_sending()
+    {
+        using var stand = new StreamStand();
+        var (stream, reply) = Cabling(stand);
+        Save(stream, reply);
+        Assert.Null(Replies.FilesRoute(StandId, Action, "sender", 0, out _));
+        var other = Cards.Save(IntegrationConnection.New() with { Name = "Другой", Address = stand.Address });
+        var upload = Cards.SaveRequest(IntegrationRequest.New() with
+            { Name = "Блоки", ConnectionId = other.Id, Method = RequestMethod.Post, Path = "/blocks" });
+        Assert.Null(Replies.FilesRoute(StandId, Action, "sender", upload.Id, out _));
+        Assert.Empty(stand.Requests);
+    }
+
+    [Fact]
     public void The_route_is_the_scenario_of_the_action()
     {
         using var stand = new StreamStand();

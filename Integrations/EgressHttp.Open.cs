@@ -89,7 +89,7 @@ public static class EgressHttp
         if (!plan.Address.IsAbsoluteUri || plan.Address.Scheme is not ("http" or "https"))
             return EgressResponse.Failed("для запроса нужен абсолютный адрес http или https",
                                          plan.SafeAddress);
-        if (Encoding.UTF8.GetByteCount(plan.Body) > MaxResponseBytes)
+        if ((plan.Data?.LongLength ?? Encoding.UTF8.GetByteCount(plan.Body)) > MaxResponseBytes)
             return EgressResponse.Failed("тело запроса больше технического ограничения 32 МБ; "
                                          + "сузьте отбор отправляемых данных", plan.SafeAddress);
 
@@ -437,9 +437,10 @@ public static class EgressHttp
     {
         var message = new HttpRequestMessage(MethodFor(plan.Method), address);
 
-        if (plan.Body.Length > 0)
+        if (plan.Data is not null || plan.Body.Length > 0)
         {
-            var content = new StringContent(plan.Body, Encoding.UTF8);
+            HttpContent content = plan.Data is { } data
+                ? new ByteArrayContent(data) : new StringContent(plan.Body, Encoding.UTF8);
 
             try
             {
@@ -470,6 +471,9 @@ public static class EgressHttp
 
             // Content-Type уже применен к телу, а класть его в заголовки запроса нельзя.
             if (header.Name.Equals("Content-Type", StringComparison.OrdinalIgnoreCase)) continue;
+            // Длину двоичного блока знает ByteArrayContent. Сохраненный заголовок запроса
+            // не должен усечь блок или заставить транспорт ждать лишние байты.
+            if (plan.Data is not null && header.Name.Equals("Content-Length", StringComparison.OrdinalIgnoreCase)) continue;
 
             if (!message.Headers.TryAddWithoutValidation(header.Name, header.Value))
                 message.Content?.Headers.TryAddWithoutValidation(header.Name, header.Value);

@@ -57,6 +57,8 @@ internal static class Program
         Case("Удаленный адресат исключается перед отправкой", RemovedBeforeSend);
         Case("Длинное подтверждение прокручивается, кнопки остаются видны", LongConfirmation);
         Case("Длинный отчет прокручивается, результат можно закрыть", LongReport);
+        Case("Вложения видны в подтверждении и передаются вместе с текстом", AttachmentsSend);
+        Case("Очистка вложений возвращает обычную отправку", ClearAttachments);
 
         Console.WriteLine($"ИТОГ: пройдено {_passed}, ошибок {_failed}.");
         return _failed == 0 ? 0 : 1;
@@ -217,6 +219,53 @@ internal static class Program
         Expect(fixture.Message.Text == message && fixture.Values[ParticipantBroadcastEditor.DraftKey] == message,
             "после успеха черновик остается");
     }
+
+    private static void AttachmentsSend()
+    {
+        var dir = Directory.CreateTempSubdirectory("sb-broadcast-ui-").FullName;
+        try
+        {
+            File.WriteAllBytes(Path.Combine(dir, "Чертеж.bin"), [1, 255, 0]);
+            using var fixture = new EditorFixture();
+            SetFiles(fixture.Editor, BroadcastAttachments.FromFolder(dir));
+            var files = Find<TextBlock>(fixture.Editor, "BroadcastFiles");
+            Expect(files.Text!.Contains("Чертеж.bin", StringComparison.Ordinal), "редактор показывает имя вложения");
+            var upload = Find<ComboBox>(fixture.Editor, "BroadcastUploadRequest");
+            upload.SelectedIndex = 0;
+            Select(fixture.Picker, "1001");
+            var pending = Start(fixture);
+            var confirm = Dialog(fixture.Owner.Window);
+            Expect(Find<TextBlock>(confirm, "MessageLabel").Text!.Contains("Чертеж.bin", StringComparison.Ordinal),
+                "подтверждение содержит вложение");
+            Capture(confirm, "doc-registry-attachments-confirmation");
+            Expect(!Find<Button>(fixture.Editor, "BroadcastFile").IsEnabled
+                && !Find<Button>(fixture.Editor, "BroadcastFolder").IsEnabled && !upload.IsEnabled,
+                "во время отправки выбор вложений и запроса заблокирован");
+            Click(Find<Button>(confirm, "ConfirmBtn"));
+            var report = Dialog(fixture.Owner.Window);
+            Expect(fixture.Replies.FileBytes.SequenceEqual(new byte[] { 1, 255, 0 }), "переданы исходные байты вложения");
+            Expect(fixture.Replies.Sent.Count == 1, "вложение и текст относятся к одному сообщению");
+            Click(Find<Button>(report, "ConfirmBtn"));
+            Wait(() => pending.IsCompleted, "отправка вложений не закончилась");
+            pending.GetAwaiter().GetResult();
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    private static void ClearAttachments()
+    {
+        using var fixture = new EditorFixture();
+        SetFiles(fixture.Editor, [new BroadcastAttachment("unused", "document.bin", 3)]);
+        Click(Find<Button>(fixture.Editor, "BroadcastClearFiles"));
+        Expect(!Find<Button>(fixture.Editor, "BroadcastClearFiles").IsVisible,
+            "кнопка очистки скрыта, когда вложений нет");
+        Expect(Find<TextBlock>(fixture.Editor, "BroadcastFiles").Text == "Вложения не выбраны",
+            "после очистки список вложений пуст");
+    }
+
+    private static void SetFiles(ParticipantBroadcastEditor editor, IReadOnlyList<BroadcastAttachment> files) =>
+        typeof(ParticipantBroadcastEditor).GetMethod("SetAttachments", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .Invoke(editor, [files]);
 
     private static void PartialSend()
     {
@@ -487,8 +536,23 @@ internal static class Program
     }
 
     private sealed record SentMessage(string Recipient, string Text);
-    private sealed class FakeReplies : IActionReplies
+    private sealed class FakeReplies : IActionReplies, IReplyFileExchange
     {
+        public List<byte> FileBytes { get; } = [];
+        public IReadOnlyList<ReplyUploadRequest> UploadRequests => [new(7, "Загрузка вложений")];
+        public IReplyFileExchange? FilesRoute(string extensionId, IExtensionAction action, string senderField,
+            int uploadRequestId, out string problem)
+        { problem = ""; return uploadRequestId == 7 ? this : null; }
+        public async Task<ReplyExchangeResult> CreateAsync(string recipient, string text, string properties,
+            CancellationToken ct = default)
+        {
+            Sent.Add(new SentMessage(recipient, text));
+            var result = await Handler(recipient, ct);
+            return new(result.Ok, result.Explanation, "{\"uuid\":\"message-id\"}");
+        }
+        public Task<ReplyExchangeResult> UploadAsync(IReadOnlyDictionary<string, string> fields, byte[] data,
+            CancellationToken ct = default)
+        { FileBytes.AddRange(data); return Task.FromResult(new ReplyExchangeResult(true, "", "")); }
         public List<SentMessage> Sent { get; } = [];
         public string? RouteName { get; set; } = "Тестовая интеграция";
         public Func<string, CancellationToken, Task<ReplyResult>> Handler { get; set; } = (_, _) => Task.FromResult(new ReplyResult(true, ""));

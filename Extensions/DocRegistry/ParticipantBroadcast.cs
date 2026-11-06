@@ -50,7 +50,8 @@ public static class ParticipantBroadcast
     /// </summary>
     public static async Task<BroadcastReport> SendAsync(IActionReplies? replies,
         IReadOnlyList<BroadcastRecipient> recipients, string? text,
-        IProgress<BroadcastProgress>? progress = null, CancellationToken ct = default)
+        IProgress<BroadcastProgress>? progress = null, CancellationToken ct = default,
+        IReadOnlyList<BroadcastAttachment>? attachments = null, int uploadRequestId = 0)
     {
         // Защита и для вызова вне окна: одному идентификатору нельзя отправить дважды
         // из-за дубля в списке. Написание и подпись первого вхождения сохраняются.
@@ -66,11 +67,22 @@ public static class ParticipantBroadcast
         if (ct.IsCancellationRequested) return new(0, total, [], true);
 
         var action = new RegisterMessageAction();
+        var files = attachments?.ToArray() ?? [];
+        IReplyFileExchange? exchange = null;
         try
         {
             if (replies.Route(DocRegistryExtension.ExtensionId, action, RegisterMessageAction.SenderField,
                 out var problem) is null)
                 return Refused($"Сообщение отправить не через что: {problem}.");
+            if (files.Length > 0)
+            {
+                BroadcastAttachments.Validate(files);
+                if (files.Any(f => f.Length == 0))
+                    return Refused("Пустые файлы нельзя передать через API: выберите непустые вложения.");
+                exchange = replies.FilesRoute(DocRegistryExtension.ExtensionId, action,
+                    RegisterMessageAction.SenderField, uploadRequestId, out problem);
+                if (exchange is null) return Refused(problem);
+            }
         }
         catch (Exception error)
         {
@@ -90,8 +102,10 @@ public static class ParticipantBroadcast
             progress?.Report(new(sent + failed.Count, total, recipient));
             try
             {
-                var result = await replies.SendAsync(DocRegistryExtension.ExtensionId, action,
-                    RegisterMessageAction.SenderField, recipient.Id, outgoing, ct);
+                var result = exchange is null
+                    ? await replies.SendAsync(DocRegistryExtension.ExtensionId, action,
+                        RegisterMessageAction.SenderField, recipient.Id, outgoing, ct)
+                    : await BroadcastFileDelivery.SendAsync(exchange, recipient.Id, outgoing, files, ct);
                 if (result.Ok) sent++;
                 else failed.Add(new(recipient, result.Explanation));
             }

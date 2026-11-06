@@ -14,11 +14,69 @@ namespace SmartBase.Database;
 /// </summary>
 public sealed class ActionReplies(IntegrationsRegistry registry) : IActionReplies
 {
+    public IReadOnlyList<ReplyUploadRequest> UploadRequests => registry.Requests()
+        .Where(r => r.Outward && r.Paging == RequestPaging.None && string.IsNullOrWhiteSpace(r.Body))
+        .Select(r => new ReplyUploadRequest(r.Id, r.Name)).ToArray();
+
+    public IReplyFileExchange? FilesRoute(string extensionId, IExtensionAction action,
+        string senderField, int uploadRequestId, out string problem)
+    {
+        var way = Find(extensionId, action, senderField, out problem);
+        if (way is null) return null;
+        var upload = registry.FindRequest(uploadRequestId);
+        if (upload is null)
+        {
+            problem = "Не выбран запрос загрузки файлов.";
+            return null;
+        }
+        if (!way.Request.Outward || way.Request.Paging != RequestPaging.None
+            || !upload.Outward || upload.Paging != RequestPaging.None
+            || upload.ConnectionId != way.Connection.Id || !string.IsNullOrWhiteSpace(upload.Body))
+        {
+            problem = "Запросы сообщения и загрузки должны изменять данные, быть без разбивки "
+                + "на страницы и использовать одно соединение. У запроса загрузки не должно быть текстового тела.";
+            return null;
+        }
+        problem = "";
+        return new FileExchange(registry, way, upload);
+    }
+
     /// <summary>Отметка шага в журнале запусков: сообщение ушло не ответом на событие.</summary>
     public const string Mark = "сообщение без события";
 
     private sealed record Way(Scenario Scenario, IntegrationRequest Request,
                                IntegrationConnection Connection, string Column);
+
+    private sealed class FileExchange(IntegrationsRegistry registry, Way way,
+        IntegrationRequest upload) : IReplyFileExchange
+    {
+        public Task<ReplyExchangeResult> CreateAsync(string recipient, string text, string properties,
+            CancellationToken ct = default) => Send(way.Request,
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [way.Column] = recipient },
+                way.Scenario.Trigger.WithBreaks(text), properties, null, ct);
+
+        public Task<ReplyExchangeResult> UploadAsync(IReadOnlyDictionary<string, string> fields,
+            byte[] data, CancellationToken ct = default) => Send(upload, fields, null, null, data, ct);
+
+        private async Task<ReplyExchangeResult> Send(IntegrationRequest request,
+            IReadOnlyDictionary<string, string> fields, string? text, string? properties,
+            byte[]? data, CancellationToken ct)
+        {
+            // Снимок не перенаправляется молча по новой настройке посреди загрузки.
+            if (!Same(registry.Find(way.Connection.Id), way.Connection)
+                || !Same(registry.FindRequest(request.Id), request)
+                || !registry.Scenarios().Any(s => s.Enabled && Same(s, way.Scenario)))
+                return new(false, "Настройки отправки изменились. Проверьте результат перед повтором.", "");
+            var answer = await RequestLauncher.ExchangeAsync(registry, way.Connection, request,
+                fields, text, properties, data, way.Scenario.Name, ct);
+            var ok = answer.Ok && !answer.Truncated;
+            return new(ok, ok ? "" : answer.Explanation.Length > 0 ? answer.Explanation
+                : $"Ошибка передачи: HTTP {answer.StatusCode}", answer.Body);
+        }
+
+        private static bool Same<T>(T current, T saved) =>
+            System.Text.Json.JsonSerializer.Serialize(current) == System.Text.Json.JsonSerializer.Serialize(saved);
+    }
 
     public string? Route(string extensionId, IExtensionAction action, string senderField,
                          out string problem) =>

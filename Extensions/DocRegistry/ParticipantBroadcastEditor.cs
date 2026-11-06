@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Platform.Storage;
 using SmartBase.Controls.Dialogs;
 using SmartBase.Utils;
 
@@ -17,6 +18,13 @@ public sealed class ParticipantBroadcastEditor : UserControl
     private readonly TextBox _message;
     private readonly ParticipantPicker _recipients;
     private readonly Button _send;
+    private readonly Button _file;
+    private readonly Button _folder;
+    private readonly Button _clear;
+    private readonly TextBlock _files;
+    private readonly StackPanel _uploadPanel;
+    private readonly ComboBox _uploadRequest;
+    private BroadcastAttachment[] _attachments = [];
     private string _savedDraft;
     private bool _busy;
 
@@ -60,12 +68,52 @@ public sealed class ParticipantBroadcastEditor : UserControl
             await PendingSend;
         };
 
+        _file = new Button { Name = "BroadcastFile", Classes = { "dialog", "auto" }, Content = "Выбрать файл" };
+        _folder = new Button { Name = "BroadcastFolder", Classes = { "dialog", "auto" }, Content = "Выбрать папку" };
+        _clear = new Button { Name = "BroadcastClearFiles", Classes = { "dialog", "auto" }, Content = "Убрать вложения" };
+        _file.Click += async (_, _) => await PickAttachmentsAsync(folder: false);
+        _folder.Click += async (_, _) => await PickAttachmentsAsync(folder: true);
+        _clear.Click += (_, _) => SetAttachments([]);
+        _files = new TextBlock { Name = "BroadcastFiles", Classes = { "desc" }, TextWrapping = TextWrapping.Wrap };
+        var fileActions = new WrapPanel { Orientation = Orientation.Horizontal };
+        foreach (var button in new[] { _file, _folder, _clear })
+        {
+            button.Margin = new Thickness(0, 0, 6, 6);
+            fileActions.Children.Add(button);
+        }
+        _uploadRequest = new ComboBox
+        {
+            Name = "BroadcastUploadRequest", HorizontalAlignment = HorizontalAlignment.Stretch,
+            DisplayMemberBinding = new Avalonia.Data.Binding(nameof(ReplyUploadRequest.Name)),
+            PlaceholderText = "Выберите запрос загрузки файлов",
+        };
+        RefreshUploadRequests();
+        _uploadRequest.DropDownOpened += (_, _) => RefreshUploadRequests();
+        _uploadRequest.SelectionChanged += (_, _) =>
+        {
+            if (_uploadRequest.SelectedItem is ReplyUploadRequest request)
+            {
+                var value = request.Id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                if (_context.Read(BroadcastFileDelivery.UploadRequestKey) != value)
+                    _context.Save(BroadcastFileDelivery.UploadRequestKey, value);
+            }
+        };
+        _uploadPanel = new StackPanel { Spacing = 6, IsVisible = false };
+        _uploadPanel.Children.Add(new TextBlock { Classes = { "desc" }, Text = "Запрос загрузки файлов" });
+        _uploadPanel.Children.Add(_uploadRequest);
+        _uploadPanel.Children.Add(new TextBlock { Classes = { "desc" }, TextWrapping = TextWrapping.Wrap,
+            Text = "Выберите запрос интеграции для передачи файлов через то же соединение, что и сообщения." });
+
         var actions = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
         actions.Children.Add(_recipients);
         Grid.SetColumn(_send, 1);
         actions.Children.Add(_send);
         var panel = new StackPanel { Spacing = 6 };
         panel.Children.Add(_message);
+        panel.Children.Add(fileActions);
+        panel.Children.Add(new ScrollViewer { Content = _files, MaxHeight = 110,
+            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled });
+        panel.Children.Add(_uploadPanel);
         panel.Children.Add(new TextBlock { Classes = { "desc" }, Text = "Кому отправить" });
         panel.Children.Add(actions);
         Content = panel;
@@ -80,6 +128,52 @@ public sealed class ParticipantBroadcastEditor : UserControl
         _message.LostFocus += (_, _) => SaveDraft();
         _recipients.SelectionChanged += (_, _) => UpdateSendState();
         UpdateSendState();
+        SetAttachments([]);
+    }
+
+    private void RefreshUploadRequests()
+    {
+        var options = _context.Replies()?.UploadRequests ?? [];
+        int.TryParse(_context.Read(BroadcastFileDelivery.UploadRequestKey), out var id);
+        _uploadRequest.ItemsSource = options;
+        _uploadRequest.SelectedItem = options.FirstOrDefault(r => r.Id == id);
+    }
+
+    internal void SetAttachments(IReadOnlyList<BroadcastAttachment> attachments)
+    {
+        _attachments = attachments.ToArray();
+        _files.Text = _attachments.Length == 0 ? "Вложения не выбраны"
+            : string.Join("\n", _attachments.Select(f => $"{f.Name} · {f.Length:N0} байт"));
+        _uploadPanel.IsVisible = _attachments.Length > 0;
+        _clear.IsVisible = _attachments.Length > 0;
+    }
+
+    private async Task PickAttachmentsAsync(bool folder)
+    {
+        if (_busy || _context.Owner() is not { } owner) return;
+        SetBusy(true);
+        try
+        {
+            var storage = owner.StorageProvider;
+            if (folder)
+            {
+                var selected = await storage.OpenFolderPickerAsync(new FolderPickerOpenOptions
+                    { Title = "Выберите папку с файлами для отправки", AllowMultiple = false });
+                if (selected.FirstOrDefault() is not { } item) return;
+                var path = item.TryGetLocalPath() ?? throw new InvalidOperationException("Выберите локальную папку.");
+                SetAttachments(await Task.Run(() => BroadcastAttachments.FromFolder(path)));
+            }
+            else
+            {
+                var selected = await storage.OpenFilePickerAsync(new FilePickerOpenOptions
+                    { Title = "Выберите файл для отправки", AllowMultiple = false });
+                if (selected.FirstOrDefault() is not { } item) return;
+                var path = item.TryGetLocalPath() ?? throw new InvalidOperationException("Выберите локальный файл.");
+                SetAttachments(await Task.Run(() => BroadcastAttachments.FromFile(path)));
+            }
+        }
+        catch (Exception error) { await Info(owner, $"Не удалось выбрать вложения: {error.Message}"); }
+        finally { SetBusy(false); }
     }
 
     private void SaveDraft()
@@ -98,6 +192,7 @@ public sealed class ParticipantBroadcastEditor : UserControl
         _busy = busy;
         _message.IsEnabled = !busy;
         _recipients.IsEnabled = !busy;
+        _file.IsEnabled = _folder.IsEnabled = _clear.IsEnabled = _uploadRequest.IsEnabled = !busy;
         UpdateSendState();
     }
 
@@ -109,6 +204,8 @@ public sealed class ParticipantBroadcastEditor : UserControl
         var text = _message.Text ?? "";
         var source = _context.Read(DocRegistryExtension.SendersKey);
         var selected = ParticipantBroadcast.Select(source, _recipients.SelectedIds);
+        var attachments = _attachments.ToArray();
+        var uploadRequestId = (_uploadRequest.SelectedItem as ReplyUploadRequest)?.Id ?? 0;
         if (string.IsNullOrWhiteSpace(text) || selected.Count == 0 || _context.Owner() is not { } owner)
         {
             UpdateSendState();
@@ -135,9 +232,22 @@ public sealed class ParticipantBroadcastEditor : UserControl
                 await Info(owner, $"Сообщение отправить не через что: {problem}.");
                 return;
             }
+            if (attachments.Length > 0)
+            {
+                BroadcastAttachments.Validate(attachments);
+                if (replies.FilesRoute(DocRegistryExtension.ExtensionId, new RegisterMessageAction(),
+                    RegisterMessageAction.SenderField, uploadRequestId, out problem) is null)
+                {
+                    await Info(owner, problem);
+                    return;
+                }
+            }
             if (!await ReviewDialog(owner, "Отправить сообщение выбранным участникам?\n\n"
                     + string.Join("\n", selected.Select(p => p.Label))
-                    + $"\n\nСообщение:\n{text}\n\nСообщение уйдет через сценарий «{scenario}».",
+                    + $"\n\nСообщение:\n{text}"
+                    + (attachments.Length == 0 ? "" : "\n\nВложения:\n"
+                        + string.Join("\n", attachments.Select(f => $"{f.Name} · {f.Length:N0} байт")))
+                    + $"\n\nСообщение уйдет через сценарий «{scenario}».",
                     confirmText: "Отправить").ShowDialog<bool>(owner))
                 return;
 
@@ -157,7 +267,7 @@ public sealed class ParticipantBroadcastEditor : UserControl
                     {
                         if (!finished) progress.SetProgress((double)state.Completed / state.Total,
                             $"Отправка: {state.Recipient.Label}");
-                    }), cancel.Token);
+                    }), cancel.Token, attachments, uploadRequestId);
             }
             finally
             {
