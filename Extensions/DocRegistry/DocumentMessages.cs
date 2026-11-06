@@ -114,18 +114,20 @@ internal static partial class DocumentMessages
                 foreach (var (field, value) in lines)
                 {
                     if (RegistrySchema.SameName(field, "Действие") || RegistrySchema.SameName(field, "Номер")) continue;
-                    var editable = new[] { "Наименование", "Проект", "ФИО" }
+                    if (RegistrySchema.SameName(field, "ФИО"))
+                    {
+                        problems.Add("ФИО: регистрирующий определяется по карточке отправителя API и не изменяется командой.");
+                        continue;
+                    }
+                    var editable = new[] { "Наименование", "Проект" }
                         .FirstOrDefault(f => RegistrySchema.SameName(f, field));
-                    // ФИО ложится в журнал тем же видом, что при регистрации: слова через один пробел.
-                    var entered = editable == "ФИО" ? MessageRegistration.Collapse(value) : value;
+                    var entered = value;
                     if (editable is null) problems.Add($"{field}: изменение этого поля не поддерживается");
                     else if (entered.Length == 0) problems.Add($"{editable}: не указано значение");
-                    else if (editable == "ФИО" && !RegistryImport.IsFullName(entered))
-                        problems.Add($"ФИО: не полное ФИО (Пример: {MessageRegistration.FioExample})");
                     else changes[editable] = entered;
                 }
                 if (changes.Count == 0 && problems.Count == 0)
-                    problems.Add("Изменение: укажите хотя бы одно поле — Наименование, Проект или ФИО");
+                    problems.Add("Изменение: укажите хотя бы одно поле — Наименование или Проект");
             }
             else
             {

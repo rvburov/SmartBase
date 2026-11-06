@@ -32,6 +32,24 @@ public sealed class FileMessageRegistrationTests : IDisposable
     public void Dispose() => _db.Dispose();
 
     [Fact]
+    public void A_workbook_without_the_registrar_column_uses_the_sender_profile_for_every_row()
+    {
+        Seed();
+        var original = FileMessageBook.Create(new FileMessageBook.Row(2, Fio: "Подмена Имени Отправителя"));
+        using var input = new MemoryStream(original);
+        using var book = new ClosedXML.Excel.XLWorkbook(input);
+        var sheet = book.Worksheet(1);
+        var column = sheet.FirstRowUsed()!.Cells().Single(c => c.GetString() == RegistrySchema.FioColumn).Address.ColumnNumber;
+        sheet.Column(column).Delete();
+        using var output = new MemoryStream();
+        book.SaveAs(output);
+        var result = File(output.ToArray());
+        Assert.True(result.Ok, result.Explanation);
+        Assert.Equal(1, result.Rows);
+        Assert.Equal(BotStand.FullName, Values("Документ")[_shape.FioFieldId]);
+    }
+
+    [Fact]
     public void Existing_series_write_every_rows_own_fields_without_requiring_message_text()
     {
         Seed();
@@ -55,7 +73,7 @@ public sealed class FileMessageRegistrationTests : IDisposable
         Assert.Equal("Сталь", first[_shape.SummaryFieldId]);
         var second = Values("Корпус");
         Assert.Equal("АБВГ.301122.002", second[_shape.DesignationFieldId]);
-        Assert.Equal("Петров Петр Петрович", second[_shape.FioFieldId]);
+        Assert.Equal(BotStand.FullName, second[_shape.FioFieldId]);
         Assert.Equal("Другой проект", second[_shape.ProjectFieldId]);
         Assert.Equal(first[_shape.DateFieldId], second[_shape.DateFieldId]);
         Assert.True(DateValue.TryParseStorage(first[_shape.DateFieldId], out var date));
@@ -136,7 +154,7 @@ public sealed class FileMessageRegistrationTests : IDisposable
         Assert.Contains("АБВГ.301121.ХХХ-ХХ", reply, StringComparison.Ordinal);
         Assert.Contains("Наименование", reply, StringComparison.Ordinal);
         Assert.Contains("Проект", reply, StringComparison.Ordinal);
-        Assert.Contains("ФИО", reply, StringComparison.Ordinal);
+        Assert.DoesNotContain("не полное ФИО", reply, StringComparison.Ordinal);
         Assert.Equal(before, Snapshot(_db.Context));
         Assert.False(Text("Да").Ok);
     }
@@ -262,7 +280,7 @@ public sealed class FileMessageRegistrationTests : IDisposable
         var bytes = FileMessageBook.Create(new FileMessageBook.Row(2));
         Assert.Equal(1, File(bytes).Rows);
 
-        var result = new RegisterMessageAction().Run(new ActionContext(_db.Constructor, 1,
+        var result = BotStand.Run(new ActionContext(_db.Constructor, 1,
             other.CollectionId, Now,
             new Dictionary<string, string> { [DocRegistryExtension.OrgCodesKey] = "АБВГ" },
             Session: _session, Channel: "file-channel"), new ActionInput(new Dictionary<string, string>
@@ -502,7 +520,7 @@ public sealed class FileMessageRegistrationTests : IDisposable
     private ActionResult File(byte[] bytes, string messageId = "file-1", string sender = "1001",
         string channel = "file-channel", object? session = null, ConstructorRepository? repo = null,
         int minutes = 0, CancellationToken ct = default) =>
-        new RegisterMessageAction().Run(Context(repo, session, channel, minutes, ct),
+        BotStand.Run(Context(repo, session, channel, minutes, ct),
             new ActionInput(new Dictionary<string, string>
             {
                 [RegisterMessageAction.SenderField] = sender,
@@ -511,7 +529,7 @@ public sealed class FileMessageRegistrationTests : IDisposable
 
     private ActionResult Text(string text, string sender = "1001", string channel = "file-channel",
         object? session = null, int minutes = 0) =>
-        new RegisterMessageAction().Run(Context(null, session, channel, minutes),
+        BotStand.Run(Context(null, session, channel, minutes),
             new ActionInput(new Dictionary<string, string>
             {
                 [RegisterMessageAction.TextField] = text,

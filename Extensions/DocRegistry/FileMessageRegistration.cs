@@ -16,7 +16,7 @@ internal static partial class DocumentMessages
     private sealed record FileReceipt(string Digest, string Reply);
 
     public static ActionResult RegisterFile(ActionContext context, byte[] bytes, string fileName,
-                                            string sender, string messageId)
+                                            string sender, string messageId, string senderFio)
     {
         var ct = context.CancellationToken;
         ct.ThrowIfCancellationRequested();
@@ -38,7 +38,7 @@ internal static partial class DocumentMessages
         try
         {
             name = RegistryMessageFile.SafeName(fileName);
-            source = RegistryMessageFile.Read(bytes, name, ct);
+            source = RegistryMessageFile.Read(bytes, name, ct, senderFio);
         }
         catch (DocRegistryException error)
         {
@@ -187,6 +187,7 @@ internal static partial class DocumentMessages
 
     private static string FileCard(FileRegistrationPlan plan, string heading) =>
         ReplyMarkup.Bold(ReplyMarkup.Escape(heading)) + "\nФайл: " + ReplyMarkup.Escape(plan.FileName) + "\n"
+        + "ФИО регистрирующего: " + ReplyMarkup.Escape(plan.Rows[0].Fio) + "\n"
         + string.Join("\n", plan.Rows.Select(row =>
             $"Строка {row.Line}: {ReplyMarkup.Bold(ReplyMarkup.Escape(row.Designation))}"));
 

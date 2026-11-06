@@ -49,7 +49,7 @@ public sealed class RegisterMessageActionTests
     [InlineData("<p>Инструкция</p>")]
     public void Instructions_need_no_database_and_explain_all_operations(string command)
     {
-        var result = Action.Run(new ActionContext(null, 1, 1, Now, Settings()), Input(command));
+        var result = BotStand.Run(new ActionContext(null, 1, 1, Now, Settings()), Input(command));
         Assert.True(result.Ok, result.Explanation);
         Assert.Equal(0, result.Rows);
         var instruction = ReplyMarkup.Text(result.Answer).ReplaceLineEndings("\n");
@@ -65,26 +65,26 @@ public sealed class RegisterMessageActionTests
 
 
     [Fact]
-    public void Instructions_are_available_without_a_recipient_list()
+    public void Instructions_require_selected_access()
     {
-        var result = Action.Run(new ActionContext(null, 1, 1, Now, Settings("")), Input("Инструкция", "unknown"));
-        Assert.True(result.Ok, result.Explanation);
-        Assert.Contains("Инструкция", ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
+        var result = BotStand.Run(new ActionContext(null, 1, 1, Now, Settings("")), Input("Инструкция", "unknown"));
+        Assert.False(result.Ok);
+        Assert.Contains("нет доступа", ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
     }
 
     [Theory]
     [InlineData("")]
     [InlineData("1002 Петров")]
-    public void Instruction_recipients_do_not_restrict_registration(string recipients)
+    public void Access_selection_restricts_registration_and_confirmation(string recipients)
     {
         using var db = new TempDatabase();
         var journal = JournalStand.Create(db.Constructor);
-        var first = Action.Run(Context(db, journal, recipients), Input(Message(), "9999"));
-        Assert.True(first.Ok, first.Explanation);
+        var first = BotStand.Run(Context(db, journal, recipients), Input(Message(), "9999"));
+        Assert.False(first.Ok);
+        Assert.Contains("нет доступа", ReplyMarkup.Text(first.Answer), StringComparison.Ordinal);
+        var confirmed = BotStand.Run(Context(db, journal, recipients), Input("Да", "9999"));
+        Assert.False(confirmed.Ok);
         Assert.Empty(db.Constructor.GetRecords(journal));
-        var confirmed = Action.Run(Context(db, journal, recipients), Input("Да", "9999"));
-        Assert.True(confirmed.Ok, confirmed.Explanation);
-        Assert.Equal("Кронштейн", Assert.Single(db.Constructor.GetRecords(journal)).Title);
     }
 
     // ── Регистрация ───────────────────────────────────────────────────────────
@@ -99,11 +99,11 @@ public sealed class RegisterMessageActionTests
         using var db = new TempDatabase();
         var journal = JournalStand.Create(db.Constructor);
 
-        var result = Action.Run(Context(db, journal), Input(Message()));
+        var result = BotStand.Run(Context(db, journal), Input(Message()));
 
         Assert.Empty(db.Constructor.GetRecords(journal));
         Assert.Contains("первый номер", ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
-        result = Action.Run(Context(db, journal), Input("Да"));
+        result = BotStand.Run(Context(db, journal), Input("Да"));
 
         Assert.True(result.Ok, result.Explanation);
         Assert.Equal(
@@ -128,9 +128,9 @@ public sealed class RegisterMessageActionTests
         var journal = JournalStand.Create(db.Constructor);
         var context = Context(db, journal);
 
-        Action.Run(context, Input(Message()));
-        Action.Run(context, Input("Да"));
-        var second = Action.Run(context, Input(Message()));
+        BotStand.Run(context, Input(Message()));
+        BotStand.Run(context, Input("Да"));
+        var second = BotStand.Run(context, Input(Message()));
 
         Assert.True(second.Ok, second.Explanation);
         Assert.Contains("АБВГ.301121.002", ReplyMarkup.Text(second.Answer), StringComparison.Ordinal);
@@ -148,11 +148,11 @@ public sealed class RegisterMessageActionTests
         var journal = JournalStand.Create(db.Constructor);
         var context = Context(db, journal);
 
-        Action.Run(context, Input(Message()));
-        Action.Run(context, Input("Да"));   // АБВГ.301121.001
+        BotStand.Run(context, Input(Message()));
+        BotStand.Run(context, Input("Да"));   // АБВГ.301121.001
 
-        var first  = Action.Run(context, Input(Message("АБВГ.301121.001-ХХ")));
-        var second = Action.Run(context, Input(Message("АБВГ.301121.001-ХХ")));
+        var first  = BotStand.Run(context, Input(Message("АБВГ.301121.001-ХХ")));
+        var second = BotStand.Run(context, Input(Message("АБВГ.301121.001-ХХ")));
 
         Assert.Contains("Номер: АБВГ.301121.001-01\n", ReplyMarkup.Text(first.Answer),  StringComparison.Ordinal);
         Assert.Contains("Номер: АБВГ.301121.001-02\n", ReplyMarkup.Text(second.Answer), StringComparison.Ordinal);
@@ -174,11 +174,11 @@ public sealed class RegisterMessageActionTests
         var journal = JournalStand.Create(db.Constructor);
         var context = Context(db, journal);
 
-        var preview = Action.Run(context, Input(Message("АБВГ.301121.007-ХХ")));
+        var preview = BotStand.Run(context, Input(Message("АБВГ.301121.007-ХХ")));
         Assert.Contains("первый номер", ReplyMarkup.Text(preview.Answer), StringComparison.Ordinal);
         Assert.Empty(db.Constructor.GetRecords(journal));
 
-        var result = Action.Run(context, Input("Да"));
+        var result = BotStand.Run(context, Input("Да"));
 
         Assert.True(result.Ok, result.Explanation);
         Assert.Contains("АБВГ.301121.007-01", ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
@@ -197,7 +197,7 @@ public sealed class RegisterMessageActionTests
         using var db = new TempDatabase();
         var journal = JournalStand.Create(db.Constructor);
 
-        var result = Action.Run(Context(db, journal), Input(Message(), sender: ""));
+        var result = BotStand.Run(Context(db, journal), Input(Message(), sender: ""));
 
         Assert.False(result.Ok);
         Assert.Equal("", result.Answer);
@@ -219,7 +219,7 @@ public sealed class RegisterMessageActionTests
             [RegisterMessageAction.SenderField] = "1001",
         });
 
-        var result = Action.Run(Context(db, journal), input);
+        var result = BotStand.Run(Context(db, journal), input);
 
         Assert.False(result.Ok);
         Assert.Equal("", result.Answer);
@@ -237,7 +237,7 @@ public sealed class RegisterMessageActionTests
         using var db = new TempDatabase();
         var journal = JournalStand.Create(db.Constructor);
 
-        var result = Action.Run(Context(db, journal), Input(""));
+        var result = BotStand.Run(Context(db, journal), Input(""));
 
         Assert.False(result.Ok);
         Assert.StartsWith("Действие: не указано действие", ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
@@ -256,7 +256,7 @@ public sealed class RegisterMessageActionTests
         using var db = new TempDatabase();
         var journal = JournalStand.Create(db.Constructor);
 
-        var result = Action.Run(Context(db, journal), Input("{text}"));
+        var result = BotStand.Run(Context(db, journal), Input("{text}"));
 
         Assert.False(result.Ok);
         Assert.StartsWith("Действие: не указано действие", ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
@@ -271,7 +271,7 @@ public sealed class RegisterMessageActionTests
         using var db = new TempDatabase();
         var journal = JournalStand.Create(db.Constructor);
 
-        var result = Action.Run(Context(db, journal), Input("Проект: Машина"));
+        var result = BotStand.Run(Context(db, journal), Input("Проект: Машина"));
 
         Assert.False(result.Ok);
         Assert.Equal(ReplyMarkup.Text(result.Answer), result.Explanation);
@@ -286,7 +286,7 @@ public sealed class RegisterMessageActionTests
         using var db = new TempDatabase();
         var journal = JournalStand.Create(db.Constructor);
 
-        var result = Action.Run(Context(db, journal), Input(Message("АБВГ.301121.000", project: "")));
+        var result = BotStand.Run(Context(db, journal), Input(Message("АБВГ.301121.000", project: "")));
 
         Assert.False(result.Ok);
         Assert.Equal(
@@ -306,7 +306,7 @@ public sealed class RegisterMessageActionTests
         using var db = new TempDatabase();
         var wrong = JournalStand.Create(db.Constructor, "Не журнал", ["Обозначение", "Что-то еще"]);
 
-        var result = Action.Run(Context(db, wrong), Input(Message()));
+        var result = BotStand.Run(Context(db, wrong), Input(Message()));
 
         Assert.False(result.Ok);
         Assert.Equal("", result.Answer);
@@ -340,6 +340,8 @@ public sealed class RegisterMessageActionTests
 /// </summary>
 public sealed class MessageScenarioTests : IDisposable
 {
+    private readonly HttpStand _profiles = new(BotUsersTests.Profile);
+    private IntegrationConnection? _profileConnection;
     private readonly TempDatabase     _db  = new("message");
     private readonly TempDir          _dir = new("message");
     private readonly DatabaseRegistry _registry;
@@ -362,6 +364,7 @@ public sealed class MessageScenarioTests : IDisposable
         // Хранилище настроек общее на процесс: оставить в нем закрытый реестр значило бы уронить
         // следующий тест, который о настройках и не думал.
         AppSettings.AttachStore(new NoSettings());
+        _profiles.Dispose();
 
         RunJournal.Attach(null);
         _registry.Dispose();
@@ -380,10 +383,17 @@ public sealed class MessageScenarioTests : IDisposable
     /// <summary>Сценарий потока: поток и его соединение заведены, шаг — регистрация по сообщению.</summary>
     private Scenario Scenario(int journal)
     {
-        var connection = _registry.Integrations.Save(IntegrationConnection.New() with
+        var connection = _profileConnection ??= _registry.Integrations.Save(IntegrationConnection.New() with
         {
-            Name = "Сторонняя программа", Address = "http://127.0.0.1:1",
+            Name = "Сторонняя программа", Address = $"http://127.0.0.1:{_profiles.Port}",
         });
+
+        var profile = _registry.Integrations.SaveRequest(IntegrationRequest.New() with
+        {
+            Name = "Карточка отправителя", ConnectionId = connection.Id, Path = "/profiles/{{поле.sender}}",
+        });
+        AppSettings.SaveExtensionSetting(DocRegistryExtension.ExtensionId, BotUsers.DirectoryKey,
+            BotUsers.Save(new(ProfileRequestId: profile.Id)));
 
         var stream = _registry.Integrations.SaveStream(IntegrationStream.New() with
         {
@@ -644,4 +654,22 @@ public sealed class MessageScenarioTests : IDisposable
         Assert.Equal("", outcome.Reply);
         Assert.Equal("Сервер не работает", StreamService.Answer(outcome, "Сервер не работает"));
     }
+    [Fact]
+    public async Task Registrar_is_taken_from_the_api_for_both_an_omitted_and_a_spoofed_message_field()
+    {
+        var journal = JournalStand.Create(_db.Constructor);
+        var scenario = Scenario(journal);
+        var text = "Действие: Регистрация\nНомер: АБВГ.301121.ХХХ\nНаименование: Первый\nПроект: Машина";
+        Assert.True((await Run(scenario, Event(text))).Ok);
+        Assert.True((await Run(scenario, Event("Да"))).Ok);
+        var spoofed = await Run(scenario, Event(text.Replace("Первый", "Второй") + "\nФИО: Поддельное Имя Отчество"));
+        Assert.True(spoofed.Ok, spoofed.Problem);
+        var shape = JournalStand.Shape(_db.Constructor, journal);
+        Assert.Equal(2, _db.Constructor.GetRecords(journal).Count);
+        Assert.All(_db.Constructor.GetRecords(journal), r =>
+            Assert.Equal(BotStand.FullName, _db.Constructor.GetFieldValues(r.Id!.Value)[shape.FioFieldId]));
+        Assert.Equal(3, _profiles.Requests.Count);
+        Assert.All(_profiles.Requests, r => Assert.StartsWith("GET /profiles/1001 ", r, StringComparison.Ordinal));
+    }
+
 }

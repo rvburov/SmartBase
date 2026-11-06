@@ -25,7 +25,7 @@ public sealed class RegistrationConfirmationTests : IDisposable
 
     private ActionResult Call(string text, string sender = "1001", int minutes = 0,
                               string channel = "bot", string orgs = "АБВГ", string senders = "1001;1002") =>
-        new RegisterMessageAction().Run(new ActionContext(_db.Constructor, 1, _journal,
+        BotStand.Run(new ActionContext(_db.Constructor, 1, _journal,
             Now.AddMinutes(minutes), new Dictionary<string, string>
             {
                 [DocRegistryExtension.OrgCodesKey] = orgs,

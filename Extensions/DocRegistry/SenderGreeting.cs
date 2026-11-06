@@ -4,12 +4,10 @@ using SmartBase.Utils;
 namespace SmartBase.Extensions.DocRegistry;
 
 /// <summary>
-/// Отправка инструкции адресатам из списка «Получатели инструкции».
+/// Отправка текущей инструкции пользователям из списка «Доступ к боту».
 ///
-/// Уходит только по кнопке <see cref="ButtonText"/> справа от списка и только новым — тем, кому
-/// инструкция еще не уходила (решения пользователя 21.10.2026). Кнопка оставляет человеку выбор,
-/// отправлять или нет, а правка списка сама ничего не рассылает: поле сохраняется при каждой
-/// потере фокуса, и недописанный номер получил бы сообщение.
+/// Уходит только по кнопке <see cref="ButtonText"/> рядом с выбором доступа и только новым —
+/// тем, кому текущая версия еще не уходила. Правка доступа сама ничего не рассылает.
 ///
 /// Кто уже получил, помнит скрытая настройка <see cref="InstructedKey"/>: в списке полей ее нет,
 /// она только пополняется. Удаление из списка ничего не отправляет и ее не трогает: вернули
@@ -27,7 +25,7 @@ public static class SenderGreeting
     public const string FirstLine = "Инструкция по регистрации документов в журнале КД.";
 
     /// <summary>Скрытая настройка: идентификаторы тех, кому инструкция уже ушла.</summary>
-    public const string InstructedKey = "senders.instructed";
+    public const string InstructedKey = "senders.instructed.profile-v1";
 
     /// <summary>
     /// Текст сообщения: заголовок, пустая строка и инструкция.
@@ -74,7 +72,10 @@ public static class SenderGreeting
         }
 
         var instructed = AppSettings.LoadExtensionSetting(DocRegistryExtension.ExtensionId, InstructedKey);
-        var fresh      = Fresh(run.Value, instructed);
+        var known = MessageRegistration.Senders(instructed);
+        IReadOnlyList<(string Id, string Entry)> fresh = BotUsers.Recipients(run.Value,
+            AppSettings.LoadExtensionSetting(DocRegistryExtension.ExtensionId, BotUsers.DirectoryKey))
+            .Where(p => !known.Contains(p.Id)).Select(p => (Id: p.Id, Entry: p.Label)).ToArray();
 
         if (fresh.Count == 0)
         {

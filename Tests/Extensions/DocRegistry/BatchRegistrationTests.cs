@@ -25,7 +25,7 @@ public sealed class BatchRegistrationTests : IDisposable
 
     private ActionResult Call(string text, string sender = "1001", int minutes = 0,
                               string channel = "bot", string orgs = "АБВГ", object? session = null) =>
-        new RegisterMessageAction().Run(new ActionContext(_db.Constructor, 1, _journal,
+        BotStand.Run(new ActionContext(_db.Constructor, 1, _journal,
             Now.AddMinutes(minutes), new Dictionary<string, string>
             {
                 [DocRegistryExtension.OrgCodesKey] = orgs,

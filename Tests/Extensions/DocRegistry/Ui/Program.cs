@@ -19,7 +19,13 @@ namespace SmartBase.Tests.Extensions.DocRegistry.Ui;
 /// <summary>Настройки и рассылка на настоящих контролах. IActionReplies заменен стендом.</summary>
 internal static class Program
 {
-    private const string Participants = "1001 Иванов Иван; 1002 Петров Петр; 1003 Сидоров Сидор";
+    private const string Participants = "1001; 1002; 1003";
+    private static readonly BotUser[] People =
+    [
+        new("1001", "Иванов Иван Иванович"), new("1002", "Петров Петр Петрович"),
+        new("1003", "Сидоров Сидор Сидорович"), new("1004", "Новый Новый Новикович"),
+    ];
+    private static string DirectoryJson => BotUsers.Save(new(Users: People));
     private static readonly MemoryStore Store = new();
     private static int _passed;
     private static int _failed;
@@ -45,7 +51,8 @@ internal static class Program
             .SetupWithoutStarting();
         FontScale.Init();
 
-        Case("Кнопка инструкции справа, редактор видит несохраненный список", SettingsLayout);
+        Case("Доступ и получатели выбираются по ФИО, а не вводом ID", SettingsLayout);
+        Case("Список API загружается и сохраняет ID выбранных ФИО", DirectoryAndAccess);
         Case("Черновик, выбор адресатов, поиск и применение галочек", DraftAndSelection);
         Case("Новый список исключает удаленных и не выбирает новых сам", UpdatedParticipants);
         Case("Большой список виртуализирован и доступен поиском", LargeList);
@@ -68,22 +75,17 @@ internal static class Program
     {
         Store.Values.Clear();
         AppSettings.SaveExtensionSetting(DocRegistryExtension.ExtensionId, DocRegistryExtension.SendersKey, Participants);
+        AppSettings.SaveExtensionSetting(DocRegistryExtension.ExtensionId, BotUsers.DirectoryKey, DirectoryJson);
         var settings = new SettingsView();
         using var owner = new ShownWindow(settings, 1100, 800);
         settings.ShowCategory("extensions");
         Pump();
-        var source = settings.GetVisualDescendants().OfType<TextBox>()
-            .Single(box => Equals(box.Tag, DocRegistryExtension.SendersKey));
-        var instruction = settings.GetVisualDescendants().OfType<Button>()
-            .Single(button => Equals(button.Content, SenderGreeting.ButtonText));
-        Expect(source.Parent is Grid && ReferenceEquals(source.Parent, instruction.Parent),
-            "поле участников и инструкция находятся в общей строке");
-        Expect(Grid.GetColumn(source) == 0 && Grid.GetColumn(instruction) == 2,
-            "кнопка инструкции стоит в правой колонке");
-        Expect(source.Bounds.Width > 80 && instruction.Bounds.Width > 60
-            && instruction.Bounds.Left >= source.Bounds.Right
-            && Math.Abs(source.Bounds.Center.Y - instruction.Bounds.Center.Y) <= 1,
-            "измеренные прямоугольники поля и кнопки расположены на одной линии");
+        Expect(!settings.GetVisualDescendants().OfType<TextBox>().Any(box => Equals(box.Tag, DocRegistryExtension.SendersKey)),
+            "ручного поля идентификаторов доступа нет");
+        var access = settings.GetVisualDescendants().OfType<BotAccessEditor>().Single();
+        var accessPicker = Find<ParticipantPicker>(access, "BotAccessUsers");
+        Expect(Find<Button>(access, "BotSendInstruction").Content!.Equals(SenderGreeting.ButtonText),
+            "инструкция отправляется рядом с выбором доступа");
         var editor = settings.GetVisualDescendants().OfType<ParticipantBroadcastEditor>().Single();
         var picker = Find<ParticipantPicker>(editor, "BroadcastRecipients");
         if (_output is not null)
@@ -92,12 +94,16 @@ internal static class Program
             Pump();
             Capture(owner.Window, "doc-registry-settings");
         }
-        // Фокус не менялся: чтение текущего TextBox должно работать и до LostFocus.
-        source.Text = "1004 Новый участник";
+        using (var accessPanel = new PickerPanel(accessPicker))
+        {
+            foreach (var id in new[] { "1001", "1002", "1003" }) RowCheck(accessPanel.Control, id, false);
+            RowCheck(accessPanel.Control, "1004", true);
+            Click(Find<Button>(accessPanel.Control, "RecipientDone"));
+        }
         picker.RefreshParticipants();
         using var panel = new PickerPanel(picker);
-        Expect(Rows(panel.Control).Select(RowLabel).SequenceEqual(["1004 Новый участник"]),
-            "выбор получает актуальный ввод поля, а не старую запись в хранилище");
+        Expect(Rows(panel.Control).Select(RowLabel).SequenceEqual(["Новый Новый Новикович"]),
+            "получатели рассылки показывают ФИО выбранного в доступе пользователя");
     }
 
     private static void DraftAndSelection()
@@ -146,19 +152,71 @@ internal static class Program
             && fixture.SaveCalls == 2 && fixture.Send.IsEnabled, "ввод сохраняет черновик без потери переносов");
     }
 
+    private static void DirectoryAndAccess()
+    {
+        var values = new Dictionary<string, string>
+        {
+            [BotUsers.DirectoryKey] = BotUsers.Save(new(11, 12)),
+            [DocRegistryExtension.SendersKey] = "1001",
+        };
+        var queries = new FakeQueries();
+        ShownWindow? owner = null;
+        var context = new ExtensionSettingEditorContext(k => values.GetValueOrDefault(k, ""),
+            (k, v) => values[k] = v, () => owner?.Window, () => null, () => queries);
+        var directory = new BotDirectoryEditor(context);
+        var access = new BotAccessEditor(context);
+        var panel = new StackPanel();
+        panel.Children.Add(directory);
+        panel.Children.Add(access);
+        using var shown = owner = new ShownWindow(panel, height: 720);
+        Click(Find<Button>(directory, "BotUsersRefresh"));
+        var pending = (Task?)typeof(BotDirectoryEditor).GetProperty("PendingLoad", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(directory);
+        Wait(() => pending?.IsCompleted == true, "список пользователей API не загрузился");
+        pending!.GetAwaiter().GetResult();
+        Expect(BotUsers.Directory(values[BotUsers.DirectoryKey]).People.Count == 2, "получены две карточки API");
+        var picker = Find<ParticipantPicker>(access, "BotAccessUsers");
+        using (var choices = new PickerPanel(picker))
+        {
+            Expect(Rows(choices.Control).Select(RowLabel).SequenceEqual(
+                ["Иванов Иван Иванович · Бюро 1", "Иванов Иван Иванович · Бюро 2"]),
+                "одинаковые ФИО различаются отделом, ID не служит основным именем");
+            RowCheck(choices.Control, "1002", true);
+            Click(Find<Button>(choices.Control, "RecipientDone"));
+        }
+        Expect(MessageRegistration.Senders(values[DocRegistryExtension.SendersKey]).SetEquals(["1001", "1002"]),
+            "выбор ФИО сохраняет связанные ID для проверки доступа");
+        var before = values[BotUsers.DirectoryKey];
+        queries.Ok = false;
+        Click(Find<Button>(directory, "BotUsersRefresh"));
+        Expect(values[BotUsers.DirectoryKey] == before && MessageRegistration.Senders(values[DocRegistryExtension.SendersKey]).Count == 2,
+            "ошибка API сохраняет прежние имена и список доступа");
+        queries.Ok = true;
+        queries.IdsOnly = true;
+        Click(Find<Button>(directory, "BotUsersRefresh"));
+        Expect(queries.ProfileIds.SequenceEqual(["1001", "1002"])
+            && BotUsers.Directory(values[BotUsers.DirectoryKey]).People.All(u => u.Complete),
+            "список только с ID дополняется карточками точных пользователей");
+        Find<ComboBox>(directory, "BotUserProfileRequest").SelectedIndex = 0;
+        Expect(BotUsers.Directory(values[BotUsers.DirectoryKey]).People.Count == 0
+            && MessageRegistration.Senders(values[DocRegistryExtension.SendersKey]).Count == 2,
+            "смена запроса карточки убирает старые имена, сохраняя возможность отозвать выбранные ID");
+    }
+
     private static void UpdatedParticipants()
     {
         using var fixture = new EditorFixture();
         Select(fixture.Picker, "1001", "1002");
-        fixture.Values[DocRegistryExtension.SendersKey] = "1001 Иванов после изменения; 1004 Новый";
+        fixture.Values[DocRegistryExtension.SendersKey] = "1001; 1004";
+        fixture.Values[BotUsers.DirectoryKey] = BotUsers.Save(new(Users: People.Select(p => p.Id == "1001"
+            ? p with { FullName = "Иванов Измененное Имя" } : p).ToArray()));
         fixture.Picker.RefreshParticipants();
         Expect(fixture.Picker.SelectedIds.SequenceEqual(["1001"]), "удаленный участник исключен, новый не выбран");
         using (var panel = new PickerPanel(fixture.Picker))
         {
-            Expect(Rows(panel.Control).Select(RowLabel).SequenceEqual(["1001 Иванов после изменения", "1004 Новый"]),
+            Expect(Rows(panel.Control).Select(RowLabel).SequenceEqual(["Иванов Измененное Имя", "Новый Новый Новикович"]),
                 "имена участников обновляются из текущего списка");
             RowCheck(panel.Control, "1004", true);
-            fixture.Values[DocRegistryExtension.SendersKey] = "1001 Иванов после изменения";
+            fixture.Values[DocRegistryExtension.SendersKey] = "1001";
             Click(Find<Button>(panel.Control, "RecipientDone"));
         }
         Expect(fixture.Picker.SelectedIds.SequenceEqual(["1001"]), "Готово повторно исключает адресата, удаленного при открытом списке");
@@ -190,9 +248,9 @@ internal static class Program
         Expect(!fixture.Message.IsEnabled && !fixture.Picker.IsEnabled && !fixture.Send.IsEnabled,
             "во время подтверждения поля и повторная отправка выключены");
         var shown = Find<TextBlock>(confirm, "MessageLabel").Text ?? "";
-        Expect(shown.Contains("1001 Иванов", StringComparison.Ordinal)
-            && shown.Contains("1003 Сидоров", StringComparison.Ordinal)
-            && !shown.Contains("1002 Петров", StringComparison.Ordinal), "подтверждение перечисляет только выбранных");
+        Expect(shown.Contains("Иванов Иван Иванович", StringComparison.Ordinal)
+            && shown.Contains("Сидоров Сидор Сидорович", StringComparison.Ordinal)
+            && !shown.Contains("Петров Петр Петрович", StringComparison.Ordinal), "подтверждение перечисляет только выбранных");
         Click(fixture.Send);
         Expect(ReferenceEquals(pending, Pending(fixture.Editor)), "повторное событие не запускает вторую операцию");
         Click(Find<Button>(confirm, "CancelBtn"));
@@ -278,7 +336,7 @@ internal static class Program
         var report = Dialog(fixture.Owner.Window);
         var text = Find<TextBlock>(report, "MessageLabel").Text ?? "";
         Expect(text.Contains("Отправлено: 2 из 3.", StringComparison.Ordinal)
-            && text.Contains("1002 Петров", StringComparison.Ordinal)
+            && text.Contains("Петров Петр Петрович", StringComparison.Ordinal)
             && text.Contains("Тестовая ошибка доставки", StringComparison.Ordinal), "отчет называет неуспешного участника и причину");
         Expect(fixture.Replies.Sent.Count == 3, "ошибка среднего адресата не блокирует последнего");
         CloseReport(fixture, pending, report);
@@ -302,7 +360,7 @@ internal static class Program
         var report = Dialog(fixture.Owner.Window);
         var text = Find<TextBlock>(report, "MessageLabel").Text ?? "";
         Expect(text.Contains("Отправлено: 1 из 3.", StringComparison.Ordinal)
-            && text.Contains("Доставка не подтверждена: 1002", StringComparison.Ordinal)
+            && text.Contains("Доставка не подтверждена: Петров Петр Петрович", StringComparison.Ordinal)
             && text.Contains("Отправка остановлена", StringComparison.Ordinal), "остановка не выдает прерванный запрос за успешную доставку");
         Expect(fixture.Replies.Sent.Count == 2 && !fixture.Replies.Sent.Any(s => s.Recipient == "1003"),
             "после остановки последний адресат не получает запрос");
@@ -513,6 +571,7 @@ internal static class Program
         public Dictionary<string, string> Values { get; } = new()
         {
             [DocRegistryExtension.SendersKey] = Participants,
+            [BotUsers.DirectoryKey] = DirectoryJson,
         };
         public FakeReplies Replies { get; } = new();
         public ParticipantBroadcastEditor Editor { get; }
@@ -580,5 +639,22 @@ internal static class Program
         public void Set(string key, string value) => Values[key] = value;
         public void Remove(string key) => Values.Remove(key);
         public IReadOnlyList<string> KeysWithPrefix(string prefix) => Values.Keys.Where(key => key.StartsWith(prefix, StringComparison.Ordinal)).ToArray();
+    }
+
+    private sealed class FakeQueries : IExtensionRequests
+    {
+        public bool Ok { get; set; } = true;
+        public bool IdsOnly { get; set; }
+        public List<string> ProfileIds { get; } = [];
+        public IReadOnlyList<ExtensionReadRequest> Requests => [new(11, "Список", 1), new(12, "Карточка", 1)];
+        public Task<ExtensionReadResult> ReadAsync(int requestId, IReadOnlyDictionary<string, string> fields, CancellationToken ct = default)
+        {
+            if (requestId == 12) ProfileIds.Add(fields["sender"]);
+            var json = IdsOnly && requestId == 11 ? "[{\"userId\":1001},{\"userId\":1002}]" : """
+                [{"userId":1001,"family":"Иванов","fname":"Иван","sname":"Иванович","division":"Бюро 1"},
+                 {"userId":1002,"family":"Иванов","fname":"Иван","sname":"Иванович","division":"Бюро 2"}]
+                """;
+            return Task.FromResult(new ExtensionReadResult(Ok, Ok ? "" : "API недоступно", json));
+        }
     }
 }

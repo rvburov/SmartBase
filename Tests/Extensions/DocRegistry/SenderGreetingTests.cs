@@ -73,10 +73,10 @@ public sealed class SenderGreetingTests
     {
         var settings = new DocRegistryExtension().Settings;
 
-        var withButton = Assert.Single(settings, s => s.Button is not null);
-        Assert.Equal(DocRegistryExtension.SendersKey, withButton.Key);
-        Assert.Equal("Отправить инструкцию", withButton.Button!.Text);
-        Assert.True(withButton.Button.Inline);
+        var access = Assert.Single(settings, s => s.Key == DocRegistryExtension.SendersKey);
+        Assert.NotNull(access.Editor);
+        Assert.Null(access.Button);
+        Assert.Equal("Доступ к боту", access.Label);
     }
 
     [Fact]

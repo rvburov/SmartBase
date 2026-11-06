@@ -33,6 +33,8 @@ public sealed class FileMessageScenarioTests : IDisposable
         AppSettings.AttachStore(_registry);
         AppSettings.SaveExtensionSetting(DocRegistryExtension.ExtensionId,
             DocRegistryExtension.OrgCodesKey, "АБВГ");
+        AppSettings.SaveExtensionSetting(DocRegistryExtension.ExtensionId,
+            DocRegistryExtension.SendersKey, "1001");
         _shape = JournalStand.Shape(_db.Constructor, JournalStand.Create(_db.Constructor));
     }
 
@@ -70,7 +72,7 @@ public sealed class FileMessageScenarioTests : IDisposable
         Assert.Equal("Учтен", _db.Constructor.GetFieldValues(first.Id!.Value)[_shape.AccountingFieldId]);
         var second = Assert.Single(records, record => record.Title == "Корпус");
         var values = _db.Constructor.GetFieldValues(second.Id!.Value);
-        Assert.Equal("Петров Петр Петрович", values[_shape.FioFieldId]);
+        Assert.Equal(BotStand.FullName, values[_shape.FioFieldId]);
         Assert.Equal("Второй проект", values[_shape.ProjectFieldId]);
 
         // Хеш постоянной квитанции считается расширением с полученных байтов, уже после HTTP.
@@ -300,7 +302,7 @@ public sealed class FileMessageScenarioTests : IDisposable
         Assert.Equal("Учтен", _db.Constructor.GetFieldValues(first.Id!.Value)[_shape.AccountingFieldId]);
         var second = Assert.Single(records, record => record.Title == "Корпус");
         var values = _db.Constructor.GetFieldValues(second.Id!.Value);
-        Assert.Equal("Петров Петр Петрович", values[_shape.FioFieldId]);
+        Assert.Equal(BotStand.FullName, values[_shape.FioFieldId]);
         Assert.Equal("Второй проект", values[_shape.ProjectFieldId]);
         var receipt = Assert.Single(_db.Context.DbMeta.AsNoTracking().Where(item =>
             item.Key.StartsWith("extension-state:doc-registry:file:")));
@@ -468,7 +470,7 @@ public sealed class FileMessageScenarioTests : IDisposable
         // скачивание и его ожидание, а подтверждать может только исходный отправитель.
         server.SetUnavailable();
         var wrongSender = await Run(scenario, PostEvent("Да", attachment: false,
-            messageId: PostMessageId + 1, author: "participant-18")).WaitAsync(TimeSpan.FromSeconds(2));
+            messageId: PostMessageId + 1, author: "1002")).WaitAsync(TimeSpan.FromSeconds(2));
         Assert.False(wrongSender.Ok);
         Assert.Empty(_db.Constructor.GetRecords(_shape.CollectionId));
         AssertPostRequests(server, attempts);
@@ -500,6 +502,12 @@ public sealed class FileMessageScenarioTests : IDisposable
             Name = "Сторонняя программа", Address = $"http://127.0.0.1:{server.Port}",
             TimeoutSeconds = 10, Retries = 0,
         });
+        var profile = cards.SaveRequest(IntegrationRequest.New() with
+        {
+            Name = "Карточка отправителя", ConnectionId = connection.Id, Path = "/profiles/{{поле.sender}}",
+        });
+        AppSettings.SaveExtensionSetting(DocRegistryExtension.ExtensionId, BotUsers.DirectoryKey,
+            BotUsers.Save(new(ProfileRequestId: profile.Id)));
         var request = cards.SaveRequest(IntegrationRequest.New() with
         {
             Name = "Получение вложения", ConnectionId = connection.Id,
@@ -547,7 +555,7 @@ public sealed class FileMessageScenarioTests : IDisposable
     {
         var source = new Dictionary<string, string>
         {
-            ["author"] = "participant-17", ["event-id"] = messageId,
+            ["author"] = "1001", ["event-id"] = messageId,
         };
         if (text is not null) source["body"] = text;
         if (attachment)
@@ -562,7 +570,7 @@ public sealed class FileMessageScenarioTests : IDisposable
     }
 
     private static StepTable PostEvent(string? text = null, bool attachment = true, int messageId = PostMessageId,
-                                      string author = "participant-17")
+                                      string author = "1001")
     {
         var source = new Dictionary<string, object>
         {
@@ -685,6 +693,15 @@ public sealed class FileMessageScenarioTests : IDisposable
                     var bytes = new byte[length];
                     await stream.ReadExactlyAsync(bytes, _stop.Token);
                     var body = Encoding.UTF8.GetString(bytes);
+                    if (headers[0].StartsWith("GET /profiles/", StringComparison.Ordinal))
+                    {
+                        var json = BotUsersTests.Profile;
+                        var profileBytes = Encoding.UTF8.GetBytes(json);
+                        await stream.WriteAsync(Encoding.ASCII.GetBytes($"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {profileBytes.Length}\r\nConnection: close\r\n\r\n"), _stop.Token);
+                        await stream.WriteAsync(profileBytes, _stop.Token);
+                        await stream.FlushAsync(_stop.Token);
+                        return;
+                    }
                     Requests.Enqueue(headers[0]);
                     Bodies.Enqueue(body);
                     var valid = _messageId is null || ValidPost(headers, body);

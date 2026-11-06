@@ -430,7 +430,7 @@ public static partial class ScenarioRunner
                                                                          scenario.Name, mark, now, ct),
                     ScenarioStepKind.Request => await RequestStepAsync(step, registry, databases,
                                                                        carry, scenario.Name, mark, now, ct),
-                    ScenarioStepKind.Action  => await ActionStepAsync(step, databases, extensions,
+                    ScenarioStepKind.Action  => await ActionStepAsync(step, registry, scenario.Trigger.StreamId, databases, extensions,
                                                                       table, text, file, fileName, scenario.Name,
                                                                       $"{scenario.Id}:{scenario.Trigger.StreamId}", now, ct),
                     ScenarioStepKind.Intake  => IntakeStep(step, scenario.Name, mark, now, ref taken),
@@ -658,6 +658,8 @@ public static partial class ScenarioRunner
     /// </summary>
     /// <param name="scenario">Имя сценария для рабочего журнала.</param>
     private static async Task<StepOutcome> ActionStepAsync(ScenarioStep                   step,
+                                                           IntegrationsRegistry registry,
+                                                           int sourceStreamId,
                                                            IReadOnlyList<DatabaseManager> databases,
                                                            IReadOnlyList<IExtension>      extensions,
                                                            StepTable?                     incoming,
@@ -719,6 +721,19 @@ public static partial class ScenarioRunner
 
         try
         {
+            // Подготовка выполняется до изолированного подключения и транзакций записи.
+            // Контекст реестра запросов остается на вызывающем потоке.
+            var sourceConnection = sourceStreamId > 0 ? registry.FindStream(sourceStreamId)?.ConnectionId ?? 0 : 0;
+            var requests = new ExtensionRequests(registry, sourceConnection);
+            for (var i = 0; i < inputs.Count; i++)
+            {
+                var prepared = await action.PrepareAsync(inputs[i], settings, requests, ct);
+                if (prepared.Failure is { } refused)
+                    return new StepOutcome(false, refused.Explanation, Reply: refused.Answer);
+                inputs[i] = prepared.Input;
+            }
+            if (!settings.OrderBy(p => p.Key).SequenceEqual(SettingsOf(step, extensions).OrderBy(p => p.Key)))
+                return StepOutcome.Bad("Настройки расширения изменились во время подготовки. Повторите запрос.");
             await Task.Run(() => target.Constructor.UseIsolated(step.CollectionId, repo =>
             {
                 var context = new ActionContext(repo, step.DbId, step.CollectionId, now, settings,

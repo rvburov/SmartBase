@@ -26,7 +26,7 @@ public sealed class ReplyMarkupTests
         });
 
     private static ActionResult Run(ActionContext context, string text, string sender = "1001") =>
-        Action.Run(context, new ActionInput(new Dictionary<string, string>(StringComparer.Ordinal)
+        BotStand.Run(context, new ActionInput(new Dictionary<string, string>(StringComparer.Ordinal)
         {
             [RegisterMessageAction.TextField]   = text,
             [RegisterMessageAction.SenderField] = sender,
@@ -107,16 +107,16 @@ public sealed class ReplyMarkupTests
     }
 
     [Fact]
-    public void An_unlisted_sender_gets_the_normal_registration_question()
+    public void An_unlisted_sender_gets_an_access_refusal_without_writing()
     {
         using var db = new TempDatabase();
         var journal = JournalStand.Create(db.Constructor);
 
         var result = Run(Context(db, journal), Message(), sender: "9999");
 
-        Assert.True(result.Ok, result.Explanation);
-        Assert.StartsWith("<b>Заявка на регистрацию</b>\n", result.Reply, StringComparison.Ordinal);
-        Assert.DoesNotContain("<", result.Explanation, StringComparison.Ordinal);
+        Assert.False(result.Ok);
+        Assert.Contains("нет доступа", ReplyMarkup.Text(result.Reply), StringComparison.Ordinal);
+        Assert.Empty(db.Constructor.GetRecords(journal));
     }
 
     /// <summary>
@@ -323,7 +323,7 @@ public sealed class ReplyMarkupTests
                 _          => string.Join("\n", lines.Select(l => "\u2022\u00a0" + l)),
             };
 
-            var (request, problems) = MessageRegistration.Read(text, ["АБВГ"]);
+            var (request, problems) = MessageRegistration.Read(text, ["АБВГ"], BotStand.FullName);
 
             Assert.Empty(problems);
             Assert.Equal("Кронштейн", request!.Name);
@@ -338,14 +338,15 @@ public sealed class ReplyMarkupTests
     {
         var sample = Regex.Match(Instruction(), "<blockquote>(Действие: Изменение.*?)</blockquote>").Value;
 
-        Assert.Equal(5, MessageRegistration.KnownLines(sample));
-        Assert.Equal(5, MessageRegistration.KnownLines("> " + ReplyMarkup.Text(sample).Trim().Replace("\n", "\n> ")));
+        Assert.Equal(4, MessageRegistration.KnownLines(sample));
+        Assert.Equal(4, MessageRegistration.KnownLines("> " + ReplyMarkup.Text(sample).Trim().Replace("\n", "\n> ")));
     }
 
     /// <summary>Актуальный текст инструкции без оформления — образец ее слов.</summary>
     private const string PlainInstruction = """
         Инструкция по работе с журналом КД
 
+        Работа с ботом доступна выбранным администратором пользователям. ФИО в профиле должно быть заполнено полностью.
         Доступны четыре действия: регистрация, просмотр, удаление и изменение.
         Каждое поле пишите с новой строки в формате Поле: значение. Вместо данных из примеров указывайте свои.
 
@@ -355,9 +356,8 @@ public sealed class ReplyMarkupTests
         Номер: АБВГ.301121.ХХХ
         Наименование: Кронштейн
         Проект: Машина
-        ФИО: Иванов Иван Иванович
 
-        Все пять полей обязательны. ФИО указывайте полностью.
+        Все четыре поля обязательны. ФИО регистрирующего берется из карточки отправителя в API; писать его в сообщении не нужно.
         Вместо ХХХ программа подставит первый свободный номер и пришлет результат регистрации.
         Для нового документа указывайте маску ХХХ. Готовый номер, например АБВГ.301121.001, для регистрации не принимается.
         Если в журнале еще нет документов с таким кодом организации и классификации, программа покажет расшифровку кода ЕСКД и попросит подтверждение. Так бывает с первым документом серии — по маске ХХХ или маске исполнения.
@@ -370,10 +370,10 @@ public sealed class ReplyMarkupTests
 
         Номер: АБВГ.301121.ХХХ, АБВГ.806121.ХХХ, АБВГ.301121.ХХХ
 
-        В одной заявке не больше 100 номеров. Наименование, проект и ФИО общие для всего списка. Повтор маски запрашивает еще один свободный номер.
+        В одной заявке не больше 100 номеров. Наименование и проект общие для всего списка; ФИО заполняется по карточке отправителя. Повтор маски запрашивает еще один свободный номер.
         Если в одном номере ошибка, не регистрируется весь список. Если требуется подтверждение, один ответ Да или Нет относится ко всему списку.
         При настроенном приеме вложений можно отправить книгу .xlsx или .xlsm по шаблону журнала:
-        Первый лист, восемь колонок журнала, до 1000 строк и 10 МБ. Наименование, проект и ФИО указываются в каждой строке.
+        Первый лист, семь колонок журнала без ФИО регистрирующего, до 1000 строк и 10 МБ. Наименование и проект указываются в каждой строке. ФИО во всех строках берется у отправителя файла; старый столбец ФИО, если остался, игнорируется.
         Ошибка отклоняет весь файл; ответ Да или Нет подтверждает либо отменяет весь список. В ответ придут номера текстом, исходная книга не изменяется.
         Для регистрации следующего исполнения уже выданного документа:
 
@@ -381,7 +381,6 @@ public sealed class ReplyMarkupTests
         Номер: АБВГ.301121.001-ХХ
         Наименование: Кронштейн
         Проект: Машина
-        ФИО: Иванов Иван Иванович
 
         Вместо ХХ будет выдано свободное исполнение, например 001-01.
         Повторная отправка заявки на регистрацию создает новую запись. Не отправляйте ее повторно, если уже получили успешный ответ.
@@ -409,9 +408,8 @@ public sealed class ReplyMarkupTests
         Номер: АБВГ.301121.001
         Наименование: Опора
         Проект: Станок
-        ФИО: Петров Петр Петрович
 
-        Указывайте только те поля, которые хотите заменить. Можно менять наименование, проект и ФИО. Остальные значения сохраняются.
+        Указывайте только те поля, которые хотите заменить. Можно менять наименование и проект. ФИО регистрирующего командой не меняется; остальные значения сохраняются.
         Например, для изменения только проекта:
 
         Действие: Изменение

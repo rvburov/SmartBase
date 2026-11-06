@@ -18,13 +18,13 @@ namespace SmartBase.Extensions.DocRegistry;
 ///   исполнение, и выполнить ее можно только с журналом в руках.</item>
 /// </list>
 ///
-/// <b>Откуда пришло сообщение, действие не знает.</b> Текст и отправителя приносит шаг сценария:
-/// какая колонка события ляжет в какое поле, решает человек при настройке шага. Поэтому одно и
-/// то же действие работает с любой программой, которая умеет прислать текст и назвать того, кто
-/// его написал.
+/// Текст и ID отправителя приносит шаг сценария: какая колонка события ляжет в какое поле,
+/// решает человек при настройке шага. Профиль читается сохраненным запросом через ядро;
+/// поля карточки API разбирает <see cref="BotUsers"/>.
 ///
-/// Отправитель и источник связывают ответ Да/Нет с ожидающей заявкой. Список получателей
-/// инструкции не ограничивает регистрацию; ФИО сообщения остается общим автором документов.
+/// Отправитель и источник связывают ответ Да/Нет с ожидающей заявкой. Список доступа проверяется
+/// для каждой команды; ФИО регистратора берется из карточки API,
+/// полученной подготовкой действия, а не из полей сообщения или книги.
 ///
 /// <b>Два вида отказа.</b> Причину в самом сообщении отправитель исправит сам, и отказ обращен к
 /// нему (<see cref="ActionResult.Refused"/>). Причина в настройке — журнал не тот, подключения
@@ -61,6 +61,9 @@ public sealed class RegisterMessageAction : IExtensionAction
     public ExtensionActionKind Kind => ExtensionActionKind.Operation;
     public bool AcceptsFile => true;
 
+    public Task<ActionPreparation> PrepareAsync(ActionInput input, IReadOnlyDictionary<string, string> settings,
+        IExtensionRequests requests, CancellationToken ct = default) => BotUsers.PrepareAsync(input, settings, requests, ct);
+
     public IReadOnlyList<ExtensionActionField> Fields =>
     [
         // Текст необязателен намеренно: на пустое сообщение отправитель должен получить перечень
@@ -80,9 +83,20 @@ public sealed class RegisterMessageAction : IExtensionAction
                 "отправитель не назван: в шаге не заполнено поле «Отправитель» либо в событии "
                 + "нет такой колонки");
 
+        if (!BotUsers.Allowed(context.Setting(DocRegistryExtension.SendersKey), sender))
+            return ReplyMarkup.Refused(BotUsers.Denied);
+
+        var text = input.Value(TextField);
+        var operation = MessageRegistration.Value(MessageRegistration.Lines(text), MessageRegistration.ActionKey);
+        var registering = input.Bytes is not null || RegistrySchema.SameName(operation, MessageRegistration.RegisterWord);
+        if (registering && (input.Identity is not { } identity
+            || !identity.Id.Equals(sender, StringComparison.OrdinalIgnoreCase)
+            || !RegistryImport.IsFullName(identity.FullName)))
+            return ReplyMarkup.Refused("Не получено полное ФИО отправителя из API. Проверьте настройку запроса данных пользователя.");
+
         if (input.Bytes is not null)
             return DocumentMessages.RegisterFile(context, input.Bytes, input.FileName, sender,
-                input.Value(MessageIdField));
+                input.Value(MessageIdField), input.Identity!.FullName);
 
         // Поле не заполнено В ШАГЕ — это настройка, а не сообщение: отправитель написал все как
         // надо, а текст до действия не доехал. Перечень «не указано…» в ответ на правильное
@@ -94,8 +108,6 @@ public sealed class RegisterMessageAction : IExtensionAction
 
         var orgs = DocRegistryExtension.ParseOrgCodes(context.Setting(DocRegistryExtension.OrgCodesKey));
 
-        var text = input.Value(TextField);
-
         if (RegistrySchema.SameName(MessageRegistration.Plain(text).Trim(), "Инструкция"))
             return new ActionResult(true, "Выдана инструкция по работе с журналом КД",
                                     Rows: 0, Reply: MessageInstructions.Text);
@@ -106,10 +118,10 @@ public sealed class RegisterMessageAction : IExtensionAction
         // Запятая относится только к значению «Номер»: запятые в наименовании или проекте
         // не превращают обычную регистрацию в список.
         var isBatch = MessageRegistration.Value(MessageRegistration.Lines(text), MessageRegistration.NumberKey).Contains(',');
-        var batch = isBatch ? MessageRegistration.ReadBatch(text, orgs) : null;
+        var batch = isBatch ? MessageRegistration.ReadBatch(text, orgs, input.Identity?.FullName) : null;
         var (request, problems) = isBatch
             ? (null, (IReadOnlyList<string>)Array.Empty<string>())
-            : MessageRegistration.Read(text, orgs);
+            : MessageRegistration.Read(text, orgs, input.Identity?.FullName);
 
         if (!isBatch && request is null)
         {

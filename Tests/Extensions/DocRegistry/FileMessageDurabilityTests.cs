@@ -91,7 +91,7 @@ public sealed class FileMessageDurabilityTests
     }
 
     private static ActionResult Call(ConstructorRepository repo, RegistryShape shape, byte[] bytes) =>
-        new RegisterMessageAction().Run(new ActionContext(repo, 1, shape.CollectionId, Now,
+        BotStand.Run(new ActionContext(repo, 1, shape.CollectionId, Now,
             new Dictionary<string, string> { [DocRegistryExtension.OrgCodesKey] = "АБВГ" },
             Session: new object(), Channel: "durability-channel"), new ActionInput(new Dictionary<string, string>
             {

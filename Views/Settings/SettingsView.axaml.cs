@@ -401,7 +401,8 @@ public partial class SettingsView : UserControl
                     AppSettings.SaveExtensionSetting(extension.Id, key, value);
                 },
                 () => VisualRoot as Window,
-                () => _registry is { } registry ? new ActionReplies(registry.Integrations) : null);
+                () => _registry is { } registry ? new ActionReplies(registry.Integrations) : null,
+                () => _registry is { } data ? new ExtensionRequests(data.Integrations) : null);
 
             foreach (var setting in extension.Settings)
                 rows.Children.Add(BuildSettingField(extension, setting, context, fields));

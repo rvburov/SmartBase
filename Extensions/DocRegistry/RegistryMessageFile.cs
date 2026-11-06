@@ -14,7 +14,7 @@ public static class RegistryMessageFile
 
     /// <summary>Читает существующий шаблон журнала, сохраняя настоящие номера строк первого листа.</summary>
     public static IReadOnlyList<ImportRow> Read(byte[] bytes, string fileName,
-                                               CancellationToken ct = default)
+                                               CancellationToken ct = default, string? senderFio = null)
     {
         ct.ThrowIfCancellationRequested();
         var name = SafeName(fileName);
@@ -34,7 +34,7 @@ public static class RegistryMessageFile
             var path = Path.Combine(directory, "input" + extension.ToLowerInvariant());
             File.WriteAllBytes(path, bytes);
             ct.ThrowIfCancellationRequested();
-            var rows = RegistryFile.Read(path, MaxRows, ct);
+            var rows = RegistryFile.Read(path, MaxRows, ct, senderFio);
             ct.ThrowIfCancellationRequested();
             return rows;
         }

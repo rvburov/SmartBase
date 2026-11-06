@@ -48,7 +48,8 @@ public sealed class ParticipantBroadcastEditor : UserControl
             Text = _savedDraft,
         };
         ScrollViewer.SetVerticalScrollBarVisibility(_message, Avalonia.Controls.Primitives.ScrollBarVisibility.Auto);
-        _recipients = new ParticipantPicker(() => context.Read(DocRegistryExtension.SendersKey))
+        _recipients = new ParticipantPicker(() => BotUsers.Recipients(context.Read(DocRegistryExtension.SendersKey),
+            context.Read(BotUsers.DirectoryKey)))
         {
             Name = "BroadcastRecipients",
             HorizontalAlignment = HorizontalAlignment.Stretch,
@@ -203,10 +204,12 @@ public sealed class ParticipantBroadcastEditor : UserControl
         _recipients.RefreshParticipants();
         var text = _message.Text ?? "";
         var source = _context.Read(DocRegistryExtension.SendersKey);
-        var selected = ParticipantBroadcast.Select(source, _recipients.SelectedIds);
+        var selectedIds = _recipients.SelectedIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var selected = BotUsers.Recipients(source, _context.Read(BotUsers.DirectoryKey))
+            .Where(p => selectedIds.Contains(p.Id)).ToArray();
         var attachments = _attachments.ToArray();
         var uploadRequestId = (_uploadRequest.SelectedItem as ReplyUploadRequest)?.Id ?? 0;
-        if (string.IsNullOrWhiteSpace(text) || selected.Count == 0 || _context.Owner() is not { } owner)
+        if (string.IsNullOrWhiteSpace(text) || selected.Length == 0 || _context.Owner() is not { } owner)
         {
             UpdateSendState();
             return;

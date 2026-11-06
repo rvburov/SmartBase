@@ -18,6 +18,7 @@ internal sealed class HttpStand : IDisposable
     private readonly TcpListener             _listener = new(IPAddress.Loopback, 0);
     private readonly CancellationTokenSource _stop     = new();
     private readonly byte[]                  _answer;
+    public System.Collections.Concurrent.ConcurrentQueue<string> Requests { get; } = new();
 
     public HttpStand(string json)
     {
@@ -62,14 +63,18 @@ internal sealed class HttpStand : IDisposable
                 // что конец заголовков и есть конец запроса.
                 var matched = 0;
                 var one     = new byte[1];
+                var head = new StringBuilder();
 
                 while (matched < 4)
                 {
                     if (await stream.ReadAsync(one, _stop.Token) == 0) return;
+                    head.Append((char)one[0]);
 
                     var expected = matched % 2 == 0 ? '\r' : '\n';
                     matched = one[0] == expected ? matched + 1 : one[0] == '\r' ? 1 : 0;
                 }
+
+                Requests.Enqueue(head.ToString().Split("\r\n")[0]);
 
                 await stream.WriteAsync(_answer, _stop.Token);
                 await stream.FlushAsync(_stop.Token);

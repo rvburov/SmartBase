@@ -114,6 +114,9 @@ public sealed record ActionInput(
     IReadOnlyList<IReadOnlyDictionary<string, string>>? Rows  = null,
     string                                              FileName = "")
 {
+    /// <summary>Проверенная подготовкой личность; подстановки сценария это свойство не заполняют.</summary>
+    public ActionIdentity? Identity { get; init; }
+
     /// <summary>Значение поля; чего нет — пустая строка. Крайние пробелы снимаются.</summary>
     public string Value(string key) =>
         Values.TryGetValue(key, out var value) ? (value ?? "").Trim() : "";
@@ -197,8 +200,9 @@ public sealed record ActionResult(
 /// шагом, а откуда пришли данные (папка обмена, ответ сторонней программы, файл руками), действие
 /// не спрашивает.
 ///
-/// <b>В сеть действие не ходит и запросов не принимает.</b> Транспорт остается у оболочки:
-/// транспортный код размножился бы по числу расширений. Правило сторожит сборка —
+/// <b>Сетевой транспорт остается у оболочки.</b> Подготовка может прочитать данные сохраненным
+/// запросом через IExtensionRequests до открытия подключения записи; Run работает с готовым входом.
+/// Без этой границы транспортный код размножился бы по числу расширений. Правило сторожит сборка —
 /// <c>OneDoorOutwardTests</c> роняет тесты, если в
 /// <c>Extensions/</c> встретился сетевой тип.
 ///
@@ -208,6 +212,13 @@ public sealed record ActionResult(
 /// </summary>
 public interface IExtensionAction
 {
+    /// <summary>
+    /// Получить внешние данные до открытия подключения для записи. По умолчанию вход не меняется.
+    /// Сеть и учетные данные обслуживает оболочка, все операции с БД остаются в Run.
+    /// </summary>
+    Task<ActionPreparation> PrepareAsync(ActionInput input, IReadOnlyDictionary<string, string> settings,
+        IExtensionRequests requests, CancellationToken ct = default) => Task.FromResult(new ActionPreparation(input));
+
     /// <summary>Принимает файл предыдущего шага вместе со значениями записи.
     /// Остальные действия не получают двоичные данные молча.</summary>
     bool AcceptsFile => false;

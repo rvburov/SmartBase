@@ -11,7 +11,7 @@ namespace SmartBase.Extensions.DocRegistry;
 /// документ, номер подберется первым свободным.</param>
 /// <param name="Name">Наименование документа.</param>
 /// <param name="Project">Проект.</param>
-/// <param name="Fio">ФИО регистрирующего — как написано в сообщении.</param>
+/// <param name="Fio">ФИО регистрирующего: у бота из карточки отправителя API.</param>
 public sealed record RegistrationRequest(string Org, string Eskd, int? Number,
                                          string Name, string Project, string Fio)
 {
@@ -46,8 +46,8 @@ public sealed record BatchRegistrationRead(IReadOnlyList<BatchRegistrationItem> 
 /// Номер: АБВГ.301121.ХХХ
 /// Наименование: Кронштейн
 /// Проект: Машина
-/// ФИО: Иванов Иван Иванович
 /// </code>
+/// Бот передает ФИО отдельно из карточки API; строка ФИО в тексте его не заменяет.
 ///
 /// <b>Все ошибки сразу.</b> Отправитель исправляет сообщение по ответу, и ответ «не указан
 /// проект», за которым после исправления приходит «неправильный номер», — это три круга
@@ -127,11 +127,11 @@ public static class MessageRegistration
     /// отказывать в регистрации из-за незаполненной настройки нечестно по отношению к отправителю:
     /// код все равно проверяется по форме).</param>
     public static (RegistrationRequest? Request, IReadOnlyList<string> Problems) Read(
-        string? text, IReadOnlyList<string> orgCodes) => ReadValues(Lines(text), orgCodes);
+        string? text, IReadOnlyList<string> orgCodes, string? senderFio = null) => ReadValues(Lines(text), orgCodes, senderFio);
 
     /// <summary>Те же правила для колонок книги: перенос внутри ячейки не становится новой строкой сообщения.</summary>
     internal static (RegistrationRequest? Request, IReadOnlyList<string> Problems) ReadValues(
-        List<(string Key, string Value)> values, IReadOnlyList<string> orgCodes)
+        List<(string Key, string Value)> values, IReadOnlyList<string> orgCodes, string? senderFio = null)
     {
         var problems = new List<string>();
 
@@ -159,7 +159,7 @@ public static class MessageRegistration
         if (project.Length == 0)
             problems.Add($"{ProjectKey}: не указан проект");
 
-        var fio = Collapse(Value(values, FioKey));
+        var fio = Collapse(senderFio ?? Value(values, FioKey));
         if (fio.Length == 0)
             problems.Add($"{FioKey}: не указано ФИО (Пример: {FioExample})");
         else if (!RegistryImport.IsFullName(fio))
@@ -179,7 +179,7 @@ public static class MessageRegistration
     /// Порядок, повторы и пустые элементы сохраняются: одинаковые маски означают несколько
     /// документов, а случайная двойная запятая — ошибку, не сокращение заявки.
     /// </summary>
-    public static BatchRegistrationRead ReadBatch(string? text, IReadOnlyList<string> orgCodes)
+    public static BatchRegistrationRead ReadBatch(string? text, IReadOnlyList<string> orgCodes, string? senderFio = null)
     {
         var values = Lines(text);
         var common = new List<string>();
@@ -193,7 +193,7 @@ public static class MessageRegistration
         if (name.Length == 0) common.Add($"{NameKey}: не указано наименование");
         var project = Value(values, ProjectKey);
         if (project.Length == 0) common.Add($"{ProjectKey}: не указан проект");
-        var fio = Collapse(Value(values, FioKey));
+        var fio = Collapse(senderFio ?? Value(values, FioKey));
         if (fio.Length == 0)
             common.Add($"{FioKey}: не указано ФИО (Пример: {FioExample})");
         else if (!RegistryImport.IsFullName(fio))
@@ -325,7 +325,7 @@ public static class MessageRegistration
 
     // ── ФИО ───────────────────────────────────────────────────────────────────
 
-    /// <summary>ФИО к одному виду: слова через один пробел — и при регистрации, и при изменении.</summary>
+    /// <summary>ФИО к одному виду: слова через один пробел.</summary>
     internal static string Collapse(string text) =>
         string.Join(" ", text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
 
@@ -395,7 +395,7 @@ public static class MessageRegistration
     private static readonly char[] LineBreaks = ['\n', '\r', '\u2028', '\u2029', '\u0085', '\v', '\f'];
 
     /// <summary>
-    /// Сколько строк сообщения узнано — из пяти, которые оно должно содержать. Ноль на непустом
+    /// Сколько строк сообщения узнано. Ноль на непустом
     /// тексте значит, что действию дали не сообщение: это видно тому, кто настраивал шаг, а не
     /// отправителю.
     /// </summary>

@@ -8,10 +8,11 @@ namespace SmartBase.Extensions.DocRegistry;
 /// Проверка содержимого здесь не идет — ею занимается <see cref="RegistryImport"/>; здесь
 /// отсеивается только то, из-за чего читать нечего: не тот формат, не тот лист, не те столбцы.
 ///
-/// Столбцы в файле — ТЕ ЖЕ ВОСЕМЬ, что в коллекции-журнале (<see cref="RegistrySchema.Columns"/>),
+/// При ручном импорте столбцы в файле — те же восемь, что в журнале (<see cref="RegistrySchema.Columns"/>),
 /// и ищутся так же — по именам, в любом порядке, лишние пропускаются. Правило одно на файл и на
 /// журнал намеренно: файл делают выгрузкой из журнала или по его образцу, и выгрузка журнала со
 /// своими столбцами (для письма и прочего) обязана читаться без правки шапки.
+/// Бот передает ФИО из карточки отправителя отдельно: столбец ФИО в книге необязателен и не читается.
 /// </summary>
 public static class RegistryFile
 {
@@ -27,7 +28,8 @@ public static class RegistryFile
     public static IReadOnlyList<ImportRow> Read(string path) => Read(path, int.MaxValue);
 
     /// <summary>Ограниченный разбор вложения. Ручной импорт сохраняет прежний предел.</summary>
-    internal static IReadOnlyList<ImportRow> Read(string path, int maxRows, CancellationToken ct = default)
+    internal static IReadOnlyList<ImportRow> Read(string path, int maxRows, CancellationToken ct = default,
+        string? senderFio = null)
     {
         if (!File.Exists(path))
             throw new DocRegistryException($"Файл не найден: {path}");
@@ -54,7 +56,7 @@ public static class RegistryFile
 
         // Номера столбцов эталона в книге — в порядке эталона: 0 — «Наименование», 1 —
         // «Обозначение» и так далее.
-        var at = Header(used.FirstRow(), sheet.Name);
+        var at = Header(used.FirstRow(), sheet.Name, senderFio is not null);
 
         var rows = new List<ImportRow>();
 
@@ -76,7 +78,7 @@ public static class RegistryFile
                 Line:        row.WorksheetRow().RowNumber(),
                 Name:        Text(row.Cell(at[0])),
                 Designation: Text(row.Cell(at[1])),
-                Fio:         Text(row.Cell(at[2])),
+                Fio:         senderFio ?? Text(row.Cell(at[2])),
                 Project:     Text(row.Cell(at[4])),
                 Accounting:  Text(row.Cell(at[5])),
                 FirstUse:    Text(row.Cell(at[6])),
@@ -94,10 +96,17 @@ public static class RegistryFile
     /// эталона. Сообщения — как у проверки коллекции (<see cref="RegistrySchema.Check"/>):
     /// человек видит один и тот же разбор и там и тут.
     /// </summary>
-    private static IReadOnlyList<int> Header(IXLRangeRow header, string sheetName)
+    private static IReadOnlyList<int> Header(IXLRangeRow header, string sheetName, bool fromSender)
     {
         var cells = header.Cells().Select((cell, i) => (Name: Text(cell), Number: i + 1)).ToList();
 
+        // В книге бота ФИО заполняет карточка отправителя. Старый столбец, если остался,
+        // игнорируется; отсутствие столбца не сдвигает остальные значения.
+        if (fromSender)
+        {
+            cells.RemoveAll(c => RegistrySchema.SameName(c.Name, RegistrySchema.FioColumn));
+            cells.Add((RegistrySchema.FioColumn, 0));
+        }
         var (found, problem) = RegistrySchema.Find(cells, c => c.Name);
 
         return found?.Select(c => c.Number).ToList()

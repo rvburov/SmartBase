@@ -22,7 +22,7 @@ namespace SmartBase.Extensions.DocRegistry;
 /// </summary>
 public sealed class ParticipantPicker : UserControl
 {
-    private readonly Func<string> _source;
+    private readonly Func<IReadOnlyList<BroadcastRecipient>> _source;
     private readonly HashSet<string> _selected = new(StringComparer.OrdinalIgnoreCase);
     private readonly TextBlock _summary;
     private readonly Button _button;
@@ -36,7 +36,9 @@ public sealed class ParticipantPicker : UserControl
 
     public string Summary => _summary.Text ?? "";
 
-    public ParticipantPicker(Func<string> source)
+    public ParticipantPicker(Func<string> source) : this(() => ParticipantBroadcast.Participants(source())) { }
+
+    public ParticipantPicker(Func<IReadOnlyList<BroadcastRecipient>> source)
     {
         _source = source;
         _summary = new TextBlock
@@ -76,11 +78,20 @@ public sealed class ParticipantPicker : UserControl
     /// <summary>Перечитать текущее поле настроек. Новые адресаты сами не выбираются.</summary>
     public void RefreshParticipants()
     {
-        _participants = ParticipantBroadcast.Participants(_source());
+        _participants = _source();
         var before = _selected.Count;
         _selected.IntersectWith(_participants.Select(p => p.Id));
         RefreshSummary();
         if (_selected.Count != before) SelectionChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    public void SetSelected(IEnumerable<string> ids)
+    {
+        RefreshParticipants();
+        _selected.Clear();
+        _selected.UnionWith(ids);
+        _selected.IntersectWith(_participants.Select(p => p.Id));
+        RefreshSummary();
     }
 
     public void Open()

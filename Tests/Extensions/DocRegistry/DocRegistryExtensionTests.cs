@@ -40,6 +40,7 @@ public sealed class DocRegistryExtensionTests
             DocRegistryExtension.FioKey,
             DocRegistryExtension.DatabaseKey,
             DocRegistryExtension.CollectionKey,
+            BotUsers.DirectoryKey,
             DocRegistryExtension.SendersKey,
             ParticipantBroadcastEditor.DraftKey,
         ], keys);

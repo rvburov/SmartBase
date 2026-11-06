@@ -41,7 +41,7 @@ public sealed record ExtensionSettingButton(string Text, Func<ExtensionSettingRu
 /// <param name="Replies">Текущий путь отправки ответов; <c>null</c> — интеграции недоступны.</param>
 public sealed record ExtensionSettingEditorContext(
     Func<string, string> Read, Action<string, string> Save,
-    Func<Window?> Owner, Func<IActionReplies?> Replies);
+    Func<Window?> Owner, Func<IActionReplies?> Replies, Func<IExtensionRequests?>? Requests = null);
 
 /// <summary>Что оболочка дает кнопке настройки.</summary>
 /// <param name="Owner">Окно настроек — владелец диалогов кнопки.</param>

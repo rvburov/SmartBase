@@ -32,7 +32,7 @@ public sealed class DocumentMessageTests : IDisposable
     private ActionResult Call(string text, string sender = "1001", DateTimeOffset? at = null,
                               int? journal = null, int dbId = 1, string senders = "1001 Иванов; 1002 Петров",
                               ConstructorRepository? repo = null) =>
-        new RegisterMessageAction().Run(new ActionContext(repo ?? _db.Constructor, dbId, journal ?? _journal,
+        BotStand.Run(new ActionContext(repo ?? _db.Constructor, dbId, journal ?? _journal,
             at ?? Now, new Dictionary<string, string>
             {
                 [DocRegistryExtension.OrgCodesKey] = "АБВГ",
@@ -99,7 +99,7 @@ public sealed class DocumentMessageTests : IDisposable
     public void Editing_previews_old_and_new_values_and_preserves_the_number_and_date(string answer)
     {
         var before = _db.Constructor.GetFieldValues(_id);
-        var result = Call(Request("Изменение") + "\nНаименование: Опора\nПроект: Станок\nФИО: Петров Петр Петрович");
+        var result = Call(Request("Изменение") + "\nНаименование: Опора\nПроект: Станок");
         Assert.True(result.Ok, result.Explanation);
         Assert.Contains("Наименование: Кронштейн → Опора", ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
         Assert.Contains("Проект: Машина → Станок", ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
@@ -112,22 +112,18 @@ public sealed class DocumentMessageTests : IDisposable
         Assert.Equal(before[_shape.DateFieldId], after[_shape.DateFieldId]);
         Assert.Equal(before[_shape.AccountingFieldId], after[_shape.AccountingFieldId]);
         Assert.Equal(answer == "Да" ? "Станок" : "Машина", after[_shape.ProjectFieldId]);
-        Assert.Equal(answer == "Да" ? "Петров Петр Петрович" : "Иванов Иван Иванович", after[_shape.FioFieldId]);
+        Assert.Equal("Иванов Иван Иванович", after[_shape.FioFieldId]);
     }
 
     /// <summary>ФИО при изменении ложится тем же видом, что при регистрации: слова через один пробел.</summary>
     [Fact]
-    public void An_edited_full_name_is_collapsed_like_a_registered_one()
+    public void The_registrar_name_cannot_be_changed_by_a_message()
     {
-        var preview = Call(Request("Изменение") + "\nФИО: Петров   Петр \t Петрович");
-        Assert.True(preview.Ok, preview.Explanation);
-        Assert.Contains("ФИО: Иванов Иван Иванович → Петров Петр Петрович", ReplyMarkup.Text(preview.Answer), StringComparison.Ordinal);
-        Assert.True(Call("Да").Ok);
-        Assert.Equal("Петров Петр Петрович", _db.Constructor.GetFieldValues(_id)[_shape.FioFieldId]);
-
-        var same = Call(Request("Изменение") + "\nФИО: Петров  Петр  Петрович");
-        Assert.False(same.Ok);
-        Assert.Contains("Изменений нет", ReplyMarkup.Text(same.Answer), StringComparison.Ordinal);
+        var preview = Call(Request("Изменение") + "\nФИО: Петров Петр Петрович");
+        Assert.False(preview.Ok);
+        Assert.Contains("не изменяется командой", ReplyMarkup.Text(preview.Answer), StringComparison.Ordinal);
+        Assert.False(Call("Да").Ok);
+        Assert.Equal("Иванов Иван Иванович", _db.Constructor.GetFieldValues(_id)[_shape.FioFieldId]);
     }
 
     [Fact]
@@ -144,20 +140,21 @@ public sealed class DocumentMessageTests : IDisposable
     [InlineData("Просмотр")]
     [InlineData("Удаление")]
     [InlineData("Изменение")]
-    public void Every_action_accepts_an_unlisted_sender(string action)
+    public void Every_action_refuses_an_unlisted_sender(string action)
     {
         var text = Request(action) + (action == "Изменение" ? "\nПроект: Станок" : "");
         var result = Call(text, sender: "9999");
-        Assert.True(result.Ok, result.Explanation);
+        Assert.False(result.Ok);
+        Assert.Contains("нет доступа", ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
         Assert.NotNull(_db.Constructor.GetRecord(_id));
     }
 
     [Fact]
-    public void Instruction_recipient_changes_do_not_cancel_a_pending_delete()
+    public void Revoking_access_prevents_a_pending_delete()
     {
         Assert.True(Call(Request("Удаление")).Ok);
-        Assert.True(Call("Да", senders: "1002 Петров").Ok);
-        Assert.Null(_db.Constructor.GetRecord(_id));
+        Assert.False(Call("Да", senders: "1002 Петров").Ok);
+        Assert.NotNull(_db.Constructor.GetRecord(_id));
     }
 
     [Theory]
