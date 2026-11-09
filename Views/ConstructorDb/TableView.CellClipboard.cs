@@ -96,6 +96,7 @@ public partial class TableView
     /// очистка; если скопировать не удалось, ничего не стирается.</summary>
     public async Task CutCellsAsync()
     {
+        if (!Can(PermAction.EditRecord)) { PermissionNotice.Show(this, PermAction.EditRecord); return; }
         if (!await CopyCellsAsync()) return;
         await ClearCellsAsync("Вырезание");
     }

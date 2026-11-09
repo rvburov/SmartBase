@@ -51,12 +51,6 @@ public sealed class RegisterMessageAction : IExtensionAction
     /// <summary>Первая строка ответа об удаче.</summary>
     public const string RegisteredWord = "Зарегистрировано";
 
-    /// <summary>
-    /// Отказ тому, кого нет в списке. Без подробностей: чужому они ни к чему. Уходит с первым
-    /// предложением жирным (<see cref="ReplyMarkup.Headed"/>).
-    /// </summary>
-    public const string NotListed = "Вы не в списке регистрирующих. Обратитесь к администратору";
-
     public string Key         => ActionKey;
     public string Name        => "Зарегистрировать по сообщению";
     public string Description =>
@@ -83,8 +77,6 @@ public sealed class RegisterMessageAction : IExtensionAction
 
     public ActionResult Run(ActionContext context, ActionInput input)
     {
-        // Допуск — первым и отдельно: тому, кого нет в списке, разбор его сообщения не нужен.
-        var senders = MessageRegistration.Senders(context.Setting(DocRegistryExtension.SendersKey));
         var sender  = input.Value(SenderField);
 
         if (sender.Length == 0)

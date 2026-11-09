@@ -75,6 +75,7 @@ public partial class SettingsView
     private async Task EditConnectionAsync(IntegrationConnection card)
     {
         if (VisualRoot is not Window win || Integrations is null) return;
+        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
 
         var registry = Integrations;
         var hasSecret = card.Id > 0 && registry.HasSecret(card.Id);
@@ -338,6 +339,7 @@ public partial class SettingsView
     private async Task EditRequestAsync(IntegrationRequest card)
     {
         if (VisualRoot is not Window win || Integrations is null) return;
+        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
 
         var registry    = Integrations;
         var connections = registry.Connections();

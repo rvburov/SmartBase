@@ -263,6 +263,7 @@ public partial class ConstructorRepository
     /// </summary>
     public ExportSource ExportSourceIsolated(int collectionId)
     {
+        Demand(PermAction.ViewCollection, collectionId);
 
         using var ctx = new AppDbContext(db.DbPath);
         ctx.ApplyPerformancePragmas();

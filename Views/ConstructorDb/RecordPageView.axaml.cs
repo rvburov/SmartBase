@@ -1185,7 +1185,8 @@ public partial class RecordPageView : UserControl
             && DatePeriodConfig.FromConfig(row.Field.ConfigJson) is { Automatic: false })
         {
             var recalculate = new MenuItem { Header = "Пересчитать" };
-            recalculate.Click += (_, _) => _ = RecalculateDatePeriodsAsync(TargetFieldIds(fieldId));
+            Guarded(recalculate, PermAction.EditRecord,
+                () => _ = RecalculateDatePeriodsAsync(TargetFieldIds(fieldId)));
             menu.Items.Add(recalculate);
         }
 

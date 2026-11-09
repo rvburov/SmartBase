@@ -62,7 +62,7 @@ public partial class TableView
         {
             var item  = new MenuItem { InputGesture = MenuGesture(shortcut) };
             var value = CellAlign.Store(align);
-            item.Click += (_, _) => apply([(StyleAspect.HAlign, value)]);
+            Guarded(item, permission, () => apply([(StyleAspect.HAlign, value)]));
             placement.Items.Add(item);
             horizontal.Add((item, align, text));
         }
@@ -74,7 +74,7 @@ public partial class TableView
         {
             var item  = new MenuItem();
             var value = CellAlign.Store(align);
-            item.Click += (_, _) => apply([(StyleAspect.VAlign, value)]);
+            Guarded(item, permission, () => apply([(StyleAspect.VAlign, value)]));
             placement.Items.Add(item);
             vertical.Add((item, align, text));
         }
@@ -82,7 +82,7 @@ public partial class TableView
         placement.Items.Add(new Separator());
 
         var reset = new MenuItem { Header = MenuIcons.PlainHeader("По умолчанию") };
-        reset.Click += (_, _) => apply(ResetAlignment);
+        Guarded(reset, permission, () => apply(ResetAlignment));
         placement.Items.Add(reset);
 
         void Refresh()

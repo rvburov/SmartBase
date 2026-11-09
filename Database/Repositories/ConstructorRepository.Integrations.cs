@@ -468,6 +468,10 @@ public partial class ConstructorRepository
                                              CancellationToken ct,
                                              IReadOnlyList<int>? records = null)
     {
+        // Права — на публичной точке входа, как у ApplyRowsIsolated: изолированный клон
+        // репозитория прав не несет. Отправка наружу начинается с чтения коллекции.
+        Demand(PermAction.ViewCollection, binding.CollectionId);
+
         using var ctx = new AppDbContext(db.DbPath);
         ctx.ApplyPerformancePragmas();
         var isolated = new ConstructorRepository(ctx);

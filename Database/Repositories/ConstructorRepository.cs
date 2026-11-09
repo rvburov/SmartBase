@@ -2187,7 +2187,7 @@ public partial class ConstructorRepository(AppDbContext db)
     {
         using var ctx = new AppDbContext(db.DbPath);
         ctx.ApplyBulkPerformancePragmas();
-        var repo = new ConstructorRepository(ctx);
+        var repo = new ConstructorRepository(ctx) { Permissions = Permissions };
         // ExportColumn — снимок из UI: поле могло сменить тип или исчезнуть до старта.
         // Метаданные читаются только по живому audit-полю ИМЕННО этой коллекции.
         var liveTypes = ctx.DbFields.AsNoTracking().Where(f => f.CollectionId == collectionId)
@@ -2623,6 +2623,10 @@ public partial class ConstructorRepository(AppDbContext db)
                                       IProgress<int>? progress = null, int? batchSize = null,
                                       int sourceDbId = 0, int targetDbId = 0)
     {
+        // this — ЦЕЛЕВАЯ база: проверяем право создавать в ней. Право удаления в источнике
+        // проверяет UI по репозиторию источника (его PermissionService здесь недоступен).
+        Demand(PermAction.CreateCollection);
+
         // Запрет удаления связанными записями проверяется до копирования.
         EnsureMoveAllowed(sourceDbPath, repo => [srcCollectionId]);
 
@@ -6138,7 +6142,7 @@ public partial class ConstructorRepository(AppDbContext db)
             using var _ = run;
             using var ctx = new AppDbContext(db.DbPath);
             ctx.ApplyPerformancePragmas();
-            var repo = new ConstructorRepository(ctx) { ComputedRun = run };
+            var repo = new ConstructorRepository(ctx) { Permissions = Permissions, ComputedRun = run };
             return repo.ColumnValues(collectionId, key, others, excludeHidden, ForeignResolver(crossPaths), search, ct, reuse);
         }, ct);
     }
@@ -6307,7 +6311,7 @@ public partial class ConstructorRepository(AppDbContext db)
             using var _ = run;
             using var ctx = new AppDbContext(db.DbPath);
             ctx.ApplyPerformancePragmas();
-            var repo  = new ConstructorRepository(ctx) { ComputedRun = run };
+            var repo  = new ConstructorRepository(ctx) { Permissions = Permissions, ComputedRun = run };
             var resolver = ForeignResolver(crossPaths);
             using var foreignScope = (resolver?.Target as ForeignPropertyReader)?.OpenScope();
             var scope = repo.FilteredRecords(collectionId, others, excludeHidden, resolver);
@@ -6380,7 +6384,7 @@ public partial class ConstructorRepository(AppDbContext db)
             using var _ = run;
             using var ctx = new AppDbContext(db.DbPath);
             ctx.ApplyPerformancePragmas();
-            var repo = new ConstructorRepository(ctx) { ComputedRun = run };
+            var repo = new ConstructorRepository(ctx) { Permissions = Permissions, ComputedRun = run };
             return repo.GetColumnCounts(collectionId, key, others, excludeHidden, ForeignResolver(crossPaths));
         });
     }

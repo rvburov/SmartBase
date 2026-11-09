@@ -68,6 +68,10 @@ public partial class ConstructorRepository
     public ApiRows ApiReadIsolated(int collectionId, IReadOnlyList<string>? fieldKeys,
                                    string since, int after, int take)
     {
+        // Права того, кто открыл базу на этой машине: обмен не читает того, что запрещено
+        // ему самому. Права робота проверены раньше, у двери (IngressHandler).
+        Demand(PermAction.ViewCollection, collectionId);
+
         using var ctx = new AppDbContext(db.DbPath);
         ctx.ApplyPerformancePragmas();
         var isolated = new ConstructorRepository(ctx);
@@ -179,6 +183,8 @@ public partial class ConstructorRepository
     /// <param name="take">Сколько строк; зажимается в 1..<see cref="ApiPage"/>.</param>
     public ApiChangesPage ApiChangesIsolated(string collection, long after, int take)
     {
+        Demand(PermAction.ViewCollection);
+
         using var ctx = new AppDbContext(db.DbPath);
 
         var page = ctx.ChangeLog

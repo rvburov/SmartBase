@@ -150,7 +150,7 @@ public sealed class InboxModesTests : IDisposable
         Assert.Contains(_db.Context.ChangeLog.ToList(),
                         row => row.Action == "delete"
                             && row.TargetName == "Заказ 2"
-                            && row.UserName == "Обмен по API");
+                            && row.UserName == "Обмен учетной системы");
     }
 
     [Fact]

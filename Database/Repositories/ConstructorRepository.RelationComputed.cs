@@ -157,7 +157,10 @@ public partial class ConstructorRepository
         var result = new List<RelationPropertyValue>();
         foreach (var group in records.GroupBy(r => r.CollectionId))
         {
-            result.AddRange(group.Select(r => new RelationPropertyValue(r.Id, r.Title ?? "", r.Title ?? "", r.Title ?? "", "text", null)));
+            if (!repo.CanReadRelationCollection(group.Key))
+                result.AddRange(group.Select(r => new RelationPropertyValue(r.Id, "", "", RelationProperty.NoAccess, "", null)));
+            else
+                result.AddRange(group.Select(r => new RelationPropertyValue(r.Id, r.Title ?? "", r.Title ?? "", r.Title ?? "", "text", null)));
         }
         return result;
     }

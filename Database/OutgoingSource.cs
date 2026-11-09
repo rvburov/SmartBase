@@ -1,3 +1,4 @@
+using SmartBase.Core.Models;
 using SmartBase.Integrations;
 
 namespace SmartBase.Database;
@@ -47,7 +48,15 @@ public static class OutgoingSource
 
         var limit = binding.Single ? 1 : int.MaxValue;
 
-        var read = source.Constructor.ReadOutgoingIsolated(binding, limit, ct, records);
+        Repositories.ConstructorRepository.OutgoingRows read;
+        try
+        {
+            read = source.Constructor.ReadOutgoingIsolated(binding, limit, ct, records);
+        }
+        catch (PermissionDeniedException denied)
+        {
+            return (null, denied.Message);
+        }
 
         if (read.Trouble is { Length: > 0 } trouble) return (null, trouble);
 

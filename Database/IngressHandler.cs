@@ -159,7 +159,15 @@ public static class IngressHandler
         IReadOnlyList<string>? fieldKeys = fieldText.Length == 0 ? null
             : fieldText.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
         var started = DateTimeOffset.Now;
-        var read = target.Constructor.ApiReadIsolated(collectionId, fieldKeys, since, (int)after, take);
+        ConstructorRepository.ApiRows read;
+        try
+        {
+            read = target.Constructor.ApiReadIsolated(collectionId, fieldKeys, since, (int)after, take);
+        }
+        catch (PermissionDeniedException mine)
+        {
+            return Refuse(403, "На компьютере-приемнике: " + mine.Message, call, who, target, now);
+        }
         if (read.Trouble is { } trouble)
             return Refuse(400, Capitalize(trouble) + ".", call, who, target, now);
 
@@ -206,7 +214,15 @@ public static class IngressHandler
             return Refuse(400, badLimit, call, who, target, now);
 
         var started = DateTimeOffset.Now;
-        var tail = target.Constructor.ApiChangesIsolated(collection, after, take);
+        ConstructorRepository.ApiChangesPage tail;
+        try
+        {
+            tail = target.Constructor.ApiChangesIsolated(collection, after, take);
+        }
+        catch (PermissionDeniedException mine)
+        {
+            return Refuse(403, "На компьютере-приемнике: " + mine.Message, call, who, target, now);
+        }
         if (tail.Trouble is { } trouble)
             return Refuse(400, Capitalize(trouble) + ".", call, who, target, now);
 
