@@ -221,7 +221,7 @@
 
 | Расширение | Функциональные наборы в `Tests/Extensions` | Конкурентная проверка и оставшаяся граница | Команда |
 |---|---|---|---|
-| Переименование PDF (`PdfRename`) | `PdfRenamerTests`, `PdfRenamerProcessTests`, `PdfRenameExtensionTests` | Есть 8 независимых папок/планов и сохранность байтов; общий конфликт целевого имени и отмена отдельно | `./Tests/run-extensions.sh PdfRename` |
+| Переименование PDF (`PdfRename`) | `PdfRenamerTests`, `PdfRenamerProcessTests`, `PdfRenameExtensionTests`, `Rename/RunTests` | Есть 8 независимых папок/планов и сохранность байтов; общий конфликт целевого имени и отмена отдельно. Режим «по содержимому»: несколько потоков распознавания и одно переименование, одинаковое итоговое имя у двух документов, остановка посреди пакета, пакет 8000 файлов (с подменным распознаванием) | `./Tests/run-extensions.sh PdfRename` |
 | Сравнение изделий/расшифровок (`ProductCompare`) | `ProductCompareEngineTests`, `ProductCompareRunTests`, `BreakdownCompareRunTests`, `BreakdownFilesTests` | Есть 8 независимых пар книг/выходов, разбор результата и SHA-256 входов; общий выход отдельно | `./Tests/run-extensions.sh ProductCompare` |
 | Расчет состава (`AssemblyCalc`) | `AssemblyCalcEngineTests`, `AssemblyCalcRunTests` | Есть 8 расчетов независимых книг и проверка значений; конфликт одного выходного пути отдельно | `./Tests/run-extensions.sh AssemblyCalc` |
 | Анализ PDF (`PdfAnalyzer`) | `PdfAnalyzerEngineTests`, `PdfAnalyzerRunTests`, `DocumentCodes*Tests`, `PdfStandSmokeTests` | Есть 8 независимых PDF/отчетов с разбором результата; общий изменяемый вход и отмена отдельно | `./Tests/run-extensions.sh PdfAnalyzer` |

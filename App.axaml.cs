@@ -292,7 +292,7 @@ public partial class App : Application
         // расширения и строку реестра — при первом же запуске уходят и его строки из
         // app.db, лишнего не остается. См. docs/features/extensions.md.
         var orphans = AppSettings.RemoveOrphanExtensionSettings(
-            Extensions.ExtensionRegistry.All.Select(e => e.Id));
+            Extensions.ExtensionRegistry.KnownIds);
         if (orphans > 0)
             Log.Information("Настройки удаленных расширений убраны из app.db: {Count}", orphans);
 
@@ -309,7 +309,7 @@ public partial class App : Application
         // в «скрытых». Иначе вернувшееся расширение молча оказалось бы скрытым.
         var hiddenOrphans = AppSettings.PruneHiddenViews(
             Settings.ViewCatalog.ScopeExtensions,
-            Extensions.ExtensionRegistry.All.Select(e => e.Id));
+            Extensions.ExtensionRegistry.KnownIds);
         if (hiddenOrphans > 0)
             Log.Information("Скрытые расширения, которых больше нет, убраны из app.db: {Count}",
                             hiddenOrphans);

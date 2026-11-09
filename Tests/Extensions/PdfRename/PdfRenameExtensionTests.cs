@@ -4,7 +4,7 @@ using SmartBase.Extensions.PdfRename;
 namespace SmartBase.Tests.Extensions.PdfRename;
 
 /// <summary>
-/// Контракт ИМЕННО этого расширения: прибитый Id и факт регистрации. Общие правила (форма Id,
+/// Контракт ИМЕННО этого расширения: прибитый Id (факт установки — в Plugin/PluginInstallTests). Общие правила (форма Id,
 /// непустые подписи, уникальность) живут в Tests/Extensions/Registry — здесь только то, что
 /// уходит вместе с расширением при удалении.
 ///
@@ -25,12 +25,5 @@ public sealed class PdfRenameExtensionTests
     public void Extension_declares_no_settings() =>
         Assert.Empty(((IExtension)new PdfRenameExtension()).Settings);
 
-    [Fact]
-    public void Extension_is_registered()
-    {
-        var found = ExtensionRegistry.FindById("pdf-rename");
-
-        Assert.NotNull(found);
-        Assert.IsType<PdfRenameExtension>(found);
-    }
+    // Регистрация в программе — теперь установка плагина: Plugin/PluginInstallTests.cs.
 }

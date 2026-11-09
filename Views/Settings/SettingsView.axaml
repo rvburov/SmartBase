@@ -1431,6 +1431,10 @@
                     </Grid.ColumnDefinitions>
                     <StackPanel Margin="16,0,16,32">
 
+                        <!-- Подключаемые расширения (плагины): установка из файла и удаление
+                             (SettingsExtensionPlugins.cs). -->
+                        <StackPanel x:Name="ExtensionPluginsBlock" />
+
                         <StackPanel x:Name="ExtensionsVisibilityBlock">
                             <Border Classes="settingRow">
                                 <Grid ColumnDefinitions="*,Auto">

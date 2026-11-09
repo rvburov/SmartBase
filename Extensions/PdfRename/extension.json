@@ -1,0 +1,8 @@
+{
+  "id": "pdf-rename",
+  "name": "Переименование PDF",
+  "version": "$VERSION$",
+  "assembly": "SmartBase.Extensions.PdfRename.dll",
+  "contract": 1,
+  "platforms": [ "$PLATFORM$" ]
+}

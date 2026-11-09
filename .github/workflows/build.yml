@@ -82,6 +82,8 @@ jobs:
           python-version: '3.13'
       - name: Модульные тесты
         run: dotnet test Tests/Unit --configuration Release --logger 'console;verbosity=minimal' --logger 'trx;LogFileName=unit.trx' --results-directory "$RUNNER_TEMP/quick-results"
+      - name: Tesseract для тестов распознавания
+        run: bash Scripts/ci/ocr-test-deps.sh
       - name: Тесты расширений
         run: bash Tests/run-extensions.sh --configuration Release --logger 'console;verbosity=minimal' --logger trx --results-directory "$RUNNER_TEMP/extensions-results"
       - name: Имена и сообщения упавших тестов
@@ -162,6 +164,12 @@ jobs:
       # системой, а именно там платформы и расходятся: регистр расширений файлов, скрытые
       # файлы с ведущей точкой, разделители путей, сортировка по культуре.
       # TRX без LogFileName получает уникальное имя для каждого проекта, общий файл не затирается.
+      # Плагин «Переименование PDF» распознает текст Tesseract-ом: на Linux — системным
+      # (apt), на Windows — своим, но языковые данные в репозитории не лежат. На macOS
+      # OCR-часть плагина не поставляется, ее тесты пропускаются сами.
+      - name: Tesseract для тестов распознавания
+        run: bash Scripts/ci/ocr-test-deps.sh
+
       - name: Тесты расширений
         run: bash Tests/run-extensions.sh --configuration Release --logger 'console;verbosity=minimal' --logger trx --results-directory "$RUNNER_TEMP/extensions-results"
 

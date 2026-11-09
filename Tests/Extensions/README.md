@@ -25,7 +25,7 @@ dotnet test Tests/Extensions/PdfRename     # одно расширение
 
 ## Добавить расширение
 
-Скопировать папку-образец (`PdfRename/` — самая простая), переименовать `.csproj`,
+Скопировать папку-образец (`PdfWatermark/`), переименовать `.csproj`,
 `RootNamespace` и `AssemblyName`. Больше ничего: ни `SmartBase.sln`, ни скрипт прогона, ни CI
 списка расширений не содержат.
 

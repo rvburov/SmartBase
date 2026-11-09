@@ -1,0 +1,152 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Расширение-плагин «Переименование PDF». Собирается отдельно от программы: код расширения,
+    OCR (Tesseract, PaddleOCR), OpenCV, PDFium и модели лежат в его собственной папке
+    (docs/developer/features/extensions/pdf-rename.md, раздел «Плагин и зависимости»).
+    Удалили папку плагина — ушли и расширение, и все его библиотеки; программа о них не знает.
+
+    От программы плагин берет только контракт: сборку SmartBase (IExtension, окна, стили) и
+    Avalonia — ссылки на них не копируются (Private=false, ExcludeAssets=runtime), в рантайме
+    их отдает программа (Extensions/PluginLoadContext.cs).
+
+    Нативные части OCR — на одну платформу: OcrRid. Без -r берется ОС сборки, пакет на другую
+    платформу собирает Scripts/extension-pack.sh (dotnet publish -r <rid>).
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>SmartBase.Extensions.PdfRename</RootNamespace>
+    <AssemblyName>SmartBase.Extensions.PdfRename</AssemblyName>
+    <Version>2.0.0</Version>
+    <!-- Плагин: в вывод копируются все зависимости и пишется .deps.json для загрузчика. -->
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <!-- Плагин не публикуется одним файлом и не предкомпилируется: грузится из папки. -->
+    <PublishReadyToRun>false</PublishReadyToRun>
+    <SatelliteResourceLanguages>ru;en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <OcrRid Condition="'$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier)</OcrRid>
+    <OcrRid Condition="'$(OcrRid)' == '' and $([MSBuild]::IsOSPlatform('Windows'))">win-x64</OcrRid>
+    <OcrRid Condition="'$(OcrRid)' == '' and $([MSBuild]::IsOSPlatform('Linux'))">linux-x64</OcrRid>
+    <OcrRid Condition="'$(OcrRid)' == '' and $([MSBuild]::IsOSPlatform('OSX'))">osx-arm64</OcrRid>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SmartBase.Tests.Extensions.PdfRename" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Служебные программы сборки — не код плагина. -->
+    <Compile Remove="Tools\**" />
+    <None Remove="Tools\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Контракт программы: в папку плагина не копируется. -->
+    <ProjectReference Include="..\..\SmartBase.csproj">
+      <Private>false</Private>
+      <ExcludeAssets>runtime;native</ExcludeAssets>
+      <SetTargetFramework>TargetFramework=net10.0</SetTargetFramework>
+    </ProjectReference>
+    <PackageReference Include="Avalonia" Version="11.2.3" ExcludeAssets="runtime;native" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Страницы PDF в картинку: PDFium. Своя копия у плагина — не зависеть от того, есть ли
+         он в программе (сейчас его держит «Водяной знак»). -->
+    <PackageReference Include="Docnet.Core" Version="2.6.0" />
+    <!-- Обработка изображений: рамки шаблона, выравнивание, подготовка областей. -->
+    <PackageReference Include="OpenCvSharp4" Version="4.13.0.20261107" />
+    <!-- PaddleOCR на официальном движке Paddle Inference (CPU, OpenBLAS). -->
+    <PackageReference Include="Sdcb.PaddleOCR" Version="3.3.1" />
+    <!-- Модели PaddleOCR v5: из пакета (116 МБ, все языки) берутся только нужные —
+         детектор и распознавание восточнославянских языков с латиницей, см. PaddleModels ниже. -->
+    <PackageReference Include="Sdcb.PaddleOCR.Models.LocalV5" Version="3.3.1"
+                      ExcludeAssets="all" GeneratePathProperty="true" />
+    <!-- Tesseract для Windows: готовые tesseract55.dll и leptonica (только Windows, x64).
+         На Linux и macOS Tesseract берется из системы. -->
+    <PackageReference Include="TesseractOCR" Version="5.5.2"
+                      ExcludeAssets="all" GeneratePathProperty="true" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(OcrRid)' == 'win-x64'">
+    <PackageReference Include="OpenCvSharp4.runtime.win" Version="4.13.0.20261107" />
+    <PackageReference Include="Sdcb.PaddleInference.runtime.win64.openblas" Version="3.3.1.70" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(OcrRid)' == 'linux-x64'">
+    <PackageReference Include="OpenCvSharp4.official.runtime.linux-x64" Version="4.13.0.20261107" />
+    <PackageReference Include="Sdcb.PaddleInference.runtime.linux-x64.openblas" Version="3.3.1.70" />
+  </ItemGroup>
+
+  <!-- Tesseract для Windows кладется в ocr/tesseract/ папки плагина. -->
+  <ItemGroup Condition="'$(OcrRid)' == 'win-x64'">
+    <None Include="$(PkgTesseractOCR)\x64\tesseract55.dll" Link="ocr\tesseract\tesseract55.dll"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="$(PkgTesseractOCR)\x64\leptonica-1.85.0.dll" Link="ocr\tesseract\leptonica-1.85.0.dll"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- Описание плагина для программы; платформа подставляется при сборке. Лицензии сторонних
+       компонентов едут вместе с плагином. -->
+  <ItemGroup>
+    <None Include="extension.json" CopyToOutputDirectory="Never" CopyToPublishDirectory="Never" />
+    <None Include="THIRD-PARTY-NOTICES.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!--
+    Модели PaddleOCR: из пакета Sdcb.PaddleOCR.Models.LocalV5 (ресурсы сборки) вынимаются
+    детектор mobile_zh_det (многоязычный) и распознавание eslav_PP_OCRv5_mobile_rec (русский,
+    белорусский, украинский, латиница, цифры) — около 13 МБ вместо 116. Вынимает их
+    Tools/ExtractPaddleModels.cs (файловая программа .NET, без загрузки сборки моделей).
+  -->
+
+  <PropertyGroup>
+    <PaddleModels>mobile_zh_det;eslav_PP_OCRv5_mobile_rec</PaddleModels>
+    <PaddleModelsDir>$(MSBuildProjectDirectory)/../../artifacts/ocr-models/paddle-v5</PaddleModelsDir>
+    <PaddleModelsSource>$(PkgSdcb_PaddleOCR_Models_LocalV5)\lib\netstandard2.0\Sdcb.PaddleOCR.Models.LocalV5.dll</PaddleModelsSource>
+  </PropertyGroup>
+
+  <Target Name="SbPaddleModels" BeforeTargets="AssignTargetPaths"
+          Inputs="$(PaddleModelsSource)" Outputs="$(PaddleModelsDir)\eslav_PP_OCRv5_mobile_rec\inference.pdiparams">
+    <Exec Command="dotnet run --file &quot;$(MSBuildProjectDirectory)/Tools/ExtractPaddleModels.cs&quot; -- &quot;$(PaddleModelsSource)&quot; &quot;$(PaddleModelsDir)&quot; &quot;$(PaddleModels)&quot;" />
+  </Target>
+
+  <Target Name="SbPaddleModelItems" BeforeTargets="AssignTargetPaths" DependsOnTargets="SbPaddleModels">
+    <ItemGroup>
+      <_SbPaddleModel Include="$(PaddleModelsDir)/**/*" />
+      <None Include="@(_SbPaddleModel)"
+            Link="ocr/paddle/%(_SbPaddleModel.RecursiveDir)%(_SbPaddleModel.Filename)%(_SbPaddleModel.Extension)"
+            CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    </ItemGroup>
+  </Target>
+
+  <!-- extension.json с платформой сборки — в вывод и в публикацию. -->
+  <Target Name="SbWriteManifest" AfterTargets="Build;Publish">
+    <PropertyGroup>
+      <_SbManifest>$([System.IO.File]::ReadAllText('$(MSBuildProjectDirectory)\extension.json').Replace('$PLATFORM$', '$(OcrRid)').Replace('$VERSION$', '$(Version)'))</_SbManifest>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(OutDir)extension.json" Lines="$(_SbManifest)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <WriteLinesToFile Condition="'$(PublishDir)' != '' and Exists('$(PublishDir)')" File="$(PublishDir)extension.json"
+                      Lines="$(_SbManifest)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+  </Target>
+
+  <!--
+    Отладка: dotnet build Extensions/PdfRename -p:DeployPlugin=true кладет собранный плагин в
+    папку плагинов отладочного запуска (.localdata/extensions/pdf-rename) — «dotnet run»
+    программы его подхватит. Без флага (в том числе при сборке тестов) ничего не копируется.
+  -->
+  <Target Name="SbDeployDebug" AfterTargets="SbWriteManifest"
+          Condition="'$(DeployPlugin)' == 'true' and '$(Configuration)' == 'Debug' and '$(RuntimeIdentifier)' == ''">
+    <ItemGroup>
+      <_SbPluginFiles Include="$(OutDir)**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_SbPluginFiles)"
+          DestinationFiles="@(_SbPluginFiles->'$(MSBuildProjectDirectory)\..\..\.localdata\extensions\pdf-rename\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

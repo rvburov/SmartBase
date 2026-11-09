@@ -266,6 +266,13 @@ dotnet test Tests/Integration             # SQLite + PostgreSQL, около 18 �
   В Serilog расширения не пишут (ни `using Serilog;`, ни `Log.*`) — сбои в окне расширения.
   Порядок — «Как добавить / удалить расширение» в
   [extensions/overview.md](docs/developer/features/extensions/overview.md).
+- **Тяжелые зависимости расширения — только плагином.** Библиотеки, которые нужны одному
+  расширению (OCR, OpenCV, модели, нативные среды выполнения), в `SmartBase.csproj` не добавляются:
+  расширение делается плагином — свой проект и `extension.json` в его папке, все библиотеки и модели
+  в папке плагина, установка и удаление из «Настройки → Расширения». Удалили плагин — ушли и его
+  библиотеки, программа работает как прежде. Глобально в систему ничего не ставится. Устройство —
+  раздел «Плагины» в [extensions/overview.md](docs/developer/features/extensions/overview.md),
+  образец — `Extensions/PdfRename/`.
 - **`TextBox.TextChanged` в Avalonia 11.2 приходит отложенно**, флаги подавления не работают.
   Обработчик, который пишет (в базу, настройки, событие наверх), сверяет текст с известным значением
   и молчит при совпадении — [docs/developer/ui/widgets.md](docs/developer/ui/widgets.md).
@@ -279,7 +286,8 @@ dotnet test Tests/Integration             # SQLite + PostgreSQL, около 18 �
   Пишется «е». Сам символ остается только там, где без него не работает свертка при поиске
   (пользователь может набрать эту букву с клавиатуры): `Replace` в `RegistrySchema.Fold`,
   `EskdCatalog.Fold`, `JournalSchema`, `CellTyping`, `DocHighlight`, `Homoglyphs`,
-  `DocTextIndex.YoSpellings`, `REPLACE` в `ConstructorRepository.DocsPaging.cs` — и в тестовых данных,
+  `DocTextIndex.YoSpellings`, `REPLACE` в `ConstructorRepository.DocsPaging.cs`, `TextRules` расширения
+  PdfRename (OCR читает эту букву со скана) — и в тестовых данных,
   которые эти места проверяют. Справочник `Extensions/DocRegistry/eskd.tsv.gz` правится только заменой
   буквы без смены порядка строк: на порядке держится бинарный поиск по коду.
 - **Без имен сторонних программ** в `docs/developer/`, `docs/user/`, комментариях и интерфейсе —

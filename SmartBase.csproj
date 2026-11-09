@@ -261,6 +261,30 @@
             Condition="'$(_StandaloneComponentLicense)' != '$(_SourceApplicationLicense)'" />
   </Target>
 
+  <!-- Расширения-плагины: папка Extensions/<Имя>/ со своим проектом и файлом extension.json
+       собирается отдельно и в программу не входит — ее код, библиотеки и модели живут в папке
+       плагина (Extensions/ExtensionPlugins.cs, docs/developer/features/extensions/overview.md).
+       Признак плагина — extension.json в его папке; правило общее, новый плагин правок здесь не
+       требует. Исключение — в цели, а не статическим Remove: маски в путях, вычисленных из
+       других элементов, MSBuild не раскрывает. -->
+  <Target Name="SbExcludePluginSources" BeforeTargets="BeforeBuild;CoreCompile;PrepareForBuild">
+    <PropertyGroup>
+      <!-- Только папки внутри Extensions/ этого проекта: extension.json выше корня репозитория
+           не должен выкинуть из сборки всю программу. -->
+      <_SbPluginsRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)', 'Extensions'))</_SbPluginsRoot>
+    </PropertyGroup>
+    <ItemGroup>
+      <Compile          Remove="@(Compile)"
+                        Condition="$([System.String]::Copy('$([MSBuild]::GetDirectoryNameOfFileAbove(%(Compile.RootDir)%(Compile.Directory), extension.json))').StartsWith('$(_SbPluginsRoot)'))" />
+      <AvaloniaXaml     Remove="@(AvaloniaXaml)"
+                        Condition="$([System.String]::Copy('$([MSBuild]::GetDirectoryNameOfFileAbove(%(AvaloniaXaml.RootDir)%(AvaloniaXaml.Directory), extension.json))').StartsWith('$(_SbPluginsRoot)'))" />
+      <AvaloniaResource Remove="@(AvaloniaResource)"
+                        Condition="$([System.String]::Copy('$([MSBuild]::GetDirectoryNameOfFileAbove(%(AvaloniaResource.RootDir)%(AvaloniaResource.Directory), extension.json))').StartsWith('$(_SbPluginsRoot)'))" />
+      <EmbeddedResource Remove="@(EmbeddedResource)"
+                        Condition="$([System.String]::Copy('$([MSBuild]::GetDirectoryNameOfFileAbove(%(EmbeddedResource.RootDir)%(EmbeddedResource.Directory), extension.json))').StartsWith('$(_SbPluginsRoot)'))" />
+    </ItemGroup>
+  </Target>
+
   <!-- Tests/ — отдельный проект-генератор стенда (Tests/DbGenerator), в приложение не входит -->
   <ItemGroup>
     <Compile    Remove="Tests\**" />
@@ -306,6 +330,9 @@
     <InternalsVisibleTo Include="SmartBase.Tests.Sections" />
     <InternalsVisibleTo Include="SmartBase.Tests.DocReader" />
     <InternalsVisibleTo Include="Benchmarks" />
+    <!-- Загрузчик плагинов (ExtensionPlugins.UseRoot) — тестам реестра и плагина «Переименование PDF». -->
+    <InternalsVisibleTo Include="SmartBase.Tests.Extensions.Registry" />
+    <InternalsVisibleTo Include="SmartBase.Tests.Extensions.PdfRename" />
   </ItemGroup>
 
   <!--

@@ -1,287 +1,439 @@
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.IO;
+using System.Collections.Concurrent;
 using System.Text;
-using System.Threading;
-using System.Threading.Tasks;
+using Avalonia.Collections;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
+using Avalonia.Threading;
 using SmartBase.Controls.Dialogs;
+using SmartBase.Extensions.PdfRename.Ocr;
+using SmartBase.Extensions.PdfRename.Recognition;
+using SmartBase.Extensions.PdfRename.Rename;
+using SmartBase.Utils;
 
 namespace SmartBase.Extensions.PdfRename;
 
 /// <summary>
-/// Окно расширения «Переименование PDF» (в основном стиле приложения): выбор папки,
-/// «Проверить» (предпросмотр без изменений), «Запустить» (с подтверждением) и
-/// «Остановить». Логика — в <see cref="PdfRenamer"/>.
-///
-/// Масштаб (тысячи файлов): план строится один раз и в фоне; сам прогон идет в
-/// <see cref="Task.Run"/>, а UI обновляется не на каждый файл, а с троттлингом
-/// (~20 раз/сек) — журнал копится в <see cref="StringBuilder"/> и рендерится пачкой,
-/// логируются только проблемные файлы (успехи отражает счетчик/полоса), число строк
-/// журнала ограничено. Так окно остается отзывчивым на десятках тысяч файлов.
+/// Окно «Переименование PDF». Два режима:
+/// <list type="bullet">
+/// <item><b>По содержимому</b> — шаблоны с цветными рамками, сопоставление, Tesseract и
+/// PaddleOCR (<see cref="OcrRenameRun"/>);</item>
+/// <item><b>По имени</b> — прежнее правило «все до первого пробела» (<see cref="PdfRenamer"/>).</item>
+/// </list>
+/// Тяжелая работа идет в фоне; журнал и счетчики обновляются пачкой по таймеру
+/// (<see cref="UiIntervalMs"/>), а не на каждый файл. Журнал — виртуализированный список:
+/// полный результат прогона на тысячи файлов листается без задержек.
 /// </summary>
 public partial class PdfRenameWindow : Window
 {
-    private const int MaxLogLines  = 1000;   // потолок строк журнала (итог всегда полный)
-    private const int UiIntervalMs = 50;     // как часто обновлять UI во время прогона (~20/сек)
+    private const int ModeContent = 0;
+    private const int ModeName = 1;
+    private const int UiIntervalMs = 200;
 
-    private readonly StringBuilder _log = new();
-    private readonly Stopwatch _throttle = new();
+    private const string KeyMode = "mode";
+    private const string KeyTemplates = "templates";
+    private const string KeySource = "source";
+    private const string KeyRecursive = "recursive";
+
+    private readonly AvaloniaList<string> _lines = [];
+    private readonly ConcurrentQueue<string> _pending = new();
+    private readonly DispatcherTimer _timer;
 
     private CancellationTokenSource? _cts;
     private bool _running;
-    private int  _curr, _total;       // последний прогресс (обновляется на UI-потоке)
-    private int  _shownLines;         // сколько строк уже выведено в журнал за прогон
-    private bool _truncated;          // достигнут ли потолок строк
+    private bool _restoring;
+
+    // Ход прогона: пишут фоновые потоки (Interlocked), читает таймер.
+    private int _found, _processed, _renamed, _already, _skipped;
+    private string _phase = "";
 
     public PdfRenameWindow()
     {
         InitializeComponent();
+        LogList.ItemsSource = _lines;
+        _timer = new DispatcherTimer(TimeSpan.FromMilliseconds(UiIntervalMs), DispatcherPriority.Background, (_, _) => Flush());
+
+        ModeCombo.ItemsSource = new[] { "По содержимому (шаблоны и OCR)", "По имени (до первого пробела)" };
+        _restoring = true;
+        var mode = AppSettings.LoadExtensionSetting(PdfRenameExtension.ExtensionId, KeyMode);
+        ModeCombo.SelectedIndex = mode == "name" ? ModeName : ModeContent;
+        TemplatesBox.Text = AppSettings.LoadExtensionSetting(PdfRenameExtension.ExtensionId, KeyTemplates);
+        SourceBox.Text = AppSettings.LoadExtensionSetting(PdfRenameExtension.ExtensionId, KeySource);
+        RecursiveCheck.IsChecked = AppSettings.LoadExtensionSetting(PdfRenameExtension.ExtensionId, KeyRecursive) == "1";
+        _restoring = false;
+        ApplyMode();
+        // Закрыли окно посреди прогона — та же остановка, что и «Стоп»: переименованное
+        // остается, остальное не трогается.
+        Closing += (_, _) => _cts?.Cancel();
+        Closed += (_, _) => _timer.Stop();
+    }
+
+    private bool ContentMode => ModeCombo.SelectedIndex != ModeName;
+
+    private static void Remember(string key, string value) =>
+        AppSettings.SaveExtensionSetting(PdfRenameExtension.ExtensionId, key, value);
+
+    // ── Режим и поля ──────────────────────────────────────────────────────────
+
+    private void OnModeChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (_restoring) return;
+        Remember(KeyMode, ContentMode ? "content" : "name");
+        ApplyMode();
+    }
+
+    private void ApplyMode()
+    {
+        var content = ContentMode;
+        TemplatesPanel.IsVisible = content;
+        RecursiveCheck.IsVisible = content;
+        PreviewBtn.IsVisible = !content;
+        SourceTitle.Text = content ? "2. Папка с PDF" : "Папка с PDF";
+        ActionsGrid.ColumnDefinitions = new ColumnDefinitions(content ? "0,0,*,10,*" : "*,10,*,10,*");
+        if (!_running) StatusText.Text = "Готов к работе";
         UpdateActionState();
     }
 
-    // ── Выбор папки ───────────────────────────────────────────────────────────
+    private void OnPathChanged(object? sender, TextChangedEventArgs e)
+    {
+        if (!_restoring && sender is TextBox box)
+            Remember(box == TemplatesBox ? KeyTemplates : KeySource, box.Text?.Trim() ?? "");
+        UpdateActionState();
+    }
 
-    private async void OnBrowseClick(object? sender, RoutedEventArgs e)
+    private void OnRecursiveChanged(object? sender, RoutedEventArgs e)
+    {
+        if (!_restoring) Remember(KeyRecursive, RecursiveCheck.IsChecked == true ? "1" : "0");
+    }
+
+    private async void OnBrowseTemplates(object? sender, RoutedEventArgs e)
+    {
+        var path = await PickFolder("Выберите папку с шаблонами", TemplatesBox.Text);
+        if (path is not null) TemplatesBox.Text = path;
+    }
+
+    private async void OnBrowseSource(object? sender, RoutedEventArgs e)
+    {
+        var path = await PickFolder("Выберите папку с PDF-файлами", SourceBox.Text);
+        if (path is null) return;
+        SourceBox.Text = path;
+        if (!ContentMode) await ReportFolderContents(path);
+    }
+
+    private async Task<string?> PickFolder(string title, string? current)
     {
         IStorageFolder? start = null;
-        var current = FolderBox.Text?.Trim();
+        current = current?.Trim();
         if (!string.IsNullOrEmpty(current) && Directory.Exists(current))
             start = await StorageProvider.TryGetFolderFromPathAsync(current);
-
         var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
         {
-            Title                  = "Выберите папку с PDF-файлами",
-            AllowMultiple          = false,
+            Title = title,
+            AllowMultiple = false,
             SuggestedStartLocation = start,
         });
-
-        var folder = folders.FirstOrDefault();
-        if (folder is null) return;
-
-        FolderBox.Text = folder.Path.LocalPath;   // TextChanged обновит состояние кнопок
-        await ReportFolderContents(folder.Path.LocalPath);
+        return folders.FirstOrDefault()?.Path.LocalPath;
     }
 
-    private void OnFolderTextChanged(object? sender, TextChangedEventArgs e) => UpdateActionState();
+    // ── Запуск ────────────────────────────────────────────────────────────────
 
-    // Кратко показать, что в папке: число PDF и первые имена (листинг — в фоне).
-    private async Task ReportFolderContents(string folder)
+    private async void OnRunClick(object? sender, RoutedEventArgs e)
     {
-        ClearLog();
-        LogLineNow($"📂 Папка: {folder}");
-
-        if (!Directory.Exists(folder)) { LogLineNow("❌ Папка не существует"); return; }
-
-        List<string> pdfs;
-        try { pdfs = await Task.Run(() => PdfRenamer.ListPdfFiles(folder)); }
-        catch (Exception ex) { LogLineNow($"❌ Нет доступа к папке: {ex.Message}"); return; }
-
-        if (pdfs.Count == 0) { LogLineNow("⚠️ В папке нет PDF-файлов"); return; }
-
-        LogLineNow($"📄 Найдено PDF-файлов: {pdfs.Count}");
-        foreach (var name in pdfs.Take(5)) LogLineNow($"  • {name}");
-        if (pdfs.Count > 5) LogLineNow($"  … и еще {pdfs.Count - 5}");
-        LogLineNow("💡 Нажмите «Проверить» для предпросмотра изменений");
+        if (ContentMode) await RunContentAsync();
+        else await RunByNameAsync(dryRun: false);
     }
 
-    // ── Проверка / запуск ─────────────────────────────────────────────────────
-
-    private async void OnPreviewClick(object? sender, RoutedEventArgs e) => await ExecuteAsync(dryRun: true);
-    private async void OnRunClick(object? sender, RoutedEventArgs e)     => await ExecuteAsync(dryRun: false);
-
-    private async Task ExecuteAsync(bool dryRun)
-    {
-        if (!TryGetReadyFolder(out var folder)) return;
-
-        SetRunning(true);
-        ResetRunState();
-        var ct = _cts!.Token;
-
-        // 1) План — один раз и в фоне (на сетевой шаре BuildPlan делает File.Exists на каждый файл).
-        List<RenameItem> plan;
-        try
-        {
-            plan = await Task.Run(() => PdfRenamer.BuildPlan(folder), ct);
-        }
-        catch (Exception ex)
-        {
-            LogLineNow($"❌ Ошибка: {ex.Message}");
-            SetRunning(false);
-            return;
-        }
-
-        // 2) Реальный запуск — подтверждение.
-        if (!dryRun)
-        {
-            var willRename = plan.Count(p => p.Outcome == RenameOutcome.WillRename);
-            if (willRename == 0)
-            {
-                LogLineNow("");
-                LogLineNow("ℹ️ Переименовывать нечего (нет подходящих файлов или все конфликтуют)");
-                SetRunning(false);
-                return;
-            }
-
-            var confirmed = await new ConfirmDialog(
-                $"Будет переименовано файлов: {willRename}.\n\nФайлы не удаляются, только переименовываются. Продолжить?",
-                confirmText: "Переименовать",
-                cancelText:  "Отмена").ShowDialog<bool>(this);
-
-            if (!confirmed)
-            {
-                LogLineNow("");
-                LogLineNow("⏹️ Операция отменена");
-                SetRunning(false);
-                return;
-            }
-        }
-
-        LogLineNow("");
-        LogLineNow(dryRun
-            ? "🔍 Проверка — изменения НЕ применяются (показаны переименования и конфликты)"
-            : "🚀 Переименование… (в журнале — только конфликты и ошибки)");
-
-        // 3) Прогон в фоне; UI обновляется с троттлингом через OnProgress.
-        _throttle.Restart();
-        var progress = new Progress<RenameProgress>(OnProgress);
-
-        RenameSummary summary;
-        try
-        {
-            summary = await Task.Run(() => PdfRenamer.Process(folder, plan, dryRun, progress, ct), ct);
-        }
-        catch (Exception ex)
-        {
-            RenderLog();
-            LogLineNow($"❌ Ошибка: {ex.Message}");
-            SetRunning(false);
-            return;
-        }
-
-        // Финальный сброс журнала и сводка (continuation идет после всех колбэков прогресса).
-        UpdateBar();
-        RenderLog();
-        LogLineNow("");
-        LogLineNow(SummaryLine(summary, dryRun));
-        SetRunning(false);
-    }
+    private async void OnPreviewClick(object? sender, RoutedEventArgs e) => await RunByNameAsync(dryRun: true);
 
     private void OnStopClick(object? sender, RoutedEventArgs e)
     {
         _cts?.Cancel();
         StopBtn.IsEnabled = false;
+        _phase = "Останавливается… файлы в работе дочитываются и не переименовываются";
     }
 
-    // Колбэк прогресса (на UI-потоке): копит журнал, но рендерит/двигает полосу не чаще UiIntervalMs.
-    private void OnProgress(RenameProgress p)
+    /// <summary>Режим «по содержимому».</summary>
+    private async Task RunContentAsync()
     {
-        _curr  = p.Current;
-        _total = p.Total;
+        var templates = TemplatesBox.Text?.Trim() ?? "";
+        var source = SourceBox.Text?.Trim() ?? "";
+        if (_running) return;
+        ClearLog();
+        if (!Directory.Exists(templates)) { Log("❌ Папка шаблонов не выбрана или не существует"); Flush(); return; }
+        if (!Directory.Exists(source)) { Log("❌ Папка с PDF не выбрана или не существует"); Flush(); return; }
 
-        if (!_truncated && ShouldLog(p.Item.Outcome))
+        var recursive = RecursiveCheck.IsChecked == true;
+        var confirmed = await new ConfirmDialog(
+            "Файлы в папке с PDF" + (recursive ? " и ее подпапках" : "") + " будут переименованы на месте " +
+            "по распознанным обозначению и наименованию.\n\nСодержимое файлов не меняется, ничего не удаляется; " +
+            "сомнительные и конфликтующие файлы пропускаются. Продолжить?",
+            confirmText: "Запустить",
+            cancelText: "Отмена").ShowDialog<bool>(this);
+        if (!confirmed) return;
+
+        StartRun();
+        Log($"📁 Шаблоны: {templates}");
+        Log($"📂 Папка с PDF: {source}{(recursive ? "  (с подпапками)" : "")}");
+        _phase = "Проверка OCR-компонентов…";
+        var ct = _cts!.Token;
+
+        RunSummary? summary = null;
+        try
         {
-            if (_shownLines < MaxLogLines) { LogLine(FormatLine(p.Item)); _shownLines++; }
-            else { LogLine($"… показаны первые {MaxLogLines} строк (полный итог ниже)"); _truncated = true; }
+            summary = await Task.Run(() =>
+            {
+                var problems = OcrComponents.CheckReady();
+                if (problems.Count > 0)
+                {
+                    Log("❌ Распознавание недоступно — проверка двумя движками невозможна:");
+                    foreach (var p in problems) Log("   • " + p);
+                    return null;
+                }
+                Log($"🔤 OCR: Tesseract {TesseractEngine.Version()} (rus+eng) и PaddleOCR v5 — оба готовы");
+                var tessdata = OcrComponents.FindTessdata()!;
+                _phase = "Чтение шаблонов…";
+                var settings = new RunSettings(templates, source, recursive);
+                Log($"⚙️ Потоков распознавания: {settings.EffectiveWorkers}");
+                return OcrRenameRun.Execute(settings, () => OcrPair.CreateReal(tessdata), new Sink(this), ct);
+            }, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            Log($"❌ Ошибка: {ex.Message}");
         }
 
-        if (_throttle.ElapsedMilliseconds >= UiIntervalMs)
+        if (summary is { Fatal: null })
         {
-            UpdateBar();
-            RenderLog();
-            _throttle.Restart();
+            Log("");
+            Log(summary.Stopped
+                ? $"⏹️ Остановлено пользователем. Переименовано: {summary.Renamed}, пропущено: {summary.Skipped}" +
+                  (summary.AlreadyNamed > 0 ? $", уже с верным именем: {summary.AlreadyNamed}" : "") +
+                  $"; не обработано (остались без изменений): {summary.NotProcessed}"
+                : $"📊 Завершено. Найдено: {summary.Found}, переименовано: {summary.Renamed}, пропущено: {summary.Skipped}" +
+                  (summary.AlreadyNamed > 0 ? $", уже с верным именем: {summary.AlreadyNamed}" : ""));
+        }
+        _phase = summary is null || summary.Fatal is not null ? "Не выполнено — причина в журнале"
+            : summary.Stopped ? "Остановлено пользователем" : "Завершено";
+        StopRun();
+    }
+
+    /// <summary>Получатель хода прогона: копит строки и счетчики для таймера окна.</summary>
+    private sealed class Sink(PdfRenameWindow w) : IRunSink
+    {
+        public void Message(string text) => w.Log("ℹ️ " + text);
+
+        public void Found(int count)
+        {
+            Volatile.Write(ref w._found, count);
+            w._phase = "Распознавание и переименование…";
+            w.Log($"📄 Найдено PDF-файлов: {count}");
+        }
+
+        public void File(JournalEntry entry)
+        {
+            Interlocked.Increment(ref w._processed);
+            switch (entry.Status)
+            {
+                case FileStatus.Renamed: Interlocked.Increment(ref w._renamed); break;
+                case FileStatus.AlreadyNamed: Interlocked.Increment(ref w._already); break;
+                default: Interlocked.Increment(ref w._skipped); break;
+            }
+            w.Log(Format(entry));
         }
     }
 
-    // ── Журнал и прогресс ─────────────────────────────────────────────────────
-
-    // На реальном прогоне успехи (Renamed) и пропуски (Unchanged) в журнал не пишем —
-    // их отражают счетчик/полоса и итоговая сводка. Логируем только то, что требует внимания.
-    private static bool ShouldLog(RenameOutcome o) =>
-        o is RenameOutcome.WillRename or RenameOutcome.Conflict or RenameOutcome.Error;
-
-    private static string FormatLine(RenameItem item) => item.Outcome switch
+    internal static string Format(JournalEntry e) => e.Status switch
     {
-        RenameOutcome.WillRename => $"🔍 {item.OldName} → {item.NewName}",
-        RenameOutcome.Renamed    => $"✅ {item.OldName} → {item.NewName}",
-        RenameOutcome.Unchanged  => $"⏭️ {item.OldName} ({item.Note})",
-        RenameOutcome.Conflict   => $"⚠️ {item.OldName} → {item.NewName} ({item.Note})",
-        RenameOutcome.Error      => $"❌ {item.OldName}: {item.Note}",
-        _                        => item.OldName,
+        FileStatus.Renamed => $"✅ {e.RelativePath} → {e.NewName}" + (e.Template is null ? "" : $"  (шаблон «{e.Template}»)"),
+        FileStatus.AlreadyNamed => $"☑️ {e.RelativePath} — {e.Reason}",
+        FileStatus.Error => $"❌ {e.RelativePath} — {e.Reason}",
+        _ => $"⏭️ {e.RelativePath} — {e.Reason}",
     };
 
-    private static string SummaryLine(RenameSummary s, bool dryRun)
+    /// <summary>Режим «по имени» (прежнее правило), с предпросмотром.</summary>
+    private async Task RunByNameAsync(bool dryRun)
     {
-        if (s.Cancelled)
-            return $"⏹️ Остановлено. Успели переименовать: {s.Renamed} из {s.Total}";
-        return dryRun
-            ? $"🔍 Проверка завершена. Будет переименовано: {s.Planned} из {s.Total} " +
-              $"(без изменений: {s.Unchanged}, конфликтов: {s.Conflicts})"
-            : $"📊 Готово. Переименовано: {s.Renamed} из {s.Total} " +
-              $"(без изменений: {s.Unchanged}, конфликтов: {s.Conflicts}, ошибок: {s.Errors})";
+        var folder = SourceBox.Text?.Trim() ?? "";
+        if (_running) return;
+        if (!Directory.Exists(folder)) { ClearLog(); Log("❌ Папка не выбрана или не существует"); Flush(); return; }
+
+        List<RenameItem> plan;
+        try { plan = await Task.Run(() => PdfRenamer.BuildPlan(folder)); }
+        catch (Exception ex) { Log($"❌ Ошибка: {ex.Message}"); Flush(); return; }
+
+        if (!dryRun)
+        {
+            var willRename = plan.Count(p => p.Outcome == RenameOutcome.WillRename);
+            if (willRename == 0)
+            {
+                Log("ℹ️ Переименовывать нечего (нет подходящих файлов или все конфликтуют)");
+                Flush();
+                return;
+            }
+            var confirmed = await new ConfirmDialog(
+                $"Будет переименовано файлов: {willRename}.\n\nФайлы не удаляются, только переименовываются. Продолжить?",
+                confirmText: "Переименовать",
+                cancelText: "Отмена").ShowDialog<bool>(this);
+            if (!confirmed) return;
+        }
+
+        StartRun();
+        Log($"📂 Папка: {folder}");
+        Log(dryRun
+            ? "🔍 Проверка — изменения НЕ применяются (показаны переименования и конфликты)"
+            : "🚀 Переименование… (в журнале — только конфликты и ошибки)");
+        _found = plan.Count;
+        _phase = dryRun ? "Проверка…" : "Переименование…";
+        var ct = _cts!.Token;
+        var progress = new Progress<RenameProgress>(p =>
+        {
+            _processed = p.Current;
+            if (p.Item.Outcome is RenameOutcome.WillRename or RenameOutcome.Conflict or RenameOutcome.Error)
+                Log(FormatByName(p.Item));
+        });
+
+        try
+        {
+            var s = await Task.Run(() => PdfRenamer.Process(folder, plan, dryRun, progress, ct), ct);
+            _renamed = s.Renamed;
+            _skipped = s.Conflicts + s.Errors;
+            Log("");
+            Log(s.Cancelled
+                ? $"⏹️ Остановлено. Успели переименовать: {s.Renamed} из {s.Total}"
+                : dryRun
+                    ? $"🔍 Проверка завершена. Будет переименовано: {s.Planned} из {s.Total} (без изменений: {s.Unchanged}, конфликтов: {s.Conflicts})"
+                    : $"📊 Готово. Переименовано: {s.Renamed} из {s.Total} (без изменений: {s.Unchanged}, конфликтов: {s.Conflicts}, ошибок: {s.Errors})");
+            _phase = s.Cancelled ? "Остановлено пользователем" : "Завершено";
+        }
+        catch (Exception ex)
+        {
+            Log($"❌ Ошибка: {ex.Message}");
+            _phase = "Не выполнено — причина в журнале";
+        }
+        StopRun();
     }
 
-    private void UpdateBar() =>
-        Progress.SetProgress(_total > 0 ? (double)_curr / _total : 0);
-
-    private void LogLine(string s)            // только в модель (дешево)
+    private static string FormatByName(RenameItem item) => item.Outcome switch
     {
-        if (_log.Length > 0) _log.Append('\n');
-        _log.Append(s);
+        RenameOutcome.WillRename => $"🔍 {item.OldName} → {item.NewName}",
+        RenameOutcome.Renamed => $"✅ {item.OldName} → {item.NewName}",
+        RenameOutcome.Conflict => $"⚠️ {item.OldName} → {item.NewName} ({item.Note})",
+        RenameOutcome.Error => $"❌ {item.OldName}: {item.Note}",
+        _ => $"⏭️ {item.OldName} ({item.Note})",
+    };
+
+    private async Task ReportFolderContents(string folder)
+    {
+        ClearLog();
+        Log($"📂 Папка: {folder}");
+        try
+        {
+            var pdfs = await Task.Run(() => PdfRenamer.ListPdfFiles(folder));
+            Log(pdfs.Count == 0 ? "⚠️ В папке нет PDF-файлов" : $"📄 Найдено PDF-файлов: {pdfs.Count}");
+            if (pdfs.Count > 0) Log("💡 Нажмите «Проверить» для предпросмотра изменений");
+        }
+        catch (Exception ex) { Log($"❌ Нет доступа к папке: {ex.Message}"); }
+        Flush();
     }
 
-    private void RenderLog()                  // модель → TextBox (дорого; зовем с троттлингом)
-    {
-        LogBox.Text       = _log.ToString();
-        LogBox.CaretIndex = LogBox.Text.Length;   // прокрутка к последней строке
-    }
+    // ── Журнал и состояние ────────────────────────────────────────────────────
 
-    private void LogLineNow(string s) { LogLine(s); RenderLog(); }
+    private void Log(string line) => _pending.Enqueue(line);
 
     private void ClearLog()
     {
-        _log.Clear();
-        _shownLines = 0;
-        _truncated  = false;
-        LogBox.Text = "";
+        while (_pending.TryDequeue(out _)) { }
+        _lines.Clear();
+        SaveLogBtn.IsEnabled = false;
     }
 
-    // ── Состояние ─────────────────────────────────────────────────────────────
-
-    private bool TryGetReadyFolder(out string folder)
+    /// <summary>Перенести накопленные строки в список и обновить счетчики (UI-поток).</summary>
+    private void Flush()
     {
-        folder = FolderBox.Text?.Trim() ?? "";
-        if (_running) return false;
-        if (string.IsNullOrEmpty(folder)) { LogLineNow("❌ Папка не выбрана"); return false; }
-        if (!Directory.Exists(folder))    { LogLineNow("❌ Папка не существует"); return false; }
-        return true;
+        if (!_pending.IsEmpty)
+        {
+            var batch = new List<string>();
+            while (_pending.TryDequeue(out var line)) batch.Add(line);
+            _lines.AddRange(batch);
+            if (_lines.Count > 0) LogList.ScrollIntoView(_lines.Count - 1);
+        }
+        SaveLogBtn.IsEnabled = !_running && _lines.Count > 0;
+
+        int found = Volatile.Read(ref _found), processed = Volatile.Read(ref _processed);
+        if (_running || processed > 0)
+        {
+            var counters = $"Найдено: {found} · Обработано: {processed} · Переименовано: {Volatile.Read(ref _renamed)} · " +
+                           $"Пропущено: {Volatile.Read(ref _skipped)}" +
+                           (_already > 0 ? $" · Уже с верным именем: {_already}" : "");
+            StatusText.Text = _phase.Length > 0 ? $"{_phase}\n{counters}" : counters;
+            Progress.SetProgress(found > 0 ? (double)processed / found : 0);
+        }
     }
 
-    private void ResetRunState()
+    private void StartRun()
     {
-        _cts        = new CancellationTokenSource();
-        _curr       = 0;
-        _total      = 0;
-        _shownLines = 0;
-        _truncated  = false;
+        _cts = new CancellationTokenSource();
+        _found = _processed = _renamed = _already = _skipped = 0;
+        _phase = "";
         Progress.SetProgress(0);
+        _running = true;
+        StopBtn.IsEnabled = true;
+        UpdateActionState();
+        _timer.Start();
     }
 
-    private void SetRunning(bool running)
+    private void StopRun()
     {
-        _running = running;
-        StopBtn.IsEnabled = running;
+        _running = false;
+        _timer.Stop();
+        Flush();
+        StopBtn.IsEnabled = false;
         UpdateActionState();
     }
 
-    // Кнопки действий доступны, когда указана папка и прогон не идет; «Обзор» — когда не идет.
     private void UpdateActionState()
     {
-        var hasFolder = !string.IsNullOrWhiteSpace(FolderBox.Text);
-        BrowseBtn.IsEnabled  = !_running;
-        PreviewBtn.IsEnabled = !_running && hasFolder;
-        RunBtn.IsEnabled     = !_running && hasFolder;
+        var hasSource = !string.IsNullOrWhiteSpace(SourceBox.Text);
+        var ready = hasSource && (!ContentMode || !string.IsNullOrWhiteSpace(TemplatesBox.Text));
+        ModeCombo.IsEnabled = !_running;
+        TemplatesBtn.IsEnabled = SourceBtn.IsEnabled = !_running;
+        TemplatesBox.IsEnabled = SourceBox.IsEnabled = RecursiveCheck.IsEnabled = !_running;
+        PreviewBtn.IsEnabled = !_running && hasSource;
+        RunBtn.IsEnabled = !_running && ready;
+    }
+
+    // ── Копирование и сохранение журнала ──────────────────────────────────────
+
+    private async void OnLogKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.C || !e.KeyModifiers.HasFlag(KeyModifiers.Control) && !e.KeyModifiers.HasFlag(KeyModifiers.Meta)) return;
+        var indexes = LogList.Selection.SelectedIndexes.Where(i => i >= 0 && i < _lines.Count).Order().ToList();
+        if (indexes.Count == 0 || Clipboard is null) return;
+        await Clipboard.SetTextAsync(string.Join(Environment.NewLine, indexes.Select(i => _lines[i])));
+        e.Handled = true;
+    }
+
+    private async void OnSaveLog(object? sender, RoutedEventArgs e)
+    {
+        var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        {
+            Title = "Сохранить журнал",
+            SuggestedFileName = $"Журнал переименования {DateTime.Now:yyyy-MM-dd HH-mm}.txt",
+            DefaultExtension = "txt",
+            FileTypeChoices = [new FilePickerFileType("Текст") { Patterns = ["*.txt"] }],
+        });
+        if (file is null) return;
+        try
+        {
+            await using var stream = await file.OpenWriteAsync();
+            await using var writer = new StreamWriter(stream, new UTF8Encoding(true));
+            foreach (var line in _lines) await writer.WriteLineAsync(line);
+        }
+        catch (Exception ex)
+        {
+            Log($"❌ Журнал не сохранен: {ex.Message}");
+            Flush();
+        }
     }
 }

@@ -32,6 +32,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\..\SmartBase.csproj" />
+    <!-- Расширение — отдельный плагин (своя сборка, OCR и модели в выводе); тесты видят его
+         внутренние типы (InternalsVisibleTo в проекте плагина). -->
+    <ProjectReference Include="..\..\..\Extensions\PdfRename\SmartBase.Extensions.PdfRename.csproj" />
     <ProjectReference Include="..\..\ExtensionsShared\ExtensionsShared.csproj" />
   </ItemGroup>
 

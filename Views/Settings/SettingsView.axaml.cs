@@ -357,6 +357,7 @@ public partial class SettingsView : UserControl
     // в окне расширения пишет в те же ключи.
     private void BuildExtensionsPanel()
     {
+        BuildExtensionPluginsBlock();
         BuildExtensionsVisibility();
         BuildExtensionsSettingsList();
     }

@@ -1,0 +1,69 @@
+Расширение «Переименование PDF» для SmartBase — уведомления о сторонних компонентах
+THIRD-PARTY SOFTWARE NOTICES AND INFORMATION
+
+Расширение распространяется отдельным архивом (плагином) и под той же лицензией, что
+и SmartBase (Apache License 2.0). Оно включает перечисленное ниже стороннее программное
+обеспечение и данные, которые остаются под лицензиями своих правообладателей. Файл
+распространяется вместе с расширением; полные тексты лицензий Apache 2.0, MIT и BSD —
+в файле THIRD-PARTY-NOTICES.txt программы SmartBase и по ссылкам ниже.
+
+------------------------------------------------------------------------------
+Распознавание текста
+------------------------------------------------------------------------------
+
+PaddleOCR (модели PP-OCRv5: mobile_zh_det, eslav_PP_OCRv5_mobile_rec)
+  Apache License 2.0 — Copyright (c) PaddlePaddle Authors
+  https://github.com/PaddlePaddle/PaddleOCR
+
+Paddle Inference (нативные библиотеки, сборка OpenBLAS; в составе
+Sdcb.PaddleInference.runtime.*.openblas)
+  Apache License 2.0 — Copyright (c) PaddlePaddle Authors
+  https://github.com/PaddlePaddle/Paddle
+  Включает OpenBLAS (BSD 3-Clause), protobuf (BSD 3-Clause), ONNX Runtime (MIT),
+  Paddle2ONNX (Apache 2.0) и другие компоненты, перечисленные их авторами.
+
+Sdcb.PaddleOCR, Sdcb.PaddleInference, Sdcb.PaddleOCR.Models.LocalV5
+  Apache License 2.0 — Copyright (c) sdcb
+  https://github.com/sdcb/PaddleSharp
+
+Tesseract OCR (Windows: tesseract55.dll из пакета TesseractOCR 5.5.2)
+  Apache License 2.0 — Copyright (c) Tesseract OCR authors
+  https://github.com/tesseract-ocr/tesseract
+  На Linux и macOS расширение использует Tesseract, установленный в системе.
+
+Leptonica (Windows: leptonica-1.85.0.dll из пакета TesseractOCR 5.5.2)
+  BSD 2-Clause — Copyright (c) Dan Bloomberg
+  http://www.leptonica.org
+
+TesseractOCR (пакет NuGet, источник библиотек Tesseract для Windows)
+  Apache License 2.0 — Copyright (c) Kees van Spelde, Charles Weld
+  https://github.com/Sicos1977/TesseractOCR
+
+Языковые данные Tesseract (tessdata_fast 4.1.0: rus.traineddata, eng.traineddata)
+  Apache License 2.0 — Copyright (c) Tesseract OCR authors
+  https://github.com/tesseract-ocr/tessdata_fast
+
+------------------------------------------------------------------------------
+Обработка изображений и PDF
+------------------------------------------------------------------------------
+
+OpenCV (нативная библиотека в составе OpenCvSharp4.runtime.win /
+OpenCvSharp4.official.runtime.linux-x64)
+  Apache License 2.0 — Copyright (c) OpenCV team
+  https://opencv.org
+
+OpenCvSharp4
+  Apache License 2.0 — Copyright (c) shimat
+  https://github.com/shimat/opencvsharp
+
+PDFium (нативная библиотека в составе Docnet.Core 2.6.0)
+  BSD 3-Clause — Copyright 2014 The PDFium Authors
+  https://pdfium.googlesource.com/pdfium/
+
+Docnet.Core
+  MIT — Copyright (c) Polyakov Ilya
+  https://github.com/GowenGit/docnet
+
+YamlDotNet (зависимость Sdcb.PaddleOCR)
+  MIT — Copyright (c) Antoine Aubry and contributors
+  https://github.com/aaubry/YamlDotNet

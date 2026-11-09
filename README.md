@@ -430,7 +430,7 @@ SmartBase/
 │   └── Platforms/              # Бэкенды ОС: macOS — свой код, Windows/Linux — библиотека
 │
 ├── Extensions/                 # Плагины: IExtension + реестр, каждый в своей папке
-│   ├── PdfRename/              #   Переименование PDF
+│   ├── PdfRename/              #   Переименование PDF по скану (плагин: OCR в своей папке, ставится отдельно)
 │   ├── PdfAnalyzer/            #   Анализ PDF-файлов
 │   ├── ProductCompare/         #   Сравнение составов изделий
 │   ├── AssemblyCalc/           #   Расчет сборочных единиц
