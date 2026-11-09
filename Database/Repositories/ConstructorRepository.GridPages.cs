@@ -113,7 +113,7 @@ public sealed partial class ConstructorRepository
             var t0 = GridTimings.Start();
             using var ctx = new AppDbContext(db.DbPath);
             ctx.ApplyPerformancePragmas();
-            var repo = new ConstructorRepository(ctx);
+            var repo = new ConstructorRepository(ctx) { Permissions = Permissions };
             using var foreignScope = (ForeignResolver(crossPaths)?.Target as ForeignPropertyReader)?.OpenScope();
             GridTimings.Stop(t0, "страница (фон): подключение");
 
@@ -151,7 +151,7 @@ public sealed partial class ConstructorRepository
         {
             using var ctx = new AppDbContext(db.DbPath);
             ctx.ApplyPerformancePragmas();
-            var repo = new ConstructorRepository(ctx);
+            var repo = new ConstructorRepository(ctx) { Permissions = Permissions };
             using var foreignScope = (ForeignResolver(paths)?.Target as ForeignPropertyReader)?.OpenScope();
             return new TopUpData(repo.GetFieldValuesBatch(recordIds, fieldIds), repo.ReadPageLinks(recordIds, relationFieldIds));
         });
@@ -524,7 +524,7 @@ public sealed partial class ConstructorRepository
                                           (sortKey is null ? "" : $", сортировка по {sortKey}"));
             await using var ctx = new AppDbContext(dbPath);
             ctx.ApplyPerformancePragmas();
-            var repo = new ConstructorRepository(ctx) { ComputedRun = run };
+            var repo = new ConstructorRepository(ctx) { Permissions = Permissions, ComputedRun = run };
             var ids  = await repo.FilteredIdsSortedAsync(collectionId, filtersCopy, excludeHidden, sortKey, sortAsc,
                                                          sortFieldType, ForeignResolver(crossPaths), ct);
             slow.Context += $", отобрано {ids.Count:N0}";
@@ -566,6 +566,7 @@ public sealed partial class ConstructorRepository
         var fieldType = storedType;
         if (FieldTypeInfo.IsAuditComputed(fieldType))
         {
+            Demand(PermAction.ViewCollection, collectionId);
             return await AuditSortedIdsAsync(q, fieldType, sortAsc, ct);
         }
 
@@ -574,7 +575,8 @@ public sealed partial class ConstructorRepository
             var field = DatePeriodField(fid);
             if (field is null)
                 return await q.OrderBy(r => r.Position).ThenBy(r => r.Id).Select(r => r.Id).ToListAsync(ct);
-            if (DatePeriodConfig.FromConfig(field.ConfigJson) is { Automatic: false })
+            if (DatePeriodConfig.FromConfig(field.ConfigJson) is { Automatic: false }
+                && Permissions?.Can(PermAction.ViewCollection, collectionId) != false)
                 return await NumberSortedIdsAsync(collectionId, q, fid, sortAsc, filters.Count == 0, excludeHidden, ct);
             // Храним только id и числовой ключ, без строк и словарей всех ячеек.
             // Порядок чтения — порядок таблицы; порядковый номер сохраняет устойчивость.
@@ -821,7 +823,9 @@ public sealed partial class ConstructorRepository
                 {
                     context = new AppDbContext(path);
                     context.ApplyPerformancePragmas();
-                    var repo = new ConstructorRepository(context);
+                    var permissions = new PermissionService(context) { DbId = dbId };
+                    permissions.Reload(notify: false);
+                    var repo = new ConstructorRepository(context) { Permissions = permissions };
                     _opened[dbId] = (context, repo);
                     return repo;
                 }

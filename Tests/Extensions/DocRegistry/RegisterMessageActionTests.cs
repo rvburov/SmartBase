@@ -185,7 +185,56 @@ public sealed class RegisterMessageActionTests
         Assert.Single(db.Constructor.GetRecords(journal));
     }
 
+    // ── Допуск ────────────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Того, кого нет в списке, действие не регистрирует — и сообщение его не разбирает: чужому
+    /// перечень ошибок его сообщения ни к чему.
+    /// </summary>
+    [Fact]
+    public void A_sender_outside_the_list_is_refused()
+    {
+        using var db = new TempDatabase();
+        var journal = JournalStand.Create(db.Constructor);
+
+        var result = Action.Run(Context(db, journal), Input("не сообщение вовсе", sender: "9999"));
+
+        Assert.False(result.Ok);
+        Assert.Equal(RegisterMessageAction.NotListed, ReplyMarkup.Text(result.Answer));
+        Assert.Contains("9999", result.Explanation, StringComparison.Ordinal);
+        Assert.Empty(db.Constructor.GetRecords(journal));
+    }
+
+    /// <summary>Сверяется идентификатор, а не пометка рядом с ним: «Иванов» — не отправитель.</summary>
+    [Fact]
+    public void The_note_next_to_an_identifier_is_not_a_sender()
+    {
+        using var db = new TempDatabase();
+        var journal = JournalStand.Create(db.Constructor);
+
+        var result = Action.Run(Context(db, journal), Input(Message(), sender: "Иванов"));
+
+        Assert.False(result.Ok);
+        Assert.Equal(RegisterMessageAction.NotListed, ReplyMarkup.Text(result.Answer));
+    }
+
+    /// <summary>
+    /// Пустой список — «никому», а не «всем». Отправителю — что его нет в списке; тому, кто
+    /// настраивал, — что список пуст: иначе он искал бы отправителя в списке, которого нет.
+    /// </summary>
+    [Fact]
+    public void An_empty_list_lets_nobody_in()
+    {
+        using var db = new TempDatabase();
+        var journal = JournalStand.Create(db.Constructor);
+
+        var result = Action.Run(Context(db, journal, senders: ""), Input(Message()));
+
+        Assert.False(result.Ok);
+        Assert.Equal(RegisterMessageAction.NotListed, ReplyMarkup.Text(result.Answer));
+        Assert.Contains("пуст", result.Explanation, StringComparison.Ordinal);
+        Assert.Empty(db.Constructor.GetRecords(journal));
+    }
 
     /// <summary>
     /// Отправитель не назван — это ошибка настройки шага, а не сообщения: отправителю сказать
@@ -607,6 +656,30 @@ public sealed class MessageScenarioTests : IDisposable
         Assert.Single(_db.Constructor.GetRecords(journal));
         Assert.True((await Run(scenario, Event("Да"))).Ok);
         Assert.Empty(_db.Constructor.GetRecords(journal));
+    }
+
+    [Fact]
+    public async Task A_readonly_connection_can_view_but_cannot_confirm_deletion()
+    {
+        var journal = JournalStand.Create(_db.Constructor);
+        var scenario = Scenario(journal);
+        Assert.True((await Run(scenario, Event(Message))).Ok);
+        Assert.True((await Run(scenario, Event("Да"))).Ok);
+        Assert.True((await Run(scenario, Event("Действие: Удаление\nНомер: АБВГ.301121.001"))).Ok);
+        var userId = _db.Permissions.CurrentUserId;
+        _db.Permissions.SetMask(userId, null, (int)PermAction.ViewCollection);
+        var me = _db.Context.DbUsers.Single(u => u.Id == userId);
+        me.IsAdmin = false;
+        _db.Context.SaveChanges();
+        _db.Permissions.Reload(notify: false);
+
+        var viewed = await Run(scenario, Event("Действие: Просмотр\nНомер: АБВГ.301121.001"));
+        Assert.True(viewed.Ok, viewed.Problem);
+        Assert.Contains("Наименование: Кронштейн", ReplyMarkup.Text(viewed.Reply), StringComparison.Ordinal);
+        var denied = await Run(scenario, Event("Да"));
+        Assert.False(denied.Ok);
+        Assert.Contains("Недостаточно прав", ReplyMarkup.Text(denied.Reply), StringComparison.Ordinal);
+        Assert.Single(_db.Constructor.GetRecords(journal));
     }
 
     /// <summary>Ошибки сообщения доезжают до ответа словами действия, без приставок оболочки.</summary>

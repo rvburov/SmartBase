@@ -25,6 +25,7 @@ public partial class ConstructorRepository
     /// <returns>Id созданных записей сверху вниз.</returns>
     public List<int> AddEmptyRecords(int collectionId, int count)
     {
+        Demand(PermAction.CreateRecord, collectionId);
         if (count <= 0) return [];
 
         var now    = DateTime.Now.ToString("o");
@@ -59,6 +60,7 @@ public partial class ConstructorRepository
     /// <returns>Id созданных свойств слева направо.</returns>
     public List<int> AddPasteTextFields(int collectionId, int count)
     {
+        Demand(PermAction.CreateField, collectionId);
         var ids = new List<int>(Math.Max(0, count));
         if (count <= 0) return ids;
 
@@ -109,9 +111,10 @@ public partial class ConstructorRepository
 
         if (emptyRecords.Count > 0)
         {
+            Demand(PermAction.DeleteRecord, collectionId);
             DeleteRecordsData(emptyRecords);
         }
-
+        if (emptyFields.Count > 0) Demand(PermAction.DeleteField, collectionId);
         foreach (var fieldId in emptyFields) DeleteField(fieldId);
         return (emptyRecords.Count, emptyFields.Count);
     }

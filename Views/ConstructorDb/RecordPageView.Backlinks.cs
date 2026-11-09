@@ -51,7 +51,7 @@ public partial class RecordPageView
         repo is not null && _vm is not null && (Shows(repo) || (_backlinkReader?.Reads(repo.DbPath) ?? true));
 
     /// <summary>Перечитать блок ссылок: коммит в базе-источнике, подключили или отключили базу,
-    /// изменились связанные записи.</summary>
+    /// сменились права.</summary>
     public void RefreshBacklinks() => LoadBacklinks();
 
     private void ResetBacklinks()

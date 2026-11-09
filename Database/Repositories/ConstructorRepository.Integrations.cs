@@ -41,6 +41,11 @@ public partial class ConstructorRepository
         if (!db.DbCollections.AsNoTracking().Any(c => c.Id == binding.CollectionId))
             throw new ImportException("Коллекция не найдена — возможно, ее удалили.");
 
+        // Права спрашиваются ДО первой записи, хотя их проверит и каждый AddRecord отдельно:
+        // отказ на середине оставил бы коллекцию наполовину обновленной, а обмен повторяется
+        // по расписанию — разбираться в таком состоянии потом некому.
+        DemandRights(binding);
+
         var reader = ColumnReader(binding, schema);
         var fields = FieldsOfBinding(binding);
 
@@ -168,19 +173,68 @@ public partial class ConstructorRepository
         return new BindingResult(created, updated, skipped, unclear, empty);
     }
 
-    /// <summary>Применить привязку в фоне на своем подключении.</summary>
-    public BindingResult ApplyRowsIsolated(CollectionBinding binding, ImportSchema schema,
-        IEnumerable<ImportRow> rows, CancellationToken ct, IProgress<int>? progress = null)
+    /// <summary>
+    /// То же на ОТДЕЛЬНОМ подключении — для вызова с фонового потока. Общий контекст с фонового
+    /// потока трогать нельзя: его параллельно использует интерфейс, и EF отвечает на это
+    /// «A second operation was started on this context instance» (см. <c>ImportStreamedCollectionIsolated</c>).
+    ///
+    /// Права ручной записи спрашиваются ЗДЕСЬ, на публичной точке входа. Автоподстановка
+    /// наследует исходные права отдельно: ее отложенная работа проверит их перед записью.
+    /// </summary>
+    public BindingResult ApplyRowsIsolated(
+        CollectionBinding      binding,
+        ImportSchema           schema,
+        IEnumerable<ImportRow> rows,
+        CancellationToken      ct,
+        IProgress<int>?        progress = null)
     {
+        DemandRights(binding);
+
         using var ctx = new AppDbContext(db.DbPath);
-        return new ConstructorRepository(ctx).ApplyRows(binding, schema, rows, ct, progress);
+        return new ConstructorRepository(ctx) { FileAutoPermissions = AutoFilePermissions }
+            .ApplyRows(binding, schema, rows, ct, progress);
     }
 
-    /// <summary>Выполнить работу расширения на отдельном подключении.</summary>
-    public T UseIsolated<T>(int collectionId, Func<ConstructorRepository, T> work)
+    /// <summary>
+    /// Отдельное подключение к той же базе — для работы, которую ведет не интерфейс: шаг
+    /// сценария выполняет действие расширения в фоне, а расширение пишет записи само
+    /// (<c>Extensions/ExtensionAction.cs</c>).
+    ///
+    /// Подключение открывается ОДНО на всю работу, а не на строку: сообщений в пачке бывает
+    /// несколько сотен, и подключение на каждое стоило бы дороже самой записи.
+    ///
+    /// Права ручной записи спрашиваются ЗДЕСЬ, на публичной точке входа, — как и у
+    /// <see cref="ApplyRowsIsolated"/>. По умолчанию спрашивается право заводить записи;
+    /// исходные ограничения автоподстановки передаются клону независимо от этого контракта.
+    /// Для операции, выбирающей права по входным данным, checkInside передает живой кеш прав
+    /// клону: его мутаторы проверяют свои права, а чтение проверяет само действие.
+    /// </summary>
+    /// <param name="collectionId">Коллекция, с которой будет работать вызванная работа.</param>
+    /// <param name="work">Что сделать на отдельном подключении.</param>
+    /// <param name="checkInside">Проверять права внутри операции вместо общего CreateRecord.</param>
+    public T UseIsolated<T>(int collectionId, Func<ConstructorRepository, T> work, bool checkInside = false)
     {
+        if (!checkInside) Demand(PermAction.CreateRecord, collectionId);
+
         using var ctx = new AppDbContext(db.DbPath);
-        return work(new ConstructorRepository(ctx));
+        return work(new ConstructorRepository(ctx)
+        {
+            Permissions = checkInside ? Permissions : null,
+            FileAutoPermissions = AutoFilePermissions,
+        });
+    }
+
+    /// <summary>
+    /// Права, без которых привязку применять нечем. Спрашивается только то, что привязка
+    /// собирается делать: право заводить записи не нужно тому, кто выбрал «только обновлять».
+    /// </summary>
+    private void DemandRights(CollectionBinding binding)
+    {
+        if (!binding.Matches || binding.CreateMissing)
+            Demand(PermAction.CreateRecord, binding.CollectionId);
+
+        if (binding.Matches && binding.UpdateExisting)
+            Demand(PermAction.EditRecord, binding.CollectionId);
     }
 
     // ── Чтение колонок источника ──────────────────────────────────────────────

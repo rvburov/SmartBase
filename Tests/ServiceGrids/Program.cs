@@ -1,18 +1,18 @@
 // Стенд служебных таблиц (этап 6а плана drawn-grid.md): «Диагностика» (SettingsView), «История
-// изменений» (ProfileView) — настоящие экраны на временных
+// изменений» и «Пользователи» (ProfileView) — настоящие экраны на временных
 // данных (Fixtures.cs). Для каждой таблицы при масштабе 1 и 2 снимаются кадры сцен: базовая,
 // наведение на заголовок, наведение на кнопку фильтра, наведение на строку, выбранная строка с
-// панелью деталей. Кадры
+// панелью деталей (у «Пользователей» вместо нее — прокрутка вбок с закрепленной колонкой). Кадры
 // сравниваются попиксельно с эталонами в папке --ref (по умолчанию ~/TestData/regress); нет эталона —
 // кадр принимается за эталон. Так эталонами стали кадры таблиц на DataGrid, снятые до перевода на
 // рисованную сетку, а после перевода тот же стенд сверяет с ними рисованные.
 // Затем (масштаб 1) — поведение: стрелка вниз двигает выделение и панель деталей, кнопка заголовка
-// открывает окно фильтра, прокрутка к концу подгружает страницы.
+// открывает окно фильтра, прокрутка к концу подгружает страницы, галочка права меняет маску.
 // Таблица ищется по имени, ее устройство стенд не знает: строки, колонки и смещение читаются
 // отражением (ItemsSource/Columns у DataGrid, RowCount/ItemAt/ColumnWidths/OffsetX у ServiceGrid).
 // Платформа — Avalonia.Headless с настоящим шрифтом (Skia).
 //
-//   dotnet run -c Release --project Tests/ServiceGrids -- [--data DIR] [--out DIR] [--ref DIR] [--only logs|history]
+//   dotnet run -c Release --project Tests/ServiceGrids -- [--data DIR] [--out DIR] [--ref DIR] [--only logs|history|users]
 
 using System.Diagnostics;
 using System.Reflection;
@@ -55,7 +55,7 @@ Dispatcher.UIThread.UnhandledException += (_, e) => Console.WriteLine($"    [и�
 var swFx = Stopwatch.StartNew();
 using var fx = Fixtures.Build(dataDir);
 Console.WriteLine($"Стенд: {dataDir} ({swFx.ElapsedMilliseconds:N0} мс на данные)");
-Console.WriteLine($"Диагностика {Fixtures.LogRows} строк, история {fx.HistoryRows} строк, пользователи сохранены как авторы записей");
+Console.WriteLine($"Диагностика {Fixtures.LogRows} строк, история {fx.HistoryRows} строк, пользователей {Fixtures.Users.Length + 1}");
 Console.WriteLine($"Эталоны: {refDir}; кадры: {outDir}");
 Console.WriteLine();
 
@@ -67,6 +67,7 @@ var tables = new (string Key, string Grid, bool Details)[]
 {
     ("logs",        "LogsGrid",    true),
     ("history",     "HistoryGrid", true),
+    ("users",       "UsersGrid",   false),
 };
 
 // Сначала масштаб 2, потом 1: проверки поведения (только при масштабе 1) пишут в базу стенда
@@ -110,6 +111,13 @@ foreach (var scale in new[] { 2.0, 1.0 })
             // Панель деталей сузила таблицу — колонки другой ширины, геометрия считается заново.
             if (scale == 1) BehaveDetails(w, view, grid, key, Geometry(w, grid));
         }
+        else
+        {
+            if (scale == 1) BehaveUsers(w, view, grid, geo);
+            Scene(w, grid, key, scale, geo, "scrolled", () => { ScrollRight(w, grid, key, scale, "scrolled", 1); w.MouseMove(geo.Park); });
+            // Правый край: даты, кнопка удаления (в том числе недоступная у своей строки).
+            Scene(w, grid, key, scale, geo, "end",      () => { ScrollRight(w, grid, key, scale, "end", 3); w.MouseMove(geo.Park); });
+        }
         w.Close();
         Pump();
     }
@@ -146,6 +154,16 @@ return worst == 0 && failed == 0 ? 0 : 2;
     w.Content = profile;
     w.Show();
     Settle(w);
+    if (key == "users")
+    {
+        profile.ShowCategory("admin");
+        Pump();
+        var open = profile.FindControl<Button>("UsersOpenBtn") ?? throw new InvalidOperationException("нет кнопки UsersOpenBtn");
+        open.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Pump();
+        WaitRows(profile, "UsersGrid");
+        return (w, profile);
+    }
     profile.ShowCategory(key);
     Pump();
     WaitRows(profile, "HistoryGrid");
@@ -165,7 +183,7 @@ static string Title(string key) => key switch
 {
     "logs"        => "Диагностика",
     "history"     => "История изменений",
-    _             => throw new ArgumentOutOfRangeException(nameof(key)),
+    _             => "Пользователи",
 };
 
 // ── Геометрия таблицы в окне ──────────────────────────────────────────────────
@@ -296,6 +314,36 @@ void BehaveDetails(Window w, Control view, Control grid, string key, Geo geo)
         WaitUntil(() => RowCount(grid) > was, TimeSpan.FromSeconds(3));
     }
     Expect(RowCount(grid) == expected, $"подгрузка при прокрутке: было {first}, стало {RowCount(grid)} из {expected}");
+}
+
+// «Пользователи»: галочка права меняет маску в базе и возвращается вторым кликом; окно фильтра.
+void BehaveUsers(Window w, Control view, Control grid, Geo geo)
+{
+    var petr = -1;
+    for (var i = 0; i < RowCount(grid); i++)
+        if (ItemAt(grid, i) is AdminUserRow { DisplayName: var n } && n == Fixtures.Users[1]) petr = i;
+    Expect(petr >= 0, $"строка «{Fixtures.Users[1]}» есть в таблице (индекс {petr})");
+    if (petr >= 0)
+    {
+        // Колонка «Изменение коллекции» — вторая колонка прав: имя, ключ, роль, доступ, просмотр, изменение.
+        const int col = 5;
+        var pt   = geo.RowCenter(petr, geo.Left(col) + geo.Widths[col] / 2);
+        var mask = fx.MaskOf(Fixtures.Users[1]);
+        Click(w, pt);
+        var on = fx.MaskOf(Fixtures.Users[1]);
+        Expect(on == (mask | (int)PermAction.EditCollection), $"клик по галочке дает право: маска {mask} → {on}");
+        Click(w, pt);
+        var off = fx.MaskOf(Fixtures.Users[1]);
+        Expect(off == mask, $"второй клик снимает право: маска {on} → {off}");
+        w.MouseMove(geo.Park); Pump();
+    }
+
+    var popups = TransientPopups.Count;
+    Click(w, geo.Chevron(1));
+    var opened = WaitUntil(() => TransientPopups.Count > popups, TimeSpan.FromSeconds(5));
+    Expect(opened, "кнопка заголовка открывает окно фильтра");
+    TransientPopups.CloseAll();
+    Pump();
 }
 
 // Полный текст поля выбранной строки.

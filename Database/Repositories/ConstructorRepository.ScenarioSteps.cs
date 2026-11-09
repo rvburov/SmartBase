@@ -89,11 +89,13 @@ public partial class ConstructorRepository
     {
         var matching = !string.IsNullOrWhiteSpace(matchField);
 
-
-
+        // Права спрашиваются по тому, что шаг СОБИРАЕТСЯ делать. Обновление без права правки —
+        // это правка чужих данных мимо запрета, а создание без права создания — обход его же.
+        if (matching)      Demand(PermAction.EditRecord,   collectionId);
+        if (createMissing) Demand(PermAction.CreateRecord, collectionId);
 
         using var ctx = new AppDbContext(db.DbPath);
-        var repo = new ConstructorRepository(ctx);
+        var repo = new ConstructorRepository(ctx) { FileAutoPermissions = AutoFilePermissions };
 
         var collection = repo.CollectionName(collectionId);
         if (collection.Length == 0)

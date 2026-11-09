@@ -1,8 +1,8 @@
 # Матрица многопользовательского покрытия
 
-> **30.10.2026:** механизмы ролей, паролей SmartBase, политик и аудита сняты, соответствующие
-> проверки удалены. Новые регрессии — `LegacySecurityMetadataTests`, `UserOptionsTests`,
-> анонимный API с выбором `database`, `OutgoingBodySizeTests` и проверки реальной отправки.
+> **30.10.2026 / 09.11.2026:** контур безопасности (политики, метки, направления, выдачи,
+> мастер-пароль, журнал безопасности) снят вместе с его проверками. Доступ к базе, роли, права,
+> пароль базы, менеджер паролей и токены роботов 09.11.2026 вернули вместе с их тестами.
 > Результаты 26.10 ниже сохранены как исторические, а не как новый прогон.
 
 
@@ -195,7 +195,9 @@
 | Сценарии: вычисления, условие, запись, копия/перенос, вызов действия | `ScenarioRunnerTests`, `ScenarioActionTests`, `ScenarioComputeTests`, `ScenarioDeedsTests`, `ScenarioTransferTests`, `ScenarioAutomationTests`, `ScenarioIntakeTests`, `ConcurrentIntegrationTests`, `ConcurrentExchangeAtomicityTests` | Шаг записи атомарен, общий/независимые ключи и повтор; 1000 `integrations`; отдельные регрессии резервирования номеров расширений | Полный ScenarioRunner под нагрузкой со stop/restart, повтором внешней доставки и цепочкой нескольких действий |
 | Расписание сценариев и потоки | `ScenarioServiceTests`, `StreamServiceTests`, `ScenariosRegistryTests`, `StreamsRegistryTests` | Функциональные lifecycle и ошибки | Start/stop/restart во время входящих событий, два экземпляра планировщика, доставка без задвоения |
 | Заметки: создание/переименование/перенос/копия/сохранение/удаление файлов | Unit `VaultOperationsTests`, `VaultScannerTests`, `NoteAutosaveTests`, `NoteFormatTests`, `NoteMarkupScannerTests` | Настоящие временные файлы, BOM/переносы строк/отказ перезаписи соседа | `ConcurrentPersonalFilesTests`: 32 конфликта имен/сохранения и независимые файловые операции; остается настоящий UI autosave/удаление, отзыв доступа и сетевой обрыв |
-| Участники и совместимость старых ограничений | `UserOptionsTests`, `LegacySecurityMetadataTests` | Регистрация, имена, SQLite/PostgreSQL, повторное открытие, дубль и перенос со старыми масками | `multiuser people`: авторство и CRUD без допуска |
+| Профиль, допуск, пароли базы, права и матрица действий | `DbAccessLifecycleTests`, `PermissionServiceTests`, `PermissionMatrixTests`, `PgAccessTests`, `FileAutoPermissionTests` | Управляемая чужая правка, удаление пользователя/разрешения, отказ доступа | `ConcurrentAccessTests`: регистрация и запись после явной перезагрузки отзыва; `multiuser access`: авторы/читатели; остается отзыв между проверкой и commit, открытый UI |
+| Менеджер паролей и защищенное хранилище | Unit `SecretsInventoryTests`, `SecretFieldConventionTests`, `ListenerPermissionsTests`; `DbSettingsRegistryTests`, `IntegrationsRegistryTests` | Инвентарь/допуск/маскировка и замена тестового секрета; это не проверка всех нативных хранилищ | Параллельная смена/удаление своих секретов в отдельных профилях, отказ системного хранилища; UI не должен показывать значение после отзыва прав |
+| Снятый контур: старые метки конфиденциальности | `LegacyConfidentialityTests` | SQLite/PostgreSQL, повторное открытие, дубль и перенос со старыми метками; метки остаются данными и не ограничивают работу | — |
 | Подключения PostgreSQL и внешних сервисов | `DbSettingsRegistryTests`, `IntegrationsRegistryTests`, `SecretFieldConventionTests` | Сохранение, замена и маскирование технических учетных данных | Нативные хранилища ОС требуют проверки своей платформы |
 | История изменений, диагностика и рабочий журнал запусков | `ChangeLogTests`, `LogReaderTests`, `RunJournalTests`, `ServiceGrids` | Пагинация, фильтры, экспорт, параллельное дописывание | Визуальные стенды и масштабирование проверяются отдельно |
 | Настройки, горячие клавиши, категории и реестр подключений | `DbSettingsRegistryTests`, `DbShortcutSettingsTests`, `CategoryRepositoryTests`; Unit settings/shortcuts; `Sections` | Функциональные и UI; настройки пользователя отделены от общих данных | `ConcurrentPersonalFilesTests`: 1000 отдельных хранилищ/реестров подключений; остается межпроцессный запуск, горячие клавиши и смена настроек при активных работах |

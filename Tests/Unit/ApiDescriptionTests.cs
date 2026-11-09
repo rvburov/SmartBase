@@ -24,14 +24,12 @@ public sealed class ApiDescriptionTests
     [Fact]
     public void The_text_promises_the_addresses_the_listener_answers()
     {
-        var text = ApiDescription.Text("http://127.0.0.1:8787", "Основная", Schema, 7);
+        var text = ApiDescription.Text("http://127.0.0.1:8787", "Основная", Schema);
 
         Assert.Contains(IngressApi.InboxPath,   text, StringComparison.Ordinal);
         Assert.Contains(IngressApi.PingPath,    text, StringComparison.Ordinal);
         Assert.Contains(IngressApi.SchemaPath,  text, StringComparison.Ordinal);
-        Assert.Contains("database=7", text, StringComparison.Ordinal);
-        Assert.Contains("без входа и токенов", text, StringComparison.Ordinal);
-        Assert.DoesNotContain("Authorization", text, StringComparison.Ordinal);
+        Assert.Contains(IngressApi.TokenHeader, text, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -50,17 +48,20 @@ public sealed class ApiDescriptionTests
         Assert.Contains("не ограничен",             text, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Про открытый текст сказано ПРЯМО (6.2: «сказать об этом надо прямо»).
+    ///
+    /// Описание пересылают той стороне, и решение «по какой сети ходить» принимают там. Молчание
+    /// об открытом тексте в документе, который читает именно тот, кто будет слать токен, — худшее
+    /// место для умолчания: «защита только токеном» звучит надежно ровно до вопроса «а токен-то
+    /// как едет».
+    /// </summary>
     [Fact]
-    public void The_text_explains_database_selection_and_read_field_selection()
+    public void The_text_says_plainly_that_the_token_travels_in_the_open()
     {
         var text = ApiDescription.Text("http://127.0.0.1:8787", "Основная", Schema);
 
-        Assert.Contains("ровно одна база", text, StringComparison.Ordinal);
-        Assert.Contains("fields", text, StringComparison.Ordinal);
-        Assert.Contains("уникальным в пределах базы", text, StringComparison.Ordinal);
-        Assert.Contains("collectionId", text, StringComparison.Ordinal);
-        Assert.Contains("columns", text, StringComparison.Ordinal);
-        Assert.Contains("409", text, StringComparison.Ordinal);
+        Assert.Contains("ОТКРЫТЫМ ТЕКСТОМ", text, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -4,16 +4,26 @@ using SmartBase.Utils;
 
 namespace SmartBase.Tests.Integration;
 
-/// <summary>Справочник людей обновляется без перезапуска и сохраняет прежние значения ячеек.</summary>
+/// <summary>
+/// Живой состав пользователей базы (docs/architecture/users-permissions.md): опции типа
+/// свойства «пользователь» — ДОПУЩЕННЫЕ пользователи db_users, и они меняются, пока
+/// приложение открыто (сосед присоединился, администратор допустил/отозвал, сменилось ФИО).
+/// Отдельное подключение здесь играет роль второй машины общей базы: ее правки обязаны
+/// доезжать без перезапуска — общий контекст живет весь сеанс, и любой кеш EF на этих
+/// строках означал бы «пользователь есть в базе, но его нет в выпадающем списке».
+/// </summary>
 public sealed class UserOptionsTests
 {
-    private static int JoinUser(string path, string key, string name)
+    // Регистрация соседа в базе — как PermissionService при монтировании на его машине.
+    private static int JoinUser(string path, string key, string name, bool approved = false)
     {
         using var neighbour = new AppDbContext(path);
         var user = new DbUserEntity
         {
-            UserKey = key, DisplayName = name, CreatedAt = DateTime.UtcNow.ToString("o"),
-            IsApproved = false, IsAdmin = false, AccessDecided = true,
+            UserKey     = key,
+            DisplayName = name,
+            IsApproved  = approved,
+            CreatedAt   = DateTime.UtcNow.ToString("o"),
         };
         neighbour.DbUsers.Add(user);
         neighbour.SaveChanges();
@@ -21,34 +31,55 @@ public sealed class UserOptionsTests
     }
 
     [Fact]
-    public void A_registered_person_is_available_without_approval_and_historical_values_survive_removal()
+    public void Approved_neighbour_appears_in_options_and_leaves_after_revoke()
     {
         using var db = new TempDatabase();
         Assert.Contains(CurrentUser.DisplayName, db.Constructor.GetUserOptions());
+
         var id = JoinUser(db.Path, "ivanov@pc2", "Иванов Иван");
+
+        // Ждет допуска — в списке исполнителей его быть не должно.
+        Assert.DoesNotContain("Иванов Иван", db.Constructor.GetUserOptions());
+
+        db.Permissions.SetApproved(id, true);
         Assert.Contains("Иванов Иван", db.Constructor.GetUserOptions());
-        Assert.Contains(db.Users.GetUsers(), u => u.Id == id);
-        db.Users.RemoveUser(id);
+
+        // Ушел из базы (допуск отозван): выбрать нельзя, но старые значения — снапшот строкой.
+        db.Permissions.SetApproved(id, false);
         Assert.DoesNotContain("Иванов Иван", db.Constructor.GetUserOptions());
         Assert.Contains("Иванов Иван", db.Constructor.GetUserOptions("Иванов Иван"));
     }
 
     [Fact]
-    public void A_person_added_by_another_connection_appears_without_restart()
+    public void Options_follow_neighbour_approval_without_restart()
     {
         using var db = new TempDatabase();
-        _ = db.Users.GetUsers();
         var id = JoinUser(db.Path, "petrov@pc3", "Петров Петр");
+
+        // Панель администратора уже посмотрела на пользователей — строки в контексте.
+        Assert.Contains(db.Permissions.GetUsers(), u => u.UserKey == "petrov@pc3" && !u.IsApproved);
+
+        // Допуск выдан другой машиной (второй администратор общей базы).
+        using (var neighbour = new AppDbContext(db.Path))
+        {
+            neighbour.DbUsers.First(u => u.UserKey == "petrov@pc3").IsApproved = true;
+            neighbour.SaveChanges();
+        }
+
         Assert.Contains("Петров Петр", db.Constructor.GetUserOptions());
-        Assert.Contains(db.Users.GetUsers(), u => u.Id == id && u.DisplayName == "Петров Петр");
+        Assert.True(db.Permissions.GetUsers().First(u => u.UserKey == "petrov@pc3").IsApproved,
+                    "панель администратора обязана показывать актуальный допуск");
+        Assert.Equal((int)SmartBase.Core.Models.PermAction.All, db.Permissions.GetMask(id, null));
     }
 
     [Fact]
     public void Renamed_neighbour_shows_new_name_in_options()
     {
         using var db = new TempDatabase();
-        JoinUser(db.Path, "sidorov@pc4", "Сидоров С.");
+        JoinUser(db.Path, "sidorov@pc4", "Сидоров С.", approved: true);
         Assert.Contains("Сидоров С.", db.Constructor.GetUserOptions());
+
+        // Сосед заполнил ФИО в профиле — снапшот имени в db_users обновился с его стороны.
         using (var neighbour = new AppDbContext(db.Path))
         {
             neighbour.DbUsers.First(u => u.UserKey == "sidorov@pc4").DisplayName = "Сидоров Семен Семенович";
@@ -60,29 +91,57 @@ public sealed class UserOptionsTests
     }
 
     [Fact]
-    public void Profile_rename_does_not_overwrite_legacy_user_metadata()
+    public void Own_approval_by_neighbour_unlocks_database_without_restart()
     {
         using var db = new TempDatabase();
-        _ = db.Users.GetUsers();
+
+        // Понижаем себя до ожидающего допуска (базу создал кто-то другой).
+        var me = db.Context.DbUsers.First(u => u.UserKey == CurrentUser.Key);
+        me.IsAdmin    = false;
+        me.IsApproved = false;
+        db.Context.SaveChanges();
+        db.Permissions.Reload(notify: false);
+        Assert.False(db.Permissions.AccessGranted);
+
+        // Администратор с другой машины подтвердил доступ; поллер разбудит Reload.
         using (var neighbour = new AppDbContext(db.Path))
         {
-            var user = neighbour.DbUsers.First(u => u.UserKey == CurrentUser.Key);
-            user.IsAdmin = false;
-            user.IsApproved = false;
-            user.AccessDecided = true;
+            neighbour.DbUsers.First(u => u.UserKey == CurrentUser.Key).IsApproved = true;
             neighbour.SaveChanges();
         }
+
+        db.Permissions.Reload(notify: false);
+        Assert.True(db.Permissions.AccessGranted);
+    }
+
+    [Fact]
+    public void Profile_rename_does_not_roll_back_neighbour_approval()
+    {
+        using var db = new TempDatabase();
+
+        var me = db.Context.DbUsers.First(u => u.UserKey == CurrentUser.Key);
+        me.IsAdmin    = false;
+        me.IsApproved = false;
+        db.Context.SaveChanges();
+        db.Permissions.Reload(notify: false);
+
+        using (var neighbour = new AppDbContext(db.Path))
+        {
+            neighbour.DbUsers.First(u => u.UserKey == CurrentUser.Key).IsApproved = true;
+            neighbour.SaveChanges();
+        }
+
+        // Правка ФИО в профиле пишет свою строку db_users — она не должна утащить
+        // за собой устаревший снапшот допуска.
         var original = CurrentUser.LastName;
         try
         {
             CurrentUser.LastName = "Тестов";
-            db.Users.SyncDisplayName();
+            db.Permissions.SyncDisplayName();
         }
         finally { CurrentUser.LastName = original; }
+
         using var check = new AppDbContext(db.Path);
-        var saved = check.DbUsers.First(u => u.UserKey == CurrentUser.Key);
-        Assert.False(saved.IsAdmin);
-        Assert.False(saved.IsApproved);
-        Assert.True(saved.AccessDecided);
+        Assert.True(check.DbUsers.First(u => u.UserKey == CurrentUser.Key).IsApproved);
     }
 }

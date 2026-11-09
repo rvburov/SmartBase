@@ -474,6 +474,17 @@ public partial class TableView : UserControl
     // (тогда прокрутка сбрасывается) или это обновление той же (прокрутка хранится).
     private int? _lastLoadedCollectionId;
 
+    // Право текущего пользователя в открытой коллекции (нет сервиса прав — без ограничений).
+    // Меню читают его при открытии, поэтому смена прав видна со следующего клика.
+    private bool Can(PermAction a) => _repository?.Permissions?.Can(a, _collectionId) ?? true;
+
+    // Запрещенное действие НЕ гасим, а объясняем: пункт остается кликабельным и по клику
+    // показывает причину («Недостаточно прав: удаление записей запрещено администратором
+    // базы данных») — как замок у коллекции без права просмотра. Молчаливо серый пункт
+    // выглядел как поломка: непонятно, кто и что запретил.
+    private void Guarded(MenuItem item, PermAction action, Action run) =>
+        item.Click += (_, _) => PermissionNotice.Run(this, Can(action), action, run);
+
     public void Load(ConstructorRepository repository, int collectionId) => Load(repository, collectionId, null);
 
     /// <summary>Открыть коллекцию. <paramref name="snapshot"/> — данные открытия, прочитанные в фоне
@@ -1289,7 +1300,8 @@ public partial class TableView : UserControl
         var mi = new MenuItem { Header = MenuIcons.CreateRecordHeader() }
             .WithGesture("table.createRecord", this);
         // В конце; открывать ли панель — по настройке.
-        mi.Click += (_, _) => RecordCreateRequested?.Invoke(this, (ConstructorSettings.OpenNewRecord, null));
+        Guarded(mi, PermAction.CreateRecord,
+                () => RecordCreateRequested?.Invoke(this, (ConstructorSettings.OpenNewRecord, null)));
         menu.Items.Add(mi);
 
         // «Отображение» доступно и отсюда — на случай, если все колонки скрыты и до
@@ -1332,10 +1344,11 @@ public partial class TableView : UserControl
             .WithGesture("table.createRecord", this);
         // После этой строки; открывать ли панель — по настройке. Если строка еще не заполнена
         // (id=0) — создаем в конце.
-        miCreate.Click += (_, _) => {
+        Guarded(miCreate, PermAction.CreateRecord, () =>
+        {
             var rid = RecordIdOf(row);
             RecordCreateRequested?.Invoke(this, (ConstructorSettings.OpenNewRecord, rid > 0 ? rid : (int?)null));
-        };
+        });
         menu.Items.Add(miCreate);
 
         menu.Items.Add(new Separator());
@@ -1347,12 +1360,13 @@ public partial class TableView : UserControl
 
         var miDuplicate = new MenuItem { Header = MenuIcons.DuplicateHeader() }
             .WithGesture("table.duplicateRecord", this);
-        miDuplicate.Click += (_, _) => RequestRecordDuplicateFromMenu(row);
+        Guarded(miDuplicate, PermAction.DuplicateRecord, () => RequestRecordDuplicateFromMenu(row));
         menu.Items.Add(miDuplicate);
 
+        // Перенос = изъятие записи из коллекции: право как у удаления.
         var miRelocate = new MenuItem { Header = MenuIcons.LocationHeader() }
             .WithGesture("table.relocateRecords", this);
-        miRelocate.Click += (_, _) => RequestRecordRelocateFromMenu(row);
+        Guarded(miRelocate, PermAction.DeleteRecord, () => RequestRecordRelocateFromMenu(row));
         menu.Items.Add(miRelocate);
 
         // «Отображение» (записей) — глобальное окно видимости/уровней строк (список всех
@@ -1377,7 +1391,7 @@ public partial class TableView : UserControl
         menu.Items.Add(new Separator());
 
         var miDelete = MakeDeleteMenuItem().WithGesture("table.deleteRecords", this);
-        miDelete.Click += (_, _) => RequestRecordDeleteFromMenu(row);
+        Guarded(miDelete, PermAction.DeleteRecord, () => RequestRecordDeleteFromMenu(row));
         menu.Items.Add(miDelete);
 
         return menu;
@@ -1456,13 +1470,14 @@ public partial class TableView : UserControl
     {
         var host = new MenuItem { Header = MenuIcons.ColorHeader() };
         MenuIcons.FixSubmenuGap(host);
+        host.IsEnabled = Can(PermAction.EditRecord);
 
         OnMenuOpening(menu, () =>
         {
             host.Items.Clear();
             var ids = TargetRecordIds(row);
             if (ids.Count == 0) { host.IsEnabled = false; return; }
-            host.IsEnabled = true;
+            host.IsEnabled = Can(PermAction.EditRecord);
 
             // Отмечаем цвет ТОЙ строки, по которой кликнули (в выделении она не обязательно
             // первая), а применяем ко всему набору — как у колонок.
@@ -1667,12 +1682,12 @@ public partial class TableView : UserControl
 
         var miEdit = new MenuItem { Header = MenuIcons.EditHeader() }
             .WithGesture("table.editProperty", this);
-        miEdit.Click += (_, _) => SystemFieldRenameRequested?.Invoke(this, key);
+        Guarded(miEdit, PermAction.EditField, () => SystemFieldRenameRequested?.Invoke(this, key));
         menu.Items.Add(miEdit);
 
         var miCreate = new MenuItem { Header = MenuIcons.CreatePropertyHeader() }
             .WithGesture("table.createProperty", this);
-        miCreate.Click += (_, _) => PropertyCreateAfterRequested?.Invoke(this, key);
+        Guarded(miCreate, PermAction.CreateField, () => PropertyCreateAfterRequested?.Invoke(this, key));
         menu.Items.Add(miCreate);
 
         var miDisplay = new MenuItem { Header = MenuIcons.DisplayHeader() }
@@ -1771,17 +1786,17 @@ public partial class TableView : UserControl
 
         var miEdit = new MenuItem { Header = MenuIcons.EditHeader() }
             .WithGesture("table.editProperty", this);
-        miEdit.Click += (_, _) => PropertyEditRequested?.Invoke(this, fieldId);
+        Guarded(miEdit, PermAction.EditField, () => PropertyEditRequested?.Invoke(this, fieldId));
         menu.Items.Add(miEdit);
 
         var miDuplicate = new MenuItem { Header = MenuIcons.DuplicateHeader() }
             .WithGesture("table.duplicateProperty", this);
-        miDuplicate.Click += (_, _) => RequestDuplicateFromMenu(fieldId);
+        Guarded(miDuplicate, PermAction.DuplicateField, () => RequestDuplicateFromMenu(fieldId));
         menu.Items.Add(miDuplicate);
 
         var miCreate = new MenuItem { Header = MenuIcons.CreatePropertyHeader() }
             .WithGesture("table.createProperty", this);
-        miCreate.Click += (_, _) => PropertyCreateAfterRequested?.Invoke(this, fieldId.ToString());
+        Guarded(miCreate, PermAction.CreateField, () => PropertyCreateAfterRequested?.Invoke(this, fieldId.ToString()));
         menu.Items.Add(miCreate);
 
         var miDisplay = new MenuItem { Header = MenuIcons.DisplayHeader() }
@@ -1797,7 +1812,7 @@ public partial class TableView : UserControl
         if (fileAuto)
         {
             var miRefresh = new MenuItem { Header = "Обновить привязку" };
-            miRefresh.Click += (_, _) => RefreshAutoFileFromMenu(fieldId);
+            Guarded(miRefresh, PermAction.EditRecord, () => RefreshAutoFileFromMenu(fieldId));
             menu.Items.Add(miRefresh);
         }
 
@@ -1811,19 +1826,20 @@ public partial class TableView : UserControl
         menu.Items.Add(new Separator());
 
         var miDelete = MakeDeleteMenuItem(enabled: !isRequired).WithGesture("table.deleteColumns", this);
-        miDelete.Click += (_, _) => RequestDeleteFromMenu(fieldId);
+        Guarded(miDelete, PermAction.DeleteField, () => RequestDeleteFromMenu(fieldId));
         menu.Items.Add(miDelete);
 
         return menu;
     }
 
-    // Цвет колонки хранится в column_meta. Состав пересчитывается при открытии:
-    // и отметка текущего цвета,
+    // Цвет колонки — тот же аспект column_meta, что видимость и подпись, поэтому право
+    // как у правки свойства. Состав пересчитывается при открытии: и отметка текущего цвета,
     // и НАБОР колонок — выделение к моменту клика могло смениться.
     private void AddColumnColorItems(ContextMenu menu, string key)
     {
         var host = new MenuItem { Header = MenuIcons.ColorHeader() };
         MenuIcons.FixSubmenuGap(host);
+        host.IsEnabled = Can(PermAction.EditField);
 
         OnMenuOpening(menu, () =>
         {

@@ -7,15 +7,19 @@ using SmartBase.Utils;
 
 namespace SmartBase.Tests.Integration;
 
-/// <summary>Старые ограничения остаются историческими данными и больше не закрывают рабочие операции.</summary>
-public sealed class LegacySecurityMetadataTests
+/// <summary>
+/// Метки конфиденциальности сняты вместе с контуром доступа (30.10.2026): в старых базах они
+/// остаются историческими данными (db_meta, ConfigJson свойства) и не закрывают ни чтение, ни
+/// выгрузку, ни копирование и перенос. Права пользователей при этом действуют как прежде.
+/// </summary>
+public sealed class LegacyConfidentialityTests
 {
     private const string FieldConfig = "{\"confidentiality\":\"closed\",\"custom\":\"сохранить\"}";
 
     [SkippableTheory]
     [InlineData("sqlite")]
     [InlineData("postgres")]
-    public void Reopening_a_database_ignores_old_passwords_masks_and_labels_but_preserves_people_and_values(string provider)
+    public void Reopening_a_database_ignores_old_labels_and_preserves_values(string provider)
     {
         using var data = new MultiUserTestDatabase(provider);
         var collection = SampleData.AddCollection(data.Repo, "Старые данные").Id!.Value;
@@ -25,12 +29,11 @@ public sealed class LegacySecurityMetadataTests
         var original = SampleData.AddRecord(data.Repo, collection, "Старая запись").Id!.Value;
         data.Repo.SetFieldValue(original, field, "Сохраненное значение");
         data.Repo.SetFieldValue(original, person, "Иванов Иван");
-        StoreLegacyRestrictions(data.Manager.Context, collection);
+        StoreLegacyLabels(data.Manager.Context);
         data.Manager.Dispose();
 
         using var reopened = DatabaseManager.Open(9, "После обновления", data.Path, provider: provider);
         var repo = reopened.Constructor;
-        Assert.Contains("Иванов Иван", repo.GetUserOptions());
         Assert.Equal("Сохраненное значение", repo.GetFieldValues(original)[field]);
         Assert.Equal("Иванов Иван", repo.GetFieldValues(original)[person]);
         Assert.Equal(FieldConfig, repo.GetFields(collection).Single(f => f.Id == field).ConfigJson);
@@ -48,14 +51,7 @@ public sealed class LegacySecurityMetadataTests
         Assert.Equal("Старая запись", repo.GetRecord(original)!.Title);
 
         using var check = data.OpenContext();
-        var me = check.DbUsers.AsNoTracking().Single(u => u.UserKey == CurrentUser.Key);
-        Assert.False(me.IsAdmin);
-        Assert.False(me.IsApproved);
-        Assert.True(me.AccessDecided);
-        Assert.Contains(check.DbPermissions.AsNoTracking(), p => p.UserId == me.Id && p.ActionsMask == 0);
-        Assert.Equal("legacy-test-only", check.DbMeta.AsNoTracking().Single(m => m.Key == "password.hash").Value);
         Assert.Equal("closed", check.DbMeta.AsNoTracking().Single(m => m.Key == "confidentiality").Value);
-        Assert.Contains(check.DbUsers.AsNoTracking(), u => u.UserKey == "legacy-person" && u.DisplayName == "Иванов Иван");
         MultiUserTestDatabase.AssertHealthy(check);
     }
 
@@ -73,8 +69,8 @@ public sealed class LegacySecurityMetadataTests
             { CollectionId = collection, Name = "Текст", FieldType = "text", ConfigJson = FieldConfig }).Id!.Value;
         var record = SampleData.AddRecord(source.Repo, collection, "Исходная запись").Id!.Value;
         source.Repo.SetFieldValue(record, field, "Полные данные");
-        StoreLegacyRestrictions(source.Manager.Context, collection);
-        StoreLegacyRestrictions(target.Manager.Context, null);
+        StoreLegacyLabels(source.Manager.Context);
+        StoreLegacyLabels(target.Manager.Context);
 
         var copy = source.Repo.DuplicateCollection(collection).Id!.Value;
         var copiedRecord = Assert.Single(source.Repo.GetRecords(copy));
@@ -96,27 +92,11 @@ public sealed class LegacySecurityMetadataTests
         MultiUserTestDatabase.AssertHealthy(targetCheck);
     }
 
-    private static void StoreLegacyRestrictions(AppDbContext context, int? collection)
+    private static void StoreLegacyLabels(AppDbContext context)
     {
-        var me = context.DbUsers.Single(u => u.UserKey == CurrentUser.Key);
-        me.IsAdmin = false; me.IsApproved = false; me.AccessDecided = true;
-        context.DbPermissions.Add(new DbPermissionEntity { UserId = me.Id, CollectionId = collection, ActionsMask = 0 });
-        if (!context.DbUsers.Any(u => u.UserKey == "legacy-person"))
-            context.DbUsers.Add(new DbUserEntity
-            {
-                UserKey = "legacy-person", DisplayName = "Иванов Иван", IsAdmin = false,
-                IsApproved = false, AccessDecided = true, CreatedAt = "2026-01-01T00:00:00Z",
-            });
-        foreach (var (key, value) in new[]
-        {
-            ("password.hash", "legacy-test-only"), ("password.salt", "test-salt"),
-            ("password.iterations", "210000"), ("access.password.enabled", "0"), ("confidentiality", "closed"),
-        })
-        {
-            var row = context.DbMeta.Find(key);
-            if (row is null) context.DbMeta.Add(new DbMetaEntity { Key = key, Value = value });
-            else row.Value = value;
-        }
+        var row = context.DbMeta.Find("confidentiality");
+        if (row is null) context.DbMeta.Add(new DbMetaEntity { Key = "confidentiality", Value = "closed" });
+        else row.Value = "closed";
         context.SaveChanges();
     }
 }

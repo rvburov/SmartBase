@@ -762,7 +762,7 @@ public static partial class ScenarioRunner
                 }
 
                 return true;
-            }), ct);
+            }, checkInside: action.ChecksPermissions), ct);
         }
         catch (OperationCanceledException)
         {

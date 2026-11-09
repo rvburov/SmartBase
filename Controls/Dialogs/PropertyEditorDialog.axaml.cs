@@ -681,7 +681,7 @@ public partial class PropertyEditorDialog : Window
         if (repo is not null)
             foreach (var c in repo.GetAllCollections())
                 // Пункт списка — одна строка (TitleText); выбор идет по Id.
-                if (c.Id.HasValue)
+                if (c.Id.HasValue && (repo.Permissions?.Can(PermAction.ViewCollection, c.Id.Value) ?? true))
                     items.Add(new TargetCollectionItem { Id = c.Id.Value, Name = TitleText.FirstLine(c.Name) });
         RelationTargetCombo.ItemsSource   = items;
         // Цель нужно выбрать явно (список сменился). Исключение — старая связь без базы: ее
@@ -735,7 +735,7 @@ public partial class PropertyEditorDialog : Window
         {
             if (RelationDbResolver.MountedEntryFor(_repository) is not { } db) return;
             var name = TitleText.FirstLine(_editField?.Name ?? NameBox.Text ?? "");
-            await RelationIntegrityDialog.ShowForAsync(this, db.Manager, db.Entry,
+            await RelationIntegrityDialog.ShowForAsync(this, db.Manager, db.Entry, db.Permissions,
                 $"Связь «{name}» · {db.Entry.Name}", fieldId);
         };
     }
@@ -1052,6 +1052,7 @@ public partial class PropertyEditorDialog : Window
         CancelBtn.IsEnabled = false;
         try { await SavePropertyAsync(); }
         catch (OperationCanceledException) { ShowError("Сохранение отменено"); }
+        catch (PermissionDeniedException ex) { ShowError(ex.Message); }
         finally
         {
             _savingProperty = false;
@@ -1211,7 +1212,7 @@ public partial class PropertyEditorDialog : Window
         if (_selectedType == "relation")
         {
             try { SavedDataFieldIds = _repository.SaveRelationDataColumns(savedFieldId, CollectRelationData()); }
-            catch (InvalidOperationException ex)
+            catch (Exception ex) when (ex is InvalidOperationException or PermissionDeniedException)
             {
                 _editFieldId ??= savedFieldId;
                 ShowError(ex.Message);

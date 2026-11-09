@@ -21,7 +21,8 @@ public partial class ConstructorRepository
         ct.ThrowIfCancellationRequested();
         if (field.Id is not int fieldId) yield break;
         var config = DatePeriodConfig.FromConfig(field.ConfigJson);
-        var calculate = config is { Automatic: true };
+        var readable = Permissions?.Can(PermAction.ViewCollection, field.CollectionId) != false;
+        var calculate = readable && config is { Automatic: true };
         if (calculate)
         {
             calculate = db.DbFields.AsNoTracking().Any(f => f.CollectionId == field.CollectionId
@@ -31,7 +32,7 @@ public partial class ConstructorRepository
         var ordered = scope.AsNoTracking().Where(r => r.CollectionId == field.CollectionId)
             .OrderBy(r => r.Position).ThenBy(r => r.Id);
         IQueryable<DatePeriodColumnInput> query;
-        if (config is null || config.Automatic && !calculate)
+        if (!readable || config is null || config.Automatic && !calculate)
             query = ordered.Select(r => new DatePeriodColumnInput(r.Id, null));
         else if (!config.Automatic)
             query = ordered.Select(r => new DatePeriodColumnInput(r.Id,
@@ -125,7 +126,8 @@ public partial class ConstructorRepository
         var counts = new Dictionary<string, int>(StringComparer.Ordinal);
         var config = DatePeriodConfig.FromConfig(field.ConfigJson);
         var records = scope.AsNoTracking().Where(r => r.CollectionId == field.CollectionId);
-        if (field.Id is not int fieldId || config is null)
+        if (field.Id is not int fieldId || config is null
+            || Permissions?.Can(PermAction.ViewCollection, field.CollectionId) == false)
         {
             var total = records.Count();
             return total > 0 ? [("", total)] : [];

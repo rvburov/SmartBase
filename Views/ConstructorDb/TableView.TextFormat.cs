@@ -48,9 +48,9 @@ public partial class TableView
     /// Подменю «Форматирование текста» → «Расположение текста». <paramref name="current"/> — что
     /// отметить галочкой (спрашивается на каждое открытие: расположение могли сменить клавишами или в
     /// другом меню); null в группе — галочки в ней нет. <paramref name="apply"/> пишет изменения по
-    /// адресату меню.
+    /// адресату меню. Запрещенный пункт не гаснет, а по клику объясняет причину (Guarded).
     /// </summary>
-    private void AddTextFormatItems(ContextMenu menu,
+    private void AddTextFormatItems(ContextMenu menu, PermAction permission,
                                     Func<(CellHAlign? H, CellVAlign? V)> current,
                                     Action<IReadOnlyList<(StyleAspect Aspect, string? Value)>> apply)
     {
@@ -106,7 +106,7 @@ public partial class TableView
     private void AddCellTextFormatItems(ContextMenu menu, TableRowVm row, TableColumnDef def)
     {
         if (!CellAlign.Applies(def.FieldType)) return;
-        AddTextFormatItems(menu,
+        AddTextFormatItems(menu, PermAction.EditRecord,
             () =>
             {
                 var style = ResolvedStyle(row, def.Key);
@@ -117,7 +117,7 @@ public partial class TableView
 
     /// <summary>Меню строки: строка или все выделенные строки; отметка — заданное строке.</summary>
     private void AddRowTextFormatItems(ContextMenu menu, Func<TableRowVm?> row) =>
-        AddTextFormatItems(menu,
+        AddTextFormatItems(menu, PermAction.EditRecord,
             () =>
             {
                 var style = RowStyleOf(RecordIdOf(row));
@@ -133,7 +133,7 @@ public partial class TableView
     private void AddColumnTextFormatItems(ContextMenu menu, string key, string fieldType)
     {
         if (!CellAlign.Applies(fieldType)) return;
-        AddTextFormatItems(menu,
+        AddTextFormatItems(menu, PermAction.EditField,
             () =>
             {
                 var style = ColumnStyleOf(key);
@@ -165,8 +165,8 @@ public partial class TableView
 
     /// <summary>
     /// Ctrl+L / Ctrl+E / Ctrl+R — горизонталь выделенного: выделенные столбцы (по заголовку), иначе
-    /// выделенные ячейки (пока фокус в таблице — как у буфера обмена), иначе выделенные строки.
-    /// Путь записи — тот же, что у пунктов меню. Нечего выравнивать — клавиша не наша.
+    /// выделенные ячейки (пока фокус в таблице — как у буфера обмена), иначе выделенные строки. Права
+    /// и путь записи — те же, что у пунктов меню. Нечего выравнивать — клавиша не наша.
     /// </summary>
     private bool HandleAlignShortcut(KeyEventArgs e)
     {
@@ -180,18 +180,21 @@ public partial class TableView
         if (_selectedColumnKeys.Count > 0)
         {
             if (AlignableColumnKeys(_selectedColumnKeys) is not { Count: > 0 } keys) return false;
-            ApplyColumnStyle(keys, changes);
+            PermissionNotice.Run(this, Can(PermAction.EditField), PermAction.EditField,
+                () => ApplyColumnStyle(keys, changes));
             return true;
         }
 
         if (HasCellSelection && IsKeyboardFocusWithin)
         {
-            Fire(() => ApplySelectedCellsStyleAsync(changes));
+            PermissionNotice.Run(this, Can(PermAction.EditRecord), PermAction.EditRecord,
+                () => Fire(() => ApplySelectedCellsStyleAsync(changes)));
             return true;
         }
 
         if (SelectedRecordIds() is not { Count: > 0 } ids) return false;
-        ApplyRowStyle(ids, changes);
+        PermissionNotice.Run(this, Can(PermAction.EditRecord), PermAction.EditRecord,
+            () => ApplyRowStyle(ids, changes));
         return true;
     }
 }

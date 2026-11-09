@@ -56,7 +56,8 @@ public partial class SettingsView
         var folder    = AppSettings.LoadInboxFolder();
         var databases = _databases?.Invoke() ?? [];
 
-        // Сначала параметры сетевого приема, затем папка и описание формата обмена.
+        // Порядок тот же, что в плане (раздел 6.7): сначала сеть, потом папка, потом токены и
+        // описание. Сеть первой не потому, что важнее, — с нее начинают читать.
         Add(rows, AccessModeRow());
 
         Add(rows, FolderRow(folder));
@@ -64,6 +65,7 @@ public partial class SettingsView
         Add(rows, AutoRow(folder, databases));
         Add(rows, CheckRow(folder, databases));
 
+        Add(rows, TokensRow());
         Add(rows, ApiRow());
 
         Add(rows, Row("Что класть в папку",
@@ -81,6 +83,7 @@ public partial class SettingsView
         var choose = RowButton("Выбрать…", () => _ = ChooseInboxFolderAsync());
         var clear  = RowButton("Убрать",  () =>
         {
+            if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
 
             AppSettings.SaveInboxFolder("");
             BuildIntegrationsInbox();
@@ -117,6 +120,7 @@ public partial class SettingsView
     private async Task ChooseInboxFolderAsync()
     {
         if (TopLevel.GetTopLevel(this) is not { } top) return;
+        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
 
         IStorageFolder? start = null;
         var current = AppSettings.LoadInboxFolder();

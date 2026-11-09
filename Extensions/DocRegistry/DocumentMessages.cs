@@ -137,30 +137,35 @@ internal static partial class DocumentMessages
             }
             if (problems.Count > 0) return ReplyMarkup.Refused(string.Join("\n", problems));
 
-            var check = Shape(repo, context.CollectionId);
-            if (check.Shape is not { } shape) return ActionResult.Failed(check.Problem!);
-            var (card, problem) = Find(repo, shape, number!, context);
-            if (card is null) return ReplyMarkup.Refused(problem);
-            if (known == View) return Reply(card.Text(), 1);
+            try
+            {
+                Demand(repo, context.CollectionId, known);
+                var check = Shape(repo, context.CollectionId);
+                if (check.Shape is not { } shape) return ActionResult.Failed(check.Problem!);
+                var (card, problem) = Find(repo, shape, number!, context);
+                if (card is null) return ReplyMarkup.Refused(problem);
+                if (known == View) return Reply(card.Text(), 1);
 
-            var after = Apply(card, changes);
-            if (known == Edit && after == card)
-                return ReplyMarkup.Refused("Изменение: новые значения совпадают с текущими. Изменений нет");
+                var after = Apply(card, changes);
+                if (known == Edit && after == card)
+                    return ReplyMarkup.Refused("Изменение: новые значения совпадают с текущими. Изменений нет");
 
-            foreach (var expired in waiting.Items.Where(p => p.Value.Expires <= context.Now).Select(p => p.Key).ToArray())
-                waiting.Items.Remove(expired);
-            if (waiting.Items.Count >= 256)
-                return ReplyMarkup.Refused("Подтверждение: слишком много ожидающих операций. Повторите запрос позже");
-            waiting.Items[key] = new Pending(known, card, shape, changes, context.Now + Lifetime);
-            // Перечень изменений строками: старое значение зачеркнуто, новое — жирным.
-            var preview = known == Delete
-                ? $"{ReplyMarkup.Bold("Подтвердите удаление документа:")}\n{card.Text()}"
-                : $"{ReplyMarkup.Bold("Подтвердите изменение документа:")}\n{card.Text()}\n\n"
-                  + $"{ReplyMarkup.Bold("Изменения:")}\n"
-                  + string.Join("\n", changes.Select(c =>
-                        $"{c.Key}: {ReplyMarkup.Struck(ReplyMarkup.Escape(Value(card, c.Key)))} → "
-                        + ReplyMarkup.Bold(ReplyMarkup.Escape(c.Value))));
-            return Reply($"{preview}\n\n{Prompt}", 0);
+                foreach (var expired in waiting.Items.Where(p => p.Value.Expires <= context.Now).Select(p => p.Key).ToArray())
+                    waiting.Items.Remove(expired);
+                if (waiting.Items.Count >= 256)
+                    return ReplyMarkup.Refused("Подтверждение: слишком много ожидающих операций. Повторите запрос позже");
+                waiting.Items[key] = new Pending(known, card, shape, changes, context.Now + Lifetime);
+                // Перечень изменений строками: старое значение зачеркнуто, новое — жирным.
+                var preview = known == Delete
+                    ? $"{ReplyMarkup.Bold("Подтвердите удаление документа:")}\n{card.Text()}"
+                    : $"{ReplyMarkup.Bold("Подтвердите изменение документа:")}\n{card.Text()}\n\n"
+                      + $"{ReplyMarkup.Bold("Изменения:")}\n"
+                      + string.Join("\n", changes.Select(c =>
+                            $"{c.Key}: {ReplyMarkup.Struck(ReplyMarkup.Escape(Value(card, c.Key)))} → "
+                            + ReplyMarkup.Bold(ReplyMarkup.Escape(c.Value))));
+                return Reply($"{preview}\n\n{Prompt}", 0);
+            }
+            catch (PermissionDeniedException error) { return ReplyMarkup.Refused(error.Message); }
         }
     }
 
@@ -221,6 +226,7 @@ internal static partial class DocumentMessages
                     return WriteRegistration(context, repo, shape, input);
                 });
             }
+            catch (PermissionDeniedException error) { return ReplyMarkup.Refused(error.Message); }
             catch (DocRegistryException error) { return ReplyMarkup.Refused($"Номер: {error.Message}"); }
         }
     }
@@ -228,6 +234,13 @@ internal static partial class DocumentMessages
     private static string[] Series(ConstructorRepository repo, RegistryShape shape, string org, string eskd) =>
         DocRegistrar.Designations(repo, shape).Where(d => Designation.NumberIn(d, org, eskd) is not null)
             .OrderBy(d => d, StringComparer.Ordinal).ToArray();
+
+    private static void DemandRegistration(ConstructorRepository repo, int collection)
+    {
+        repo.Permissions?.Demand(PermAction.ViewCollection, collection);
+        repo.Permissions?.Demand(PermAction.CreateRecord, collection);
+        repo.Permissions?.Demand(PermAction.EditRecord, collection);
+    }
 
     private static ActionResult WriteRegistration(ActionContext context, ConstructorRepository repo,
                                                    RegistryShape shape, RegistrationInput input)
@@ -242,6 +255,11 @@ internal static partial class DocumentMessages
     {
         try
         {
+            // Права подключения проверяются и при подтверждении: между запросом и ответом «Да» их
+            // могли отозвать.
+            if (pending.Registration is not null || pending.File is not null || pending.Batch is not null)
+                DemandRegistration(repo, context.CollectionId);
+            else Demand(repo, context.CollectionId, pending.Action);
             if (pending.File is { } file)
                 return ConfirmFile(context, repo, pending.Shape, file);
             if (pending.Batch is { } batch)
@@ -278,6 +296,7 @@ internal static partial class DocumentMessages
                 return Reply($"{ReplyMarkup.Bold("Изменено")}\n{Apply(current, pending.Changes).Text([.. pending.Changes.Keys])}", 1);
             });
         }
+        catch (PermissionDeniedException error) { return ReplyMarkup.Refused(error.Message); }
         catch (DocRegistryException error)
         {
             if (pending.File is { } file)
@@ -286,6 +305,13 @@ internal static partial class DocumentMessages
                 ? RefuseBatch(batch.Rows.Length, [$"Номер: {error.Message}", "Отправьте весь список заново."])
                 : ReplyMarkup.Refused($"Номер: {error.Message}");
         }
+    }
+
+    private static void Demand(ConstructorRepository repo, int collection, string action)
+    {
+        repo.Permissions?.Demand(PermAction.ViewCollection, collection);
+        if (action != View)
+            repo.Permissions?.Demand(action == Delete ? PermAction.DeleteRecord : PermAction.EditRecord, collection);
     }
 
     private static SchemaCheck Shape(ConstructorRepository repo, int collectionId)

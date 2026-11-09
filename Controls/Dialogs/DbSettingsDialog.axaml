@@ -47,6 +47,12 @@
                  VerticalContentAlignment="Center"
                  CornerRadius="{StaticResource RadiusMedium}" />
         <!-- Видно, только когда поле серое: серое поле без объяснения читается как поломка -->
+        <TextBlock x:Name="NameLockHint"
+                   IsVisible="False"
+                   Margin="0,0,0,12"
+                   TextWrapping="Wrap"
+                   FontSize="{DynamicResource FontSizeSmall}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
 
         <TextBlock Text="Расположение"
                    Margin="0,0,0,6"
@@ -74,7 +80,7 @@
                        TextWrapping="Wrap" />
 
             <!-- Кнопка стоит рядом с числом, которое уменьшает, и видна ВСЕГДА: пока она
-                 появлялась только при нужде в сжатии, пользователь искал ее глазами и не
+                 появлялась только при нужде в сжатии, администратор искал ее глазами и не
                  находил. Нельзя сжать — кнопка серая, а под ней написано почему.
                  Резервная копия переехала в «Настройки → Резервное копирование» -->
             <Grid ColumnDefinitions="Auto,*" Margin="0,0,0,12">

@@ -5,7 +5,7 @@ using SmartBase.Utils;
 namespace SmartBase.Notifications;
 
 /// <summary>
-/// Читатель очередей событий задач по всем открытым базам: курсор на базу, свое
+/// Читатель очередей событий задач по всем допущенным базам: курсор на базу, свое
 /// подключение на базу, отвалившаяся база не гасит остальные.
 ///
 /// Курсоры персистентные (app.db) — за счет этого работает догон: события, случившиеся
@@ -58,7 +58,10 @@ public sealed class TaskEventReader(Func<IReadOnlyList<DatabaseManager>> openedD
                     // одинаковые RecordId разных баз схлопнулись бы при дедупе и по метке.
                     e.DbId = db.DbId;
 
-                    events.Add(e);
+                    // Изолированное чтение прав не проверяет: коллекция могла стать
+                    // недоступной с тех пор, как событие записали.
+                    if (db.Permissions.Can(PermAction.ViewCollection, e.CollectionId))
+                        events.Add(e);
                 }
             }
             catch

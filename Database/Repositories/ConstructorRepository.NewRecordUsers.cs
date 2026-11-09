@@ -22,6 +22,7 @@ public partial class ConstructorRepository
 
     private CalendarRecord AddCalendarRecordWithUserDefaults(CalendarRecord record, bool initializeUserValues)
     {
+        Demand(PermAction.CreateRecord, record.CollectionId);
         var original = (record.Id, record.CollectionId, record.FieldId);
         try
         {

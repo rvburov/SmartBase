@@ -2,13 +2,13 @@ namespace SmartBase.Core.Models;
 
 public enum RelationIntegrityStatus
 {
-    Completed, Cancelled, Unavailable, Conflict, BackupFailed, InvalidPlan, Applied,
+    Completed, Cancelled, Unavailable, NoAccess, Conflict, BackupFailed, InvalidPlan, Applied,
 }
 
 public enum RelationIntegrityIssueKind
 {
     MissingSourceRecord, MissingSourceField, MissingSourceCollection, InvalidSourceFieldType, SourceCollectionMismatch,
-    MissingTargetRecord, MissingTargetCollection, TargetUnavailable,
+    MissingTargetRecord, MissingTargetCollection, TargetUnavailable, TargetAccessDenied,
     MissingConfiguration, InvalidConfiguration, MissingDependency, InvalidDependency, DependencyCycle, DependencyUnverified,
     CanonicalDuplicate, SingleCardinality, InvalidSelfLink, InvalidTargetIdentity,
     LegacyMixedTarget, TargetCollectionMismatch, NumericProjectionCollision,
@@ -30,7 +30,7 @@ public static class RelationIntegrityKinds
 
 public sealed record RelationIntegrityProgress(long ScannedEdges, long ScannedFields, long Issues);
 
-/// <summary>Один проверенный факт. Заголовки содержат данные проверенных источников.
+/// <summary>Один проверенный факт. Заголовки содержат только доступные пользователю данные.
 /// Стабильный ключ относится к конкретному ребру или свойству, а не к его месту в списке.</summary>
 public sealed record RelationIntegrityIssue(string Key, RelationIntegrityIssueKind Kind,
     int SourceDbId, string SourceDatabaseIdentity, int? CollectionId, int? FieldId,

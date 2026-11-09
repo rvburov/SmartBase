@@ -168,6 +168,16 @@ public sealed class RelationComputedTests
         Assert.Equal("Старая внешняя цель", values[lookup.Id!.Value]);
         Assert.Equal("1", values[count.Id!.Value]);
 
+        var me = remote.Context.DbUsers.First(u => u.UserKey == CurrentUser.Key);
+        remote.Permissions.SetMask(remote.Permissions.CurrentUserId, null, (int)PermAction.All);
+        remote.Permissions.SetMask(remote.Permissions.CurrentUserId, actual, (int)PermAction.None);
+        me.IsAdmin = false;
+        me.IsApproved = true;
+        remote.Context.SaveChanges();
+        remote.Permissions.Reload(notify: false);
+        values = repo.GetRelationComputedValues([record])[record];
+        Assert.Equal(RelationProperty.NoAccess, values[lookup.Id.Value]);
+        Assert.Equal(RelationProperty.NoAccess, values[count.Id.Value]);
     }
 
     [Fact]
@@ -235,6 +245,25 @@ public sealed class RelationComputedTests
         Assert.Equal(batch[s.Record][lookup.Id.Value], column[s.Record]);
         Assert.Equal(batch[linked][lookup.Id.Value], column[linked]);
         Assert.Equal("", column[plain]);
+    }
+
+    [Fact]
+    public void Lookup_does_not_disclose_a_target_collection_hidden_from_the_user()
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+        var s = Seed(repo);
+        var lookup = Computed(repo, s, "lookup", "__title__");
+        var me = db.Context.DbUsers.First(u => u.UserKey == CurrentUser.Key);
+        db.Permissions.SetMask(db.Permissions.CurrentUserId, null, (int)PermAction.All);
+        db.Permissions.SetMask(db.Permissions.CurrentUserId, s.Target, (int)PermAction.None);
+        me.IsAdmin = false;
+        me.IsApproved = true;
+        db.Context.SaveChanges();
+        db.Permissions.Reload(notify: false);
+        var value = repo.GetRelationComputedValues([s.Record])[s.Record][lookup.Id!.Value];
+        Assert.Equal(RelationProperty.NoAccess, value);
+        Assert.DoesNotContain("Первый", value);
     }
 
     [SkippableFact]

@@ -133,6 +133,7 @@ public partial class ConstructorRepository
             .Select(pair => pair.Key)).Distinct()
             .Where(id => loaded is null || loadedFieldIds is not null && !loadedFieldIds.Contains(id)).ToArray();
         var byCollection = fields.GroupBy(field => field.CollectionId).ToDictionary(group => group.Key, group => group.ToArray());
+        var visible = byCollection.Keys.ToDictionary(id => id, id => Permissions?.Can(PermAction.ViewCollection, id) != false);
         foreach (var chunk in recordIds.Distinct().Chunk(200))
         {
             ct.ThrowIfCancellationRequested();
@@ -152,7 +153,7 @@ public partial class ConstructorRepository
                 var id = field.Id!.Value;
                 var value = "";
                 var config = configs[id];
-                if (config is not null)
+                if (visible[record.CollectionId] && config is not null)
                 {
                     if (!config.Automatic && !force) value = SourceValue(record.Id, id) ?? "";
                     else if (sources.GetValueOrDefault(config.DateFieldId) == record.CollectionId
@@ -182,13 +183,14 @@ public partial class ConstructorRepository
         IReadOnlyList<int>? fieldIds = null, CancellationToken ct = default)
     {
         var path = DbPath;
+        var permissions = Permissions;
         var ids = recordIds.ToArray();
         var selected = fieldIds?.ToArray();
         return Task.Run(() =>
         {
             using var context = new AppDbContext(path);
             context.ApplyPerformancePragmas();
-            return new ConstructorRepository(context)
+            return new ConstructorRepository(context) { Permissions = permissions }
                 .ReadDatePeriods(ids, selected, ct: ct);
         }, ct);
     }
@@ -233,7 +235,11 @@ public partial class ConstructorRepository
             ct.ThrowIfCancellationRequested();
             LockRecordsForWrite(recordIds);
             var records = db.DbRecords.Where(r => recordIds.Contains(r.Id)).ToList();
-
+            foreach (var collection in records.Select(r => r.CollectionId).Distinct())
+            {
+                Demand(PermAction.ViewCollection, collection);
+                Demand(PermAction.EditRecord, collection);
+            }
             var collectionIds = records.Select(r => r.CollectionId).Distinct().ToList();
             var fieldQuery = db.DbFields.AsNoTracking().Where(f => f.FieldType == "date_period"
                 && collectionIds.Contains(f.CollectionId));
@@ -285,6 +291,7 @@ public partial class ConstructorRepository
         CancellationToken ct = default)
     {
         var path = DbPath;
+        var permissions = Permissions;
         var ids = recordIds.ToArray();
         var selected = fieldIds?.ToArray();
         return Task.Run(() =>
@@ -292,7 +299,7 @@ public partial class ConstructorRepository
             ct.ThrowIfCancellationRequested();
             using var context = new AppDbContext(path);
             context.ApplyPerformancePragmas();
-            new ConstructorRepository(context)
+            new ConstructorRepository(context) { Permissions = permissions }
                 .RecalculateDatePeriods(ids, selected, ct);
         }, ct);
     }
@@ -310,7 +317,7 @@ public partial class ConstructorRepository
         ct.ThrowIfCancellationRequested();
         if (selected.Count == 0) return excluded ? scope : scope.Where(_ => false);
         var config = DatePeriodConfig.FromConfig(field.ConfigJson);
-        if (config is null)
+        if (config is null || Permissions?.Can(PermAction.ViewCollection, field.CollectionId) == false)
             return selected.Contains("") != excluded ? scope : scope.Where(_ => false);
         if (!config.Automatic)
         {

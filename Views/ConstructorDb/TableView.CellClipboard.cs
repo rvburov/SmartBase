@@ -149,6 +149,7 @@ public partial class TableView
     public async Task ClearCellsAsync(string operation = "Очистка")
     {
         if (!HasCellSelection || _repository is null) return;
+        if (!Can(PermAction.EditRecord)) { PermissionNotice.Show(this, PermAction.EditRecord); return; }
 
         if (await SelectedCellsAsync() is not { } cells) return;
 
@@ -184,6 +185,7 @@ public partial class TableView
     {
         FollowSelectionIdentity();
         if (_cellRange is not { } range || _repository is null) return;
+        if (!Can(PermAction.EditRecord)) { PermissionNotice.Show(this, PermAction.EditRecord); return; }
 
         var text = await GetClipboardTextAsync();
         if (text is null) return;
@@ -316,9 +318,9 @@ public partial class TableView
         List<int> records = [], fields = [];
         try
         {
-            if (needCols > 0)
+            if (needCols > 0 && Can(PermAction.CreateField))
                 fields = _repository.AddPasteTextFields(_collectionId, needCols);
-            if (needRows > 0 && plain)
+            if (needRows > 0 && plain && Can(PermAction.CreateRecord))
                 records = _repository.AddEmptyRecords(_collectionId, needRows);
         }
         catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath))
@@ -617,7 +619,7 @@ public partial class TableView
             Header       = MenuIcons.PasteValuesHeader(),
             InputGesture = MenuGesture("table.paste"),
         };
-        paste.Click += (_, _) => { select(); Fire(PasteCellsAsync); };
+        Guarded(paste, PermAction.EditRecord, () => { select(); Fire(PasteCellsAsync); });
         menu.Items.Add(paste);
 
         // Пустой буфер — вставлять нечего: пункт гаснет при открытии меню, а не молчит по нажатию.
@@ -636,7 +638,7 @@ public partial class TableView
             Header       = MenuIcons.ClearValuesHeader(),
             InputGesture = MenuGesture("table.clearCells"),
         };
-        clear.Click += (_, _) => { select(); Fire(() => ClearCellsAsync()); };
+        Guarded(clear, PermAction.EditRecord, () => { select(); Fire(() => ClearCellsAsync()); });
         menu.Items.Add(clear);
     }
 
@@ -689,6 +691,7 @@ public partial class TableView
         OnMenuOpening(menu, () =>
         {
             host.Items.Clear();
+            host.IsEnabled = Can(PermAction.EditRecord);
 
             var current = row.CellStyle(def.Key);
             host.Items.Add(ColorMenu.Build("Фон ячейки", current.Bg,

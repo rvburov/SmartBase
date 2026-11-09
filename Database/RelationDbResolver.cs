@@ -161,24 +161,24 @@ public static class RelationDbResolver
 
     /// <summary>Подключенная база репозитория и ее строка реестра (проверка связей из окна
     /// свойства: резервной копии нужны оба). null — окно открыто без рабочего пространства.</summary>
-    public static (DatabaseManager Manager, Entities.DatabaseRefEntity Entry)?
+    public static (DatabaseManager Manager, Entities.DatabaseRefEntity Entry, IReadOnlyList<PermissionService> Permissions)?
         MountedEntryFor(ConstructorRepository repo)
     {
         if (_ws is null) return null;
         var manager = _ws.Mounted.FirstOrDefault(m => m.Constructor == repo || m.Context.DbPath == repo.DbPath);
         var entry = manager is null ? null : _ws.Registry.GetAll().FirstOrDefault(e => e.Id == manager.DbId);
         return manager is null || entry is null ? null
-            : (manager, entry);
+            : (manager, entry, _ws.Mounted.Select(m => m.Permissions).Distinct().ToArray());
     }
 
     /// <summary>Номер реестра этого компьютера для номера связи; 0 — база не встречалась.</summary>
     public static int RegistryIdFor(int linkId) =>
         MountedManagerFor(linkId)?.DbId ?? (RegistryByLink.TryGetValue(linkId, out var id) ? id : 0);
 
-    /// <summary>Номер реестра базы репозитория (журнал безопасности, обмен, последняя запись).</summary>
+    /// <summary>Номер реестра базы репозитория (обмен, последняя запись).</summary>
     public static int RegistryIdFor(ConstructorRepository repo) =>
         _ws?.Mounted.FirstOrDefault(m => m.Constructor == repo || m.Context.DbPath == repo.DbPath)?.DbId
-        ?? 0;
+        ?? repo.Permissions?.DbId ?? 0;
 
     /// <summary>Список баз реестра (номер реестра + имя) — для расширений и окон, которые
     /// выбирают базу этого компьютера, а не цель связи.</summary>

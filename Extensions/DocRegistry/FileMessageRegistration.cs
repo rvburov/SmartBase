@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using SmartBase.Core.Models;
 using SmartBase.Database.Repositories;
 
 namespace SmartBase.Extensions.DocRegistry;
@@ -26,6 +27,8 @@ internal static partial class DocumentMessages
             return ReplyMarkup.Refused("Файл: неверный идентификатор сообщения");
         if (context.Repo is not { } repo)
             return ActionResult.Failed("действию не дали подключения к базе данных");
+        try { DemandRegistration(repo, context.CollectionId); }
+        catch (PermissionDeniedException error) { return ReplyMarkup.Refused(error.Message); }
 
         var receiptKey = FileKey(context, sender, messageId);
         var digest = Convert.ToHexString(SHA256.HashData(bytes));

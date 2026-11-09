@@ -50,6 +50,15 @@ public partial class SettingsView
         if (mode == IngressMode.Network && MachineAddress.All().Count > 1)
             state.Add(Note("Адреса этой машины: " + string.Join(", ", MachineAddress.All())
                            + ". Отправителю нужен доступный ему адрес."));
+
+        // Сетевой режим защищен одним токеном, и по обычному HTTP токен идет по сети открытым
+        // текстом. Сказано на самом экране: решение принимают здесь, а не в документации.
+        if (mode == IngressMode.Network)
+            state.Add(Note(
+                "Защита — токен, и по обычному HTTP он идет по сети открытым текстом: тот, кто "
+                + "смотрит трафик этой сети, сможет писать в базу от имени робота. Если это "
+                + "неприемлемо — оставьте прием только с этого компьютера или папку обмена."));
+
         block.Children.Add(DataBox(state));
 
         return Row("Как к нам обращаются",
@@ -72,6 +81,13 @@ public partial class SettingsView
         radio.IsCheckedChanged += (_, _) =>
         {
             if (radio.IsChecked != true || AppSettings.LoadIngressMode() == value) return;
+
+            if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup))
+            {
+                radio.IsChecked = false;
+                return;
+            }
+
             AppSettings.SaveIngressMode(value);
             _ingress?.Apply();
             BuildIntegrationsInbox();
@@ -112,6 +128,7 @@ public partial class SettingsView
     private async Task GrantListenerAsync(int port)
     {
         if (VisualRoot is not Window win) return;
+        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
 
         var trouble = await ListenerPermissions.GrantAsync(port);
 
@@ -139,6 +156,8 @@ public partial class SettingsView
 
         var apply = RowButton("Применить", () =>
         {
+            if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
+
             if (!int.TryParse(box.Text, out var wanted) || !IngressGate.ValidPort(wanted))
             {
                 _ = ConfirmDialog
@@ -185,6 +204,108 @@ public partial class SettingsView
                  + ". Обычно это занятый номер — попробуйте другой.";
 
         return "Сейчас не слушаю: прием выключен.";
+    }
+
+    // ── Токены доступа ────────────────────────────────────────────────────────
+
+    private Border TokensRow()
+    {
+        var block = new StackPanel { Spacing = 8 };
+
+        if (Integrations is not { } registry)
+        {
+            block.Children.Add(DataBox("Список станет доступен, когда откроется база данных."));
+            return Row("Токены доступа", TokensHelp(), block);
+        }
+
+        var tokens = registry.Tokens();
+        var opened = _databases?.Invoke() ?? [];
+
+        if (tokens.Count == 0)
+            block.Children.Add(DataBox("Не выдано ни одного токена — постучаться к нам сейчас "
+                                       + "некому."));
+
+        foreach (var token in tokens)
+        {
+            var database = opened.FirstOrDefault(d => d.DbId == token.DbId)?.Name
+                        ?? $"база №{token.DbId} (сейчас не открыта)";
+
+            var line = Note($"{token.Name} — {database}"
+                + (token.Enabled ? "" : " · выключен")
+                + (token.Used is { } used
+                    ? $" · последнее обращение {used.ToLocalTime():dd.MM.yyyy HH:mm}"
+                    : " · обращений не было"));
+
+            var item = token;
+
+            // Сам токен — в ячейке с данными, действия над ним — рядом, как кнопки строки в
+            // «Управлении базой данных»: показанное и нажимаемое не смешиваются.
+            var actions = ButtonLine(
+                RowButton(item.Enabled ? "Выключить" : "Включить", () =>
+                {
+                    if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
+
+                    registry.EnableToken(item.Id, !item.Enabled);
+                    BuildIntegrationsInbox();
+                }),
+                RowButton("Убрать", () => _ = RemoveTokenAsync(registry, item)));
+
+            var box = DataBox(new[] { line });
+            box.VerticalAlignment = VerticalAlignment.Center;
+            actions.VerticalAlignment = VerticalAlignment.Center;
+            actions.Margin = new Avalonia.Thickness(8, 0, 0, -6);
+
+            var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+            Grid.SetColumn(box, 0);
+            Grid.SetColumn(actions, 1);
+            grid.Children.Add(box);
+            grid.Children.Add(actions);
+
+            block.Children.Add(grid);
+        }
+
+        block.Children.Add(ButtonLine(
+            RowButton("Создать токен", () => _ = IssueTokenAsync(registry))));
+
+        return Row("Токены доступа", TokensHelp(), block);
+    }
+
+    private static string TokensHelp() =>
+        "Токен — это пользователь-робот в базе данных: он виден администратору в списке "
+        + "пользователей, его именем подписаны сделанные им записи, и допуск ему отзывается там "
+        + "же, где человеку. По умолчанию роботу разрешено только создавать и изменять записи. "
+        + "Читать коллекцию через этот канал он сможет, когда администратор даст ему право "
+        + "«Просмотр коллекции» в «Панели администратора».";
+
+    /// <summary>
+    /// Выдать токен под одну из открытых баз. Сам поток — окно, робот, единственный показ текста —
+    /// общий с менеджером паролей (<see cref="TokenIssue"/>): порядок его шагов забывать нельзя, и
+    /// держать его в двух местах значило бы однажды забыть в одном.
+    /// </summary>
+    private async Task IssueTokenAsync(Database.IntegrationsRegistry registry)
+    {
+        if (VisualRoot is not Window win) return;
+        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
+
+        await TokenIssue.RunAsync(win, registry, _databases?.Invoke() ?? [],
+                                  issued: BuildIntegrationsInbox);
+    }
+
+    private async Task RemoveTokenAsync(Database.IntegrationsRegistry registry, AccessToken token)
+    {
+        if (VisualRoot is not Window win) return;
+        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
+
+        var ok = await new ConfirmDialog(
+            $"Убрать токен «{token.Name}»?\n\n"
+            + "Отправитель с этим токеном перестанет проходить сразу же. Пользователь-робот в "
+            + "базе останется: его именем подписаны уже сделанные записи, и удалить его значило "
+            + "бы обезличить историю изменений.").ShowDialog<bool>(win);
+
+        if (!ok) return;
+
+        registry.RemoveToken(token.Id);
+        BuildIntegrationsInbox();
     }
 
     // ── Описание API ──────────────────────────────────────────────────────────

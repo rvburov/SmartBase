@@ -7,15 +7,44 @@ using SmartBase.Integrations;
 
 namespace SmartBase.Tests.Integration;
 
-/// <summary>Чтение HTTP API: состав полей, курсоры, дата изменения и история без авторизации.</summary>
+/// <summary>
+/// Чтение HTTP API: состав полей, курсоры, дата изменения и история. Читает робот токена, которому
+/// администратор базы дал право «Просмотр коллекции»; без этого права чтение — отказ.
+/// </summary>
 [Collection(EgressCollection.Name)]
 public sealed class IngressReadTests : IDisposable
 {
     private static readonly DateTimeOffset Now = new(2026, 9, 12, 12, 0, 0, TimeSpan.Zero);
+    private readonly string _dir = Directory.CreateTempSubdirectory("sbingressread_").FullName;
     private readonly TempDatabase _db = new(dbId: 7, name: "Основная");
+    private readonly DatabaseRegistry _registry;
+    private readonly AccessToken _token;
+    private readonly string _secret;
 
-    public IngressReadTests() => RunJournal.Attach(null);
-    public void Dispose() { RunJournal.Attach(null); _db.Dispose(); }
+    public IngressReadTests()
+    {
+        RunJournal.Attach(null);
+        _registry = DatabaseRegistry.Open(Path.Combine(_dir, "default.db"), Path.Combine(_dir, "app.db"));
+        (_token, _secret) = _registry.Integrations.Issue("Чтение учетной системы", 7, "ПК17", Now);
+        _db.Permissions.EnsureRobot(_token.RobotKey, _token.Name, Now);
+        Grant(PermAction.ViewCollection);
+    }
+
+    public void Dispose()
+    {
+        RunJournal.Attach(null);
+        _registry.Dispose();
+        _db.Dispose();
+        try { SqliteGate.ClearAllPools(); } catch { /* временный стенд */ }
+        try { Directory.Delete(_dir, recursive: true); } catch { /* временная папка */ }
+    }
+
+    /// <summary>Права робота — той же маской, что выставляет панель администратора.</summary>
+    private void Grant(PermAction mask)
+    {
+        var robot = _db.Context.DbUsers.Single(u => u.UserKey == _token.RobotKey);
+        _db.Permissions.SetMask(robot.Id, null, (int)(PermissionService.RobotDefaultMask | mask));
+    }
 
     private (int Id, int Number, int Total) Orders()
     {
@@ -37,7 +66,8 @@ public sealed class IngressReadTests : IDisposable
     }
 
     private IngressAnswer Get(string path, string query) => IngressHandler.Handle(
-        new IngressCall("GET", path, "", "127.0.0.1", query), [_db.Manager], null, Now);
+        new IngressCall("GET", path, _secret, "", "127.0.0.1", query),
+        _registry.Integrations, [_db.Manager], null, Now);
 
     private IngressAnswer Read(string query = "collection=Заказы") => Get(IngressApi.RecordsPath, query);
     private static JsonElement Body(IngressAnswer answer) => JsonDocument.Parse(answer.Body).RootElement;
@@ -184,16 +214,23 @@ public sealed class IngressReadTests : IDisposable
         Assert.Equal(2, Body(answer).GetProperty("rows").GetArrayLength());
     }
 
+    /// <summary>Без права «Просмотр коллекции» у робота не читаются ни записи, ни журнал.</summary>
     [Fact]
-    public void Historical_security_metadata_no_longer_restricts_api_reading()
+    public void Reading_needs_the_view_right_of_the_robot()
+    {
+        Orders();
+        Grant(PermAction.None);
+
+        Assert.Equal(403, Read().Status);
+        Assert.Equal(403, Get(IngressApi.ChangesPath, "collection=Заказы").Status);
+    }
+
+    /// <summary>Снятые метки конфиденциальности остаются в базе данными и чтения не закрывают.</summary>
+    [Fact]
+    public void Old_confidentiality_labels_do_not_restrict_api_reading()
     {
         var (id, number, _) = Orders();
         _db.Context.DbMeta.Add(new DbMetaEntity { Key = "confidentiality", Value = "closed" });
-        _db.Context.DbMeta.Add(new DbMetaEntity { Key = "password.hash", Value = "старый-хэш" });
-        var user = _db.Context.DbUsers.First();
-        user.IsApproved = false;
-        user.IsAdmin = false;
-        _db.Context.DbPermissions.Add(new DbPermissionEntity { UserId = user.Id, ActionsMask = 0 });
         _db.Context.DbFields.Find(number)!.ConfigJson = """{"confidentiality":"restricted"}""";
         _db.Context.SaveChanges();
 

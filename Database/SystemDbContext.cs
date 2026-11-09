@@ -29,6 +29,9 @@ public class SystemDbContext : DbContext
     /// <summary>Потоки событий — там же: поток в файле базы открыла бы каждая копия программы.</summary>
     public DbSet<IntegrationStreamEntity> IntegrationStreams { get; set; } = null!;
 
+    /// <summary>Токены входящего канала — тоже локальные: порт слушает одна машина.</summary>
+    public DbSet<IntegrationTokenEntity> IntegrationTokens { get; set; } = null!;
+
     private readonly string _path;
 
     public SystemDbContext(string path) => _path = path;
@@ -71,6 +74,12 @@ public class SystemDbContext : DbContext
         model.Entity<IntegrationStreamEntity>(e =>
         {
             e.ToTable("integration_streams");
+            e.HasKey(x => x.Id);
+        });
+
+        model.Entity<IntegrationTokenEntity>(e =>
+        {
+            e.ToTable("integration_tokens");
             e.HasKey(x => x.Id);
         });
     }

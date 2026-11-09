@@ -268,7 +268,8 @@ public partial class PropertyEditorDialog
             if (found.Count > 0) return true;
         }
         catch (OperationCanceledException) { return false; }
-        catch (Exception ex) when (ex is InvalidOperationException or System.Data.Common.DbException or IOException) { return true; }
+        catch (Exception ex) when (ex is InvalidOperationException or System.Data.Common.DbException or IOException
+                                       or PermissionDeniedException) { return true; }
         var name = (RelationTargetCombo.SelectedItem as TargetCollectionItem)?.Name ?? "";
         return await new ConfirmDialog(
             $"Сейчас ни одна запись коллекции «{name}» не подходит под условие выбора — выбрать будет нечего. Сохранить так?",

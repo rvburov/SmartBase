@@ -21,7 +21,7 @@ namespace SmartBase.Database;
 /// </summary>
 public static class ApiDescription
 {
-    // Адреса и параметр выбора базы берутся у двери: описание обязано обещать ровно
+    // Адреса, заголовок токена и параметр базы берутся у двери (IngressApi): описание обязано обещать ровно
     // то, что слушатель принимает.
 
     private static readonly JsonSerializerOptions Format = new()
@@ -37,7 +37,7 @@ public static class ApiDescription
     /// второе мнение о том, где программа слушает.
     /// </summary>
     /// <param name="address">Адрес слушателя; пусто — прием выключен, и это сказано прямо.</param>
-    /// <param name="database">Имя базы.</param>
+    /// <param name="database">Имя базы, в которую пишет токен.</param>
     /// <param name="collections">Схема коллекций.</param>
     public static string Text(string address, string database,
                               IReadOnlyList<ApiCollection> collections, int? databaseId = null)
@@ -66,8 +66,17 @@ public static class ApiDescription
             text.AppendLine();
         }
 
-        text.AppendLine("API работает без входа и токенов. Параметр «database» выбирает открытую базу "
-                      + "по ключу из реестра приложения. Если открыта ровно одна база, параметр можно не указывать.");
+        text.AppendLine($"Токен едет заголовком «{IngressApi.TokenHeader}» либо «Authorization: Bearer …».");
+        text.AppendLine("Токен выдается один раз и больше нигде не показывается. База определяется токеном; "
+                      + "параметр «database» можно не указывать, а указанный обязан совпасть с базой токена.");
+        text.AppendLine("Права — у робота токена в панели администратора базы: запись по умолчанию, "
+                      + "чтение — с правом «Просмотр коллекции».");
+
+        // Сказано и здесь: описание пересылают той стороне, и там принимают решение, по какой
+        // сети ходить. Молчание об открытом тексте в документе, который читает именно тот, кто
+        // будет слать токен, — худшее место для умолчания (6.2).
+        text.AppendLine("По обычному HTTP токен идет по сети ОТКРЫТЫМ ТЕКСТОМ: в заводской сети "
+                      + "это обычно приемлемо, но через недоверенную сеть слать его нельзя.");
         text.AppendLine();
 
         text.AppendLine("Тело сообщения — такое же, как у файла в папке обмена:");
@@ -84,8 +93,10 @@ public static class ApiDescription
         text.AppendLine();
         text.AppendLine("«mode»: «add» — добавить, «update» — найти по ключу и обновить "
                       + "(ненайденную запись заведет),");
-        text.AppendLine("«delete» — найти по ключу и удалить (читается только колонка ключа),");
-        text.AppendLine("«ensure-collection» — создать коллекцию и добрать недостающие поля; вместо «rows» — "
+        text.AppendLine("«delete» — найти по ключу и удалить (нужно право «Удаление записи» у "
+                      + "робота; читается только колонка ключа),");
+        text.AppendLine("«ensure-collection» — создать коллекцию и добрать недостающие поля "
+                      + "(права «Создание коллекции» и «Создание свойства»); вместо «rows» — "
                       + "«fields»: [{ \"name\": \"Номер\", \"type\": \"text\" }], типы: "
                       + string.Join(", ", InboxField.KnownTypes) + ". Существующие поля не "
                       + "трогаются, несовпадение типов — отказ.");

@@ -84,7 +84,8 @@ public partial class TableView
         catch (Exception ex)
         {
             DbErrors.HandleRead(ex, repository.DbPath);
-            Serilog.Log.Warning(ex, "Не удалось обновить отбор по периоду времени после изменения записи");
+            if (ex is not PermissionDeniedException)
+                Serilog.Log.Warning(ex, "Не удалось обновить отбор по периоду времени после изменения записи");
         }
         finally
         {
@@ -102,7 +103,7 @@ public partial class TableView
         if (!_fields.Any(field => field.FieldType == "date_period"
             && DatePeriodConfig.FromConfig(field.ConfigJson) is { Automatic: false })) return;
         var item = new MenuItem { Header = "Пересчитать" };
-        item.Click += (_, _) => _ = RecalculateDatePeriodsAsync(TargetRecordIds(row));
+        Guarded(item, PermAction.EditRecord, () => _ = RecalculateDatePeriodsAsync(TargetRecordIds(row)));
         menu.Items.Add(item);
     }
 
@@ -136,6 +137,10 @@ public partial class TableView
             foreach (var id in recordIds) RecordValueEdited?.Invoke(this, id);
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+        catch (PermissionDeniedException)
+        {
+            PermissionNotice.Run(this, false, PermAction.EditRecord, () => { });
+        }
         catch (Exception ex)
         {
             if (!DbErrors.Handle(ex, repository.DbPath) && window is not null)

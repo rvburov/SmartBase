@@ -96,6 +96,7 @@ public partial class SettingsView
     private async Task DeleteConnectionAsync(IntegrationConnection connection)
     {
         if (VisualRoot is not Window win || Integrations is null) return;
+        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
 
         var registry = Integrations;
         var used     = registry.RequestsOf(connection.Id);
@@ -308,6 +309,7 @@ public partial class SettingsView
                                          IntegrationRequest request)
     {
         if (VisualRoot is not Window win) return;
+        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
 
         var databases = _databases?.Invoke() ?? [];
 
@@ -353,6 +355,7 @@ public partial class SettingsView
     private async Task DeleteRequestAsync(IntegrationRequest request)
     {
         if (VisualRoot is not Window win || Integrations is null) return;
+        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
 
         // Запрос с шагом сценария не удаляется — как и соединение с запросами: сценарий с дырой
         // посреди списка шагов хуже отказа.
@@ -385,6 +388,7 @@ public partial class SettingsView
     private async Task ImportCurlAsync()
     {
         if (VisualRoot is not Window win || Integrations is null) return;
+        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
 
         var import = await new CurlImportDialog().ShowDialog<CurlImport?>(win);
         if (import is null) return;

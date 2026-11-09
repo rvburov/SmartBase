@@ -113,7 +113,7 @@ internal static class CoreWindowChecks
         };
         // Отрицательный порт отвергается TcpClient до сети. Повторно вызываем настоящий
         // метод проверки уже после Show, чтобы ответ изменил высоту открытой формы.
-        runner.Run("Настройки PostgreSQL", () => new DbSettingsDialog(pgEntry, null, false, null),
+        runner.Run("Настройки PostgreSQL", () => new DbSettingsDialog(pgEntry, null, false, true, null),
             new State("короткий статус", w => Probe(w, pgEntry, "127.0.0.1")),
             new State("длинный статус", w => Probe(w, pgEntry,
                 string.Join('-', Enumerable.Repeat("длинный-адрес-сервера", 18)))),
@@ -132,7 +132,7 @@ internal static class CoreWindowChecks
         runner.Banner("Подключение PostgreSQL", () => new PgConnectDialog(), "HostBox");
         runner.Banner("Создание базы PostgreSQL", () => new PgCreateDatabaseDialog(), "HostBox");
         runner.Banner("Настройки SQLite", () => new DbSettingsDialog(
-            new DatabaseRefEntity { Name = "Стенд SQLite", Path = "/stand/database.db" }, null, false, null),
+            new DatabaseRefEntity { Name = "Стенд SQLite", Path = "/stand/database.db" }, null, false, true, null),
             confirm: "SaveBtn");
 
         // В Headless нет гарантии наличия Clipboard. Вызываем тот же обработчик статуса,

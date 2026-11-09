@@ -43,7 +43,7 @@
   [storage-and-migrations](developer/architecture/database/storage-and-migrations.md) (два файла, миграции, пути, WAL) ·
   [multi-database](developer/architecture/database/multi-database.md) (несколько БД одновременно; чужие правки поллером и свои — шиной `ChangeBus`, по которой разделы обновляются в моменте) ·
   [network-shares](developer/architecture/database/network-shares.md) (общая база SQLite в сетевой папке: определение пути, режим DELETE и признак в файле, монтирование, потеря и возврат, зависшая папка, файлы рядом с базой, проверка на боевой машине).
-- [users-permissions.md](developer/architecture/users-permissions.md) — справочник участников, авторство и история изменений.
+- [users-permissions.md](developer/architecture/users-permissions.md) — пользователи, допуск, права, пароль базы, роботы.
 - **Производительность** ([performance/](developer/architecture/performance/)):
   [overview](developer/architecture/performance/overview.md) (принципы, индексы, узкие места) ·
   [hot-paths](developer/architecture/performance/hot-paths.md) (таблица, фильтр, импорт, экспорт) ·
@@ -60,7 +60,7 @@
 - [notes.md](developer/features/notes.md) — раздел «Заметки»: папка с Markdown на диске, дерево файлов, редактор и просмотр.
 - [library.md](developer/features/library.md) — раздел «Библиотека документов»: лента файлов, фильтр по типу, поиск внутри документов (кеш FTS5), миниатюры PDF.
 - **Расширения** ([extensions/](developer/features/extensions/)): [overview](developer/features/extensions/overview.md) (механизм: контракт, реестр, настройки, видимость, файлы данных) — дальше **файл на расширение**, имя файла равно его `Id`: [pdf-rename](developer/features/extensions/pdf-rename.md) · [product-compare](developer/features/extensions/product-compare.md) · [assembly-calc](developer/features/extensions/assembly-calc.md) · [pdf-analyzer](developer/features/extensions/pdf-analyzer.md) · [docs-collection](developer/features/extensions/docs-collection.md) · [time-collector](developer/features/extensions/time-collector.md) · [doc-registry](developer/features/extensions/doc-registry.md) · [pdf-watermark](developer/features/extensions/pdf-watermark.md).
-- **Интеграции** ([integrations/](developer/features/integrations/)): [overview](developer/features/integrations/overview.md) — обмен со сторонними программами: HTTP, потоки, сценарии и анонимный API · [inbox](developer/features/integrations/inbox.md) — протокол папки-приемника, контракт для отправителя. План целиком — [ROADMAP-API.md](ROADMAP-API.md).
+- **Интеграции** ([integrations/](developer/features/integrations/)): [overview](developer/features/integrations/overview.md) — обмен со сторонними программами: HTTP, потоки, сценарии и API по токену робота · [inbox](developer/features/integrations/inbox.md) — протокол папки-приемника, контракт для отправителя. План целиком — [ROADMAP-API.md](ROADMAP-API.md).
 - [categories.md](developer/features/categories.md) · [settings.md](developer/features/settings.md) · [backup.md](developer/features/backup.md) · [user-guide-section.md](developer/features/user-guide-section.md) · [notifications.md](developer/features/notifications.md) · [autostart-background.md](developer/features/autostart-background.md) · [profile.md](developer/features/profile.md) · [logging.md](developer/features/logging.md) · [icons.md](developer/features/icons.md).
 
 ### UI ([developer/ui/](developer/ui/))

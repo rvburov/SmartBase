@@ -438,18 +438,27 @@ JSON — файлового и сетевого. Один и тот же наб�
 папка обмена и `--inbox` продолжают работать. Настройка сетевого режима может требовать
 разрешений операционной системы (`Setup/ListenerPermissions.cs`).
 
-**API анонимный:** токены, пользователи-роботы, выдачи чтения и подтверждения удалены.
-Параметр `database=<DbId>` выбирает открытую базу по ключу реестра текущего приложения.
-Если открыта ровно одна база, параметр можно опустить; при нескольких базах отсутствие
-выбора дает HTTP 400. Список открытых баз читает текущий `Workspace`, а не снимок при старте.
+**API — по токену робота** (`IngressHandler`). Порядок проверок: адрес и метод (404/405 до
+всякого токена) → токен (`IntegrationsRegistry.Verify`; нет, выключен, не подошел — один и тот
+же ответ 401 «Неверный токен.») → база токена среди открытых (иначе 503) → параметр
+`database=<DbId>`: необязателен, а указанный обязан совпасть с базой токена (иначе 403;
+нечисловой — 400) → права робота (`PermissionService.RobotIsolated`, свежим запросом на своем
+подключении). Токен едет заголовком `X-SmartBase-Token` (`IngressApi.TokenHeader`) либо
+`Authorization: Bearer`. Хранится он в `app.db` (`integration_tokens`) только отпечатком PBKDF2
+([AccessToken](../../../../Integrations/AccessToken.cs)); выдача заводит в базе
+пользователя-робота с маской `RobotDefaultMask` (создание и изменение записей). Выдачи чтения,
+подтверждения направлений и журнал безопасности сняты вместе с контуром 30.10.2026.
 
-| Метод и путь | Назначение |
-|---|---|
-| `GET /v1/ping?database=<DbId>` | проверка выбранной базы |
-| `GET /v1/schema?database=<DbId>` | коллекции и свойства |
-| `POST /v1/inbox?database=<DbId>` | применение сообщения |
-| `GET /v1/records?database=<DbId>&collection=<имя>` | чтение записей |
-| `GET /v1/changes?database=<DbId>&collection=<имя>` | хвост истории, включая удаления |
+| Метод и путь | Назначение | Право робота |
+|---|---|---|
+| `GET /v1/ping` | проверка связи: база, токен, готов ли робот (`ready`, `trouble`) | — |
+| `GET /v1/schema` | коллекции и свойства | создание записи или просмотр коллекции |
+| `POST /v1/inbox` | применение сообщения | `add`/`update` — создание записи; `delete` — удаление записи; `ensure-collection` — создание коллекции и свойства |
+| `GET /v1/records?collection=<имя>` | чтение записей | просмотр коллекции |
+| `GET /v1/changes?collection=<имя>` | хвост истории, включая удаления | просмотр коллекции |
+
+Записи робота подписаны его именем (`CurrentUser.ActAs`), повтор сообщения узнается по паре
+«токен + идентификатор сообщения» (`IngressReplies`).
 
 Чтение по умолчанию возвращает название и все свойства коллекции. `fields=t,<ключ или имя>`
 сужает состав; `since` — ISO-8601, `after` — курсор из `next`, `limit` — до 500 записей.
@@ -462,7 +471,7 @@ JSON — файлового и сетевого. Один и тот же наб�
 При уникальных выбранных именах `records.values` сохраняет ключи-имена. Если они повторяются,
 все ключи строки становятся каноническими (`t` и ключ свойства), а `columns` описывает
 `key`, `name`, `fieldKey`. Получатель не теряет одно из одноименных свойств.
-В API нет роли, пароля SmartBase или проверки старых масок доступа. Ограничения сервера PostgreSQL и файловой системы продолжают действовать.
+Ограничения сервера PostgreSQL и файловой системы действуют поверх прав робота.
 
 Пример сообщения:
 
@@ -1607,7 +1616,7 @@ GET или POST; неизвестная подстановка в пути ил�
 | Дверь внутрь: режимы, порт, потолок тела | [IngressGate.cs](../../../../Integrations/IngressGate.cs) |
 | Слушатель порта — единственное место в решении | [IngressHttp.Open.cs](../../../../Integrations/IngressHttp.Open.cs) |
 | Договор входящего канала: метод, путь, query, тело и ответ | [IngressCall.cs](../../../../Integrations/IngressCall.cs) |
-| Выбор базы и коллекции, чтение и применение сообщения без сокета | [IngressHandler.cs](../../../../Database/IngressHandler.cs) |
+| Токен, база токена, права робота, чтение и применение сообщения без сокета | [IngressHandler.cs](../../../../Database/IngressHandler.cs) |
 | Служба приема по сети: режим, порт и состояние слушателя | [IngressService.cs](../../../../Database/IngressService.cs) |
 | Память о повторах входящего канала | [IngressReplies.cs](../../../../Database/IngressReplies.cs) |
 | Схема коллекций для описания API | [ConstructorRepository.Api.cs](../../../../Database/Repositories/ConstructorRepository.Api.cs) |
@@ -1625,7 +1634,9 @@ GET или POST; неизвестная подстановка в пути ил�
 | Окно правки сценария: расписание и шаги | [ScenarioDialog.axaml.cs](../../../../Controls/Dialogs/ScenarioDialog.axaml.cs) |
 | Окно настройки шага-действия: действие, коллекция, поля | [ScenarioActionDialog.axaml.cs](../../../../Controls/Dialogs/ScenarioActionDialog.axaml.cs) |
 | Вкладка «Доступ извне», половина про папку | [SettingsIntegrationsInbox.cs](../../../../Views/Settings/SettingsIntegrationsInbox.cs) |
-| Она же, половина про сеть: режимы, порт, описание API | [SettingsIntegrationsAccess.cs](../../../../Views/Settings/SettingsIntegrationsAccess.cs) |
+| Токены: хранение, отпечаток, проверка | [IntegrationsRegistry.Tokens.cs](../../../../Database/IntegrationsRegistry.Tokens.cs), [AccessToken.cs](../../../../Integrations/AccessToken.cs) |
+| Права робота в базе | [PermissionService.Robots.cs](../../../../Database/Repositories/PermissionService.Robots.cs) |
+| Она же, половина про сеть: режимы, порт, токены роботов, описание API | [SettingsIntegrationsAccess.cs](../../../../Views/Settings/SettingsIntegrationsAccess.cs) |
 | Вкладка «Журнал»: строки и подробности | [SettingsIntegrationsJournal.cs](../../../../Views/Settings/SettingsIntegrationsJournal.cs) |
 | Строка списка и иконка-кнопка, общие с «Управлением базой данных» | [SettingRows.cs](../../../../Controls/Widgets/SettingRows.cs) — `ListRow`, `IconButton` |
 | Формат переносимого набора настроек | [ScenarioBundle.cs](../../../../Integrations/ScenarioBundle.cs) |

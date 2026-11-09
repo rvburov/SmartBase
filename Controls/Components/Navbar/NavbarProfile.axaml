@@ -19,7 +19,24 @@
         <StackPanel Grid.Column="1" Orientation="Horizontal"
                     Spacing="8" VerticalAlignment="Center">
 
-            <!-- Выбранная база истории изменений. -->
+            <!-- «Добавить пароль» — только в разделе «Менеджер паролей» и только администратору
+                 хотя бы одной открытой базы. Тот же прием, что «Добавить базу данных» в
+                 NavbarSettings: стандартный ComboBox работает как меню действий — выбранный пункт
+                 открывает свое окно, а выбор тут же сбрасывается (см. код-behind). Паролей баз
+                 и серверов в меню нет: у каждой открытой базы их строка в списке уже есть. -->
+            <ComboBox x:Name="AddSecretCombo"
+                      IsVisible="False"
+                      Width="170" Height="{StaticResource ControlHeightStandard}"
+                      VerticalAlignment="Center"
+                      PlaceholderText="Добавить пароль"
+                      PlaceholderForeground="{StaticResource BrushPrimaryText}">
+                <ComboBoxItem Content="Соединение" />
+                <ComboBoxItem Content="Токен" />
+            </ComboBox>
+
+            <!-- Подпись списка баз стоит СНАРУЖИ списка: сам список показывает только имя базы.
+                 Одна подпись на оба списка — «Истории изменений» и панели администратора: они
+                 никогда не видны вместе. -->
             <TextBlock x:Name="DbLabel"
                        Text="Базы данных"
                        IsVisible="False"
@@ -36,9 +53,17 @@
                       VerticalAlignment="Center"
                       ItemTemplate="{StaticResource NavbarDbTemplate}" />
 
+            <!-- Выбор базы панели администратора: та же роль и то же место, что у списка баз
+                 «Истории изменений», — все строки раздела относятся к выбранной здесь базе. -->
+            <ComboBox x:Name="AdminDbCombo"
+                      IsVisible="False"
+                      Width="220" Height="{StaticResource ControlHeightStandard}"
+                      VerticalAlignment="Center"
+                      ItemTemplate="{StaticResource NavbarDbTemplate}" />
+
             <!-- Выгрузка в CSV — крайняя кнопка навбара, тем же видом, что
                  «Импорт/Экспорт» в сайдбаре конструктора (navbtn 30×30, lucide download).
-                 Доступна в разделе «История изменений». -->
+                 Только у «Истории изменений». -->
             <Button x:Name="ExportBtn"
                     Classes="navbtn" Width="30" Height="30"
                     IsVisible="False"

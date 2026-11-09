@@ -10,7 +10,8 @@ namespace SmartBase.Tests.ServiceGrids;
 /// <summary>
 /// Данные стенда — воспроизводимые: те же строки, те же метки времени при каждом прогоне, иначе
 /// кадры не сравнить. Журнал диагностики пишется сырым SQLite в схеме приемника Serilog; журнал
-/// изменений — настоящими операциями репозитория (метки времени потом выставляются по порядку).
+/// изменений — настоящими операциями репозитория (метки времени потом выставляются по порядку);
+/// пользователи — строками db_users со всеми состояниями допуска и ролей.
 /// </summary>
 sealed class Fixtures : IDisposable
 {
@@ -77,6 +78,7 @@ sealed class Fixtures : IDisposable
         var ws    = Workspace.Attach(registry, db);
 
         var cid = FillHistory(db);
+        FillUsers(db);
         var historyRows = FixTimestamps(defPath);
 
         return new Fixtures(logsPath, registry, db, ws, cid, historyRows);
@@ -143,7 +145,38 @@ sealed class Fixtures : IDisposable
         return cid;
     }
 
+    // Все состояния таблицы «Пользователи»: второй администратор, обычный пользователь с частью прав,
+    // ожидающий допуска, с отозванным допуском, робот и еще один пользователь.
+    private static void FillUsers(DatabaseManager db)
+    {
+        var ctx = db.Context;
+        DbUserEntity U(string key, string name, bool admin, bool approved, bool decided, int day, int seenDay) => new()
+        {
+            UserKey = key, DisplayName = name, IsAdmin = admin, IsApproved = approved, AccessDecided = decided,
+            CreatedAt  = new DateTime(2026, 9, day,     7, 12, 0, DateTimeKind.Utc).ToString("o"),
+            LastSeenAt = new DateTime(2026, 9, seenDay, 15, 40, 0, DateTimeKind.Utc).ToString("o"),
+        };
+        ctx.DbUsers.AddRange(
+            U("anna.ivanova@pc-01",    Users[0], admin: true,  approved: true,  decided: true,  day: 1,  seenDay: 24),
+            U("petr.sidorov@pc-02",    Users[1], admin: false, approved: true,  decided: true,  day: 3,  seenDay: 23),
+            U("olga.kuznetsova@pc-03", Users[2], admin: false, approved: false, decided: false, day: 22, seenDay: 22),
+            U("ivan.zaytsev@pc-04",    Users[3], admin: false, approved: false, decided: true,  day: 5,  seenDay: 19),
+            U("robot.exchange",        Users[4], admin: false, approved: true,  decided: true,  day: 10, seenDay: 24),
+            U("maria.orlova@pc-06",    Users[5], admin: false, approved: true,  decided: true,  day: 12, seenDay: 21));
+        ctx.SaveChanges();
 
+        var petr  = ctx.DbUsers.First(u => u.UserKey == "petr.sidorov@pc-02");
+        var maria = ctx.DbUsers.First(u => u.UserKey == "maria.orlova@pc-06");
+        db.Permissions.SetMask(petr.Id,  null, (int)(PermAction.ViewCollection | PermAction.CreateRecord | PermAction.EditRecord));
+        db.Permissions.SetMask(maria.Id, null, (int)(PermAction.ViewCollection | PermAction.EditCollection | PermAction.CreateField | PermAction.DeleteRecord));
+    }
+
+    /// <summary>Маска прав пользователя — для проверки клика по галочке.</summary>
+    public int MaskOf(string displayName)
+    {
+        var user = Db.Context.DbUsers.AsNoTracking().First(u => u.DisplayName == displayName);
+        return Db.Permissions.GetMask(user.Id, null);
+    }
 
     // Метки времени журнала и текущего пользователя — по порядку и фиксированные: настоящие
     // операции проставили «сейчас», а кадр обязан совпадать с эталоном день за днем.
@@ -186,12 +219,8 @@ sealed class Fixtures : IDisposable
         return ids.Count;
     }
 
-
-
     public void Dispose()
     {
-
-
         Workspace.Dispose();
         Registry.Dispose();
     }

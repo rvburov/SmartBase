@@ -138,6 +138,7 @@ public partial class ConstructorRepository
             throw new InvalidOperationException($"Условий выбора записей — не больше {RelationCondition.MaxConditions}.");
         var target = cfg.TargetDbId == 0 ? this : RelationDbResolver.RepoFor(cfg.TargetDbId)
             ?? throw new InvalidOperationException("Целевая база связи недоступна: условие выбора проверить нельзя.");
+        target.Demand(PermAction.ViewCollection, cfg.TargetCollectionId);
         var options = target.GetRelationPropertyOptions(cfg.TargetCollectionId).ToDictionary(o => o.Key);
         foreach (var condition in where)
         {
@@ -298,10 +299,10 @@ public partial class ConstructorRepository
                     ?? new(new HashSet<int>(), TargetUnavailable, "");
             if (RelationDbResolver.MountedRepoFor(cfg.TargetDbId) is not { } mounted) return new(new HashSet<int>(), TargetUnavailable, "");
             using var context = new AppDbContext(mounted.DbPath);
-            var isolated = new ConstructorRepository(context);
+            var isolated = new ConstructorRepository(context) { Permissions = mounted.Permissions };
             return isolated.EvaluateRelationCondition(cfg.TargetCollectionId, cfg, ids, ct);
         }
-        catch (Exception ex) when (ex is System.Data.Common.DbException or IOException
+        catch (Exception ex) when (ex is System.Data.Common.DbException or IOException or PermissionDeniedException
                                        or InvalidOperationException)
         {
             return new(new HashSet<int>(), TargetUnavailable, "");
@@ -418,7 +419,7 @@ public partial class ConstructorRepository
         db.DbRecords.AsNoTracking().Where(r => r.CollectionId == collectionId).Select(r => r.Id).ToHashSet();
 
     // Отказ в новой связи: какая запись и какое условие. Названия цели видит только тот, кто
-    // проверен на существование целевой коллекции.
+    // прошел проверку права просмотра целевой коллекции.
     internal string ConditionRefusal(int collectionId, IReadOnlyCollection<int> refused, string condition)
     {
         var names = db.DbRecords.AsNoTracking().Where(r => refused.Contains(r.Id) && r.CollectionId == collectionId)

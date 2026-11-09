@@ -40,6 +40,7 @@ public partial class ConstructorRepository
 
         private string? Inspect(ConstructorRepository owner, int collection, string key)
         {
+            if (!owner.CanReadRelationCollection(collection)) return null;
             var parts = RelationConfig.SplitKeys(key);
             if (parts.Count > 1)
             {

@@ -391,7 +391,8 @@ public partial class IntegrationBindingDialog : Window
                 made.Add((row, field.Id!.Value));
             }
         }
-        catch (Exception failure) when (failure is InvalidOperationException)
+        catch (Exception failure) when (failure is InvalidOperationException
+                                               or PermissionDeniedException)
         {
             // Часть полей могла завестись — они остаются: удалять их обратно значило бы
             // разбирать чужую коллекцию из-за неудачи на третьей колонке. Зато выбор в списке

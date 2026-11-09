@@ -75,6 +75,7 @@ public sealed class RelationIntegrityScanTests
         var target = state == "missing" ? 910001 : f.RemoteRecords[0];
         var edge = f.InsertEdge(field, f.SourceRecord, RelationIntegrityFixture.TargetId, target);
         if (state == "unavailable") f.SetTargetAvailable(false);
+        if (state == "denied") f.SetRights(f.Target, PermAction.All & ~PermAction.ViewCollection);
         var before = f.Snapshot();
         var targetBefore = f.Snapshot(f.Target);
 
@@ -184,7 +185,15 @@ public sealed class RelationIntegrityScanTests
         var cancelled = f.Source.Constructor.ScanRelationIntegrityAsync(ct: cancel.Token).GetAwaiter().GetResult();
         Assert.Equal(RelationIntegrityStatus.Cancelled, cancelled.Status);
         Assert.Equal(before, f.Snapshot());
-
+        f.SetRights(f.Source, PermAction.None);
+        before = f.Snapshot();
+        var denied = f.Scan();
+        Assert.Equal(RelationIntegrityStatus.NoAccess, denied.Status);
+        Assert.Empty(denied.Issues);
+        Assert.Empty(denied.Counts);
+        Assert.Equal(0, denied.ScannedEdges);
+        Assert.DoesNotContain("Исходная запись", JsonSerializer.Serialize(denied));
+        Assert.Equal(before, f.Snapshot());
     }
 
     [Theory]
@@ -343,7 +352,33 @@ internal sealed class RelationIntegrityFixture : IDisposable
         Parameter(command, "@config", config); Parameter(command, "@id", field); command.ExecuteNonQuery();
     }
 
+    public void SetRights(DatabaseManager manager, PermAction mask)
+    {
+        using (var context = new AppDbContext(manager.Path))
+        {
+            var user = context.DbUsers.Single(u => u.UserKey == SmartBase.Utils.CurrentUser.Key);
+            user.IsAdmin = true;
+            user.IsApproved = true;
+            context.SaveChanges();
+        }
+        manager.Permissions.Reload(notify: false);
+        manager.Permissions.SetMask(manager.Permissions.CurrentUserId, null, (int)mask);
+        using (var context = new AppDbContext(manager.Path))
+        {
+            var user = context.DbUsers.Single(u => u.UserKey == SmartBase.Utils.CurrentUser.Key);
+            user.IsAdmin = false;
+            context.SaveChanges();
+        }
+        manager.Permissions.Reload(notify: false);
+    }
 
+    public void RevokeAdministratorWithoutReload(DatabaseManager manager)
+    {
+        using var context = new AppDbContext(manager.Path);
+        var user = context.DbUsers.Single(u => u.UserKey == SmartBase.Utils.CurrentUser.Key);
+        user.IsAdmin = false;
+        context.SaveChanges();
+    }
 
     public IReadOnlyList<int> EdgeIds(string? sqliteArtifact = null)
     {

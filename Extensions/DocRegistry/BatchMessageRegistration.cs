@@ -13,6 +13,8 @@ internal static partial class DocumentMessages
                                              RegistryShape expectedShape)
     {
         var repo = context.Repo!;
+        try { DemandRegistration(repo, context.CollectionId); }
+        catch (PermissionDeniedException error) { return ReplyMarkup.Refused(error.Message); }
         var waiting = WaitingByRepo.GetValue(context.Session ?? repo, _ => new Waiting());
         var key = (context.DbId, context.CollectionId, context.Channel, sender.ToUpperInvariant());
         lock (waiting)

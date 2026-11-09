@@ -8,6 +8,7 @@ namespace SmartBase.Database;
 public sealed class IngressService : IDisposable
 {
     private readonly Func<IReadOnlyList<DatabaseManager>> _databases;
+    private readonly string                               _systemDbPath;
 
     private IngressHttp?  _door;
     private IngressMode   _mode = IngressMode.Off;
@@ -16,7 +17,13 @@ public sealed class IngressService : IDisposable
     /// <summary>Состояние поменялось — экран перерисовывает строку «слушаю / не слушаю».</summary>
     public event Action? Changed;
 
-    public IngressService(Func<IReadOnlyList<DatabaseManager>> databases) => _databases = databases;
+    /// <param name="databases">Открытые базы — целевая ищется среди них по токену.</param>
+    /// <param name="systemDbPath">app.db этой машины: там лежат токены входящего канала.</param>
+    public IngressService(Func<IReadOnlyList<DatabaseManager>> databases, string systemDbPath)
+    {
+        _databases    = databases;
+        _systemDbPath = systemDbPath;
+    }
 
     /// <summary>Порт открыт прямо сейчас.</summary>
     public bool Listening => _door is not null;
@@ -99,12 +106,18 @@ public sealed class IngressService : IDisposable
 
     // ── Ответ на обращение ────────────────────────────────────────────────────
 
-    /// <summary>Обработать обращение на потоке слушателя.</summary>
+    /// <summary>
+    /// Обработать обращение на потоке слушателя. Реестр токенов — на СВОЕМ подключении к app.db на
+    /// время одного обращения: обращений единицы в минуту, а общий контекст принадлежит интерфейсу.
+    /// </summary>
     private IngressAnswer Answer(IngressCall call)
     {
         try
         {
-            return IngressHandler.Handle(call, _databases(), IngressReplies.Current, DateTimeOffset.Now);
+            using var system = new SystemDbContext(_systemDbPath);
+
+            return IngressHandler.Handle(call, new IntegrationsRegistry(system),
+                                         _databases(), IngressReplies.Current, DateTimeOffset.Now);
         }
         catch (Exception failure)
         {

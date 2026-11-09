@@ -45,6 +45,8 @@ public partial class ConstructorRepository
         ct = ComputedToken(ct);
         var run = ComputedRun;
         if (field.Id is not int fid || field.CollectionId != collectionId) return RelationComputedColumn.Constant("");
+        if (Permissions?.Can(PermAction.ViewCollection, field.CollectionId) == false)
+            return RelationComputedColumn.Constant(RelationProperty.NoAccess);
         using var scope = RelationPropertyResolution.Enter(DbPath, fid);
         if (scope is null) return RelationComputedColumn.Constant(RelationProperty.Cycle);
         if (RelationComputedSetup(field) is not var (cfg, relationConfig))
@@ -189,6 +191,9 @@ public partial class ConstructorRepository
             {
                 var targetRepo = ComputedTargetRepo(dbId, relationConfig.TargetDbId);
                 if (targetRepo is null) { errors[dbId] = UnavailableLabel(dbId); continue; }
+                if (propertyKey != TitleKey
+                    && targetRepo.Permissions?.Can(PermAction.ViewCollection, relationConfig.TargetCollectionId) == false)
+                { errors[dbId] = RelationProperty.NoAccess; continue; }
                 var reader = ComputedTargetReader(dbId, targetRepo, out isolatedDb);
                 var done = 0;
                 foreach (var chunk in ids.Order().Chunk(ComputedTargetBatch))
@@ -202,7 +207,7 @@ public partial class ConstructorRepository
                         targets[(dbId, value.RecordId)] = value;
                 }
             }
-
+            catch (PermissionDeniedException) { errors[dbId] = RelationProperty.NoAccess; }
             catch (Exception ex) when (ex is System.Data.Common.DbException or System.IO.IOException
                                                 or InvalidOperationException or ArgumentException)
             { errors[dbId] = "(вычисление недоступно)"; }
@@ -228,7 +233,7 @@ public partial class ConstructorRepository
         if (dbId == 0 || RelationDbResolver.HasScopedResolver) return targetRepo;
         owned = new AppDbContext(targetRepo.DbPath);
         owned.ApplyPerformancePragmas();
-        return new ConstructorRepository(owned);
+        return new ConstructorRepository(owned) { Permissions = targetRepo.Permissions };
     }
 }
 

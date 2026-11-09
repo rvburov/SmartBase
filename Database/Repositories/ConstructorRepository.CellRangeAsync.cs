@@ -12,6 +12,9 @@ namespace SmartBase.Database.Repositories;
 /// путем, что фоновая подгрузка страниц таблицы (<see cref="LoadPageAsync"/>) и применение
 /// привязки (<see cref="ApplyRowsIsolated"/>).
 ///
+/// Права ручной записи спрашиваются ЗДЕСЬ, на публичной точке входа. Отложенная
+/// автоподстановка получает исходные права отдельно и повторно проверяет их перед записью.
+///
 /// После записи общий контекст не знает, что поменялось: отслеживаемые им значения и записи
 /// затронутых ячеек снимаются с учета (<see cref="ForgetTracked"/>), и следующее чтение берет
 /// свежие. Слияние побуквенных правок по этим ячейкам тоже забывается — по той же причине, что и
@@ -35,6 +38,7 @@ public sealed partial class ConstructorRepository
     public Task<List<CellRow>> ReadCellRowsAsync(int collectionId, Func<ConstructorRepository, RecordPage> records,
                                                  IReadOnlyList<int> fieldIds, CancellationToken ct)
     {
+        Demand(PermAction.ViewCollection, collectionId);
         var path   = db.DbPath;
         var fields = fieldIds.ToList();
 
@@ -61,6 +65,7 @@ public sealed partial class ConstructorRepository
     public async Task<CellBulkResult> SetCellsBulkIsolatedAsync(int collectionId, IReadOnlyList<CellWrite> cells,
                                                                 IReadOnlyList<TitleWrite>? titles, string operation)
     {
+        Demand(PermAction.EditRecord, collectionId);
         var path = db.DbPath;
 
         var result = await Task.Run(() =>
@@ -70,7 +75,7 @@ public sealed partial class ConstructorRepository
             // после того как значения видны (WalCheckpointer).
             ctx.ApplyBulkPerformancePragmas();
             ctx.DeferCheckpoint();
-            return new ConstructorRepository(ctx)
+            return new ConstructorRepository(ctx) { FileAutoPermissions = AutoFilePermissions }
                 .SetCellsBulk(collectionId, cells, titles, operation);
         });
 
@@ -85,6 +90,7 @@ public sealed partial class ConstructorRepository
     /// <summary><see cref="SetLinksBulk"/> на отдельном подключении — для больших пакетов.</summary>
     public async Task<LinkBulkResult> SetLinksBulkIsolatedAsync(int collectionId, IReadOnlyList<LinkWrite> writes, string operation)
     {
+        Demand(PermAction.EditRecord, collectionId);
         var path = db.DbPath;
 
         var result = await Task.Run(() =>
@@ -92,7 +98,7 @@ public sealed partial class ConstructorRepository
             using var ctx = new AppDbContext(path);
             ctx.ApplyBulkPerformancePragmas();
             ctx.DeferCheckpoint();   // перенос журнала — в фоне, см. SetCellsBulkIsolatedAsync
-            return new ConstructorRepository(ctx).SetLinksBulk(collectionId, writes, operation);
+            return new ConstructorRepository(ctx) { Permissions = Permissions }.SetLinksBulk(collectionId, writes, operation);
         });
 
         var touched = (result.ChangesTruncated ? writes.Select(w => (w.RecordId, w.FieldId))
@@ -106,6 +112,7 @@ public sealed partial class ConstructorRepository
     /// <summary><see cref="ResolveRelationTitles"/> на отдельном подключении.</summary>
     public Task<Dictionary<string, TitleResolution>> ResolveRelationTitlesIsolatedAsync(int fieldId, IReadOnlyCollection<string> texts)
     {
+        Demand(PermAction.ViewCollection, CollectionOfField(fieldId));
         var path = db.DbPath;
         var list = texts.ToList();
 
@@ -113,7 +120,7 @@ public sealed partial class ConstructorRepository
         {
             using var ctx = new AppDbContext(path);
             ctx.ApplyPerformancePragmas();
-            return new ConstructorRepository(ctx).ResolveRelationTitles(fieldId, list);
+            return new ConstructorRepository(ctx) { Permissions = Permissions }.ResolveRelationTitles(fieldId, list);
         });
     }
 

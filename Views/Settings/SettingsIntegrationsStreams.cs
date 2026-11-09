@@ -120,6 +120,7 @@ public partial class SettingsView
     private async Task EditStreamAsync(IntegrationStream card)
     {
         if (VisualRoot is not Window win || Integrations is null) return;
+        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
 
         var registry = Integrations;
 
@@ -148,6 +149,7 @@ public partial class SettingsView
     private async Task DeleteStreamAsync(IntegrationStream stream)
     {
         if (VisualRoot is not Window win || Integrations is null) return;
+        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
 
         var registry = Integrations;
         var used     = registry.ScenariosOfStream(stream.Id);

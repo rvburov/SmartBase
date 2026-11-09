@@ -27,6 +27,10 @@ public partial class RecordPageView
             ReloadFromDb();
             NotifyRecordChanged();
         }
+        catch (PermissionDeniedException)
+        {
+            PermissionNotice.Run(this, false, PermAction.EditRecord, () => { });
+        }
         catch (Exception ex)
         {
             if (!DbErrors.Handle(ex, repository.DbPath) && VisualRoot is Window window)

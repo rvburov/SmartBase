@@ -93,18 +93,19 @@ public partial class MainWindow : Window
         // Прием файлов из папки обмена по расписанию («Настройки → Интеграции → Прием»).
         // Список баз передается вызываемым: потерянную базу монитор доступности размонтирует,
         // и правило «база недоступна — не запускаемся» держится само.
-        _inbox       = new InboxService(MountedDbs);
-        // Прием по сети из настроек интеграций; режим и порт выбирает пользователь.
-        _ingress     = new IngressService(MountedDbs);
+        _inbox       = new InboxService(GrantedDbs);
+        // Прием по сети («Настройки → Интеграции → Доступ извне»): режим и порт выбирает
+        // пользователь, отправитель предъявляет токен.
+        _ingress     = new IngressService(GrantedDbs, AppSettings.SystemDbPath);
         // Сценарии по расписанию («Настройки → Интеграции»). Реестр сценариев лежит в app.db,
         // базы передаются вызываемым списком, сообщения шага идут карточками в углу окна.
-        _scenarios   = new ScenarioService(workspace.Registry.Integrations, MountedDbs,
+        _scenarios   = new ScenarioService(workspace.Registry.Integrations, GrantedDbs,
                                            SmartBase.Extensions.ExtensionRegistry.All,
                                            Controls.Widgets.AppNotifications.Info);
         // Потоки событий («Настройки → Интеграции → Потоки»): слушаются те, чьи события
         // заводят включенные сценарии. Сценарий на событие запускает тот же исполнитель, что и
         // по расписанию.
-        _streams     = new StreamService(workspace.Registry.Integrations, MountedDbs,
+        _streams     = new StreamService(workspace.Registry.Integrations, GrantedDbs,
                                          SmartBase.Extensions.ExtensionRegistry.All,
                                          Controls.Widgets.AppNotifications.Info);
         // Резолвер чужих баз для межбазовых связей (тип «relation» с TargetDbId>0).
@@ -132,6 +133,9 @@ public partial class MainWindow : Window
         AppDbContext.PhantomRowsDropped = _ => Notify(
             "Объект уже удален другим пользователем — часть изменений не применена. " +
             "Данные на экране обновятся через несколько секунд.");
+        // Отказ по правам — окном с причиной (тост тут легко пропустить): так ведут себя
+        // и запрещенные пункты меню, и замок у коллекции без права просмотра.
+        DbErrors.NotifyDenied  = message => Controls.Dialogs.PermissionNotice.Show(this, message);
         // Дубль записи не скопировал связи на записи вне условия выбора — человек должен знать.
         Database.Repositories.ConstructorRepository.ConditionNotice = Controls.Widgets.AppNotifications.Info;
         // Календарь и панель записи пока работают с дефолтной БД (мульти-БД календаря — Этап 3.3).
@@ -146,7 +150,7 @@ public partial class MainWindow : Window
             PlatformNotifications.CreateBadge(() => TryGetPlatformHandle()?.Handle ?? nint.Zero),
             CollectDueEvents,
             AppSettings.SaveNotifyWatermark,
-            taskSource: new TaskEventReader(MountedDbs));
+            taskSource: new TaskEventReader(GrantedDbs));
         // Клик по баннеру (может прийти из фонового потока библиотеки/делегата) → активировать
         // окно и показать запись с кнопкой «Принято». Маршалим в UI-поток.
         _notifications.RecordActivated += r => Dispatcher.UIThread.Post(() => OnNotificationClicked(r));
@@ -251,19 +255,19 @@ public partial class MainWindow : Window
         // MainWindow.Sections.cs).
         ConstructorModule.Initialize(_constructor);
         // Допущенные БД — для окна «Расположение» записи (перенос в другую коллекцию/БД).
-        ConstructorModule.SetDatabases(MountedDbs());
+        ConstructorModule.SetDatabases(GrantedDbs());
 
         // Точки вызова обмена в разделе данных. Охват задает МЕСТО: меню строки таблицы —
         // выделенные записи, меню коллекции в сайдбаре — вся коллекция, кнопка в нижней полосе
         // открытой записи — она одна.
-        ConstructorModule.AttachIntegrations(workspace.Registry.Integrations, MountedDbs);
+        ConstructorModule.AttachIntegrations(workspace.Registry.Integrations, GrantedDbs);
 
         // Сайдбар: вся коллекция целиком, и потому здесь же ручные сценарии. Запускает их ТА ЖЕ
         // служба, что ходит по расписанию, — вторая дорога не отвечала бы на вопрос «а что будет
         // само».
         ConstructorSidebar.DataActions = (dbId, collectionId) =>
             Views.ConstructorDb.IntegrationActions.Build(
-                this, workspace.Registry.Integrations, MountedDbs(),
+                this, workspace.Registry.Integrations, GrantedDbs(),
                 (scenario, ct) => _scenarios.RunNowAsync(scenario, ct),
                 dbId, collectionId, scenarios: true);
 
@@ -272,21 +276,30 @@ public partial class MainWindow : Window
         // записи и база приложения РАЗНЫЕ.
         RecordPanel.DataActions = (dbId, collectionId) =>
             Views.ConstructorDb.IntegrationActions.Build(
-                this, workspace.Registry.Integrations, MountedDbs(), scenarioRun: null,
+                this, workspace.Registry.Integrations, GrantedDbs(), scenarioRun: null,
                 dbId > 0 ? dbId : _currentConstructorDbId, collectionId, scenarios: false);
 
-        // Все модули показывают подключенные базы.
-        CalendarSidebar.InitializeWorkspace(MountedDbs(), Controls.Components.SidebarMode.Calendar);
-        TasksSidebar.InitializeWorkspace(MountedDbs(), Controls.Components.SidebarMode.Tasks);
-        LibrarySidebar.InitializeWorkspace(MountedDbs(), Controls.Components.SidebarMode.Library);
+        // Боковые панели: календарь — только допущенные БД; конструктор — все смонтированные
+        // (недопущенные показываются замком, клик по замку — запрос доступа).
+        CalendarSidebar.InitializeWorkspace(GrantedDbs(), Controls.Components.SidebarMode.Calendar);
+        TasksSidebar.InitializeWorkspace(GrantedDbs(), Controls.Components.SidebarMode.Tasks);
+        LibrarySidebar.InitializeWorkspace(GrantedDbs(), Controls.Components.SidebarMode.Library);
         ConstructorSidebar.InitializeWorkspace(workspace.Mounted, Controls.Components.SidebarMode.Constructor);
+        ConstructorSidebar.DatabaseUnlockRequested += async (_, dbId) => await RequestDatabaseUnlock(dbId);
+        // Клик по коллекции с замком (просмотр запрещен правами) — пояснение вместо
+        // молчаливого «ничего не происходит».
+        ConstructorSidebar.CollectionAccessDenied += async (_, name) =>
+            await ConfirmDialog.Info(
+                    $"Нет доступа к коллекции «{name}». Просмотр запрещен администратором " +
+                    "базы данных — обратитесь к нему, чтобы получить право.")
+                .ShowDialog(this);
 
         // Клик по заглушке немонтированной базы — подсказка с текущим статусом.
         foreach (var sidebar in DatabaseSidebars)
             sidebar.PendingDatabaseTapped += async (_, dbId) => await ShowPendingDatabaseInfo(dbId);
 
         // Живой состав пользователей уже смонтированных баз (дальше — из SyncMountedToUi).
-        HookUserEvents();
+        HookPermissionEvents();
 
         // ── Заметки ──────────────────────────────────────────────────────────────
         //
@@ -895,8 +908,25 @@ public partial class MainWindow : Window
         // (ShowModule → «Задачи»); календарь и конструктор при показе перечитывают всегда.
         _lastChange[dbId] = ChangeBus.Now();
 
-        // Изменение имени пользователя обновляет списки авторов и исполнителей.
-        if (changes.Any(c => c.TargetType == "user")) changedDb.Users.Reload();
+        // События пользователей (присоединение/допуск/права, targetType "user"):
+        // перечитать свой снапшот прав и открытую панель администратора — у админа
+        // новый пользователь появляется «в моменте», у ожидающего допуск снимает замок
+        // без перезапуска. До проверки IsCellEditing: правку ячеек эти события не трогают,
+        // а задерживать допуск на ретраи незачем (повтор идемпотентен).
+        if (changes.Any(c => c.TargetType == "user"))
+        {
+            var wasGranted = changedDb.Permissions.AccessGranted;
+            changedDb.Permissions.Reload();
+            if (changedDb.Permissions.AccessGranted != wasGranted)
+            {
+                SyncMountedToUi();   // замок в сайдбарах, наборы БД календаря/задач
+                if (changedDb.Permissions.AccessGranted)
+                    NotifyInfo($"Администратор подтвердил доступ к базе данных «{changedDb.Name}».");
+                else
+                    Notify($"Доступ к базе данных «{changedDb.Name}» отозван администратором.");
+            }
+            _profileView?.OnRemoteUserChanges(dbId);
+        }
 
         // Пользователь печатает в ячейке — не затираем ввод, повторяем через пару секунд
         // (refresh идемпотентен, лишний повтор безвреден).
@@ -1069,18 +1099,21 @@ public partial class MainWindow : Window
             .ToList();
     }
 
-    private List<DatabaseManager> MountedDbs() => _workspace.Mounted.ToList();
+    // Допущенные БД: календарь, цели переноса и списки диалогов видят только их.
+    // Недопущенные (замок) показывает лишь сайдбар конструктора.
+    private List<DatabaseManager> GrantedDbs() =>
+        _workspace.Mounted.Where(m => m.Permissions.AccessGranted).ToList();
 
     // Источник событий для службы уведомлений: события со стартом в окне [from, to) по всем
-    // подключенным БД (то же, что показывает календарь: activeIds=null → все видимые поля-даты,
+    // допущенным БД (то же, что показывает календарь: activeIds=null → все видимые поля-даты,
     // без учета временных галок сайдбара). Зовется из ФОНОВОГО потока (NotificationService.
     // TickBackground), поэтому читает КАЖДУЮ БД на свежем подключении
-    // (GetCalendarRecordsByRangeIsolated), а не общий однопоточный контекст. MountedDbs()
+    // (GetCalendarRecordsByRangeIsolated), а не общий однопоточный контекст. GrantedDbs()
     // безопасен вне UI-потока: Workspace.Mounted отдает снимок под локом.
     private IReadOnlyList<Core.Models.CalendarRecord> CollectDueEvents(DateTime from, DateTime to)
     {
         var list = new List<Core.Models.CalendarRecord>();
-        foreach (var m in MountedDbs())
+        foreach (var m in GrantedDbs())
         {
             try { list.AddRange(m.Constructor.GetCalendarRecordsByRangeIsolated(from, to, null)); }
             catch { /* БД могла отвалиться на ходу — пропускаем, монитор переподключит */ }
@@ -1320,50 +1353,54 @@ public partial class MainWindow : Window
     // заглушками со статусом во всех сайдбарах баз.
     private void SyncMountedToUi()
     {
-        HookUserEvents();
+        HookPermissionEvents();
         QueueRelationBaseMigration();
         QueueAllRelationRefreshes();
         QueueRelationIntegrityChecks();
         var pending = PendingDbs();
         ConstructorSidebar.InitializeWorkspace(_workspace.Mounted, Controls.Components.SidebarMode.Constructor, pending);
-        CalendarSidebar.InitializeWorkspace(MountedDbs(), Controls.Components.SidebarMode.Calendar, pending);
-        TasksSidebar.InitializeWorkspace(MountedDbs(), Controls.Components.SidebarMode.Tasks, pending);
-        LibrarySidebar.InitializeWorkspace(MountedDbs(), Controls.Components.SidebarMode.Library, pending);
-        _calendarView?.SetDatabases(MountedDbs());
-        _tasksView?.SetDatabases(MountedDbs());
-        _libraryView?.SetDatabases(MountedDbs());
-        ConstructorModule.SetDatabases(MountedDbs());
+        CalendarSidebar.InitializeWorkspace(GrantedDbs(), Controls.Components.SidebarMode.Calendar, pending);
+        TasksSidebar.InitializeWorkspace(GrantedDbs(), Controls.Components.SidebarMode.Tasks, pending);
+        LibrarySidebar.InitializeWorkspace(GrantedDbs(), Controls.Components.SidebarMode.Library, pending);
+        _calendarView?.SetDatabases(GrantedDbs());
+        _tasksView?.SetDatabases(GrantedDbs());
+        _libraryView?.SetDatabases(GrantedDbs());
+        ConstructorModule.SetDatabases(GrantedDbs());
         _calendarView?.SetActiveIds(CalendarSidebar.GetActiveIds());
         _tasksView?.SetActiveIds(TasksSidebar.GetActiveIds());
         _libraryView?.SetActiveIds(LibrarySidebar.GetActiveIds());
         _settingsView?.RefreshDatabases();   // обновить статус «подключена/не подключена»
-        _profileView?.OnDatabasesChanged();
-        SyncProfileSidebar();
+        _profileView?.OnDatabasesChanged();  // история — только базы с допуском, панель администратора — свои базы
         if (_recordPanelLogicalOpen) RecordPanel.RefreshBacklinks();   // ссылки из подключенной или отключенной базы
     }
 
     // ── Живой состав пользователей базы ───────────────────────────────────────
     //
-    // Имена пользователей служат опциями свойств «Пользователь» и исполнителей задач.
-    // Изменения из соседней копии приходят через поллер, локальные — через UserDirectory.
-    private readonly HashSet<int> _userHooked = [];
+    // Пользователи базы — источник опций типа свойства «пользователь» (исполнитель
+    // задачи, «Назначил», любые user-поля коллекции). Состав меняется на ходу:
+    // сосед присоединился к базе, администратор допустил/отозвал допуск, кто-то
+    // сменил ФИО. PermissionService.Changed — единый сигнал обеих сторон: у админа
+    // он приходит от его же действия в панели, у остальных — из поллера чужих правок
+    // (OnRemoteChanges → Reload). По нему перечитываем открытые списки, чтобы
+    // выпадающие не приходилось «оживлять» перезапуском.
+    private readonly HashSet<int> _permHooked = [];
 
-    private void HookUserEvents()
+    private void HookPermissionEvents()
     {
         // База размонтирована (отключили/потеряли) — забываем: при повторном
-        // монтировании будет новый DatabaseManager со своим справочником пользователей.
-        _userHooked.RemoveWhere(id => _workspace.Get(id) is null);
+        // монтировании будет новый DatabaseManager со своим сервисом прав.
+        _permHooked.RemoveWhere(id => _workspace.Get(id) is null);
 
         foreach (var db in _workspace.Mounted)
         {
-            if (!_userHooked.Add(db.DbId)) continue;
+            if (!_permHooked.Add(db.DbId)) continue;
             var dbId = db.DbId;
-            db.Users.Changed += (_, _) =>
+            db.Permissions.Changed += (_, _) =>
                 Dispatcher.UIThread.Post(() => OnDbUsersChanged(dbId));
         }
     }
 
-    // Состав пользователей базы изменился: обновить то, что уже построено.
+    // Состав пользователей/прав базы изменился: обновить то, что уже построено.
     // Таблица конструктора и панель записи перечитывают опции при построении
     // редактора сами (ConstructorRepository.GetUserOptions) — им нужен только
     // повод перерисоваться, а задачи держат список исполнителей быстрого добавления.
@@ -1372,9 +1409,53 @@ public partial class MainWindow : Window
         if (_workspace.Get(dbId) is null) return;
         QueueRelationIntegrityChecks(force: true);
 
+        // Право просмотра коллекции рисуется замком в сайдбаре конструктора: выдали или
+        // отобрали — дерево должно перестроиться без перезапуска.
+        ConstructorSidebar.Refresh();
+
         if (_activeModule == "tasks") _tasksView?.Refresh();
+        // Права любой базы решают, какие ссылки на запись видны: закрытая коллекция-источник
+        // пропадает из блока ссылок без перезапуска.
         if (_recordPanelLogicalOpen && RecordPanel.Shows(_workspace.Get(dbId)?.Constructor)) RecordPanel.ReloadFromDb();
         else if (_recordPanelLogicalOpen) RecordPanel.RefreshBacklinks();
+    }
+
+    // Клик по запертой базе в сайдбаре — это и есть просьба о доступе. Включен доступ по
+    // паролю — диалог ввода (верный пароль дает допуск сразу), выключен или пароля нет —
+    // пояснение про подтверждение администратором.
+    private async Task RequestDatabaseUnlock(int dbId)
+    {
+        var db = _workspace.Get(dbId);
+        if (db is null) return;
+
+        try
+        {
+            // Допуск и политику читаем свежими: пока висел замок, администратор мог уже пустить
+            // или выключить вход паролем.
+            db.Permissions.Reload(notify: false);
+            // Убрали из базы, пока она была открыта, — запрос заводится заново: иначе администратор
+            // не увидел бы ни человека, ни запроса до следующего открытия базы.
+            db.Permissions.RequestAccess();
+        }
+        catch (Exception ex) when (DbErrors.Handle(ex, db.Constructor.DbPath)) { return; }
+
+        if (db.Permissions.AccessGranted) { SyncMountedToUi(); return; }
+
+        if (db.Permissions.PasswordAccess)
+        {
+            var unlocked = await PasswordDialog
+                .ForUnlock(db.Name, db.Permissions.Unlock)
+                .ShowDialog<bool>(this);
+            if (unlocked) SyncMountedToUi();
+        }
+        else
+        {
+            await ConfirmDialog.Info(
+                $"База данных «{db.Name}» станет доступна после подтверждения администратором. " +
+                "Запрос на доступ уже отправлен и виден администратору в панели администратора. " +
+                "Как только доступ подтвердят, база откроется сама.")
+                .ShowDialog(this);
+        }
     }
 
     private void ShowModule(string module)
@@ -1489,7 +1570,8 @@ public partial class MainWindow : Window
     // Пересобираем ТОЛЬКО при смене состава: SetItems перерисовывает строки и сбрасывает выбор
     // на первый пункт, а заход в раздел — частое действие. Выбранное расширение переживает
     // перестройку, если осталось видимым.
-    // Пересобираем список только при смене состава разделов.
+    // Разделы профиля — тем же приемом, что и список расширений: набор не изменился — сайдбар не
+    // трогаем, иначе выбор раздела прыгал бы под руками при каждом обновлении.
     private void SyncProfileSidebar()
     {
         var visible = ProfileRegistry.All;
@@ -1764,6 +1846,13 @@ public partial class MainWindow : Window
         // Коллекцию берем У САМОЙ ЗАПИСИ (переход по чипу связи открывает запись ДРУГОЙ
         // коллекции — панель должна показать ее собственную схему полей).
         var ownCollectionId = repo.GetRecord(recordId)?.CollectionId;
+        if (ownCollectionId is int protectedCollection &&
+            !(repo.Permissions?.Can(PermAction.ViewCollection, protectedCollection) ?? true))
+        {
+            Notify("Нет доступа к коллекции связанной записи.");
+            return;
+        }
+
         // МЕЖБАЗОВЫЙ переход к несуществующей записи фолбэка иметь НЕ МОЖЕТ: id активной коллекции
         // относится к ДРУГОЙ базе, и панель открывалась бы с чужой схемой и пустыми полями — снаружи
         // это выглядит как «ничего не произошло». Внутри своей базы фолбэк оставляем прежним.

@@ -31,12 +31,17 @@ public partial class DbSettingsDialog : Window
     private readonly DatabaseRefEntity _entry;
     private readonly Action? _compact;
 
+    /// <summary>Правка названия и пароля разрешена (администратор базы либо база не подключена).</summary>
+    private readonly bool _canManage;
+
+    /// <param name="canManage">Правка названия и пароля: см. <see cref="DatabaseRow.CanManage"/>.</param>
     public DbSettingsDialog(DatabaseRefEntity entry, DatabaseManager.StorageStats? storage,
-                            bool canMaintain, Action? onCompact)
+                            bool canMaintain, bool canManage, Action? onCompact)
     {
         InitializeComponent();
         _entry     = entry;
         _compact   = onCompact;
+        _canManage = canManage;
 
         // Движок назван в заголовке: окно у файловой и серверной базы разное внутри, и
         // человек должен видеть, о какой из них речь, не вчитываясь в содержимое.
@@ -45,11 +50,25 @@ public partial class DbSettingsDialog : Window
         NameBox.Text  = entry.Name;
         PathText.Text = entry.Path;
 
+        // Название в списке и пароль подключения — дело администратора базы. Остальным поля
+        // показываются серыми, а не прячутся: спрятанное поле рождает вопрос «а где это
+        // меняется», серое отвечает на него сразу.
+        NameBox.IsEnabled = canManage;
+        if (!canManage)
+        {
+            NameLockHint.Text      = "Название в списке меняет администратор базы.";
+            NameLockHint.IsVisible = true;
+        }
+
         SqliteSection.IsVisible = !entry.IsPostgres;
         PgSection.IsVisible     = entry.IsPostgres;
 
         if (entry.IsPostgres)
         {
+            PgPasswordBox.IsEnabled = canManage;
+            if (!canManage)
+                PgPasswordHint.Text = "Пароль подключения меняет администратор базы.";
+
             HelpBtn.Click += async (_, _) => await new PgServerHelpDialog(
                 entry.PgHost, entry.PgPort ?? PgConnectionInfo.DefaultPort).ShowDialog(this);
             DetailsBtn.Click += async (_, _) => await new PgDetailsDialog(
@@ -75,14 +94,14 @@ public partial class DbSettingsDialog : Window
                 StorageText.Foreground = Brush("BrushSecondaryText", "#8E8E93");
             }
             // Кнопка видна всегда, серая — когда сжать нельзя, и причина написана под ней.
-            // Прежнее «видна, только когда есть что возвращать» оставляло пользователя
+            // Прежнее «видна, только когда есть что возвращать» оставляло администратора
             // искать глазами кнопку, которой на экране не было.
             CompactBtn.IsEnabled = canMaintain;
             if (!canMaintain)
             {
                 CompactHint.Text = storage is null
                     ? "Сжать файл можно, когда база подключена."
-                    : "База временно недоступна для сжатия.";
+                    : "Сжимать файл может администратор базы.";
                 CompactHint.IsVisible = true;
             }
             else if (entry.IsDefault)
@@ -134,10 +153,12 @@ public partial class DbSettingsDialog : Window
             NameBox.Focus();
             return;
         }
-        var newName = name == _entry.Name ? null : name;
+        // Поля серые — менять нечему, но пусть и сохранение не пропустит: разметку правят
+        // чаще, чем перечитывают, и забытый IsEnabled не должен становиться дырой.
+        var newName = !_canManage || name == _entry.Name ? null : name;
 
         string? newPwd = null;
-        if (_entry.IsPostgres && PgPasswordBox.Text is { Length: > 0 } pwd)
+        if (_entry.IsPostgres && _canManage && PgPasswordBox.Text is { Length: > 0 } pwd)
         {
             // Проба новым паролем ДО записи: роль с другим паролем не пройдет, и в
             // реестре останется прежний секрет.

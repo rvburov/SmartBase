@@ -328,4 +328,40 @@ public sealed class DocumentMessageTests : IDisposable
         Assert.Equal(auditCount, _db.Context.ChangeLog.Count());
     }
 
+    [Theory]
+    [InlineData("Просмотр", false)]
+    [InlineData("Удаление", false)]
+    [InlineData("Изменение", false)]
+    [InlineData("Удаление", true)]
+    [InlineData("Изменение", true)]
+    public void Database_permissions_are_checked_before_preview_and_again_before_write(string action, bool afterPreview)
+    {
+        var request = Request(action) + (action == "Изменение" ? "\nПроект: Станок" : "");
+        if (afterPreview) Assert.True(Call(request).Ok);
+        var userId = _db.Permissions.CurrentUserId;
+        _db.Permissions.SetMask(userId, null, (int)(action == "Просмотр" ? PermAction.None : PermAction.ViewCollection));
+        var me = _db.Context.DbUsers.Single(u => u.Id == userId);
+        me.IsAdmin = false;
+        _db.Context.SaveChanges();
+        _db.Permissions.Reload(notify: false);
+        var result = Call(afterPreview ? "Да" : request);
+        Assert.False(result.Ok);
+        Assert.Contains("Недостаточно прав", ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
+        Assert.NotNull(_db.Constructor.GetRecord(_id));
+        Assert.Equal("Машина", _db.Constructor.GetFieldValues(_id)[_shape.ProjectFieldId]);
+    }
+
+    [Fact]
+    public void Registration_without_rights_to_fill_values_does_not_leave_a_partial_record()
+    {
+        var userId = _db.Permissions.CurrentUserId;
+        _db.Permissions.SetMask(userId, null, (int)PermAction.CreateRecord);
+        _db.Context.DbUsers.Single(u => u.Id == userId).IsAdmin = false;
+        _db.Context.SaveChanges();
+        _db.Permissions.Reload(notify: false);
+        var result = Call("Действие: Регистрация\nНомер: АБВГ.301121.ХХХ\nНаименование: Опора\nПроект: Станок\nФИО: Иванов Иван Иванович");
+        Assert.False(result.Ok);
+        Assert.Contains("Недостаточно прав", ReplyMarkup.Text(result.Answer), StringComparison.Ordinal);
+        Assert.Single(_db.Constructor.GetRecords(_journal));
+    }
 }

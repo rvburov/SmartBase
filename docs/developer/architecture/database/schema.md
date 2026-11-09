@@ -12,7 +12,7 @@
 - Сущности: [Database/Entities/](../../../../Database/Entities/) —
   [CoreEntities.cs](../../../../Database/Entities/CoreEntities.cs) (данные),
   [UiEntities.cs](../../../../Database/Entities/UiEntities.cs) (проекции и UI-настройки),
-  [ProfileEntities.cs](../../../../Database/Entities/ProfileEntities.cs) (участники/история/исторические колонки),
+  [ProfileEntities.cs](../../../../Database/Entities/ProfileEntities.cs) (пользователи/права/журнал),
   [DatabaseRefEntity.cs](../../../../Database/Entities/DatabaseRefEntity.cs) и
   [AppSettingEntity.cs](../../../../Database/Entities/AppSettingEntity.cs) и
   [IntegrationEntities.cs](../../../../Database/Entities/IntegrationEntities.cs) (app.db).
@@ -141,11 +141,25 @@ app.db: он никогда не пересоздается.
 `IntegrationsRegistry`: шаг без существующего запроса не сохраняется, а запрос, на который
 ссылается шаг, не удаляется.
 
-### Исторические данные интеграций
+### `integration_tokens` — токены роботов HTTP API
 
-Старые таблицы направлений, токенов API и выдач чтения могут оставаться в app.db.
-Приложение больше не создает и не читает их для обмена. Значения сохраняются без
-автоматического удаления пользовательских служебных данных.
+| Колонка | Тип | Описание |
+|---|---|---|
+| `Id` | INTEGER, PK | ключ токена |
+| `Name` | TEXT | имя токена — оно же имя пользователя-робота в истории изменений |
+| `DbId` | INTEGER | база реестра, под которую выдан токен; она же база обращений |
+| `Hash` | TEXT | отпечаток PBKDF2 (`pbkdf2$итерации$соль$хэш`); сам токен не хранится |
+| `RobotKey` | TEXT | ключ пользователя-робота в `db_users` базы токена |
+| `CreatedAt`, `UsedAt` | TEXT | когда выдан и когда было последнее обращение (ISO-8601) |
+| `Enabled` | INTEGER 0/1 | выключенный токен не пускает, но сохраняется |
+
+Права робота живут не здесь, а в `db_permissions` базы токена — той же маской, что у человека.
+
+### Исторические данные контура
+
+Старые таблицы направлений и выдач чтения снятого контура безопасности могут оставаться в
+app.db. Приложение их не создает и не читает. Значения сохраняются без автоматического
+удаления.
 
 ---
 
@@ -413,9 +427,9 @@ FK-каскадов у этих таблиц нет (исключение — `c
 | `RowResize` | INTEGER 0/1 | разрешен ресайз строк |
 | `ViewMode` | TEXT | режим отображения (дефолт `table`) |
 
-### Участники и история (модуль «Профиль»)
+### Пользователи, права, журнал (модуль «Профиль»)
 
-Справочник имен и история принадлежат базе. Историческая схема прав сохранена без применения.
+Живут в файле базы (не в app.db): права и история путешествуют вместе с ним.
 Подробно — [users-permissions.md](../users-permissions.md).
 
 #### `db_users` — пользователи, известные базе
@@ -425,28 +439,28 @@ FK-каскадов у этих таблиц нет (исключение — `c
 | `Id` | INTEGER, PK | |
 | `UserKey` | TEXT, UNIQUE | «учетка@компьютер», нижний регистр |
 | `DisplayName` | TEXT | снапшот ФИО, обновляется при монтировании |
-| `IsAdmin` | INTEGER 0/1 | историческая колонка, не применяется |
-| `IsApproved`, `AccessDecided` | INTEGER 0/1 | исторические колонки, не ограничивают работу |
+| `IsAdmin` | INTEGER 0/1 | первый открывший базу становится админом |
+| `IsApproved` | INTEGER 0/1 | допуск (дает админ или верный пароль базы) |
 | `CreatedAt` | TEXT | ISO, когда впервые открыл базу |
 | `LastSeenAt` | TEXT | ISO, последнее монтирование базы этим пользователем (в журнал не пишется) |
 
-#### `db_permissions` — историческая схема прав
+#### `db_permissions` — права
 
 | Колонка | Тип | Описание |
 |---|---|---|
 | `Id` | INTEGER, PK | |
 | `UserId` | INTEGER, FK→`db_users.Id`, CASCADE | |
 | `CollectionId` | INTEGER, NULL, FK→`db_collections.Id`, CASCADE | NULL = права на всю базу; не-NULL — переопределение для коллекции (приоритетнее) |
-| `ActionsMask` | INTEGER | историческая маска, не читается при выполнении операций |
+| `ActionsMask` | INTEGER | битовая маска `PermAction` |
 
 Уникальный индекс `(UserId, CollectionId)` — одна маска на пользователя и область.
-Таблица остается для совместимости, но приложение ее не использует для допуска или запрета.
+У админа строк нет — ему можно все.
 
 #### `db_meta` — ключ-значение базы
 
 | Колонка | Тип | Описание |
 |---|---|---|
-| `Key` | TEXT, PK | действующие настройки: `changelog.retention.enabled` / `changelog.retention.months` и другие ключи базы; прежние `password.*`, `access.*`, `confidentiality` могут сохраняться как неиспользуемые |
+| `Key` | TEXT, PK | `password.hash` / `password.salt` / `password.iterations` / `password.unlocked_at` / `access.password.enabled` (способ входа) / `changelog.retention.enabled` / `changelog.retention.months`, … Метка снятого контура `confidentiality` может остаться и не применяется |
 | `Value` | TEXT | |
 
 #### `change_log` — журнал изменений

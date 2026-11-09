@@ -121,7 +121,8 @@ public partial class MainWindow
     {
         using var slow = Logging.Diag.Measure("построение раздела «Календарь»", Logging.Diag.UiOpen);
         var view = _calendarView = AddSection(new CalendarControllerView(), "CalendarModule");
-        view.Initialize(MountedDbs(), _categories);
+        // Календарь агрегирует события только из ДОПУЩЕННЫХ БД (без допуска — данные не видны).
+        view.Initialize(GrantedDbs(), _categories);
         // После создания/изменения события обновляем Sidebar (могла появиться новая коллекция)
         view.CollectionsMayHaveChanged += (_, _) =>
         {
@@ -136,7 +137,7 @@ public partial class MainWindow
     {
         using var slow = Logging.Diag.Measure("построение раздела «Задачи»", Logging.Diag.UiOpen);
         var view = _tasksView = AddSection(new TasksControllerView(), "TasksModule");
-        view.Initialize(MountedDbs());
+        view.Initialize(GrantedDbs());
         // Создание/правка задачи могли создать коллекцию или авто-поля («Назначил»/«Статус»).
         view.CollectionsMayHaveChanged += (_, _) =>
         {
@@ -158,7 +159,7 @@ public partial class MainWindow
     {
         using var slow = Logging.Diag.Measure("построение раздела «Библиотека документов»", Logging.Diag.UiOpen);
         var view = _libraryView = AddSection(new LibraryControllerView(), "LibraryModule");
-        view.Initialize(MountedDbs());
+        view.Initialize(GrantedDbs());
 
         // ── Панель чтения документа ──
         // Открывается «Прочитать» в карточке и двойным кликом по ней; Escape и toggle навбара
@@ -185,7 +186,10 @@ public partial class MainWindow
     {
         using var slow = Logging.Diag.Measure("построение раздела «Профиль»", Logging.Diag.UiOpen);
         var view = _profileView = AddSection(new ProfileView(), "ProfileModule");
-        // История читает открытые базы рабочего пространства.
+        // Менеджер паролей переименовал базу тем же окном настроек базы, что и «Настройки», —
+        // и обрабатывается это тем же кодом.
+        view.DatabaseRenamed += OnDatabaseRenamed;
+        // Панели администратора и истории работают со смонтированными БД рабочего пространства.
         view.Initialize(_workspace);
         return view;
     }
@@ -236,11 +240,15 @@ public partial class MainWindow
                 : null,
             // Сведения о файле — снимок, снятый при монтировании (без обращения к файлу с UI-потока).
             dbId => _workspace.Get(dbId)?.Storage,
-            // Стадии задач всех открытых баз.
-            taskStages: () => MountedDbs().SelectMany(m => m.Constructor.GetTaskStages()).Distinct().ToList(),
+            // Администратор базы: он обслуживает файл (сжать/копия) и правит в окне настроек
+            // название с паролем подключения. Провайдер здесь не при чем — где нужен именно
+            // SQLite, это проверяется на месте.
+            dbId => _workspace.Get(dbId) is { } m && m.Permissions.IsAdmin,
+            // Стадии задач всех допущенных баз — для списка «Стадия новой задачи».
+            taskStages: () => GrantedDbs().SelectMany(m => m.Constructor.GetTaskStages()).Distinct().ToList(),
             // Открытые базы — «Интеграциям»: ответ сторонней программы укладывается в коллекцию
             // выбранной базы, и список должен быть тем, что есть на экране прямо сейчас.
-            databases: MountedDbs,
+            databases: GrantedDbs,
             // Кнопка «Проверить папку» ведет ту же службу, что ходит по расписанию: две
             // реализации одного обхода разошлись бы на первой же правке.
             inboxSweep: ct => _inbox.RunNowAsync(ct),
