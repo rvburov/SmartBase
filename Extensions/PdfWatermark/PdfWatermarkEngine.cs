@@ -238,8 +238,9 @@ public static class PdfWatermarkEngine
         using (doc)
         {
             // У свободного режима нет уникального номера из журнала. Два окна могут выбрать
-            // одно имя до записи первого файла, поэтому публикуем готовый PDF атомарно,
-            // без перезаписи. При коллизии повторяется только выбор имени, не растеризация.
+            // одно имя до записи первого файла. CreateNew резервирует имя одним вызовом ОС:
+            // File.Move(false) на Unix сначала проверяет наличие, затем rename может затереть
+            // появившийся файл. При коллизии повторяется только выбор имени, не растеризация.
             var staged = Path.Combine(request.OutputFolder, $".watermark-{Guid.NewGuid():N}.tmp");
             try
             {
@@ -250,12 +251,28 @@ public static class PdfWatermarkEngine
                     var output = CopyNumber.UniquePath(request.OutputFolder,
                                                        $"{CopyNumber.DocumentOf(path)} водяной знак.pdf",
                                                        forbidden: path);
+                    FileStream destination;
                     try
                     {
-                        File.Move(staged, output, overwrite: false);
+                        destination = new FileStream(output, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+                    }
+                    catch (IOException) when (File.Exists(output)) { continue; }
+
+                    var complete = false;
+                    try
+                    {
+                        using (destination)
+                        using (var input = File.OpenRead(staged))
+                            input.CopyToAsync(destination, ct).GetAwaiter().GetResult();
+                        complete = true;
                         return new StampItem(name, StampStatus.Done, Pages: pages, OutputName: Path.GetFileName(output));
                     }
-                    catch (IOException) when (File.Exists(output)) { }
+                    finally
+                    {
+                        // Удаляем только файл, который создали сами, после закрытия дескриптора.
+                        if (!complete)
+                            try { File.Delete(output); } catch { /* best-effort */ }
+                    }
                 }
             }
             catch (UnauthorizedAccessException ex)
