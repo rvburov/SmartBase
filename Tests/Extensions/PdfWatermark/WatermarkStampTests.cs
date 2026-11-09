@@ -15,8 +15,10 @@ public sealed class WatermarkStampTests
 {
     private static readonly string[] Lines =
     [
+        "КОПИЯ",
+        "Экземпляр № 3",
         "Выдан: Иванов Иван Иванович",
-        "Экз. № 3 · 29.08.2026",
+        "Дата выдачи: 29.08.2026",
         "Передача третьим лицам запрещена",
     ];
 
@@ -42,22 +44,23 @@ public sealed class WatermarkStampTests
     }
 
     [Fact]
-    public void Longer_warning_makes_the_stamp_smaller()
+    public void Long_warning_wraps_inside_the_block_at_a_readable_size()
     {
-        // Кегль задан длиной самой длинной строки: она обязана уложиться в диагональ листа.
-        var shorter = WatermarkStamp.FontSizeFor(["Экз. № 3"], 595, 842, WatermarkStamp.Default);
-        var longer  = WatermarkStamp.FontSizeFor(Lines,        595, 842, WatermarkStamp.Default);
-
-        Assert.True(shorter > longer, $"короткая надпись {shorter:0.#} pt, длинная {longer:0.#} pt");
+        const string warning = "Передача третьим лицам запрещена. Документ предназначен для внутреннего использования.";
+        var block = StampTextLayout.Compose([warning], 75 * 4, 50 * 4, 4, WatermarkStamp.Default);
+        Assert.True(block.Lines.Count > 1);
+        Assert.Equal(warning, string.Join(" ", block.Lines.Select(line => line.Text)));
+        Assert.InRange(block.FontPt, 10, 18);
+        Assert.True(block.Height <= 50 * 4);
     }
 
     [Fact]
-    public void Stamp_grows_with_the_sheet()
+    public void Block_dimensions_remain_physical_on_a_larger_sheet()
     {
-        var a4 = WatermarkStamp.FontSizeFor(Lines,  595,  842, WatermarkStamp.Default);
-        var a1 = WatermarkStamp.FontSizeFor(Lines, 1684, 2384, WatermarkStamp.Default);
-
-        Assert.True(a1 > a4 * 2, $"A4 {a4:0.#} pt, A1 {a1:0.#} pt — знак не вырос вместе с листом");
+        var a4 = StampLayout.Default.Plan(210 * 4, 297 * 4, 4);
+        var a1 = StampLayout.Default.Plan(594 * 4, 841 * 4, 4);
+        Assert.Equal(a4.Width, a1.Width);
+        Assert.Equal(a4.Height, a1.Height);
     }
 
     // --- Разрешение растра -------------------------------------------------------------------
@@ -203,7 +206,7 @@ public sealed class WatermarkStampTests
         {
             using var clean   = PdfStand.Render(src, page);
             using var stamped = PdfStand.Render(dst, page);
-            Assert.True(PdfStand.DiffShare(stamped, clean) > 1, $"страница {page} без знака");
+            Assert.True(PdfStand.DiffPixels(stamped, clean) > 400, $"страница {page} без знака");
         }
     }
 

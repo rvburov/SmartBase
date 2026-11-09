@@ -4,10 +4,17 @@ using Microsoft.EntityFrameworkCore;
 
 namespace SmartBase.Extensions.PdfWatermark;
 
+/// <summary>Способ работы с текстом: выдача с журналом или надпись без сохранения в базу.</summary>
+public enum StampMode
+{
+    Journal,
+    FreeText,
+}
+
 /// <summary>Чем кончился один файл.</summary>
 public enum StampStatus
 {
-    /// <summary>Знак наложен, строка в журнале заведена.</summary>
+    /// <summary>Знак наложен; в режиме выдачи строка в журнале заведена.</summary>
     Done,
 
     /// <summary>Файл не наш — защищен паролем или поврежден. Штатная ситуация пакетного прогона.</summary>
@@ -42,14 +49,18 @@ public sealed record StampRequest(
     DateTime Date,
     string Warning,
     string DbPath,
-    JournalShape Shape);
+    JournalShape? Shape,
+    StampMode Mode = StampMode.Journal,
+    string FreeText = "",
+    StampLayout? Layout = null);
 
 public sealed record StampSummary(
     int Total, int Done, int Skipped, int Failed, bool Cancelled,
     IReadOnlyList<StampItem> Items);
 
 /// <summary>
-/// Прогон: обход источника и наложение знака на каждый найденный PDF с записью в журнал выдачи.
+/// Прогон: обход источника и наложение знака на каждый найденный PDF. В режиме выдачи
+/// ведет журнал, в свободном режиме работает только с файлами.
 ///
 /// Единица отказа — ФАЙЛ, а не прогон: защищенный паролем или битый документ становится строкой
 /// отчета, и пачка идет дальше. Обрывают прогон только отмена и отказы уровня прогона (шрифт,
@@ -61,6 +72,10 @@ public sealed record StampSummary(
 public static class PdfWatermarkEngine
 {
     public const string Extension = ".pdf";
+
+    /// <summary>Предел многострочной надписи: случайная вставка целого документа не должна
+    /// превращать обработку страницы в неограниченную верстку.</summary>
+    public const int MaxFreeTextLength = 4000;
 
     /// <summary>
     /// Список PDF: либо один выбранный файл, либо обход папки.
@@ -120,6 +135,26 @@ public static class PdfWatermarkEngine
         if (!Directory.Exists(request.OutputFolder))
             throw new PdfWatermarkException($"Не найдена папка для сохранения результата «{request.OutputFolder}».");
 
+        (request.Layout ?? new StampLayout()).Validate();
+
+        if (request.Mode == StampMode.FreeText)
+        {
+            if (string.IsNullOrWhiteSpace(request.FreeText))
+                throw new PdfWatermarkException("Введите текст водяного знака.");
+            if (request.FreeText.Length > MaxFreeTextLength)
+                throw new PdfWatermarkException($"Текст водяного знака должен содержать не более {MaxFreeTextLength} символов.");
+
+            // Эта ветка отделена ДО создания контекста: свободная надпись работает без базы,
+            // не читает журнал и не оставляет в нем ни записей, ни резервов экземпляров.
+            var lines = request.FreeText.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+            return RunFiles(files, progress, ct, path => ProcessFreeText(request, path, lines, ct));
+        }
+
+        if (request.Mode != StampMode.Journal)
+            throw new PdfWatermarkException("Выберите режим водяного знака.");
+        if (request.Shape is not { } shape)
+            throw new PdfWatermarkException("Выберите коллекцию журнала выдачи.");
+
         // Свое подключение: фоновая работа с базой идет на свежем контексте, а не на общем.
         using var ctx = new AppDbContext(request.DbPath);
         ctx.ApplyPerformancePragmas();
@@ -130,9 +165,18 @@ public static class PdfWatermarkEngine
 
         // Базовый снимок — два запроса на пачку. Повторяем его только после чужой записи
         // в SQLite; у PG без такого счетчика резерв заново проверяет текущий документ.
-        var ledger = NumberLedger.LoadPinned(repo, request.Shape,
+        var ledger = NumberLedger.LoadPinned(repo, shape,
                                        files.Select(CopyNumber.DocumentOf).ToHashSet(StringComparer.Ordinal));
 
+        return RunFiles(files, progress, ct,
+                        path => Process(repo, request, shape, path, ledger, ct),
+                        ctx.ChangeTracker.Clear);
+    }
+
+    private static StampSummary RunFiles(IReadOnlyList<string> files,
+                                          IProgress<StampProgress>? progress, CancellationToken ct,
+                                          Func<string, StampItem> process, Action? afterFile = null)
+    {
         var items     = new List<StampItem>(files.Count);
         var cancelled = false;
 
@@ -147,14 +191,15 @@ public static class PdfWatermarkEngine
 
             try
             {
-                items.Add(Process(repo, request, path, ledger, ct));
+                ct.ThrowIfCancellationRequested();
+                items.Add(process(path));
 
                 // Трекер EF чистится ПОСЛЕ КАЖДОГО файла, и это не осторожность, а условие
                 // выполнимости больших пачек: SaveChanges в проекте проходит по всем
                 // отслеживаемым записям (аудит новых строк в AppDbContext), поэтому с ростом
                 // трекера каждая следующая вставка дорожает. На тысяче файлов это уже видно
                 // глазом, на двадцати тысячах прогон встал бы на квадрате.
-                ctx.ChangeTracker.Clear();
+                afterFile?.Invoke();
             }
             catch (OperationCanceledException)
             {
@@ -176,7 +221,59 @@ public static class PdfWatermarkEngine
             items);
     }
 
-    private static StampItem Process(ConstructorRepository repo, StampRequest request,
+    private static StampItem ProcessFreeText(StampRequest request, string path,
+                                              IReadOnlyList<string> lines, CancellationToken ct)
+    {
+        var name = Path.GetFileName(path);
+        PdfSharp.Pdf.PdfDocument doc;
+        try
+        {
+            doc = WatermarkStamp.Open(path);
+        }
+        catch (PdfWatermarkException ex)
+        {
+            return new StampItem(name, StampStatus.Skipped, Note: ex.Message);
+        }
+
+        using (doc)
+        {
+            // У свободного режима нет уникального номера из журнала. Два окна могут выбрать
+            // одно имя до записи первого файла, поэтому публикуем готовый PDF атомарно,
+            // без перезаписи. При коллизии повторяется только выбор имени, не растеризация.
+            var staged = Path.Combine(request.OutputFolder, $".watermark-{Guid.NewGuid():N}.tmp");
+            try
+            {
+                var pages = WatermarkStamp.StampAndSave(path, doc, staged, lines, ct, layout: request.Layout);
+                while (true)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var output = CopyNumber.UniquePath(request.OutputFolder,
+                                                       $"{CopyNumber.DocumentOf(path)} водяной знак.pdf",
+                                                       forbidden: path);
+                    try
+                    {
+                        File.Move(staged, output, overwrite: false);
+                        return new StampItem(name, StampStatus.Done, Pages: pages, OutputName: Path.GetFileName(output));
+                    }
+                    catch (IOException) when (File.Exists(output)) { }
+                }
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                throw new PdfWatermarkException("нет доступа к папке результата", ex);
+            }
+            catch (IOException ex)
+            {
+                throw new PdfWatermarkException($"не удалось записать результат: {ex.Message}", ex);
+            }
+            finally
+            {
+                try { if (File.Exists(staged)) File.Delete(staged); } catch { /* best-effort */ }
+            }
+        }
+    }
+
+    private static StampItem Process(ConstructorRepository repo, StampRequest request, JournalShape shape,
                                      string path, NumberLedger ledger, CancellationToken ct)
     {
         var name     = Path.GetFileName(path);
@@ -196,7 +293,7 @@ public static class PdfWatermarkEngine
         using (doc)
         {
             // Резерв. Номер подбирается здесь, прямо перед вставкой.
-            var issue = IssueJournal.Reserve(repo, request.Shape,
+            var issue = IssueJournal.Reserve(repo, shape,
                                              new IssueInput(document, request.Holder, request.Date),
                                              ledger);
 
@@ -206,7 +303,7 @@ public static class PdfWatermarkEngine
             try
             {
                 var lines = CopyNumber.StampText(request.Holder, issue.Number, request.Date, request.Warning);
-                var pages = WatermarkStamp.StampAndSave(path, doc, output, lines, ct);
+                var pages = WatermarkStamp.StampAndSave(path, doc, output, lines, ct, layout: request.Layout);
 
                 return new StampItem(name, StampStatus.Done, issue.Number, pages, Path.GetFileName(output));
             }

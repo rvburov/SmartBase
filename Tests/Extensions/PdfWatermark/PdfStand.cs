@@ -150,6 +150,11 @@ internal static class PdfStand
     /// исходной страницей), и его стойкость (сравнение после чистки).
     /// </summary>
     public static double DiffShare(SKBitmap a, SKBitmap b, int tolerance = 25)
+        => DiffPixels(a, b, tolerance) * 100.0 / (a.Width * a.Height);
+
+    /// <summary>Число измененных пикселей: компактный блок на A1 занимает меньшую долю листа,
+    /// чем на A4, но при одинаковом масштабе рендера сами буквы имеют те же размеры.</summary>
+    public static int DiffPixels(SKBitmap a, SKBitmap b, int tolerance = 25)
     {
         if (a.Width != b.Width || a.Height != b.Height)
             throw new InvalidOperationException($"размеры не совпали: {a.Width}×{a.Height} и {b.Width}×{b.Height}");
@@ -164,7 +169,7 @@ internal static class PdfStand
             if (Math.Abs(Grey(left) - Grey(right)) > tolerance) differing++;
         }
 
-        return differing * 100.0 / (a.Width * a.Height);
+        return differing;
     }
 
     /// <summary>Средний цвет пикселей, отличающихся от эталона, — им проверяется, что знак серый,

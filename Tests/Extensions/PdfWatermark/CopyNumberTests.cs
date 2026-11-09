@@ -113,27 +113,27 @@ public sealed class CopyNumberTests
     // --- Текст знака -----------------------------------------------------------------------------
 
     [Fact]
-    public void Stamp_text_is_three_lines() =>
-        Assert.Equal(["Выдан: Иванов Иван Иванович", "Экз. № 3 · 29.08.2026",
-                      "Передача третьим лицам запрещена"],
+    public void Stamp_text_starts_with_copy_and_keeps_number_and_date_separate() =>
+        Assert.Equal(["КОПИЯ", "Экземпляр № 3", "Выдан: Иванов Иван Иванович",
+                      "Дата выдачи: 29.08.2026", "Передача третьим лицам запрещена"],
                      CopyNumber.StampText("  Иванов Иван Иванович  ", 3, new DateTime(2026, 8, 29),
                                           "Передача третьим лицам запрещена"));
 
     [Fact]
     public void Empty_warning_is_dropped_rather_than_left_dangling() =>
-        Assert.Equal(["Выдан: Иванов Иван Иванович", "Экз. № 3 · 29.08.2026"],
+        Assert.Equal(["КОПИЯ", "Экземпляр № 3", "Выдан: Иванов Иван Иванович", "Дата выдачи: 29.08.2026"],
                      CopyNumber.StampText("Иванов Иван Иванович", 3, new DateTime(2026, 8, 29), "   "));
 
     [Fact]
     public void Empty_holder_leaves_no_dangling_line() =>
         // Пустая строка забрала бы себе место в блоке и сдвинула знак с середины листа.
-        Assert.Equal(["Экз. № 3 · 29.08.2026", "Передача третьим лицам запрещена"],
+        Assert.Equal(["КОПИЯ", "Экземпляр № 3", "Дата выдачи: 29.08.2026", "Передача третьим лицам запрещена"],
                      CopyNumber.StampText("   ", 3, new DateTime(2026, 8, 29),
                                           "Передача третьим лицам запрещена"));
 
     [Fact]
     public void Date_is_written_without_time() =>
         // Время в дате знака не нужно и не помещается: на бумаге важен день выдачи.
-        Assert.Equal(["Выдан: Иванов", "Экз. № 1 · 29.08.2026"],
+        Assert.Equal(["КОПИЯ", "Экземпляр № 1", "Выдан: Иванов", "Дата выдачи: 29.08.2026"],
                      CopyNumber.StampText("Иванов", 1, new DateTime(2026, 8, 29, 14, 35, 0), ""));
 }

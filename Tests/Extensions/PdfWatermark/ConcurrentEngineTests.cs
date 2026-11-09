@@ -31,7 +31,7 @@ public sealed class ConcurrentEngineTests
             {
                 using var clean = PdfStand.Render(f.Source);
                 using var stamped = PdfStand.Render(output);
-                Assert.True(PdfStand.DiffShare(stamped, clean) > 1, "На готовой странице нет видимого знака");
+                Assert.True(PdfStand.DiffPixels(stamped, clean) > 400, "На готовой странице нет видимого знака");
             });
             using var check = new AppDbContext(f.Database.Path);
             var repo = new ConstructorRepository(check);
@@ -67,7 +67,7 @@ public sealed class ConcurrentEngineTests
             {
                 using var clean = PdfStand.Render(job.Source);
                 using var stamped = PdfStand.Render(output);
-                Assert.True(PdfStand.DiffShare(stamped, clean) > 1, "В выданной копии нет видимого знака");
+                Assert.True(PdfStand.DiffPixels(stamped, clean) > 400, "В выданной копии нет видимого знака");
             });
             return new PublishedCopy(index, item.Number, output, request.Holder);
         }, TimeSpan.FromMinutes(3), verify: copies =>

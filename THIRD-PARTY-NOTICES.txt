@@ -32,9 +32,10 @@ THIRD-PARTY SOFTWARE NOTICES AND INFORMATION
      Copyright (c) 2010, ParaType Ltd. (http://www.paratype.com/public)
      https://fonts.google.com/specimen/PT+Sans
 
-     Начертание PT Sans Regular поставляется внутри приложения встроенным
-     ресурсом сборки (Extensions/PdfWatermark/ptsans-regular.ttf.gz) и
-     используется расширением «Водяной знак на PDF»: им рисуется текст знака
+     Начертания PT Sans Regular и PT Sans Narrow Bold поставляются внутри
+     приложения встроенными ресурсами сборки (Extensions/PdfWatermark/
+     ptsans-regular.ttf.gz и ptsansnarrow-bold.ttf.gz). Расширение «Водяной
+     знак на PDF» использует узкое полужирное начертание: им рисуется текст знака
      по пикселям страницы. В создаваемые документы сам шрифт НЕ встраивается —
      там уже готовое изображение. Текст лицензии — в разделе 3.5. «PT Sans» и
      «ParaType» являются зарезервированными наименованиями шрифта
@@ -651,7 +652,8 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 ------------------------------------------------------------------------------
 
 Применяется к шрифтам Inter (внутри пакета Avalonia.Fonts.Inter) и
-PT Sans (Extensions/PdfWatermark/ptsans-regular.ttf.gz).
+PT Sans Regular и PT Sans Narrow Bold (Extensions/PdfWatermark/
+ptsans-regular.ttf.gz и ptsansnarrow-bold.ttf.gz).
 
 Copyright (c) 2016 The Inter Project Authors (https://github.com/rsms/inter),
 with Reserved Font Name "Inter".

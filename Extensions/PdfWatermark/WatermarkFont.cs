@@ -4,7 +4,7 @@ using SkiaSharp;
 namespace SmartBase.Extensions.PdfWatermark;
 
 /// <summary>
-/// Шрифт водяного знака: PT Sans, встроенный в сборку.
+/// Шрифт водяного знака: PT Sans Narrow Bold, встроенный в сборку.
 ///
 /// Шрифт лежит В РЕПОЗИТОРИИ, а не берется с машины: на Windows нет DejaVu, на голом Linux нет
 /// Arial, а знак обязан выглядеть одинаково везде, где выдают документы. PT Sans выбран за
@@ -19,7 +19,7 @@ public static class WatermarkFont
 {
     /// <summary>Окончание имени встроенного ресурса. Полное имя собирается из RootNamespace и
     /// пути файла, поэтому ищем по окончанию — как <c>EskdCatalog</c>.</summary>
-    private const string ResourceSuffix = "ptsans-regular.ttf.gz";
+    private const string ResourceSuffix = "ptsansnarrow-bold.ttf.gz";
 
     private static readonly Lazy<byte[]> Unpacked = new(Unpack, isThreadSafe: true);
 

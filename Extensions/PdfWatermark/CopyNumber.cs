@@ -90,23 +90,20 @@ public static class CopyNumber
     }
 
     /// <summary>
-    /// Текст знака ТРЕМЯ строками: кому выдан · экземпляр и дата · предупреждение.
-    ///
-    /// Три строки, а не одна: длина строки задает кегль (знак вписывается в диагональ листа), и
-    /// одна длинная надпись получалась мелкой — мельче текста самого документа. Разбитая на
-    /// строки, она занимает тот же лист буквами вдвое-втрое крупнее.
-    ///
-    /// Пустое предупреждение и пустое ФИО просто отбрасываются: знак остается осмысленным и без
-    /// них, а пустая строка забрала бы себе место в блоке.
+    /// Текст выдачи отдельными смысловыми строками. Перенос длинных строк в границах блока
+    /// выполняет отрисовка; номер экземпляра и дата остаются отдельными полями надписи.
+    /// Пустой получатель или предупреждение не занимают пустую строку.
     /// </summary>
     public static IReadOnlyList<string> StampText(string holder, int number, DateTime date, string warning)
     {
-        var lines = new List<string>(3);
+        var lines = new List<string>(5)
+        {
+            "КОПИЯ",
+            $"Экземпляр № {number}",
+        };
 
         if (holder.Trim() is { Length: > 0 } who) lines.Add($"Выдан: {who}");
-
-        lines.Add($"Экз. № {number} · {date.ToString("dd.MM.yyyy", CultureInfo.InvariantCulture)}");
-
+        lines.Add($"Дата выдачи: {date.ToString("dd.MM.yyyy", CultureInfo.InvariantCulture)}");
         if (warning.Trim() is { Length: > 0 } text) lines.Add(text);
 
         return lines;

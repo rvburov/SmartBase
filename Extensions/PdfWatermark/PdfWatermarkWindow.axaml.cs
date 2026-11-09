@@ -46,14 +46,21 @@ public partial class PdfWatermarkWindow : Window
     private int  _shownLines;
     private bool _truncated;
     private bool _busy;
+    private bool _initializing = true;
+    private bool _journalLoaded;
+
+    private bool IsFreeText => ModeCombo.SelectedIndex == 0;
 
     public PdfWatermarkWindow()
     {
         InitializeComponent();
 
-        _databases = RelationDbResolver.RegistryDatabases();
-        DbCombo.ItemsSource = _databases.Select(d => d.Name).ToList();
-        DbCombo.IsEnabled   = _databases.Count > 1;
+        var layout = new StampLayout();
+        BlockWidthBox.Text = layout.BlockWidthMm.ToString(CultureInfo.InvariantCulture);
+        BlockHeightBox.Text = layout.BlockHeightMm.ToString(CultureInfo.InvariantCulture);
+        PageMarginBox.Text = layout.MarginMm.ToString(CultureInfo.InvariantCulture);
+        GapXBox.Text = layout.GapXmm.ToString(CultureInfo.InvariantCulture);
+        GapYBox.Text = layout.GapYmm.ToString(CultureInfo.InvariantCulture);
 
         Restore(OutputBox, PdfWatermarkExtension.OutputKey);
 
@@ -67,7 +74,34 @@ public partial class PdfWatermarkWindow : Window
         DateBox.Date        = DateTime.Today;
         DateBox.DateChanged += (_, _) => UpdateState();
 
-        RestoreDatabase();
+        _initializing = false;
+        UpdateMode();
+    }
+
+    private void OnModeChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (!_initializing) UpdateMode();
+    }
+
+    private void UpdateMode()
+    {
+        FreeTextPanel.IsVisible = IsFreeText;
+        JournalPanel.IsVisible = !IsFreeText;
+        if (!IsFreeText && !_journalLoaded)
+        {
+            _journalLoaded = true;
+            _databases = RelationDbResolver.RegistryDatabases();
+            DbCombo.ItemsSource = _databases.Select(d => d.Name).ToList();
+            DbCombo.IsEnabled = _databases.Count > 1;
+            RestoreDatabase();
+        }
+        UpdateState();
+    }
+
+    private void OnPlacementChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (_initializing) return;
+        GapPanel.IsVisible = PlacementCombo.SelectedIndex == 1;
         UpdateState();
     }
 
@@ -140,6 +174,7 @@ public partial class PdfWatermarkWindow : Window
 
     private void OnSourceChanged(object? sender, TextChangedEventArgs e)
     {
+        if (_initializing) return;
         // Рекурсия имеет смысл только для папки — на одиночном файле обходить нечего.
         var isFolder = Directory.Exists(SourceBox.Text?.Trim() ?? "");
         RecursiveCheck.IsEnabled = isFolder && !_busy;
@@ -154,6 +189,7 @@ public partial class PdfWatermarkWindow : Window
 
     private void OnDbChanged(object? sender, SelectionChangedEventArgs e)
     {
+        if (_initializing || IsFreeText) return;
         _repo        = null;
         _collections = [];
         CollectionCombo.ItemsSource = null;
@@ -221,6 +257,7 @@ public partial class PdfWatermarkWindow : Window
     /// <summary>Перечитать выбранную коллекцию: сошлась ли структура журнала.</summary>
     private void RefreshShape()
     {
+        if (_initializing || IsFreeText) return;
         _shape         = null;
         _schemaProblem = null;
 
@@ -267,26 +304,32 @@ public partial class PdfWatermarkWindow : Window
 
     private async void OnExecuteClick(object? sender, RoutedEventArgs e)
     {
-        if (_busy || _shape is null || _repo is null) return;
+        if (_busy) return;
+        UpdateState();
+        if (!ExecuteBtn.IsEnabled) return;
 
+        var free   = IsFreeText;
         var source = SourceBox.Text!.Trim();
         var output = OutputBox.Text!.Trim();
-        var holder = HolderBox.Text!.Trim();
-        var date   = DateBox.Date!.Value;
-        var shape  = _shape;
+        var holder = free ? "" : HolderBox.Text!.Trim();
+        var date   = free ? DateTime.Today : DateBox.Date!.Value;
+        var shape  = free ? null : _shape;
 
-        // Право проверяем ЗДЕСЬ, на общем репозитории: у свежего репозитория движка Permissions
-        // нет по контракту, поэтому фоновые записи проверок не проходят вовсе. Точку входа
-        // нужно создать явно, иначе прогон уйдет в фон и упадет там.
-        if (_repo.Permissions is { } perms &&
-            (!perms.Can(PermAction.CreateRecord, shape.CollectionId) ||
+        // Права журнала проверяются на UI-подключении; свободному тексту база не нужна.
+        if (!free && _repo!.Permissions is { } perms &&
+            (!perms.Can(PermAction.CreateRecord, shape!.CollectionId) ||
              !perms.Can(PermAction.EditRecord,   shape.CollectionId)))
         {
             SetStatus("Нет права дописывать записи в журнал выдачи", "BrushRed");
             return;
         }
 
-        var dbPath = _repo.DbPath;
+        var dbPath = free ? "" : _repo!.DbPath;
+        var layout = ReadLayout();
+        var text   = free ? FreeTextBox.Text ?? "" : "";
+        var warning = free ? "" : PdfWatermarkExtension.Warning(WarningBox.Text);
+        var recursive = RecursiveCheck.IsChecked == true;
+        var mode = free ? StampMode.FreeText : StampMode.Journal;
 
         SetBusy(true);
         ClearLog();
@@ -296,9 +339,7 @@ public partial class PdfWatermarkWindow : Window
         try
         {
             Progress.SetIndeterminate("Поиск документов");
-            var recursive = RecursiveCheck.IsChecked == true;
             var files = await Task.Run(() => PdfWatermarkEngine.ListPdfFiles(source, recursive, ct), ct);
-
             if (files.Count == 0)
             {
                 Fail("В указанном месте не найдено PDF-документов.");
@@ -307,22 +348,20 @@ public partial class PdfWatermarkWindow : Window
 
             LogLineNow($"📂 Источник: {source}");
             LogLineNow($"📄 Документов: {files.Count}");
-            LogLineNow($"🖊️ Кому выдан: {holder}, дата {date:dd.MM.yyyy}");
-            LogLineNow("🚀 Наложение знака…");
+            if (!free)
+            {
+                LogLineNow($"🖊️ Выдан: {holder}, дата {date:dd.MM.yyyy}");
+                RememberWarning(warning);
+            }
+            LogLineNow(free ? "🚀 Наложение свободного текста…" : "🚀 Наложение знака…");
 
-            // Предупреждение берется ИЗ ОКНА и тут же уходит в настройки: человек правит его
-            // под конкретную выдачу, а следующее открытие окна подставит последнее значение.
-            var warning = PdfWatermarkExtension.Warning(WarningBox.Text);
-            RememberWarning(warning);
-
-            var request  = new StampRequest(source, recursive, output, holder, date,
-                                            warning, dbPath, shape);
+            // Свободный текст остается только в памяти запроса и не попадает в журнал окна.
+            var request = new StampRequest(source, recursive, output, holder, date,
+                                            warning, dbPath, shape, mode, text, layout);
             var progress = new Progress<StampProgress>(OnProgress);
-
             _throttle.Restart();
             var summary = await Task.Run(() => PdfWatermarkEngine.Run(request, files, progress, ct), ct);
-
-            await Report(summary);
+            await Report(summary, mode);
         }
         catch (OperationCanceledException)
         {
@@ -365,13 +404,15 @@ public partial class PdfWatermarkWindow : Window
 
     /// <summary>Итог прогона: по строке на файл, затем сводка. Успехи ТОЖЕ пишутся — выданные
     /// номера и есть то, ради чего прогон делается.</summary>
-    private async Task Report(StampSummary summary)
+    private async Task Report(StampSummary summary, StampMode mode)
     {
         foreach (var item in summary.Items)
             LogLine(item.Status switch
             {
                 StampStatus.Done    => $"✅ {item.FileName} → {item.OutputName} " +
-                                       $"(экз. {item.Number}, страниц {item.Pages})",
+                                       (mode == StampMode.FreeText
+                                           ? $"(страниц {item.Pages})"
+                                           : $"(экз. {item.Number}, страниц {item.Pages})"),
                 StampStatus.Skipped => $"⏭️ {item.FileName} — {item.Note}",
                 _                   => $"❌ {item.FileName} — {item.Note}",
             });
@@ -379,7 +420,9 @@ public partial class PdfWatermarkWindow : Window
         LogLine("");
         LogLine(summary.Cancelled
             ? $"⏹️ Остановлено. Обработано: {summary.Done} из {summary.Total} — " +
-              "знак наложен и строки заведены только для них."
+              (mode == StampMode.FreeText
+                  ? "знак наложен только на обработанные документы."
+                  : "знак наложен и строки заведены только для них.")
             : $"📊 Готово. Обработано: {summary.Done} из {summary.Total}.");
 
         if (summary.Skipped > 0) LogLine($"⏭️ Пропущено (пароль или повреждение): {summary.Skipped}");
@@ -421,6 +464,10 @@ public partial class PdfWatermarkWindow : Window
     {
         _busy = busy;
 
+        ModeCombo.IsEnabled       = !busy;
+        PlacementCombo.IsEnabled  = !busy;
+        FreeTextBox.IsEnabled     = !busy;
+        LayoutPanel.IsEnabled     = !busy;
         SourceBox.IsEnabled       = !busy;
         FileBtn.IsEnabled         = !busy;
         FolderBtn.IsEnabled       = !busy;
@@ -443,7 +490,7 @@ public partial class PdfWatermarkWindow : Window
     /// </summary>
     private void UpdateState()
     {
-        if (_busy) return;
+        if (_initializing || _busy) return;
 
         var source = SourceBox.Text?.Trim() ?? "";
         var output = OutputBox.Text?.Trim() ?? "";
@@ -453,15 +500,48 @@ public partial class PdfWatermarkWindow : Window
         if (Block(!File.Exists(source) && !Directory.Exists(source), "Указанный файл или папка не существует")) return;
         if (Block(output.Length == 0,                   "Выберите папку для сохранения результата")) return;
         if (Block(!Directory.Exists(output),            "Папка для сохранения результата не существует")) return;
-        if (Block(holder.Length == 0,                   "Заполните, кому выдан документ")) return;
-        if (Block(DateBox.Date is null,                 "Заполните дату выдачи")) return;
-        if (Block(_databases.Count == 0,                "Нет доступных баз данных")) return;
-        if (Block(_repo is null,                        "База недоступна")) return;
-        if (Block(CollectionCombo.SelectedIndex < 0,    "Выберите коллекцию журнала выдачи")) return;
-        if (Block(_shape is null, $"Вы выбрали неправильную коллекцию — {_schemaProblem}")) return;
+        if (IsFreeText)
+        {
+            if (Block(string.IsNullOrWhiteSpace(FreeTextBox.Text), "Введите текст водяного знака")) return;
+            if (Block((FreeTextBox.Text?.Length ?? 0) > PdfWatermarkEngine.MaxFreeTextLength,
+                      $"Текст водяного знака: не более {PdfWatermarkEngine.MaxFreeTextLength} символов")) return;
+        }
+        else
+        {
+            if (Block(holder.Length == 0,                   "Заполните, кому выдан документ")) return;
+            if (Block(DateBox.Date is null,                 "Заполните дату выдачи")) return;
+            if (Block(_databases.Count == 0,                "Нет доступных баз данных")) return;
+            if (Block(_repo is null,                        "База недоступна")) return;
+            if (Block(CollectionCombo.SelectedIndex < 0,    "Выберите коллекцию журнала выдачи")) return;
+            if (Block(_shape is null, $"Вы выбрали неправильную коллекцию — {_schemaProblem}")) return;
+        }
+
+        try { ReadLayout().Validate(); }
+        catch (PdfWatermarkException ex)
+        {
+            Block(true, ex.Message);
+            return;
+        }
 
         ExecuteBtn.IsEnabled = true;
         SetStatus("Готов к работе", "BrushSecondaryText");
+    }
+
+    private StampLayout ReadLayout() => new(
+        PlacementCombo.SelectedIndex == 1 ? StampPlacement.Tiled : StampPlacement.Center,
+        ReadMm(BlockWidthBox, "Ширина блока"),
+        ReadMm(BlockHeightBox, "Высота блока"),
+        PlacementCombo.SelectedIndex == 1 ? ReadMm(GapXBox, "Промежуток между столбцами") : new StampLayout().GapXmm,
+        PlacementCombo.SelectedIndex == 1 ? ReadMm(GapYBox, "Промежуток между рядами") : new StampLayout().GapYmm,
+        ReadMm(PageMarginBox, "Отступ от краев"));
+
+    private static double ReadMm(TextBox box, string label)
+    {
+        var text = box.Text?.Trim() ?? "";
+        if ((double.TryParse(text, NumberStyles.Float, CultureInfo.CurrentCulture, out var value) ||
+             double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out value)) &&
+            double.IsFinite(value)) return value;
+        throw new PdfWatermarkException($"{label}: введите число в миллиметрах.");
     }
 
     private bool Block(bool condition, string message)

@@ -10,31 +10,27 @@ namespace SmartBase.Extensions.PdfWatermark;
 
 /// <summary>Оформление знака. Записью, а не константами: правится в одном месте и подставляется
 /// в тестах.</summary>
-/// <param name="Alpha">Непрозрачность ЗАЛИВКИ букв, 0-255. 71 — примерно 28%: знак хорошо виден,
-/// но текст документа под ним читается.</param>
+/// <param name="Alpha">Непрозрачность заливки букв, 0-255. 125 — примерно 49%: узкие
+/// полужирные буквы сплошные и читаемые, без светлой пустоты внутри контура.</param>
 /// <param name="OutlineAlpha">Непрозрачность КОНТУРА букв. Контур — это стойкость знака: светлую
 /// заливку сгоняет одна операция «уровни» в любом бесплатном редакторе, а контур по плотности
 /// сравним с текстом документа, и порог, который уберет его, испортит и сам документ. Тонкая
 /// линия читать не мешает.</param>
-/// <param name="OutlineShare">Толщина контура в долях кегля. 0.022 — примерно 1 пиксель на
-/// каждые 45 пикселей высоты буквы.</param>
-/// <param name="DiagonalShare">Какую долю диагонали листа занимает БЛОК надписи целиком. 0.86 —
-/// чтобы не упирался в углы.</param>
+/// <param name="OutlineShare">Толщина контура в долях кегля. 0.035 держит компактные буквы
+/// после уменьшения страницы и осветления изображения.</param>
 /// <param name="LineSpacing">Межстрочный шаг в долях кегля.</param>
-/// <param name="MinFontPt">Нижний упор кегля: длинная надпись на A5 не должна стать нечитаемой.</param>
-/// <param name="MaxFontPt">Верхний упор — защита от вырожденного случая (все строки пустые), а
-/// не рабочее ограничение: на больших форматах знак обязан расти вместе с листом.</param>
+/// <param name="MinFontPt">Минимальный читаемый кегль. При переполнении блока нужен явный отказ.</param>
+/// <param name="MaxFontPt">Обычный кегль компактного блока. Заголовок «КОПИЯ» крупнее в 1.35 раза.</param>
 public sealed record StampLook(
-    byte   Alpha         = 71,
+    byte   Alpha         = 125,
     byte   OutlineAlpha  = 168,
-    double OutlineShare  = 0.022,
+    double OutlineShare  = 0.035,
     byte   R             = 90,
     byte   G             = 90,
     byte   B             = 90,
-    double DiagonalShare = 0.86,
-    double LineSpacing   = 1.3,
-    double MinFontPt     = 5,
-    double MaxFontPt     = 160);
+    double LineSpacing   = 1.15,
+    double MinFontPt     = 10,
+    double MaxFontPt     = 18);
 
 /// <summary>
 /// Наложение диагональной надписи на готовый PDF: блок строк по центру листа, снизу вверх вдоль
@@ -106,11 +102,14 @@ public static class WatermarkStamp
     /// нельзя, а молча сохранить копию значило бы именно это.</exception>
     public static int StampAndSave(string source, PdfSharp.Pdf.PdfDocument doc, string outputPath,
                                    IReadOnlyList<string> lines,
-                                   CancellationToken ct, StampLook? look = null)
+                                   CancellationToken ct, StampLook? look = null, StampLayout? layout = null)
     {
-        if (lines.Count == 0) throw new ArgumentException("Знак без текста", nameof(lines));
+        if (lines.Count == 0 || lines.All(string.IsNullOrWhiteSpace))
+            throw new ArgumentException("Знак без текста", nameof(lines));
 
         var style = look ?? Default;
+        var placement = layout ?? StampLayout.Default;
+        placement.Validate();
         var scale = PageRaster.ScaleFor(doc);
 
         using var output = new PdfSharp.Pdf.PdfDocument();
@@ -144,7 +143,8 @@ public static class WatermarkStamp
                     var (jpeg, width, height) = PdfGate.Run(() =>
                     {
                         using var page = reader.GetPageReader(index);
-                        return (StampPage(page, lines, style), page.GetPageWidth(), page.GetPageHeight());
+                        return (StampPage(page, lines, style, placement, scale * 72 / 25.4),
+                                page.GetPageWidth(), page.GetPageHeight());
                     });
 
                     pages.Add(jpeg);
@@ -194,7 +194,8 @@ public static class WatermarkStamp
 
     /// <summary>Отрисовать знак на одной странице и вернуть готовый JPEG.</summary>
     private static MemoryStream StampPage(Docnet.Core.Readers.IPageReader page,
-                                          IReadOnlyList<string> lines, StampLook look)
+                                          IReadOnlyList<string> lines, StampLook look,
+                                          StampLayout layout, double pixelsPerMm)
     {
         var w = page.GetPageWidth();
         var h = page.GetPageHeight();
@@ -207,7 +208,7 @@ public static class WatermarkStamp
         System.Runtime.InteropServices.Marshal.Copy(raw, 0, bitmap.GetPixels(), raw.Length);
 
         using (var canvas = new SKCanvas(bitmap))
-            Draw(canvas, w, h, lines, look);
+            Draw(canvas, w, h, lines, look, layout, pixelsPerMm);
 
         using var image = SKImage.FromBitmap(bitmap);
         using var data  = image.Encode(SKEncodedImageFormat.Jpeg, PageRaster.JpegQuality)
@@ -228,47 +229,53 @@ public static class WatermarkStamp
     /// нужно — в отличие от прежнего пути через PDFsharp, где холст был сырым MediaBox.
     /// </summary>
     public static void Draw(SKCanvas canvas, int width, int height,
-                            IReadOnlyList<string> lines, StampLook look)
+                            IReadOnlyList<string> lines, StampLook look,
+                            StampLayout? layout = null, double? pixelsPerMm = null)
     {
-        var size = (float)FontSizeFor(lines, width, height, look);
+        // Для отдельного холста без PDF короткая сторона условно равна A4. Настоящий прогон
+        // всегда передает масштаб растеризатора: миллиметры не зависят от dpi и формата листа.
+        var scale = pixelsPerMm ?? Math.Min(width, height) / 210d;
+        var grid = (layout ?? StampLayout.Default).Plan(width, height, scale);
+        var block = StampTextLayout.Compose(lines, grid.Width, grid.Height, scale, look);
 
         using var fill = new SKPaint
         {
             Color       = new SKColor(look.R, look.G, look.B, look.Alpha),
             IsAntialias = true,
             Typeface    = WatermarkFont.Typeface,
-            TextSize    = size,
+            BlendMode   = SKBlendMode.Multiply,
         };
 
-        // Контур рисуется ПОВЕРХ заливки и держит знак при чистке: заливку в 28% сгоняет одна
-        // операция «уровни», а эту линию — уже нет, она по плотности как текст документа.
+        // Умножение оставляет черные штрихи документа черными: светлая надпись не выбеливает
+        // исходный текст. Контур дополняет плотную заливку при осветлении картинки.
         using var outline = new SKPaint
         {
             Color       = new SKColor(look.R, look.G, look.B, look.OutlineAlpha),
             IsAntialias = true,
             Typeface    = WatermarkFont.Typeface,
-            TextSize    = size,
+            BlendMode   = SKBlendMode.Multiply,
             Style       = SKPaintStyle.Stroke,
-            StrokeWidth = Math.Max(1f, size * (float)look.OutlineShare),
         };
 
         canvas.Save();
+        canvas.ClipRect(new SKRect((float)grid.Margin, (float)grid.Margin,
+                                   width - (float)grid.Margin, height - (float)grid.Margin));
         canvas.Translate(width / 2f, height / 2f);
-        canvas.RotateDegrees((float)AngleFor(width, height));
-
-        var step = size * (float)look.LineSpacing;
-        var top  = -step * lines.Count / 2f;
-
-        for (var i = 0; i < lines.Count; i++)
+        canvas.RotateDegrees((float)grid.Angle);
+        foreach (var center in grid.Centers)
         {
-            // Skia ставит текст по БАЗОВОЙ линии, поэтому строка опускается внутри своей полосы
-            // на 0.7 шага — так блок оказывается зрительно посередине.
-            var line = fill.MeasureText(lines[i]);
-            var x    = -line / 2f;
-            var y    = top + i * step + step * 0.7f;
-
-            canvas.DrawText(lines[i], x, y, fill);
-            canvas.DrawText(lines[i], x, y, outline);
+            canvas.Save();
+            canvas.Translate((float)center.X, (float)center.Y);
+            foreach (var line in block.Lines)
+            {
+                fill.TextSize = outline.TextSize = line.Size;
+                outline.StrokeWidth = Math.Max((float)(scale * 0.05), line.Size * (float)look.OutlineShare);
+                var x = -fill.MeasureText(line.Text) / 2;
+                var y = line.Baseline - (float)block.Height / 2;
+                canvas.DrawText(line.Text, x, y, fill);
+                canvas.DrawText(line.Text, x, y, outline);
+            }
+            canvas.Restore();
         }
 
         canvas.Restore();
@@ -285,36 +292,6 @@ public static class WatermarkStamp
     /// </summary>
     public static double AngleFor(double width, double height) =>
         -Math.Atan2(height, width) * 180 / Math.PI;
-
-    /// <summary>
-    /// Кегль, при котором БЛОК строк, положенный по диагонали, занимает
-    /// <see cref="StampLook.DiagonalShare"/> листа.
-    ///
-    /// Блок шириной W и высотой H, повернутый на угол диагонали, вписан в лист w×h ровно при
-    /// <c>W + H·max(w/h, h/w) ≤ d</c> (габарит повернутого прямоугольника, где косинус и синус
-    /// угла — это w/d и h/d).
-    ///
-    /// И ширина, и высота блока строго ЛИНЕЙНЫ по кеглю, поэтому подбор — одно измерение на
-    /// пробном кегле и деление, а не итерации.
-    /// </summary>
-    public static double FontSizeFor(IReadOnlyList<string> lines, double width, double height,
-                                     StampLook look)
-    {
-        const float probe = 20;
-
-        using var ruler = new SKPaint { Typeface = WatermarkFont.Typeface, TextSize = probe };
-
-        var wide = lines.Count == 0 ? 0 : lines.Max(line => ruler.MeasureText(line));
-        var tall = probe * look.LineSpacing * lines.Count;
-
-        var slim = Math.Max(width / height, height / width);
-        var room = wide + tall * slim;
-
-        return room > 0
-            ? Math.Clamp(probe * look.DiagonalShare * Diagonal(width, height) / room,
-                         look.MinFontPt, look.MaxFontPt)
-            : look.MinFontPt;
-    }
 
     private static void Save(PdfSharp.Pdf.PdfDocument doc, string path)
     {

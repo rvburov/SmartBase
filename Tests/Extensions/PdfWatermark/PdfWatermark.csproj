@@ -26,6 +26,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Remove="Ui/**/*.cs" />
     <Using Include="Xunit" />
     <Using Include="SmartBase.Tests.Extensions.Shared" />
   </ItemGroup>

@@ -247,6 +247,81 @@ public sealed class PdfWatermarkEngineTests
     }
 
     [Fact]
+    public void Logged_layout_changes_visible_coverage_but_adds_only_one_issue_per_document()
+    {
+        using var db  = new TempDatabase("wm-layout");
+        using var src = new TempDir("wm-src");
+        using var dst = new TempDir("wm-dst");
+        var source = Path.Combine(src.Path, "чертеж.pdf");
+        PdfStand.WriteA4(source);
+        var collectionId = IssueStand.Create(db.Constructor);
+        var shape = IssueStand.Shape(db.Constructor, collectionId);
+        var request = Request(source, dst.Path, false, db.Path, shape);
+
+        var centered = PdfWatermarkEngine.Run(request with
+            { Layout = new StampLayout(StampPlacement.Center) }, [source], null, CancellationToken.None);
+        var tiled = PdfWatermarkEngine.Run(request with
+            { Layout = new StampLayout(StampPlacement.Tiled) }, [source], null, CancellationToken.None);
+
+        Assert.Equal((1, 0, 0), (centered.Done, centered.Failed, centered.Skipped));
+        Assert.Equal((1, 0, 0), (tiled.Done, tiled.Failed, tiled.Skipped));
+        Assert.Equal(1, Assert.Single(centered.Items).Number);
+        Assert.Equal(2, Assert.Single(tiled.Items).Number);
+        using var clean = PdfStand.Render(source);
+        using var centerImage = PdfStand.Render(Path.Combine(dst.Path, centered.Items[0].OutputName!));
+        using var tiledImage = PdfStand.Render(Path.Combine(dst.Path, tiled.Items[0].OutputName!));
+        var centerCoverage = PdfStand.DiffShare(centerImage, clean);
+        var tiledCoverage = PdfStand.DiffShare(tiledImage, clean);
+        Assert.True(centerCoverage > 0.25, "центральный знак отсутствует в готовом PDF");
+        Assert.True(tiledCoverage > centerCoverage * 3,
+                    $"размещение блоками не дошло до PDF: центр {centerCoverage:F2}%, повторение {tiledCoverage:F2}%");
+
+        Assert.Equal(2, db.Constructor.GetRecordTitlesOrdered(collectionId).Count);
+        Assert.Equal([1, 2], IssueJournal.TakenFor(db.Constructor, shape, "чертеж"));
+        Assert.Equal(2, dst.Names().Length);
+    }
+
+    [Fact]
+    public void Overflow_releases_the_reserved_number_and_leaves_no_output_or_journal_row()
+    {
+        using var db  = new TempDatabase("wm-overflow");
+        using var src = new TempDir("wm-src");
+        using var dst = new TempDir("wm-dst");
+        var source = Path.Combine(src.Path, "чертеж.pdf");
+        PdfStand.WriteA4(source);
+        var original = File.ReadAllBytes(source);
+        var collectionId = IssueStand.Create(db.Constructor);
+        var shape = IssueStand.Shape(db.Constructor, collectionId);
+        var request = Request(source, dst.Path, false, db.Path, shape);
+
+        // Геометрия допустима, но вся надпись при читаемом кегле в нее не помещается.
+        // Ошибка возникает после резерва и должна снять именно его, а не оставить номер
+        // занятым из-за того, что исходный PDF успешно прошел предполет.
+        var overflowing = request with
+        {
+            Holder = string.Concat(Enumerable.Repeat("Очень длинное имя получателя ", 50)),
+            Warning = string.Concat(Enumerable.Repeat("Длинное предупреждение ", 50)),
+            Layout = new StampLayout(BlockWidthMm: 20, BlockHeightMm: 15),
+        };
+        var failed = PdfWatermarkEngine.Run(overflowing, [source], null, CancellationToken.None);
+
+        Assert.Equal((0, 1, 0), (failed.Done, failed.Failed, failed.Skipped));
+        Assert.Contains("Текст не помещается", Assert.Single(failed.Items).Note);
+        Assert.Empty(dst.Names());
+        Assert.Empty(db.Constructor.GetRecordTitlesOrdered(collectionId));
+        Assert.Empty(IssueJournal.TakenFor(db.Constructor, shape, "чертеж"));
+        Assert.Equal(original, File.ReadAllBytes(source));
+
+        var corrected = PdfWatermarkEngine.Run(request, [source], null, CancellationToken.None);
+
+        Assert.Equal((1, 0, 0), (corrected.Done, corrected.Failed, corrected.Skipped));
+        Assert.Equal(1, Assert.Single(corrected.Items).Number);
+        Assert.Equal(["чертеж экз. 1.pdf"], dst.Names());
+        Assert.Single(db.Constructor.GetRecordTitlesOrdered(collectionId));
+        Assert.Equal([1], IssueJournal.TakenFor(db.Constructor, shape, "чертеж"));
+    }
+
+    [Fact]
     public void Missing_output_folder_stops_the_run_before_it_starts()
     {
         using var db  = new TempDatabase("wm-engine");
