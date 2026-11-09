@@ -44,7 +44,8 @@ mkdir -p "$out/ocr/tessdata"
 for lang in rus eng; do
   file="$out/ocr/tessdata/$lang.traineddata"
   curl -fsSL --retry 3 -o "$file" "https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/4.1.0/$lang.traineddata"
-  actual=$( (sha256sum "$file" 2>/dev/null || shasum -a 256 "$file") | cut -d' ' -f1)
+  # Через stdin: с путем в аргументе Git Bash на Windows печатает сумму с ведущим «\».
+  actual=$( (sha256sum < "$file" 2>/dev/null || shasum -a 256 < "$file") | cut -d' ' -f1)
   if [[ "$actual" != "${sums[$lang]}" ]]; then
     echo "Контрольная сумма $lang.traineddata не совпала: $actual" >&2
     exit 1

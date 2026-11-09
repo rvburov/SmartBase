@@ -29,10 +29,11 @@
   </PropertyGroup>
 
   <PropertyGroup>
+    <_SbArch>$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant())</_SbArch>
     <OcrRid Condition="'$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier)</OcrRid>
-    <OcrRid Condition="'$(OcrRid)' == '' and $([MSBuild]::IsOSPlatform('Windows'))">win-x64</OcrRid>
-    <OcrRid Condition="'$(OcrRid)' == '' and $([MSBuild]::IsOSPlatform('Linux'))">linux-x64</OcrRid>
-    <OcrRid Condition="'$(OcrRid)' == '' and $([MSBuild]::IsOSPlatform('OSX'))">osx-arm64</OcrRid>
+    <OcrRid Condition="'$(OcrRid)' == '' and $([MSBuild]::IsOSPlatform('Windows'))">win-$(_SbArch)</OcrRid>
+    <OcrRid Condition="'$(OcrRid)' == '' and $([MSBuild]::IsOSPlatform('Linux'))">linux-$(_SbArch)</OcrRid>
+    <OcrRid Condition="'$(OcrRid)' == '' and $([MSBuild]::IsOSPlatform('OSX'))">osx-$(_SbArch)</OcrRid>
   </PropertyGroup>
 
   <ItemGroup>

@@ -52,10 +52,14 @@ public sealed record ScanOptions
 /// </summary>
 public static class SyntheticForms
 {
+    // Шрифт синтетических сканов — DejaVu Sans на всех ОС (на нем замерены движки): системный
+    // на Linux, на Windows CI — файл из SB_TEST_FONT (Scripts/ci/ocr-test-deps.sh).
     private static readonly Lazy<SKTypeface> Font = new(() =>
-        SKTypeface.FromFamilyName("DejaVu Sans") is { } t && t.FamilyName == "DejaVu Sans"
-            ? t
-            : SKFontManager.Default.MatchCharacter('Ж') ?? SKTypeface.Default);
+        Environment.GetEnvironmentVariable("SB_TEST_FONT") is { Length: > 0 } file && File.Exists(file)
+            ? SKTypeface.FromFile(file)
+            : SKTypeface.FromFamilyName("DejaVu Sans") is { } t && t.FamilyName == "DejaVu Sans"
+                ? t
+                : SKFontManager.Default.MatchCharacter('Ж') ?? SKTypeface.Default);
 
     public static FormFields Fields(FormKind kind)
     {

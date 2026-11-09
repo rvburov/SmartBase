@@ -4,6 +4,7 @@
 #             DejaVu для синтетических сканов;
 #   Windows — Tesseract плагин приносит сам, нужны только языковые данные: tessdata_fast 4.1.0
 #             (те же файлы, что в пакете tesseract-ocr-rus Ubuntu), путь — в TESSDATA_PREFIX;
+#             и шрифт DejaVu Sans 2.37 для синтетических сканов (как на Linux) — в SB_TEST_FONT;
 #   macOS   — OCR-часть плагина не поставляется, тесты распознавания пропускаются сами.
 set -euo pipefail
 
@@ -22,10 +23,22 @@ case "$(uname -s)" in
     )
     for lang in rus eng; do
       curl -fsSL --retry 3 -o "$dir/$lang.traineddata" "https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/4.1.0/$lang.traineddata"
-      actual=$(sha256sum "$dir/$lang.traineddata" | cut -d' ' -f1)
+      # Через stdin: с путем в аргументе Git Bash печатает сумму с ведущим «\».
+      actual=$(sha256sum < "$dir/$lang.traineddata" | cut -d' ' -f1)
       [[ "$actual" == "${sums[$lang]}" ]] || { echo "::error::контрольная сумма $lang.traineddata: $actual"; exit 1; }
     done
     echo "TESSDATA_PREFIX=$(cygpath -w "$dir")" >> "${GITHUB_ENV:-/dev/null}"
+
+    fonts="${RUNNER_TEMP:-/tmp}/fonts"
+    mkdir -p "$fonts"
+    curl -fsSL --retry 3 -o "$fonts/dejavu.zip" \
+      "https://github.com/dejavu-fonts/dejavu-fonts/releases/download/version_2_37/dejavu-fonts-ttf-2.37.zip"
+    actual=$(sha256sum < "$fonts/dejavu.zip" | cut -d' ' -f1)
+    [[ "$actual" == 7576310b219e04159d35ff61dd4a4ec4cdba4f35c00e002a136f00e96a908b0a ]] \
+      || { echo "::error::контрольная сумма dejavu-fonts-ttf-2.37.zip: $actual"; exit 1; }
+    python -c "import sys, zipfile; open(sys.argv[2], 'wb').write(zipfile.ZipFile(sys.argv[1]).read('dejavu-fonts-ttf-2.37/ttf/DejaVuSans.ttf'))" \
+      "$(cygpath -w "$fonts/dejavu.zip")" "$(cygpath -w "$fonts/DejaVuSans.ttf")"
+    echo "SB_TEST_FONT=$(cygpath -w "$fonts/DejaVuSans.ttf")" >> "${GITHUB_ENV:-/dev/null}"
     ;;
   *)
     echo "OCR-часть плагина на $(uname -s) не поставляется — тесты распознавания пропустятся"
