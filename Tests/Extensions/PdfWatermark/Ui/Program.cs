@@ -56,6 +56,7 @@ internal static class Program
         Case("Свободный режим работает без базы, получателя и даты", FreeModeWithoutDatabase);
         Case("Пустой текст и неверные границы блокируют запуск", InputValidation);
         Case("Промежутки нужны только при повторении блоков", PlacementSwitch);
+        Case("Изменение промежутков меняет блоки готового PDF", ExecuteChangedSpacing);
         Case("Свободный текст не остается в настройках и новом окне", FreeTextIsNotRemembered);
         Case("Нажатие запуска создает PDF без базы и не записывает текст в журнал", ExecuteFreeText);
         Case("Выдача, свободный текст и повторная выдача используют только поля своего режима", ExecuteModeCycle);
@@ -68,7 +69,7 @@ internal static class Program
     private static void FreeModeWithoutDatabase()
     {
         using var fixture = new Fixture();
-        Expect(fixture.Mode.SelectedIndex == 1, "при открытии сохранен режим выдачи с журналом");
+        Expect(fixture.Mode.SelectedIndex == 0, "новое окно сразу открывает свободный текст");
         Expect(fixture.Find<TextBlock>("HolderLabel").Text == "3. Выдан", "пункт 3 называется Выдан");
         fixture.PrepareFreeText("Первая строка\nВторая строка");
         fixture.Find<TextBox>("HolderBox").Text = "";
@@ -121,6 +122,10 @@ internal static class Program
         using var fixture = new Fixture();
         fixture.PrepareFreeText("Контрольная копия");
         var gaps = fixture.Find<Panel>("GapPanel");
+        Expect(fixture.Find<ComboBox>("PlacementCombo").SelectedIndex == 1 && gaps.IsVisible,
+            "новое окно сразу предлагает блоки по всей странице и доступные промежутки");
+        fixture.Find<ComboBox>("PlacementCombo").SelectedIndex = 0;
+        Pump(fixture.Window);
         Expect(!gaps.IsVisible, "при одном блоке промежутки скрыты");
         fixture.Find<ComboBox>("PlacementCombo").SelectedIndex = 1;
         Pump(fixture.Window);
@@ -158,7 +163,7 @@ internal static class Program
         const string privateText = "Проверка интерфейса 9624\nДля внутреннего использования";
         using var fixture = new Fixture();
         fixture.PrepareFreeText(privateText);
-        Capture(fixture.Window, "watermark-free-center");
+        Capture(fixture.Window, "watermark-free-tiled");
         Click(fixture.Execute);
         Wait(() => fixture.Window.OwnedWindows.OfType<ConfirmDialog>().Any()
                    || (!fixture.Find<Button>("StopBtn").IsEnabled && fixture.Status.Contains("не удалось", StringComparison.OrdinalIgnoreCase)),
@@ -216,6 +221,7 @@ internal static class Program
         var date = new DateTime(2026, 11, 9);
         using var journal = new JournalFixture();
         using var fixture = new Fixture();
+        fixture.Mode.SelectedIndex = 1;
         fixture.Find<TextBox>("SourceBox").Text = fixture.Source;
         fixture.Find<TextBox>("OutputBox").Text = fixture.Output;
         fixture.Find<TextBox>("HolderBox").Text = firstHolder;
@@ -228,7 +234,8 @@ internal static class Program
         Expect(fixture.Execute.IsEnabled, "настоящий журнал выбран и выдача готова к запуску");
         var first = ExecuteToCompletion(fixture);
         Expect(Path.GetFileName(first) == "source экз. 1.pdf", "первая выдача получила экземпляр 1");
-        ExpectRenderedText(fixture.Source, first, CopyNumber.StampText(firstHolder, 1, date, warning));
+        ExpectRenderedText(fixture.Source, first, CopyNumber.StampText(firstHolder, 1, date, warning),
+                          new StampLayout(StampPlacement.Tiled));
 
         fixture.Mode.SelectedIndex = 0;
         fixture.Find<TextBox>("SourceBox").Text = Path.GetDirectoryName(fixture.Source);
@@ -264,6 +271,22 @@ internal static class Program
                && rows.Select(row => journal.Repo.GetFieldValues(row.Id)[journal.Shape.CopyFieldId]).Order()
                       .SequenceEqual(new[] { "1", "2" }),
             "в журнале ровно две выдачи с разными номерами");
+    }
+
+    private static void ExecuteChangedSpacing()
+    {
+        using var fixture = new Fixture();
+        const string text = "КОПИЯ\nДля внутреннего использования";
+        fixture.PrepareFreeText(text);
+        var first = ExecuteToCompletion(fixture);
+        fixture.Find<TextBox>("GapXBox").Text = "30";
+        fixture.Find<TextBox>("GapYBox").Text = "25";
+        Pump(fixture.Window);
+        Expect(fixture.Execute.IsEnabled, "измененные промежутки позволяют повторный запуск");
+        var second = ExecuteToCompletion(fixture);
+        Expect(!Render(first).SequenceEqual(Render(second)), "промежутки изменили рисунок готового PDF");
+        ExpectRenderedText(fixture.Source, second, text.Split('\n'),
+                          new StampLayout(StampPlacement.Tiled, GapXmm: 30, GapYmm: 25));
     }
 
     private static string ExecuteToCompletion(Fixture fixture, Action? afterStart = null)

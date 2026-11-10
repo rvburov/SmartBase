@@ -10,23 +10,23 @@ namespace SmartBase.Extensions.PdfWatermark;
 
 /// <summary>Оформление знака. Записью, а не константами: правится в одном месте и подставляется
 /// в тестах.</summary>
-/// <param name="Alpha">Непрозрачность единственной заливки букв, 0-255. 80 — примерно 31%:
-/// на белом листе получается светлый серый около 206, без темных краев и обводки.</param>
+/// <param name="Alpha">Непрозрачность единственной заливки букв, 0-255. 60 — примерно 24%:
+/// на белом листе получается светлый серо-голубой, без темных краев и обводки.</param>
 /// <param name="LineSpacing">Межстрочный шаг в долях кегля.</param>
 /// <param name="MinFontPt">Минимальный читаемый кегль. При переполнении блока нужен явный отказ.</param>
 /// <param name="MaxFontPt">Обычный кегль компактного блока. Заголовок «КОПИЯ» крупнее в 1.35 раза.</param>
 public sealed record StampLook(
-    byte   Alpha         = 80,
-    byte   R             = 100,
-    byte   G             = 100,
-    byte   B             = 100,
-    double LineSpacing   = 1.15,
+    byte   Alpha         = 60,
+    byte   R             = 80,
+    byte   G             = 120,
+    byte   B             = 155,
+    double LineSpacing   = 1.12,
     double MinFontPt     = 10,
-    double MaxFontPt     = 18);
+    double MaxFontPt     = 30);
 
 /// <summary>
-/// Наложение диагональной надписи на готовый PDF: блок строк по центру листа, снизу вверх вдоль
-/// диагонали, серым полупрозрачным — знак виден, а документ под ним читается.
+/// Наложение диагональной надписи на готовый PDF: один блок или повторение по всему листу,
+/// с наклоном 35 градусов и светлой серо-голубой заливкой — документ под знаком читается.
 ///
 /// <b>Знак ВПЕЧАТЫВАЕТСЯ в пиксели страницы.</b> Страница переводится в растр (PDFium через
 /// Docnet.Core), надпись рисуется по пикселям (Skia), и результат кладется в новый документ
@@ -227,7 +227,8 @@ public static class WatermarkStamp
         // Для отдельного холста без PDF короткая сторона условно равна A4. Настоящий прогон
         // всегда передает масштаб растеризатора: миллиметры не зависят от dpi и формата листа.
         var scale = pixelsPerMm ?? Math.Min(width, height) / 210d;
-        var grid = (layout ?? StampLayout.Default).Plan(width, height, scale);
+        var placement = layout ?? StampLayout.Default;
+        var grid = placement.Plan(width, height, scale);
         var block = StampTextLayout.Compose(lines, grid.Width, grid.Height, scale, look);
 
         using var fill = new SKPaint
@@ -237,6 +238,19 @@ public static class WatermarkStamp
             Typeface    = WatermarkFont.Typeface,
             BlendMode   = SKBlendMode.Multiply,
         };
+
+        if (placement.Placement == StampPlacement.Tiled)
+        {
+            // Размер области задает перенос текста, а фактические метрики — расстояния до
+            // следующего блока. Поэтому короткая надпись тоже заполняет весь лист.
+            var textWidth = 0f;
+            foreach (var line in block.Lines)
+            {
+                fill.TextSize = line.Size;
+                textWidth = Math.Max(textWidth, fill.MeasureText(line.Text));
+            }
+            grid = placement.Plan(width, height, scale, textWidth, block.Height);
+        }
 
         // Один проход заливки дает единый светлый тон. Умножение сохраняет черные штрихи
         // документа: надпись не выбеливает исходный текст под собой.
@@ -267,12 +281,10 @@ public static class WatermarkStamp
         Math.Sqrt(width * width + height * height);
 
     /// <summary>
-    /// Угол надписи в градусах. Ось Y холста направлена ВНИЗ, поэтому положительный угол — по
-    /// часовой стрелке, а надпись «снизу вверх слева направо» получается отрицательным углом
-    /// диагонали. Чистая функция — покрывается тестом без единой картинки.
+    /// Согласованный наклон 35 градусов сохраняется на портретных и альбомных листах.
+    /// Ось Y холста направлена вниз: отрицательное значение поднимает строки слева направо.
     /// </summary>
-    public static double AngleFor(double width, double height) =>
-        -Math.Atan2(height, width) * 180 / Math.PI;
+    public static double AngleFor(double width, double height) => -35;
 
     private static void Save(PdfSharp.Pdf.PdfDocument doc, string path)
     {

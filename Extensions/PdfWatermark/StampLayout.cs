@@ -5,11 +5,11 @@ public enum StampPlacement { Center, Tiled }
 /// <summary>Размеры блока в его собственных осях, до поворота. Все расстояния в миллиметрах.</summary>
 public sealed record StampLayout(
     StampPlacement Placement = StampPlacement.Center,
-    double BlockWidthMm = 75,
-    double BlockHeightMm = 50,
-    double GapXmm = 10,
-    double GapYmm = 12,
-    double MarginMm = 8)
+    double BlockWidthMm = 130,
+    double BlockHeightMm = 115,
+    double GapXmm = 6,
+    double GapYmm = 7,
+    double MarginMm = 0)
 {
     public static readonly StampLayout Default = new();
 
@@ -31,10 +31,12 @@ public sealed record StampLayout(
     }
 
     /// <summary>
-    /// Сетка в повернутых осях: вместе с блоками по диагонали идут сами ряды. В расчет
-    /// попадают только целые блоки внутри полей страницы, включая их повернутые углы.
+    /// Сетка в повернутых осях: вместе с блоками по диагонали идут сами ряды. Повторение
+    /// продолжается за края листа, а видимые части обрезаются при отрисовке по полям страницы.
+    /// Измеренные размеры текста в пикселях задают шаг без пустого места внутри блока.
     /// </summary>
-    public StampGrid Plan(double width, double height, double pixelsPerMm)
+    public StampGrid Plan(double width, double height, double pixelsPerMm,
+                           double? measuredTextWidth = null, double? measuredTextHeight = null)
     {
         Validate();
         if (!double.IsFinite(width) || !double.IsFinite(height) ||
@@ -44,57 +46,56 @@ public sealed record StampLayout(
         var margin = MarginMm * pixelsPerMm;
         var roomW = width - margin * 2;
         var roomH = height - margin * 2;
-        if (roomW <= 0 || roomH <= 0)
+        if (!double.IsFinite(margin) || roomW <= 0 || roomH <= 0)
             throw new PdfWatermarkException("Отступы занимают всю страницу. Уменьшите отступ от краев.");
 
         var angle = WatermarkStamp.AngleFor(width, height);
         var radians = angle * Math.PI / 180;
-        var cos = Math.Cos(radians);
-        var sin = Math.Sin(radians);
+        var cos = Math.Abs(Math.Cos(radians));
+        var sin = Math.Abs(Math.Sin(radians));
         var w = BlockWidthMm * pixelsPerMm;
         var h = BlockHeightMm * pixelsPerMm;
-        var boundW = Math.Abs(cos) * w + Math.Abs(sin) * h;
-        var boundH = Math.Abs(sin) * w + Math.Abs(cos) * h;
-        // Небольшой лист получает вписанный блок. Ниже текстовый расчет проверит, что буквы
-        // остались читаемыми: молча ужимать многословную надпись до нескольких пикселей нельзя.
-        var fit = Math.Min(1, Math.Min(roomW / boundW, roomH / boundH));
-        w *= fit;
-        h *= fit;
-        boundW *= fit;
-        boundH *= fit;
+        if (!double.IsFinite(w) || !double.IsFinite(h))
+            throw new PdfWatermarkException("Не удалось определить размеры блока.");
 
-        var centers = new List<StampCenter> { new(0, 0) };
-        if (Placement == StampPlacement.Tiled)
+        if (Placement == StampPlacement.Center)
         {
-            var stepX = w + GapXmm * pixelsPerMm;
-            var stepY = h + GapYmm * pixelsPerMm;
-            var columnCount = Math.Ceiling((Math.Abs(cos) * roomW + Math.Abs(sin) * roomH) / stepX / 2);
-            var rowCount = Math.Ceiling((Math.Abs(sin) * roomW + Math.Abs(cos) * roomH) / stepY / 2);
-            // Неограниченно большой MediaBox не должен породить миллионы вызовов Skia.
-            if (!double.IsFinite(columnCount) || !double.IsFinite(rowCount) ||
-                columnCount > 10_000 || rowCount > 10_000 ||
-                (columnCount * 2 + 1) * (rowCount * 2 + 1) > 20_000)
-                throw new PdfWatermarkException("Слишком много блоков на странице. Увеличьте размеры блока или промежутки.");
-
-            var columns = (int)columnCount;
-            var rows = (int)rowCount;
-
-            for (var row = -rows; row <= rows; row++)
-            for (var column = -columns; column <= columns; column++)
-            {
-                if (row == 0 && column == 0) continue;
-                var x = column * stepX;
-                var y = row * stepY;
-                var pageX = cos * x - sin * y;
-                var pageY = sin * x + cos * y;
-                if (Math.Abs(pageX) + boundW / 2 <= roomW / 2 + 0.001 &&
-                    Math.Abs(pageY) + boundH / 2 <= roomH / 2 + 0.001)
-                    centers.Add(new(x, y));
-            }
+            // Один центральный блок вписывается в небольшой лист. Ниже текстовый расчет
+            // проверит читаемость; повторяющийся узор сохраняет физический размер букв.
+            var boundW = cos * w + sin * h;
+            var boundH = sin * w + cos * h;
+            var fit = Math.Min(1, Math.Min(roomW / boundW, roomH / boundH));
+            return new(w * fit, h * fit, angle, margin, [new(0, 0)]);
         }
+
+        w = measuredTextWidth ?? w;
+        h = measuredTextHeight ?? h;
+        if (!double.IsFinite(w) || !double.IsFinite(h) || w <= 0 || h <= 0)
+            throw new PdfWatermarkException("Не удалось определить размеры текста знака.");
+        var stepX = w + GapXmm * pixelsPerMm;
+        var stepY = h + GapYmm * pixelsPerMm;
+        if (!double.IsFinite(stepX) || !double.IsFinite(stepY))
+            throw new PdfWatermarkException("Не удалось определить промежутки между блоками.");
+        // Дополнительный ряд с каждой стороны покрывает крайние части букв, как в
+        // согласованном образце. Целый блок больше не обязан помещаться на листе.
+        var columnCount = Math.Ceiling((cos * roomW + sin * roomH) / stepX / 2) + 1;
+        var rowCount = Math.Ceiling((sin * roomW + cos * roomH) / stepY / 2) + 1;
+        // Ограничение проверяется до преобразования в int и включает крайние ряды.
+        if (!double.IsFinite(columnCount) || !double.IsFinite(rowCount) ||
+            columnCount > 10_000 || rowCount > 10_000 ||
+            (columnCount * 2 + 1) * (rowCount * 2 + 1) > 20_000)
+            throw new PdfWatermarkException("Слишком много блоков на странице. Увеличьте размеры блока или промежутки.");
+
+        var columns = (int)columnCount;
+        var rows = (int)rowCount;
+        var centers = new List<StampCenter>((columns * 2 + 1) * (rows * 2 + 1));
+        for (var row = -rows; row <= rows; row++)
+        for (var column = -columns; column <= columns; column++)
+            centers.Add(new(column * stepX, row * stepY));
 
         return new(w, h, angle, margin, centers);
     }
+
 }
 
 /// <summary>Центр блока относительно центра страницы, в повернутых осях сетки.</summary>

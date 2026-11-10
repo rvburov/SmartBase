@@ -75,6 +75,7 @@ public partial class PdfWatermarkWindow : Window
         DateBox.DateChanged += (_, _) => UpdateState();
 
         _initializing = false;
+        GapPanel.IsVisible = PlacementCombo.SelectedIndex == 1;
         UpdateMode();
     }
 

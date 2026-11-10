@@ -17,7 +17,7 @@
                 <Grid ColumnDefinitions="*,14,*">
                     <StackPanel Grid.Column="0" Spacing="6">
                         <TextBlock Text="Режим надписи" FontWeight="{StaticResource FontWeightBold}" />
-                        <ComboBox x:Name="ModeCombo" HorizontalAlignment="Stretch" SelectedIndex="1"
+                        <ComboBox x:Name="ModeCombo" HorizontalAlignment="Stretch" SelectedIndex="0"
                                   SelectionChanged="OnModeChanged">
                             <ComboBoxItem Content="Свободный текст" />
                             <ComboBoxItem Content="С записью в таблицу" />
@@ -25,7 +25,7 @@
                     </StackPanel>
                     <StackPanel Grid.Column="2" Spacing="6">
                         <TextBlock Text="Размещение" FontWeight="{StaticResource FontWeightBold}" />
-                        <ComboBox x:Name="PlacementCombo" HorizontalAlignment="Stretch" SelectedIndex="0"
+                        <ComboBox x:Name="PlacementCombo" HorizontalAlignment="Stretch" SelectedIndex="1"
                                   SelectionChanged="OnPlacementChanged">
                             <ComboBoxItem Content="По центру" />
                             <ComboBoxItem Content="Блоками по всей странице" />
@@ -102,28 +102,28 @@
                     <Grid ColumnDefinitions="*,14,*,14,*">
                         <StackPanel Grid.Column="0" Spacing="6">
                             <TextBlock Text="Ширина блока" />
-                            <TextBox x:Name="BlockWidthBox" Text="75" TextChanged="OnFormChanged" />
+                            <TextBox x:Name="BlockWidthBox" Text="130" TextChanged="OnFormChanged" />
                         </StackPanel>
                         <StackPanel Grid.Column="2" Spacing="6">
                             <TextBlock Text="Высота блока" />
-                            <TextBox x:Name="BlockHeightBox" Text="50" TextChanged="OnFormChanged" />
+                            <TextBox x:Name="BlockHeightBox" Text="115" TextChanged="OnFormChanged" />
                         </StackPanel>
                         <StackPanel Grid.Column="4" Spacing="6">
                             <TextBlock Text="Отступ от краев" />
-                            <TextBox x:Name="PageMarginBox" Text="8" TextChanged="OnFormChanged" />
+                            <TextBox x:Name="PageMarginBox" Text="0" TextChanged="OnFormChanged" />
                         </StackPanel>
                     </Grid>
                     <Grid x:Name="GapPanel" ColumnDefinitions="*,14,*" IsVisible="False">
                         <StackPanel Grid.Column="0" Spacing="6">
                             <TextBlock Text="Промежуток между столбцами" TextWrapping="Wrap" />
-                            <TextBox x:Name="GapXBox" Text="10" TextChanged="OnFormChanged" />
+                            <TextBox x:Name="GapXBox" Text="6" TextChanged="OnFormChanged" />
                         </StackPanel>
                         <StackPanel Grid.Column="2" Spacing="6">
                             <TextBlock Text="Промежуток между рядами" TextWrapping="Wrap" />
-                            <TextBox x:Name="GapYBox" Text="12" TextChanged="OnFormChanged" />
+                            <TextBox x:Name="GapYBox" Text="7" TextChanged="OnFormChanged" />
                         </StackPanel>
                     </Grid>
-                    <TextBlock Text="Весь блок повернут по диагонали снизу слева вверх направо. Размеры задаются до поворота."
+                    <TextBlock Text="Наклон блока — 35° снизу слева вверх направо. При повторении крайние блоки обрезаются границами листа. Размеры задаются до поворота."
                                TextWrapping="Wrap" Foreground="{StaticResource BrushSecondaryText}" />
                 </StackPanel>
 

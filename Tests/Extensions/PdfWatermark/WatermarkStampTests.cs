@@ -25,17 +25,16 @@ public sealed class WatermarkStampTests
     // --- Угол и кегль: чистая математика, ни одного PDF -------------------------------------
 
     [Fact]
-    public void Angle_on_a_square_page_is_exactly_45_degrees_up()
+    public void Angle_on_a_square_page_is_the_approved_35_degrees_up()
     {
-        // Диагональ квадрата — 45°, минус означает «снизу вверх» (ось Y холста смотрит вниз).
-        // Если знак когда-нибудь перевернется, упадет именно этот тест.
-        Assert.Equal(-45, WatermarkStamp.AngleFor(300, 300), 6);
+        // Угол согласован независимо от пропорций листа; минус означает «снизу вверх».
+        Assert.Equal(-35, WatermarkStamp.AngleFor(300, 300), 6);
     }
 
     [Theory]
-    [InlineData(595.3, 841.9, -54.7)]   // A4 портрет
-    [InlineData(841.9, 595.3, -35.3)]   // A4 альбом
-    public void Angle_follows_the_page_diagonal(double w, double h, double expected)
+    [InlineData(595.3, 841.9, -35)]   // A4 портрет
+    [InlineData(841.9, 595.3, -35)]   // A4 альбом
+    public void Approved_angle_is_the_same_on_portrait_and_landscape_pages(double w, double h, double expected)
     {
         // Довороту страницы (/Rotate) здесь места нет: PDFium растеризует лист таким, каким его
         // видит читатель, поэтому холст всегда «как на экране». В прежнем пути через PDFsharp
@@ -50,7 +49,7 @@ public sealed class WatermarkStampTests
         var block = StampTextLayout.Compose([warning], 75 * 4, 50 * 4, 4, WatermarkStamp.Default);
         Assert.True(block.Lines.Count > 1);
         Assert.Equal(warning, string.Join(" ", block.Lines.Select(line => line.Text)));
-        Assert.InRange(block.FontPt, 10, 18);
+        Assert.InRange(block.FontPt, 10, 30);
         Assert.True(block.Height <= 50 * 4);
     }
 
@@ -127,7 +126,7 @@ public sealed class WatermarkStampTests
     [Theory]
     [InlineData(StampPlacement.Center)]
     [InlineData(StampPlacement.Tiled)]
-    public void Letters_have_a_single_light_grey_fill_without_dark_edges(StampPlacement placement)
+    public void Letters_have_a_single_light_grey_blue_fill_without_dark_edges(StampPlacement placement)
     {
         using var bitmap = new SKBitmap(840, 1188);
         using (var canvas = new SKCanvas(bitmap))
@@ -141,15 +140,17 @@ public sealed class WatermarkStampTests
         Assert.True(ink.Length > 500, "светлая надпись должна быть видна");
         Assert.All(ink, pixel =>
         {
-            Assert.Equal(pixel.Red, pixel.Green);
-            Assert.Equal(pixel.Red, pixel.Blue);
-            // Сглаживание осветляет края, а редкие стыки очертаний шрифта могут быть
-            // чуть темнее основной заливки. Темного контура вокруг букв быть не должно.
-            Assert.InRange(pixel.Red, (byte)185, (byte)249);
+            // Заливка серо-голубая, сглаживание лишь приближает края к белому.
+            // Редкие стыки очертаний могут быть темнее основной заливки, но темной
+            // обводки вокруг букв быть не должно.
+            Assert.True(pixel.Red <= pixel.Green && pixel.Green <= pixel.Blue);
+            Assert.InRange(pixel.Red, (byte)190, (byte)249);
         });
-        Assert.True(ink.Count(pixel => pixel.Red < 204) * 1_000 < ink.Length,
+        Assert.True(ink.Count(pixel => pixel.Red < 210) * 1_000 < ink.Length,
                     "темные пиксели образуют контур вместо единой светлой заливки");
-        Assert.InRange(ink.Min(pixel => pixel.Red), (byte)185, (byte)210);
+        Assert.InRange(ink.Min(pixel => pixel.Red), (byte)190, (byte)220);
+        Assert.True(ink.Count(pixel => pixel.Blue - pixel.Red >= 10) > ink.Length / 2,
+                    "заливка потеряла согласованный серо-голубой оттенок");
     }
 
     [Fact]
@@ -170,7 +171,7 @@ public sealed class WatermarkStampTests
     }
 
     [Fact]
-    public void Stamp_is_grey_not_coloured()
+    public void Saved_stamp_has_the_approved_light_grey_blue_tone()
     {
         using var dir = new TempDir("stamp");
         var (src, dst) = Pair(dir, "чертеж");
@@ -178,14 +179,16 @@ public sealed class WatermarkStampTests
 
         Stamp(src, dst);
 
-        using var clean   = PdfStand.Render(src);
-        using var stamped = PdfStand.Render(dst);
-        var (r, g, b) = PdfStand.AverageDiffColor(stamped, clean);
+        using var clean   = PdfStand.Render(src, scale: 1);
+        using var stamped = PdfStand.Render(dst, scale: 1);
+        var (r, g, b) = PdfStand.AverageDiffColor(stamped, clean, tolerance: 15);
 
-        // Серый — это равные составляющие. Цветной знак спорит с содержимым документа, а на
-        // черно-белой печати становится грязным пятном.
-        Assert.True(Math.Abs(r - g) < 6 && Math.Abs(g - b) < 6,
-                    $"знак не серый: R{r:0} G{g:0} B{b:0}");
+        // Проверяем сохраненный PDF, включая JPEG и повторное сглаживание просмотрщика.
+        // Оттенок холодный серо-голубой, без возврата к нейтральному серому или темному синему.
+        Assert.InRange(r, 200, 242);
+        Assert.InRange(g - r, 4, 14);
+        Assert.InRange(b - g, 3, 13);
+        Assert.InRange(b - r, 9, 25);
     }
 
     [Fact]
@@ -371,7 +374,7 @@ public sealed class WatermarkStampTests
 
         var share = touched * 100.0 / (bitmap.Width * bitmap.Height);
         Assert.True(touched > 1_000, "знак не появился на холсте");
-        Assert.InRange(share, 0.5, 5);
+        Assert.InRange(share, 0.5, 10);
     }
 
     /// <summary>Тот же путь, которым идет прогон: предполет открывает документ, запись идет по
