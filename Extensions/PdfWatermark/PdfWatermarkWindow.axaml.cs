@@ -330,6 +330,10 @@ public partial class PdfWatermarkWindow : Window
         var warning = free ? "" : PdfWatermarkExtension.Warning(WarningBox.Text);
         var recursive = RecursiveCheck.IsChecked == true;
         var mode = free ? StampMode.FreeText : StampMode.Journal;
+        // Весь ввод фиксируется одним неизменяемым запросом ДО первого await. После поиска
+        // файлов прогон не перечитывает ни режим, ни скрытые поля другого режима.
+        var request = new StampRequest(source, recursive, output, holder, date,
+                                       warning, dbPath, shape, mode, text, layout);
 
         SetBusy(true);
         ClearLog();
@@ -339,7 +343,8 @@ public partial class PdfWatermarkWindow : Window
         try
         {
             Progress.SetIndeterminate("Поиск документов");
-            var files = await Task.Run(() => PdfWatermarkEngine.ListPdfFiles(source, recursive, ct), ct);
+            var files = await Task.Run(() => PdfWatermarkEngine.ListPdfFiles(request.Source, request.Recursive,
+                                                                            ct, request.OutputFolder), ct);
             if (files.Count == 0)
             {
                 Fail("В указанном месте не найдено PDF-документов.");
@@ -356,8 +361,6 @@ public partial class PdfWatermarkWindow : Window
             LogLineNow(free ? "🚀 Наложение свободного текста…" : "🚀 Наложение знака…");
 
             // Свободный текст остается только в памяти запроса и не попадает в журнал окна.
-            var request = new StampRequest(source, recursive, output, holder, date,
-                                            warning, dbPath, shape, mode, text, layout);
             var progress = new Progress<StampProgress>(OnProgress);
             _throttle.Restart();
             var summary = await Task.Run(() => PdfWatermarkEngine.Run(request, files, progress, ct), ct);

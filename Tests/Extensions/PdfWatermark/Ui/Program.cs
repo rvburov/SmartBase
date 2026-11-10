@@ -4,9 +4,13 @@ using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
+using Docnet.Core;
+using Docnet.Core.Models;
 using SmartBase.Controls.Dialogs;
 using SmartBase.Controls.Widgets;
+using SmartBase.Core.Models;
 using SmartBase.Database;
+using SmartBase.Database.Repositories;
 using SmartBase.Extensions.PdfWatermark;
 using SmartBase.Utils;
 using UglyToad.PdfPig.Writer;
@@ -54,6 +58,7 @@ internal static class Program
         Case("Промежутки нужны только при повторении блоков", PlacementSwitch);
         Case("Свободный текст не остается в настройках и новом окне", FreeTextIsNotRemembered);
         Case("Нажатие запуска создает PDF без базы и не записывает текст в журнал", ExecuteFreeText);
+        Case("Выдача, свободный текст и повторная выдача используют только поля своего режима", ExecuteModeCycle);
         Case("Форма прокручивается, действия и журнал доступны при разных размерах", SmallWindowLayout);
 
         Console.WriteLine($"ИТОГ: пройдено {_passed}, ошибок {_failed}.");
@@ -202,6 +207,101 @@ internal static class Program
         }
     }
 
+    private static void ExecuteModeCycle()
+    {
+        const string privateText = "КОПИЯ\nСвободная надпись 7654";
+        const string firstHolder = "Получатель первого экземпляра";
+        const string secondHolder = "Получатель второго экземпляра";
+        const string warning = "Предупреждение только для выдачи";
+        var date = new DateTime(2026, 11, 9);
+        using var journal = new JournalFixture();
+        using var fixture = new Fixture();
+        fixture.Find<TextBox>("SourceBox").Text = fixture.Source;
+        fixture.Find<TextBox>("OutputBox").Text = fixture.Output;
+        fixture.Find<TextBox>("HolderBox").Text = firstHolder;
+        fixture.Find<TextBox>("WarningBox").Text = warning;
+        fixture.Find<DateField>("DateBox").Date = date;
+        fixture.FreeText.Text = privateText;
+        var collections = fixture.Find<ComboBox>("CollectionCombo");
+        collections.SelectedIndex = collections.ItemsSource!.Cast<string>().ToList().IndexOf(JournalFixture.Name);
+        Pump(fixture.Window);
+        Expect(fixture.Execute.IsEnabled, "настоящий журнал выбран и выдача готова к запуску");
+        var first = ExecuteToCompletion(fixture);
+        Expect(Path.GetFileName(first) == "source экз. 1.pdf", "первая выдача получила экземпляр 1");
+        ExpectRenderedText(fixture.Source, first, CopyNumber.StampText(firstHolder, 1, date, warning));
+
+        fixture.Mode.SelectedIndex = 0;
+        fixture.Find<TextBox>("SourceBox").Text = Path.GetDirectoryName(fixture.Source);
+        fixture.Find<CheckBox>("RecursiveCheck").IsChecked = true;
+        fixture.Find<ComboBox>("PlacementCombo").SelectedIndex = 1;
+        Pump(fixture.Window);
+        var free = ExecuteToCompletion(fixture, () =>
+        {
+            Expect(!fixture.Mode.IsEnabled && !fixture.FreeText.IsEnabled,
+                "режим и текст недоступны для изменения во время обработки");
+            // Программная смена после нажатия сильнее обычного ввода: даже она не должна
+            // изменить уже отправленный запрос на поиске или обработке файлов.
+            fixture.FreeText.Text = "Другой текст после нажатия";
+            fixture.Mode.SelectedIndex = 1;
+        });
+        ExpectRenderedText(fixture.Source, free, privateText.Split('\n'), new StampLayout(StampPlacement.Tiled));
+        Expect(journal.Repo.GetRecordTitlesOrdered(journal.Shape.CollectionId).Count == 1,
+            "свободная надпись после выдачи не добавила строку журнала");
+        Expect(!fixture.Find<TextBox>("LogBox").Text!.Contains("7654", StringComparison.Ordinal)
+               && Store.Values.Values.All(value => !value.Contains("7654", StringComparison.Ordinal)),
+            "текст текущего свободного запроса не попал в журнал окна и настройки");
+
+        fixture.Mode.SelectedIndex = 1;
+        fixture.Find<TextBox>("SourceBox").Text = fixture.Source;
+        fixture.Find<TextBox>("HolderBox").Text = secondHolder;
+        fixture.Find<ComboBox>("PlacementCombo").SelectedIndex = 0;
+        Pump(fixture.Window);
+        var second = ExecuteToCompletion(fixture);
+        Expect(Path.GetFileName(second) == "source экз. 2.pdf", "возврат к выдаче продолжает нумерацию с экземпляра 2");
+        ExpectRenderedText(fixture.Source, second, CopyNumber.StampText(secondHolder, 2, date, warning));
+        var rows = journal.Repo.GetRecordTitlesOrdered(journal.Shape.CollectionId);
+        Expect(rows.Count == 2
+               && rows.Select(row => journal.Repo.GetFieldValues(row.Id)[journal.Shape.CopyFieldId]).Order()
+                      .SequenceEqual(new[] { "1", "2" }),
+            "в журнале ровно две выдачи с разными номерами");
+    }
+
+    private static string ExecuteToCompletion(Fixture fixture, Action? afterStart = null)
+    {
+        var before = Directory.GetFiles(fixture.Output, "*.pdf").ToHashSet(StringComparer.Ordinal);
+        fixture.Execute.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        afterStart?.Invoke();
+        Wait(() => fixture.Window.OwnedWindows.OfType<ConfirmDialog>().Any()
+                   || !fixture.Find<Button>("StopBtn").IsEnabled,
+            fixture.Window, "не получен итог обработки PDF");
+        var confirmation = fixture.Window.OwnedWindows.OfType<ConfirmDialog>().SingleOrDefault();
+        Expect(confirmation is not null, "обработка завершилась итоговым окном: " + fixture.Find<TextBox>("LogBox").Text);
+        Click(confirmation!.FindControl<Button>("ConfirmBtn")!);
+        Wait(() => fixture.Execute.IsEnabled, fixture.Window, "форма не вернулась в готовое состояние");
+        return Directory.GetFiles(fixture.Output, "*.pdf").Except(before, StringComparer.Ordinal).Single();
+    }
+
+    private static void ExpectRenderedText(string source, string output, IReadOnlyList<string> lines,
+                                           StampLayout? layout = null)
+    {
+        var expected = Path.Combine(Path.GetDirectoryName(source)!, $"ожидаемый-{Guid.NewGuid():N}.pdf");
+        try
+        {
+            using (var doc = WatermarkStamp.Open(source))
+                WatermarkStamp.StampAndSave(source, doc, expected, lines, CancellationToken.None, layout: layout);
+            Expect(Render(expected).SequenceEqual(Render(output)),
+                "пиксели " + Path.GetFileName(output) + " содержат только текст выбранного режима");
+        }
+        finally { File.Delete(expected); }
+    }
+
+    private static byte[] Render(string path)
+    {
+        using var document = DocLib.Instance.GetDocReader(path, new PageDimensions(0.35));
+        using var page = document.GetPageReader(0);
+        return page.GetImage(new Docnet.Core.Converters.NaiveTransparencyRemover(255, 255, 255));
+    }
+
     private static void Inside(Control control, Window window)
     {
         var origin = control.TranslatePoint(default, window) ?? throw new InvalidOperationException("контрол вне окна");
@@ -313,6 +413,52 @@ internal static class Program
     {
         public WatermarkTestApp() { }
         public override void OnFrameworkInitializationCompleted() { }
+    }
+
+    private sealed class JournalFixture : IDisposable
+    {
+        public const string Name = "Журнал стенда переключения режимов";
+        private readonly string _directory = Directory.CreateTempSubdirectory("sb-watermark-journal-ui-").FullName;
+        private readonly DatabaseRegistry _registry;
+        private readonly Workspace _workspace;
+        public ConstructorRepository Repo => _workspace.Default.Constructor;
+        public JournalShape Shape { get; }
+
+        public JournalFixture()
+        {
+            var path = Path.Combine(_directory, "journal.sqlite");
+            _registry = DatabaseRegistry.Open(path, Path.Combine(_directory, "app.sqlite"));
+            var entry = _registry.GetAll().Single();
+            _workspace = Workspace.Attach(_registry, DatabaseManager.Open(entry.Id, entry.Name, path));
+            var collection = Repo.AddCollection(new DbCollection { Name = Name, Position = 1000 });
+            var id = collection.Id!.Value;
+            Repo.SetSystemFieldName(id, JournalSchema.TitleKey, JournalSchema.TitleColumn, "Название");
+            var order = new List<string> { JournalSchema.TitleKey };
+            foreach (var (name, type) in new[]
+            {
+                (JournalSchema.CopyColumn, "number"), (JournalSchema.HolderColumn, "text"), (JournalSchema.DateColumn, "date"),
+            })
+            {
+                var field = Repo.AddField(new DbField
+                {
+                    CollectionId = id, Name = name, FieldType = type, Position = order.Count * 1000,
+                });
+                order.Add(field.Id!.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
+            Repo.SaveColumnOrder(id, order);
+            Shape = JournalSchema.Check(Repo, id, Name).Shape
+                    ?? throw new InvalidOperationException("Не удалось собрать журнал стенда");
+            RelationDbResolver.Configure(_workspace);
+        }
+
+        public void Dispose()
+        {
+            RelationDbResolver.Configure(null);
+            _workspace.Dispose();
+            _registry.Dispose();
+            SqliteGate.ClearAllPools();
+            Directory.Delete(_directory, recursive: true);
+        }
     }
 
     private sealed class MemoryStore : ISettingsDatabase

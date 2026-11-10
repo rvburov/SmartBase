@@ -159,10 +159,11 @@ public sealed class PdfWatermarkEngineTests
 
         // Знак впечатан в пиксели, поэтому проверяется он расхождением с исходной страницей.
         // Текста в выданном документе не остается вовсе — ни знака, ни документа.
-        using var clean   = PdfStand.Render(source);
-        using var stamped = PdfStand.Render(output);
+        using var clean   = PdfStand.Render(source, scale: 1);
+        using var stamped = PdfStand.Render(output, scale: 1);
 
-        Assert.True(PdfStand.DiffShare(stamped, clean) > 1, "знака нет на странице результата");
+        Assert.True(PdfStand.DiffPixels(stamped, clean, tolerance: 15) > 1_000,
+                    "знака нет на странице результата");
         Assert.Equal("", PdfStand.TextOf(output));
     }
 

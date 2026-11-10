@@ -8,8 +8,8 @@ namespace SmartBase.Tests.Extensions.PdfWatermark;
 ///
 /// Знак ВПЕЧАТАН в пиксели, поэтому и проверяется он по ПИКСЕЛЯМ: текстовых объектов в выданном
 /// документе не остается вовсе, разбирать нечего. Тесты сравнивают страницу результата со
-/// страницей исходника — ровно то, что увидит человек, — и отдельно проверяют, что знак
-/// переживает самую дешевую атаку.
+/// страницей исходника — ровно то, что увидит человек, — и отдельно проверяют светлую
+/// сплошную заливку без темного контура букв.
 /// </summary>
 public sealed class WatermarkStampTests
 {
@@ -118,14 +118,42 @@ public sealed class WatermarkStampTests
         Assert.Equal("", PdfStand.TextOf(dst));
 
         // А в пикселях знак есть.
-        using var clean   = PdfStand.Render(src);
-        using var stamped = PdfStand.Render(dst);
-        Assert.True(PdfStand.DiffShare(stamped, clean) > 1,
+        using var clean   = PdfStand.Render(src, scale: 1);
+        using var stamped = PdfStand.Render(dst, scale: 1);
+        Assert.True(PdfStand.DiffPixels(stamped, clean, tolerance: 15) > 1_000,
                     "знака не видно на странице результата");
     }
 
+    [Theory]
+    [InlineData(StampPlacement.Center)]
+    [InlineData(StampPlacement.Tiled)]
+    public void Letters_have_a_single_light_grey_fill_without_dark_edges(StampPlacement placement)
+    {
+        using var bitmap = new SKBitmap(840, 1188);
+        using (var canvas = new SKCanvas(bitmap))
+        {
+            canvas.Clear(SKColors.White);
+            WatermarkStamp.Draw(canvas, bitmap.Width, bitmap.Height, Lines, WatermarkStamp.Default,
+                                new StampLayout(placement), pixelsPerMm: 4);
+        }
+
+        var ink = bitmap.Pixels.Where(pixel => pixel.Red < 250).ToArray();
+        Assert.True(ink.Length > 500, "светлая надпись должна быть видна");
+        Assert.All(ink, pixel =>
+        {
+            Assert.Equal(pixel.Red, pixel.Green);
+            Assert.Equal(pixel.Red, pixel.Blue);
+            // Сглаживание осветляет края, а редкие стыки очертаний шрифта могут быть
+            // чуть темнее основной заливки. Темного контура вокруг букв быть не должно.
+            Assert.InRange(pixel.Red, (byte)185, (byte)249);
+        });
+        Assert.True(ink.Count(pixel => pixel.Red < 204) * 1_000 < ink.Length,
+                    "темные пиксели образуют контур вместо единой светлой заливки");
+        Assert.InRange(ink.Min(pixel => pixel.Red), (byte)185, (byte)210);
+    }
+
     [Fact]
-    public void Stamp_survives_the_cheapest_attack()
+    public void Saved_pdf_preserves_the_light_letter_fill()
     {
         using var dir = new TempDir("stamp");
         var (src, dst) = Pair(dir, "чертеж");
@@ -133,20 +161,12 @@ public sealed class WatermarkStampTests
 
         Stamp(src, dst);
 
-        using var clean   = PdfStand.Render(src);
-        using var stamped = PdfStand.Render(dst);
-
-        // Самая дешевая атака на растровый знак — «уровни» в любом бесплатном редакторе: все
-        // светлее порога становится белым. Одну лишь светлую заливку она сгоняет начисто,
-        // поэтому у знака есть контур, по плотности сравнимый с текстом документа.
-        using var attacked = PdfStand.Levels(stamped, 230);
-        using var reference = PdfStand.Levels(clean, 230);
-
-        var before = PdfStand.DiffShare(stamped, clean);
-        var after  = PdfStand.DiffShare(attacked, reference);
-
-        Assert.True(after > before / 2,
-                    $"знак снят чисткой: было {before:0.00}%, осталось {after:0.00}%");
+        // Проверяем уже сохраненный и заново открытый PDF. Допуск учитывает JPEG и
+        // повторное сглаживание просмотрщика, но прежняя темная обводка сюда не проходит.
+        using var stamped = PdfStand.Render(dst, scale: 2);
+        var ink = stamped.Pixels.Where(pixel => pixel.Red < 245).ToArray();
+        Assert.True(ink.Length > 1_000, "знака не видно после сохранения PDF");
+        Assert.InRange(ink.Min(pixel => pixel.Red), (byte)185, (byte)215);
     }
 
     [Fact]
@@ -204,9 +224,9 @@ public sealed class WatermarkStampTests
 
         for (var page = 1; page <= 4; page++)
         {
-            using var clean   = PdfStand.Render(src, page);
-            using var stamped = PdfStand.Render(dst, page);
-            Assert.True(PdfStand.DiffPixels(stamped, clean) > 400, $"страница {page} без знака");
+            using var clean   = PdfStand.Render(src, page, scale: 1);
+            using var stamped = PdfStand.Render(dst, page, scale: 1);
+            Assert.True(PdfStand.DiffPixels(stamped, clean, tolerance: 15) > 1_000, $"страница {page} без знака");
         }
     }
 
@@ -219,9 +239,9 @@ public sealed class WatermarkStampTests
 
         Stamp(src, dst);
 
-        using var clean   = PdfStand.Render(src);
-        using var stamped = PdfStand.Render(dst);
-        Assert.True(PdfStand.DiffShare(stamped, clean) > 1, "на повернутой странице знака нет");
+        using var clean   = PdfStand.Render(src, scale: 1);
+        using var stamped = PdfStand.Render(dst, scale: 1);
+        Assert.True(PdfStand.DiffPixels(stamped, clean, tolerance: 15) > 1_000, "на повернутой странице знака нет");
     }
 
     [Fact]
@@ -237,9 +257,9 @@ public sealed class WatermarkStampTests
         // PDF 1.3 выдают сканеры и «Файлы» на iOS — самые частые здесь документы. На прежнем
         // пути они были отдельной бедой: прозрачности в 1.3 нет, и знак ложился глухим. Растру
         // версия исходника безразлична, но проверка остается — документы-то те же.
-        using var clean   = PdfStand.Render(src);
-        using var stamped = PdfStand.Render(dst);
-        Assert.True(PdfStand.DiffShare(stamped, clean) > 1);
+        using var clean   = PdfStand.Render(src, scale: 1);
+        using var stamped = PdfStand.Render(dst, scale: 1);
+        Assert.True(PdfStand.DiffPixels(stamped, clean, tolerance: 15) > 1_000);
     }
 
     [Fact]
@@ -350,7 +370,8 @@ public sealed class WatermarkStampTests
             if (bitmap.GetPixel(x, y).Red < 250) touched++;
 
         var share = touched * 100.0 / (bitmap.Width * bitmap.Height);
-        Assert.InRange(share, 1, 25);
+        Assert.True(touched > 1_000, "знак не появился на холсте");
+        Assert.InRange(share, 0.5, 5);
     }
 
     /// <summary>Тот же путь, которым идет прогон: предполет открывает документ, запись идет по

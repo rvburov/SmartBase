@@ -10,24 +10,16 @@ namespace SmartBase.Extensions.PdfWatermark;
 
 /// <summary>Оформление знака. Записью, а не константами: правится в одном месте и подставляется
 /// в тестах.</summary>
-/// <param name="Alpha">Непрозрачность заливки букв, 0-255. 125 — примерно 49%: узкие
-/// полужирные буквы сплошные и читаемые, без светлой пустоты внутри контура.</param>
-/// <param name="OutlineAlpha">Непрозрачность КОНТУРА букв. Контур — это стойкость знака: светлую
-/// заливку сгоняет одна операция «уровни» в любом бесплатном редакторе, а контур по плотности
-/// сравним с текстом документа, и порог, который уберет его, испортит и сам документ. Тонкая
-/// линия читать не мешает.</param>
-/// <param name="OutlineShare">Толщина контура в долях кегля. 0.035 держит компактные буквы
-/// после уменьшения страницы и осветления изображения.</param>
+/// <param name="Alpha">Непрозрачность единственной заливки букв, 0-255. 80 — примерно 31%:
+/// на белом листе получается светлый серый около 206, без темных краев и обводки.</param>
 /// <param name="LineSpacing">Межстрочный шаг в долях кегля.</param>
 /// <param name="MinFontPt">Минимальный читаемый кегль. При переполнении блока нужен явный отказ.</param>
 /// <param name="MaxFontPt">Обычный кегль компактного блока. Заголовок «КОПИЯ» крупнее в 1.35 раза.</param>
 public sealed record StampLook(
-    byte   Alpha         = 125,
-    byte   OutlineAlpha  = 168,
-    double OutlineShare  = 0.035,
-    byte   R             = 90,
-    byte   G             = 90,
-    byte   B             = 90,
+    byte   Alpha         = 80,
+    byte   R             = 100,
+    byte   G             = 100,
+    byte   B             = 100,
     double LineSpacing   = 1.15,
     double MinFontPt     = 10,
     double MaxFontPt     = 18);
@@ -47,9 +39,9 @@ public sealed record StampLook(
 /// текстового слоя — ни поиска, ни выделения, — а электронная подпись, если она была,
 /// недействительна (документ пересобирается заново).
 ///
-/// Полностью неудаляемым знак не становится: пиксели можно заретушировать. Но ретушь идет по
-/// тем же пикселям, где лежит текст документа, поэтому следы видны, а пакетно на сотню файлов
-/// это уже не делается за секунды.
+/// Полностью неудаляемым знак не становится: пиксели можно изменять и ретушировать.
+/// Впечатывание объединяет надпись со страницей, но не гарантирует сохранность знака после
+/// редактирования изображения.
 /// </summary>
 public static class WatermarkStamp
 {
@@ -246,17 +238,8 @@ public static class WatermarkStamp
             BlendMode   = SKBlendMode.Multiply,
         };
 
-        // Умножение оставляет черные штрихи документа черными: светлая надпись не выбеливает
-        // исходный текст. Контур дополняет плотную заливку при осветлении картинки.
-        using var outline = new SKPaint
-        {
-            Color       = new SKColor(look.R, look.G, look.B, look.OutlineAlpha),
-            IsAntialias = true,
-            Typeface    = WatermarkFont.Typeface,
-            BlendMode   = SKBlendMode.Multiply,
-            Style       = SKPaintStyle.Stroke,
-        };
-
+        // Один проход заливки дает единый светлый тон. Умножение сохраняет черные штрихи
+        // документа: надпись не выбеливает исходный текст под собой.
         canvas.Save();
         canvas.ClipRect(new SKRect((float)grid.Margin, (float)grid.Margin,
                                    width - (float)grid.Margin, height - (float)grid.Margin));
@@ -268,12 +251,10 @@ public static class WatermarkStamp
             canvas.Translate((float)center.X, (float)center.Y);
             foreach (var line in block.Lines)
             {
-                fill.TextSize = outline.TextSize = line.Size;
-                outline.StrokeWidth = Math.Max((float)(scale * 0.05), line.Size * (float)look.OutlineShare);
+                fill.TextSize = line.Size;
                 var x = -fill.MeasureText(line.Text) / 2;
                 var y = line.Baseline - (float)block.Height / 2;
                 canvas.DrawText(line.Text, x, y, fill);
-                canvas.DrawText(line.Text, x, y, outline);
             }
             canvas.Restore();
         }

@@ -147,7 +147,7 @@ internal static class PdfStand
     /// <summary>
     /// Доля пикселей (в процентах), которыми две картинки одного размера расходятся сильнее
     /// <paramref name="tolerance"/> по яркости. Так измеряется и наличие знака (сравнение с
-    /// исходной страницей), и его стойкость (сравнение после чистки).
+    /// исходной страницей), и различие двух вариантов надписи.
     /// </summary>
     public static double DiffShare(SKBitmap a, SKBitmap b, int tolerance = 25)
         => DiffPixels(a, b, tolerance) * 100.0 / (a.Width * a.Height);
@@ -190,26 +190,6 @@ internal static class PdfStand
         }
 
         return count == 0 ? (0, 0, 0) : (r / count, g / count, b / count);
-    }
-
-    /// <summary>
-    /// Самая дешевая атака на растровый знак: «уровни» с белой точкой
-    /// <paramref name="white"/> — все, что светлее, становится белым.
-    /// </summary>
-    public static SKBitmap Levels(SKBitmap source, byte white)
-    {
-        var result = new SKBitmap(source.Info);
-
-        for (var y = 0; y < source.Height; y++)
-        for (var x = 0; x < source.Width; x++)
-        {
-            var pixel = source.GetPixel(x, y);
-            result.SetPixel(x, y, new SKColor(Lift(pixel.Red), Lift(pixel.Green), Lift(pixel.Blue)));
-        }
-
-        return result;
-
-        byte Lift(byte value) => (byte)Math.Min(255, value * 255 / white);
     }
 
     private static int Grey(SKColor color) => (color.Red * 299 + color.Green * 587 + color.Blue * 114) / 1000;

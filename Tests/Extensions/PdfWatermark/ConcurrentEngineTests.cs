@@ -29,9 +29,10 @@ public sealed class ConcurrentEngineTests
             // Рендер проверки тоже проходит штатную общую очередь PDFium.
             PdfGate.Run(() =>
             {
-                using var clean = PdfStand.Render(f.Source);
-                using var stamped = PdfStand.Render(output);
-                Assert.True(PdfStand.DiffPixels(stamped, clean) > 400, "На готовой странице нет видимого знака");
+                using var clean = PdfStand.Render(f.Source, scale: 1);
+                using var stamped = PdfStand.Render(output, scale: 1);
+                Assert.True(PdfStand.DiffPixels(stamped, clean, tolerance: 15) > 1_000,
+                            "На готовой странице нет видимого знака");
             });
             using var check = new AppDbContext(f.Database.Path);
             var repo = new ConstructorRepository(check);
@@ -65,9 +66,10 @@ public sealed class ConcurrentEngineTests
             Assert.Equal(job.SourceHash, ConcurrentTasks.Fingerprint(job.Source));
             PdfGate.Run(() =>
             {
-                using var clean = PdfStand.Render(job.Source);
-                using var stamped = PdfStand.Render(output);
-                Assert.True(PdfStand.DiffPixels(stamped, clean) > 400, "В выданной копии нет видимого знака");
+                using var clean = PdfStand.Render(job.Source, scale: 1);
+                using var stamped = PdfStand.Render(output, scale: 1);
+                Assert.True(PdfStand.DiffPixels(stamped, clean, tolerance: 15) > 1_000,
+                            "В выданной копии нет видимого знака");
             });
             return new PublishedCopy(index, item.Number, output, request.Holder);
         }, TimeSpan.FromMinutes(3), verify: copies =>

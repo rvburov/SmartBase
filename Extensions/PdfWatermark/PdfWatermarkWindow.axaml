@@ -41,6 +41,8 @@
                         <Button Grid.Column="2" x:Name="FileBtn" Classes="dialog" Content="Файл…" Click="OnBrowseFile" />
                         <Button Grid.Column="4" x:Name="FolderBtn" Classes="dialog" Content="Папка…" Click="OnBrowseFolder" />
                     </Grid>
+                    <TextBlock Text="Для смены надписи выбирайте исходный PDF без водяного знака."
+                               TextWrapping="Wrap" Foreground="{StaticResource BrushSecondaryText}" />
                 </StackPanel>
 
                 <CheckBox x:Name="RecursiveCheck" IsChecked="False" IsEnabled="False"

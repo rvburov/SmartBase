@@ -80,11 +80,14 @@ public static class PdfWatermarkEngine
     /// <summary>
     /// Список PDF: либо один выбранный файл, либо обход папки.
     ///
+    /// Отдельная папка результата внутри источника пропускается: ее прежние результаты уже
+    /// содержат впечатанные знаки. Явно выбранный файл и сохранение в сам источник разрешены.
     /// Скрытые и системные файлы пропускаются, а недоступная подпапка обход не роняет — на
     /// сетевой шаре одна закрытая папка не должна отменять работу по остальным.
     /// </summary>
     /// <exception cref="PdfWatermarkException">Источника не существует.</exception>
-    public static List<string> ListPdfFiles(string source, bool recursive, CancellationToken ct)
+    public static List<string> ListPdfFiles(string source, bool recursive, CancellationToken ct,
+                                            string? outputFolder = null)
     {
         if (File.Exists(source))
             return IsPdf(source) ? [source] : [];
@@ -99,10 +102,24 @@ public static class PdfWatermarkEngine
             AttributesToSkip      = FileAttributes.Hidden | FileAttributes.System,
         };
 
+        string? excludedOutput = null;
+        if (!string.IsNullOrWhiteSpace(outputFolder))
+        {
+            var relative = Path.GetRelativePath(Path.GetFullPath(source), Path.GetFullPath(outputFolder));
+            if (relative != "." && relative != ".." && !Path.IsPathRooted(relative) &&
+                !relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+                excludedOutput = Path.TrimEndingDirectorySeparator(Path.GetFullPath(outputFolder)) +
+                                 Path.DirectorySeparatorChar;
+        }
+        var pathComparison = OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+            ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
         var files = new List<string>();
         foreach (var path in Directory.EnumerateFiles(source, "*", options))
         {
             ct.ThrowIfCancellationRequested();
+            if (excludedOutput is not null && Path.GetFullPath(path).StartsWith(excludedOutput, pathComparison))
+                continue;
             if (IsPdf(path)) files.Add(path);
         }
 

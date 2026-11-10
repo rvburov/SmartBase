@@ -9,6 +9,51 @@ public sealed class FreeTextEngineTests
     private const string Text = "Для внутреннего использования\nОтдел разработки";
 
     [Fact]
+    public void Folder_scan_excludes_a_nested_output_folder_but_keeps_its_sibling()
+    {
+        using var dir = new TempDir("wm-free-scan");
+        var output = Directory.CreateDirectory(Path.Combine(dir.Path, "результат")).FullName;
+        var nested = Directory.CreateDirectory(Path.Combine(output, "архив")).FullName;
+        var sibling = Directory.CreateDirectory(Path.Combine(dir.Path, "результат исходный")).FullName;
+        var original = Path.Combine(dir.Path, "чертеж.pdf");
+        var siblingOriginal = Path.Combine(sibling, "схема.pdf");
+        PdfStand.WriteA4(original);
+        PdfStand.WriteA4(siblingOriginal);
+        PdfStand.WriteA4(Path.Combine(output, "чертеж экз. 1.pdf"));
+        PdfStand.WriteA4(Path.Combine(nested, "чертеж водяной знак.pdf"));
+
+        var files = PdfWatermarkEngine.ListPdfFiles(dir.Path, true, CancellationToken.None,
+                                                    Path.Combine(output, "."));
+
+        Assert.Equal(new[] { original, siblingOriginal }.Order(StringComparer.Ordinal), files);
+    }
+
+    [Theory]
+    [InlineData("источник")]
+    [InlineData(".")]
+    [InlineData("результат")]
+    public void Folder_scan_keeps_inputs_when_output_is_the_same_folder_a_parent_or_a_sibling(string outputName)
+    {
+        using var dir = new TempDir("wm-free-scan");
+        var source = Directory.CreateDirectory(Path.Combine(dir.Path, "источник")).FullName;
+        var output = Directory.CreateDirectory(Path.Combine(dir.Path, outputName)).FullName;
+        var original = Path.Combine(source, "чертеж.pdf");
+        PdfStand.WriteA4(original);
+
+        Assert.Equal([original], PdfWatermarkEngine.ListPdfFiles(source, true, CancellationToken.None, output));
+    }
+
+    [Fact]
+    public void An_explicitly_selected_pdf_in_the_output_folder_is_still_an_input()
+    {
+        using var dir = new TempDir("wm-free-scan");
+        var source = Path.Combine(dir.Path, "чертеж водяной знак.pdf");
+        PdfStand.WriteA4(source);
+
+        Assert.Equal([source], PdfWatermarkEngine.ListPdfFiles(source, true, CancellationToken.None, dir.Path));
+    }
+
+    [Fact]
     public void Free_text_works_without_a_database_and_is_baked_into_every_page()
     {
         using var src = new TempDir("wm-free-src");
@@ -81,6 +126,81 @@ public sealed class FreeTextEngineTests
         Assert.Equal(row, remaining.Id);
         Assert.Equal("чертеж", remaining.Title);
         Assert.Equal(before, db.Constructor.GetFieldValues(row).OrderBy(p => p.Key).ToArray());
+    }
+
+    [Fact]
+    public void Alternating_modes_uses_only_the_current_text_and_preserves_journal_numbering()
+    {
+        using var db = new TempDatabase("wm-free-isolation");
+        using var src = new TempDir("wm-free-src");
+        using var dst = new TempDir("wm-free-dst");
+        var source = Path.Combine(src.Path, "чертеж.pdf");
+        PdfStand.WriteA4(source);
+        var collection = IssueStand.Create(db.Constructor);
+        var shape = IssueStand.Shape(db.Constructor, collection);
+        var journal = new StampRequest(source, false, dst.Path, "Получатель первого экземпляра",
+                                      new DateTime(2026, 11, 9), "Предупреждение журнала", db.Path, shape);
+        var first = PdfWatermarkEngine.Run(journal, [source], null, CancellationToken.None);
+        Assert.Equal(1, Assert.Single(first.Items).Number);
+
+        var layout = new StampLayout(StampPlacement.Tiled);
+        var clean = Request(source, dst.Path) with { FreeText = "КОПИЯ\nСвободная надпись", Layout = layout };
+        var expectedFree = PdfWatermarkEngine.Run(clean, [source], null, CancellationToken.None);
+        var poisoned = journal with
+        {
+            Mode = StampMode.FreeText,
+            FreeText = clean.FreeText,
+            Holder = "Чужой получатель не должен появиться",
+            Warning = "Чужое предупреждение не должно появиться",
+            Date = new DateTime(1901, 2, 3),
+            Layout = layout,
+        };
+        var actualFree = PdfWatermarkEngine.Run(poisoned, [source], null, CancellationToken.None);
+        Assert.Equal(0, Assert.Single(actualFree.Items).Number);
+        Assert.Single(db.Constructor.GetRecordTitlesOrdered(collection));
+        using (var expected = PdfStand.Render(Path.Combine(dst.Path, expectedFree.Items[0].OutputName!)))
+        using (var actual = PdfStand.Render(Path.Combine(dst.Path, actualFree.Items[0].OutputName!)))
+            Assert.Equal(0, PdfStand.DiffPixels(expected, actual, tolerance: 0));
+
+        var resumed = journal with { Holder = "Получатель второго экземпляра", FreeText = "Лишний свободный текст" };
+        var second = PdfWatermarkEngine.Run(resumed, [source], null, CancellationToken.None);
+        Assert.Equal(2, Assert.Single(second.Items).Number);
+        var rows = db.Constructor.GetRecordTitlesOrdered(collection);
+        Assert.Equal(2, rows.Count);
+        Assert.Equal(new[] { "1", "2" }, rows.Select(row => db.Constructor.GetFieldValues(row.Id)[shape.CopyFieldId]).Order());
+
+        var expectedJournal = Path.Combine(src.Path, "ожидаемая выдача.pdf");
+        using (var doc = WatermarkStamp.Open(source))
+            WatermarkStamp.StampAndSave(source, doc, expectedJournal,
+                CopyNumber.StampText(resumed.Holder, 2, resumed.Date, resumed.Warning), CancellationToken.None);
+        using var expectedPage = PdfStand.Render(expectedJournal);
+        using var actualPage = PdfStand.Render(Path.Combine(dst.Path, second.Items[0].OutputName!));
+        Assert.Equal(0, PdfStand.DiffPixels(expectedPage, actualPage, tolerance: 0));
+    }
+
+    [Fact]
+    public void A_watermark_already_baked_into_the_input_remains_part_of_the_page()
+    {
+        using var src = new TempDir("wm-free-src");
+        using var dst = new TempDir("wm-free-dst");
+        var source = Path.Combine(src.Path, "чистый.pdf");
+        var issued = Path.Combine(src.Path, "выданный.pdf");
+        PdfStand.WriteA4(source);
+        using (var doc = WatermarkStamp.Open(source))
+            WatermarkStamp.StampAndSave(source, doc, issued,
+                CopyNumber.StampText("Прежний получатель", 17, new DateTime(2026, 11, 9), "Прежнее предупреждение"),
+                CancellationToken.None);
+        var issuedBefore = File.ReadAllBytes(issued);
+
+        var free = Request(source, dst.Path) with { FreeText = "КОПИЯ", Layout = new StampLayout(StampPlacement.Tiled) };
+        var clean = PdfWatermarkEngine.Run(free, [source], null, CancellationToken.None);
+        var overIssued = PdfWatermarkEngine.Run(free with { Source = issued }, [issued], null, CancellationToken.None);
+        using var cleanPage = PdfStand.Render(Path.Combine(dst.Path, clean.Items[0].OutputName!));
+        using var issuedPage = PdfStand.Render(Path.Combine(dst.Path, overIssued.Items[0].OutputName!));
+
+        Assert.True(PdfStand.DiffPixels(cleanPage, issuedPage) > 100,
+                    "впечатанная прежняя выдача должна оставаться содержимым исходной страницы");
+        Assert.Equal(issuedBefore, File.ReadAllBytes(issued));
     }
 
     [Fact]
@@ -207,9 +327,9 @@ public sealed class FreeTextEngineTests
                     Assert.Equal(SharedFreeSource.PageCount, PdfStand.PageCount(path));
                     PdfGate.Run(() =>
                     {
-                        using var clean = PdfStand.Render(shared.Source);
-                        using var stamped = PdfStand.Render(path);
-                        Assert.True(PdfStand.DiffShare(stamped, clean) > 0.25,
+                        using var clean = PdfStand.Render(shared.Source, scale: 1);
+                        using var stamped = PdfStand.Render(path, scale: 1);
+                        Assert.True(PdfStand.DiffPixels(stamped, clean, tolerance: 15) > 200,
                                     "готовый файл не содержит видимой свободной надписи");
                     });
                     Assert.Equal("", PdfStand.TextOf(path));
@@ -228,10 +348,10 @@ public sealed class FreeTextEngineTests
                                            [source], null, CancellationToken.None);
         var second = PdfWatermarkEngine.Run(Request(source, dst.Path) with { FreeText = "ДРУГОЙ ТЕКСТ" },
                                             [source], null, CancellationToken.None);
-        using var a = PdfStand.Render(Path.Combine(dst.Path, first.Items[0].OutputName!));
-        using var b = PdfStand.Render(Path.Combine(dst.Path, second.Items[0].OutputName!));
+        using var a = PdfStand.Render(Path.Combine(dst.Path, first.Items[0].OutputName!), scale: 1);
+        using var b = PdfStand.Render(Path.Combine(dst.Path, second.Items[0].OutputName!), scale: 1);
 
-        Assert.True(PdfStand.DiffShare(a, b) > 0.1, "результат не зависит от введенного текста");
+        Assert.True(PdfStand.DiffPixels(a, b, tolerance: 15) > 200, "результат не зависит от введенного текста");
     }
 
     [Fact]
